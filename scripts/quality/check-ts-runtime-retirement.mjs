@@ -79,6 +79,7 @@ export function collectTsRuntimeRetirementFailures(manifest, routes) {
   const discoveredRoutes = routes.filter((route) => includeMethods.size === 0 || includeMethods.has(route.method));
   const exactSurfaces = manifest.surfaces ?? [];
   const routeFamilies = manifest.routeFamilies ?? [];
+  validateRequiredRouteBehaviorTests(manifest, exactSurfaces, failures);
 
   for (const surface of exactSurfaces) {
     if (!surface.route) {
@@ -111,6 +112,12 @@ export function collectTsRuntimeRetirementFailures(manifest, routes) {
     classified,
     summary,
   };
+}
+
+export function collectTsRuntimeRetirementFailuresWithFiles(manifest, routes, options = {}) {
+  const result = collectTsRuntimeRetirementFailures(manifest, routes);
+  validateRequiredRouteBehaviorTestFiles(manifest, result.failures, options.repoRoot);
+  return result;
 }
 
 export function findClassificationForRoute(route, exactSurfaces, routeFamilies) {
@@ -156,6 +163,64 @@ function validateExactCoverageFloor(manifest, summary, failures) {
       `exact route surface coverage ${summary.exactClassified} is below `
       + `discovery.exactRouteSurfacesMin ${exactRouteSurfacesMin}`,
     );
+  }
+}
+
+function validateRequiredRouteBehaviorTests(manifest, exactSurfaces, failures) {
+  const required = manifest.discovery?.requiredRouteBehaviorTestSurfaceIds ?? [];
+  if (!Array.isArray(required)) {
+    failures.push("discovery.requiredRouteBehaviorTestSurfaceIds must be an array when set");
+    return;
+  }
+
+  const seen = new Set();
+  for (const surfaceId of required) {
+    if (!hasNonEmptyString(surfaceId)) {
+      failures.push("discovery.requiredRouteBehaviorTestSurfaceIds contains a non-string/empty id");
+      continue;
+    }
+    if (seen.has(surfaceId)) {
+      failures.push(`discovery.requiredRouteBehaviorTestSurfaceIds contains duplicate ${surfaceId}`);
+      continue;
+    }
+    seen.add(surfaceId);
+
+    const surface = exactSurfaces.find((entry) => entry.id === surfaceId);
+    if (!surface) {
+      failures.push(`required route behavior test surface ${surfaceId} is missing from exact surfaces`);
+      continue;
+    }
+    if (!surface.route) {
+      failures.push(`${surfaceId}: required route behavior test surface is missing an exact route`);
+    } else if (surface.route.method === "GET") {
+      failures.push(`${surfaceId}: required route behavior test surface must be non-GET`);
+    }
+    if (surface.classification !== "fail_closed") {
+      failures.push(`${surfaceId}: required route behavior test surface must be fail_closed`);
+    }
+    if (!hasNonEmptyString(surface.routeBehavioralTest)) {
+      failures.push(`${surfaceId}: missing routeBehavioralTest`);
+    }
+  }
+}
+
+function validateRequiredRouteBehaviorTestFiles(manifest, failures, repoRoot) {
+  if (!repoRoot) {
+    return;
+  }
+  const required = manifest.discovery?.requiredRouteBehaviorTestSurfaceIds ?? [];
+  if (!Array.isArray(required)) {
+    return;
+  }
+  for (const surfaceId of required) {
+    const surface = (manifest.surfaces ?? []).find((entry) => entry.id === surfaceId);
+    if (!hasNonEmptyString(surface?.routeBehavioralTest)) {
+      continue;
+    }
+    const testPath = path.resolve(repoRoot, surface.routeBehavioralTest);
+    if (!fs.existsSync(testPath)) {
+      failures.push(`${surfaceId}: routeBehavioralTest file does not exist: ${surface.routeBehavioralTest}`);
+    }
   }
 }
 
@@ -317,7 +382,7 @@ function main() {
     : path.join(repoRoot, args.manifestPath);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   const routes = discoverRoutes(repoRoot, manifest.discovery?.routeSourceDir ?? "src/api/http/routes");
-  const result = collectTsRuntimeRetirementFailures(manifest, routes);
+  const result = collectTsRuntimeRetirementFailuresWithFiles(manifest, routes, { repoRoot });
   const report = {
     generatedAt: new Date().toISOString(),
     repoRoot,
