@@ -122,7 +122,7 @@
 
 use std::env;
 use std::io::{Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -1168,6 +1168,99 @@ impl AgentRunWsListener {
         provider_workspace_dispatch_enabled: bool,
     ) -> Result<usize, TransportError> {
         let (stream, _peer) = self.listener.accept()?;
+        Self::serve_accepted_stream(
+            stream,
+            server_kp,
+            runtime,
+            owner_allowlist,
+            peer_allowlist,
+            run_control_enabled,
+            mission_bound_run_enabled,
+            mission_intake_enabled,
+            mission_spine_dispatch_enabled,
+            memory_confirm_enabled,
+            run_outcome_learning_confirm_enabled,
+            token_surface_enabled,
+            provider_workspace_dispatch_enabled,
+        )
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    fn accept_one_with_timeout<T: Transport>(
+        &self,
+        timeout: Duration,
+        server_kp: &DeviceKeypair,
+        runtime: &HubRuntime<T>,
+        owner_allowlist: &[String],
+        peer_allowlist: &[[u8; X25519_PUBKEY_LEN]],
+        run_control_enabled: bool,
+        mission_bound_run_enabled: bool,
+        mission_intake_enabled: bool,
+        mission_spine_dispatch_enabled: bool,
+        memory_confirm_enabled: bool,
+        run_outcome_learning_confirm_enabled: bool,
+        token_surface_enabled: bool,
+        provider_workspace_dispatch_enabled: bool,
+    ) -> Result<usize, TransportError> {
+        self.listener.set_nonblocking(true)?;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match self.listener.accept() {
+                Ok((stream, _peer)) => {
+                    self.listener.set_nonblocking(false)?;
+                    stream.set_nonblocking(false)?;
+                    return Self::serve_accepted_stream(
+                        stream,
+                        server_kp,
+                        runtime,
+                        owner_allowlist,
+                        peer_allowlist,
+                        run_control_enabled,
+                        mission_bound_run_enabled,
+                        mission_intake_enabled,
+                        mission_spine_dispatch_enabled,
+                        memory_confirm_enabled,
+                        run_outcome_learning_confirm_enabled,
+                        token_surface_enabled,
+                        provider_workspace_dispatch_enabled,
+                    );
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if std::time::Instant::now() >= deadline {
+                        self.listener.set_nonblocking(false)?;
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "timed out waiting for TS interop client connection",
+                        )
+                        .into());
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => {
+                    self.listener.set_nonblocking(false)?;
+                    return Err(e.into());
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn serve_accepted_stream<T: Transport>(
+        stream: TcpStream,
+        server_kp: &DeviceKeypair,
+        runtime: &HubRuntime<T>,
+        owner_allowlist: &[String],
+        peer_allowlist: &[[u8; X25519_PUBKEY_LEN]],
+        run_control_enabled: bool,
+        mission_bound_run_enabled: bool,
+        mission_intake_enabled: bool,
+        mission_spine_dispatch_enabled: bool,
+        memory_confirm_enabled: bool,
+        run_outcome_learning_confirm_enabled: bool,
+        token_surface_enabled: bool,
+        provider_workspace_dispatch_enabled: bool,
+    ) -> Result<usize, TransportError> {
         // HARDENING: a per-connection read timeout BEFORE any read, so a stalled peer cannot
         // wedge the single-threaded accept loop before auth/dispatch.
         stream.set_read_timeout(Some(READ_TIMEOUT))?;
@@ -6534,7 +6627,29 @@ mod tests {
     }
 
     /// Read the ONE JSON line the runner prints on stdout.
-    fn read_client_json(child: std::process::Child) -> serde_json::Value {
+    fn read_client_json(mut child: std::process::Child) -> serde_json::Value {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            if child
+                .try_wait()
+                .expect("poll TS client subprocess")
+                .is_some()
+            {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let out = child
+                    .wait_with_output()
+                    .expect("await killed TS client subprocess");
+                panic!(
+                    "TS client did not exit before timeout. stdout={:?} stderr={:?}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
         let out = child
             .wait_with_output()
             .expect("await TS client subprocess");
@@ -7087,8 +7202,9 @@ mod tests {
     // (1e) OPERATOR-SURFACE-SHAPED MEMORY CONFIRM ROUND-TRIP: real TS memory-spine POST route
     // handler -> real dispatch adapter -> real sealed MemoryDecisionRequest -> real Rust
     // memory-confirm arm -> real DB candidate transition to Confirmed/recallable. This is still
-    // manual/ignored (Node bundle + subprocess), not organic operator traffic, but closes the
-    // split proof at the HTTP route surface for Lane M without provider/model spend.
+    // controlled loopback proof (Node bundle + subprocess), not organic operator traffic, but it is
+    // PR-CI runnable via rust-core.yml and closes the split proof at the HTTP route surface for
+    // Lane M without provider/model spend.
     #[test]
     #[ignore = "needs `node` + the prebuilt interop bundle; opt in with --ignored"]
     fn interop_ts_memory_route_decision_confirms_real_rust_candidate() {
@@ -7118,7 +7234,8 @@ mod tests {
         );
 
         let processed = listener
-            .accept_one(
+            .accept_one_with_timeout(
+                Duration::from_secs(10),
                 &server_kp,
                 &rt,
                 &owner_allowlist,

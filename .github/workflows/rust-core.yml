@@ -9,10 +9,24 @@ on:
     paths:
       - "rust-core/**"
       - ".github/workflows/rust-core.yml"
+      - "src/api/http/routes/friday-memory-spine-routes.ts"
+      - "src/api/mission-spine/friday-memory-spine-dispatch-adapter.ts"
+      - "src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.ts"
+      - "test/interop/**"
+      - "package.json"
+      - "package-lock.json"
+      - "docs/ops/prod-flags-manifest.json"
   pull_request:
     paths:
       - "rust-core/**"
       - ".github/workflows/rust-core.yml"
+      - "src/api/http/routes/friday-memory-spine-routes.ts"
+      - "src/api/mission-spine/friday-memory-spine-dispatch-adapter.ts"
+      - "src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.ts"
+      - "test/interop/**"
+      - "package.json"
+      - "package-lock.json"
+      - "docs/ops/prod-flags-manifest.json"
 
 concurrency:
   group: rust-core-${{ github.ref }}
@@ -21,7 +35,7 @@ concurrency:
 jobs:
   rust-core:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: rust-core
@@ -98,3 +112,16 @@ jobs:
       - name: Test
         # The one live DeepSeek test is #[ignore]d, so this needs no network/secrets.
         run: cargo test --workspace
+      - name: Setup Node for sealed-client interop proof
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install sealed-client interop dependencies
+        working-directory: .
+        run: npm ci
+      - name: Build sealed-client interop runner
+        working-directory: .
+        run: node test/interop/build-sealed-client-runner.mjs
+      - name: Memory-spine TS route to Rust confirm proof
+        run: cargo test -p friday-hub interop_ts_memory_route_decision_confirms_real_rust_candidate --bin hub_agent_run_server -- --ignored --nocapture
