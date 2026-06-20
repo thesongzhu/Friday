@@ -181,6 +181,19 @@ describe("FridaySkillExecutor", () => {
     const result = await handle.result;
     expect(result.status).toBe("completed");
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
+
+    const snapshot = runStore.getRun(handle.runId);
+    expect(snapshot?.metadata?.sandbox).toMatchObject({
+      os: {
+        boundary: process.platform === "darwin"
+          ? "darwin_sandbox_exec_write_network_guard"
+          : "os_sandbox_unavailable_fail_closed",
+        requested: process.platform === "darwin",
+        required: process.platform === "darwin",
+        denyNetwork: true,
+        writableRootCount: 1,
+      },
+    });
   });
 
   it("runs shell skills that require the local shell capability", async () => {
@@ -1274,6 +1287,16 @@ export async function execute(_input, ctx) {
         code: "CAPABILITY_DISABLED",
         capability: "skill_node_runtime",
         runtimeKind: "node",
+      });
+      const snapshot = runStore.getRun("test-id-0001");
+      expect(snapshot?.metadata?.sandbox).toMatchObject({
+        os: {
+          boundary: "disabled_in_production_unisolated_test_harness_only",
+          requested: false,
+          required: false,
+          denyNetwork: false,
+          writableRootCount: 0,
+        },
       });
     } finally {
       if (previousGate === undefined) {

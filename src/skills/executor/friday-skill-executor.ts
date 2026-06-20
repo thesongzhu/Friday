@@ -750,6 +750,40 @@ export function createFridaySkillExecutor(
     };
   }
 
+  function skillProcessSandboxMetadata(
+    runtimeKind: FridayRegisteredSkill["manifest"]["runtime"]["kind"],
+    skillDir: string,
+  ): Record<string, unknown> {
+    if (runtimeKind === "shell" || runtimeKind === "python") {
+      const sandbox = skillProcessSandbox(skillDir);
+      return {
+        boundary: sandbox.enabled
+          ? "darwin_sandbox_exec_write_network_guard"
+          : "os_sandbox_unavailable_fail_closed",
+        requested: sandbox.enabled,
+        required: sandbox.required === true,
+        denyNetwork: sandbox.denyNetwork !== false,
+        writableRootCount: sandbox.writableRoots?.length ?? 0,
+      };
+    }
+    if (runtimeKind === "node") {
+      return {
+        boundary: "disabled_in_production_unisolated_test_harness_only",
+        requested: false,
+        required: false,
+        denyNetwork: false,
+        writableRootCount: 0,
+      };
+    }
+    return {
+      boundary: "not_process_skill_runtime",
+      requested: false,
+      required: false,
+      denyNetwork: false,
+      writableRootCount: 0,
+    };
+  }
+
   function executeInternal(
     request: InternalFridaySkillExecuteRequest,
   ): FridaySkillExecuteHandle {
@@ -1335,6 +1369,7 @@ export function createFridaySkillExecutor(
               executionMode: readExecutionMode(registered),
               trustTier: (registered.trust as Partial<FridayRegisteredSkill["trust"]> | undefined)?.trustTier,
               allowedExecutionModes: (registered.trust as Partial<FridayRegisteredSkill["trust"]> | undefined)?.sandboxPolicy?.allowedExecutionModes ?? [],
+              os: skillProcessSandboxMetadata(manifest.runtime.kind, registered.skillDir),
             },
           },
         });
