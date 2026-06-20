@@ -119,6 +119,17 @@ jobs:
         run: |
           cargo test -p friday-hub --test provider_failover -- --nocapture
           cargo test -p friday-hub provider_failover --lib -- --nocapture
+      - name: Artifact lifecycle stress proofs
+        # P0 multi-angle stress residue: pin surface timeline, crash recovery,
+        # retention/reaper, and ledger-vs-reaper contention as explicit CI legs.
+        # These are local real-Db/real-loop proofs: no keys, no network, no model spend,
+        # no live/organic truth upgrade.
+        run: |
+          cargo test -p friday-hub --test surface_events_timeline -- --nocapture
+          cargo test -p friday-hub --test crash_recovery -- --nocapture
+          cargo test -p friday-hub --bin hub_agent_run_server retention_sweep_runs_only_on_enabled_reaper_tick -- --nocapture
+          cargo test -p friday-storage flag_on_sweep_prunes_only_old_terminal_rows_others_untouched --lib -- --nocapture
+          cargo test -p friday-storage --test atomic concurrent_billing_survives_a_reaper_sweeping_on_a_short_cadence -- --nocapture
       - name: Setup Node for sealed-client interop proof
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
