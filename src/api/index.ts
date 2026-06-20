@@ -311,5 +311,14 @@ export type {
   FridayMissionAutoDispatchDriver,
   MissionAutoDispatchStartRun,
 } from "./mission-spine/friday-mission-auto-dispatch-driver.js";
+export {
+  FRIDAY_D20_SIGNED_BATCH_WORKTREE_FLAG,
+  createFridayD20SignedBatchWorktreeService,
+} from "./mission-spine/friday-rust-hub-d20-signed-batch-worktree-service.js";
+export type {
+  FridayD20SignedBatchWorktreeInput,
+  FridayD20SignedBatchWorktreeReceipt,
+  FridayD20SignedBatchWorktreeService,
+} from "./mission-spine/friday-rust-hub-d20-signed-batch-worktree-service.js";
 export { createFridayDeterministicPipelineRuntime } from "./runtime/friday-deterministic-pipeline-runtime.js";
 export type { CreateFridayDeterministicPipelineRuntimeDeps } from "./runtime/friday-deterministic-pipeline-runtime.js";

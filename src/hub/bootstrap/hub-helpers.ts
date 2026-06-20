@@ -1960,6 +1960,8 @@ export interface FridayHubConfig {
    * admits NO mutating run (the read-only qualifier stays hard — a SEPARATE later PR).
    */
   agentRunControlViaRust?: boolean;
+  /** D20 W2 signed-batch worktree product entrypoint flag; default false / env fallback. */
+  d20SignedBatchWorktreeViaRust?: boolean;
   /**
    * providers-bridge cut-over (DARK): master ON/OFF for routing the retired Tier-2
    * PROVIDER surfaces (`providers.detect` / `providers.doctor` / `providers.validate` /

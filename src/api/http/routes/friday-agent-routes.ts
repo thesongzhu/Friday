@@ -44,6 +44,10 @@ import {
   RUST_ROUTE_CODEX_PROVIDER_ID,
   RUST_ROUTE_READ_TOOL_ALLOWLIST,
 } from "../../runtime/friday-rust-route-constants.js";
+import type {
+  FridayD20SignedBatchWorktreeInput,
+  FridayD20SignedBatchWorktreeReceipt,
+} from "../../mission-spine/friday-rust-hub-d20-signed-batch-worktree-service.js";
 
 // ─── Constants ───
 
@@ -1069,6 +1073,10 @@ export interface FridayAgentRoutesDeps {
     opaqueSignedBlob: Uint8Array,
     principal: FridayAuthPrincipal | null,
   ) => Promise<FridayResumeAgentRunResponse>;
+  d20SignedBatchWorktreeViaRust?: boolean;
+  dispatchD20SignedBatchWorktree?: (
+    input: FridayD20SignedBatchWorktreeInput,
+  ) => Promise<FridayD20SignedBatchWorktreeReceipt>;
 }
 
 interface FridayAgentPlanControlInput {
@@ -1312,6 +1320,20 @@ export function createFridayAgentRoutes(
         details: {
           classification: "fail_closed",
           replacement: "rust_owned_agent_run_entrypoint_required",
+        },
+      },
+    );
+  }
+
+  function failClosedD20SignedBatchWorktreeRoute(): FridayDomainError {
+    return new FridayDomainError(
+      "D20_SIGNED_BATCH_WORKTREE_RETIRED",
+      "D20 signed-batch worktree dispatch is unavailable until the Rust-owned entrypoint is enabled.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_d20_signed_batch_worktree_required",
         },
       },
     );
@@ -1867,6 +1889,87 @@ export function createFridayAgentRoutes(
         // (e) Relay VERBATIM to the runtime resume (which resolves the WS secret + dials the sealed
         // resume; fails closed on any error). Returns the refs-only outcome (NEVER a body).
         return await deps.resumeRun(runId, opaqueSignedBlob, ctx.principal);
+      },
+    },
+
+    // ─── POST /v1/agent/d20/worktree-batches/dispatch ───
+    // D20 W2 trust-dial worktree batch PRODUCT ENTRYPOINT — DARK, default-off. TS is a thin
+    // owner-gated courier into the Rust verifier/consumer; it never verifies, mints, or rewrites
+    // the operator-signed batch. If the exact signed `action` JSON carries `principal_id`, it must
+    // match the authenticated owner; older signed artifacts may omit it and must remain digest-stable.
+    {
+      operationId: "agent.d20.worktree.batch.dispatch",
+      method: "POST",
+      path: "/v1/agent/d20/worktree-batches/dispatch",
+      auth: { public: true },
+      async handler(ctx) {
+        if (
+          deps.d20SignedBatchWorktreeViaRust !== true
+          || !deps.dispatchD20SignedBatchWorktree
+        ) {
+          throw failClosedD20SignedBatchWorktreeRoute();
+        }
+        const bound = assertBoundPrincipalForOperation(
+          ctx.principal,
+          "agent.d20.worktree.batch.dispatch",
+          "api",
+        );
+        const body = ctx.body;
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          throw new FridayDomainError(
+            "D20_SIGNED_BATCH_WORKTREE_BODY_REQUIRED",
+            "D20 signed-batch worktree dispatch requires a JSON object body.",
+            { httpStatus: 400 },
+          );
+        }
+        const record = body as Record<string, unknown>;
+        const workspaceRoot = record.workspaceRoot;
+        if (typeof workspaceRoot !== "string" || workspaceRoot.trim().length === 0) {
+          throw new FridayDomainError(
+            "D20_SIGNED_BATCH_WORKTREE_WORKSPACE_REQUIRED",
+            "workspaceRoot is required.",
+            { httpStatus: 400 },
+          );
+        }
+        const action = record.action;
+        if (!action || typeof action !== "object" || Array.isArray(action)) {
+          throw new FridayDomainError(
+            "D20_SIGNED_BATCH_WORKTREE_ACTION_REQUIRED",
+            "action JSON is required.",
+            { httpStatus: 400 },
+          );
+        }
+        const actionPrincipalId = (action as Record<string, unknown>).principal_id;
+        if (actionPrincipalId != null && typeof actionPrincipalId !== "string") {
+          throw new FridayDomainError(
+            "D20_SIGNED_BATCH_WORKTREE_PRINCIPAL_INVALID",
+            "The signed action principal_id must be a string when present.",
+            { httpStatus: 400 },
+          );
+        }
+        if (typeof actionPrincipalId === "string" && actionPrincipalId !== bound.principalId) {
+          throw new FridayDomainError(
+            "D20_SIGNED_BATCH_WORKTREE_PRINCIPAL_MISMATCH",
+            "The signed action principal_id must match the authenticated owner.",
+            { httpStatus: 403 },
+          );
+        }
+        if (
+          !record.signedBatch
+          || typeof record.signedBatch !== "object"
+          || Array.isArray(record.signedBatch)
+        ) {
+          throw new FridayDomainError(
+            "D20_SIGNED_BATCH_WORKTREE_SIGNED_BATCH_REQUIRED",
+            "signedBatch JSON is required.",
+            { httpStatus: 400 },
+          );
+        }
+        return await deps.dispatchD20SignedBatchWorktree({
+          signedBatch: record.signedBatch,
+          action,
+          workspaceRoot: workspaceRoot.trim(),
+        });
       },
     },
 

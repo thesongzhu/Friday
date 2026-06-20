@@ -3,14 +3,14 @@
 exports[`MECHANISM-4 — API Route Contract (Snapshot) > Phase 14.5A WP-001: every public mutating route maps to an accepted gate family 1`] = `
 {
   "classified": {
-    "bound_principal": 64,
+    "bound_principal": 65,
     "channel_signature": 4,
     "hmac_or_bearer_opt_in": 1,
     "public_low_risk": 2,
     "rate_limited_pending": 4,
     "unclassified": 251,
   },
-  "total_public_mutating": 326,
+  "total_public_mutating": 327,
   "unclassified_sample_max_5": [
     "capabilities.acquisition.runs.create",
     "capabilities.acquisition.runs.approve",
@@ -21,7 +21,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > Phase 14.5A WP-001: eve
 }
 `;
 
-exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures route count to detect accidental additions/removals 1`] = `425`;
+exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures route count to detect accidental additions/removals 1`] = `426`;
 
 exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route surface as a stable contract 1`] = `
 [
@@ -4108,6 +4108,16 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   {
     "authKind": "public",
     "index": 408,
+    "method": "POST",
+    "operationId": "agent.d20.worktree.batch.dispatch",
+    "path": "/v1/agent/d20/worktree-batches/dispatch",
+    "rateLimitPolicyId": null,
+    "roles": [],
+    "scopes": [],
+  },
+  {
+    "authKind": "public",
+    "index": 409,
     "method": "GET",
     "operationId": "agent.runs.audit",
     "path": "/v1/agent/runs/:runId/audit",
@@ -4117,7 +4127,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 409,
+    "index": 410,
     "method": "POST",
     "operationId": "agent.runs.rollback",
     "path": "/v1/agent/runs/:runId/rollback",
@@ -4127,7 +4137,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 410,
+    "index": 411,
     "method": "POST",
     "operationId": "agent.runs.approve.plan",
     "path": "/v1/agent/runs/:runId/approve-plan",
@@ -4137,7 +4147,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 411,
+    "index": 412,
     "method": "POST",
     "operationId": "agent.runs.reject.plan",
     "path": "/v1/agent/runs/:runId/reject-plan",
@@ -4147,7 +4157,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 412,
+    "index": 413,
     "method": "POST",
     "operationId": "agent.runs.approve.tool",
     "path": "/v1/agent/runs/:runId/approve-tool",
@@ -4157,7 +4167,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 413,
+    "index": 414,
     "method": "POST",
     "operationId": "agent.runs.reject.tool",
     "path": "/v1/agent/runs/:runId/reject-tool",
@@ -4167,7 +4177,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 414,
+    "index": 415,
     "method": "GET",
     "operationId": "agent.runs.events",
     "path": "/v1/agent/runs/:runId/events",
@@ -4177,7 +4187,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 415,
+    "index": 416,
     "method": "POST",
     "operationId": "agent.automations.create",
     "path": "/v1/agent/automations",
@@ -4187,7 +4197,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 416,
+    "index": 417,
     "method": "GET",
     "operationId": "agent.automations.list",
     "path": "/v1/agent/automations",
@@ -4197,7 +4207,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 417,
+    "index": 418,
     "method": "GET",
     "operationId": "agent.automations.get",
     "path": "/v1/agent/automations/:automationId",
@@ -4207,7 +4217,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 418,
+    "index": 419,
     "method": "PATCH",
     "operationId": "agent.automations.update",
     "path": "/v1/agent/automations/:automationId",
@@ -4217,7 +4227,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 419,
+    "index": 420,
     "method": "DELETE",
     "operationId": "agent.automations.delete",
     "path": "/v1/agent/automations/:automationId",
@@ -4227,7 +4237,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 420,
+    "index": 421,
     "method": "POST",
     "operationId": "agent.automations.run",
     "path": "/v1/agent/automations/:automationId/run",
@@ -4237,7 +4247,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 421,
+    "index": 422,
     "method": "GET",
     "operationId": "agent.subagents.list",
     "path": "/v1/agent/subagents",
@@ -4247,7 +4257,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 422,
+    "index": 423,
     "method": "GET",
     "operationId": "agent.subagents.get",
     "path": "/v1/agent/subagents/:subagentId",
@@ -4257,7 +4267,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 423,
+    "index": 424,
     "method": "GET",
     "operationId": "agent.runs.subagents.list",
     "path": "/v1/agent/runs/:runId/subagents",
@@ -4267,7 +4277,7 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
   },
   {
     "authKind": "public",
-    "index": 424,
+    "index": 425,
     "method": "GET",
     "operationId": "assets.inventory.list",
     "path": "/v1/assets/inventory",

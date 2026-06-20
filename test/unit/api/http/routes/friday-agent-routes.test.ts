@@ -101,9 +101,9 @@ describe("FridayAgentRoutes", () => {
     };
   });
 
-  it("registers 19 agent routes", () => {
+  it("registers 20 agent routes", () => {
     const routes = createFridayAgentRoutes(stubDeps);
-    expect(routes).toHaveLength(19);
+    expect(routes).toHaveLength(20);
   });
 
   it("POST /v1/agent/runs requires agent.run scope with workflow.run compatibility", () => {
@@ -477,6 +477,120 @@ describe("FridayAgentRoutes", () => {
       receivedAt: "2026-01-01T00:00:00.000Z",
     })).rejects.toMatchObject({ code: "AGENT_RUN_RESUME_SIGNED_APPROVAL_REQUIRED", httpStatus: 400 });
     expect(resumeRun).not.toHaveBeenCalled();
+  });
+
+  it("D20 signed-batch worktree route FLAG-OFF fail-closes before body/owner work", async () => {
+    const dispatch = vi.fn();
+    stubDeps.dispatchD20SignedBatchWorktree = dispatch;
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.d20.worktree.batch.dispatch")!;
+
+    await expect(route.handler({
+      body: null,
+      params: {},
+      query: {},
+      headers: {},
+      principal: null,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({
+      code: "D20_SIGNED_BATCH_WORKTREE_RETIRED",
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_d20_signed_batch_worktree_required",
+      },
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("D20 signed-batch worktree route rejects an action principal mismatch before dispatch", async () => {
+    const dispatch = vi.fn();
+    stubDeps.d20SignedBatchWorktreeViaRust = true;
+    stubDeps.dispatchD20SignedBatchWorktree = dispatch;
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.d20.worktree.batch.dispatch")!;
+
+    await expect(route.handler({
+      body: {
+        workspaceRoot: "/tmp/worktree",
+        signedBatch: { decision: "allow" },
+        action: { action: "write_file", principal_id: "owner:mallory", params: [] },
+      },
+      params: {},
+      query: {},
+      headers: {},
+      principal: createStubPrincipal({ principalId: "owner:alice" }),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({
+      code: "D20_SIGNED_BATCH_WORKTREE_PRINCIPAL_MISMATCH",
+      httpStatus: 403,
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("D20 signed-batch worktree route rejects a non-string action principal before dispatch", async () => {
+    const dispatch = vi.fn();
+    stubDeps.d20SignedBatchWorktreeViaRust = true;
+    stubDeps.dispatchD20SignedBatchWorktree = dispatch;
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.d20.worktree.batch.dispatch")!;
+
+    await expect(route.handler({
+      body: {
+        workspaceRoot: "/tmp/worktree",
+        signedBatch: { decision: "allow" },
+        action: { action: "write_file", principal_id: 42, params: [] },
+      },
+      params: {},
+      query: {},
+      headers: {},
+      principal: createStubPrincipal({ principalId: "owner:alice" }),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({
+      code: "D20_SIGNED_BATCH_WORKTREE_PRINCIPAL_INVALID",
+      httpStatus: 400,
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("D20 signed-batch worktree route relays the signed batch and exact action JSON to Rust dispatcher", async () => {
+    const receipt = {
+      truthLabel: "d20_worktree_signed_batch_artifact" as const,
+      proofOnly: true as const,
+      ok: true,
+      executed: false,
+      resultStatus: "requires_approval",
+      batchSignId: "batch-1",
+      auditChainVerified: true,
+    };
+    const dispatch = vi.fn().mockResolvedValue(receipt);
+    stubDeps.d20SignedBatchWorktreeViaRust = true;
+    stubDeps.dispatchD20SignedBatchWorktree = dispatch;
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.d20.worktree.batch.dispatch")!;
+    const signedBatch = { decision: "allow", batch_sign_id: "batch-1", action_digests: ["digest"] };
+    const action = { action: "write_file", params: [{ key: "path", value: "out.txt" }] };
+
+    const response = await route.handler({
+      body: { workspaceRoot: "/tmp/worktree", signedBatch, action },
+      params: {},
+      query: {},
+      headers: {},
+      principal: createStubPrincipal({ principalId: "owner:alice" }),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({
+      workspaceRoot: "/tmp/worktree",
+      signedBatch,
+      action,
+    });
+    expect(response).toBe(receipt);
   });
 
   it("GET /v1/agent/runs requires agent.read scope with workflow.run compatibility", () => {
