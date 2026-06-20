@@ -121,7 +121,7 @@ export const TIER1_PARITY_FLOW_SPECS = Object.freeze([
     flowId: "c1-deepseek-real-green-routing-diagnostic",
     lane: "C1",
     source: "deepseek",
-    expectedHarness: "scripts/ops/run-real-green-gate-self-hosted.mjs",
+    expectedHarness: "scripts/ops/friday-c1-c2-deepseek-rgg-core-gate.mjs",
   },
   {
     order: 17,
