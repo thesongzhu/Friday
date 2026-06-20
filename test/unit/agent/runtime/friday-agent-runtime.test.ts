@@ -14,6 +14,7 @@ import {
   createFridayAgentRunEventRepository,
   createFridayAgentSelfFixService,
 } from "#agent";
+import { createFridaySelfLearningRuntime } from "#learning";
 import { createFridaySystemService } from "../../../../src/system/engine/friday-system-service.js";
 import type { FridaySystemCompanionBridge } from "../../../../src/system/companion/friday-system-companion.types.js";
 import type {
@@ -9357,6 +9358,164 @@ describe("FridayAgentRuntime", () => {
     expect(result.status).toBe("completed");
     expect(callCount).toBe(3);
     expect(result.response).toContain("2026-02-18 (America/Los_Angeles)");
+  });
+
+  it("uses Review Center confirmed learned timezone facts in runtime context", async () => {
+    const selfLearning = createFridaySelfLearningRuntime({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+    });
+    const reviewEvent = {
+      eventId: "evt-review-timezone",
+      ts: NOW,
+      userId: "test-user",
+      kind: "user_correction" as const,
+      payload: { feedbackKind: "learned_fact_approval" },
+    };
+    selfLearning.events.collect(reviewEvent);
+    selfLearning.facts.applySignals({
+      event: reviewEvent,
+      signals: [
+        {
+          signalId: "sig-review-timezone",
+          kind: "preference",
+          key: "pref:timezone",
+          value: "Asia/Tokyo",
+          confidence: 0.95,
+          sourceEventId: "evt-review-timezone",
+          userId: "test-user",
+          ts: NOW,
+          situationalContext: {
+            candidateId: "candidate-timezone-1",
+            origin: "post_run",
+          },
+        },
+      ],
+      nowIso: NOW,
+    });
+
+    const ctx = selfLearning.context.buildContext({
+      userId: "test-user",
+      nowIso: NOW,
+    });
+    expect(ctx.appliedFacts[0]).toMatchObject({
+      key: "pref:timezone",
+      provenance: {
+        source: "preference_fact",
+        reviewBoundary: "review_center_confirmed",
+        reviewCenterCandidateId: "candidate-timezone-1",
+        reviewCenterOrigin: "post_run",
+      },
+    });
+
+    let capturedPromptContext: FridayAgentSystemPromptContext | undefined;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        yield { type: "text_delta", text: "ok" };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 2 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: (context) => {
+        capturedPromptContext = context;
+        return "You are a test agent.";
+      },
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => "2026-02-19T16:30:00.000Z",
+      learningContextBuilder: (input) => selfLearning.context.buildContext(input),
+    });
+
+    const result = await runtime.executeRun({
+      task: "Hello",
+      principalId: "test-user",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(capturedPromptContext).toEqual(expect.objectContaining({
+      timezone: "Asia/Tokyo",
+      localDate: "2026-02-20",
+    }));
+  });
+
+  it("does not use unconfirmed inferred learned timezone facts in runtime context", async () => {
+    const selfLearning = createFridaySelfLearningRuntime({
+      db,
+      idGenerator,
+      nowIso: () => NOW,
+    });
+    const inferredEvent = {
+      eventId: "evt-inferred-timezone",
+      ts: NOW,
+      userId: "test-user",
+      kind: "user_message" as const,
+      payload: { text: "I might prefer Tokyo time." },
+    };
+    selfLearning.events.collect(inferredEvent);
+    selfLearning.facts.applySignals({
+      event: inferredEvent,
+      signals: [
+        {
+          signalId: "sig-inferred-timezone",
+          kind: "preference",
+          key: "pref:timezone",
+          value: "Asia/Tokyo",
+          confidence: 0.65,
+          sourceEventId: "evt-inferred-timezone",
+          userId: "test-user",
+          ts: NOW,
+        },
+      ],
+      nowIso: NOW,
+    });
+
+    const ctx = selfLearning.context.buildContext({
+      userId: "test-user",
+      nowIso: NOW,
+    });
+    expect(ctx.preferences).not.toHaveProperty("pref:timezone");
+    expect(ctx.appliedFacts).toEqual([]);
+
+    let capturedPromptContext: FridayAgentSystemPromptContext | undefined;
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        yield { type: "text_delta", text: "ok" };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 5, outputTokens: 2 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPromptBuilder: (context) => {
+        capturedPromptContext = context;
+        return "You are a test agent.";
+      },
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => "2026-02-19T16:30:00.000Z",
+      learningContextBuilder: (input) => selfLearning.context.buildContext(input),
+    });
+
+    const result = await runtime.executeRun({
+      task: "Hello",
+      principalId: "test-user",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(capturedPromptContext?.timezone).not.toBe("Asia/Tokyo");
   });
 
   it("does not enrich system prompt when no principalId is provided", async () => {
