@@ -844,6 +844,50 @@ fn retention_sweep_enabled_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
+fn run_session_reaper_tick(db: &friday_storage::Db, retention_on: bool, now_ms: i64) {
+    match friday_storage::sweep_lifecycle(db.conn(), now_ms) {
+        Ok(outcome) if !outcome.is_empty() => {
+            eprintln!(
+                "hub_agent_run_server: session sweep idled={} archived={} pruned={} hard_deleted={} messages_deleted={}",
+                outcome.idled,
+                outcome.archived,
+                outcome.pruned,
+                outcome.hard_deleted,
+                outcome.messages_deleted,
+            );
+        }
+        // An empty sweep is the common case — stay quiet to avoid log spam.
+        Ok(_) => {}
+        // A sweep error (e.g. a transient lock) is logged and the loop continues; the
+        // reaper never crashes the daemon. Category only — never row contents.
+        Err(_e) => {
+            eprintln!("hub_agent_run_server: session sweep failed (continuing)");
+        }
+    }
+    // (gap #25) On the SAME tick, run the artifact-retention sweep when enabled. It is
+    // internally fail-safe (never returns Err; a per-table failure is counted, the sweep
+    // moves on), so a retention problem can never crash the reaper. Refs-only count log on
+    // a non-empty sweep; empty sweeps stay quiet.
+    if retention_on {
+        let r = friday_storage::sweep_retention(
+            db.conn(),
+            now_ms,
+            friday_storage::RetentionWindows::default(),
+        );
+        if !r.is_empty() {
+            eprintln!(
+                "hub_agent_run_server: retention sweep token_ledger={} surface_event={} mission={} work_item={} memory_item={} table_errors={}",
+                r.token_ledger_deleted,
+                r.surface_event_deleted,
+                r.mission_deleted,
+                r.work_item_deleted,
+                r.memory_item_deleted,
+                r.table_errors,
+            );
+        }
+    }
+}
+
 /// Spawn the DARK session-lifecycle reaper tick on its OWN thread + OWN DB connection.
 ///
 /// The thread opens a SEPARATE `Db::open_hub` connection (NOT the accept-loop's, never shared
@@ -885,51 +929,7 @@ fn spawn_session_reaper(db_path: String, retention_on: bool) {
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
-            match friday_storage::sweep_lifecycle(db.conn(), now_ms) {
-                Ok(outcome) if !outcome.is_empty() => {
-                    eprintln!(
-                        "hub_agent_run_server: session sweep idled={} archived={} pruned={} hard_deleted={} messages_deleted={}",
-                        outcome.idled,
-                        outcome.archived,
-                        outcome.pruned,
-                        outcome.hard_deleted,
-                        outcome.messages_deleted,
-                    );
-                }
-                // An empty sweep is the common case — stay quiet to avoid log spam.
-                Ok(_) => {}
-                // A sweep error (e.g. a transient lock) is logged and the loop continues; the
-                // reaper never crashes the daemon. Category only — never row contents.
-                Err(_e) => {
-                    eprintln!("hub_agent_run_server: session sweep failed (continuing)");
-                }
-            }
-            // (gap #25) On the SAME tick, run the artifact-retention sweep when enabled. It is
-            // internally fail-safe (never returns Err; a per-table failure is counted, the sweep
-            // moves on), so a retention problem can never crash the reaper. Refs-only count log on
-            // a non-empty sweep; empty sweeps stay quiet.
-            if retention_on {
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0);
-                let r = friday_storage::sweep_retention(
-                    db.conn(),
-                    now_ms,
-                    friday_storage::RetentionWindows::default(),
-                );
-                if !r.is_empty() {
-                    eprintln!(
-                        "hub_agent_run_server: retention sweep token_ledger={} surface_event={} mission={} work_item={} memory_item={} table_errors={}",
-                        r.token_ledger_deleted,
-                        r.surface_event_deleted,
-                        r.mission_deleted,
-                        r.work_item_deleted,
-                        r.memory_item_deleted,
-                        r.table_errors,
-                    );
-                }
-            }
+            run_session_reaper_tick(&db, retention_on, now_ms);
         }
     });
 }
@@ -3372,6 +3372,54 @@ mod tests {
         assert!(
             retention_sweep_enabled_from(Some(" 1 ")),
             "padded 1 ⇒ enabled (trimmed)"
+        );
+    }
+
+    #[test]
+    fn retention_sweep_runs_only_on_enabled_reaper_tick() {
+        let (rt, _ws) = mock_runtime("retention-reaper-tick", OWNER);
+        let now = 2_000 * 24 * 60 * 60 * 1000_i64;
+        let old = now - friday_storage::retention::TOKEN_LEDGER_MAX_AGE_MS - 1;
+        rt.db()
+            .conn()
+            .execute(
+                "INSERT INTO token_ledger
+                    (ledger_id, session_id, activity_id, provider_kind, model, base_url_host,
+                     prompt_tokens, completion_tokens, total_tokens, cost_estimate, fallback,
+                     result_link, created_at)
+                 VALUES ('tl_reaper_old', NULL, NULL, 'deepseek', 'deepseek-chat',
+                         'api.deepseek.com', 1, 1, 2, NULL, 0, NULL, ?1)",
+                rusqlite::params![old],
+            )
+            .unwrap();
+
+        let count = || {
+            rt.db()
+                .conn()
+                .query_row("SELECT COUNT(*) FROM token_ledger", [], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap()
+        };
+        assert_eq!(count(), 1, "seeded one old ledger row");
+
+        run_session_reaper_tick(rt.db(), false, now);
+        assert_eq!(count(), 1, "retention flag OFF keeps the old ledger row");
+
+        run_session_reaper_tick(rt.db(), true, now);
+        assert_eq!(
+            count(),
+            0,
+            "retention flag ON runs artifact retention on the same tick"
+        );
+        assert_eq!(
+            rt.db()
+                .conn()
+                .query_row("SELECT COUNT(*) FROM audit_ledger", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "the tick did not synthesize audit rows"
         );
     }
 
