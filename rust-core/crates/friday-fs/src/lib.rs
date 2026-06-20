@@ -175,6 +175,11 @@ pub enum FsError {
     /// DELIBERATELY dropped** so no path/secret reaches the error. Fail-closed.
     #[error("command could not be spawned")]
     CommandSpawn,
+
+    /// A caller explicitly required an OS sandbox, but the local platform/runtime cannot provide
+    /// the requested substrate. This is a hard fail-closed signal: the command was NOT run.
+    #[error("required command sandbox is unavailable")]
+    CommandSandboxUnavailable,
 }
 
 /// The kind of a [`stat_file_within_root`] target, after the no-follow `lstat`. A
@@ -1021,6 +1026,9 @@ pub const RUN_COMMAND_DRAIN_GRACE: std::time::Duration = std::time::Duration::fr
 /// a child with no `PATH` cannot resolve a bare program name like `echo`.
 pub const RUN_COMMAND_CHILD_PATH: &str = "/usr/bin:/bin:/usr/local/bin";
 
+/// macOS Seatbelt entrypoint used by the opt-in sandboxed command runner.
+pub const DARWIN_SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
+
 /// The result of a successfully-SPAWNED command (a tokenize/spawn FAILURE is an `Err`, never
 /// this). `exit_code` is `None` when the child was killed by a signal (incl. our timeout kill)
 /// or otherwise has no normal exit code. `output` is the combined, byte-capped, char-boundary-
@@ -1103,6 +1111,40 @@ pub fn run_command_in_root_with_timeout(
     command: &str,
     timeout: std::time::Duration,
 ) -> Result<CommandRunResult, FsError> {
+    run_command_in_root_inner(root, command, timeout, CommandSandbox::None)
+}
+
+/// Whether the local host can provide the opt-in Darwin Seatbelt sandbox substrate.
+pub fn darwin_sandbox_exec_available() -> bool {
+    cfg!(target_os = "macos") && Path::new(DARWIN_SANDBOX_EXEC).is_file()
+}
+
+/// [`run_command_in_root`] with a required macOS Seatbelt sandbox around the child process.
+///
+/// This is intentionally a separate opt-in surface: existing callers keep their byte-for-byte
+/// runner behavior, while callers that require OS sandboxing get fail-closed behavior if
+/// `sandbox-exec` is unavailable. The sandbox permits file writes only under `root` and denies
+/// outbound networking.
+pub fn run_command_in_root_with_darwin_sandbox_timeout(
+    root: &Path,
+    command: &str,
+    timeout: std::time::Duration,
+) -> Result<CommandRunResult, FsError> {
+    run_command_in_root_inner(root, command, timeout, CommandSandbox::DarwinSeatbelt)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommandSandbox {
+    None,
+    DarwinSeatbelt,
+}
+
+fn run_command_in_root_inner(
+    root: &Path,
+    command: &str,
+    timeout: std::time::Duration,
+    sandbox: CommandSandbox,
+) -> Result<CommandRunResult, FsError> {
     use std::os::unix::process::CommandExt as _;
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
@@ -1120,8 +1162,20 @@ pub fn run_command_in_root_with_timeout(
     //     /tmp → /private/tmp) is the real dir, and so a non-existent root is a clean NotFound.
     let real_root = std::fs::canonicalize(root).map_err(classify_open_err)?;
 
-    let mut cmd = Command::new(program);
-    cmd.args(args)
+    let sandboxed_args;
+    let (spawn_program, spawn_args): (&str, &[String]) = match sandbox {
+        CommandSandbox::None => (program, args),
+        CommandSandbox::DarwinSeatbelt => {
+            if !darwin_sandbox_exec_available() {
+                return Err(FsError::CommandSandboxUnavailable);
+            }
+            sandboxed_args = darwin_sandbox_exec_args(&real_root, program, args);
+            (DARWIN_SANDBOX_EXEC, sandboxed_args.as_slice())
+        }
+    };
+
+    let mut cmd = Command::new(spawn_program);
+    cmd.args(spawn_args)
         .current_dir(&real_root) // per-child cwd; never set_current_dir (global)
         .stdin(Stdio::null()) // no inherited stdin; a reader can't block on a tty
         .stdout(Stdio::piped())
@@ -1340,6 +1394,40 @@ pub fn run_command_in_root_with_timeout(
         output_truncated: truncated,
         timed_out,
     })
+}
+
+fn darwin_sandbox_exec_args(root: &Path, program: &str, args: &[String]) -> Vec<String> {
+    let mut wrapped = vec![
+        "-p".to_string(),
+        darwin_sandbox_profile(root),
+        "--".to_string(),
+        program.to_string(),
+    ];
+    wrapped.extend(args.iter().cloned());
+    wrapped
+}
+
+fn darwin_sandbox_profile(root: &Path) -> String {
+    format!(
+        "(version 1)\n\
+         (allow default)\n\
+         (deny network*)\n\
+         (deny file-write* (require-not (subpath {})))\n",
+        darwin_sandbox_profile_string(root)
+    )
+}
+
+fn darwin_sandbox_profile_string(path: &Path) -> String {
+    let mut out = String::from("\"");
+    for ch in path.to_string_lossy().chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Truncate `s` to at most `max` bytes, backing up to the nearest UTF-8 char boundary so the
@@ -1837,6 +1925,80 @@ mod tests {
         let r = run_command_in_root(root.path(), "echo $HOME").unwrap();
         assert_eq!(r.exit_code, Some(0));
         assert_eq!(r.output.trim_end(), "$HOME", "no shell expansion expected");
+    }
+
+    #[test]
+    fn darwin_sandbox_profile_quotes_path_literals() {
+        let path = PathBuf::from("/tmp/friday \"quoted\" path\\tail");
+        let quoted = darwin_sandbox_profile_string(&path);
+        assert_eq!(quoted, "\"/tmp/friday \\\"quoted\\\" path\\\\tail\"");
+
+        let profile = darwin_sandbox_profile(&path);
+        assert!(profile.contains("(deny network*)"));
+        assert!(profile.contains("(deny file-write* (require-not (subpath "));
+        assert!(profile.contains(&quoted));
+    }
+
+    #[test]
+    fn darwin_sandbox_required_fails_closed_when_unavailable() {
+        if darwin_sandbox_exec_available() {
+            return;
+        }
+        let root = TempDir::new();
+        let err = run_command_in_root_with_darwin_sandbox_timeout(
+            root.path(),
+            "echo hi",
+            std::time::Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, FsError::CommandSandboxUnavailable),
+            "required sandbox must fail closed, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn darwin_sandbox_allows_root_write_when_available() {
+        if !darwin_sandbox_exec_available() {
+            return;
+        }
+        let root = TempDir::new();
+        let r = run_command_in_root_with_darwin_sandbox_timeout(
+            root.path(),
+            "touch inside.txt",
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(r.exit_code, Some(0), "sandbox output: {:?}", r.output);
+        assert!(root.path().join("inside.txt").is_file());
+    }
+
+    #[test]
+    fn darwin_sandbox_blocks_outside_write_when_available() {
+        if !darwin_sandbox_exec_available() {
+            return;
+        }
+        let root = TempDir::new();
+        let outside = TempDir::new();
+        let outside_file = outside.path().join("outside.txt");
+        let command = format!("touch {}", outside_file.display());
+
+        let r = run_command_in_root_with_darwin_sandbox_timeout(
+            root.path(),
+            &command,
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_ne!(
+            r.exit_code,
+            Some(0),
+            "outside write must be blocked; output: {:?}",
+            r.output
+        );
+        assert!(
+            !outside_file.exists(),
+            "sandboxed command must not create files outside root"
+        );
     }
 
     /// TIMEOUT + KILL: `sleep 5` with a SHORT (200ms) test timeout → timed_out=true, child killed,
