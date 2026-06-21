@@ -36,6 +36,17 @@
       "playbook_select",
       "playbook_candidates_promote",
       "playbook_rollback",
+      "satellite_heartbeat",
+      "satellite_capabilities_update",
+      "satellite_sync_pull",
+      "satellite_sync_push",
+      "satellite_commands_poll",
+      "satellite_commands_ack",
+      "satellite_register",
+      "satellite_handshake",
+      "satellite_pairing_approve",
+      "satellite_pairing_reject",
+      "satellite_revoke",
       "sessions_create",
       "sessions_messages_create",
       "sessions_archive",
@@ -4097,6 +4108,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-satellite-runtime-routes.test.ts",
       "proof": "src/api/http/routes/friday-satellite-runtime-routes.ts fail-closes default/live satellites.heartbeat to TS_RUNTIME_SATELLITE_RUNTIME_RETIRED after requireSatellitePrincipal and the hoisted ts validation, immediately before the TypeScript recordHeartbeat write (friday-satellite-heartbeat-service.ts withWriteTransaction: heartbeat insert, pairing status + last-seen updates); legacy behavior is reachable only through explicit allowTestOnlySatelliteRuntimeExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite runtime entrypoint when available."
     },
@@ -4110,6 +4122,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-satellite-runtime-routes.test.ts",
       "proof": "src/api/http/routes/friday-satellite-runtime-routes.ts fail-closes default/live satellites.capabilities.update to TS_RUNTIME_SATELLITE_RUNTIME_RETIRED after requireSatellitePrincipal and the hoisted revision/generatedAt/capabilities validation, immediately before the TypeScript updateCapabilities write (friday-satellite-capability-service.ts withWriteTransaction: capability upsert + monotonic revision persist); legacy behavior is reachable only through explicit allowTestOnlySatelliteRuntimeExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite runtime entrypoint when available."
     },
@@ -4123,6 +4136,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-satellite-runtime-routes.test.ts",
       "proof": "src/api/http/routes/friday-satellite-runtime-routes.ts fail-closes default/live satellites.sync.pull to TS_RUNTIME_SATELLITE_RUNTIME_RETIRED after requireSatellitePrincipal and the hoisted streamId/lastAckedSeq validation, immediately before the TypeScript pullSync write (friday-satellite-sync-service.ts withWriteTransaction: outbox leaseBatch + signed resume cursor — a write despite the pull name); legacy behavior is reachable only through explicit allowTestOnlySatelliteRuntimeExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite runtime entrypoint when available."
     },
@@ -4136,6 +4150,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-satellite-runtime-routes.test.ts",
       "proof": "src/api/http/routes/friday-satellite-runtime-routes.ts fail-closes default/live satellites.sync.push to TS_RUNTIME_SATELLITE_RUNTIME_RETIRED after requireSatellitePrincipal, immediately before the TypeScript pushSync write (friday-satellite-sync-service.ts withWriteTransaction: checkpoint advance, outbox ackUpToSeq, learning events, remote node results); legacy behavior is reachable only through explicit allowTestOnlySatelliteRuntimeExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite runtime entrypoint when available."
     },
@@ -4149,6 +4164,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-satellite-runtime-routes.test.ts",
       "proof": "src/api/http/routes/friday-satellite-runtime-routes.ts fail-closes default/live satellites.commands.poll to TS_RUNTIME_SATELLITE_RUNTIME_RETIRED after requireSatellitePrincipal and limit/leaseMs normalization, immediately before the TypeScript pollCommands write (friday-outbox-queue-service.ts withWriteTransaction: leaseBatch marks outbox rows leased to this satellite); legacy behavior is reachable only through explicit allowTestOnlySatelliteRuntimeExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite runtime entrypoint when available."
     },
@@ -4162,6 +4178,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-satellite-runtime-routes.test.ts",
       "proof": "src/api/http/routes/friday-satellite-runtime-routes.ts fail-closes default/live satellites.commands.ack to TS_RUNTIME_SATELLITE_RUNTIME_RETIRED after requireSatellitePrincipal, the status validation, and the hoisted terminal-result field validation (runId/nodeId/attemptId/attempt), immediately before the TypeScript reportCommandResult/ackCommand writes (workflow-run remote node result advance + friday-outbox-queue-service.ts withWriteTransaction ackById); legacy behavior is reachable only through explicit allowTestOnlySatelliteRuntimeExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite runtime entrypoint when available."
     },
@@ -4186,6 +4203,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-satellite-pairing-routes.test.ts",
       "proof": "src/api/http/routes/friday-satellite-pairing-routes.ts fail-closes default/live satellites.register to TS_RUNTIME_SATELLITE_PAIRING_RETIRED after the type/displayName/publicKey validation, immediately before the TypeScript registerSatellite write (friday-satellite-registration-service.ts withWriteTransaction: satellite insert + pairing request insert + optional capability upsert); the route is public/rate-limited and never auto-approves; legacy behavior is reachable only through explicit allowTestOnlySatellitePairingExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite pairing entrypoint when available."
     },
@@ -4199,6 +4217,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-satellite-pairing-routes.test.ts",
       "proof": "src/api/http/routes/friday-satellite-pairing-routes.ts fail-closes default/live satellites.handshake to TS_RUNTIME_SATELLITE_PAIRING_RETIRED after the token/signedChallenge/challengeNonce/clientEphemeralPublicKey validation, immediately before the TypeScript completeHandshake write (friday-satellite-pairing-service.ts withWriteTransaction: pairing status->online, last-seen, epoch bump); legacy behavior (including the handshake signature verifier) is reachable only through explicit allowTestOnlySatellitePairingExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite pairing entrypoint when available."
     },
@@ -4212,6 +4231,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-satellite-pairing-routes.test.ts",
       "proof": "src/api/http/routes/friday-satellite-pairing-routes.ts fail-closes default/live satellites.pairing.approve to TS_RUNTIME_SATELLITE_PAIRING_RETIRED after assertBoundPrincipalForOperation and immediately before the TypeScript getPairingRequest lookup + approvePairing write (friday-satellite-pairing-service.ts withWriteTransaction: request->approved, satellite->paired, API token issuance); the bound-principal owner check still runs first; legacy behavior is reachable only through explicit allowTestOnlySatellitePairingExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite pairing entrypoint when available."
     },
@@ -4225,6 +4245,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-satellite-pairing-routes.test.ts",
       "proof": "src/api/http/routes/friday-satellite-pairing-routes.ts fail-closes default/live satellites.pairing.reject to TS_RUNTIME_SATELLITE_PAIRING_RETIRED after assertBoundPrincipalForOperation and immediately before the TypeScript getPairingRequest lookup + rejectPairing write (friday-satellite-pairing-service.ts withWriteTransaction: request->rejected); the bound-principal owner check still runs first; legacy behavior is reachable only through explicit allowTestOnlySatellitePairingExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite pairing entrypoint when available."
     },
@@ -4238,6 +4259,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-satellite-pairing-routes.test.ts",
       "proof": "src/api/http/routes/friday-satellite-pairing-routes.ts fail-closes default/live satellites.revoke to TS_RUNTIME_SATELLITE_PAIRING_RETIRED after assertBoundPrincipalForOperation and immediately before the TypeScript revokeSatellite write (friday-satellite-pairing-service.ts withWriteTransaction: pairing->revoked, revokeAllForSatellite, token version bump); the bound-principal owner check still runs first; legacy behavior is reachable only through explicit allowTestOnlySatellitePairingExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite pairing entrypoint when available."
     },
