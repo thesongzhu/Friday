@@ -408,6 +408,7 @@ public struct MissionWorkbenchRouteDecision: Codable, Sendable, Equatable {
 public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
   public let missionId: String
   public let fridayConversationId: String
+  public let agentSessionId: String?
   public let runtimeFeedStatus: MissionWorkbenchRuntimeFeedStatus
   public let statusLabels: [MissionWorkbenchStatusLabel]
   public let duplicatePreflight: MissionWorkbenchDuplicatePreflight
@@ -424,6 +425,7 @@ public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
   public init(
     missionId: String,
     fridayConversationId: String,
+    agentSessionId: String? = nil,
     runtimeFeedStatus: MissionWorkbenchRuntimeFeedStatus,
     statusLabels: [MissionWorkbenchStatusLabel],
     duplicatePreflight: MissionWorkbenchDuplicatePreflight,
@@ -439,6 +441,7 @@ public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
   ) {
     self.missionId = missionId
     self.fridayConversationId = fridayConversationId
+    self.agentSessionId = agentSessionId
     self.runtimeFeedStatus = runtimeFeedStatus
     self.statusLabels = statusLabels
     self.duplicatePreflight = duplicatePreflight

@@ -435,8 +435,20 @@ final class DetailReadClient: FridayRustReadClient, @unchecked Sendable {
     try record("sessions", kind: "sessions", status: "ready", proofRef: "proof://session/list")
   }
 
+  func fetchSessionOpen(agentSessionId: String) async throws -> ReadProjectionSnapshot {
+    try record("session-open:\(agentSessionId)", kind: "session-open", status: "open", proofRef: "proof://session/open/\(agentSessionId)")
+  }
+
+  func fetchSessionLinkState(agentSessionId: String) async throws -> ReadProjectionSnapshot {
+    try record("session-link:\(agentSessionId)", kind: "session-link", status: "connected", proofRef: "proof://session/link/\(agentSessionId)")
+  }
+
   func fetchRunReadback(runId: String) async throws -> ReadProjectionSnapshot {
     try record("run:\(runId)", kind: "run", status: "complete", runId: runId, proofRef: "proof://run/\(runId)")
+  }
+
+  func fetchRunFileView(runId: String) async throws -> ReadProjectionSnapshot {
+    try record("run-files:\(runId)", kind: "run-files", status: "ready", runId: runId, proofRef: "proof://run-files/\(runId)")
   }
 
   func fetchActivityNeedsMe(runId: String) async throws -> ReadProjectionSnapshot {
@@ -531,6 +543,28 @@ func loadDetailCallsRunAndNeedsMeReadArms() async {
   }
   #expect(detail.title == "Needs-me activity")
   #expect(detail.refs.contains("proof://needs/run-desktop"))
+}
+
+@Test
+@MainActor
+func loadDetailCallsSessionAndRunFileReadArms() async {
+  let client = DetailReadClient()
+  let vm = OperationsOverviewViewModel(client: client)
+  await vm.loadDetail(.sessionOpen(agentSessionId: "session-desktop"))
+  await vm.loadDetail(.sessionLinkState(agentSessionId: "session-desktop"))
+  await vm.loadDetail(.runFileView(runId: "run-desktop"))
+
+  #expect(client.requested == [
+    "session-open:session-desktop",
+    "session-link:session-desktop",
+    "run-files:run-desktop",
+  ])
+  guard case let .loaded(detail) = vm.detailState else {
+    Issue.record("expected detail .loaded, got \(vm.detailState)")
+    return
+  }
+  #expect(detail.title == "Run files")
+  #expect(detail.refs.contains("proof://run-files/run-desktop"))
 }
 
 @Test
