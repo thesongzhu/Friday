@@ -371,7 +371,9 @@ assembled="$tmpdir/assembled.json"
 observations_manifest="$tmpdir/observations-manifest.json"
 template_manifest="$tmpdir/template-observations-manifest.json"
 fixture="$tmpdir/fixture.json"
+organic="$tmpdir/organic.json"
 placeholder="$tmpdir/placeholder.json"
+pending_marker="$tmpdir/pending-marker.json"
 missing_evidence="$tmpdir/missing-evidence.json"
 missing_metadata="$tmpdir/missing-metadata.json"
 missing_observations="$tmpdir/missing-observations.json"
@@ -392,11 +394,23 @@ echo "[mission-spine-ui-self-test] fixture/sample proof is rejected"
 write_proof "$fixture" "$mobile" "$desktop" "$channel" "$timeline" "fixture_sample" true
 expect_exit 5 env MISSION_SPINE_UI_DEVICE_PROOF="$fixture" "$gate"
 
+echo "[mission-spine-ui-self-test] organic proof claim is rejected"
+write_proof "$organic" "$mobile" "$desktop" "$channel" "$timeline"
+jq '.organic = true' "$organic" >"$organic.tmp"
+mv "$organic.tmp" "$organic"
+expect_exit 5 env MISSION_SPINE_UI_DEVICE_PROOF="$organic" "$gate"
+
 echo "[mission-spine-ui-self-test] placeholder/template proof is rejected"
 write_proof "$placeholder" "$mobile" "$desktop" "$channel" "$timeline"
 jq '.capture_run_id = "TODO_FILL_AFTER_REAL_CAPTURE_RUN"' "$placeholder" >"$placeholder.tmp"
 mv "$placeholder.tmp" "$placeholder"
 expect_exit 5 env MISSION_SPINE_UI_DEVICE_PROOF="$placeholder" "$gate"
+
+echo "[mission-spine-ui-self-test] pending real-capture marker is rejected"
+write_proof "$pending_marker" "$mobile" "$desktop" "$channel" "$timeline"
+jq '.capture_run_id = "pending-real-capture"' "$pending_marker" >"$pending_marker.tmp"
+mv "$pending_marker.tmp" "$pending_marker"
+expect_exit 5 env MISSION_SPINE_UI_DEVICE_PROOF="$pending_marker" "$gate"
 
 echo "[mission-spine-ui-self-test] missing evidence file is rejected"
 write_proof "$missing_evidence" "$mobile" "$desktop" "$channel" "$tmpdir/absent-timeline.trace"
@@ -484,7 +498,7 @@ expect_exit 64 env \
   OUT="$assembled" \
   scripts/mission-spine-ui-device-proof-assemble.sh
 
-rm "$valid" "$assembled" "$observations_manifest" "$template_manifest" "$fixture" "$placeholder" "$missing_evidence" "$missing_metadata" "$missing_observations" "$missing_stress" "$hash_mismatch" "$bytes_mismatch" "$secret_evidence" "$template_assembled" "$mobile" "$desktop" "$channel" "$timeline" "$secret_mobile"
+rm "$valid" "$assembled" "$observations_manifest" "$template_manifest" "$fixture" "$organic" "$placeholder" "$pending_marker" "$missing_evidence" "$missing_metadata" "$missing_observations" "$missing_stress" "$hash_mismatch" "$bytes_mismatch" "$secret_evidence" "$template_assembled" "$mobile" "$desktop" "$channel" "$timeline" "$secret_mobile"
 rmdir "$tmpdir"
 
 echo "[mission-spine-ui-self-test] PASS"
