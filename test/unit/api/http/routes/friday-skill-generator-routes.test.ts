@@ -265,19 +265,34 @@ describe("FridaySkillGeneratorRoutes", () => {
     return { routes, generatorService, registry };
   }
 
-  it("fail-closes skill generator sessions by default without invoking the TypeScript generator", async () => {
+  it.each([
+    [
+      "skills.generator.sessions.create",
+      {
+        body: { goal: "Build a timer", userId: "user-1", channel: "discord" },
+        principal: { userId: "user-1", principalId: "user-1", tenantId: "tenant-1" },
+      },
+    ],
+    ["skills.generator.sessions.get", { params: { sessionId: "sess-1" } }],
+    [
+      "skills.generator.sessions.messages.create",
+      { params: { sessionId: "sess-1" }, body: { message: "JSON format please" } },
+    ],
+    ["skills.generator.sessions.generate", { params: { sessionId: "sess-1" }, body: {} }],
+    ["skills.generator.sessions.test", { params: { sessionId: "sess-1" } }],
+    ["skills.generator.sessions.evidence.get", { params: { sessionId: "sess-1" } }],
+    ["skills.generator.sessions.approve", { params: { sessionId: "sess-1" }, body: withCanonicalApproval() }],
+    ["skills.generator.sessions.cancel", { params: { sessionId: "sess-1" } }],
+  ])("%s fail-closes by default without invoking the TypeScript generator", async (operationId, ctxOverrides) => {
     const generatorService = makeMockGeneratorService();
     const routes = createFridaySkillGeneratorRoutes({
       skillGenerator: generatorService,
       registry: makeMockRegistry(),
     });
-    const route = routes.find((r) => r.operationId === "skills.generator.sessions.create")!;
+    const route = routes.find((r) => r.operationId === operationId)!;
 
     await expect(
-      route.handler(makeCtx({
-        body: { goal: "Build a timer", userId: "user-1", channel: "discord" },
-        principal: { userId: "user-1", principalId: "user-1", tenantId: "tenant-1" },
-      })),
+      route.handler(makeCtx(ctxOverrides)),
     ).rejects.toMatchObject({
       code: "TS_RUNTIME_SKILL_GENERATOR_RETIRED",
       httpStatus: 503,
@@ -287,6 +302,12 @@ describe("FridaySkillGeneratorRoutes", () => {
       },
     });
     expect(generatorService.startSession).not.toHaveBeenCalled();
+    expect(generatorService.getSession).not.toHaveBeenCalled();
+    expect(generatorService.submitTurn).not.toHaveBeenCalled();
+    expect(generatorService.generateDraft).not.toHaveBeenCalled();
+    expect(generatorService.recordExplicitTestResult).not.toHaveBeenCalled();
+    expect(generatorService.approveAndSave).not.toHaveBeenCalled();
+    expect(generatorService.cancelSession).not.toHaveBeenCalled();
   });
 
   function withCanonicalApproval(body: {

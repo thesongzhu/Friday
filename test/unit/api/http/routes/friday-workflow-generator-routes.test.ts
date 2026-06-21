@@ -137,19 +137,26 @@ describe("FridayWorkflowGeneratorRoutes", () => {
     allowTestOnlyWorkflowGeneratorExecution: true,
   });
 
-  it("fail-closes workflow generator sessions by default without invoking the TypeScript generator", async () => {
+  it.each([
+    ["workflows.generator.sessions.create", { body: { goal: "Build workflow", userId: "u-1", channel: "test" } }],
+    ["workflows.generator.sessions.get", { params: { sessionId: "s-1" } }],
+    [
+      "workflows.generator.sessions.messages.create",
+      { params: { sessionId: "s-1" }, body: { message: "Use manual trigger" } },
+    ],
+    ["workflows.generator.sessions.generate", { params: { sessionId: "s-1" }, body: {} }],
+    ["workflows.generator.sessions.evidence.get", { params: { sessionId: "s-1" } }],
+    ["workflows.generator.sessions.approve", { params: { sessionId: "s-1" }, body: {} }],
+    ["workflows.generator.sessions.cancel", { params: { sessionId: "s-1" } }],
+  ])("%s fail-closes by default without invoking the TypeScript generator", async (operationId, ctxOverrides) => {
     const localService = makeMockService();
     const localRoutes = createFridayWorkflowGeneratorRoutes({
       workflowGenerator: localService,
     });
-    const createRoute = localRoutes.find((r) => r.operationId === "workflows.generator.sessions.create")!;
+    const route = localRoutes.find((r) => r.operationId === operationId)!;
 
     await expect(
-      createRoute.handler(
-        makeCtx({
-          body: { goal: "Build workflow", userId: "u-1", channel: "test" },
-        }) as never,
-      ),
+      route.handler(makeCtx(ctxOverrides) as never),
     ).rejects.toMatchObject({
       code: "TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED",
       httpStatus: 503,
@@ -159,6 +166,11 @@ describe("FridayWorkflowGeneratorRoutes", () => {
       },
     });
     expect(localService.startSession).not.toHaveBeenCalled();
+    expect(localService.getSession).not.toHaveBeenCalled();
+    expect(localService.submitTurn).not.toHaveBeenCalled();
+    expect(localService.generateDraft).not.toHaveBeenCalled();
+    expect(localService.approveAndSave).not.toHaveBeenCalled();
+    expect(localService.cancelSession).not.toHaveBeenCalled();
   });
 
   it("creates exactly 7 routes", () => {

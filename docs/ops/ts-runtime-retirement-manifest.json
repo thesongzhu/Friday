@@ -1621,6 +1621,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill generator session routes to TS_RUNTIME_SKILL_GENERATOR_RETIRED before invoking the TypeScript skillGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned skill generator entrypoint when available."
     },
@@ -1634,6 +1635,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill generator session routes to TS_RUNTIME_SKILL_GENERATOR_RETIRED before reading TypeScript generator session state; legacy generator reads are reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned redacted skill generator session projection when available."
     },
@@ -1647,6 +1649,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill generator message submission to TS_RUNTIME_SKILL_GENERATOR_RETIRED before invoking the TypeScript skillGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned skill generator turn entrypoint when available."
     },
@@ -1660,6 +1663,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill draft generation to TS_RUNTIME_SKILL_GENERATOR_RETIRED before invoking the TypeScript skillGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned skill draft generation entrypoint when available."
     },
@@ -1673,6 +1677,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill draft self-test to TS_RUNTIME_SKILL_GENERATOR_RETIRED before writing temp files or executing the TypeScript draft test path; legacy self-test behavior is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned skill draft validation/test entrypoint when available."
     },
@@ -1686,6 +1691,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill generator evidence reads to TS_RUNTIME_SKILL_GENERATOR_RETIRED before reading TypeScript generator evidence state; legacy generator evidence reads are reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned redacted skill generator evidence projection when available."
     },
@@ -1699,6 +1705,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live generated skill approval to TS_RUNTIME_SKILL_GENERATOR_RETIRED before evaluating TypeScript candidate approval or staging a candidate; legacy generator approval is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned generated skill candidate approval entrypoint when available."
     },
@@ -1712,6 +1719,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill generator cancellation to TS_RUNTIME_SKILL_GENERATOR_RETIRED before invoking the TypeScript skillGenerator service; legacy generator cancellation is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned skill generator cancellation entrypoint when available."
     },
@@ -1725,6 +1733,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow generator session routes to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before invoking the TypeScript workflowGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow generator entrypoint when available."
     },
@@ -1738,6 +1747,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow generator session reads to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before reading TypeScript generator session state; legacy generator reads are reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned redacted workflow generator session projection when available."
     },
@@ -1751,6 +1761,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow generator message submission to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before invoking the TypeScript workflowGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow generator turn entrypoint when available."
     },
@@ -1764,6 +1775,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow draft generation to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before invoking the TypeScript workflowGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow draft generation entrypoint when available."
     },
@@ -1777,6 +1789,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow generator evidence reads to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before reading TypeScript generator evidence state; legacy generator evidence reads are reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned redacted workflow generator evidence projection when available."
     },
@@ -1790,6 +1803,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live generated workflow approval to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before reading evidence, publishing through TypeScript Workflow CRUD, or recording observability; legacy generator approval is reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned generated workflow approval entrypoint when available."
     },
@@ -1803,6 +1817,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-generator-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow generator cancellation to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before invoking the TypeScript workflowGenerator service; legacy generator cancellation is reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow generator cancellation entrypoint when available."
     },
