@@ -17237,7 +17237,10 @@ mod tests {
         assert!(
             on.contains("Confirmed run-outcome learning signals")
                 && on.contains("preference")
-                && on.contains("refs-only run outcome: turns=3; executed_tools=1")
+                && on.contains("candidate_kind=preference")
+                && on.contains("consumer=recall-preference")
+                && on.contains("turns=3; executed_tools=1")
+                && on.contains("refs_only=true")
                 && on.contains("friday://agent-run/run-a1-drive"),
             "flag-ON must inject the confirmed refs-only learning signal: {on:?}"
         );
