@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createFridayHealthRoutes } from "#api";
 import type { FridayRouteDefinition, FridayHttpContext } from "#api";
+import { getFridayExecutionIsolationStatus } from "../../../../../src/skills/executor/friday-execution-isolation-status.js";
 
 // ─── Helpers ───
 
@@ -82,6 +83,7 @@ describe("createFridayHealthRoutes", () => {
     const routes = createFridayHealthRoutes({
       version: "0.1.0",
       getUptimeSeconds: () => 42,
+      getExecutionIsolationStatus: () => getFridayExecutionIsolationStatus({}, { darwinSandboxExecAvailable: false }),
     });
     const route = findRoute(routes, "health.capabilities");
     const result = await route.handler(makeCtx({
@@ -147,6 +149,43 @@ describe("createFridayHealthRoutes", () => {
         },
         "agent.exec": {
           boundary: "logical_workspace_guard_host_spawn",
+          osSandbox: false,
+          defaultLive: true,
+        },
+      },
+    });
+  });
+
+  it("derives default execution-isolation capabilities from the shared status provider", async () => {
+    const routes = createFridayHealthRoutes({
+      version: "0.1.0",
+      getUptimeSeconds: () => 42,
+      getExecutionIsolationStatus: () => getFridayExecutionIsolationStatus({}, { darwinSandboxExecAvailable: true }),
+    });
+    const route = findRoute(routes, "health.capabilities");
+    const result = await route.handler(makeCtx()) as {
+      capabilities: {
+        executionIsolation?: {
+          disposition?: string;
+          osSandbox?: boolean;
+          surfaces?: Record<string, { osSandbox?: boolean; defaultLive?: boolean }>;
+        };
+      };
+    };
+
+    expect(result.capabilities.executionIsolation).toMatchObject({
+      disposition: "partial_os_sandbox",
+      osSandbox: true,
+      surfaces: {
+        "skill.shell": {
+          osSandbox: true,
+          defaultLive: true,
+        },
+        "skill.python": {
+          osSandbox: true,
+          defaultLive: true,
+        },
+        "agent.exec": {
           osSandbox: false,
           defaultLive: true,
         },

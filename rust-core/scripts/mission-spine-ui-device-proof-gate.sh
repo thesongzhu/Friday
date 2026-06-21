@@ -66,7 +66,9 @@ reject_placeholder_markers() {
     "REPLACE_WITH_REAL_CAPTURE" \
     "__MISSION_ID__" \
     "\"template\": true" \
-    "\"not_real_proof\": true"
+    "\"not_real_proof\": true" \
+    "pending-real-capture" \
+    "mission_pending_runtime_projection"
   do
     if rg -q --fixed-strings --text "$marker" "$target"; then
       echo "BLOCKER: UI/device ${label} still contains proof-template placeholder marker: $marker" >&2
@@ -83,16 +85,17 @@ if jq -e '
   or (.synthetic // false) == true
   or (.sample // false) == true
   or (.dry_run // false) == true
-  or ((.proof_source // "") | test("fixture|sample|dry"; "i"))
+  or (.organic // false) == true
+  or ((.proof_source // "") | test("fixture|sample|dry|organic"; "i"))
 ' "$proof" >/dev/null; then
-  echo "BLOCKER: UI/device proof artifact is marked as fixture/sample/synthetic/dry-run: $proof" >&2
+  echo "BLOCKER: UI/device proof artifact is marked as fixture/sample/synthetic/dry-run/organic: $proof" >&2
   exit 5
 fi
 
 jq -e '
   def nonempty_string: type == "string" and length > 0;
   def safe_kind: type == "string" and test("^(screenshot|video|trace|log|json)$");
-  def not_fake_string: type == "string" and (test("fixture|sample|synthetic|dry"; "i") | not);
+  def not_fake_string: type == "string" and (test("fixture|sample|synthetic|dry|organic"; "i") | not);
   def sha256_hex: type == "string" and test("^[0-9a-f]{64}$");
   def ok_bool($path): getpath($path) == true;
   def has_status_label($needle): (.status_labels // []) | index($needle) != null;
