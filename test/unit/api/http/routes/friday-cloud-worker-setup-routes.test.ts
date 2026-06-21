@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createFridayCloudWorkerSetupRoutes,
@@ -36,6 +36,21 @@ function retiredFindRoute(operationId: string) {
   const route = routes.find((r) => r.operationId === operationId);
   if (!route) throw new Error(`route not found: ${operationId}`);
   return route;
+}
+
+function retiredRoutesWithSpies() {
+  const dnsValidate = vi.fn(async () => ({ verdict: "ok" }));
+  const packageGenerate = vi.fn(async () => ({ bundleId: "bundle-1" }));
+  const teardownReceipt = vi.fn(async () => ({ receiptId: "receipt-1" }));
+  const routes = createFridayCloudWorkerSetupRoutes({
+    setupService: {
+      ...setupService,
+      dnsValidator: { validate: dnsValidate },
+      packageService: { generate: packageGenerate },
+      teardown: { issueReceipt: teardownReceipt },
+    } as unknown as FridayCloudWorkerSetupRoutesDeps["setupService"],
+  });
+  return { routes, dnsValidate, packageGenerate, teardownReceipt };
 }
 
 function boundCtx(overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {}): FridayHttpContext<unknown, unknown, unknown> {
@@ -171,18 +186,39 @@ describe("Phase 17A — cloud-worker setup routes", () => {
   });
 
   describe("TS runtime retirement (allowTestOnlyCloudWorkerSetupExecution unset)", () => {
-    const cases: Array<{ op: string; body: Record<string, unknown> }> = [
-      { op: "cloud.workers.dns.validate", body: { dnsProviderId: "dnspod", dnsName: "worker.friday-test.example.com", rootDomain: "example.com" } },
-      { op: "cloud.workers.package.generate", body: { providerId: "aliyun-ecs", httpsHost: "https://worker.friday-test.example.com", dnsName: "worker.friday-test.example.com", dnsProviderId: "dnspod", ownerRunId: "owner-run-1" } },
-      { op: "cloud.workers.teardown.receipt", body: { providerId: "aliyun-ecs", ownerRunId: "r", resourceTag: "t" } },
+    const cases: Array<{
+      op: string;
+      body: Record<string, unknown>;
+      spyName: "dnsValidate" | "packageGenerate" | "teardownReceipt";
+    }> = [
+      {
+        op: "cloud.workers.dns.validate",
+        body: { dnsProviderId: "dnspod", dnsName: "worker.friday-test.example.com", rootDomain: "example.com" },
+        spyName: "dnsValidate",
+      },
+      {
+        op: "cloud.workers.package.generate",
+        body: { providerId: "aliyun-ecs", httpsHost: "https://worker.friday-test.example.com", dnsName: "worker.friday-test.example.com", dnsProviderId: "dnspod", ownerRunId: "owner-run-1" },
+        spyName: "packageGenerate",
+      },
+      {
+        op: "cloud.workers.teardown.receipt",
+        body: { providerId: "aliyun-ecs", ownerRunId: "r", resourceTag: "t" },
+        spyName: "teardownReceipt",
+      },
     ];
 
-    for (const { op, body } of cases) {
-      it(`fail-closes ${op} with 503`, async () => {
-        await expect(retiredFindRoute(op).handler(boundCtx({ body }))).rejects.toMatchObject({
+    for (const { op, body, spyName } of cases) {
+      it(`fail-closes ${op} with 503 before calling the TS setup service`, async () => {
+        const retired = retiredRoutesWithSpies();
+        const route = retired.routes.find((candidate) => candidate.operationId === op);
+        if (!route) throw new Error(`route not found: ${op}`);
+
+        await expect(route.handler(boundCtx({ body }))).rejects.toMatchObject({
           code: "TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED",
           httpStatus: 503,
         } satisfies Partial<FridayDomainError>);
+        expect(retired[spyName]).not.toHaveBeenCalled();
       });
     }
 

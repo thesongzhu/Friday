@@ -159,7 +159,12 @@
       "standing_goals_create",
       "standing_goals_patch",
       "agenda_approve",
-      "agenda_run"
+      "agenda_run",
+      "cloud_worker_dns_validate",
+      "cloud_worker_package_generate",
+      "cloud_worker_teardown_receipt",
+      "deeplink_preview",
+      "providers_detect"
     ]
   },
   "classificationValues": [
@@ -2483,6 +2488,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.get) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy read; no durable policy store exists so there is no redactable projection. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy read projection when available."
     },
@@ -2496,6 +2502,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.list) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy read; no durable policy store exists so there is no redactable projection. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy list projection when available."
     },
@@ -4500,6 +4507,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-cloud-worker-setup-routes.test.ts",
       "proof": "src/api/http/routes/friday-cloud-worker-setup-routes.ts fail-closes default/live cloud.workers.dns.validate to TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED after the bound-principal gate and the dnsProviderId/dnsName/rootDomain validation, immediately before the TypeScript dnsValidator.validate compute (friday-cloud-worker-dns-validator.ts: stateless acceptance-policy verdict; no DB write and no external DNS/network egress). Legacy behavior is reachable only through explicit allowTestOnlyCloudWorkerSetupExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cloud-worker setup entrypoint when available."
     },
@@ -4513,6 +4521,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-cloud-worker-setup-routes.test.ts",
       "proof": "src/api/http/routes/friday-cloud-worker-setup-routes.ts fail-closes default/live cloud.workers.package.generate to TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED after the bound-principal gate and the providerId/httpsHost/dnsName/dnsProviderId/ownerRunId validation, immediately before (and ABOVE the try/catch that maps errors to 400) the TypeScript packageService.generate compute (friday-cloud-worker-package.ts: in-memory deployment bundle render + secret-leak scan + sha256 bundleId; no DB write and no external egress). Legacy behavior is reachable only through explicit allowTestOnlyCloudWorkerSetupExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cloud-worker setup entrypoint when available."
     },
@@ -4526,6 +4535,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-cloud-worker-setup-routes.test.ts",
       "proof": "src/api/http/routes/friday-cloud-worker-setup-routes.ts fail-closes default/live cloud.workers.teardown.receipt to TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED after the bound-principal gate and the providerId/ownerRunId/resourceTag validation, immediately before the TypeScript teardown.issueReceipt compute (friday-cloud-worker-teardown.ts: in-memory receipt with sha256 receiptId + manual cleanup steps; no DB write and no external egress). Legacy behavior is reachable only through explicit allowTestOnlyCloudWorkerSetupExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cloud-worker setup entrypoint when available."
     },
@@ -4763,6 +4773,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deeplink-routes.test.ts",
       "proof": "src/api/http/routes/friday-deeplink-routes.ts deeplink.preview wires default/live to assertDeepLinkTestOracleAllowed(deps) AFTER body validation (missing uri/payload or unparseable -> 400 VALIDATION_FAILED) and IMMEDIATELY BEFORE validateFridayDeepLink(parsed.payload) (the deep-link verdict/safety compute). 503 TS_RUNTIME_DEEPLINK_RETIRED (classification fail_closed, replacement rust_owned_deeplink_entrypoint_required). Non-mutating but fail_closed not compat_shim: validateFridayDeepLink is a Rust-ownable product-logic verdict computation (a security/policy decision over a user-supplied deep-link payload), not a thin read of Friday stored state. No third-party egress. executes_product_logic:false: no verdict compute runs in default/live. Reachable only through explicit allowTestOnlyDeepLinkExecution test-oracle wiring (inline createFridayDeepLinkRoutes).",
       "next_action": "Replace the fail-closed response with the Rust-owned deep-link preview/verdict entrypoint when available."
     },
@@ -4822,6 +4833,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-setup-routes.test.ts",
       "proof": "src/api/http/routes/friday-setup-routes.ts providers.detect wires default/live to assertProviderDetectTestOracleAllowed(deps) AFTER all request validation (assertSetupBootstrapBoundary; body presence -> 400; kind/authMode/key/baseUrl validation -> 400) and IMMEDIATELY BEFORE the provider model-fetch egress (fetchOpenAiModels / fetchCompatibleModels / fetchAnthropicModels / fetchGoogleModels / fetchOllamaModels to the provider /v1/models). 503 TS_RUNTIME_PROVIDERS_DETECT_RETIRED (classification fail_closed, replacement rust_owned_provider_detect_entrypoint_required). fail_closed NOT operator_external_adapter: detect is a transient capability/key-validation PROBE (enumerate models + validate the key), Rust-ownable product logic whose provider calls move into Rust — the same shape as media-understanding/agent runs that call providers; it is not a permanent egress-delivery conduit, and when retired the guard fail-closes BEFORE any fetch so nothing egresses. executes_product_logic:false: no provider fetch runs in default/live. Flag allowTestOnlyProviderDetectExecution threaded inline (CreateFridayApiRuntimeDeps -> createFridaySetupRoutes) + hub-config (FridayHubConfig -> friday-hub-bootstrap) so the onboarding setup-wizard e2e (createFridayHub), the mock-parity e2e (createMockHubEnv), and the live real-journeys e2e (real-env) set it. OPERATOR/RECONCILIATION NOTE: retiring this route 503s the production onboarding/setup-wizard model-detection AND the release-GO closure harness scripts/e2e/run-friday-closure.mjs (POSTs /v1/providers/detect, throws on non-200) — these are NOT CI gates but need the Rust detect entrypoint (or an operator decision) before production onboarding/release-verify; recorded in the closure ledger. Reachable only through explicit allowTestOnlyProviderDetectExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned provider-detect entrypoint when available; this route is on the production onboarding + release-GO path — coordinate the Rust entrypoint with operator sign-off (see reconciliation note)."
     },
