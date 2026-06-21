@@ -386,6 +386,10 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(thrown).toBeInstanceOf(FridayDomainError);
     expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
     expect((thrown as FridayDomainError).httpStatus).toBe(503);
+    expect((thrown as FridayDomainError).details).toMatchObject({
+      classification: "fail_closed",
+      replacement: "rust_owned_agent_run_control_entrypoint_required",
+    });
     expect(executeRun).not.toHaveBeenCalled();
     expect(rollbackRun).not.toHaveBeenCalled();
   });
@@ -433,6 +437,10 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(thrown).toBeInstanceOf(FridayDomainError);
     expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
     expect((thrown as FridayDomainError).httpStatus).toBe(503);
+    expect((thrown as FridayDomainError).details).toMatchObject({
+      classification: "fail_closed",
+      replacement: "rust_owned_agent_run_control_entrypoint_required",
+    });
     expect(rollbackRun).not.toHaveBeenCalled();
   });
 
@@ -474,6 +482,10 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(thrown).toBeInstanceOf(FridayDomainError);
     expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
     expect((thrown as FridayDomainError).httpStatus).toBe(503);
+    expect((thrown as FridayDomainError).details).toMatchObject({
+      classification: "fail_closed",
+      replacement: "rust_owned_agent_run_control_entrypoint_required",
+    });
     expect(executeRun).not.toHaveBeenCalled();
   });
 
@@ -537,6 +549,10 @@ describe("API Runtime — Extended Route Registration", () => {
       expect(thrown).toBeInstanceOf(FridayDomainError);
       expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
       expect((thrown as FridayDomainError).httpStatus).toBe(503);
+      expect((thrown as FridayDomainError).details).toMatchObject({
+        classification: "fail_closed",
+        replacement: "rust_owned_agent_run_control_entrypoint_required",
+      });
     });
   }
 
@@ -594,6 +610,10 @@ describe("API Runtime — Extended Route Registration", () => {
       expect(thrown).toBeInstanceOf(FridayDomainError);
       expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
       expect((thrown as FridayDomainError).httpStatus).toBe(503);
+      expect((thrown as FridayDomainError).details).toMatchObject({
+        classification: "fail_closed",
+        replacement: "rust_owned_agent_run_control_entrypoint_required",
+      });
       expect(executeRun).not.toHaveBeenCalled();
     });
   }
@@ -653,6 +673,10 @@ describe("API Runtime — Extended Route Registration", () => {
       expect(thrown).toBeInstanceOf(FridayDomainError);
       expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
       expect((thrown as FridayDomainError).httpStatus).toBe(503);
+      expect((thrown as FridayDomainError).details).toMatchObject({
+        classification: "fail_closed",
+        replacement: "rust_owned_agent_run_control_entrypoint_required",
+      });
       expect(resolveToolApproval).not.toHaveBeenCalled();
     });
   }
