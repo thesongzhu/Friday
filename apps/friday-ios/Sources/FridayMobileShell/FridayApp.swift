@@ -176,7 +176,8 @@ struct RootView: View {
         switch destination {
         case .home:
           FridayHomeScreen(viewModel: homeVM)
-        case .platform, .activity, .workflows, .settings:
+        case .missions, .needsMe, .memory, .platform, .activity, .workflows, .onboarding,
+             .settings:
           FridayProjectionScreen(destination: destination, viewModel: homeVM)
         }
       }
