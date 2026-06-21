@@ -7,7 +7,10 @@
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridayRuntimeCapabilityMatrix } from "#providers";
-import type { FridayExecutionIsolationStatus } from "../../../skills/executor/friday-execution-isolation-status.js";
+import {
+  type FridayExecutionIsolationStatus,
+  getFridayExecutionIsolationStatus,
+} from "../../../skills/executor/friday-execution-isolation-status.js";
 
 // ─── Types ───
 
@@ -53,6 +56,7 @@ export interface FridayHealthRoutesDeps {
   version: string;
   getUptimeSeconds?: () => number;
   getCapabilities?: () => FridayHealthCapabilities | Promise<FridayHealthCapabilities>;
+  getExecutionIsolationStatus?: () => FridayExecutionIsolationStatus;
 }
 
 // ─── Factory ───
@@ -61,79 +65,41 @@ export function createFridayHealthRoutes(
   deps: FridayHealthRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
   const startTime = Date.now();
-  const defaultCapabilities: FridayHealthCapabilities = {
-    schemaVersion: "1.0",
-    plugins: {
-      runtimeMode: "stub",
-    },
-    channels: {
-      supportedKinds: [],
-      enabledKinds: [],
-      webhookEndpoints: {
-        line: false,
-        whatsapp: false,
-        lark: false,
-      },
-    },
-    mcp: {
-      enabled: false,
-    },
-    packaging: {
-      enabled: false,
-    },
-    executionIsolation: {
+  const getExecutionIsolationStatus = deps.getExecutionIsolationStatus ?? getFridayExecutionIsolationStatus;
+
+  function defaultCapabilities(): FridayHealthCapabilities {
+    return {
       schemaVersion: "1.0",
-      disposition: "open_no_os_sandbox",
-      osSandbox: false,
-      surfaces: {
-        "skill.shell": {
-          boundary: "logical_guards_only",
-          osSandbox: false,
-          defaultLive: false,
-          notes: "Shell skills use host child_process.spawn with cwd/env/timeout/output guards; no kernel sandbox is applied.",
-        },
-        "skill.python": {
-          boundary: "logical_guards_only",
-          osSandbox: false,
-          defaultLive: false,
-          notes: "Python skills share the shell executor boundary and are not isolated by an OS sandbox.",
-        },
-        "skill.node": {
-          boundary: "disabled_in_production_unisolated_test_harness_only",
-          osSandbox: false,
-          defaultLive: false,
-          notes: "Non-bundled Node skills dynamically import in-process modules; FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true is accepted only by the test harness, never as a production live unlock.",
-        },
-        "skill.node.bundled_system": {
-          boundary: "disabled_in_production_unisolated_test_harness_only",
-          osSandbox: false,
-          defaultLive: false,
-          notes: "Bundled system Node skills are also disabled in production because they dynamically import in-process modules without OS isolation; FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true is accepted only by the test harness.",
-        },
-        "plugin.entrypoint": {
-          boundary: "retired_by_default_dynamic_import_when_enabled",
-          osSandbox: false,
-          defaultLive: false,
-          notes: "Plugin lifecycle routes are retired by default; enabled plugin entrypoints are dynamic imports, not OS-isolated processes.",
-        },
-        "agent.exec": {
-          boundary: "logical_workspace_guard_host_spawn",
-          osSandbox: false,
-          defaultLive: true,
-          notes: "Agent exec uses host spawn with workspace, shell, timeout, and output controls; no OS sandbox is applied.",
+      plugins: {
+        runtimeMode: "stub",
+      },
+      channels: {
+        supportedKinds: [],
+        enabledKinds: [],
+        webhookEndpoints: {
+          line: false,
+          whatsapp: false,
+          lark: false,
         },
       },
-    },
-    search: {
-      provider: "duckduckgo_html",
-      latestness: "unverified",
-    },
-    system: {
-      enabled: false,
-      remoteMode: "unavailable",
-      companionReadiness: "unavailable",
-    },
-  };
+      mcp: {
+        enabled: false,
+      },
+      packaging: {
+        enabled: false,
+      },
+      executionIsolation: getExecutionIsolationStatus(),
+      search: {
+        provider: "duckduckgo_html",
+        latestness: "unverified",
+      },
+      system: {
+        enabled: false,
+        remoteMode: "unavailable",
+        companionReadiness: "unavailable",
+      },
+    };
+  }
 
   async function buildHealthPayload(includeCapabilities: boolean) {
     const uptimeSeconds = deps.getUptimeSeconds
@@ -148,7 +114,7 @@ export function createFridayHealthRoutes(
     }
     const capabilities = deps.getCapabilities
       ? await deps.getCapabilities()
-      : defaultCapabilities;
+      : defaultCapabilities();
     return {
       status: "ok",
       version: deps.version,
