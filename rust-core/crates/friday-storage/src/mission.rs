@@ -1219,7 +1219,8 @@ fn has_unmaterialized_deferred_follow_up(
     mission_id: &str,
     work_items: &[WorkItem],
 ) -> Result<bool> {
-    for decision in list_route_decisions_for_mission(conn, mission_id)? {
+    let route_decisions = list_route_decisions_for_mission(conn, mission_id)?;
+    for decision in &route_decisions {
         if decision.deferred_options.is_empty() {
             continue;
         }
@@ -1230,19 +1231,51 @@ fn has_unmaterialized_deferred_follow_up(
         {
             continue;
         }
-        let source_marker = format!("source_route_decision:{}", decision.decision_id);
-        let materialized = work_items.iter().any(|work_item| {
-            work_item
-                .judgment_memory
-                .inheritable_context
-                .iter()
-                .any(|context| context == &source_marker)
-        });
-        if !materialized {
+        if !deferred_route_decision_materialized(decision, &route_decisions, work_items) {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+fn deferred_route_decision_materialized(
+    decision: &RouteDecisionCard,
+    route_decisions: &[RouteDecisionCard],
+    work_items: &[WorkItem],
+) -> bool {
+    let source_marker = format!("source_route_decision:{}", decision.decision_id);
+    if work_items.iter().any(|work_item| {
+        work_item
+            .judgment_memory
+            .inheritable_context
+            .iter()
+            .any(|context| context == &source_marker)
+    }) {
+        return true;
+    }
+
+    // Product intake can record an early route decision, then the mission-bound run records the
+    // actionable route decision for the same source WorkItem and materializes the follow-up from
+    // that later card. Do not keep the Mission open on the stale intake twin once the same source
+    // WorkItem has a later materialized deferred decision.
+    route_decisions
+        .iter()
+        .filter(|candidate| {
+            candidate.decision_id != decision.decision_id
+                && candidate.work_item_id == decision.work_item_id
+                && candidate.created_at_ms >= decision.created_at_ms
+                && !candidate.deferred_options.is_empty()
+        })
+        .any(|candidate| {
+            let source_marker = format!("source_route_decision:{}", candidate.decision_id);
+            work_items.iter().any(|work_item| {
+                work_item
+                    .judgment_memory
+                    .inheritable_context
+                    .iter()
+                    .any(|context| context == &source_marker)
+            })
+        })
 }
 
 pub fn veto_route_decision(

@@ -663,6 +663,91 @@ fn mission_closes_after_materialized_deferred_follow_up_completes() {
 }
 
 #[test]
+fn mission_closes_when_run_bound_deferred_decision_materializes_intake_twin() {
+    let db = Db::open_hub(&temp_db_path("wi-deferred-followup-intake-twin-close")).unwrap();
+    seed(&db, WorkItemStatus::ProviderWaiting);
+    seed_hybrid_route_decision(&db);
+
+    db.transition_work_item_status(
+        "work-wi",
+        WorkItemStatus::CompletedWithProof,
+        "agent:codex",
+        "codex first leg completed",
+        Some("friday://agent-run/run-codex-first"),
+        10,
+    )
+    .unwrap();
+
+    let mut source = db.get_work_item("work-wi").unwrap().unwrap();
+    source.judgment_memory.why_this_route =
+        "Codex first for workspace execution; Claude synthesis follow-up deferred".into();
+    source.judgment_memory.considered_options = vec![
+        "combination: Codex first, Claude synthesis after proof".into(),
+        "claude: writing only".into(),
+    ];
+    source.judgment_memory.deferred_options = vec!["Claude synthesis follow-up".into()];
+    db.upsert_route_decision(&RouteDecisionCard::from_work_item(
+        "route-decision:agent-loop:run-codex-first".into(),
+        &source,
+        vec![
+            "agent-run:run-codex-first".into(),
+            "friday://agent-run/run-codex-first".into(),
+        ],
+        11,
+        None,
+    ))
+    .unwrap();
+
+    db.materialize_deferred_route_follow_up(DeferredRouteFollowUpRequest {
+        decision_id: "route-decision:agent-loop:run-codex-first",
+        source_work_item_id: "work-wi",
+        follow_up_work_item_id: "work-wi-claude-followup",
+        follow_up_lane: WorkLane::Claude,
+        follow_up_provider_or_agent: Some("claude"),
+        actor_ref: "agent:friday",
+        reason: "create tracked Claude synthesis leg after Codex proof",
+        now_ms: 12,
+    })
+    .unwrap();
+
+    for (now, next) in [
+        (13, WorkItemStatus::Dispatched),
+        (14, WorkItemStatus::HubAccepted),
+        (15, WorkItemStatus::ProviderRouted),
+        (16, WorkItemStatus::ProviderWaiting),
+    ] {
+        db.transition_work_item_status(
+            "work-wi-claude-followup",
+            next,
+            "agent:friday",
+            "advance follow-up",
+            None,
+            now,
+        )
+        .unwrap();
+    }
+    db.transition_work_item_status(
+        "work-wi-claude-followup",
+        WorkItemStatus::CompletedWithProof,
+        "agent:claude",
+        "claude follow-up completed",
+        Some("proof://outcome/AnswerProduced/run-claude-followup?signal=answer_len=18"),
+        17,
+    )
+    .unwrap();
+
+    let mission = db.get_mission("mission-wi").unwrap().unwrap();
+    assert_eq!(
+        mission.status,
+        MissionStatus::Done,
+        "a stale intake-time deferred decision must not keep the Mission active after the same source WorkItem's run-bound decision materialized and completed its follow-up"
+    );
+    assert!(mission
+        .proof_refs
+        .contains(&"audit://workitem_lifecycle:work-wi-claude-followup:17".to_string()));
+}
+
+#[test]
 fn deferred_follow_up_requires_proven_source_and_unused_follow_up_id() {
     let db = Db::open_hub(&temp_db_path("wi-deferred-followup-gates")).unwrap();
     seed(&db, WorkItemStatus::ReadyToDispatch);
