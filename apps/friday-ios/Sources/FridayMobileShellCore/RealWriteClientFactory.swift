@@ -141,4 +141,30 @@ public enum RealWriteClientFactory {
       sessionId: sessionId,
       agentRunControlViaRust: agentRunControlViaRust)
   }
+
+  /// Construct the LIVE write client for a REAL DEVICE using its OWN device-generated keypair
+  /// identity (the J2 mobile write-half client side).
+  ///
+  /// A real phone has no `~/.friday/master.key`, so `makeLive()` (the master-derived host path)
+  /// yields honest `.masterKeyMissing` there. This overload instead uses the device's
+  /// Keychain-persisted X25519 keypair (`DeviceKeypairStore.loadOrGenerate()`). Its PUBLIC key must
+  /// be enrolled in the write server's peer-allowlist before any live dispatch can authenticate.
+  ///
+  /// This only swaps the peer identity; it does NOT flip run-control, does NOT mint signatures, and
+  /// does NOT open any remote ingress. The default shipped app path remains the throwing
+  /// honest-unavailable client unless explicitly opted in by the app shell.
+  public static func makeLive(
+    deviceKeypair: DeviceKeypair,
+    config: AgentRunServerConfig = .liveLoopback,
+    forwardedPrincipal: String = liveAgentRunOwnerPrincipal,
+    sessionId: String? = nil,
+    agentRunControlViaRust: Bool = false
+  ) -> FridayMobileMissionDispatchingWriteClient {
+    make(
+      config: config,
+      keypair: deviceKeypair.keypair,
+      forwardedPrincipal: forwardedPrincipal,
+      sessionId: sessionId,
+      agentRunControlViaRust: agentRunControlViaRust)
+  }
 }
