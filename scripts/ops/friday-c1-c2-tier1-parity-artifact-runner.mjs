@@ -20,6 +20,7 @@ function envEnabled(env, name) {
 function readConfig(env = process.env) {
   return {
     enabled: envEnabled(env, "FRIDAY_C1_C2_TIER1_ARTIFACT_RUN"),
+    allowCustomCommand: envEnabled(env, "FRIDAY_C1_C2_TIER1_ALLOW_CUSTOM_COMMAND"),
     artifactRoot: env.FRIDAY_C1_C2_TIER1_CAPTURE_ROOT?.trim() ?? "",
     flowId: env.FRIDAY_C1_C2_TIER1_FLOW_ID?.trim() ?? "",
     commandJson: env.FRIDAY_C1_C2_TIER1_FLOW_COMMAND_JSON?.trim() ?? "",
@@ -55,7 +56,7 @@ function digestOutput(stdout, stderr) {
   return crypto.createHash("sha256").update(stdout).update(stderr).digest("hex");
 }
 
-function buildRecord(flow, command, result, startedAt, completedAt) {
+function buildRecord(flow, command, commandSource, result, startedAt, completedAt) {
   const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? "");
   const stderr = Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.from(result.stderr ?? "");
   const exitCode = typeof result.status === "number" ? result.status : null;
@@ -73,9 +74,10 @@ function buildRecord(flow, command, result, startedAt, completedAt) {
     startedAt,
     completedAt,
     harness: flow.expectedHarness,
+    commandSource,
     evidence: [
       {
-        kind: "harness-exit",
+        kind: commandSource === "default" ? "harness-exit" : "custom-command-exit",
         path: flow.expectedHarness,
         argv0: path.basename(command[0]),
         exitCode,
@@ -110,7 +112,15 @@ export async function runOneFlow(config = readConfig()) {
   if (!flow) {
     return { ok: false, status: "blocked", blocker: `unknown flow id: ${config.flowId || "(empty)"}` };
   }
+  if (config.commandJson && !config.allowCustomCommand) {
+    return {
+      ok: false,
+      status: "blocked",
+      blocker: "custom flow commands require FRIDAY_C1_C2_TIER1_ALLOW_CUSTOM_COMMAND=1",
+    };
+  }
 
+  const commandSource = config.commandJson ? "custom" : "default";
   const command = parseCommandJson(config.commandJson) ?? defaultCommandForFlow(config.repoRoot, flow);
   if (!command) {
     return { ok: false, status: "blocked", blocker: `no default command for ${flow.expectedHarness}` };
@@ -123,7 +133,7 @@ export async function runOneFlow(config = readConfig()) {
     env: process.env,
   });
   const completedAt = new Date().toISOString();
-  const record = buildRecord(flow, command, result, startedAt, completedAt);
+  const record = buildRecord(flow, command, commandSource, result, startedAt, completedAt);
   const artifactPath = await writeRecord(config.artifactRoot, flow, record);
   return {
     ok: record.status === "passed",
