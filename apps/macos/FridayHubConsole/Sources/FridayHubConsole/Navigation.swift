@@ -2,9 +2,7 @@ import SwiftUI
 
 /// The nav-rail destinations of the Hub Console.
 ///
-/// Only `.operations` is built in D-PR1. The other destinations exist in the
-/// LOCKED desktop design (provider admin, parity, workflow, channels, evidence)
-/// and appear as honest "not in this PR" placeholders — never faked content.
+/// Desktop destinations backed by the Rust Hub Workbench projection.
 enum HubDestination: String, CaseIterable, Identifiable {
   case operations
   case providerAdmin
@@ -37,6 +35,6 @@ enum HubDestination: String, CaseIterable, Identifiable {
     }
   }
 
-  /// Whether this destination is implemented in D-PR1.
-  var isBuilt: Bool { self == .operations }
+  /// Whether this destination is implemented by the desktop shell.
+  var isBuilt: Bool { true }
 }
