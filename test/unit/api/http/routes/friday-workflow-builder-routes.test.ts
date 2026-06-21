@@ -212,25 +212,54 @@ describe("FridayWorkflowBuilderRoutes", () => {
 
   it("fail-closes workflow builder draft/lock mutations by default", async () => {
     const createSpy = vi.fn(() => ({ draft: stubDraft }));
+    const saveSpy = vi.fn(() => ({ draft: stubDraft }));
+    const autosaveSpy = vi.fn(() => ({ draft: null }));
+    const compileSpy = vi.fn(() => ({ compiled: stubCompiled, validation: stubValidation }));
+    const publishSpy = vi.fn(() => ({
+      workflowId: "",
+      workflowVersionId: "",
+      versionNumber: 1,
+      published: true,
+      checksum: "",
+      validation: stubValidation,
+    }));
     const acquireSpy = vi.fn(() => ({ acquired: true }));
+    const renewSpy = vi.fn(() => ({ lock: null }));
+    const releaseSpy = vi.fn(() => ({ released: true as const }));
     const failClosedRoutes = createFridayWorkflowBuilderRoutes({
       ...stubDeps,
       allowTestOnlyWorkflowBuilderDraftExecution: false,
       createDraft: createSpy,
+      saveDraft: saveSpy,
+      autosaveDraft: autosaveSpy,
+      compileDraft: compileSpy,
+      publishDraft: publishSpy,
       acquireLock: acquireSpy,
+      renewLock: renewSpy,
+      releaseLock: releaseSpy,
     });
-    await expect(
-      failClosedRoutes.find((r) => r.operationId === "drafts.create")!.handler(makeCtx({ body: { title: "D" } })),
-    ).rejects.toMatchObject({
-      code: "TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED",
-      httpStatus: 503,
-      details: { classification: "fail_closed" },
-    });
-    await expect(
-      failClosedRoutes.find((r) => r.operationId === "locks.acquire")!.handler(makeCtx({ body: {} })),
-    ).rejects.toMatchObject({ code: "TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED", httpStatus: 503 });
-    expect(createSpy).not.toHaveBeenCalled();
-    expect(acquireSpy).not.toHaveBeenCalled();
+    const cases: Array<[string, Partial<FridayHttpContext<unknown, unknown, unknown>>]> = [
+      ["drafts.create", { body: { title: "D" } }],
+      ["drafts.save", { body: { title: "D2" } }],
+      ["drafts.autosave", { body: { title: "D3" } }],
+      ["drafts.compile", { body: {} }],
+      ["drafts.publish", { body: {} }],
+      ["locks.acquire", { body: {} }],
+      ["locks.renew", { body: {} }],
+      ["locks.release", { body: {} }],
+    ];
+    for (const [operationId, ctx] of cases) {
+      await expect(
+        failClosedRoutes.find((r) => r.operationId === operationId)!.handler(makeCtx(ctx)),
+      ).rejects.toMatchObject({
+        code: "TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED",
+        httpStatus: 503,
+        details: { classification: "fail_closed" },
+      });
+    }
+    for (const mutation of [createSpy, saveSpy, autosaveSpy, compileSpy, publishSpy, acquireSpy, renewSpy, releaseSpy]) {
+      expect(mutation).not.toHaveBeenCalled();
+    }
   });
 
   it("fail-closes templates.instantiate by default", async () => {

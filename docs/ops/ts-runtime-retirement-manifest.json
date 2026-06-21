@@ -1831,6 +1831,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-routes.ts wires default/live workflows.create to TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED before principal authority checks, validation side effects, or calling the TypeScript workflow CRUD service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowCatalogMutationExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow catalog create entrypoint when available."
     },
@@ -1844,6 +1845,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-routes.ts wires default/live workflows.update to TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED before principal authority checks, revision validation, or calling the TypeScript workflow CRUD service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowCatalogMutationExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow catalog update entrypoint when available."
     },
@@ -1857,6 +1859,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-routes.ts wires default/live workflows.archive to TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED before principal authority checks or calling the TypeScript workflow archive service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowCatalogMutationExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow catalog archive entrypoint when available."
     },
@@ -1870,6 +1873,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-routes.ts wires default/live workflows.publish to TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED before principal authority checks or calling the TypeScript workflow publish service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowCatalogMutationExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow catalog publish entrypoint when available."
     },
@@ -1883,6 +1887,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-product-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-product-routes.ts wires default/live workflows.deploy to TS_RUNTIME_WORKFLOW_DEPLOY_RETIRED before principal authority checks, deployment option handling, or calling the TypeScript workflow product service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowDeployExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow deployment entrypoint when available."
     },
@@ -1896,6 +1901,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-builder-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live workflows.bundles.import to TS_RUNTIME_WORKFLOW_BUNDLE_IMPORT_RETIRED before principal authority checks or calling the TypeScript importWorkflowBundle service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBundleImportExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow bundle import entrypoint when available."
     },
@@ -2669,6 +2675,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-builder-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live drafts.create to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript createDraft service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow builder draft create entrypoint when available."
     },
@@ -2682,6 +2689,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-builder-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live drafts.save to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript saveDraft service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow builder draft save entrypoint when available."
     },
@@ -2695,6 +2703,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-builder-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live drafts.autosave to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript autosaveDraft service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow builder draft autosave entrypoint when available."
     },
@@ -2708,6 +2717,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-builder-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live drafts.compile to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript compileDraft service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow builder draft compile entrypoint when available."
     },
@@ -2721,6 +2731,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-builder-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live drafts.publish to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript publishDraft service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow builder draft publish entrypoint when available."
     },
@@ -2747,6 +2758,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-builder-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live locks.acquire to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript acquireLock service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow builder lock acquire entrypoint when available."
     },
@@ -2760,6 +2772,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-builder-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live locks.renew to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript renewLock service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow builder lock renew entrypoint when available."
     },
@@ -2773,6 +2786,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-builder-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live locks.release to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript releaseLock service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow builder lock release entrypoint when available."
     },
@@ -2786,6 +2800,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-conflict-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-conflict-routes.ts wires default/live conflicts.resolve to TS_RUNTIME_WORKFLOW_CONFLICT_RESOLVE_RETIRED before principal authority checks and before calling the TypeScript resolveConflict service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowConflictResolution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow conflict resolution entrypoint when available."
     },
