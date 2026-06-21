@@ -163,23 +163,3 @@ struct UnavailableView: View {
     .frame(maxWidth: .infinity, minHeight: 200)
   }
 }
-
-/// Honest placeholder for mobile design areas not implemented in this PR.
-struct PlaceholderScreen: View {
-  let destination: MobileDestination
-
-  var body: some View {
-    VStack(spacing: 10) {
-      Image(systemName: destination.systemImage)
-        .font(.system(size: 30)).foregroundStyle(MobileTheme.textSecondary)
-      Text(destination.title)
-        .font(.headline).foregroundStyle(MobileTheme.textPrimary)
-      Text("This area is not available yet.")
-        .font(.footnote).foregroundStyle(MobileTheme.textSecondary)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: 320)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(MobileTheme.backgroundWarmOffWhite.ignoresSafeArea())
-  }
-}

@@ -176,8 +176,8 @@ struct RootView: View {
         switch destination {
         case .home:
           FridayHomeScreen(viewModel: homeVM)
-        default:
-          PlaceholderScreen(destination: destination)
+        case .platform, .activity, .workflows, .settings:
+          FridayProjectionScreen(destination: destination, viewModel: homeVM)
         }
       }
       .navigationTitle(destination.title)

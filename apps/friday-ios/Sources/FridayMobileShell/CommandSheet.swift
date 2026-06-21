@@ -3,9 +3,9 @@ import SwiftUI
 /// The full-screen grid launcher (locked: menuModel = commandSheet) opened from the
 /// top-left of Home.
 ///
-/// Only Home is built in M-PR1. The other destinations exist in the LOCKED mobile
-/// design (Platform/Provider workspace, Activity, Workflows, Settings) and appear
-/// as honest "not in this PR" placeholders — never faked content.
+/// The launcher surfaces all mobile read-projection destinations. Each non-Home destination
+/// consumes the same refs-only HomeProjection; none fabricates detail the read seam does not
+/// carry.
 enum MobileDestination: String, CaseIterable, Identifiable {
   case home
   case platform
@@ -35,8 +35,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     }
   }
 
-  /// Whether this destination is implemented in M-PR1.
-  var isBuilt: Bool { self == .home }
+  var isBuilt: Bool { true }
 }
 
 /// The Command Sheet: a full-screen 2-column grid launcher.
@@ -63,7 +62,7 @@ struct CommandSheet: View {
         }
         .padding(16)
 
-        Text("Read-only mode · more surfaces coming online")
+        Text("Read-only projection")
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)
           .padding(.top, 8)
