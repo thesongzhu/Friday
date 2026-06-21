@@ -142,7 +142,16 @@
       "sessions_memory_extract",
       "sessions_memory_remember",
       "sessions_memory_extraction_retry",
-      "memory_items_create"
+      "memory_items_create",
+      "realtime_ack",
+      "plugins_install",
+      "plugins_enable",
+      "plugins_disable",
+      "plugins_uninstall",
+      "providers_validate",
+      "capabilities_doctor",
+      "providers_routing_pin",
+      "providers_routing_penalty_clear"
     ]
   },
   "classificationValues": [
@@ -4556,6 +4565,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-realtime-routes.test.ts",
       "proof": "The TypeScript checkpoint-ack mutation (friday-realtime-subscription-service.ts ackEvent -> withWriteTransaction checkpointRepo.upsert advances/persists the delivery cursor) has TWO user-triggerable call sites and BOTH fail-close by default/live: (1) the HTTP route src/api/http/routes/friday-realtime-routes.ts realtime.ack -> assertRealtimeTestOracleAllowed(deps) after streamId/seq/epoch validation + isStreamAuthorized + cursor HMAC, immediately before ackEvent (503 TS_RUNTIME_REALTIME_RETIRED); (2) the WS gateway ack frame src/api/realtime/friday-realtime-ws-gateway.ts (createFridayRealtimeWsGateway, served at /v1/realtime/ws) returns a DEGRADED_MODE error frame (TS_RUNTIME_REALTIME_RETIRED) after the same auth/epoch/cursor checks, immediately before ackEvent. Both call sites are gated by the single top-level allowTestOnlyRealtimeExecution flag (threaded into CreateFridayApiRuntimeDeps -> both the inline createFridayRealtimeRoutes and createFridayRealtimeWsGateway). executes_product_logic:false: no checkpoint write occurs in default/live. Legacy behavior is reachable only through explicit allowTestOnlyRealtimeExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned realtime delivery entrypoint when available."
     },
@@ -4756,6 +4766,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-plugin-routes.test.ts",
       "proof": "src/api/http/routes/friday-plugin-routes.ts plugins.install wires default/live to assertPluginTestOracleAllowed(deps) AFTER validateInstallBody (malformed/missing installPath -> 400) and IMMEDIATELY BEFORE the manifest filesystem load (manifestLoader.loadFromDirectory) AND pluginService.installPlugin — so when retired NOTHING is read from the install dir or installed. 503 TS_RUNTIME_PLUGIN_RETIRED (classification fail_closed, replacement rust_owned_plugin_lifecycle_entrypoint_required). Local plugin-registry mutation + manifest FS read, no third-party egress, so fail_closed; GET plugin reads (list/get/versions) stay compat_shim. executes_product_logic:false: no install (and no manifest FS read) in default/live. Flag allowTestOnlyPluginExecution threaded inline (CreateFridayApiRuntimeDeps -> createFridayPluginRoutes) + hub-config (FridayHubConfig -> friday-hub-bootstrap, for the live self-upgrade-plugin e2e which boots a real hub via createFridayDeepProofHubEnv -> real-env). Reachable only through explicit allowTestOnlyPluginExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned plugin install entrypoint when available."
     },
@@ -4765,6 +4776,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-plugin-routes.test.ts",
       "proof": "src/api/http/routes/friday-plugin-routes.ts plugins.enable wires default/live to assertPluginTestOracleAllowed(deps) as the first handler statement, before pluginService.enablePlugin(id) (loads/activates the plugin). 503 TS_RUNTIME_PLUGIN_RETIRED. Local mutation, no egress, fail_closed. executes_product_logic:false. SCOPE NOTE (route-scoped): pluginService.enablePlugin/disablePlugin are ALSO reached by the autonomy lifecycle routes /v1/autonomy/plugins/:id/{review-enable,canary,promote,rollback} (via pluginRuntime=deps.pluginService) — but those are INDEPENDENTLY gated under allowTestOnlyAutonomyLifecycleExecution (#547, TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED), so the enable/disable methods are fail-closed system-wide in production (both flags unset). This surface gates ONLY the /v1/plugins/:id/enable route via allowTestOnlyPluginExecution.",
       "next_action": "Replace the fail-closed response with the Rust-owned plugin enable entrypoint when available."
     },
@@ -4774,6 +4786,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-plugin-routes.test.ts",
       "proof": "src/api/http/routes/friday-plugin-routes.ts plugins.disable wires default/live to assertPluginTestOracleAllowed(deps) as the first handler statement, before pluginService.disablePlugin(id). 503 TS_RUNTIME_PLUGIN_RETIRED. Local mutation, no egress, fail_closed. executes_product_logic:false. SCOPE NOTE (route-scoped): like plugins.enable, pluginService.disablePlugin is ALSO reached by the autonomy lifecycle routes /v1/autonomy/plugins/:id/{...} (pluginRuntime=deps.pluginService), independently gated under allowTestOnlyAutonomyLifecycleExecution (#547) — so disable is fail-closed system-wide in production. This surface gates ONLY the /v1/plugins/:id/disable route.",
       "next_action": "Replace the fail-closed response with the Rust-owned plugin disable entrypoint when available."
     },
@@ -4783,6 +4796,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-plugin-routes.test.ts",
       "proof": "src/api/http/routes/friday-plugin-routes.ts plugins.uninstall wires default/live to assertPluginTestOracleAllowed(deps) as the first handler statement, before pluginService.uninstallPlugin(id, force) (removes the plugin from the registry). 503 TS_RUNTIME_PLUGIN_RETIRED. Local mutation, no egress, fail_closed. executes_product_logic:false. Reachable only through explicit allowTestOnlyPluginExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned plugin uninstall entrypoint when available."
     },
@@ -4801,6 +4815,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/providers/api/friday-provider-routes.test.ts",
       "proof": "src/api/http/routes/friday-provider-routes.ts providers.validate wires default/live to assertProviderProbeTestOracleAllowed(deps) AFTER request validation + the canonical mutation gate (maybeRequireProviderMutationTicket; gate-required profiles 503/CANONICAL_APPROVAL_REQUIRED before the guard) and BEFORE the providerService.validateProvider call. 503 TS_RUNTIME_PROVIDER_PROBE_RETIRED (classification fail_closed, replacement rust_owned_provider_probe_entrypoint_required). fail_closed NOT operator_external_adapter: validateProvider (src/providers/services/friday-provider-service.ts, verified by reading the impl) is a transient key/connectivity PROBE that egresses to the provider (validator.validate({credential,...}) for HTTP, validateCliProvider for CLI) AND persists the resulting validation state to the provider DB (withWriteTransaction) — it is both a probe and a state write, Rust-ownable product logic — same shape as providers.detect; it is not a permanent egress-delivery conduit, and when retired the guard fail-closes BEFORE the validateProvider call so neither the egress nor the state write runs. executes_product_logic:false: no provider validation runs in default/live. Flag allowTestOnlyProviderProbeExecution threaded CreateFridayApiRuntimeDeps -> createFridayProviderRoutes + hub-config (FridayHubConfig -> friday-hub-bootstrap) so mock-env (createMockHubEnv default-true), real-env (live, true), and the full/llm e2e (createFridayHub) set it. OPERATOR/RECONCILIATION NOTE: retiring this route 503s the release-GO closure harnesses scripts/e2e/run-friday-closure.mjs and scripts/e2e/run-friday-external-closure.mjs (both POST /v1/providers/:providerId/validate, throw on non-200) — these are NOT CI gates but need the Rust provider-probe entrypoint (or an operator decision) before release-verify; same shape as the providers.detect reconciliation note. Reachable only through explicit allowTestOnlyProviderProbeExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned provider-probe entrypoint when available; validate is on the release-GO path — coordinate with operator sign-off (see reconciliation note)."
     },
@@ -4810,6 +4825,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/providers/api/friday-provider-routes.test.ts",
       "proof": "src/api/http/routes/friday-provider-routes.ts providers.doctor wires default/live to assertProviderProbeTestOracleAllowed(deps) at the top of the handler, so the 503 fires BEFORE the providerService.doctorProvider call. 503 TS_RUNTIME_PROVIDER_PROBE_RETIRED (classification fail_closed, replacement rust_owned_provider_probe_entrypoint_required). fail_closed NOT operator_external_adapter: doctorProvider (src/providers/services/friday-provider-service.ts buildDoctorReport, verified by reading the impl) computes a transient provider backend/auth/routing-eligibility health diagnostic — read-shaped for HTTP/oauth providers (derived from stored validation state + config), and in the CLI branch it runs a live probeFridayCliSession session probe; it is the same diagnostic surface providers.health.list aggregates per-provider. This is Rust-ownable diagnostic product logic; the guard fail-closes BEFORE the doctorProvider call so no doctor diagnostic runs in default/live. executes_product_logic:false: no provider doctor diagnostic runs in default/live. Flag allowTestOnlyProviderProbeExecution threaded as for providers.validate (runtime + hub-config + mock-env/real-env/e2e). Reachable only through explicit allowTestOnlyProviderProbeExecution test-oracle wiring. OFF-ROUTE CALLER COMPLETENESS (A3 HOLE 3, 2026-06-12): the providerService.doctorProvider/validateProvider METHODS (doctorProvider internally calls validateProvider) are reached by FIVE caller classes (whole-repo grep): (1) THIS route + providers.validate [both route-guarded]; (2) the providers.health.list / capabilities.health.list aggregate compatibility READS (friday-provider-routes.ts listHealthSnapshot/listCapabilityHealthSnapshot) which run the same read-shaped doctorProvider health computation per provider — LIVE, intentionally a bounded compatibility read (see those surfaces' migration_intent); (3) the operator-local CLI `friday provider doctor` (src/cli/friday-cli-auth.ts:330/352/358 → doctorProvider) — LIVE operator-local; (4) the agent provider tool (src/agent/tools/friday-agent-provider-tool.ts:389/511 → doctorProvider/validateProvider) — DARK (runs only inside agentRuntime.executeRun's tool loop, fail-closed by default); (5) the autonomy provider-profile-upgrade-lifecycle canary (src/autonomy/services/friday-provider-profile-upgrade-lifecycle-service.ts:527 → deps.validateProvider) — DARK (canonical-approval-gated + behind the autonomy lifecycle). DECISION: ACCEPT-GATED, NOT method-fenced. A method-head fail-closed guard on doctorProvider/validateProvider would 503 BOTH the live operator-local CLI AND the live providers.health.list aggregate read — degrading two live paths. Per the no-degrade rule (and the #691 precedent that left the operator-local `friday run` CLI out-of-scope), these methods stay LIVE; the off-route reaches are closed where separable at the ROUTE boundary (providers.doctor/providers.validate fail-closed here) and the dark agent-tool/autonomy reaches are already closed upstream by executeRun's fence. The provider-probe METHOD is therefore a documented L1 DEFERRAL (operator-local CLI + live compatibility-read aggregate), to move to the Rust-owned provider-probe entrypoint when it lands.",
       "next_action": "Replace the fail-closed response with the Rust-owned provider-probe entrypoint when available. The doctorProvider/validateProvider METHOD remains live for the operator-local CLI (friday provider doctor) and the providers.health.list aggregate compatibility read — accept-gated L1 deferrals, not method-fence targets (would degrade live paths); they move to the Rust provider-probe entrypoint together."
     },
@@ -4819,6 +4835,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/providers/api/friday-provider-routes.test.ts",
       "proof": "src/api/http/routes/friday-provider-routes.ts capabilities.doctor wires default/live to assertProviderProbeTestOracleAllowed(deps) AFTER body validation (parseCapabilityDoctorProviderIds -> 400 on an explicit empty providerIds list) + the canonical mutation gate (maybeRequireProviderMutationTicket) and BEFORE the providerService.runCapabilityDoctor call. 503 TS_RUNTIME_PROVIDER_PROBE_RETIRED (classification fail_closed, replacement rust_owned_provider_probe_entrypoint_required). fail_closed NOT operator_external_adapter: runCapabilityDoctor (src/providers/services/friday-provider-service.ts, verified by reading the impl) calls validateProvider per provider (egress + DB validation-state write) and runs probeProviderCapability live standardized capability PROBES against the providers, Rust-ownable product logic; when retired the guard fail-closes BEFORE the runCapabilityDoctor call so neither the per-provider validation nor the capability probes run. executes_product_logic:false: no capability probe runs in default/live. Flag allowTestOnlyProviderProbeExecution threaded as for providers.validate. Reachable only through explicit allowTestOnlyProviderProbeExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned provider-probe entrypoint when available."
     },
@@ -4828,6 +4845,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/providers/api/friday-provider-routes.test.ts",
       "proof": "src/api/http/routes/friday-provider-routes.ts providers.routing.pin wires default/live to assertProviderRoutingControlsTestOracleAllowed(deps) AFTER the user-scoped principal check (401 UNAUTHORIZED), body validation (providerId/model/backendKind -> 400 VALIDATION_ERROR), and the canonical mutation gate (maybeRequireProviderMutationTicket) and IMMEDIATELY BEFORE the providerService.pinRoute user-scoped routing-state write. 503 TS_RUNTIME_PROVIDER_ROUTING_CONTROLS_RETIRED (classification fail_closed, replacement rust_owned_provider_routing_controls_entrypoint_required). fail_closed NOT operator_external_adapter: pin writes user-scoped routing state (runtime product logic), Rust-ownable; when retired the guard fail-closes BEFORE the write so no state mutates. executes_product_logic:false: no routing pin write runs in default/live. Flag allowTestOnlyProviderRoutingControlsExecution threaded CreateFridayApiRuntimeDeps -> createFridayProviderRoutes + hub-config so mock-env (default-true), real-env (true), and full-e2e (createFridayHub) set it; mock-journeys e2e Scenario exercises POST /v1/providers/routing/pin through createMockHubEnv. This flag does NOT cover the model-routing config surfaces (GET/PUT /v1/model-routing), which remain operator_external_adapter and are DEFERRED. Reachable only through explicit allowTestOnlyProviderRoutingControlsExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned routing-controls entrypoint when available."
     },
@@ -4837,6 +4855,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/providers/api/friday-provider-routes.test.ts",
       "proof": "src/api/http/routes/friday-provider-routes.ts providers.routing.penalty.clear wires default/live to assertProviderRoutingControlsTestOracleAllowed(deps) AFTER the user-scoped principal check (401 UNAUTHORIZED), body validation (providerId/model/backendKind -> 400 VALIDATION_ERROR), and the canonical mutation gate (maybeRequireProviderMutationTicket) and IMMEDIATELY BEFORE the providerService.clearRoutePenalty user-scoped routing-penalty write. 503 TS_RUNTIME_PROVIDER_ROUTING_CONTROLS_RETIRED (classification fail_closed, replacement rust_owned_provider_routing_controls_entrypoint_required). fail_closed NOT operator_external_adapter: penalty.clear writes user-scoped routing-penalty state (runtime product logic), Rust-ownable; when retired the guard fail-closes BEFORE the write so no state mutates. executes_product_logic:false: no penalty-clear write runs in default/live. Flag allowTestOnlyProviderRoutingControlsExecution threaded as for providers.routing.pin. This flag does NOT cover the model-routing config surfaces (GET/PUT /v1/model-routing), which remain operator_external_adapter and are DEFERRED. Reachable only through explicit allowTestOnlyProviderRoutingControlsExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned routing-controls entrypoint when available."
     },
