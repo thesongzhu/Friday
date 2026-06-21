@@ -93,15 +93,57 @@ public protocol FridayRustReadClient: Sendable {
   /// Fetch the Mission Workbench refs-only projection over the sealed-WS read seam:
   /// handshake → owner-authed request → open the owner-sealed snapshot → typed result.
   func fetchWorkbench() async throws -> WorkbenchSnapshot
+  /// Fetch one run's refs-only readback projection.
+  func fetchRunReadback(runId: String) async throws -> ReadProjectionSnapshot
   /// Fetch one run's owner-gated answer body over the sealed-WS read seam. This is the explicit
   /// body-bearing sibling of `fetchWorkbench()`/RunReadback; implementations must not source the
   /// body from refs-only projections.
   func fetchRunAnswerBody(runId: String) async throws -> RunAnswerBody
+  /// Fetch provider readiness labels through the read-only providers-doctor arm.
+  func fetchProvidersDoctor(probe: String?) async throws -> ReadProjectionSnapshot
+  /// Fetch the owner's routed-session refs.
+  func fetchSessionList() async throws -> ReadProjectionSnapshot
+  /// Fetch one owner-gated routed session transcript. This is a deliberate owner-only body carve-out.
+  func fetchSessionOpen(agentSessionId: String) async throws -> ReadProjectionSnapshot
+  /// Fetch one routed session's refs-only freshness/connectivity state.
+  func fetchSessionLinkState(agentSessionId: String) async throws -> ReadProjectionSnapshot
+  /// Fetch one run's refs-only workspace file-view projection.
+  func fetchRunFileView(runId: String) async throws -> ReadProjectionSnapshot
+  /// Fetch one paused run's refs-only Activity / Needs-Me projection.
+  func fetchActivityNeedsMe(runId: String) async throws -> ReadProjectionSnapshot
 }
 
 public extension FridayRustReadClient {
+  func fetchRunReadback(runId: String) async throws -> ReadProjectionSnapshot {
+    throw FridayReadClientError.transport("run readback unavailable")
+  }
+
   func fetchRunAnswerBody(runId: String) async throws -> RunAnswerBody {
     throw FridayReadClientError.transport("run answer body readback unavailable")
+  }
+
+  func fetchProvidersDoctor(probe: String? = nil) async throws -> ReadProjectionSnapshot {
+    throw FridayReadClientError.transport("providers doctor readback unavailable")
+  }
+
+  func fetchSessionList() async throws -> ReadProjectionSnapshot {
+    throw FridayReadClientError.transport("session list readback unavailable")
+  }
+
+  func fetchSessionOpen(agentSessionId: String) async throws -> ReadProjectionSnapshot {
+    throw FridayReadClientError.transport("session open readback unavailable")
+  }
+
+  func fetchSessionLinkState(agentSessionId: String) async throws -> ReadProjectionSnapshot {
+    throw FridayReadClientError.transport("session link-state readback unavailable")
+  }
+
+  func fetchRunFileView(runId: String) async throws -> ReadProjectionSnapshot {
+    throw FridayReadClientError.transport("run file-view readback unavailable")
+  }
+
+  func fetchActivityNeedsMe(runId: String) async throws -> ReadProjectionSnapshot {
+    throw FridayReadClientError.transport("activity needs-me readback unavailable")
   }
 }
 
@@ -147,78 +189,21 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
   }
 
   public func fetchWorkbench() async throws -> WorkbenchSnapshot {
-    let transport = try makeTransport()
-
-    // (1) HANDSHAKE — cleartext preamble over the raw socket, then WS upgrade.
-    //   client pubkey OUT → server pubkey IN → 64-byte session nonce IN.
-    try transport.writeFrame(keypair.publicKey)
-    let serverPub = try transport.readFrame()
-    guard serverPub.count == FridayCrypto.x25519PublicKeyLen else {
-      throw FridayReadClientError.badServerPubkey
-    }
-    let sessionNonce = try transport.readFrame()
-    // The server emits a 64-byte (hex-of-32-CSPRNG) nonce; the verifier rejects any other
-    // width (`SESSION_NONCE_LEN`). Bind it VERBATIM (do NOT hex-decode to 32 bytes).
-    guard sessionNonce.count == 64 else {
-      throw FridayReadClientError.badSessionNonce
-    }
-    try transport.upgrade()
-
-    // Derive the per-session key (ECDH + HKDF). Same key both ends agree on.
-    let sessionKey: [UInt8]
-    do {
-      sessionKey = try keypair.agree(peerPublicKey: serverPub)
-    } catch {
-      throw FridayReadClientError.transport("session-key agreement failed: \(error)")
+    let response = try sendReadMessage { requestId, authProof in
+      .workbenchProjectionRequest(WorkbenchProjectionRequestWire(
+        missionId: missionId,
+        forwardedPrincipal: forwardedPrincipal,
+        authProof: authProof,
+        requestId: requestId))
     }
 
-    // (2) REQUEST — a WorkbenchProjectionRequest, owner-authed, sealed under the session key.
-    let requestId = newRequestId()
-    let authProof = try FridayCrypto.buildAuthProof(
-      sessionKey: sessionKey,
-      sessionNonce: sessionNonce,
-      sessionAad: readSessionAad,
-      authChallenge: readAuthChallenge,
-      forwardedPrincipal: forwardedPrincipal,
-      boundContext: Array(requestId.utf8)
-    )
-    let request = WorkbenchProjectionRequestWire(
-      missionId: missionId,
-      forwardedPrincipal: forwardedPrincipal,
-      authProof: authProof,
-      requestId: requestId
-    )
-    let reqEnvelope = FridayEnvelope(
-      msgId: "msg-\(requestId)",
-      sentAt: now(),
-      message: .workbenchProjectionRequest(request)
-    )
-    let reqBody = try sealEnvelope(reqEnvelope, sessionKey: sessionKey)
-    try transport.sendMessage(reqBody)
-
-    // (3) RESPONSE — open the sealed envelope, then the owner-sealed snapshot body.
-    let respBody: [UInt8]
-    do {
-      respBody = try transport.recvMessage()
-    } catch {
-      // A read server that fails auth ENDS the session (no snapshot). Surface as fail-closed.
-      throw FridayReadClientError.transport("no response (session ended fail-closed): \(error)")
-    }
-    let respEnvelope = try openEnvelope(respBody, sessionKey: sessionKey)
-
-    switch respEnvelope.message {
+    switch response.message {
     case .workbenchProjectionSnapshot(let snap):
       // The projection JSON is OWNER-SEALED: hex of `[nonce_len][nonce][ciphertext]`,
       // sealed under the session key with the read SESSION_AAD. Only the bound owner can
       // open it. Open → the refs-only projection JSON → typed snapshot.
-      let sealedBytes = try Hex.decode(snap.projectionJson)
-      let innerSealed = try FridayCrypto.decodeSealed(sealedBytes)
-      let projectionBytes: [UInt8]
-      do {
-        projectionBytes = try FridayCrypto.open(key: sessionKey, sealed: innerSealed, aad: readSessionAad)
-      } catch {
-        throw FridayReadClientError.malformedProjection("owner-sealed projection failed to open: \(error)")
-      }
+      let projectionBytes = try openOwnerSealedJSON(
+        snap.projectionJson, sessionKey: response.sessionKey, label: "projection")
       return try WorkbenchSnapshot(
         projectionJSON: Data(projectionBytes),
         generatedAtMs: snap.generatedAtMs
@@ -257,70 +242,70 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "RunAnswerBodyRequest")
     case .runAnswerBodySnapshot:
       throw FridayReadClientError.unexpectedResponse(kind: "RunAnswerBodySnapshot")
+    case .runReadbackRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunReadbackRequest")
+    case .runReadbackSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunReadbackSnapshot")
+    case .providersDoctorRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "ProvidersDoctorRequest")
+    case .providersDoctorSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "ProvidersDoctorSnapshot")
+    case .sessionListRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionListRequest")
+    case .sessionListSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionListSnapshot")
+    case .sessionOpenRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionOpenRequest")
+    case .sessionOpenSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionOpenSnapshot")
+    case .sessionLinkStateRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionLinkStateRequest")
+    case .sessionLinkStateSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionLinkStateSnapshot")
+    case .runFileViewRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunFileViewRequest")
+    case .runFileViewSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunFileViewSnapshot")
+    case .activityNeedsMeRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "ActivityNeedsMeRequest")
+    case .activityNeedsMeSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "ActivityNeedsMeSnapshot")
     case .unsupported(let kind):
       throw FridayReadClientError.unexpectedResponse(kind: kind)
     }
   }
 
+  public func fetchRunReadback(runId: String) async throws -> ReadProjectionSnapshot {
+    try await fetchProjection(
+      makeMessage: { requestId, authProof in
+        .runReadbackRequest(RunReadbackRequestWire(
+          runId: runId,
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof,
+          requestId: requestId))
+      },
+      extract: { message in
+        if case .runReadbackSnapshot(let snap) = message {
+          return (snap.projectionJson, snap.generatedAtMs)
+        }
+        return nil
+      },
+      expected: "RunReadbackSnapshot")
+  }
+
   public func fetchRunAnswerBody(runId: String) async throws -> RunAnswerBody {
-    let transport = try makeTransport()
-
-    try transport.writeFrame(keypair.publicKey)
-    let serverPub = try transport.readFrame()
-    guard serverPub.count == FridayCrypto.x25519PublicKeyLen else {
-      throw FridayReadClientError.badServerPubkey
-    }
-    let sessionNonce = try transport.readFrame()
-    guard sessionNonce.count == 64 else {
-      throw FridayReadClientError.badSessionNonce
-    }
-    try transport.upgrade()
-
-    let sessionKey: [UInt8]
-    do {
-      sessionKey = try keypair.agree(peerPublicKey: serverPub)
-    } catch {
-      throw FridayReadClientError.transport("session-key agreement failed: \(error)")
-    }
-
-    let requestId = newRequestId()
-    let authProof = try FridayCrypto.buildAuthProof(
-      sessionKey: sessionKey,
-      sessionNonce: sessionNonce,
-      sessionAad: readSessionAad,
-      authChallenge: readAuthChallenge,
-      forwardedPrincipal: forwardedPrincipal,
-      boundContext: Array(requestId.utf8)
-    )
-    let reqEnvelope = FridayEnvelope(
-      msgId: "msg-\(requestId)",
-      sentAt: now(),
-      message: .runAnswerBodyRequest(RunAnswerBodyRequestWire(
+    let response = try sendReadMessage { requestId, authProof in
+      .runAnswerBodyRequest(RunAnswerBodyRequestWire(
         runId: runId,
         forwardedPrincipal: forwardedPrincipal,
         authProof: authProof,
         requestId: requestId))
-    )
-    try transport.sendMessage(try sealEnvelope(reqEnvelope, sessionKey: sessionKey))
-
-    let respBody: [UInt8]
-    do {
-      respBody = try transport.recvMessage()
-    } catch {
-      throw FridayReadClientError.transport("no response (session ended fail-closed): \(error)")
     }
-    let respEnvelope = try openEnvelope(respBody, sessionKey: sessionKey)
 
-    switch respEnvelope.message {
+    switch response.message {
     case .runAnswerBodySnapshot(let snap):
-      let sealedBytes = try Hex.decode(snap.answerJson)
-      let innerSealed = try FridayCrypto.decodeSealed(sealedBytes)
-      let answerBytes: [UInt8]
-      do {
-        answerBytes = try FridayCrypto.open(key: sessionKey, sealed: innerSealed, aad: readSessionAad)
-      } catch {
-        throw FridayReadClientError.malformedProjection("owner-sealed answer failed to open: \(error)")
-      }
+      let answerBytes = try openOwnerSealedJSON(
+        snap.answerJson, sessionKey: response.sessionKey, label: "answer")
       return try RunAnswerBody(answerJSON: Data(answerBytes), generatedAtMs: snap.generatedAtMs)
     case .error(let code, let message):
       throw FridayReadClientError.serverError(code: code, message: message)
@@ -352,12 +337,230 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionRequest")
     case .runOutcomeLearningDecisionResult:
       throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionResult")
+    case .runReadbackRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunReadbackRequest")
+    case .runReadbackSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunReadbackSnapshot")
+    case .providersDoctorRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "ProvidersDoctorRequest")
+    case .providersDoctorSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "ProvidersDoctorSnapshot")
+    case .sessionListRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionListRequest")
+    case .sessionListSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionListSnapshot")
+    case .sessionOpenRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionOpenRequest")
+    case .sessionOpenSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionOpenSnapshot")
+    case .sessionLinkStateRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionLinkStateRequest")
+    case .sessionLinkStateSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "SessionLinkStateSnapshot")
+    case .runFileViewRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunFileViewRequest")
+    case .runFileViewSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunFileViewSnapshot")
+    case .activityNeedsMeRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "ActivityNeedsMeRequest")
+    case .activityNeedsMeSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "ActivityNeedsMeSnapshot")
     case .unsupported(let kind):
       throw FridayReadClientError.unexpectedResponse(kind: kind)
     }
   }
 
+  public func fetchProvidersDoctor(probe: String? = nil) async throws -> ReadProjectionSnapshot {
+    try await fetchProjection(
+      makeMessage: { requestId, authProof in
+        .providersDoctorRequest(ProvidersDoctorRequestWire(
+          probe: probe,
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof,
+          requestId: requestId))
+      },
+      extract: { message in
+        if case .providersDoctorSnapshot(let snap) = message {
+          return (snap.projectionJson, snap.generatedAtMs)
+        }
+        return nil
+      },
+      expected: "ProvidersDoctorSnapshot")
+  }
+
+  public func fetchSessionList() async throws -> ReadProjectionSnapshot {
+    try await fetchProjection(
+      makeMessage: { requestId, authProof in
+        .sessionListRequest(SessionListRequestWire(
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof,
+          requestId: requestId))
+      },
+      extract: { message in
+        if case .sessionListSnapshot(let snap) = message {
+          return (snap.projectionJson, snap.generatedAtMs)
+        }
+        return nil
+      },
+      expected: "SessionListSnapshot")
+  }
+
+  public func fetchSessionOpen(agentSessionId: String) async throws -> ReadProjectionSnapshot {
+    try await fetchProjection(
+      makeMessage: { requestId, authProof in
+        .sessionOpenRequest(SessionOpenRequestWire(
+          agentSessionId: agentSessionId,
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof,
+          requestId: requestId))
+      },
+      extract: { message in
+        if case .sessionOpenSnapshot(let snap) = message {
+          return (snap.projectionJson, snap.generatedAtMs)
+        }
+        return nil
+      },
+      expected: "SessionOpenSnapshot")
+  }
+
+  public func fetchSessionLinkState(agentSessionId: String) async throws -> ReadProjectionSnapshot {
+    try await fetchProjection(
+      makeMessage: { requestId, authProof in
+        .sessionLinkStateRequest(SessionLinkStateRequestWire(
+          agentSessionId: agentSessionId,
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof,
+          requestId: requestId))
+      },
+      extract: { message in
+        if case .sessionLinkStateSnapshot(let snap) = message {
+          return (snap.projectionJson, snap.generatedAtMs)
+        }
+        return nil
+      },
+      expected: "SessionLinkStateSnapshot")
+  }
+
+  public func fetchRunFileView(runId: String) async throws -> ReadProjectionSnapshot {
+    try await fetchProjection(
+      makeMessage: { requestId, authProof in
+        .runFileViewRequest(RunFileViewRequestWire(
+          runId: runId,
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof,
+          requestId: requestId))
+      },
+      extract: { message in
+        if case .runFileViewSnapshot(let snap) = message {
+          return (snap.projectionJson, snap.generatedAtMs)
+        }
+        return nil
+      },
+      expected: "RunFileViewSnapshot")
+  }
+
+  public func fetchActivityNeedsMe(runId: String) async throws -> ReadProjectionSnapshot {
+    try await fetchProjection(
+      makeMessage: { requestId, authProof in
+        .activityNeedsMeRequest(ActivityNeedsMeRequestWire(
+          runId: runId,
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof,
+          requestId: requestId))
+      },
+      extract: { message in
+        if case .activityNeedsMeSnapshot(let snap) = message {
+          return (snap.projectionJson, snap.generatedAtMs)
+        }
+        return nil
+      },
+      expected: "ActivityNeedsMeSnapshot")
+  }
+
   // MARK: Envelope seal/open over the session key (transport layer)
+
+  private struct ReadResponse {
+    let message: FridayMessage
+    let sessionKey: [UInt8]
+  }
+
+  private func fetchProjection(
+    makeMessage: (String, [UInt8]) -> FridayMessage,
+    extract: (FridayMessage) -> (projectionJson: String, generatedAtMs: Int64)?,
+    expected: String
+  ) async throws -> ReadProjectionSnapshot {
+    let response = try sendReadMessage(makeMessage)
+    if case .error(let code, let message) = response.message {
+      throw FridayReadClientError.serverError(code: code, message: message)
+    }
+    guard let snapshot = extract(response.message) else {
+      throw FridayReadClientError.unexpectedResponse(kind: expected)
+    }
+    let projectionBytes = try openOwnerSealedJSON(
+      snapshot.projectionJson, sessionKey: response.sessionKey, label: "projection")
+    return try ReadProjectionSnapshot(
+      projectionJSON: Data(projectionBytes),
+      generatedAtMs: snapshot.generatedAtMs)
+  }
+
+  private func sendReadMessage(_ makeMessage: (String, [UInt8]) -> FridayMessage) throws -> ReadResponse {
+    let transport = try makeTransport()
+
+    try transport.writeFrame(keypair.publicKey)
+    let serverPub = try transport.readFrame()
+    guard serverPub.count == FridayCrypto.x25519PublicKeyLen else {
+      throw FridayReadClientError.badServerPubkey
+    }
+    let sessionNonce = try transport.readFrame()
+    guard sessionNonce.count == 64 else {
+      throw FridayReadClientError.badSessionNonce
+    }
+    try transport.upgrade()
+
+    let sessionKey: [UInt8]
+    do {
+      sessionKey = try keypair.agree(peerPublicKey: serverPub)
+    } catch {
+      throw FridayReadClientError.transport("session-key agreement failed: \(error)")
+    }
+
+    let requestId = newRequestId()
+    let authProof = try FridayCrypto.buildAuthProof(
+      sessionKey: sessionKey,
+      sessionNonce: sessionNonce,
+      sessionAad: readSessionAad,
+      authChallenge: readAuthChallenge,
+      forwardedPrincipal: forwardedPrincipal,
+      boundContext: Array(requestId.utf8))
+    let reqEnvelope = FridayEnvelope(
+      msgId: "msg-\(requestId)",
+      sentAt: now(),
+      message: makeMessage(requestId, authProof))
+    try transport.sendMessage(try sealEnvelope(reqEnvelope, sessionKey: sessionKey))
+
+    let respBody: [UInt8]
+    do {
+      respBody = try transport.recvMessage()
+    } catch {
+      throw FridayReadClientError.transport("no response (session ended fail-closed): \(error)")
+    }
+    let respEnvelope = try openEnvelope(respBody, sessionKey: sessionKey)
+    return ReadResponse(message: respEnvelope.message, sessionKey: sessionKey)
+  }
+
+  private func openOwnerSealedJSON(
+    _ sealedHex: String,
+    sessionKey: [UInt8],
+    label: String
+  ) throws -> [UInt8] {
+    let sealedBytes = try Hex.decode(sealedHex)
+    let innerSealed = try FridayCrypto.decodeSealed(sealedBytes)
+    do {
+      return try FridayCrypto.open(key: sessionKey, sealed: innerSealed, aad: readSessionAad)
+    } catch {
+      throw FridayReadClientError.malformedProjection("owner-sealed \(label) failed to open: \(error)")
+    }
+  }
 
   /// Serialize + seal an envelope into a WS Binary body. Mirrors
   /// `friday_transport::seal_envelope`: JSON → `seal(key, json, aad)` → `encodeSealed`.

@@ -89,7 +89,11 @@ final class ReadClientWiringTests: XCTestCase {
       let reqPrincipal: String
       let reqId: String
       let authProof: [UInt8]
-      enum ResponseKind { case workbench, answerBody(runId: String) }
+      enum ResponseKind {
+        case workbench
+        case projection((String, String, Int64) -> FridayMessage)
+        case answerBody(runId: String)
+      }
       let responseKind: ResponseKind
       switch env.message {
       case .workbenchProjectionRequest(let req):
@@ -97,11 +101,67 @@ final class ReadClientWiringTests: XCTestCase {
         reqId = req.requestId
         authProof = req.authProof
         responseKind = .workbench
+      case .runReadbackRequest(let req):
+        reqPrincipal = req.forwardedPrincipal
+        reqId = req.requestId
+        authProof = req.authProof
+        responseKind = .projection { requestId, sealedHex, generatedAtMs in
+          .runReadbackSnapshot(RunReadbackSnapshotWire(
+            requestId: requestId, projectionJson: sealedHex, generatedAtMs: generatedAtMs))
+        }
       case .runAnswerBodyRequest(let req):
         reqPrincipal = req.forwardedPrincipal
         reqId = req.requestId
         authProof = req.authProof
         responseKind = .answerBody(runId: req.runId)
+      case .providersDoctorRequest(let req):
+        reqPrincipal = req.forwardedPrincipal
+        reqId = req.requestId
+        authProof = req.authProof
+        responseKind = .projection { requestId, sealedHex, generatedAtMs in
+          .providersDoctorSnapshot(ProvidersDoctorSnapshotWire(
+            requestId: requestId, projectionJson: sealedHex, generatedAtMs: generatedAtMs))
+        }
+      case .sessionListRequest(let req):
+        reqPrincipal = req.forwardedPrincipal
+        reqId = req.requestId
+        authProof = req.authProof
+        responseKind = .projection { requestId, sealedHex, generatedAtMs in
+          .sessionListSnapshot(SessionListSnapshotWire(
+            requestId: requestId, projectionJson: sealedHex, generatedAtMs: generatedAtMs))
+        }
+      case .sessionOpenRequest(let req):
+        reqPrincipal = req.forwardedPrincipal
+        reqId = req.requestId
+        authProof = req.authProof
+        responseKind = .projection { requestId, sealedHex, generatedAtMs in
+          .sessionOpenSnapshot(SessionOpenSnapshotWire(
+            requestId: requestId, projectionJson: sealedHex, generatedAtMs: generatedAtMs))
+        }
+      case .sessionLinkStateRequest(let req):
+        reqPrincipal = req.forwardedPrincipal
+        reqId = req.requestId
+        authProof = req.authProof
+        responseKind = .projection { requestId, sealedHex, generatedAtMs in
+          .sessionLinkStateSnapshot(SessionLinkStateSnapshotWire(
+            requestId: requestId, projectionJson: sealedHex, generatedAtMs: generatedAtMs))
+        }
+      case .runFileViewRequest(let req):
+        reqPrincipal = req.forwardedPrincipal
+        reqId = req.requestId
+        authProof = req.authProof
+        responseKind = .projection { requestId, sealedHex, generatedAtMs in
+          .runFileViewSnapshot(RunFileViewSnapshotWire(
+            requestId: requestId, projectionJson: sealedHex, generatedAtMs: generatedAtMs))
+        }
+      case .activityNeedsMeRequest(let req):
+        reqPrincipal = req.forwardedPrincipal
+        reqId = req.requestId
+        authProof = req.authProof
+        responseKind = .projection { requestId, sealedHex, generatedAtMs in
+          .activityNeedsMeSnapshot(ActivityNeedsMeSnapshotWire(
+            requestId: requestId, projectionJson: sealedHex, generatedAtMs: generatedAtMs))
+        }
       default:
         throw FridayReadClientError.transport("expected a read projection request")
       }
@@ -136,6 +196,9 @@ final class ReadClientWiringTests: XCTestCase {
           projectionJson: "",
           generatedAtMs: 1_780_640_000_000
         ))
+      case .projection(let build):
+        plaintext = projectionJSON
+        responseMessage = build(reqId, "", 1_780_640_000_000)
       case .answerBody(let runId):
         if answerJSON.isEmpty {
           plaintext = Array("""
@@ -158,6 +221,41 @@ final class ReadClientWiringTests: XCTestCase {
       switch responseMessage {
       case .workbenchProjectionSnapshot(let snap):
         finalMessage = .workbenchProjectionSnapshot(WorkbenchProjectionSnapshotWire(
+          requestId: snap.requestId,
+          projectionJson: sealedHex,
+          generatedAtMs: snap.generatedAtMs))
+      case .runReadbackSnapshot(let snap):
+        finalMessage = .runReadbackSnapshot(RunReadbackSnapshotWire(
+          requestId: snap.requestId,
+          projectionJson: sealedHex,
+          generatedAtMs: snap.generatedAtMs))
+      case .providersDoctorSnapshot(let snap):
+        finalMessage = .providersDoctorSnapshot(ProvidersDoctorSnapshotWire(
+          requestId: snap.requestId,
+          projectionJson: sealedHex,
+          generatedAtMs: snap.generatedAtMs))
+      case .sessionListSnapshot(let snap):
+        finalMessage = .sessionListSnapshot(SessionListSnapshotWire(
+          requestId: snap.requestId,
+          projectionJson: sealedHex,
+          generatedAtMs: snap.generatedAtMs))
+      case .sessionOpenSnapshot(let snap):
+        finalMessage = .sessionOpenSnapshot(SessionOpenSnapshotWire(
+          requestId: snap.requestId,
+          projectionJson: sealedHex,
+          generatedAtMs: snap.generatedAtMs))
+      case .sessionLinkStateSnapshot(let snap):
+        finalMessage = .sessionLinkStateSnapshot(SessionLinkStateSnapshotWire(
+          requestId: snap.requestId,
+          projectionJson: sealedHex,
+          generatedAtMs: snap.generatedAtMs))
+      case .runFileViewSnapshot(let snap):
+        finalMessage = .runFileViewSnapshot(RunFileViewSnapshotWire(
+          requestId: snap.requestId,
+          projectionJson: sealedHex,
+          generatedAtMs: snap.generatedAtMs))
+      case .activityNeedsMeSnapshot(let snap):
+        finalMessage = .activityNeedsMeSnapshot(ActivityNeedsMeSnapshotWire(
           requestId: snap.requestId,
           projectionJson: sealedHex,
           generatedAtMs: snap.generatedAtMs))
@@ -271,6 +369,64 @@ final class ReadClientWiringTests: XCTestCase {
     XCTAssertEqual(body.answerLen, 50)
     XCTAssertEqual(body.truthLabel, "rust_wired_owner_gated")
     XCTAssertEqual(transport.processed, 1)
+  }
+
+  func testFetchAdditionalReadArms_decodeOwnerSealedProjection() async throws {
+    func makeClient(requestId: String) throws -> (SealedWSReadClient, EmulatedRustServerTransport) {
+      let clientKp = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(B1KAT.k1Agree.clientSecret))
+      let serverKp = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(B1KAT.k1Agree.serverSecret))
+      let nonce = try Hex.decode(B1KAT.k3Auth.sessionNonce)
+      let transport = EmulatedRustServerTransport(
+        serverKeypair: serverKp,
+        sessionNonce: nonce,
+        peerAllowlist: [clientKp.publicKey],
+        ownerAllowlist: [owner],
+        projectionJSON: Array(Self.refsOnlyProjection.utf8)
+      )
+      let client = SealedWSReadClient(
+        keypair: clientKp,
+        forwardedPrincipal: owner,
+        makeTransport: { transport },
+        now: { 1000 },
+        newRequestId: { requestId }
+      )
+      return (client, transport)
+    }
+
+    let runReadback = try makeClient(requestId: "req-run-readback")
+    let runReadbackSnapshot = try await runReadback.0.fetchRunReadback(runId: "run-1")
+    XCTAssertEqual(runReadbackSnapshot.raw["missionId"] as? String, "mission_read_seam_probe_20260611")
+    XCTAssertEqual(runReadback.1.processed, 1)
+
+    let providersDoctor = try makeClient(requestId: "req-providers")
+    let providersDoctorSnapshot = try await providersDoctor.0.fetchProvidersDoctor(probe: "both")
+    XCTAssertEqual(providersDoctorSnapshot.raw["missionId"] as? String, "mission_read_seam_probe_20260611")
+    XCTAssertEqual(providersDoctor.1.processed, 1)
+
+    let sessionList = try makeClient(requestId: "req-session-list")
+    let sessionListSnapshot = try await sessionList.0.fetchSessionList()
+    XCTAssertEqual(sessionListSnapshot.raw["missionId"] as? String, "mission_read_seam_probe_20260611")
+    XCTAssertEqual(sessionList.1.processed, 1)
+
+    let sessionOpen = try makeClient(requestId: "req-session-open")
+    let sessionOpenSnapshot = try await sessionOpen.0.fetchSessionOpen(agentSessionId: "session-1")
+    XCTAssertEqual(sessionOpenSnapshot.raw["missionId"] as? String, "mission_read_seam_probe_20260611")
+    XCTAssertEqual(sessionOpen.1.processed, 1)
+
+    let linkState = try makeClient(requestId: "req-link-state")
+    let linkStateSnapshot = try await linkState.0.fetchSessionLinkState(agentSessionId: "session-1")
+    XCTAssertEqual(linkStateSnapshot.raw["missionId"] as? String, "mission_read_seam_probe_20260611")
+    XCTAssertEqual(linkState.1.processed, 1)
+
+    let fileView = try makeClient(requestId: "req-file-view")
+    let fileViewSnapshot = try await fileView.0.fetchRunFileView(runId: "run-1")
+    XCTAssertEqual(fileViewSnapshot.raw["missionId"] as? String, "mission_read_seam_probe_20260611")
+    XCTAssertEqual(fileView.1.processed, 1)
+
+    let needsMe = try makeClient(requestId: "req-needs-me")
+    let needsMeSnapshot = try await needsMe.0.fetchActivityNeedsMe(runId: "run-1")
+    XCTAssertEqual(needsMeSnapshot.raw["missionId"] as? String, "mission_read_seam_probe_20260611")
+    XCTAssertEqual(needsMe.1.processed, 1)
   }
 
   func testFetchWorkbench_mismatchedPrincipal_endsFailClosed() async throws {
