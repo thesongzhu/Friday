@@ -3861,6 +3861,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.intents.execute to TS_RUNTIME_SYSTEM_INTENT_RETIRED after the idempotency-key validation and immediately before the TypeScript system intent execution (canonical-gate eval, control-lease acquisition, companion-bridge local desktop control); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemIntentExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system intent execution entrypoint when available."
     },
@@ -3874,6 +3875,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.approvals.update to TS_RUNTIME_SYSTEM_APPROVAL_RETIRED after the idempotency-key validation and immediately before the TypeScript approval-rule mutation deps.approvals.update (the live hub wires this dep to a canonical-gate stub); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemApprovalExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system approval-rule entrypoint when available."
     },
@@ -3887,6 +3889,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.remote.devices.register to TS_RUNTIME_SYSTEM_REMOTE_RETIRED after the idempotency-key validation and immediately before the TypeScript remote-device registration write; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemRemoteExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system remote-access (device/session/WebAuthn) entrypoint when available."
     },
@@ -3900,6 +3903,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.remote.devices.delete to TS_RUNTIME_SYSTEM_REMOTE_RETIRED after the deviceId path-param extraction and immediately before the TypeScript remote-device revoke write; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemRemoteExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system remote-access (device/session/WebAuthn) entrypoint when available."
     },
@@ -3913,6 +3917,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.remote.devices.passkey.delete to TS_RUNTIME_SYSTEM_REMOTE_RETIRED after the deviceId path-param extraction and immediately before the TypeScript remote-device passkey clear write; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemRemoteExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system remote-access (device/session/WebAuthn) entrypoint when available."
     },
@@ -3926,6 +3931,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.remote.auth.register.options to TS_RUNTIME_SYSTEM_REMOTE_RETIRED after the idempotency-key validation and immediately before the TypeScript WebAuthn registration challenge-write (beginRegistration); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemRemoteExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system remote-access (device/session/WebAuthn) entrypoint when available."
     },
@@ -3939,6 +3945,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.remote.auth.register.verify to TS_RUNTIME_SYSTEM_REMOTE_RETIRED after the idempotency-key validation and immediately before the TypeScript WebAuthn registration verification (passkey upsert + device credential write); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemRemoteExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system remote-access (device/session/WebAuthn) entrypoint when available."
     },
@@ -3952,6 +3959,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.remote.auth.assert.options to TS_RUNTIME_SYSTEM_REMOTE_RETIRED after the idempotency-key validation and immediately before the TypeScript WebAuthn assertion challenge-write (beginAssertion); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemRemoteExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system remote-access (device/session/WebAuthn) entrypoint when available."
     },
@@ -3965,6 +3973,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.remote.auth.assert.verify to TS_RUNTIME_SYSTEM_REMOTE_RETIRED after the idempotency-key validation and immediately before the TypeScript WebAuthn assertion verification (assertion grant + token mint); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemRemoteExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system remote-access (device/session/WebAuthn) entrypoint when available."
     },
@@ -3978,6 +3987,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.remote.sessions.create to TS_RUNTIME_SYSTEM_REMOTE_RETIRED after the idempotency-key validation and immediately before the TypeScript remote-session open write; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemRemoteExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system remote-access (device/session/WebAuthn) entrypoint when available."
     },
@@ -3991,6 +4001,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.remote.sessions.heartbeat to TS_RUNTIME_SYSTEM_REMOTE_RETIRED after the idempotency-key validation and immediately before the TypeScript remote-session liveness write; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemRemoteExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system remote-access (device/session/WebAuthn) entrypoint when available."
     },
@@ -4004,6 +4015,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-system-routes.test.ts",
       "proof": "src/api/http/routes/friday-system-routes.ts fail-closes default/live system.remote.sessions.delete to TS_RUNTIME_SYSTEM_REMOTE_RETIRED after the sessionId path-param extraction and immediately before the TypeScript remote-session close write; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySystemRemoteExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned system remote-access (device/session/WebAuthn) entrypoint when available."
     },
