@@ -2524,6 +2524,13 @@
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.create) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy product logic, persistence, or enforcement; no durable storage/evaluator/audit exists. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior). The route owns no policy truth.",
       "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "propagates default/live bootstrap proof-pending policy 503s for every policy route",
+        "desktop.policies.create",
+        "DESKTOP_POLICY_NOT_PERSISTED",
+        "details: { status: \"proof_pending\" }",
+        "expect(deps.policies[testCase.key]).toHaveBeenCalledTimes(1)"
+      ],
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy create/persist/enforce entrypoint when available."
     },
     {
@@ -2537,6 +2544,13 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "propagates default/live bootstrap proof-pending policy 503s for every policy route",
+        "desktop.policies.get",
+        "DESKTOP_POLICY_NOT_PERSISTED",
+        "details: { status: \"proof_pending\" }",
+        "expect(deps.policies[testCase.key]).toHaveBeenCalledTimes(1)"
+      ],
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.get) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy read; no durable policy store exists so there is no redactable projection. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy read projection when available."
     },
@@ -2551,6 +2565,13 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "propagates default/live bootstrap proof-pending policy 503s for every policy route",
+        "desktop.policies.list",
+        "DESKTOP_POLICY_NOT_PERSISTED",
+        "details: { status: \"proof_pending\" }",
+        "expect(deps.policies[testCase.key]).toHaveBeenCalledTimes(1)"
+      ],
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.list) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy read; no durable policy store exists so there is no redactable projection. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy list projection when available."
     },
@@ -2566,6 +2587,13 @@
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.update) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy mutation; no durable storage/evaluator/audit exists. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
       "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "propagates default/live bootstrap proof-pending policy 503s for every policy route",
+        "desktop.policies.update",
+        "DESKTOP_POLICY_NOT_PERSISTED",
+        "details: { status: \"proof_pending\" }",
+        "expect(deps.policies[testCase.key]).toHaveBeenCalledTimes(1)"
+      ],
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy update/persist/enforce entrypoint when available."
     },
     {
@@ -2580,6 +2608,13 @@
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.delete) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy mutation. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
       "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "propagates default/live bootstrap proof-pending policy 503s for every policy route",
+        "desktop.policies.delete",
+        "DESKTOP_POLICY_NOT_PERSISTED",
+        "details: { status: \"proof_pending\" }",
+        "expect(deps.policies[testCase.key]).toHaveBeenCalledTimes(1)"
+      ],
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy delete entrypoint when available."
     },
     {
@@ -2594,6 +2629,13 @@
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.addRule) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy rule mutation. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
       "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "propagates default/live bootstrap proof-pending policy 503s for every policy route",
+        "desktop.policies.rules.create",
+        "DESKTOP_POLICY_NOT_PERSISTED",
+        "details: { status: \"proof_pending\" }",
+        "expect(deps.policies[testCase.key]).toHaveBeenCalledTimes(1)"
+      ],
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy rule create entrypoint when available."
     },
     {
@@ -2608,6 +2650,13 @@
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.removeRule) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy rule mutation. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
       "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "propagates default/live bootstrap proof-pending policy 503s for every policy route",
+        "desktop.policies.rules.delete",
+        "DESKTOP_POLICY_NOT_PERSISTED",
+        "details: { status: \"proof_pending\" }",
+        "expect(deps.policies[testCase.key]).toHaveBeenCalledTimes(1)"
+      ],
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy rule delete entrypoint when available."
     },
     {
@@ -2622,6 +2671,13 @@
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.permissions.respond) throws DESKTOP_PERMISSION_DECISION_NOT_PERSISTED (503, status proof_pending) before any permission decision is recorded or enforced; prompt decisions are not durably stored. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
       "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "propagates default/live bootstrap proof-pending permission decision 503s",
+        "desktop.permissions.respond",
+        "DESKTOP_PERMISSION_DECISION_NOT_PERSISTED",
+        "details: { status: \"proof_pending\" }",
+        "expect(deps.permissions[testCase.key]).toHaveBeenCalledTimes(1)"
+      ],
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop permission decision entrypoint when available."
     },
     {
@@ -2635,6 +2691,13 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "propagates default/live bootstrap proof-pending permission decision 503s",
+        "desktop.permissions.decisions.list",
+        "DESKTOP_PERMISSION_DECISION_NOT_PERSISTED",
+        "details: { status: \"proof_pending\" }",
+        "expect(deps.permissions[testCase.key]).toHaveBeenCalledTimes(1)"
+      ],
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.permissions.listDecisions) throws DESKTOP_PERMISSION_DECISION_NOT_PERSISTED (503, status proof_pending) before any read; no decisions log is wired so there is no redactable projection. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop permission decision log projection when available."
     },

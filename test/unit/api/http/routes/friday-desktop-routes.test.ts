@@ -474,48 +474,75 @@ describe("createFridayDesktopRoutes", () => {
       expect(deps.policies.removeRule).toHaveBeenCalledWith("pol-1", "rule-1", { etag: "e1", idempotencyKey: "k14" });
     });
 
-    it("propagates default/live bootstrap proof-pending policy 503s", async () => {
-      const deps = makeDeps({
-        policies: {
-          create: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
-          get: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
-          list: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
-          update: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
-          delete: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
-          addRule: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
-          removeRule: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+    it("propagates default/live bootstrap proof-pending policy 503s for every policy route", async () => {
+      const policyKeys = ["create", "get", "list", "update", "delete", "addRule", "removeRule"] as const;
+      const cases = [
+        {
+          operationId: "desktop.policies.create",
+          key: "create",
+          ctx: makeCtx({ body: { name: "Safe", rules: [], idempotencyKey: "k-pol-create" } }),
         },
-      });
-      const routes = createFridayDesktopRoutes(deps);
-
-      await expect(
-        findRoute(routes, "desktop.policies.create").handler(
-          makeCtx({ body: { name: "Safe", rules: [], idempotencyKey: "k-pol-create" } }),
-        ),
-      ).rejects.toMatchObject({ code: "DESKTOP_POLICY_NOT_PERSISTED", httpStatus: 503 });
-      await expect(
-        findRoute(routes, "desktop.policies.update").handler(
-          makeCtx({ params: { policyId: "pol-1" }, body: { etag: "e1", idempotencyKey: "k-pol-update" } }),
-        ),
-      ).rejects.toMatchObject({ code: "DESKTOP_POLICY_NOT_PERSISTED", httpStatus: 503 });
-      await expect(
-        findRoute(routes, "desktop.policies.delete").handler(
-          makeCtx({ params: { policyId: "pol-1" }, body: { etag: "e1", idempotencyKey: "k-pol-delete" } }),
-        ),
-      ).rejects.toMatchObject({ code: "DESKTOP_POLICY_NOT_PERSISTED", httpStatus: 503 });
-      await expect(
-        findRoute(routes, "desktop.policies.rules.create").handler(
-          makeCtx({
+        {
+          operationId: "desktop.policies.get",
+          key: "get",
+          ctx: makeCtx({ params: { policyId: "pol-1" } }),
+        },
+        {
+          operationId: "desktop.policies.list",
+          key: "list",
+          ctx: makeCtx({ query: { limit: 20 } }),
+        },
+        {
+          operationId: "desktop.policies.update",
+          key: "update",
+          ctx: makeCtx({ params: { policyId: "pol-1" }, body: { etag: "e1", idempotencyKey: "k-pol-update" } }),
+        },
+        {
+          operationId: "desktop.policies.delete",
+          key: "delete",
+          ctx: makeCtx({ params: { policyId: "pol-1" }, body: { etag: "e1", idempotencyKey: "k-pol-delete" } }),
+        },
+        {
+          operationId: "desktop.policies.rules.create",
+          key: "addRule",
+          ctx: makeCtx({
             params: { policyId: "pol-1" },
             body: { rule: { actionType: "click", appFilter: "*", riskLevel: "low", decision: "allow" }, etag: "e1", idempotencyKey: "k-pol-rule-create" },
           }),
-        ),
-      ).rejects.toMatchObject({ code: "DESKTOP_POLICY_NOT_PERSISTED", httpStatus: 503 });
-      await expect(
-        findRoute(routes, "desktop.policies.rules.delete").handler(
-          makeCtx({ params: { policyId: "pol-1", ruleId: "rule-1" }, body: { etag: "e1", idempotencyKey: "k-pol-rule-delete" } }),
-        ),
-      ).rejects.toMatchObject({ code: "DESKTOP_POLICY_NOT_PERSISTED", httpStatus: 503 });
+        },
+        {
+          operationId: "desktop.policies.rules.delete",
+          key: "removeRule",
+          ctx: makeCtx({ params: { policyId: "pol-1", ruleId: "rule-1" }, body: { etag: "e1", idempotencyKey: "k-pol-rule-delete" } }),
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        const deps = makeDeps({
+          policies: {
+            create: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+            get: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+            list: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+            update: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+            delete: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+            addRule: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+            removeRule: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+          },
+        });
+        const route = findRoute(createFridayDesktopRoutes(deps), testCase.operationId);
+
+        await expect(route.handler(testCase.ctx)).rejects.toMatchObject({
+          code: "DESKTOP_POLICY_NOT_PERSISTED",
+          httpStatus: 503,
+          details: { status: "proof_pending" },
+        });
+        expect(deps.policies[testCase.key]).toHaveBeenCalledTimes(1);
+        for (const key of policyKeys) {
+          if (key !== testCase.key) {
+            expect(deps.policies[key]).not.toHaveBeenCalled();
+          }
+        }
+      }
     });
   });
 
@@ -564,23 +591,39 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("propagates default/live bootstrap proof-pending permission decision 503s", async () => {
-      const deps = makeDeps({
-        permissions: {
-          list: vi.fn().mockResolvedValue({ permissions: [], platform: "darwin" }),
-          respond: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_PERMISSION_DECISION_NOT_PERSISTED"); }),
-          listDecisions: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_PERMISSION_DECISION_NOT_PERSISTED"); }),
+      const cases = [
+        {
+          operationId: "desktop.permissions.respond",
+          key: "respond",
+          ctx: makeCtx({ params: { promptId: "p-1" }, body: { decision: "allow_once", idempotencyKey: "k-perm-respond" } }),
         },
-      });
-      const routes = createFridayDesktopRoutes(deps);
+        {
+          operationId: "desktop.permissions.decisions.list",
+          key: "listDecisions",
+          ctx: makeCtx({ query: { actionType: "click" } }),
+        },
+      ] as const;
 
-      await expect(
-        findRoute(routes, "desktop.permissions.respond").handler(
-          makeCtx({ params: { promptId: "p-1" }, body: { decision: "allow_once", idempotencyKey: "k-perm-respond" } }),
-        ),
-      ).rejects.toMatchObject({ code: "DESKTOP_PERMISSION_DECISION_NOT_PERSISTED", httpStatus: 503 });
-      await expect(
-        findRoute(routes, "desktop.permissions.decisions.list").handler(makeCtx({ query: { actionType: "click" } })),
-      ).rejects.toMatchObject({ code: "DESKTOP_PERMISSION_DECISION_NOT_PERSISTED", httpStatus: 503 });
+      for (const testCase of cases) {
+        const deps = makeDeps({
+          permissions: {
+            list: vi.fn().mockResolvedValue({ permissions: [], platform: "darwin" }),
+            respond: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_PERMISSION_DECISION_NOT_PERSISTED"); }),
+            listDecisions: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_PERMISSION_DECISION_NOT_PERSISTED"); }),
+          },
+        });
+        const route = findRoute(createFridayDesktopRoutes(deps), testCase.operationId);
+
+        await expect(route.handler(testCase.ctx)).rejects.toMatchObject({
+          code: "DESKTOP_PERMISSION_DECISION_NOT_PERSISTED",
+          httpStatus: 503,
+          details: { status: "proof_pending" },
+        });
+        expect(deps.permissions[testCase.key]).toHaveBeenCalledTimes(1);
+        expect(deps.permissions.list).not.toHaveBeenCalled();
+        const otherKey = testCase.key === "respond" ? "listDecisions" : "respond";
+        expect(deps.permissions[otherKey]).not.toHaveBeenCalled();
+      }
     });
   });
 
