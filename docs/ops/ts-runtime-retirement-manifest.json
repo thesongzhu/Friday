@@ -4377,6 +4377,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-cross-border-pack-routes.test.ts",
       "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.profile.put to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId and the hoisted profile-body validation, immediately before the TypeScript upsertProfile write (friday-cross-border-pack-service.ts writePreference PROFILE_KEY); legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
     },
@@ -4390,6 +4391,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-cross-border-pack-routes.test.ts",
       "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.import.post to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId and the hoisted batch-body validation, immediately before the TypeScript importBatch write (friday-cross-border-pack-service.ts writePreference IMPORTS_KEY). publicLinks/fileNames/rawText are RECORDED locally, never fetched or sent — no third-party egress. Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
     },
@@ -4403,6 +4405,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-cross-border-pack-routes.test.ts",
       "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.workflow.presets.apply to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId and the hoisted preset-body validation (timezone), immediately before the TypeScript applyWorkflowPreset write (friday-cross-border-pack-service.ts managed-workflow create/deployDraft + writeWorkflowAutomations — product-internal workflow-runtime orchestration, not a third-party send). Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
     },
@@ -4416,6 +4419,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-cross-border-pack-routes.test.ts",
       "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.workflow.presets.toggle to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId, the enabled-boolean check, and the hoisted workflowId param validation, immediately before the TypeScript setWorkflowPresetEnabled write (friday-cross-border-pack-service.ts cron trigger setRegistrationEnabled + writeWorkflowAutomations). Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
     },
@@ -4429,6 +4433,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-cross-border-pack-routes.test.ts",
       "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.run.evidence.capture to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId and the hoisted evidence-body validation, immediately before the TypeScript captureRunEvidence write (friday-cross-border-pack-service.ts writePreference RUN_EVIDENCE_KEY + profile adaptationState update). Records locally, no external egress. Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
     },
@@ -4442,6 +4447,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-cross-border-pack-routes.test.ts",
       "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.import.stale to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId and the hoisted importBatchId param validation, immediately before the TypeScript markImportStale write (friday-cross-border-pack-service.ts writePreference IMPORTS_KEY). Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
     },
@@ -4455,6 +4461,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-cross-border-pack-routes.test.ts",
       "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.workflows.disable.all to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId, immediately before the TypeScript disableAllWorkflows write (friday-cross-border-pack-service.ts disable cron trigger registrations + writeWorkflowAutomations). Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
     },
@@ -4507,6 +4514,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-diagnosis-routes.test.ts",
       "proof": "src/api/http/routes/friday-diagnosis-routes.ts fail-closes default/live diagnosis.incidents.manual.resolve to TS_RUNTIME_DIAGNOSIS_RETIRED after requireUserId and the required-fix validation, immediately before the TypeScript manualResolveIncident write (friday-self-healing-api-service.ts withWriteTransaction: actionRepo.markRejected, lessonRepo.upsertByFingerprint, incidentRepo.updateStatus). Legacy behavior is reachable only through explicit allowTestOnlyDiagnosisExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned diagnosis entrypoint when available."
     },
@@ -4520,6 +4528,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-diagnosis-routes.test.ts",
       "proof": "src/api/http/routes/friday-diagnosis-routes.ts fail-closes default/live diagnosis.lessons.enabled.set to TS_RUNTIME_DIAGNOSIS_RETIRED after requireUserId and the enabled-boolean validation, immediately before the TypeScript setLessonEnabled write (friday-self-healing-api-service.ts withWriteTransaction: factRepo delete/upsert of the lesson_disabled fact). Legacy behavior is reachable only through explicit allowTestOnlyDiagnosisExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned diagnosis entrypoint when available."
     },
@@ -4533,6 +4542,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-diagnosis-routes.test.ts",
       "proof": "src/api/http/routes/friday-diagnosis-routes.ts fail-closes default/live diagnosis.patterns.demote to TS_RUNTIME_DIAGNOSIS_RETIRED after requireUserId and the factor-finite-number validation, immediately before the TypeScript demotePattern write (friday-self-healing-api-service.ts withWriteTransaction: factRepo.upsert of the pattern_demotion fact). Legacy behavior is reachable only through explicit allowTestOnlyDiagnosisExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned diagnosis entrypoint when available."
     },
