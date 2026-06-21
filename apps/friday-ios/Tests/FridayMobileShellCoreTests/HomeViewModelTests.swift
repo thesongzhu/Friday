@@ -28,12 +28,51 @@ final class HomeViewModelTests: XCTestCase {
   final class FakeReadClient: FridayRustReadClient, @unchecked Sendable {
     enum Script { case snapshot(WorkbenchSnapshot); case fail(FridayReadClientError) }
     let script: Script
+    private(set) var requestedDetails: [String] = []
     init(_ script: Script) { self.script = script }
     func fetchWorkbench() async throws -> WorkbenchSnapshot {
       switch script {
       case .snapshot(let s): return s
       case .fail(let e): throw e
       }
+    }
+
+    func fetchProvidersDoctor(probe: String?) async throws -> ReadProjectionSnapshot {
+      requestedDetails.append("providers:\(probe ?? "")")
+      return try detailSnapshot(kind: "providers", status: "ready", proofRef: "proof://provider/doctor")
+    }
+
+    func fetchSessionList() async throws -> ReadProjectionSnapshot {
+      requestedDetails.append("sessions")
+      return try detailSnapshot(kind: "sessions", status: "ready", proofRef: "proof://session/list")
+    }
+
+    func fetchRunReadback(runId: String) async throws -> ReadProjectionSnapshot {
+      requestedDetails.append("run:\(runId)")
+      return try detailSnapshot(kind: "run", status: "complete", runId: runId, proofRef: "proof://run/\(runId)")
+    }
+
+    func fetchActivityNeedsMe(runId: String) async throws -> ReadProjectionSnapshot {
+      requestedDetails.append("needs-me:\(runId)")
+      return try detailSnapshot(kind: "needs-me", status: "waiting", runId: runId, proofRef: "proof://needs/\(runId)")
+    }
+
+    private func detailSnapshot(
+      kind: String,
+      status: String,
+      runId: String? = nil,
+      proofRef: String
+    ) throws -> ReadProjectionSnapshot {
+      var raw: [String: Any] = [
+        "missionId": "mission-7",
+        "status": status,
+        "truthLabel": "friday_owned",
+        "proofRef": proofRef,
+        "evidenceRefs": ["proof://evidence/\(kind)"],
+      ]
+      if let runId { raw["runId"] = runId }
+      let data = try JSONSerialization.data(withJSONObject: raw)
+      return try ReadProjectionSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_123)
     }
   }
 
@@ -118,6 +157,42 @@ final class HomeViewModelTests: XCTestCase {
     guard case .unavailable(let reason) = vm.state else { return XCTFail("expected .unavailable") }
     XCTAssertTrue(reason.contains("Friday is unavailable"), "reason: \(reason)")
     XCTAssertNil(vm.state.projection) // never a fabricated ready projection
+  }
+
+  func testLoadDetail_callsProviderDoctorReadArm() async throws {
+    let client = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let vm = HomeViewModel(client: client)
+    await vm.loadDetail(.providersDoctor(probe: "anthropic"))
+    guard case let .loaded(detail) = vm.detailState else {
+      return XCTFail("expected detail .loaded, got \(vm.detailState)")
+    }
+    XCTAssertEqual(client.requestedDetails, ["providers:anthropic"])
+    XCTAssertEqual(detail.title, "Provider doctor")
+    XCTAssertEqual(detail.summary, "mission=mission-7 | status=ready | truth=friday_owned")
+    XCTAssertEqual(detail.refs, ["proof://provider/doctor", "proof://evidence/providers"])
+  }
+
+  func testLoadDetail_callsRunAndNeedsMeReadArms() async throws {
+    let client = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let vm = HomeViewModel(client: client)
+    await vm.loadDetail(.runReadback(runId: "run-1"))
+    await vm.loadDetail(.activityNeedsMe(runId: "run-1"))
+    XCTAssertEqual(client.requestedDetails, ["run:run-1", "needs-me:run-1"])
+    guard case let .loaded(detail) = vm.detailState else {
+      return XCTFail("expected detail .loaded, got \(vm.detailState)")
+    }
+    XCTAssertEqual(detail.title, "Needs-me activity")
+    XCTAssertTrue(detail.refs.contains("proof://needs/run-1"))
+  }
+
+  func testLoadDetail_transportFailureIsHonestUnavailable() async {
+    let vm = HomeViewModel(client: FakeReadClient(.fail(.transport("server dark"))))
+    await vm.loadDetail(.sessionOpen(agentSessionId: "session-1"))
+    guard case let .unavailable(title, reason) = vm.detailState else {
+      return XCTFail("expected detail .unavailable, got \(vm.detailState)")
+    }
+    XCTAssertEqual(title, "Session open")
+    XCTAssertTrue(reason.contains("offline"), "reason: \(reason)")
   }
 }
 

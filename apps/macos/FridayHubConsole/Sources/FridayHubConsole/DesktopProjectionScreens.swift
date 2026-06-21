@@ -130,6 +130,8 @@ struct DesktopProjectionScreen: View {
       if !snapshot.statusLabels.isEmpty || !snapshot.runtimeFeedStatus.isHealthy {
         StatusBanner(snapshot: snapshot)
       }
+      detailActions(snapshot)
+      detailResult
 
       switch DesktopProjectionSurface(destination) {
       case .providerAdmin:
@@ -147,6 +149,88 @@ struct DesktopProjectionScreen: View {
       }
     }
     .padding(20)
+  }
+
+  private func detailActions(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        cardTitle("Read Arms")
+        HStack(spacing: 8) {
+          Button {
+            Task { await viewModel.loadDetail(.providersDoctor(probe: nil)) }
+          } label: {
+            Label("Providers", systemImage: "stethoscope")
+          }
+          .disabled(viewModel.detailState.isLoading)
+
+          Button {
+            Task { await viewModel.loadDetail(.sessionList) }
+          } label: {
+            Label("Sessions", systemImage: "rectangle.stack")
+          }
+          .disabled(viewModel.detailState.isLoading)
+
+          if let runId = snapshot.runOutcomeLearningCandidates.first?.runId, !runId.isEmpty {
+            Button {
+              Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
+            } label: {
+              Label("Run", systemImage: "doc.text.magnifyingglass")
+            }
+            .disabled(viewModel.detailState.isLoading)
+
+            Button {
+              Task { await viewModel.loadDetail(.activityNeedsMe(runId: runId)) }
+            } label: {
+              Label("Needs Me", systemImage: "bell.badge")
+            }
+            .disabled(viewModel.detailState.isLoading)
+          }
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var detailResult: some View {
+    switch viewModel.detailState {
+    case .idle:
+      EmptyView()
+    case let .loading(arm):
+      GlassPanel {
+        HStack(spacing: 12) {
+          ProgressView()
+          Text(arm.title)
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textSecondary)
+        }
+      }
+    case let .loaded(detail):
+      GlassPanel {
+        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+          HStack {
+            cardTitle(detail.title)
+            Spacer()
+            StatusChip(text: "\(detail.refs.count)", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+          }
+          Text(detail.summary)
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textPrimary)
+          RefPill(label: "generated", ref: "\(detail.generatedAtMs)")
+          ForEach(detail.refs, id: \.self) { ref in
+            RefPill(label: nil, ref: ref)
+          }
+        }
+      }
+    case let .unavailable(title, reason):
+      GlassPanel {
+        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+          cardTitle(title)
+          Text(reason)
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textSecondary)
+        }
+      }
+    }
   }
 
   private func providerStatus(_ snapshot: WorkbenchSnapshot) -> some View {
