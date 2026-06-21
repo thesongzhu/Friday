@@ -33,10 +33,12 @@
 //   live rust-hub.sqlite. The sealed client opens the raw TCP preamble + ECDH + RFC6455 itself.
 //
 // MODES:
-//   --mode dispatch-mutating [--artifact-dir <dir>] [--proof-file <path>]
-//       (default artifact dir: $TMPDIR/friday-s6-transport-a; default proof-file under it)
+//   --mode dispatch-mutating [--artifact-dir <dir>] [--proof-file <workspace-relative-path>]
+//       (default artifact dir: $TMPDIR/friday-s6-transport-a; default proof-file:
+//        s6-proof-artifact.txt under the hub's agent-run workspace)
 //       Resolve the client secret (fail loud on null). Optionally print the NON-secret client pubkey.
-//       dispatchRun a MUTATING run (NO readOnly constraint) instructing a write_file to <proof-file>.
+//       dispatchRun a MUTATING run (NO readOnly constraint) instructing a write_file to the
+//       workspace-relative <proof-file>.
 //       EXPECT a PAUSED outcome (outcome==="paused"). Print runId/approvalId/actionDigest/summary,
 //       read the persisted pending_approval_request row by run_id, and write pending-request.json
 //       under the artifact dir in the EXACT schema friday-operator-approve sign --request consumes.
@@ -83,6 +85,8 @@ const DEFAULT_PORT = 48750; // FRIDAY_HUB_AGENT_RUN_WS_PORT on the live hub
 const DEFAULT_TIMEOUT_MS = 30000;
 const DEFAULT_ARTIFACT_DIR =
   process.env.FRIDAY_S6_ARTIFACT_DIR || path.join(os.tmpdir(), "friday-s6-transport-a");
+const DEFAULT_AGENT_RUN_WORKSPACE =
+  process.env.FRIDAY_S6_AGENT_RUN_WORKSPACE || "/Users/jarvis/.friday/agent-run-workspace";
 const DEFAULT_PROOF_BASENAME = "s6-proof-artifact.txt";
 const DEFAULT_PENDING_REQUEST_BASENAME = "pending-request.json";
 const DEFAULT_SIGNED_APPROVAL_BASENAME = "signed-approval.json";
@@ -118,6 +122,29 @@ function die(category, msg, extra) {
 function resolvePathArg(value, fallback) {
   const selected = typeof value === "string" && value.length > 0 ? value : fallback;
   return path.resolve(selected);
+}
+
+function workspaceRelativeProofPathArg(value) {
+  const selected = typeof value === "string" && value.length > 0 ? value : DEFAULT_PROOF_BASENAME;
+  if (selected.includes("\0")) {
+    die("proof-path", "--proof-file must not contain NUL bytes");
+  }
+  if (path.isAbsolute(selected) || path.win32.isAbsolute(selected)) {
+    die(
+      "proof-path",
+      "--proof-file must be workspace-relative because the friday-fs actuator correctly rejects absolute paths",
+      `got: ${selected}`,
+    );
+  }
+  const parts = selected.split(/[\\/]+/);
+  if (parts.length === 0 || parts.some((part) => part.length === 0 || part === "." || part === "..")) {
+    die(
+      "proof-path",
+      "--proof-file must be a non-empty workspace-relative path with no '.', '..', or empty path segments",
+      `got: ${selected}`,
+    );
+  }
+  return parts.join("/");
 }
 
 function ensurePrivateDir(dir) {
@@ -278,10 +305,8 @@ function freshRunId() {
 async function modeDispatchMutating(args, createFactory, resolverMod) {
   const artifactDir = resolvePathArg(args["artifact-dir"], DEFAULT_ARTIFACT_DIR);
   ensurePrivateDir(artifactDir);
-  const proofFile = resolvePathArg(
-    args["proof-file"],
-    path.join(artifactDir, DEFAULT_PROOF_BASENAME),
-  );
+  const proofWorkspacePath = workspaceRelativeProofPathArg(args["proof-file"]);
+  const proofHostPath = path.join(DEFAULT_AGENT_RUN_WORKSPACE, ...proofWorkspacePath.split("/"));
   const pendingRequestPath = resolvePathArg(
     args["pending-request-file"],
     path.join(artifactDir, DEFAULT_PENDING_REQUEST_BASENAME),
@@ -298,12 +323,13 @@ async function modeDispatchMutating(args, createFactory, resolverMod) {
 
   const runId = freshRunId();
   const task =
-    `Use the write_file tool to write the exact text "S6_MUTATION_OK" to the file ${proofFile}, ` +
+    `Use the write_file tool to write the exact text "S6_MUTATION_OK" to the file ${proofWorkspacePath}, ` +
     "then reply with exactly: S6_WRITE_DONE";
 
   console.log(
     `[dispatch-mutating] sealed-WS → ${DEFAULT_HOST}:${DEFAULT_PORT} runId=${runId} ` +
-      `principal=${FORWARDED_PRINCIPAL} artifactDir=${artifactDir} proofFile=${proofFile} ` +
+      `principal=${FORWARDED_PRINCIPAL} artifactDir=${artifactDir} ` +
+      `proofWorkspacePath=${proofWorkspacePath} expectedHostProofFile=${proofHostPath} ` +
       "(NO readOnly constraint)",
   );
 
@@ -441,7 +467,7 @@ async function modeDispatchMutating(args, createFactory, resolverMod) {
       `  1. friday-operator-approve sign --key <operator.key> --request ${pendingRequestPath} > ${signedApprovalPath}\n` +
       `  2. node ${path.resolve(process.argv[1])} --mode resume --run-id ${outcome.runId} ` +
       `--approval ${signedApprovalPath}\n` +
-      "  3. verify the proof-file write + a fresh token_ledger row for the runId.\n" +
+      `  3. verify ${proofHostPath} contains S6_MUTATION_OK + a fresh token_ledger row for the runId.\n` +
       "[dispatch-mutating] (this PAUSE is a real S6-in-product proof, but does NOT move the v1 gate " +
       "until the operator signs + the broader gate passes.)",
   );
