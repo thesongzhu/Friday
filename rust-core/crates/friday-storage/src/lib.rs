@@ -1304,6 +1304,29 @@ impl Db {
         process_registry::find_active_port_conflict(&self.conn, port_binding)
     }
 
+    pub fn request_process_stop(&self, lease_id: &str, now_ms: i64) -> Result<ProcessLease> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Process leases are Hub-only".into(),
+            ));
+        }
+        process_registry::request_process_stop(&self.conn, lease_id, now_ms)
+    }
+
+    pub fn record_process_stopped_with_proof(
+        &self,
+        lease_id: &str,
+        proof_ref: &str,
+        now_ms: i64,
+    ) -> Result<ProcessLease> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Process leases are Hub-only".into(),
+            ));
+        }
+        process_registry::record_process_stopped_with_proof(&self.conn, lease_id, proof_ref, now_ms)
+    }
+
     pub fn upsert_process_observation(&self, observation: &ProcessObservation) -> Result<()> {
         if self.profile != Profile::Hub {
             return Err(StorageError::Unsupported(

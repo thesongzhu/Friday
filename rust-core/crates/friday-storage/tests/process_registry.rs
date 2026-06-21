@@ -286,3 +286,54 @@ fn observations_are_inspect_only_and_stopped_requires_proof() {
     fake_stop.proof_refs.clear();
     assert!(db.upsert_process_lease(&fake_stop).is_err());
 }
+
+#[test]
+fn process_stop_state_machine_requires_owned_lease_safe_stop_and_proof() {
+    let db = Db::open_hub(&temp_db_path("process-registry-stop")).unwrap();
+    seed_mission(&db);
+    db.upsert_workspace_claim(&claim(ClaimState::Active))
+        .unwrap();
+    db.upsert_process_observation(&observation()).unwrap();
+
+    assert!(db.request_process_stop("missing-lease", 10).is_err());
+    let observed = db
+        .get_process_observation("obs-unowned-codex")
+        .unwrap()
+        .unwrap();
+    assert!(!observed.is_control_allowed_without_adoption());
+
+    let mut no_stop = lease(LeaseState::Running);
+    no_stop.lease_id = "lease-no-stop".into();
+    no_stop.port_bindings = vec!["127.0.0.1:4142".into()];
+    no_stop.safe_stop_ref = None;
+    db.upsert_process_lease(&no_stop).unwrap();
+    assert!(db.request_process_stop("lease-no-stop", 11).is_err());
+
+    db.upsert_process_lease(&lease(LeaseState::Healthy))
+        .unwrap();
+    let requested = db.request_process_stop("lease-dev-server", 12).unwrap();
+    assert_eq!(requested.state, LeaseState::StoppingRequested);
+    assert_eq!(requested.updated_at_ms, 12);
+    assert!(!requested.can_request_stop());
+    assert!(requested.blocks_new_work());
+    assert_eq!(
+        db.find_active_port_conflict("127.0.0.1:3142")
+            .unwrap()
+            .map(|l| l.lease_id),
+        Some("lease-dev-server".into())
+    );
+
+    assert!(db
+        .record_process_stopped_with_proof("lease-dev-server", "", 13)
+        .is_err());
+    let stopped = db
+        .record_process_stopped_with_proof("lease-dev-server", "proof://process-stopped", 14)
+        .unwrap();
+    assert_eq!(stopped.state, LeaseState::StoppedWithProof);
+    assert_eq!(stopped.proof_refs, vec!["proof://process-stopped"]);
+    assert!(stopped.stopped_is_proven());
+    assert!(db
+        .find_active_port_conflict("127.0.0.1:3142")
+        .unwrap()
+        .is_none());
+}

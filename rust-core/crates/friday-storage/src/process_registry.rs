@@ -487,6 +487,69 @@ pub fn find_active_port_conflict(
         .find(|lease| lease.port_bindings.iter().any(|p| p == port_binding)))
 }
 
+pub fn request_process_stop(
+    conn: &Connection,
+    lease_id: &str,
+    now_ms: i64,
+) -> Result<ProcessLease> {
+    require_non_empty(lease_id, "lease_id")?;
+    let mut lease = get_process_lease(conn, lease_id)?
+        .ok_or_else(|| unsupported(format!("process lease '{lease_id}' not found")))?;
+    if !lease.can_request_stop() {
+        return Err(unsupported(format!(
+            "process lease '{lease_id}' cannot request stop without active state and safe_stop_ref"
+        )));
+    }
+    lease.state = LeaseState::StoppingRequested;
+    lease.updated_at_ms = now_ms;
+    upsert_process_lease(conn, &lease)?;
+    Ok(lease)
+}
+
+pub fn record_process_stopped_with_proof(
+    conn: &Connection,
+    lease_id: &str,
+    proof_ref: &str,
+    now_ms: i64,
+) -> Result<ProcessLease> {
+    require_non_empty(lease_id, "lease_id")?;
+    require_non_empty(proof_ref, "proof_ref")?;
+    let mut lease = get_process_lease(conn, lease_id)?
+        .ok_or_else(|| unsupported(format!("process lease '{lease_id}' not found")))?;
+    if !matches!(
+        lease.state,
+        LeaseState::StoppingRequested
+            | LeaseState::Running
+            | LeaseState::Healthy
+            | LeaseState::Stale
+    ) {
+        return Err(unsupported(format!(
+            "process lease '{lease_id}' cannot be stopped from state '{}'",
+            lease.state.as_str()
+        )));
+    }
+    if lease
+        .safe_stop_ref
+        .as_deref()
+        .map_or(true, |r| r.trim().is_empty())
+    {
+        return Err(unsupported(format!(
+            "process lease '{lease_id}' cannot be stopped without safe_stop_ref"
+        )));
+    }
+    if !lease
+        .proof_refs
+        .iter()
+        .any(|existing| existing == proof_ref)
+    {
+        lease.proof_refs.push(proof_ref.to_string());
+    }
+    lease.state = LeaseState::StoppedWithProof;
+    lease.updated_at_ms = now_ms;
+    upsert_process_lease(conn, &lease)?;
+    Ok(lease)
+}
+
 fn process_leases_by_sql<P>(conn: &Connection, sql: &str, params: P) -> Result<Vec<ProcessLease>>
 where
     P: Params,

@@ -209,8 +209,8 @@ pub fn friday_v1_mechanism_matrix() -> Vec<MechanismRow> {
             owner: RustHub,
             status: RustOwnedPartial,
             rust_entrypoint: "friday_hub::global_work_graph",
-            proof_gate: "cargo test -p friday-storage process_registry",
-            blocker: "live supervisor/adoption/stop runtime is not proven; observed processes cannot be controlled",
+            proof_gate: "cargo test -p friday-storage --test process_registry",
+            blocker: "stop state machine is storage-proven; live supervisor/adoption/OS-stop runtime is not proven; observed-only processes cannot be controlled",
             user_triggerable_product_logic: true,
         },
         MechanismRow {
