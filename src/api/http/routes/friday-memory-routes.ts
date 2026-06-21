@@ -185,6 +185,14 @@ function readPrincipalUserId(principal: unknown): string {
   return userId;
 }
 
+function learnedFactRevocationUnavailable(): never {
+  throw new FridayDomainError(
+    "MEMORY_LEARNED_FACT_REVOCATION_UNAVAILABLE",
+    "Learned fact revocation is unavailable in this runtime",
+    { httpStatus: 503 },
+  );
+}
+
 function readStoreMetadata(body: FridayMemoryStoreRequest): Record<string, unknown> | undefined {
   return body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
     ? body.metadata as Record<string, unknown>
@@ -599,11 +607,7 @@ export function createFridayMemoryRoutes(
         const { id } = ctx.params as { id: string };
         if (isLearnedFactSyntheticId(id)) {
           if (!deps.deleteLearnedFact) {
-            throw new FridayDomainError(
-              FRIDAY_MEMORY_ERROR_CODES.NOT_FOUND,
-              `Memory item '${id}' not found`,
-              { httpStatus: 404 },
-            );
+            learnedFactRevocationUnavailable();
           }
           const key = readLearnedFactKeyFromSyntheticId(id);
           if (!key) {

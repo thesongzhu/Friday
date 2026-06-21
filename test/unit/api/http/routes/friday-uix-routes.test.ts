@@ -486,6 +486,39 @@ describe("FridayUixRoutes", () => {
     expect(deleteLearnedFact).toHaveBeenCalledWith({ userId: "user-1", key: "pref:display_name" });
   });
 
+  it("fails closed when learned fact revocation writers are unavailable", async () => {
+    const service = makeService();
+    const routes = createFridayUixRoutes({ service });
+    const clearRoute = routes.find((entry) => entry.operationId === "uix.learnedfacts.clear")!;
+    const deleteRoute = routes.find((entry) => entry.operationId === "uix.learnedfacts.delete")!;
+
+    await expect(clearRoute.handler(makeCtx())).rejects.toMatchObject({
+      code: "UIX_LEARNED_FACT_REVOCATION_UNAVAILABLE",
+      httpStatus: 503,
+    });
+    await expect(
+      deleteRoute.handler(makeCtx({ params: { factKey: encodeURIComponent("pref:display_name") } })),
+    ).rejects.toMatchObject({
+      code: "UIX_LEARNED_FACT_REVOCATION_UNAVAILABLE",
+      httpStatus: 503,
+    });
+  });
+
+  it("keeps learned fact delete not-found distinct when the revocation writer is wired", async () => {
+    const service = makeService();
+    const deleteLearnedFact = vi.fn(() => false);
+    const routes = createFridayUixRoutes({ service, deleteLearnedFact });
+    const deleteRoute = routes.find((entry) => entry.operationId === "uix.learnedfacts.delete")!;
+
+    await expect(
+      deleteRoute.handler(makeCtx({ params: { factKey: encodeURIComponent("pref:display_name") } })),
+    ).rejects.toMatchObject({
+      code: "UIX_PREFERENCE_NOT_FOUND",
+      httpStatus: 404,
+    });
+    expect(deleteLearnedFact).toHaveBeenCalledWith({ userId: "user-1", key: "pref:display_name" });
+  });
+
   it("lists learned facts with explicit memory and context-use boundaries", async () => {
     const service = makeService();
     const routes = createFridayUixRoutes({

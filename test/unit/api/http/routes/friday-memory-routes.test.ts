@@ -511,6 +511,34 @@ describe("FridayMemoryRoutes", () => {
     expect(deleteLearnedFact).toHaveBeenCalledWith({ userId: "user-1", key: "pref:display_name" });
   });
 
+  it("delete handler fails closed for learned fact ids when the revocation writer is unavailable", async () => {
+    const route = findRoute("memory.delete");
+
+    await expect(
+      route.handler(makeCtx({ params: { id: "learned-fact:pref:display_name" } })),
+    ).rejects.toMatchObject({
+      code: "MEMORY_LEARNED_FACT_REVOCATION_UNAVAILABLE",
+      httpStatus: 503,
+    });
+  });
+
+  it("delete handler keeps learned fact not-found distinct when the revocation writer is wired", async () => {
+    const deleteLearnedFact = vi.fn(() => false);
+    routes = createFridayMemoryRoutes({
+      memoryGuardFactory,
+      deleteLearnedFact,
+    });
+    const route = findRoute("memory.delete");
+
+    await expect(
+      route.handler(makeCtx({ params: { id: "learned-fact:pref:display_name" } })),
+    ).rejects.toMatchObject({
+      code: FRIDAY_MEMORY_ERROR_CODES.NOT_FOUND,
+      httpStatus: 404,
+    });
+    expect(deleteLearnedFact).toHaveBeenCalledWith({ userId: "user-1", key: "pref:display_name" });
+  });
+
   // ─── List handler ───
 
   it("list handler returns items", async () => {

@@ -68,6 +68,14 @@ function requireUserId(principal: { userId?: string } | null): string {
   return principal.userId;
 }
 
+function learnedFactRevocationUnavailable(): never {
+  throw new FridayDomainError(
+    "UIX_LEARNED_FACT_REVOCATION_UNAVAILABLE",
+    "Learned fact revocation is unavailable in this runtime",
+    { httpStatus: 503 },
+  );
+}
+
 function readText(body: unknown, key: string): string {
   if (!body || typeof body !== "object") {
     throw new FridayDomainError("VALIDATION_ERROR", `${key} is required`, { httpStatus: 400 });
@@ -535,7 +543,10 @@ export function createFridayUixRoutes(
       auth: { public: true },
       async handler(ctx): Promise<{ deletedCount: number }> {
         const userId = requireUserId(ctx.principal);
-        return { deletedCount: deps.clearLearnedFacts ? deps.clearLearnedFacts({ userId }) : 0 };
+        if (!deps.clearLearnedFacts) {
+          learnedFactRevocationUnavailable();
+        }
+        return { deletedCount: deps.clearLearnedFacts({ userId }) };
       },
     },
     {
@@ -581,7 +592,10 @@ export function createFridayUixRoutes(
         if (key.length === 0) {
           throw new FridayDomainError("VALIDATION_ERROR", "factKey is required", { httpStatus: 400 });
         }
-        if (!deps.deleteLearnedFact || !deps.deleteLearnedFact({ userId, key })) {
+        if (!deps.deleteLearnedFact) {
+          learnedFactRevocationUnavailable();
+        }
+        if (!deps.deleteLearnedFact({ userId, key })) {
           throw new FridayDomainError("UIX_PREFERENCE_NOT_FOUND", `Learned fact '${key}' was not found`, { httpStatus: 404 });
         }
         return { deleted: true, key };
