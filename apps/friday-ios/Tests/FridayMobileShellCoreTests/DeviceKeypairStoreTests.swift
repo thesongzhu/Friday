@@ -107,3 +107,29 @@ func makeLiveWithDeviceKeypairBuildsClientAndIsHonestlyUnavailableWithNoServer()
     // Expected: honest-unavailable (connect/handshake failed) — not a mock, not a crash.
   }
 }
+
+@Test
+func makeLiveWriteWithDeviceKeypairBuildsClientAndIsHonestlyUnavailableWithNoServer() async throws {
+  // The WRITE-side device-keypair overload mirrors the read half: it builds a real sealed-WS write
+  // client, but against a DARK server it fails closed. This proves the device identity is no longer
+  // a read-only dead-code island without claiming a live mission dispatch, remote ingress, or S6.
+  let device = try DeviceKeypairStore.loadOrGenerate(backend: InMemoryDeviceKeypairBackend())
+
+  let deadConfig = AgentRunServerConfig(
+    host: "127.0.0.1",
+    port: 59998,
+    connectTimeout: 1,
+    receiveTimeout: 1)
+  let client = RealWriteClientFactory.makeLive(deviceKeypair: device, config: deadConfig)
+
+  do {
+    _ = try await client.dispatchAgentRun(task: "device-keypair dark write probe", constraints: nil)
+    Issue.record("a dark write server must NOT yield a successful dispatch")
+  } catch is FridayWriteClientError {
+    // Expected: honest-unavailable/fail-closed (connect/handshake failed), never a fabricated run.
+  } catch is FridayReadClientError {
+    // The write factory reuses the shared loopback transport; a dark socket can fail before the
+    // write wrapper seals an envelope, surfacing the shared transport error directly. Still
+    // fail-closed and never a fabricated run.
+  }
+}

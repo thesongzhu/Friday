@@ -68,7 +68,9 @@ final class FridaySession: ObservableObject {
     // store because no socket is opened. The master-derived LIVE write path (the iOS J2 mirror of
     // the read seam's `RealReadClientFactory.makeLive`) is now BUILT and wired behind an OPT-IN
     // env/arg gate (`FRIDAY_MOBILE_LIVE_WRITE=1` / `--live-write`, mirroring `FRIDAY_MOBILE_LIVE_READ`).
-    // This PR does NOT flip the shipped default (that, and the S6 control plane, are operator gates).
+    // A separate device-keypair live path is additive and explicitly opted in with
+    // `FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR=1` / `--live-device-keypair`; the shipped default still
+    // touches no keychain, opens no socket, and remains honest-unavailable.
     if preview {
       self.writeClient = Self.honestUnavailableWriteClient()
       self.missionClient = nil
@@ -99,6 +101,10 @@ final class FridaySession: ObservableObject {
       return HonestlyUnavailableReadClient()
     }
     do {
+      if useDeviceKeypair(args: args, env: env) {
+        let device = try DeviceKeypairStore.loadOrGenerate()
+        return RealReadClientFactory.makeLive(deviceKeypair: device)
+      }
       return try RealReadClientFactory.makeLive()
     } catch {
       return RealReadClientFactory.makeHonestlyUnavailable(reason: "\(error)")
@@ -131,12 +137,22 @@ final class FridaySession: ObservableObject {
       return nil
     }
     do {
+      if useDeviceKeypair(args: args, env: env) {
+        let device = try DeviceKeypairStore.loadOrGenerate()
+        return RealWriteClientFactory.makeLive(
+          deviceKeypair: device,
+          agentRunControlViaRust: runControlEnabled)
+      }
       return try RealWriteClientFactory.makeLive(agentRunControlViaRust: runControlEnabled)
     } catch {
-      // Master key unavailable (the J2 pairing problem on a real device): no mission-capable
-      // client. The caller falls back to the throwing honest-unavailable write client.
+      // Master/device key unavailable or corrupt: no mission-capable client. The caller falls back
+      // to the throwing honest-unavailable write client; never fabricate a ready chat surface.
       return nil
     }
+  }
+
+  static func useDeviceKeypair(args: [String], env: [String: String]) -> Bool {
+    args.contains("--live-device-keypair") || env["FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR"] == "1"
   }
 
   /// The honest-unavailable WRITE client: the shared `FridayClientFactory.makeWriteClient` with its
