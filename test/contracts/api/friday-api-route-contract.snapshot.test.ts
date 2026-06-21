@@ -871,6 +871,9 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         // dispatch arm. Refuses the synthetic public principal before any dispatch; flag-OFF/503
         // by default (the merged Rust arm #753 is gated by FRIDAY_MEMORY_CONFIRM).
         "memory.spine.decide.apply",
+        // A1 run-outcome learning decision courier. Refuses the synthetic public principal
+        // before any dispatch; flag-OFF/503 by default until the Rust arm is configured.
+        "run.outcome.learning.decide.apply",
       ]);
       // rate_limited_pending
       const RATE_LIMITED_PENDING: ReadonlySet<string> = new Set([

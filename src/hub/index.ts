@@ -41,6 +41,7 @@ export {
   resolveRouteAgentRunViaRust,
   resolveRouteMissionSpineViaRust,
   resolveRouteMemorySpineViaRust,
+  resolveRouteRunOutcomeLearningViaRust,
   resolveMissionAutoDispatch,
   resolveRouteProvidersViaRust,
   resolveRouteWorkflowsViaRust,

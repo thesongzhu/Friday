@@ -81,6 +81,7 @@ import type { FridayGuideLensRoutesDeps } from "../http/routes/friday-guide-lens
 import type { FridayUixRoutesDeps } from "../http/routes/friday-uix-routes.js";
 import type { FridayMissionSpineRoutesDeps } from "../http/routes/friday-mission-spine-routes.js";
 import type { FridayMemorySpineRoutesDeps } from "../http/routes/friday-memory-spine-routes.js";
+import type { FridayRunOutcomeLearningRoutesDeps } from "../http/routes/friday-run-outcome-learning-routes.js";
 import type { FridayCrossBorderPackRoutesDeps } from "../http/routes/friday-cross-border-pack-routes.js";
 import type { FridayPackagingRoutesDeps } from "../http/routes/friday-packaging-routes.js";
 import type {
@@ -155,6 +156,8 @@ export interface FridayApiRuntime {
   missionSpine?: FridayMissionSpineRoutesDeps;
   /** (Lane M) Memory-confirmation loop terminal route surface. Always registered; DEFAULT-OFF (503). */
   memorySpine?: FridayMemorySpineRoutesDeps;
+  /** A1 run-outcome learning candidate decision route surface. Always registered; DEFAULT-OFF (503). */
+  runOutcomeLearning?: FridayRunOutcomeLearningRoutesDeps;
   crossBorderPack?: FridayCrossBorderPackRoutesDeps;
   system?: FridaySystemRoutesDeps;
   guideLens?: FridayGuideLensRoutesDeps;
@@ -656,6 +659,8 @@ export interface CreateFridayApiRuntimeDeps {
    * needs an operator to wire the adapter AND flip the Rust `FRIDAY_MEMORY_CONFIRM` flag.
    */
   memorySpine?: FridayMemorySpineRoutesDeps;
+  /** Optional A1 run-outcome learning candidate decision route surface. Default: fail-closed 503. */
+  runOutcomeLearning?: FridayRunOutcomeLearningRoutesDeps;
   /** Optional: cross-border operating pack route surface. */
   crossBorderPack?: FridayCrossBorderPackRoutesDeps;
   /**

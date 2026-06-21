@@ -138,6 +138,10 @@ import {
   createFridayMemorySpineDispatchAdapter,
   readMemorySpineRustWsPort,
 } from "../api/mission-spine/friday-memory-spine-dispatch-adapter.js";
+import {
+  createFridayRunOutcomeLearningDispatchAdapter,
+  readRunOutcomeLearningRustWsPort,
+} from "../api/mission-spine/friday-run-outcome-learning-dispatch-adapter.js";
 import { resolveRustAgentRunWsClientX25519Secret } from "../api/mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayChannelPersonaConfig, FridayGuideLensRoutesDeps, FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
@@ -1135,6 +1139,17 @@ export function resolveRouteMemorySpineViaRust(
     return configValue;
   }
   const raw = (env.FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+export function resolveRouteRunOutcomeLearningViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_RUN_OUTCOME_LEARNING_ROUTES_VIA_RUST ?? "").trim().toLowerCase();
   return raw === "1" || raw === "true";
 }
 
@@ -7213,6 +7228,16 @@ export async function createFridayHub(
       secretResolver: resolveRustAgentRunWsClientX25519Secret,
     })
     : null;
+  const routeRunOutcomeLearningViaRust = resolveRouteRunOutcomeLearningViaRust(
+    config.routeRunOutcomeLearningViaRust,
+  );
+  const runOutcomeLearningDispatch = routeRunOutcomeLearningViaRust
+    ? createFridayRunOutcomeLearningDispatchAdapter({
+      host: process.env.FRIDAY_HUB_AGENT_RUN_WS_HOST ?? "127.0.0.1",
+      port: readRunOutcomeLearningRustWsPort(process.env.FRIDAY_HUB_AGENT_RUN_WS_PORT),
+      secretResolver: resolveRustAgentRunWsClientX25519Secret,
+    })
+    : null;
 
   const runtimeSupportedChannelKinds = FRIDAY_SUPPORTED_CHANNEL_KINDS.filter(isFridayChannelKindSupported);
 
@@ -7306,6 +7331,7 @@ export async function createFridayHub(
     // the route's own default (`dispatch: null`), and `POST /v1/memory-spine/decide` is fail-closed 503
     // (`MEMORY_SPINE_DISPATCH_UNAVAILABLE`) → byte-identical to today.
     memorySpine: memorySpineDispatch ? { dispatch: memorySpineDispatch } : undefined,
+    runOutcomeLearning: runOutcomeLearningDispatch ? { dispatch: runOutcomeLearningDispatch } : undefined,
     uix: {
       service: uixService,
       readSetupCompletedAt,

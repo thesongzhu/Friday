@@ -2010,6 +2010,13 @@ export interface FridayHubConfig {
    */
   routeMemorySpineViaRust?: boolean;
   /**
+   * A1 run-outcome learning decision route bridge (DARK): wires a real dispatch adapter into
+   * `runOutcomeLearning.dispatch` so `/v1/run-outcome-learning/decide` becomes callable. DEFAULT-FALSE.
+   * End-to-end A1 live-done still requires Rust `FRIDAY_RUN_OUTCOME_LEARNING_CONFIRM`, an
+   * operator-origin organic candidate, and a real confirm.
+   */
+  routeRunOutcomeLearningViaRust?: boolean;
+  /**
    * (Organic mission→run binding PRODUCER — DARK): "after a fresh-Ready `/v1/mission-spine/intake`,
    * immediately fire a READ-ONLY bound agent-run carrying the server-produced mission handle" flag.
    * DEFAULT-FALSE — production hub creation must leave this unset so the auto-dispatch driver is

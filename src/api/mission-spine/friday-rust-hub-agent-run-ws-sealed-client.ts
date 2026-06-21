@@ -422,6 +422,14 @@ export interface FridayRustHubAgentRunSealedClient {
   decideMemory(
     request: FridayRustHubMemoryDecisionRequest,
   ): Promise<FridayRustHubMemoryDecisionResult>;
+  /**
+   * (A1) Apply the OWNER's explicit confirm/reject to ONE pending run-outcome learning candidate over
+   * a sealed session — `Message::RunOutcomeLearningDecisionRequest`. PURE Hub mutation; no
+   * provider/model call and no answer body. `status:"blocked"` is an honest refusal receipt.
+   */
+  decideRunOutcomeLearning(
+    request: FridayRustHubRunOutcomeLearningDecisionRequest,
+  ): Promise<FridayRustHubRunOutcomeLearningDecisionResult>;
 }
 
 /** (A3 courier) A resume relay: the run to resume + the operator's OPAQUE signed approval blob. */
@@ -609,6 +617,24 @@ export interface FridayRustHubMemoryDecisionResult {
   readonly blocker?: string;
   /** Whether the candidate is now recallable (durable `Confirmed`). */
   readonly recallable: boolean;
+}
+
+/** (A1) An OWNER confirm/reject decision for one refs-only run-outcome learning candidate. */
+export interface FridayRustHubRunOutcomeLearningDecisionRequest {
+  readonly candidateId: string;
+  readonly decision: "confirm" | "reject";
+  readonly reason?: string;
+}
+
+/** (A1) Refs-only run-outcome learning decision result. */
+export interface FridayRustHubRunOutcomeLearningDecisionResult {
+  readonly truthLabel: "rust_wired";
+  readonly candidateId: string;
+  readonly runId?: string;
+  readonly kind?: string;
+  readonly state: string;
+  readonly status: string;
+  readonly blocker?: string;
 }
 
 function unavailable(message: string, details?: Record<string, unknown>): FridayDomainError {
@@ -1102,6 +1128,21 @@ export function buildMemoryDecisionEnvelope(
   });
 }
 
+/** Build the exact nested `RunOutcomeLearningDecisionRequest { request: ... }` wire message. */
+export function buildRunOutcomeLearningDecisionEnvelope(
+  request: FridayRustHubRunOutcomeLearningDecisionRequest,
+): Record<string, unknown> {
+  const inner: Record<string, unknown> = {
+    candidate_id: request.candidateId,
+    decision: request.decision,
+    ...(request.reason !== undefined ? { reason: request.reason } : {}),
+  };
+  return buildMissionEnvelope(`run-outcome-learning-decision-${request.candidateId}`, {
+    kind: "RunOutcomeLearningDecisionRequest",
+    request: inner,
+  });
+}
+
 /**
  * (Lane B) Parse a `MissionIntakeResult` inbound into the refs-only TS result. Returns `undefined`
  * (caller fails closed) when a REQUIRED ref is missing/ill-typed. The optional refs are surfaced
@@ -1343,6 +1384,34 @@ export function parseMemoryDecisionResult(
     state,
     status,
     recallable,
+    ...(blocker !== undefined ? { blocker } : {}),
+  };
+}
+
+/** Parse a nested `RunOutcomeLearningDecisionResult { result: ... }` into refs-only TS shape. */
+export function parseRunOutcomeLearningDecisionResult(
+  fields: Record<string, unknown>,
+): FridayRustHubRunOutcomeLearningDecisionResult | undefined {
+  const r = unwrapResult(fields);
+  if (r === undefined) {
+    return undefined;
+  }
+  const candidateId = asString(r.candidate_id);
+  const state = asString(r.state);
+  const status = asString(r.status);
+  if (!candidateId || !state || !status) {
+    return undefined;
+  }
+  const runId = asString(r.run_id);
+  const kind = asString(r.kind);
+  const blocker = asString(r.blocker);
+  return {
+    truthLabel: "rust_wired",
+    candidateId,
+    state,
+    status,
+    ...(runId !== undefined ? { runId } : {}),
+    ...(kind !== undefined ? { kind } : {}),
     ...(blocker !== undefined ? { blocker } : {}),
   };
 }
@@ -2281,6 +2350,31 @@ export function createFridayRustHubAgentRunSealedClient(
         expectedKind: "MemoryDecisionResult",
         parse: parseMemoryDecisionResult,
         leg: "memory-decision",
+      });
+    },
+
+    decideRunOutcomeLearning(
+      request: FridayRustHubRunOutcomeLearningDecisionRequest,
+    ): Promise<FridayRustHubRunOutcomeLearningDecisionResult> {
+      if (!request.candidateId) {
+        return Promise.reject(
+          unavailable("Sealed A1 run-outcome learning decision requires a candidate id."),
+        );
+      }
+      if (request.decision !== "confirm" && request.decision !== "reject") {
+        return Promise.reject(
+          unavailable("Sealed A1 run-outcome learning decision must be 'confirm' or 'reject'."),
+        );
+      }
+      return runMissionRoundTrip<FridayRustHubRunOutcomeLearningDecisionResult>({
+        host,
+        port,
+        timeoutMs,
+        keypair,
+        envelope: buildRunOutcomeLearningDecisionEnvelope(request),
+        expectedKind: "RunOutcomeLearningDecisionResult",
+        parse: parseRunOutcomeLearningDecisionResult,
+        leg: "run-outcome-learning-decision",
       });
     },
   };
