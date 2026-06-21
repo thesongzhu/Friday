@@ -135,6 +135,19 @@ fn seed(db: &Db, status: WorkItemStatus) {
     db.upsert_work_item(&work_item(status)).unwrap();
 }
 
+fn seed_extra_work_item(db: &Db, work_item_id: &str, status: WorkItemStatus) {
+    let mut item = work_item(status);
+    item.work_item_id = work_item_id.into();
+    item.judgment_memory.task = format!("extra WorkItem {work_item_id}");
+    db.upsert_work_item(&item).unwrap();
+
+    let mut mission = db.get_mission("mission-wi").unwrap().unwrap();
+    if !mission.work_item_ids.contains(&item.work_item_id) {
+        mission.work_item_ids.push(item.work_item_id);
+    }
+    db.upsert_mission(&mission).unwrap();
+}
+
 fn seed_route_decision(db: &Db) {
     let item = db.get_work_item("work-wi").unwrap().unwrap();
     let card = RouteDecisionCard::from_work_item(
@@ -267,6 +280,68 @@ fn completed_with_proof_without_a_receipt_is_rejected() {
     assert_eq!(prev, WorkItemStatus::ProviderWaiting);
     assert_eq!(item.status, WorkItemStatus::CompletedWithProof);
     assert!(item.completion_is_proven());
+}
+
+#[test]
+fn final_completed_work_item_closes_active_mission_with_audit_proof() {
+    let db = Db::open_hub(&temp_db_path("wi-final-closes-mission")).unwrap();
+    seed(&db, WorkItemStatus::ProviderWaiting);
+
+    let (item, prev) = db
+        .transition_work_item_status(
+            "work-wi",
+            WorkItemStatus::CompletedWithProof,
+            "agent:friday",
+            "claim done with proof",
+            Some("proof://provider-completed"),
+            10,
+        )
+        .unwrap();
+    assert_eq!(prev, WorkItemStatus::ProviderWaiting);
+    assert_eq!(item.status, WorkItemStatus::CompletedWithProof);
+
+    let mission = db.get_mission("mission-wi").unwrap().unwrap();
+    assert_eq!(mission.status, MissionStatus::Done);
+    assert!(mission
+        .proof_refs
+        .contains(&"audit://workitem_lifecycle:work-wi:10".to_string()));
+    assert!(mission
+        .decision_path_summary
+        .contains("auto-close after WorkItem 'work-wi' completed_with_proof"));
+
+    let conversation = db
+        .get_friday_conversation("fconv_wi_lifecycle")
+        .unwrap()
+        .unwrap();
+    assert!(
+        !conversation
+            .active_mission_ids
+            .contains(&"mission-wi".to_string()),
+        "closed Mission is removed from the active conversation set"
+    );
+}
+
+#[test]
+fn completed_work_item_does_not_close_mission_while_sibling_is_unfinished() {
+    let db = Db::open_hub(&temp_db_path("wi-sibling-open")).unwrap();
+    seed(&db, WorkItemStatus::ProviderWaiting);
+    seed_extra_work_item(&db, "work-wi-sibling", WorkItemStatus::ReadyToDispatch);
+
+    db.transition_work_item_status(
+        "work-wi",
+        WorkItemStatus::CompletedWithProof,
+        "agent:friday",
+        "first leg done",
+        Some("proof://provider-completed"),
+        10,
+    )
+    .unwrap();
+
+    assert_eq!(
+        db.get_mission("mission-wi").unwrap().unwrap().status,
+        MissionStatus::Active,
+        "Mission remains active until every WorkItem is completed_with_proof"
+    );
 }
 
 #[test]
@@ -446,6 +521,7 @@ fn route_decision_override_reassigns_before_dispatch_in_same_lifecycle_hop() {
 fn completed_hybrid_source_materializes_deferred_claude_follow_up_work_item() {
     let db = Db::open_hub(&temp_db_path("wi-deferred-followup")).unwrap();
     seed(&db, WorkItemStatus::ProviderWaiting);
+    seed_hybrid_route_decision(&db);
     let (source, _) = db
         .transition_work_item_status(
             "work-wi",
@@ -457,7 +533,11 @@ fn completed_hybrid_source_materializes_deferred_claude_follow_up_work_item() {
         )
         .unwrap();
     assert_eq!(source.status, WorkItemStatus::CompletedWithProof);
-    seed_hybrid_route_decision(&db);
+    assert_eq!(
+        db.get_mission("mission-wi").unwrap().unwrap().status,
+        MissionStatus::Active,
+        "unmaterialized deferred follow-up keeps Mission open"
+    );
 
     let follow = db
         .materialize_deferred_route_follow_up(DeferredRouteFollowUpRequest {
@@ -519,6 +599,67 @@ fn completed_hybrid_source_materializes_deferred_claude_follow_up_work_item() {
         )
         .unwrap();
     assert_eq!(audits, 1);
+}
+
+#[test]
+fn mission_closes_after_materialized_deferred_follow_up_completes() {
+    let db = Db::open_hub(&temp_db_path("wi-deferred-followup-close")).unwrap();
+    seed(&db, WorkItemStatus::ProviderWaiting);
+    seed_hybrid_route_decision(&db);
+
+    db.transition_work_item_status(
+        "work-wi",
+        WorkItemStatus::CompletedWithProof,
+        "agent:codex",
+        "codex first leg completed",
+        Some("proof://outcome/AnswerProduced/run-codex-first?signal=answer_len=12"),
+        10,
+    )
+    .unwrap();
+
+    db.materialize_deferred_route_follow_up(DeferredRouteFollowUpRequest {
+        decision_id: "route-decision-work-wi",
+        source_work_item_id: "work-wi",
+        follow_up_work_item_id: "work-wi-claude-followup",
+        follow_up_lane: WorkLane::Claude,
+        follow_up_provider_or_agent: Some("claude"),
+        actor_ref: "agent:friday",
+        reason: "create tracked Claude synthesis leg after Codex proof",
+        now_ms: 20,
+    })
+    .unwrap();
+
+    for (now, next) in [
+        (21, WorkItemStatus::Dispatched),
+        (22, WorkItemStatus::HubAccepted),
+        (23, WorkItemStatus::ProviderRouted),
+        (24, WorkItemStatus::ProviderWaiting),
+    ] {
+        db.transition_work_item_status(
+            "work-wi-claude-followup",
+            next,
+            "agent:friday",
+            "advance follow-up",
+            None,
+            now,
+        )
+        .unwrap();
+    }
+    db.transition_work_item_status(
+        "work-wi-claude-followup",
+        WorkItemStatus::CompletedWithProof,
+        "agent:claude",
+        "claude follow-up completed",
+        Some("proof://outcome/AnswerProduced/run-claude-followup?signal=answer_len=18"),
+        25,
+    )
+    .unwrap();
+
+    let mission = db.get_mission("mission-wi").unwrap().unwrap();
+    assert_eq!(mission.status, MissionStatus::Done);
+    assert!(mission
+        .proof_refs
+        .contains(&"audit://workitem_lifecycle:work-wi-claude-followup:25".to_string()));
 }
 
 #[test]

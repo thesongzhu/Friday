@@ -1119,6 +1119,15 @@ fn transition_work_item_status_inner(
             now_ms,
         )?;
         upsert_work_item(&tx, &item)?;
+        maybe_close_mission_after_work_item_completion(
+            &tx,
+            &item,
+            previous_status,
+            &audit_id,
+            actor_ref,
+            reason,
+            now_ms,
+        )?;
         // (#24b degrade-3) ATOMIC executing-clear: when the caller routes a binding rest-state hop
         // through `transition_work_item_status_clearing_executing`, clear the durable `executing`
         // marker in the SAME transaction as the status write. `upsert_work_item` does NOT touch the
@@ -1136,6 +1145,104 @@ fn transition_work_item_status_inner(
 
         Ok((item, previous_status))
     })
+}
+
+fn maybe_close_mission_after_work_item_completion(
+    conn: &Connection,
+    item: &WorkItem,
+    previous_status: WorkItemStatus,
+    work_item_audit_id: &str,
+    actor_ref: &str,
+    reason: &str,
+    now_ms: i64,
+) -> Result<()> {
+    if previous_status == WorkItemStatus::CompletedWithProof
+        || item.status != WorkItemStatus::CompletedWithProof
+    {
+        return Ok(());
+    }
+
+    let Some(mut mission) = get_mission(conn, &item.mission_id)? else {
+        return Ok(());
+    };
+    if !mission.status.can_transition_to(MissionStatus::Done) {
+        return Ok(());
+    }
+
+    let work_items = list_work_items_for_mission(conn, &item.mission_id)?;
+    if work_items.is_empty()
+        || !work_items
+            .iter()
+            .all(|work_item| work_item.status == WorkItemStatus::CompletedWithProof)
+    {
+        return Ok(());
+    }
+    if has_unmaterialized_deferred_follow_up(conn, &item.mission_id, &work_items)? {
+        return Ok(());
+    }
+
+    let proof_ref = format!("audit://{work_item_audit_id}");
+    mission.status = mission
+        .status
+        .try_transition(MissionStatus::Done)
+        .map_err(|e| unsupported(e.to_string()))?;
+    mission.updated_at_ms = now_ms;
+    if !mission.proof_refs.contains(&proof_ref) {
+        mission.proof_refs.push(proof_ref.clone());
+    }
+    let lifecycle_entry = format!(
+        "lifecycle:{}:active->done by {}: auto-close after WorkItem '{}' completed_with_proof ({reason})",
+        mission.mission_id, actor_ref, item.work_item_id
+    );
+    mission.decision_path_summary =
+        append_lifecycle_summary(&mission.decision_path_summary, &lifecycle_entry);
+    upsert_mission(conn, &mission)?;
+
+    let mut conversation =
+        get_conversation(conn, &mission.friday_conversation_id)?.ok_or_else(|| {
+            unsupported(format!(
+                "mission_auto_close conversation '{}' not found",
+                mission.friday_conversation_id
+            ))
+        })?;
+    conversation
+        .active_mission_ids
+        .retain(|id| id != &mission.mission_id);
+    conversation.updated_at_ms = now_ms;
+    upsert_conversation(conn, &conversation)?;
+
+    Ok(())
+}
+
+fn has_unmaterialized_deferred_follow_up(
+    conn: &Connection,
+    mission_id: &str,
+    work_items: &[WorkItem],
+) -> Result<bool> {
+    for decision in list_route_decisions_for_mission(conn, mission_id)? {
+        if decision.deferred_options.is_empty() {
+            continue;
+        }
+        if decision
+            .inheritable_context
+            .iter()
+            .any(|context| context.starts_with("source_route_decision:"))
+        {
+            continue;
+        }
+        let source_marker = format!("source_route_decision:{}", decision.decision_id);
+        let materialized = work_items.iter().any(|work_item| {
+            work_item
+                .judgment_memory
+                .inheritable_context
+                .iter()
+                .any(|context| context == &source_marker)
+        });
+        if !materialized {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub fn veto_route_decision(
@@ -1248,6 +1355,12 @@ pub fn materialize_deferred_route_follow_up(
                 source.mission_id
             ))
         })?;
+        if mission.status.is_terminal() {
+            return Err(unsupported(format!(
+                "deferred_follow_up Mission '{}' is terminal",
+                source.mission_id
+            )));
+        }
         let source_proof_refs = if source.proof_receipts.is_empty() {
             vec![format!("friday://work-item/{}", source.work_item_id)]
         } else {
