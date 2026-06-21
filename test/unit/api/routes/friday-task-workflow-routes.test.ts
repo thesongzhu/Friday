@@ -649,44 +649,119 @@ describe("Phase 14.5A WP-001: task-workflow public mutating routes require bound
 });
 
 describe("TS runtime retirement — task-workflow mutations fail-close by default", () => {
-  it("fail-close with TS_RUNTIME_TASK_WORKFLOW_RETIRED (503) when the test-oracle flag is unset, even for otherwise-valid bound-principal requests", async () => {
-    // No allowTestOnlyTaskWorkflowExecution => production/runtime default.
-    const routes = createFridayTaskWorkflowRoutes({
-      service: makeStubService(),
-      disabledReason: null,
+  const VALID_RETIRED_TASK_WORKFLOW_CALLS: ReadonlyArray<{
+    operationId: string;
+    params?: Record<string, string>;
+    body?: Record<string, unknown>;
+  }> = [
+    {
+      operationId: "task.workflows.preview",
+      body: { charter: "x", taskKind: "general", contextPackage: {} },
+    },
+    {
+      operationId: "task.workflows.create",
+      body: { charter: "x", taskKind: "general", contextPackage: {} },
+    },
+    {
+      operationId: "task.workflows.revise",
+      params: { workflowId: "w-1" },
+      body: { charter: "x", reason: "update" },
+    },
+    { operationId: "task.workflows.closeout", params: { workflowId: "w-1" } },
+    {
+      operationId: "task.workflows.claims.create",
+      params: { workflowId: "w-1" },
+      body: { claimText: "x", claimKind: "runtime_evidence" },
+    },
+    {
+      operationId: "task.workflows.claims.block",
+      params: { workflowId: "w-1", claimId: "c-1" },
+      body: { reason: "x" },
+    },
+    {
+      operationId: "task.workflows.claims.evidence.attach",
+      params: { workflowId: "w-1", claimId: "c-1" },
+      body: {
+        refKind: "docs.start_here",
+        refId: "START_HERE_PROMPT.md",
+        refSource: "docs_intent_reference",
+      },
+    },
+    {
+      operationId: "task.workflows.claims.verify",
+      params: { workflowId: "w-1", claimId: "c-1" },
+      body: { verifierVerdict: "x", evidenceRefIds: ["ev-1"] },
+    },
+    {
+      operationId: "task.workflows.lanes.executor.open",
+      params: { workflowId: "w-1" },
+      body: { laneRole: "native" },
+    },
+    {
+      operationId: "task.workflows.lanes.verifier.open",
+      params: { workflowId: "w-1" },
+      body: {
+        parentLaneId: "lane-1",
+        laneRole: "provider",
+        independenceClaim: "independent",
+      },
+    },
+    {
+      operationId: "task.workflows.lanes.complete",
+      params: { workflowId: "w-1", laneId: "lane-1" },
+      body: { status: "completed" },
+    },
+    {
+      operationId: "task.workflows.lanes.verdict",
+      params: { workflowId: "w-1", laneId: "lane-1" },
+      body: { claimId: "c-1", verifierVerdict: "ok" },
+    },
+    {
+      operationId: "task.workflows.lanes.cli.handoff.record",
+      params: { workflowId: "w-1", laneId: "lane-1" },
+      body: {
+        backendId: "claude-cli",
+        systemPrompt: "system",
+        conversation: "summarize",
+      },
+    },
+    {
+      operationId: "task.workflows.channel.command.issue",
+      params: { workflowId: "w-1" },
+      body: {
+        channelKind: "discord",
+        channelChatId: "chat",
+        channelMessageId: "msg",
+        senderId: "sender",
+        intentKind: "progress_query",
+      },
+    },
+    {
+      operationId: "task.workflows.channel.command.confirm",
+      params: { workflowId: "w-1" },
+      body: { confirmationToken: "confirm-token" },
+    },
+  ];
+
+  for (const { operationId, params, body } of VALID_RETIRED_TASK_WORKFLOW_CALLS) {
+    it(`${operationId} fail-closes with TS_RUNTIME_TASK_WORKFLOW_RETIRED (503) when the test-oracle flag is unset`, async () => {
+      // No allowTestOnlyTaskWorkflowExecution => production/runtime default.
+      const routes = createFridayTaskWorkflowRoutes({
+        service: makeStubService(),
+        disabledReason: null,
+      });
+
+      await expect(
+        findRoute(routes, operationId).handler(
+          makeCtx({ params: params ?? {}, body: body ?? {} }) as never,
+        ),
+      ).rejects.toMatchObject({
+        code: "TS_RUNTIME_TASK_WORKFLOW_RETIRED",
+        httpStatus: 503,
+        details: { classification: "fail_closed" },
+      });
     });
-
-    // Pattern C: public, non-mutating preview still fail-closes (after body validation).
-    await expect(
-      findRoute(routes, "task.workflows.preview").handler(
-        makeCtx({ body: { charter: "x", taskKind: "general", contextPackage: {} } }) as never,
-      ),
-    ).rejects.toMatchObject({ code: "TS_RUNTIME_TASK_WORKFLOW_RETIRED", httpStatus: 503 });
-
-    // Pattern A: principal-gated create fail-closes for a valid bound principal + valid body.
-    await expect(
-      findRoute(routes, "task.workflows.create").handler(
-        makeCtx({ body: { charter: "x", taskKind: "general", contextPackage: {} } }) as never,
-      ),
-    ).rejects.toMatchObject({ code: "TS_RUNTIME_TASK_WORKFLOW_RETIRED", httpStatus: 503 });
-
-    // Pattern A with params + body: evidence-ref attach fail-closes after validation.
-    await expect(
-      findRoute(routes, "task.workflows.claims.evidence.attach").handler(
-        makeCtx({
-          params: { workflowId: "w-1", claimId: "c-1" },
-          body: { refKind: "docs.start_here", refId: "START_HERE_PROMPT.md", refSource: "docs_intent_reference" },
-        }) as never,
-      ),
-    ).rejects.toMatchObject({ code: "TS_RUNTIME_TASK_WORKFLOW_RETIRED", httpStatus: 503 });
-
-    // Pattern B: no-body closeout fail-closes after the bound-principal check.
-    await expect(
-      findRoute(routes, "task.workflows.closeout").handler(
-        makeCtx({ params: { workflowId: "w-1" } }) as never,
-      ),
-    ).rejects.toMatchObject({ code: "TS_RUNTIME_TASK_WORKFLOW_RETIRED", httpStatus: 503 });
-  });
+  }
 
   it("still enforces availability (503 DISABLED) and bound-principal (401) BEFORE the retirement guard", async () => {
     // Disabled service => availability check fires first (not the retirement guard).

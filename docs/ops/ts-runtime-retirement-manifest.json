@@ -3228,6 +3228,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.preview to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check and request-body validation (400) (the route is public and non-mutating, so there is no bound-principal step), and immediately before the TypeScript task-workflow preview computation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3241,6 +3242,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.create to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3254,6 +3256,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.revise to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3267,6 +3270,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.closeout to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check and the bound-principal owner/session/channel check (401), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3280,6 +3284,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.claims.create to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3293,6 +3298,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.claims.block to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3306,6 +3312,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.claims.evidence.attach to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3319,6 +3326,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.claims.verify to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3332,6 +3340,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.lanes.executor.open to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3345,6 +3354,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.lanes.verifier.open to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3358,6 +3368,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.lanes.complete to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3371,6 +3382,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.lanes.verdict to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3384,6 +3396,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.lanes.cli.handoff.record to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3397,6 +3410,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.channel.command.issue to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
@@ -3410,6 +3424,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/routes/friday-task-workflow-routes.test.ts",
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.channel.command.confirm to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
     },
