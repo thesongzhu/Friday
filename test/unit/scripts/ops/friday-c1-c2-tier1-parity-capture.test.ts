@@ -36,6 +36,7 @@ function writeCaptureArtifact(root: string, flow: CaptureModule["TIER1_PARITY_FL
       builtDark: true,
       live: false,
       organic: false,
+      harness: flow.expectedHarness,
       truthLabel: "parity-capture artifact from existing routed harness output",
       evidence: [{ kind: "artifact", path: flow.expectedHarness }],
       ...patch,
@@ -152,6 +153,32 @@ describe("C1/C2 Tier-1 parity capture runner", () => {
     );
   });
 
+  it("rejects artifacts whose harness is not bound to the flow spec", async () => {
+    const capture = await loadCaptureModule();
+    const root = makeTempRoot();
+
+    for (const flow of capture.TIER1_PARITY_FLOW_SPECS) {
+      writeCaptureArtifact(
+        root,
+        flow,
+        flow.order === 1 ? { harness: "scripts/ops/unrelated-proof.sh" } : {},
+      );
+    }
+
+    const report = await capture.buildCaptureReport({
+      enabled: true,
+      artifactRoot: root,
+      reportPath: path.join(root, "report.json"),
+      generatedAt: "2026-06-19T00:00:00.000Z",
+    });
+
+    expect(report.status).toBe("blocked");
+    expect(report.blocker).toBe("1 capture artifact(s) missing or invalid");
+    expect(report.flows.find((flow) => flow.order === 1)?.errors).toContain(
+      "harness mismatch for c1-codex-routed-proof",
+    );
+  });
+
   it("keeps the runner source free of DB writes and operator-key reads", () => {
     const source = `${readFileSync(scriptPath, "utf8")}\n${readFileSync(artifactRunnerPath, "utf8")}`;
 
@@ -175,6 +202,7 @@ describe("C1/C2 Tier-1 parity capture runner", () => {
         FRIDAY_C1_C2_TIER1_ARTIFACT_RUN: "1",
         FRIDAY_C1_C2_TIER1_CAPTURE_ROOT: root,
         FRIDAY_C1_C2_TIER1_FLOW_ID: "c1-codex-routed-proof",
+        FRIDAY_C1_C2_TIER1_ALLOW_CUSTOM_COMMAND: "1",
         FRIDAY_C1_C2_TIER1_FLOW_COMMAND_JSON: JSON.stringify([process.execPath, "-e", "process.stdout.write('ok')"]),
       },
       encoding: "utf8",
@@ -193,10 +221,32 @@ describe("C1/C2 Tier-1 parity capture runner", () => {
 
     expect(captured?.status).toBe("captured");
     expect(captured?.record.status).toBe("passed");
+    expect(captured?.record.harness).toBe("scripts/ops/friday-codex-mission-proof-of-life.sh");
+    expect(captured?.record.commandSource).toBe("custom");
+    expect(captured?.record.evidence[0].kind).toBe("custom-command-exit");
     expect(captured?.record.evidence[0].outputSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(captured?.record.truthLabel).toContain("parity-capture");
     expect(captured?.record.live).toBe(false);
     expect(captured?.record.organic).toBe(false);
+  });
+
+  it("requires an explicit opt-in before a custom flow command can mint artifacts", () => {
+    const root = makeTempRoot();
+    const result = spawnSync(process.execPath, [artifactRunnerPath], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        FRIDAY_C1_C2_TIER1_ARTIFACT_RUN: "1",
+        FRIDAY_C1_C2_TIER1_CAPTURE_ROOT: root,
+        FRIDAY_C1_C2_TIER1_FLOW_ID: "c1-codex-routed-proof",
+        FRIDAY_C1_C2_TIER1_FLOW_COMMAND_JSON: JSON.stringify([process.execPath, "-e", "process.stdout.write('ok')"]),
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('"status": "blocked"');
+    expect(result.stdout).toContain("custom flow commands require FRIDAY_C1_C2_TIER1_ALLOW_CUSTOM_COMMAND=1");
   });
 
   it("does not let a failed flow artifact count as captured", async () => {
@@ -209,6 +259,7 @@ describe("C1/C2 Tier-1 parity capture runner", () => {
         FRIDAY_C1_C2_TIER1_ARTIFACT_RUN: "1",
         FRIDAY_C1_C2_TIER1_CAPTURE_ROOT: root,
         FRIDAY_C1_C2_TIER1_FLOW_ID: "c1-codex-routed-proof",
+        FRIDAY_C1_C2_TIER1_ALLOW_CUSTOM_COMMAND: "1",
         FRIDAY_C1_C2_TIER1_FLOW_COMMAND_JSON: JSON.stringify([process.execPath, "-e", "process.exit(7)"]),
       },
       encoding: "utf8",

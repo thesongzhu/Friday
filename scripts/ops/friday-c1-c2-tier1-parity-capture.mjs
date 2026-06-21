@@ -262,6 +262,9 @@ export function validateCaptureRecord(flow, record) {
   if (recordObject.lane !== flow.lane) {
     errors.push(`lane mismatch for ${flow.flowId}`);
   }
+  if (recordObject.harness !== flow.expectedHarness) {
+    errors.push(`harness mismatch for ${flow.flowId}`);
+  }
   if (recordObject.organic === true || recordObject.runKind === "organic") {
     errors.push(`organic claim is not allowed for ${flow.flowId}`);
   }
