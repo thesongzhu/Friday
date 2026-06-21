@@ -47,9 +47,24 @@ final class HomeViewModelTests: XCTestCase {
       return try detailSnapshot(kind: "sessions", status: "ready", proofRef: "proof://session/list")
     }
 
+    func fetchSessionOpen(agentSessionId: String) async throws -> ReadProjectionSnapshot {
+      requestedDetails.append("session-open:\(agentSessionId)")
+      return try detailSnapshot(kind: "session-open", status: "open", proofRef: "proof://session/open/\(agentSessionId)")
+    }
+
+    func fetchSessionLinkState(agentSessionId: String) async throws -> ReadProjectionSnapshot {
+      requestedDetails.append("session-link:\(agentSessionId)")
+      return try detailSnapshot(kind: "session-link", status: "connected", proofRef: "proof://session/link/\(agentSessionId)")
+    }
+
     func fetchRunReadback(runId: String) async throws -> ReadProjectionSnapshot {
       requestedDetails.append("run:\(runId)")
       return try detailSnapshot(kind: "run", status: "complete", runId: runId, proofRef: "proof://run/\(runId)")
+    }
+
+    func fetchRunFileView(runId: String) async throws -> ReadProjectionSnapshot {
+      requestedDetails.append("run-files:\(runId)")
+      return try detailSnapshot(kind: "run-files", status: "ready", runId: runId, proofRef: "proof://run-files/\(runId)")
     }
 
     func fetchActivityNeedsMe(runId: String) async throws -> ReadProjectionSnapshot {
@@ -63,6 +78,9 @@ final class HomeViewModelTests: XCTestCase {
       runId: String? = nil,
       proofRef: String
     ) throws -> ReadProjectionSnapshot {
+      if case .fail(let error) = script {
+        throw error
+      }
       var raw: [String: Any] = [
         "missionId": "mission-7",
         "status": status,
@@ -83,6 +101,7 @@ final class HomeViewModelTests: XCTestCase {
       "fridayConversationId": "conv-7",
       "runtimeFeedStatus": "live_rust_hub_projection",
       "statusLabels": ["stale"],
+      "agentSessionId": "session-1",
       "routeDecision": {
         "advisorSummary": "route: deepseek (refs-only)",
         "selectedRoute": "deepseek",
@@ -122,6 +141,7 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.missionId, "mission-7")
     XCTAssertEqual(p.runtimeFeedStatus, "live_rust_hub_projection") // truth label rides AS-IS
     XCTAssertEqual(p.statusLabels, ["stale"])                       // no label upgrade
+    XCTAssertEqual(p.agentSessionId, "session-1")
     XCTAssertEqual(p.workItemIds, ["wi-1", "wi-2"])                 // refs/ids only (INV-5)
     XCTAssertTrue(vm.state.isOnline)
   }
@@ -183,6 +203,24 @@ final class HomeViewModelTests: XCTestCase {
     }
     XCTAssertEqual(detail.title, "Needs-me activity")
     XCTAssertTrue(detail.refs.contains("proof://needs/run-1"))
+  }
+
+  func testLoadDetail_callsSessionAndRunFileReadArms() async throws {
+    let client = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let vm = HomeViewModel(client: client)
+    await vm.loadDetail(.sessionOpen(agentSessionId: "session-1"))
+    await vm.loadDetail(.sessionLinkState(agentSessionId: "session-1"))
+    await vm.loadDetail(.runFileView(runId: "run-1"))
+    XCTAssertEqual(client.requestedDetails, [
+      "session-open:session-1",
+      "session-link:session-1",
+      "run-files:run-1",
+    ])
+    guard case let .loaded(detail) = vm.detailState else {
+      return XCTFail("expected detail .loaded, got \(vm.detailState)")
+    }
+    XCTAssertEqual(detail.title, "Run files")
+    XCTAssertTrue(detail.refs.contains("proof://run-files/run-1"))
   }
 
   func testLoadDetail_transportFailureIsHonestUnavailable() async {

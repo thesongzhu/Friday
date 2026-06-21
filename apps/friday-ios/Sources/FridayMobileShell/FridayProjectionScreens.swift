@@ -193,6 +193,27 @@ struct FridayProjectionScreen: View {
           }
           .disabled(viewModel.detailState.isLoading)
         }
+        if let agentSessionId = projection.agentSessionId {
+          HStack(spacing: 8) {
+            Button {
+              Task { await viewModel.loadDetail(.sessionOpen(agentSessionId: agentSessionId)) }
+            } label: {
+              Label("Open", systemImage: "text.bubble")
+            }
+            .disabled(viewModel.detailState.isLoading)
+
+            Button {
+              Task { await viewModel.loadDetail(.sessionLinkState(agentSessionId: agentSessionId)) }
+            } label: {
+              Label("Link", systemImage: "link")
+            }
+            .disabled(viewModel.detailState.isLoading)
+          }
+        } else {
+          Text("Session detail arms require an agent session ref in the projection.")
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+        }
         if let runId = projection.runOutcomeLearningCandidates.first?.runId, !runId.isEmpty {
           HStack(spacing: 8) {
             Button {
@@ -203,12 +224,18 @@ struct FridayProjectionScreen: View {
             .disabled(viewModel.detailState.isLoading)
 
             Button {
-              Task { await viewModel.loadDetail(.activityNeedsMe(runId: runId)) }
+              Task { await viewModel.loadDetail(.runFileView(runId: runId)) }
             } label: {
-              Label("Needs Me", systemImage: "bell.badge")
+              Label("Files", systemImage: "folder")
             }
             .disabled(viewModel.detailState.isLoading)
           }
+          Button {
+            Task { await viewModel.loadDetail(.activityNeedsMe(runId: runId)) }
+          } label: {
+            Label("Needs Me", systemImage: "bell.badge")
+          }
+          .disabled(viewModel.detailState.isLoading)
         }
       }
     }

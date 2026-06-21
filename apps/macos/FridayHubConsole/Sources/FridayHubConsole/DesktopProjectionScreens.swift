@@ -170,11 +170,34 @@ struct DesktopProjectionScreen: View {
           }
           .disabled(viewModel.detailState.isLoading)
 
+          if let agentSessionId = snapshot.agentSessionId {
+            Button {
+              Task { await viewModel.loadDetail(.sessionOpen(agentSessionId: agentSessionId)) }
+            } label: {
+              Label("Open", systemImage: "text.bubble")
+            }
+            .disabled(viewModel.detailState.isLoading)
+
+            Button {
+              Task { await viewModel.loadDetail(.sessionLinkState(agentSessionId: agentSessionId)) }
+            } label: {
+              Label("Link", systemImage: "link")
+            }
+            .disabled(viewModel.detailState.isLoading)
+          }
+
           if let runId = snapshot.runOutcomeLearningCandidates.first?.runId, !runId.isEmpty {
             Button {
               Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
             } label: {
               Label("Run", systemImage: "doc.text.magnifyingglass")
+            }
+            .disabled(viewModel.detailState.isLoading)
+
+            Button {
+              Task { await viewModel.loadDetail(.runFileView(runId: runId)) }
+            } label: {
+              Label("Files", systemImage: "folder")
             }
             .disabled(viewModel.detailState.isLoading)
 
@@ -185,6 +208,11 @@ struct DesktopProjectionScreen: View {
             }
             .disabled(viewModel.detailState.isLoading)
           }
+        }
+        if snapshot.agentSessionId == nil {
+          Text("Session detail arms require an agent session ref in the projection.")
+            .font(.system(size: 11))
+            .foregroundStyle(HubTheme.textSecondary)
         }
       }
     }
