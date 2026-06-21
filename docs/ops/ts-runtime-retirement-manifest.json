@@ -699,6 +699,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-guide-lens-routes.test.ts",
       "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before captureSnapshot; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
       "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
     },
@@ -712,6 +713,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-guide-lens-routes.test.ts",
       "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before validating or resolving a target; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
       "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
     },
@@ -725,6 +727,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-guide-lens-routes.test.ts",
       "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before overlay validation or showOverlay; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
       "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
     },
@@ -738,6 +741,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-guide-lens-routes.test.ts",
       "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before clearOverlay; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
       "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
     },
@@ -751,6 +755,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-guide-lens-routes.test.ts",
       "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before screenshot analysis; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
       "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
     },
@@ -764,6 +769,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-guide-lens-routes.test.ts",
       "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before verify; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
       "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
     },
@@ -777,6 +783,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-guide-lens-routes.test.ts",
       "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before updatePreferences; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
       "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
     },
@@ -790,6 +797,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-guide-lens-routes.test.ts",
       "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before updateAvatar; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
       "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
     },
