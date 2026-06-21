@@ -44,8 +44,32 @@ final class HomeViewModelTests: XCTestCase {
       "fridayConversationId": "conv-7",
       "runtimeFeedStatus": "live_rust_hub_projection",
       "statusLabels": ["stale"],
-      "routeDecision": { "advisorSummary": "route: deepseek (refs-only)" },
-      "workItems": [ { "workItemId": "wi-1" }, { "workItemId": "wi-2" } ]
+      "routeDecision": {
+        "advisorSummary": "route: deepseek (refs-only)",
+        "selectedRoute": "deepseek",
+        "alternatives": ["codex", "claude"],
+        "truthLabel": "friday_owned"
+      },
+      "providerReceiptRefs": ["proof://provider/1"],
+      "channelReceiptRefs": ["proof://surface/mobile/1"],
+      "workItems": [
+        { "workItemId": "wi-1", "title": "Draft mission", "state": "ready", "owner": "friday_owned", "done": false },
+        { "workItemId": "wi-2", "title": "Needs approval", "state": "waiting", "owner": "linked_only", "proofRef": "proof://wi/2", "done": false }
+      ],
+      "memoryCandidates": [
+        { "id": "cand-1", "preview": "Remember route preference.", "state": "candidate_review_only", "grantsMemoryAuthority": false, "evidenceRef": "proof://memory/1" }
+      ],
+      "runOutcomeLearningCandidates": [
+        { "id": "learn-1", "runId": "run-1", "workItemId": "wi-2", "kind": "preference", "state": "candidate", "summary": "DeepSeek handled the short planning leg well.", "evidenceRef": "proof://learning/1" }
+      ],
+      "capabilityStates": [
+        { "id": "cap-route", "label": "Route advisor", "kind": "advisor", "truthLabel": "friday_owned", "approvalState": "not_required", "dispatchAllowed": true, "summary": "Routes are advisory.", "proofRef": "proof://cap/1" }
+      ],
+      "transcriptSections": [
+        { "id": "sec-1", "title": "Mission", "groupKind": "mission", "missionId": "mission-7", "truthLabel": "friday_owned", "status": "ready", "events": [
+          { "id": "evt-1", "missionId": "mission-7", "surface": "mobile", "status": "ready", "truthLabel": "friday_owned", "summary": "Mobile surface read the mission projection.", "capturedAt": "2026-06-21T00:00:00Z" }
+        ] }
+      ]
     }
     """
     return try WorkbenchSnapshot(projectionJSON: Data(json.utf8), generatedAtMs: 1_780_640_000_000)
@@ -61,6 +85,23 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.statusLabels, ["stale"])                       // no label upgrade
     XCTAssertEqual(p.workItemIds, ["wi-1", "wi-2"])                 // refs/ids only (INV-5)
     XCTAssertTrue(vm.state.isOnline)
+  }
+
+  func testRefresh_liftsConsumerSurfaceProjectionRefs() async throws {
+    let vm = HomeViewModel(client: FakeReadClient(.snapshot(try sampleSnapshot())))
+    await vm.refresh()
+    guard case .loaded(let p) = vm.state else { return XCTFail("expected .loaded") }
+    XCTAssertEqual(p.routeSelected, "deepseek")
+    XCTAssertEqual(p.routeAlternatives, ["codex", "claude"])
+    XCTAssertEqual(p.providerReceiptRefs, ["proof://provider/1"])
+    XCTAssertEqual(p.channelReceiptRefs, ["proof://surface/mobile/1"])
+    XCTAssertEqual(p.workItems.map(\.title), ["Draft mission", "Needs approval"])
+    XCTAssertEqual(p.workItems.filter(\.needsAttention).map(\.id), ["wi-2"])
+    XCTAssertEqual(p.memoryCandidates.first?.grantsMemoryAuthority, false)
+    XCTAssertEqual(p.runOutcomeLearningCandidates.first?.runId, "run-1")
+    XCTAssertEqual(p.capabilityStates.first?.dispatchAllowed, true)
+    XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile surface read the mission projection.")
+    XCTAssertEqual(p.needsMeCount, 3)
   }
 
   func testRefresh_transportFailure_isHonestUnavailable() async {

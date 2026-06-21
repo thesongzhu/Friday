@@ -8,9 +8,13 @@ import SwiftUI
 /// carry.
 enum MobileDestination: String, CaseIterable, Identifiable {
   case home
+  case missions
+  case needsMe
+  case memory
   case platform
   case activity
   case workflows
+  case onboarding
   case settings
 
   var id: String { rawValue }
@@ -18,9 +22,13 @@ enum MobileDestination: String, CaseIterable, Identifiable {
   var title: String {
     switch self {
     case .home: return "Friday Home"
+    case .missions: return "Missions"
+    case .needsMe: return "Needs Me"
+    case .memory: return "Memory"
     case .platform: return "Platform"
     case .activity: return "Activity"
     case .workflows: return "Workflows"
+    case .onboarding: return "Onboarding"
     case .settings: return "Settings"
     }
   }
@@ -28,9 +36,13 @@ enum MobileDestination: String, CaseIterable, Identifiable {
   var systemImage: String {
     switch self {
     case .home: return "house"
+    case .missions: return "list.bullet.rectangle"
+    case .needsMe: return "person.crop.circle.badge.exclamationmark"
+    case .memory: return "brain.head.profile"
     case .platform: return "square.grid.2x2"
     case .activity: return "bell.badge"
     case .workflows: return "arrow.triangle.branch"
+    case .onboarding: return "sparkles.rectangle.stack"
     case .settings: return "gearshape"
     }
   }
