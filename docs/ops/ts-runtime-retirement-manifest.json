@@ -1732,6 +1732,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-routes.test.ts",
       "proof": "src/api/http/routes/friday-skill-routes.ts wires default/live skills.verify to TS_RUNTIME_SKILL_VERIFY_RETIRED before calling the TypeScript lifecycle.verifySkill service; the legacy TS verification path is reachable only through explicit allowTestOnlySkillVerifyExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned skill verification entrypoint when available."
     },
@@ -2111,6 +2112,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-auto-fix-routes.test.ts",
       "proof": "src/api/http/routes/friday-auto-fix-routes.ts wires default/live autofix.actions.run.ready to TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED after the bound-principal gate and before calling the TypeScript runReadyActions service; legacy TS execution is reachable only through explicit allowTestOnlyAutoFixExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned auto-fix run-ready execution entrypoint when available."
     },
@@ -2138,6 +2140,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-auto-fix-routes.test.ts",
       "proof": "src/api/http/routes/friday-auto-fix-routes.ts wires default/live autofix.actions.rollback to TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED after the bound-principal gate and before calling the TypeScript rollbackAction service; legacy TS rollback is reachable only through explicit allowTestOnlyAutoFixExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned auto-fix rollback entrypoint when available."
     },
@@ -2175,6 +2178,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-auto-fix-routes.test.ts",
       "proof": "src/api/http/routes/friday-auto-fix-routes.ts wires default/live autofix.actions.approve to TS_RUNTIME_AUTOFIX_CONTROLS_RETIRED after the bound-principal gate and before calling the TypeScript approveAction service; legacy TS approval is reachable only through explicit allowTestOnlyAutoFixExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned auto-fix approval/control entrypoint when available."
     },
@@ -2188,6 +2192,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-auto-fix-routes.test.ts",
       "proof": "src/api/http/routes/friday-auto-fix-routes.ts wires default/live autofix.actions.deny to TS_RUNTIME_AUTOFIX_CONTROLS_RETIRED after the bound-principal gate and before calling the TypeScript denyAction service; legacy TS denial is reachable only through explicit allowTestOnlyAutoFixExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned auto-fix denial/control entrypoint when available."
     },
@@ -2255,6 +2260,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.actions.log to TS_RUNTIME_DESKTOP_ACTION_CONTROL_RETIRED before reading the TypeScript desktop action log, whose entries carry raw action payloads (typed text, file paths/contents, clipboard, screenshots, element values) with no safe bounded projection; legacy TS reads are reachable only through explicit allowTestOnlyDesktopActionControlExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned redacted desktop action audit projection when available."
     },
@@ -2352,6 +2358,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.steps.list to TS_RUNTIME_DESKTOP_RECORDING_RETIRED before reading the TypeScript recording step stream, whose steps carry raw captured actions, element values, results, and parameter bindings (typed text, file paths, coordinates) with no safe bounded projection; legacy TS reads are reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned redacted desktop recording step projection when available."
     },
@@ -2379,6 +2386,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.elements.search to TS_RUNTIME_DESKTOP_ELEMENT_INSPECTION_RETIRED after request validation and before calling the TypeScript desktop adapter, which actively queries the live desktop accessibility tree and returns raw element name/value/window title/accessibility attributes; legacy TS execution is reachable only through explicit allowTestOnlyDesktopElementInspectionExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned desktop element search entrypoint when available."
     },
@@ -2392,6 +2400,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.list to TS_RUNTIME_DESKTOP_RECORDING_RETIRED before reading the TypeScript recording store, whose recordings carry user-authored names, descriptions, tags, parameter maps, and creator ids; the recording write/replay/step surfaces are already fail-closed, so the read is retired with them rather than projected. Legacy TS reads are reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned redacted desktop recording projection when available."
     },
@@ -2405,6 +2414,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.get to TS_RUNTIME_DESKTOP_RECORDING_RETIRED before reading the TypeScript recording store, whose recording carries user-authored name/description/tags, a parameter map, and a creator id; the recording write/replay/step surfaces are already fail-closed, so the read is retired with them rather than projected. Legacy TS reads are reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned redacted desktop recording projection when available."
     },
@@ -2552,6 +2562,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.permissions.listDecisions) throws DESKTOP_PERMISSION_DECISION_NOT_PERSISTED (503, status proof_pending) before any read; no decisions log is wired so there is no redactable projection. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop permission decision log projection when available."
     },
@@ -2887,6 +2898,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-workflow-builder-routes.test.ts",
       "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live templates.instantiate to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript instantiateTemplate service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow builder template instantiate entrypoint when available."
     },
@@ -4639,6 +4651,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-fleet-routes.test.ts",
       "proof": "src/api/http/routes/friday-fleet-routes.ts fleet.execute.satellite.remediation wires default/live to assertFleetRemediationTestOracleAllowed(deps) AFTER the canonical-approval gate requireFleetRemediationTicket (unapproved -> 403 CANONICAL_APPROVAL_REQUIRED/DENIED) and IMMEDIATELY BEFORE deps.fleetService.executeSatelliteRemediationAction. 503 TS_RUNTIME_FLEET_REMEDIATION_RETIRED (classification fail_closed, replacement rust_owned_fleet_remediation_entrypoint_required). The mutation performs non-destructive local SQLite remediation status updates (requeue/expire leases) — a user-triggerable mutation, no third-party egress, so fail_closed not operator_external_adapter; GET fleet reads stay compat_shim. executes_product_logic:false: no remediation runs in default/live. executeSatelliteRemediationAction has exactly ONE user-triggerable call site (this route — verified by grep; the full-e2e + closure fleet steps are GET reads, they do NOT POST remediation), so legacy behavior is reachable only through explicit allowTestOnlyFleetRemediationExecution test-oracle wiring (threaded CreateFridayApiRuntimeDeps -> inline createFridayFleetRoutes).",
       "next_action": "Replace the fail-closed response with the Rust-owned fleet remediation entrypoint when available."
     },
