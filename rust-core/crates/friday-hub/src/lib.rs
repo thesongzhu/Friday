@@ -2544,10 +2544,11 @@ fn matched_run_outcome_learning_candidates_for_principals<F>(
 where
     F: Fn(&friday_storage::learning_candidate::RunOutcomeLearningCandidateRow) -> bool,
 {
-    let rows = friday_storage::learning_candidate::list_recent_confirmed_run_outcome_candidates(
-        db.conn(),
-        64,
-    )?;
+    let rows =
+        friday_storage::learning_candidate::list_recent_eligible_confirmed_run_outcome_candidates(
+            db.conn(),
+            64,
+        )?;
     let mut matched = Vec::new();
     for row in rows {
         if !keep(&row) {
@@ -17179,6 +17180,28 @@ mod tests {
         .unwrap();
     }
 
+    fn run_outcome_learning_artifact_snapshot(db: &Db) -> String {
+        db.conn()
+            .query_row(
+                "SELECT COALESCE(group_concat(
+                    candidate_id || '|' || run_id || '|' || COALESCE(session_id, '') || '|' ||
+                    kind || '|' || state || '|' || evidence_ref || '|' || summary || '|' ||
+                    turns || '|' || executed_tools || '|' || created_at_ms || '|' ||
+                    COALESCE(decided_at_ms, '') || '|' || COALESCE(decision_reason, ''),
+                    '\n'
+                 ), '')
+                   FROM (
+                     SELECT candidate_id, run_id, session_id, kind, state, evidence_ref, summary,
+                            turns, executed_tools, created_at_ms, decided_at_ms, decision_reason
+                       FROM run_outcome_learning_candidate
+                      ORDER BY candidate_id
+                   )",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
     #[test]
     fn a1_run_outcome_learning_recall_flag_on_surfaces_confirmed_refs_only_signal() {
         let db = Db::open_hub(&temp_path("a1-drive-on")).unwrap();
@@ -17325,6 +17348,78 @@ mod tests {
     }
 
     #[test]
+    fn a1_run_outcome_learning_consumer_requires_candidate_confirm() {
+        let db = Db::open_hub(&temp_path("a1-consumer-confirm")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        friday_storage::agent_session::ensure_session_with_owner(
+            db.conn(),
+            "sess-a1-confirm",
+            &friday_storage::agent_session::SessionOwner {
+                user_id: Some("alice".to_string()),
+                ..friday_storage::agent_session::SessionOwner::default()
+            },
+            now,
+        )
+        .unwrap();
+        friday_storage::learning_candidate::record_run_outcome_candidates(
+            db.conn(),
+            "run-a1-confirm",
+            Some("sess-a1-confirm"),
+            3,
+            1,
+            now,
+        )
+        .unwrap();
+        let alice_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("alice"))
+                .unwrap();
+
+        let pending = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            RecallPreambleFlags {
+                a1_run_outcome_consumer_on: true,
+                ..RecallPreambleFlags::default()
+            },
+            "audit-a1-consumer-pending",
+            now + 1,
+        )
+        .unwrap();
+        assert_eq!(
+            pending, "",
+            "pending A1 candidates must not affect recall before explicit confirm"
+        );
+
+        friday_storage::learning_candidate::decide_run_outcome_candidate(
+            db.conn(),
+            "a1:run-a1-confirm:preference",
+            true,
+            now + 2,
+            Some("operator confirmed"),
+        )
+        .unwrap();
+        let confirmed = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            RecallPreambleFlags {
+                a1_run_outcome_consumer_on: true,
+                ..RecallPreambleFlags::default()
+            },
+            "audit-a1-consumer-confirmed",
+            now + 3,
+        )
+        .unwrap();
+        assert!(
+            confirmed.contains("Confirmed preference/world-model learning signals")
+                && confirmed.contains("- preference:")
+                && confirmed.contains("friday://agent-run/run-a1-confirm"),
+            "confirmed preference candidate must be the first point it can affect recall: {confirmed:?}"
+        );
+    }
+
+    #[test]
     fn a1_run_outcome_learning_consumer_surfaces_preference_world_model_only() {
         let db = Db::open_hub(&temp_path("a1-consumer-on")).unwrap();
         let now = 1_000_000_000_000_i64;
@@ -17381,6 +17476,79 @@ mod tests {
         assert!(
             !preamble.contains("operator confirmed"),
             "decision reasons are operator text and must not be prompt-injected: {preamble:?}"
+        );
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_consumer_is_deterministic_without_learning_mutation() {
+        let db = Db::open_hub(&temp_path("a1-consumer-deterministic")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        seed_confirmed_run_outcome_learning(
+            &db,
+            "sess-a1-deterministic",
+            "alice",
+            "run-a1-deterministic",
+            now,
+        );
+        friday_storage::learning_candidate::decide_run_outcome_candidate(
+            db.conn(),
+            "a1:run-a1-deterministic:world_model",
+            true,
+            now + 2,
+            Some("operator confirmed world-model text"),
+        )
+        .unwrap();
+        let alice_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("alice"))
+                .unwrap();
+        let before = run_outcome_learning_artifact_snapshot(&db);
+
+        let mut rendered = Vec::new();
+        for i in 0..4 {
+            rendered.push(
+                recall_preamble_for_principals_blended(
+                    &db,
+                    &[alice_ns.as_str()],
+                    None,
+                    RecallPreambleFlags {
+                        a1_run_outcome_consumer_on: true,
+                        ..RecallPreambleFlags::default()
+                    },
+                    &format!("audit-a1-consumer-deterministic-{i}"),
+                    now + 10 + i,
+                )
+                .unwrap(),
+            );
+        }
+
+        for output in &rendered[1..] {
+            assert_eq!(
+                output, &rendered[0],
+                "same confirmed learning artifacts must render byte-identical prompt text"
+            );
+        }
+        assert!(
+            rendered[0].contains("Confirmed preference/world-model learning signals")
+                && rendered[0].contains("- preference:")
+                && rendered[0].contains("- world_model:")
+        );
+        assert_eq!(
+            run_outcome_learning_artifact_snapshot(&db),
+            before,
+            "request-time recall may append audit, but must not mutate learning artifacts"
+        );
+        let consumer_audits: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action LIKE 'run_outcome_learning.consumer:%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            consumer_audits, 4,
+            "audit append is governance accounting and is allowed by the scoped no-mutation rule"
         );
         assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
     }
