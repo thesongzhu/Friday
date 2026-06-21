@@ -40,6 +40,7 @@ struct FridayChatScreen: View {
             .font(.title3).bold()
             .foregroundStyle(MobileTheme.textPrimary)
 
+          historyCard
           phaseCard
         }
         .padding(16)
@@ -53,6 +54,40 @@ struct FridayChatScreen: View {
   }
 
   // MARK: - The 4-state loop, rendered
+
+  @ViewBuilder private var historyCard: some View {
+    if !viewModel.history.isEmpty {
+      GlassPanel {
+        VStack(alignment: .leading, spacing: 10) {
+          HStack {
+            Label("History", systemImage: "clock.arrow.circlepath")
+              .font(.headline)
+              .foregroundStyle(MobileTheme.textPrimary)
+            Spacer()
+            Button("Clear") { viewModel.clearHistory() }
+              .font(.caption)
+              .foregroundStyle(MobileTheme.cyan)
+          }
+          ForEach(viewModel.history.suffix(8)) { item in
+            VStack(alignment: .leading, spacing: 4) {
+              Text(item.role == "you" ? "You" : "Friday")
+                .font(.caption2)
+                .foregroundStyle(MobileTheme.textSecondary)
+              Text(item.text)
+                .font(.caption)
+                .foregroundStyle(MobileTheme.textPrimary)
+                .lineLimit(4)
+              if let runId = item.runId {
+                RefPill(label: "run_id", ref: short(runId))
+              }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 3)
+          }
+        }
+      }
+    }
+  }
 
   @ViewBuilder private var phaseCard: some View {
     switch viewModel.phase {
