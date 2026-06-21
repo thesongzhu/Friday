@@ -6,6 +6,9 @@ import {
   createFridaySkillLifecycleMutatingActionRequest,
 } from "../../../../../src/autonomy/services/friday-skill-upgrade-lifecycle-service.js";
 import {
+  createFridayWorkflowLifecycleMutatingActionRequest,
+} from "../../../../../src/autonomy/services/friday-workflow-upgrade-lifecycle-service.js";
+import {
   createFridayProviderProfileLifecycleMutatingActionRequest,
 } from "../../../../../src/autonomy/services/friday-provider-profile-upgrade-lifecycle-service.js";
 import {
@@ -92,6 +95,62 @@ function makeChannelContext(body: Record<string, unknown>) {
     body,
     headers: {},
     principal,
+  };
+}
+
+function makeAutonomyLifecycleContext(body: Record<string, unknown>) {
+  return {
+    requestId: "req-1",
+    receivedAt: "2026-05-07T18:00:00.000Z",
+    params: {
+      workflowId: "workflow-1",
+      skillId: "skill-1",
+      providerId: "provider-1",
+      serverId: "mcp-1",
+      pluginId: "plugin-1",
+      channelKind: "webchat",
+    },
+    query: {},
+    body,
+    headers: {},
+    principal,
+  };
+}
+
+function makeWorkflowApproval(input: {
+  action: "shadow" | "canary" | "promote" | "rollback";
+  workflowVersionId?: string;
+  versionNumber?: number;
+  targetVersionNumber?: number;
+  success?: boolean;
+  planDigest?: string;
+}): FridayCanonicalApprovalResolution {
+  const planDigest = input.planDigest ?? "workflow-plan-1";
+  const request = createFridayWorkflowLifecycleMutatingActionRequest({
+    action: input.action,
+    workflowId: "workflow-1",
+    workflowVersionId: input.workflowVersionId,
+    versionNumber: input.versionNumber,
+    targetVersionNumber: input.targetVersionNumber,
+    success: input.success,
+    runtimeVersion: "runtime-v1",
+    actor: {
+      kind: "user",
+      id: "user-1",
+      principalId: "user-1",
+    },
+    surface: `api:/v1/autonomy/workflows/workflow-1/${input.action}`,
+    planDigest,
+    rollback: input.action === "rollback"
+      ? { planned: true, planDigest, actions: ["workflows.lifecycle.promote"] }
+      : undefined,
+  });
+  return {
+    decision: "approved",
+    approvalId: `workflow-${input.action}-approval`,
+    decidedByPrincipalId: "user-1",
+    actionDigest: createFridayMutatingActionDigest(request),
+    expiresAt: "2026-05-07T19:00:00.000Z",
   };
 }
 
@@ -530,6 +589,240 @@ function createChannelRoutes() {
   });
   return { routes, registerShadow, recordCanary };
 }
+
+function createAutonomyLifecycleRoutesDefaultOff() {
+  const workflowMutations = {
+    registerShadow: vi.fn(async () => ({ id: "workflow-1" })),
+    recordCanary: vi.fn(async () => ({ id: "workflow-1" })),
+    promote: vi.fn(async () => ({ id: "workflow-1" })),
+    rollback: vi.fn(async () => ({ id: "workflow-1" })),
+  };
+  const skillMutations = {
+    registerShadow: vi.fn(async () => ({ skillId: "skill-1", status: "not_installed", tags: [] })),
+    recordCanary: vi.fn(async () => ({ skillId: "skill-1", status: "not_installed", tags: [] })),
+    promote: vi.fn(async () => ({ skillId: "skill-1", status: "installed", tags: [] })),
+    rollback: vi.fn(async () => ({ skillId: "skill-1", status: "not_installed", tags: [] })),
+  };
+  const pluginMutations = {
+    registerShadow: vi.fn(async () => ({ id: "plugin-1" })),
+    recordCanary: vi.fn(async () => ({ id: "plugin-1" })),
+    promote: vi.fn(async () => ({ id: "plugin-1" })),
+    rollback: vi.fn(async () => ({ id: "plugin-1" })),
+    reviewEnable: vi.fn(async () => ({ id: "plugin-1" })),
+  };
+  const providerMutations = {
+    registerShadow: vi.fn(async () => ({ id: "provider-1" })),
+    recordCanary: vi.fn(async () => ({ id: "provider-1" })),
+    promote: vi.fn(async () => ({ id: "provider-1" })),
+    rollback: vi.fn(async () => ({ id: "provider-1" })),
+  };
+  const mcpMutations = {
+    registerShadow: vi.fn(async () => undefined),
+    recordCanary: vi.fn(async () => undefined),
+    promote: vi.fn(async () => undefined),
+    rollback: vi.fn(async () => undefined),
+  };
+  const channelMutations = {
+    registerShadow: vi.fn(async () => undefined),
+    recordCanary: vi.fn(async () => undefined),
+    promote: vi.fn(async () => undefined),
+    rollback: vi.fn(async () => undefined),
+  };
+  const routes = createFridayAutonomyRoutes({
+    allowTestOnlyAutonomyLifecycleExecution: false,
+    canonicalMutationGate: createFridayMutatingActionGate({
+      nowIso: () => "2026-05-07T18:00:00.000Z",
+      ticketIdGenerator: () => "ticket-1",
+    }),
+    listUpgradeStatus: () => ({ items: [] }),
+    workflowActions: {
+      ...workflowMutations,
+      getStatus: () => null,
+    },
+    skillActions: {
+      ...skillMutations,
+      getStatus: () => null,
+      getEvidence: vi.fn(() => null),
+    },
+    pluginActions: {
+      ...pluginMutations,
+      getStatus: () => null,
+      getEvidence: vi.fn(() => null),
+    },
+    providerProfileActions: {
+      ...providerMutations,
+      getStatus: () => null,
+      getEvidence: vi.fn(() => null),
+    },
+    mcpServerActions: {
+      ...mcpMutations,
+      getStatus: () => null,
+      getEvidence: vi.fn(() => null),
+    },
+    channelAdapterActions: {
+      ...channelMutations,
+      getStatus: () => null,
+      getEvidence: vi.fn(() => null),
+    },
+  });
+  return {
+    routes,
+    mutations: [
+      ...Object.values(workflowMutations),
+      ...Object.values(skillMutations),
+      ...Object.values(pluginMutations),
+      ...Object.values(providerMutations),
+      ...Object.values(mcpMutations),
+      ...Object.values(channelMutations),
+    ],
+  };
+}
+
+describe("createFridayAutonomyRoutes lifecycle route retirement", () => {
+  it.each([
+    {
+      operationId: "autonomy.workflows.shadow",
+      body: {
+        workflowVersionId: "workflow-version-1",
+        runtimeVersion: "runtime-v1",
+        planDigest: "workflow-plan-1",
+        canonicalApproval: makeWorkflowApproval({ action: "shadow", workflowVersionId: "workflow-version-1" }),
+      },
+    },
+    {
+      operationId: "autonomy.workflows.canary",
+      body: {
+        success: true,
+        runtimeVersion: "runtime-v1",
+        planDigest: "workflow-plan-1",
+        canonicalApproval: makeWorkflowApproval({ action: "canary", success: true }),
+      },
+    },
+    {
+      operationId: "autonomy.workflows.promote",
+      body: {
+        versionNumber: 1,
+        runtimeVersion: "runtime-v1",
+        planDigest: "workflow-plan-1",
+        canonicalApproval: makeWorkflowApproval({ action: "promote", versionNumber: 1 }),
+      },
+    },
+    {
+      operationId: "autonomy.workflows.rollback",
+      body: {
+        targetVersionNumber: 1,
+        runtimeVersion: "runtime-v1",
+        planDigest: "workflow-plan-1",
+        canonicalApproval: makeWorkflowApproval({ action: "rollback", targetVersionNumber: 1 }),
+      },
+    },
+    {
+      operationId: "autonomy.skills.shadow",
+      body: {
+        candidateId: "candidate-1",
+        runtimeVersion: "runtime-v1",
+        canonicalApproval: makeApproval({ action: "shadow", candidateId: "candidate-1" }),
+      },
+    },
+    {
+      operationId: "autonomy.skills.canary",
+      body: {
+        candidateId: "candidate-1",
+        runtimeVersion: "runtime-v1",
+        canonicalApproval: makeApproval({ action: "canary", candidateId: "candidate-1" }),
+      },
+    },
+    {
+      operationId: "autonomy.skills.promote",
+      body: {
+        candidateId: "candidate-1",
+        runtimeVersion: "runtime-v1",
+        planDigest: "plan-digest-1",
+        canonicalApproval: makeApproval({
+          action: "promote",
+          candidateId: "candidate-1",
+          planDigest: "plan-digest-1",
+        }),
+      },
+    },
+    {
+      operationId: "autonomy.skills.rollback",
+      body: {
+        candidateId: "candidate-1",
+        runtimeVersion: "runtime-v1",
+        planDigest: "plan-digest-1",
+        canonicalApproval: makeApproval({
+          action: "rollback",
+          candidateId: "candidate-1",
+          planDigest: "plan-digest-1",
+        }),
+      },
+    },
+    {
+      operationId: "autonomy.plugins.review.enable",
+      body: {
+        runtimeVersion: "runtime-v1",
+        providerModel: "model-v1",
+        idempotencyKey: "review-enable-key",
+      },
+    },
+    ...(["shadow", "canary", "promote", "rollback"] as const).map((action) => ({
+      operationId: `autonomy.plugins.${action}`,
+      body: {
+        shadowVersionId: "plugin-1@shadow",
+        runtimeVersion: "runtime-v1",
+        planDigest: PLUGIN_PLAN_DIGEST,
+        canonicalApproval: makePluginApproval({ action }),
+      },
+    })),
+    ...(["shadow", "canary", "promote", "rollback"] as const).map((action) => ({
+      operationId: `autonomy.providers.${action}`,
+      body: {
+        shadowVersionId: "provider-1@shadow",
+        runtimeVersion: "runtime-v1",
+        planDigest: PROVIDER_PLAN_DIGEST,
+        canonicalApproval: makeProviderApproval({ action }),
+      },
+    })),
+    ...(["shadow", "canary", "promote", "rollback"] as const).map((action) => ({
+      operationId: `autonomy.mcp.servers.${action}`,
+      body: {
+        shadowVersionId: "mcp-1@shadow",
+        runtimeVersion: "runtime-v1",
+        planDigest: MCP_PLAN_DIGEST,
+        canonicalApproval: makeMcpApproval({ action }),
+      },
+    })),
+    ...(["shadow", "canary", "promote", "rollback"] as const).map((action) => ({
+      operationId: `autonomy.channels.${action}`,
+      body: {
+        shadowVersionId: "webchat@shadow",
+        runtimeVersion: "runtime-v1",
+        planDigest: CHANNEL_PLAN_DIGEST,
+        canonicalApproval: makeChannelApproval({ action }),
+      },
+    })),
+  ])(
+    "fail-closes %s by default before invoking legacy TypeScript lifecycle mutations",
+    async ({ operationId, body }) => {
+      const deps = createAutonomyLifecycleRoutesDefaultOff();
+      const route = deps.routes.find((entry) => entry.operationId === operationId)!;
+
+      await expect(route.handler(makeAutonomyLifecycleContext(body))).rejects.toMatchObject({
+        code: "TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED",
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_autonomy_subject_upgrade_lifecycle_entrypoint_required",
+        },
+      });
+
+      for (const mutation of deps.mutations) {
+        expect(mutation).not.toHaveBeenCalled();
+      }
+    },
+  );
+});
 
 describe("createFridayAutonomyRoutes skill lifecycle approval", () => {
   it.each([

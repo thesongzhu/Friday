@@ -2903,6 +2903,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.workflows.shadow to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript workflow upgrade-lifecycle shadow service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy workflow shadow entrypoint when available."
     },
@@ -2916,6 +2917,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.workflows.canary to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript workflow upgrade-lifecycle canary service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy workflow canary entrypoint when available."
     },
@@ -2929,6 +2931,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.workflows.promote to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript workflow upgrade-lifecycle promote service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy workflow promote entrypoint when available."
     },
@@ -2942,6 +2945,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.workflows.rollback to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript workflow upgrade-lifecycle rollback service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy workflow rollback entrypoint when available."
     },
@@ -2955,6 +2959,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.skills.shadow to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript skill upgrade-lifecycle shadow service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy skill shadow entrypoint when available."
     },
@@ -2968,6 +2973,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.skills.canary to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript skill upgrade-lifecycle canary service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy skill canary entrypoint when available."
     },
@@ -2981,6 +2987,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.skills.promote to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript skill upgrade-lifecycle promote service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy skill promote entrypoint when available."
     },
@@ -2994,6 +3001,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.skills.rollback to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript skill upgrade-lifecycle rollback service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy skill rollback entrypoint when available."
     },
@@ -3007,6 +3015,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.plugins.shadow to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript plugin upgrade-lifecycle shadow service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy plugin shadow entrypoint when available."
     },
@@ -3020,6 +3029,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.plugins.canary to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript plugin upgrade-lifecycle canary service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy plugin canary entrypoint when available."
     },
@@ -3033,6 +3043,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.plugins.promote to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript plugin upgrade-lifecycle promote service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy plugin promote entrypoint when available."
     },
@@ -3046,6 +3057,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.plugins.rollback to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript plugin upgrade-lifecycle rollback service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy plugin rollback entrypoint when available."
     },
@@ -3059,6 +3071,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.providers.shadow to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript provider upgrade-lifecycle shadow service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy provider shadow entrypoint when available."
     },
@@ -3072,6 +3085,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.providers.canary to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript provider upgrade-lifecycle canary service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy provider canary entrypoint when available."
     },
@@ -3085,6 +3099,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.providers.promote to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript provider upgrade-lifecycle promote service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy provider promote entrypoint when available."
     },
@@ -3098,6 +3113,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.providers.rollback to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript provider upgrade-lifecycle rollback service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy provider rollback entrypoint when available."
     },
@@ -3111,6 +3127,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.mcp.servers.shadow to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript mcp-server upgrade-lifecycle shadow service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy mcp-server shadow entrypoint when available."
     },
@@ -3124,6 +3141,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.mcp.servers.canary to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript mcp-server upgrade-lifecycle canary service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy mcp-server canary entrypoint when available."
     },
@@ -3137,6 +3155,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.mcp.servers.promote to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript mcp-server upgrade-lifecycle promote service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy mcp-server promote entrypoint when available."
     },
@@ -3150,6 +3169,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.mcp.servers.rollback to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript mcp-server upgrade-lifecycle rollback service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy mcp-server rollback entrypoint when available."
     },
@@ -3163,6 +3183,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.channels.shadow to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript channel-adapter upgrade-lifecycle shadow service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy channel-adapter shadow entrypoint when available."
     },
@@ -3176,6 +3197,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.channels.canary to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript channel-adapter upgrade-lifecycle canary service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy channel-adapter canary entrypoint when available."
     },
@@ -3189,6 +3211,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.channels.promote to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript channel-adapter upgrade-lifecycle promote service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy channel-adapter promote entrypoint when available."
     },
@@ -3202,6 +3225,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.channels.rollback to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/validation/canonical-approval checks and before calling the TypeScript channel-adapter upgrade-lifecycle rollback service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy channel-adapter rollback entrypoint when available."
     },
@@ -3215,6 +3239,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.plugins.review.enable to TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED after principal/availability checks and before calling the TypeScript plugin review-enable lifecycle service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyLifecycleExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy plugin review-enable entrypoint when available."
     },
