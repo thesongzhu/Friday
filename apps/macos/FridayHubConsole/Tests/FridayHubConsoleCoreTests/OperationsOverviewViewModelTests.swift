@@ -414,6 +414,57 @@ struct StaticWorkbenchReadClient: FridayRustReadClient {
   }
 }
 
+final class DetailReadClient: FridayRustReadClient, @unchecked Sendable {
+  private let lock = NSLock()
+  private var _requested: [String] = []
+  var failWith: FridayReadClientError?
+
+  var requested: [String] {
+    lock.withLock { _requested }
+  }
+
+  func fetchWorkbench() async throws -> FridayRustClient.WorkbenchSnapshot {
+    try MockReadClient.representativeWireSnapshot()
+  }
+
+  func fetchProvidersDoctor(probe: String?) async throws -> ReadProjectionSnapshot {
+    try record("providers:\(probe ?? "")", kind: "providers", status: "ready", proofRef: "proof://provider/doctor")
+  }
+
+  func fetchSessionList() async throws -> ReadProjectionSnapshot {
+    try record("sessions", kind: "sessions", status: "ready", proofRef: "proof://session/list")
+  }
+
+  func fetchRunReadback(runId: String) async throws -> ReadProjectionSnapshot {
+    try record("run:\(runId)", kind: "run", status: "complete", runId: runId, proofRef: "proof://run/\(runId)")
+  }
+
+  func fetchActivityNeedsMe(runId: String) async throws -> ReadProjectionSnapshot {
+    try record("needs-me:\(runId)", kind: "needs-me", status: "waiting", runId: runId, proofRef: "proof://needs/\(runId)")
+  }
+
+  private func record(
+    _ request: String,
+    kind: String,
+    status: String,
+    runId: String? = nil,
+    proofRef: String
+  ) throws -> ReadProjectionSnapshot {
+    if let failWith { throw failWith }
+    lock.withLock { _requested.append(request) }
+    var raw: [String: Any] = [
+      "missionId": "mission-desktop",
+      "status": status,
+      "truthLabel": "friday_owned",
+      "proofRef": proofRef,
+      "evidenceRefs": ["proof://evidence/\(kind)"],
+    ]
+    if let runId { raw["runId"] = runId }
+    let data = try JSONSerialization.data(withJSONObject: raw)
+    return try ReadProjectionSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_123)
+  }
+}
+
 func snapshotWithWorkItems(
   missionId: String,
   fridayConversationId: String,
@@ -446,6 +497,56 @@ func snapshotWithWorkItems(
     memoryCandidates: [],
     capabilityStates: [],
     transcriptSections: [])
+}
+
+@Test
+@MainActor
+func loadDetailCallsProviderDoctorReadArm() async {
+  let client = DetailReadClient()
+  let vm = OperationsOverviewViewModel(client: client)
+  await vm.loadDetail(.providersDoctor(probe: "anthropic"))
+
+  #expect(client.requested == ["providers:anthropic"])
+  guard case let .loaded(detail) = vm.detailState else {
+    Issue.record("expected detail .loaded, got \(vm.detailState)")
+    return
+  }
+  #expect(detail.title == "Provider doctor")
+  #expect(detail.summary == "mission=mission-desktop | status=ready | truth=friday_owned")
+  #expect(detail.refs == ["proof://provider/doctor", "proof://evidence/providers"])
+}
+
+@Test
+@MainActor
+func loadDetailCallsRunAndNeedsMeReadArms() async {
+  let client = DetailReadClient()
+  let vm = OperationsOverviewViewModel(client: client)
+  await vm.loadDetail(.runReadback(runId: "run-desktop"))
+  await vm.loadDetail(.activityNeedsMe(runId: "run-desktop"))
+
+  #expect(client.requested == ["run:run-desktop", "needs-me:run-desktop"])
+  guard case let .loaded(detail) = vm.detailState else {
+    Issue.record("expected detail .loaded, got \(vm.detailState)")
+    return
+  }
+  #expect(detail.title == "Needs-me activity")
+  #expect(detail.refs.contains("proof://needs/run-desktop"))
+}
+
+@Test
+@MainActor
+func loadDetailFailureRendersUnavailable() async {
+  let client = DetailReadClient()
+  client.failWith = .transport("detail server dark")
+  let vm = OperationsOverviewViewModel(client: client)
+  await vm.loadDetail(.sessionList)
+
+  guard case let .unavailable(title, reason) = vm.detailState else {
+    Issue.record("expected detail .unavailable, got \(vm.detailState)")
+    return
+  }
+  #expect(title == "Session list")
+  #expect(reason.contains("offline"))
 }
 
 @Test

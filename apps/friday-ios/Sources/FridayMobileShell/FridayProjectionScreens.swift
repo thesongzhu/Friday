@@ -147,6 +147,8 @@ struct FridayProjectionScreen: View {
       if !projection.statusLabels.isEmpty {
         StatusBanner(labels: projection.statusLabels)
       }
+      detailActionsCard(projection)
+      detailResultCard
 
       switch surface {
       case .missions:
@@ -168,6 +170,85 @@ struct FridayProjectionScreen: View {
         onboardingCard(projection)
       case .settings:
         settingsCard(projection)
+      }
+    }
+  }
+
+  private func detailActionsCard(_ projection: HomeProjection) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader("Read Arms", count: nil)
+        HStack(spacing: 8) {
+          Button {
+            Task { await viewModel.loadDetail(.providersDoctor(probe: nil)) }
+          } label: {
+            Label("Providers", systemImage: "stethoscope")
+          }
+          .disabled(viewModel.detailState.isLoading)
+
+          Button {
+            Task { await viewModel.loadDetail(.sessionList) }
+          } label: {
+            Label("Sessions", systemImage: "rectangle.stack")
+          }
+          .disabled(viewModel.detailState.isLoading)
+        }
+        if let runId = projection.runOutcomeLearningCandidates.first?.runId, !runId.isEmpty {
+          HStack(spacing: 8) {
+            Button {
+              Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
+            } label: {
+              Label("Run", systemImage: "doc.text.magnifyingglass")
+            }
+            .disabled(viewModel.detailState.isLoading)
+
+            Button {
+              Task { await viewModel.loadDetail(.activityNeedsMe(runId: runId)) }
+            } label: {
+              Label("Needs Me", systemImage: "bell.badge")
+            }
+            .disabled(viewModel.detailState.isLoading)
+          }
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var detailResultCard: some View {
+    switch viewModel.detailState {
+    case .idle:
+      EmptyView()
+    case let .loading(arm):
+      GlassPanel {
+        HStack(spacing: 12) {
+          ProgressView()
+          Text(arm.title)
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+        }
+      }
+    case let .loaded(detail):
+      GlassPanel {
+        VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+          cardHeader(detail.title, count: detail.refs.count)
+          Text(detail.summary)
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textPrimary)
+          RefPill(label: "generated", ref: generatedText(detail.generatedAtMs))
+          ForEach(detail.refs, id: \.self) { ref in
+            RefPill(label: nil, ref: ref)
+          }
+        }
+      }
+    case let .unavailable(title, reason):
+      GlassPanel {
+        VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+          cardHeader(title, count: nil)
+          Text(reason)
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+        }
       }
     }
   }

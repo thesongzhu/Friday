@@ -32,6 +32,82 @@ public enum WorkbenchLoadState: Sendable, Equatable {
   }
 }
 
+public enum ReadProjectionDetailArm: Sendable, Equatable {
+  case runReadback(runId: String)
+  case providersDoctor(probe: String?)
+  case sessionList
+  case sessionOpen(agentSessionId: String)
+  case sessionLinkState(agentSessionId: String)
+  case runFileView(runId: String)
+  case activityNeedsMe(runId: String)
+
+  public var title: String {
+    switch self {
+    case .runReadback: return "Run readback"
+    case .providersDoctor: return "Provider doctor"
+    case .sessionList: return "Session list"
+    case .sessionOpen: return "Session open"
+    case .sessionLinkState: return "Session link state"
+    case .runFileView: return "Run files"
+    case .activityNeedsMe: return "Needs-me activity"
+    }
+  }
+}
+
+public struct ReadProjectionDetail: Sendable, Equatable {
+  public let title: String
+  public let generatedAtMs: Int64
+  public let summary: String
+  public let refs: [String]
+
+  public init(title: String, snapshot: ReadProjectionSnapshot) {
+    let raw = snapshot.raw
+    self.title = title
+    self.generatedAtMs = snapshot.generatedAtMs
+    self.summary = Self.summary(from: raw)
+    self.refs = Self.refs(from: raw)
+  }
+
+  private static func summary(from raw: [String: Any]) -> String {
+    let parts = [
+      firstString(raw, ["missionId", "mission_id"]).map { "mission=\($0)" },
+      firstString(raw, ["runId", "run_id"]).map { "run=\($0)" },
+      firstString(raw, ["status", "outcome"]).map { "status=\($0)" },
+      firstString(raw, ["truthLabel", "truth_label"]).map { "truth=\($0)" },
+    ].compactMap { $0 }
+    return parts.isEmpty ? "projection loaded" : parts.joined(separator: " | ")
+  }
+
+  private static func refs(from raw: [String: Any]) -> [String] {
+    let keys = [
+      "proofRef", "proof_ref", "evidenceRef", "evidence_ref", "providerRef", "provider_ref",
+      "channelRef", "channel_ref", "timelineRef", "timeline_ref", "receiptRef", "receipt_ref",
+    ]
+    var refs = keys.compactMap { raw[$0] as? String }
+    for key in ["proofRefs", "proof_refs", "evidenceRefs", "evidence_refs", "receiptRefs", "receipt_refs"] {
+      refs.append(contentsOf: raw[key] as? [String] ?? [])
+    }
+    var seen = Set<String>()
+    return refs.filter { !$0.isEmpty && seen.insert($0).inserted }
+  }
+
+  private static func firstString(_ raw: [String: Any], _ keys: [String]) -> String? {
+    keys.lazy.compactMap { raw[$0] as? String }.first
+  }
+}
+
+public enum ReadProjectionDetailState: Sendable, Equatable {
+  case idle
+  case loading(ReadProjectionDetailArm)
+  case loaded(ReadProjectionDetail)
+  case unavailable(title: String, reason: String)
+
+  public var isLoading: Bool {
+    if case .loading = self { return true }
+    return false
+  }
+}
+
 /// The state of a single spine-WRITE action (mission intake / memory decision).
 ///
 /// Mirrors `WorkbenchLoadState`'s honest vocabulary: a `.sent` action shows pending, a terminal
@@ -79,6 +155,7 @@ public enum WriteActionState: Sendable, Equatable {
 @MainActor
 public final class OperationsOverviewViewModel: ObservableObject {
   @Published public private(set) var state: WorkbenchLoadState = .idle
+  @Published public private(set) var detailState: ReadProjectionDetailState = .idle
   @Published public var selection: InspectorSelection = .none
 
   /// The mission-intake compose action's honest state.
@@ -138,6 +215,35 @@ public final class OperationsOverviewViewModel: ObservableObject {
   /// Focus a row in the proof inspector (read-only navigation).
   public func select(_ selection: InspectorSelection) {
     self.selection = selection
+  }
+
+  public func loadDetail(_ arm: ReadProjectionDetailArm) async {
+    detailState = .loading(arm)
+    do {
+      let snapshot = try await readDetail(arm)
+      detailState = .loaded(ReadProjectionDetail(title: arm.title, snapshot: snapshot))
+    } catch {
+      detailState = .unavailable(title: arm.title, reason: Self.reason(for: error))
+    }
+  }
+
+  private func readDetail(_ arm: ReadProjectionDetailArm) async throws -> ReadProjectionSnapshot {
+    switch arm {
+    case let .runReadback(runId):
+      return try await client.fetchRunReadback(runId: runId)
+    case let .providersDoctor(probe):
+      return try await client.fetchProvidersDoctor(probe: probe)
+    case .sessionList:
+      return try await client.fetchSessionList()
+    case let .sessionOpen(agentSessionId):
+      return try await client.fetchSessionOpen(agentSessionId: agentSessionId)
+    case let .sessionLinkState(agentSessionId):
+      return try await client.fetchSessionLinkState(agentSessionId: agentSessionId)
+    case let .runFileView(runId):
+      return try await client.fetchRunFileView(runId: runId)
+    case let .activityNeedsMe(runId):
+      return try await client.fetchActivityNeedsMe(runId: runId)
+    }
   }
 
   // MARK: - Spine-WRITE drivers (Lane-D entry-point-A organic loop)

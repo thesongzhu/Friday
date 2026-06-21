@@ -237,18 +237,90 @@ public enum HomeLoadState: Sendable, Equatable {
   }
 }
 
+public enum HomeReadDetailArm: Sendable, Equatable {
+  case runReadback(runId: String)
+  case providersDoctor(probe: String?)
+  case sessionList
+  case sessionOpen(agentSessionId: String)
+  case sessionLinkState(agentSessionId: String)
+  case runFileView(runId: String)
+  case activityNeedsMe(runId: String)
+
+  public var title: String {
+    switch self {
+    case .runReadback: return "Run readback"
+    case .providersDoctor: return "Provider doctor"
+    case .sessionList: return "Session list"
+    case .sessionOpen: return "Session open"
+    case .sessionLinkState: return "Session link state"
+    case .runFileView: return "Run files"
+    case .activityNeedsMe: return "Needs-me activity"
+    }
+  }
+}
+
+public struct HomeReadDetail: Sendable, Equatable {
+  public let title: String
+  public let generatedAtMs: Int64
+  public let summary: String
+  public let refs: [String]
+
+  public init(title: String, snapshot: ReadProjectionSnapshot) {
+    let raw = snapshot.raw
+    self.title = title
+    self.generatedAtMs = snapshot.generatedAtMs
+    self.summary = Self.summary(from: raw)
+    self.refs = Self.refs(from: raw)
+  }
+
+  private static func summary(from raw: [String: Any]) -> String {
+    let parts = [
+      firstString(raw, ["missionId", "mission_id"]).map { "mission=\($0)" },
+      firstString(raw, ["runId", "run_id"]).map { "run=\($0)" },
+      firstString(raw, ["status", "outcome"]).map { "status=\($0)" },
+      firstString(raw, ["truthLabel", "truth_label"]).map { "truth=\($0)" },
+    ].compactMap { $0 }
+    return parts.isEmpty ? "projection loaded" : parts.joined(separator: " | ")
+  }
+
+  private static func refs(from raw: [String: Any]) -> [String] {
+    let keys = [
+      "proofRef", "proof_ref", "evidenceRef", "evidence_ref", "providerRef", "provider_ref",
+      "channelRef", "channel_ref", "timelineRef", "timeline_ref", "receiptRef", "receipt_ref",
+    ]
+    var refs = keys.compactMap { raw[$0] as? String }
+    for key in ["proofRefs", "proof_refs", "evidenceRefs", "evidence_refs", "receiptRefs", "receipt_refs"] {
+      refs.append(contentsOf: raw[key] as? [String] ?? [])
+    }
+    var seen = Set<String>()
+    return refs.filter { !$0.isEmpty && seen.insert($0).inserted }
+  }
+
+  private static func firstString(_ raw: [String: Any], _ keys: [String]) -> String? {
+    keys.lazy.compactMap { raw[$0] as? String }.first
+  }
+}
+
+public enum HomeReadDetailState: Sendable, Equatable {
+  case idle
+  case loading(HomeReadDetailArm)
+  case loaded(HomeReadDetail)
+  case unavailable(title: String, reason: String)
+
+  public var isLoading: Bool {
+    if case .loading = self { return true }
+    return false
+  }
+}
+
 @MainActor
 public final class HomeViewModel: ObservableObject {
   @Published public private(set) var state: HomeLoadState = .idle
+  @Published public private(set) var detailState: HomeReadDetailState = .idle
 
-  /// The package's `FridayRustReadClient` is deliberately NOT `Sendable` (its `WorkbenchSnapshot`
-  /// carries a non-`Sendable` `raw: [String: Any]`), so awaiting its `nonisolated async`
-  /// `fetchWorkbench()` from this `@MainActor` VM would "send" main-actor state across the hop.
-  /// `nonisolated(unsafe)` drops the isolation and is SOUND here: the package clients are
-  /// `final class`, every stored property is an immutable `let` (no post-init mutation), and each
-  /// fetch builds a FRESH transport via `makeTransport()` — there is no shared mutable state to
-  /// race. We resolve the mismatch on the CONSUMER side (never editing the #677 package).
-  nonisolated(unsafe) private let client: FridayRustReadClient
+  /// The package's read protocol is `Sendable`; the view model still publishes only small
+  /// refs-only value projections, never the package snapshot's raw body map.
+  private let client: FridayRustReadClient
 
   /// - Parameter client: the read client. In production this is the real `SealedWSReadClient`
   ///   (built by `FridayClientFactory.makeReadClient`); a preview/debug build injects a mock.
@@ -269,6 +341,35 @@ public final class HomeViewModel: ObservableObject {
       state = .loaded(HomeProjection(snapshot))
     } catch {
       state = .unavailable(reason: Self.reason(for: error))
+    }
+  }
+
+  public func loadDetail(_ arm: HomeReadDetailArm) async {
+    detailState = .loading(arm)
+    do {
+      let snapshot = try await readDetail(arm)
+      detailState = .loaded(HomeReadDetail(title: arm.title, snapshot: snapshot))
+    } catch {
+      detailState = .unavailable(title: arm.title, reason: Self.reason(for: error))
+    }
+  }
+
+  private func readDetail(_ arm: HomeReadDetailArm) async throws -> ReadProjectionSnapshot {
+    switch arm {
+    case let .runReadback(runId):
+      return try await client.fetchRunReadback(runId: runId)
+    case let .providersDoctor(probe):
+      return try await client.fetchProvidersDoctor(probe: probe)
+    case .sessionList:
+      return try await client.fetchSessionList()
+    case let .sessionOpen(agentSessionId):
+      return try await client.fetchSessionOpen(agentSessionId: agentSessionId)
+    case let .sessionLinkState(agentSessionId):
+      return try await client.fetchSessionLinkState(agentSessionId: agentSessionId)
+    case let .runFileView(runId):
+      return try await client.fetchRunFileView(runId: runId)
+    case let .activityNeedsMe(runId):
+      return try await client.fetchActivityNeedsMe(runId: runId)
     }
   }
 
