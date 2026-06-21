@@ -80,6 +80,7 @@ export function collectTsRuntimeRetirementFailures(manifest, routes) {
   const exactSurfaces = manifest.surfaces ?? [];
   const routeFamilies = manifest.routeFamilies ?? [];
   validateRequiredRouteBehaviorTests(manifest, exactSurfaces, failures);
+  validateRequiredGovernedRouteBehaviorTests(manifest, exactSurfaces, failures);
 
   for (const surface of exactSurfaces) {
     if (!surface.route) {
@@ -204,14 +205,56 @@ function validateRequiredRouteBehaviorTests(manifest, exactSurfaces, failures) {
   }
 }
 
+function validateRequiredGovernedRouteBehaviorTests(manifest, exactSurfaces, failures) {
+  const required = manifest.discovery?.requiredGovernedRouteBehaviorTestSurfaceIds ?? [];
+  if (!Array.isArray(required)) {
+    failures.push("discovery.requiredGovernedRouteBehaviorTestSurfaceIds must be an array when set");
+    return;
+  }
+
+  const allowedClassifications = new Set(["operator_external_adapter", "rust_delegated", "compat_shim"]);
+  const seen = new Set();
+  for (const surfaceId of required) {
+    if (!hasNonEmptyString(surfaceId)) {
+      failures.push("discovery.requiredGovernedRouteBehaviorTestSurfaceIds contains a non-string/empty id");
+      continue;
+    }
+    if (seen.has(surfaceId)) {
+      failures.push(`discovery.requiredGovernedRouteBehaviorTestSurfaceIds contains duplicate ${surfaceId}`);
+      continue;
+    }
+    seen.add(surfaceId);
+
+    const surface = exactSurfaces.find((entry) => entry.id === surfaceId);
+    if (!surface) {
+      failures.push(`required governed route behavior test surface ${surfaceId} is missing from exact surfaces`);
+      continue;
+    }
+    if (!surface.route) {
+      failures.push(`${surfaceId}: required governed route behavior test surface is missing an exact route`);
+    } else if (surface.route.method === "GET") {
+      failures.push(`${surfaceId}: required governed route behavior test surface must be non-GET`);
+    }
+    if (!allowedClassifications.has(surface.classification)) {
+      failures.push(`${surfaceId}: required governed route behavior test surface has unsupported classification ${surface.classification}`);
+    }
+    if (!hasNonEmptyString(surface.routeBehavioralTest)) {
+      failures.push(`${surfaceId}: missing routeBehavioralTest`);
+    }
+    if (!Array.isArray(surface.routeBehavioralTestIncludes) || surface.routeBehavioralTestIncludes.length === 0) {
+      failures.push(`${surfaceId}: missing routeBehavioralTestIncludes`);
+    }
+  }
+}
+
 function validateRequiredRouteBehaviorTestFiles(manifest, failures, repoRoot) {
   if (!repoRoot) {
     return;
   }
-  const required = manifest.discovery?.requiredRouteBehaviorTestSurfaceIds ?? [];
-  if (!Array.isArray(required)) {
-    return;
-  }
+  const required = [
+    ...(manifest.discovery?.requiredRouteBehaviorTestSurfaceIds ?? []),
+    ...(manifest.discovery?.requiredGovernedRouteBehaviorTestSurfaceIds ?? []),
+  ];
   for (const surfaceId of required) {
     const surface = (manifest.surfaces ?? []).find((entry) => entry.id === surfaceId);
     if (!hasNonEmptyString(surface?.routeBehavioralTest)) {
@@ -220,6 +263,17 @@ function validateRequiredRouteBehaviorTestFiles(manifest, failures, repoRoot) {
     const testPath = path.resolve(repoRoot, surface.routeBehavioralTest);
     if (!fs.existsSync(testPath)) {
       failures.push(`${surfaceId}: routeBehavioralTest file does not exist: ${surface.routeBehavioralTest}`);
+      continue;
+    }
+    const testSource = fs.readFileSync(testPath, "utf8");
+    for (const snippet of surface.routeBehavioralTestIncludes ?? []) {
+      if (!hasNonEmptyString(snippet)) {
+        failures.push(`${surfaceId}: routeBehavioralTestIncludes contains a non-string/empty snippet`);
+        continue;
+      }
+      if (!testSource.includes(snippet)) {
+        failures.push(`${surfaceId}: routeBehavioralTest ${surface.routeBehavioralTest} is missing ${JSON.stringify(snippet)}`);
+      }
     }
   }
 }
