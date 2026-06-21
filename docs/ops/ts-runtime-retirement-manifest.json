@@ -10,7 +10,7 @@
   "discovery": {
     "routeSourceDir": "src/api/http/routes",
     "includeMethods": ["GET", "POST", "PATCH", "PUT", "DELETE"],
-    "exactRouteSurfacesMin": 308,
+    "exactRouteSurfacesMin": 312,
     "requiredRouteBehaviorTestSurfaceIds": [
       "agent_runs_start",
       "workflow_runs_start",
@@ -165,6 +165,12 @@
       "cloud_worker_teardown_receipt",
       "deeplink_preview",
       "providers_detect"
+    ],
+    "requiredGovernedRouteBehaviorTestSurfaceIds": [
+      "providers_create_governed_adapter",
+      "providers_routing_set_governed_adapter",
+      "skills_update_lifecycle_governed",
+      "skills_delete_lifecycle_governed"
     ]
   },
   "classificationValues": [
@@ -1729,6 +1735,48 @@
       "user_triggerable": true,
       "migration_intent": "Keep workflow run evidence export download as a bounded redacted compatibility projection while TypeScript workflow execution and evidence-export mutation remain blocked or separately owned. This download serializes sanitized evidence JSON instead of raw persisted file content or private filesystem paths.",
       "next_action": "Replace this compatibility read with a Rust-owned evidence export download projection when available."
+    },
+    {
+      "id": "skills_update_lifecycle_governed",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/:skillId/update",
+        "operationId": "skills.update"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workspace skill lifecycle update as a governed compatibility surface while arbitrary skill execution and verification remain retired or Rust-owned. Non-managed updates require canonical approval before lifecycle.update mutates.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "requires canonical approval before non-managed lifecycle update/delete",
+        "SKILL_LIFECYCLE_UPDATE_APPROVAL_REQUIRED",
+        "expect(lifecycle.update).not.toHaveBeenCalled",
+        "passes canonical approval through non-managed lifecycle update/delete",
+        "expect(lifecycle.update).toHaveBeenCalledWith(expect.objectContaining({"
+      ],
+      "proof": "src/api/http/routes/friday-skill-routes.ts skills.update uses assertCanonicalApproval for non-managed skill updates before deps.lifecycle.update. The behavior test proves missing approval blocks before mutation and a valid canonical approval is forwarded as the only mutation path.",
+      "next_action": "Move skill lifecycle update to a Rust-owned or explicitly governed product entrypoint when skill content lifecycle ownership is complete."
+    },
+    {
+      "id": "skills_delete_lifecycle_governed",
+      "route": {
+        "method": "DELETE",
+        "path": "/v1/skills/:skillId",
+        "operationId": "skills.delete"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workspace skill lifecycle delete as a governed compatibility surface while arbitrary skill execution and verification remain retired or Rust-owned. Non-managed deletes require canonical approval before lifecycle.deleteSkill mutates.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "requires canonical approval before non-managed lifecycle update/delete",
+        "SKILL_LIFECYCLE_DELETE_APPROVAL_REQUIRED",
+        "expect(lifecycle.deleteSkill).not.toHaveBeenCalled",
+        "passes canonical approval through non-managed lifecycle update/delete",
+        "expect(lifecycle.deleteSkill).toHaveBeenCalledWith({"
+      ],
+      "proof": "src/api/http/routes/friday-skill-routes.ts skills.delete uses assertCanonicalApproval for non-managed skill deletes before deps.lifecycle.deleteSkill. The behavior test proves missing approval blocks before mutation and a valid canonical approval is forwarded as the only mutation path.",
+      "next_action": "Move skill lifecycle delete to a Rust-owned or explicitly governed product entrypoint when skill content lifecycle ownership is complete."
     },
     {
       "id": "skills_run",
@@ -4828,6 +4876,35 @@
       "next_action": "Replace the fail-closed response with the Rust-owned plugin uninstall entrypoint when available."
     },
     {
+      "id": "providers_create_governed_adapter",
+      "route": { "method": "POST", "path": "/v1/providers", "operationId": "providers.create" },
+      "classification": "operator_external_adapter",
+      "user_triggerable": true,
+      "trust_boundary": "Provider configuration adapter only; provider profile creation is not task completion truth and gate-required profiles must canonical-approve before service mutation.",
+      "leak_controls": {
+        "raw_private_data_allowed": false,
+        "forbidden": [
+          "raw_transcripts",
+          "secrets",
+          "private_paths",
+          "provider_ids",
+          "channel_ids",
+          "raw_commands",
+          "private_reasoning"
+        ]
+      },
+      "routeBehavioralTest": "test/unit/providers/api/friday-provider-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "providers.create requires canonical approval in gate-required profile before service mutation",
+        "CANONICAL_APPROVAL_REQUIRED",
+        "expect(mockService.createProvider).not.toHaveBeenCalled",
+        "providers.create accepts canonical approval in gate-required profile and strips control fields",
+        "expect(mockService.createProvider).toHaveBeenCalledWith(providerBody)"
+      ],
+      "proof": "src/api/http/routes/friday-provider-routes.ts providers.create strips canonical control fields before providerService.createProvider and maybeRequireProviderMutationTicket gates the route in gate-required profiles. The behavior test proves missing approval blocks before service mutation and valid canonical approval strips control fields before delegation.",
+      "next_action": "Keep provider profile creation as a governed adapter until the provider configuration owner moves to a Rust projection/mutation entrypoint."
+    },
+    {
       "id": "providers_detect",
       "route": { "method": "POST", "path": "/v1/providers/detect", "operationId": "providers.detect" },
       "classification": "fail_closed",
@@ -4844,6 +4921,13 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "routeBehavioralTest": "test/unit/providers/api/friday-provider-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "providers.validate requires canonical approval in gate-required profile before service mutation",
+        "CANONICAL_APPROVAL_REQUIRED",
+        "expect(mockService.validateProvider).not.toHaveBeenCalled",
+        "providers.validate accepts canonical approval in gate-required profile",
+        "expect(mockService.validateProvider).toHaveBeenCalledWith(\"prov-001\","
+      ],
       "proof": "src/api/http/routes/friday-provider-routes.ts providers.validate wires default/live to assertProviderProbeTestOracleAllowed(deps) AFTER request validation + the canonical mutation gate (maybeRequireProviderMutationTicket; gate-required profiles 503/CANONICAL_APPROVAL_REQUIRED before the guard) and BEFORE the providerService.validateProvider call. 503 TS_RUNTIME_PROVIDER_PROBE_RETIRED (classification fail_closed, replacement rust_owned_provider_probe_entrypoint_required). fail_closed NOT operator_external_adapter: validateProvider (src/providers/services/friday-provider-service.ts, verified by reading the impl) is a transient key/connectivity PROBE that egresses to the provider (validator.validate({credential,...}) for HTTP, validateCliProvider for CLI) AND persists the resulting validation state to the provider DB (withWriteTransaction) — it is both a probe and a state write, Rust-ownable product logic — same shape as providers.detect; it is not a permanent egress-delivery conduit, and when retired the guard fail-closes BEFORE the validateProvider call so neither the egress nor the state write runs. executes_product_logic:false: no provider validation runs in default/live. Flag allowTestOnlyProviderProbeExecution threaded CreateFridayApiRuntimeDeps -> createFridayProviderRoutes + hub-config (FridayHubConfig -> friday-hub-bootstrap) so mock-env (createMockHubEnv default-true), real-env (live, true), and the full/llm e2e (createFridayHub) set it. OPERATOR/RECONCILIATION NOTE: retiring this route 503s the release-GO closure harnesses scripts/e2e/run-friday-closure.mjs and scripts/e2e/run-friday-external-closure.mjs (both POST /v1/providers/:providerId/validate, throw on non-200) — these are NOT CI gates but need the Rust provider-probe entrypoint (or an operator decision) before release-verify; same shape as the providers.detect reconciliation note. Reachable only through explicit allowTestOnlyProviderProbeExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned provider-probe entrypoint when available; validate is on the release-GO path — coordinate with operator sign-off (see reconciliation note)."
     },
@@ -4886,6 +4970,35 @@
       "routeBehavioralTest": "test/unit/providers/api/friday-provider-routes.test.ts",
       "proof": "src/api/http/routes/friday-provider-routes.ts providers.routing.penalty.clear wires default/live to assertProviderRoutingControlsTestOracleAllowed(deps) AFTER the user-scoped principal check (401 UNAUTHORIZED), body validation (providerId/model/backendKind -> 400 VALIDATION_ERROR), and the canonical mutation gate (maybeRequireProviderMutationTicket) and IMMEDIATELY BEFORE the providerService.clearRoutePenalty user-scoped routing-penalty write. 503 TS_RUNTIME_PROVIDER_ROUTING_CONTROLS_RETIRED (classification fail_closed, replacement rust_owned_provider_routing_controls_entrypoint_required). fail_closed NOT operator_external_adapter: penalty.clear writes user-scoped routing-penalty state (runtime product logic), Rust-ownable; when retired the guard fail-closes BEFORE the write so no state mutates. executes_product_logic:false: no penalty-clear write runs in default/live. Flag allowTestOnlyProviderRoutingControlsExecution threaded as for providers.routing.pin. This flag does NOT cover the model-routing config surfaces (GET/PUT /v1/model-routing), which remain operator_external_adapter and are DEFERRED. Reachable only through explicit allowTestOnlyProviderRoutingControlsExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned routing-controls entrypoint when available."
+    },
+    {
+      "id": "providers_routing_set_governed_adapter",
+      "route": { "method": "PUT", "path": "/v1/model-routing", "operationId": "providers.routing.set" },
+      "classification": "operator_external_adapter",
+      "user_triggerable": true,
+      "trust_boundary": "Provider routing configuration adapter only; routing config writes are not task completion truth and gate-required profiles must canonical-approve before service mutation.",
+      "leak_controls": {
+        "raw_private_data_allowed": false,
+        "forbidden": [
+          "raw_transcripts",
+          "secrets",
+          "private_paths",
+          "provider_ids",
+          "channel_ids",
+          "raw_commands",
+          "private_reasoning"
+        ]
+      },
+      "routeBehavioralTest": "test/unit/providers/api/friday-provider-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "providers.routing.set requires canonical approval in gate-required profile before service mutation",
+        "CANONICAL_APPROVAL_REQUIRED",
+        "expect(mockService.setRoutingConfig).not.toHaveBeenCalled",
+        "providers.routing.set accepts canonical approval in gate-required profile",
+        "expect(mockService.setRoutingConfig).toHaveBeenCalledWith(routingBody)"
+      ],
+      "proof": "src/api/http/routes/friday-provider-routes.ts providers.routing.set strips canonical control fields, validates routing config, and maybeRequireProviderMutationTicket gates the route in gate-required profiles before providerService.setRoutingConfig. The behavior test proves missing approval blocks before service mutation and valid canonical approval delegates only the stripped routing body.",
+      "next_action": "Keep model-routing configuration as a governed provider adapter until a Rust-owned provider routing config entrypoint exists."
     },
     {
       "id": "providers_health_list_compat",
