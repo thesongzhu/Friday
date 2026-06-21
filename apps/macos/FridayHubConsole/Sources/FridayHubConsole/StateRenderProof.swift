@@ -3,8 +3,8 @@ import AppKit
 import FridayHubConsoleCore
 import SwiftUI
 
-/// Env/flag-gated visual-QA proof for the four honest Operations Overview states (C4):
-/// loaded-mock, unavailable-503, offline, and the empty-live `Error(HUB_OFFLINE)` honest state.
+/// Env/flag-gated visual-QA proof for the honest desktop states: Operations Overview's loaded /
+/// unavailable paths plus every projection-backed nav destination in the loaded mock state.
 ///
 /// Invoked via `FridayHubConsole --state-render-proof <outdir>`. Renders ONLY the center
 /// `OperationsOverviewScreen` (not the right pane) via `ImageRenderer` — deliberately excluding
@@ -34,12 +34,18 @@ enum StateRenderProof {
     // maps to "Hub unavailable — server error hubOffline: no active mission found". The
     // AUTHORITATIVE live empty-state proof is the C1 round-trip (env-gated `Live…` tests), NOT
     // this screenshot — this just confirms the view renders the empty case honestly.
-    let cases: [(String, MockReadClient.Behavior)] = [
-      ("operations-loaded-mock", .loaded),
-      ("operations-unavailable-503", .unavailable(.hubUnavailable(statusCode: 503))),
-      ("operations-offline", .unavailable(.offline)),
+    let cases: [(String, HubDestination, MockReadClient.Behavior)] = [
+      ("operations-loaded-mock", .operations, .loaded),
+      ("provider-admin-loaded-mock", .providerAdmin, .loaded),
+      ("provider-parity-loaded-mock", .parity, .loaded),
+      ("workflow-loaded-mock", .workflow, .loaded),
+      ("channels-loaded-mock", .channels, .loaded),
+      ("evidence-loaded-mock", .evidence, .loaded),
+      ("operations-unavailable-503", .operations, .unavailable(.hubUnavailable(statusCode: 503))),
+      ("operations-offline", .operations, .unavailable(.offline)),
       (
         "operations-no-active-mission",
+        .operations,
         .unavailable(.projectionUnavailable(reason: "no active mission found"))
       ),
     ]
@@ -48,7 +54,7 @@ enum StateRenderProof {
       try? FileManager.default.createDirectory(
         atPath: outputDir, withIntermediateDirectories: true)
       var failures = 0
-      for (name, behavior) in cases {
+      for (name, destination, behavior) in cases {
         let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: behavior))
         await vm.refresh()  // mock is instant → materialize the target state.
         let outPath = "\(outputDir)/\(name).png"
@@ -57,9 +63,16 @@ enum StateRenderProof {
         // scroll content, so the whole screen rasterizes faithfully.
         let renderer: ImageRenderer<AnyView>
         if case .loaded = vm.state, let snapshot = vm.state.snapshot {
+          let loaded: AnyView
+          switch destination {
+          case .operations:
+            loaded = AnyView(OperationsOverviewScreen(viewModel: vm).loadedContent(snapshot))
+          default:
+            loaded = AnyView(DesktopProjectionScreen(destination: destination, viewModel: vm).loadedContent(snapshot))
+          }
           let content =
             VStack(alignment: .leading, spacing: 0) {
-              OperationsOverviewScreen(viewModel: vm).loadedContent(snapshot)
+              loaded
             }
             .frame(width: 760)
             .background(HubTheme.backgroundWarmOffWhite)

@@ -57,7 +57,7 @@ struct HubConsoleShell: View {
     case .operations:
       OperationsOverviewScreen(viewModel: operationsVM)
     default:
-      PlaceholderScreen(destination: destination)
+      DesktopProjectionScreen(destination: destination, viewModel: operationsVM)
     }
   }
 }
@@ -89,7 +89,7 @@ struct NavRail: View {
 
       Spacer()
 
-      Text("Read-only workbench · D-PR1")
+      Text("Read-only workbench")
         .font(.system(size: 10))
         .foregroundStyle(HubTheme.textSecondary)
         .padding(14)
@@ -133,30 +133,6 @@ struct NavRailItem: View {
       .padding(.horizontal, 8)
     }
     .buttonStyle(.plain)
-  }
-}
-
-/// Honest placeholder for design areas not implemented in D-PR1.
-/// No faked content — it states plainly that the surface is not in this PR.
-struct PlaceholderScreen: View {
-  let destination: HubDestination
-
-  var body: some View {
-    VStack(spacing: 10) {
-      Image(systemName: destination.systemImage)
-        .font(.system(size: 30))
-        .foregroundStyle(HubTheme.textSecondary)
-      Text(destination.title)
-        .font(.system(size: 17, weight: .semibold))
-        .foregroundStyle(HubTheme.textPrimary)
-      Text("This surface is part of the locked desktop design but is not built in D-PR1.")
-        .font(.system(size: 12))
-        .foregroundStyle(HubTheme.textSecondary)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: 360)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(HubTheme.backgroundWarmOffWhite)
   }
 }
 
