@@ -18,6 +18,7 @@
       "skills_run",
       "skills_import",
       "mcp_server_rpc",
+      "sessions_create",
       "sessions_messages_create",
       "sessions_archive",
       "sessions_reset",
@@ -27,6 +28,8 @@
       "sessions_compact",
       "sessions_forks_create",
       "sessions_forks_merge",
+      "sessions_run",
+      "sessions_memory_extract",
       "sessions_memory_remember",
       "sessions_memory_extraction_retry",
       "memory_items_create"
@@ -3656,6 +3659,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.create to TS_RUNTIME_SESSION_RETIRED after request-body validation and metadata sanitization and immediately before the TypeScript sessionService.createSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
     },
@@ -3795,6 +3799,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.run to TS_RUNTIME_SESSION_RUN_RETIRED after the agent-runtime availability check (501), session-key decode, request-body validation, and the task-required check (400), and immediately before resolving session context and invoking the TypeScript agent runtime via runSession; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionRunExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session agent-run entrypoint when available."
     },
@@ -3808,6 +3813,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.memory.extract to TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED after the memory-extraction availability check (501), session-key decode, and request-body validation (hoisted above the principal-alignment write), and immediately before the TypeScript principal alignment and extractionService.extractFromSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionMemoryExtractionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session memory extraction entrypoint when available."
     },
