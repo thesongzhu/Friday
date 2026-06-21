@@ -59,6 +59,7 @@ final class FridayChatViewModelTests: XCTestCase {
   final class FakeMissionClient: FridayMobileMissionDispatchingWriteClient, @unchecked Sendable {
     private(set) var submittedIntakes: [MissionIntakeRequestWire] = []
     private(set) var missionContexts: [MissionWorkItemContextWire] = []
+    private(set) var dispatchedTasks: [String] = []
 
     func dispatchAgentRun(
       task: String,
@@ -108,6 +109,7 @@ final class FridayChatViewModelTests: XCTestCase {
       missionContext: MissionWorkItemContextWire,
       constraints: AgentRunConstraintsWire?
     ) async throws -> AgentRunDispatchOutcome {
+      dispatchedTasks.append(task)
       missionContexts.append(missionContext)
       let runId = missionContext.workItemId.hasSuffix("-claude-followup") ? "run-followup" : "run-first"
       return .result(AgentRunResultWire(
@@ -296,7 +298,10 @@ final class FridayChatViewModelTests: XCTestCase {
       snapshot: try WorkbenchSnapshot(
         projectionJSON: Data(snapshotJSON.utf8),
         generatedAtMs: 0),
-      answerBodies: ["run-followup": "Claude follow-up body visible to the owner."])
+      answerBodies: [
+        "run-first": "Mobile Codex first answer",
+        "run-followup": "Claude follow-up body visible to the owner.",
+      ])
     let vm = FridayChatViewModel(
       writeClient: mission,
       signer: MockOperatorSigner(),
@@ -312,6 +317,13 @@ final class FridayChatViewModelTests: XCTestCase {
       "work-mobile-fixed",
       "work-mobile-fixed-claude-followup",
     ])
+    XCTAssertEqual(mission.dispatchedTasks.count, 2)
+    XCTAssertTrue(mission.dispatchedTasks[1].contains("source_work_item_id=work-mobile-fixed"))
+    XCTAssertTrue(mission.dispatchedTasks[1].contains("follow_up_work_item_id=work-mobile-fixed-claude-followup"))
+    XCTAssertTrue(mission.dispatchedTasks[1].contains("codex_first_run_id=run-first"))
+    XCTAssertTrue(mission.dispatchedTasks[1].contains("Mobile Codex first answer"))
+    XCTAssertTrue(mission.dispatchedTasks[1].contains("do not ask the operator for paths"))
+    XCTAssertTrue(mission.dispatchedTasks[1].contains("do not claim you verified unrelated files"))
     guard case .answered(let receipt) = vm.phase else { return XCTFail("expected answered, got \(vm.phase)") }
     XCTAssertEqual(receipt.runId, "run-first")
     XCTAssertEqual(receipt.missionId, "mission-mobile-fixed")
