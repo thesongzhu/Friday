@@ -342,6 +342,10 @@ describe("FridayAgentLoopRoutes", () => {
       ).rejects.toMatchObject({
         code: "TS_RUNTIME_AGENT_LOOP_POLICY_MUTATIONS_RETIRED",
         httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_agent_loop_policy_entrypoint_required",
+        },
       });
       expect(serviceCall).not.toHaveBeenCalled();
     }
@@ -434,6 +438,10 @@ describe("FridayAgentLoopRoutes", () => {
       ).rejects.toMatchObject({
         code: "TS_RUNTIME_AGENT_LOOP_CONTROLS_RETIRED",
         httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_agent_loop_control_entrypoint_required",
+        },
       });
       expect(serviceCall).not.toHaveBeenCalled();
     }

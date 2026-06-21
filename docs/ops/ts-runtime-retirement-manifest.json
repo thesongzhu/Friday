@@ -1299,6 +1299,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-agent-loop-routes.test.ts",
       "proof": "src/api/http/routes/friday-agent-loop-routes.ts wires default/live agent.loop.expertmode.update to TS_RUNTIME_AGENT_LOOP_POLICY_MUTATIONS_RETIRED after user-principal validation and before mutating TypeScript agent-loop expert-mode policy; legacy TS mutation is reachable only through explicit allowTestOnlyAgentLoopPolicyMutation test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned agent-loop expert-mode policy entrypoint when available."
     },
@@ -1324,6 +1325,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-agent-loop-routes.test.ts",
       "proof": "src/api/http/routes/friday-agent-loop-routes.ts wires default/live agent.loop.policy.update to TS_RUNTIME_AGENT_LOOP_POLICY_MUTATIONS_RETIRED after user-principal validation and before mutating TypeScript agent-loop policy; legacy TS mutation is reachable only through explicit allowTestOnlyAgentLoopPolicyMutation test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned agent-loop policy entrypoint when available."
     },
@@ -1385,6 +1387,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-agent-loop-routes.test.ts",
       "proof": "src/api/http/routes/friday-agent-loop-routes.ts wires default/live agent.loop.runs.pause to TS_RUNTIME_AGENT_LOOP_CONTROLS_RETIRED after user-principal validation and before calling the TypeScript agent loop service; legacy TS pause is reachable only through explicit allowTestOnlyAgentLoopRunControlExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned agent-loop pause/control entrypoint when available."
     },
@@ -1398,6 +1401,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-agent-loop-routes.test.ts",
       "proof": "src/api/http/routes/friday-agent-loop-routes.ts wires default/live agent.loop.runs.resume to TS_RUNTIME_AGENT_LOOP_CONTROLS_RETIRED after user-principal validation and before calling the TypeScript agent loop service; legacy TS resume is reachable only through explicit allowTestOnlyAgentLoopRunControlExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned agent-loop resume/control entrypoint when available."
     },
@@ -1411,6 +1415,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-agent-loop-routes.test.ts",
       "proof": "src/api/http/routes/friday-agent-loop-routes.ts wires default/live agent.loop.runs.cancel to TS_RUNTIME_AGENT_LOOP_CONTROLS_RETIRED after user-principal validation and before calling the TypeScript agent loop service; legacy TS cancel is reachable only through explicit allowTestOnlyAgentLoopRunControlExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned agent-loop cancel/control entrypoint when available."
     },
