@@ -10,7 +10,7 @@
   "discovery": {
     "routeSourceDir": "src/api/http/routes",
     "includeMethods": ["GET", "POST", "PATCH", "PUT", "DELETE"],
-    "exactRouteSurfacesMin": 312,
+    "exactRouteSurfacesMin": 327,
     "requiredRouteBehaviorTestSurfaceIds": [
       "agent_runs_start",
       "workflow_runs_start",
@@ -164,13 +164,28 @@
       "cloud_worker_package_generate",
       "cloud_worker_teardown_receipt",
       "deeplink_preview",
-      "providers_detect"
+      "providers_detect",
+      "skills_install_legacy_retired"
     ],
     "requiredGovernedRouteBehaviorTestSurfaceIds": [
       "providers_create_governed_adapter",
       "providers_routing_set_governed_adapter",
+      "providers_budget_set_governed_adapter",
       "skills_update_lifecycle_governed",
-      "skills_delete_lifecycle_governed"
+      "skills_delete_lifecycle_governed",
+      "skills_content_update_governed",
+      "skills_upgrade_decide_governed",
+      "security_tenants_create_compat",
+      "security_workspaces_create_compat",
+      "security_members_add_compat",
+      "security_roles_create_compat",
+      "security_assignments_grant_compat",
+      "security_secrets_create_compat",
+      "security_secrets_rotate_compat",
+      "security_policies_create_compat",
+      "security_policies_evaluate_compat",
+      "security_scopedresources_register_compat",
+      "security_scopedresources_unregister_compat"
     ]
   },
   "classificationValues": [
@@ -1737,6 +1752,25 @@
       "next_action": "Replace this compatibility read with a Rust-owned evidence export download projection when available."
     },
     {
+      "id": "skills_install_legacy_retired",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/install",
+        "operationId": "skills.install"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "blocks legacy install/update/delete and skill verification by default while keeping manifest validation active",
+        "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED",
+        "expect(lifecycle.install).not.toHaveBeenCalled"
+      ],
+      "proof": "src/api/http/routes/friday-skill-routes.ts keeps the legacy POST /v1/skills/install surface as an explicit retired lifecycle route. The behavior test proves default/live install rejects with SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED and does not call lifecycle.install; new skill intake must use the governed import/autonomy lifecycle path instead.",
+      "next_action": "Replace this retired legacy install compatibility route only when the governed Rust-owned skill import/install entrypoint is ready."
+    },
+    {
       "id": "skills_update_lifecycle_governed",
       "route": {
         "method": "POST",
@@ -1777,6 +1811,45 @@
       ],
       "proof": "src/api/http/routes/friday-skill-routes.ts skills.delete uses assertCanonicalApproval for non-managed skill deletes before deps.lifecycle.deleteSkill. The behavior test proves missing approval blocks before mutation and a valid canonical approval is forwarded as the only mutation path.",
       "next_action": "Move skill lifecycle delete to a Rust-owned or explicitly governed product entrypoint when skill content lifecycle ownership is complete."
+    },
+    {
+      "id": "skills_content_update_governed",
+      "route": {
+        "method": "PATCH",
+        "path": "/v1/skills/:skillId/content",
+        "operationId": "skills.content.update"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workspace skill content update as a governed compatibility surface while skill content ownership is being moved into the managed lifecycle. Workspace content updates require canonical approval before any file write; promoted managed external skills are rejected back to the lifecycle.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "B0 Slice A5: synthetic default-public principal cannot bypass content-update verifier",
+        "SKILL_CONTENT_UPDATE_APPROVAL_REQUIRED",
+        "Files must be untouched: the verifier blocks before any writeFileSync runs.",
+        "expect(readFileSync(join(skillDir, \"SKILL.md\"), \"utf8\")).toBe(originalSkillMd)"
+      ],
+      "proof": "src/api/http/routes/friday-skill-routes.ts skills.content.update uses canonical approval before mutating workspace SKILL.md/manifest content and rejects promoted managed external artifacts through the lifecycle-required path. The behavior test proves a synthetic default-public principal cannot reach the file writes without approval and that learning/skill artifacts remain byte-preserved on denial.",
+      "next_action": "Move skill content mutation to a Rust-owned or explicitly governed product entrypoint when the skill lifecycle owner is complete."
+    },
+    {
+      "id": "skills_upgrade_decide_governed",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/:skillId/upgrade/decide",
+        "operationId": "skills.upgrade.decide"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep skill upgrade decisions as a governed compatibility surface while upgrade orchestration moves to the managed lifecycle. Decisions require canonical approval bound to the analyzed candidate before applyDecision can mutate upgrade state.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "B0 Slice A5: synthetic default-public principal cannot bypass upgrade-decide verifier",
+        "SKILL_UPGRADE_DECIDE_APPROVAL_REQUIRED",
+        "expect(applyDecision).not.toHaveBeenCalled"
+      ],
+      "proof": "src/api/http/routes/friday-skill-routes.ts skills.upgrade.decide gates the candidate decision with assertCanonicalApproval before deps.upgradeAnalysis.applyDecision. The behavior test proves a synthetic public principal cannot apply a decision without canonical approval.",
+      "next_action": "Move skill upgrade decisions to a Rust-owned or explicitly governed product entrypoint when the skill lifecycle owner is complete."
     },
     {
       "id": "skills_run",
@@ -5104,12 +5177,190 @@
       "next_action": "Replace this compatibility read with a Rust-owned redacted provider-usage projection when available."
     },
     {
+      "id": "providers_budget_set_governed_adapter",
+      "route": { "method": "PUT", "path": "/v1/providers/budget", "operationId": "providers.budget.set" },
+      "classification": "operator_external_adapter",
+      "user_triggerable": true,
+      "trust_boundary": "Provider budget configuration adapter only; budget config writes are not task completion truth and gate-required profiles must canonical-approve before service mutation.",
+      "leak_controls": {
+        "raw_private_data_allowed": false,
+        "forbidden": [
+          "raw_transcripts",
+          "secrets",
+          "private_paths",
+          "provider_ids",
+          "channel_ids",
+          "raw_commands",
+          "private_reasoning"
+        ]
+      },
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-provider-usage-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "requires canonical approval before changing provider budget in gate-required profiles",
+        "PROVIDER_MUTATION_PLAN_DIGEST_REQUIRED",
+        "expect(providerService.setBudgetConfig).not.toHaveBeenCalled",
+        "accepts canonical approval and does not persist approval control fields as budget config",
+        "expect(providerService.setBudgetConfig).toHaveBeenCalledWith({ monthlyLimitUsd: 3 })"
+      ],
+      "proof": "src/api/http/routes/friday-provider-usage-routes.ts providers.budget.set validates the budget body and runs maybeRequireBudgetMutationTicket before providerService.setBudgetConfig. The behavior tests prove missing canonical approval blocks before service mutation and valid approval delegates only the stripped monthlyLimitUsd config.",
+      "next_action": "Keep provider budget configuration as a governed adapter until a Rust-owned provider budget config entrypoint exists."
+    },
+    {
       "id": "providers_budget_get_compat",
       "route": { "method": "GET", "path": "/v1/providers/budget", "operationId": "providers.budget.get" },
       "classification": "compat_shim",
       "user_triggerable": true,
       "migration_intent": "Keep the provider budget status as a bounded compatibility read while provider budget mutation (PUT /v1/providers/budget) is fail-closed or moved to Rust-owned product truth. This read (src/api/http/routes/friday-provider-usage-routes.ts) returns the monthly limit/spent/remaining snapshot; it does not mutate budget config or mark completion.",
       "next_action": "Replace this compatibility read with a Rust-owned redacted provider-budget projection when available."
+    },
+    {
+      "id": "security_tenants_create_compat",
+      "route": { "method": "POST", "path": "/v1/security/tenants", "operationId": "security.tenants.create" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep tenant creation as a compatibility security/admin surface; it owns tenant setup metadata, not task completion truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-multi-tenant-security-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "POST /v1/security/tenants validates name and slug",
+        "POST /v1/security/tenants delegates with valid body",
+        "expect(deps.tenants.create).toHaveBeenCalledWith({ name: \"Acme\", slug: \"acme\", idempotencyKey: \"k-1\" })"
+      ],
+      "next_action": "Move tenant setup to a Rust-owned security projection/mutation entrypoint before claiming it as runtime completion truth."
+    },
+    {
+      "id": "security_workspaces_create_compat",
+      "route": { "method": "POST", "path": "/v1/security/tenants/:tenantId/workspaces", "operationId": "security.workspaces.create" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workspace creation as a compatibility security/admin surface; it does not own task completion truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-multi-tenant-security-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "POST /v1/security/tenants/:tenantId/workspaces validates name+slug",
+        "POST /v1/security/tenants/:tenantId/workspaces delegates with valid body",
+        "expect(deps.workspaces.create).toHaveBeenCalledWith(\"t-1\", { name: \"Dev\", slug: \"dev\", idempotencyKey: \"k\" })"
+      ],
+      "next_action": "Move workspace setup to a Rust-owned security projection/mutation entrypoint before claiming it as runtime completion truth."
+    },
+    {
+      "id": "security_members_add_compat",
+      "route": { "method": "POST", "path": "/v1/security/tenants/:tenantId/workspaces/:workspaceId/members", "operationId": "security.members.add" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workspace member assignment as a compatibility security/admin surface; membership changes are not task completion truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-multi-tenant-security-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "POST members delegates with valid body",
+        "expect(deps.members.add).toHaveBeenCalledWith(\"t-1\", \"ws-1\", { principalId: \"u-1\", roleId: \"r-1\", idempotencyKey: \"k\" })"
+      ],
+      "next_action": "Move member assignment to a Rust-owned security projection/mutation entrypoint before claiming it as runtime completion truth."
+    },
+    {
+      "id": "security_roles_create_compat",
+      "route": { "method": "POST", "path": "/v1/security/tenants/:tenantId/roles", "operationId": "security.roles.create" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep role creation as a compatibility security/admin surface; role metadata is not task completion truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-multi-tenant-security-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "POST roles validates role.name",
+        "POST roles delegates with valid body",
+        "expect(deps.roles.create).toHaveBeenCalledWith(\"t-1\", body)"
+      ],
+      "next_action": "Move role management to a Rust-owned security projection/mutation entrypoint before claiming it as runtime completion truth."
+    },
+    {
+      "id": "security_assignments_grant_compat",
+      "route": { "method": "POST", "path": "/v1/security/tenants/:tenantId/role-assignments", "operationId": "security.assignments.grant" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep role assignment grants as a compatibility security/admin surface; assignment changes are not task completion truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-multi-tenant-security-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "POST grant delegates with valid body",
+        "expect(deps.assignments.grant).toHaveBeenCalledWith(\"t-1\", body)"
+      ],
+      "next_action": "Move role assignment grants to a Rust-owned security projection/mutation entrypoint before claiming them as runtime completion truth."
+    },
+    {
+      "id": "security_secrets_create_compat",
+      "route": { "method": "POST", "path": "/v1/security/tenants/:tenantId/secrets", "operationId": "security.secrets.create" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep secret metadata creation as a compatibility security/admin surface; it must not expose raw secret material or count as task completion truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-multi-tenant-security-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "POST secret delegates with valid body",
+        "expect(deps.secrets.create).toHaveBeenCalledWith(\"t-1\", body)"
+      ],
+      "next_action": "Move secret metadata management to a Rust-owned security projection/mutation entrypoint before claiming it as runtime completion truth."
+    },
+    {
+      "id": "security_secrets_rotate_compat",
+      "route": { "method": "POST", "path": "/v1/security/tenants/:tenantId/secrets/:secretId/rotate", "operationId": "security.secrets.rotate" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep secret rotation as a compatibility security/admin surface; rotation state is not task completion truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-multi-tenant-security-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "POST rotate delegates with valid body",
+        "expect(deps.secrets.rotate).toHaveBeenCalledWith(\"t-1\", \"s-1\", { newValue: \"new-secret\", etag: \"e\", idempotencyKey: \"k\" })"
+      ],
+      "next_action": "Move secret rotation to a Rust-owned security projection/mutation entrypoint before claiming it as runtime completion truth."
+    },
+    {
+      "id": "security_policies_create_compat",
+      "route": { "method": "POST", "path": "/v1/security/tenants/:tenantId/policies", "operationId": "security.policies.create" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep policy creation as a compatibility security/admin surface; policy metadata is not task completion truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-multi-tenant-security-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "POST policy validates name",
+        "POST policy delegates with valid body",
+        "expect(deps.policies.create).toHaveBeenCalledWith(\"t-1\", body)"
+      ],
+      "next_action": "Move policy management to a Rust-owned security projection/mutation entrypoint before claiming it as runtime completion truth."
+    },
+    {
+      "id": "security_policies_evaluate_compat",
+      "route": { "method": "POST", "path": "/v1/security/tenants/:tenantId/policies/evaluate", "operationId": "security.policies.evaluate" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep policy evaluation as a compatibility security/admin surface; it is a security decision projection, not task completion truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-multi-tenant-security-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "POST evaluate validates principalId+resource+action",
+        "POST evaluate delegates with valid body",
+        "expect(deps.policies.evaluate).toHaveBeenCalledWith(\"t-1\", body)"
+      ],
+      "next_action": "Move policy evaluation to a Rust-owned security decision entrypoint before claiming it as runtime completion truth."
+    },
+    {
+      "id": "security_scopedresources_register_compat",
+      "route": { "method": "POST", "path": "/v1/security/tenants/:tenantId/scoped-resources", "operationId": "security.scopedresources.register" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep scoped-resource registration as a compatibility security/admin surface; scoped-resource metadata is not task completion truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-multi-tenant-security-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "POST register validates resourceKind+resourceId+idempotencyKey",
+        "POST register delegates with a valid body",
+        "expect(deps.scopedResources.register).toHaveBeenCalledWith(\"t-1\", expect.objectContaining({"
+      ],
+      "next_action": "Move scoped-resource registration to a Rust-owned security projection/mutation entrypoint before claiming it as runtime completion truth."
+    },
+    {
+      "id": "security_scopedresources_unregister_compat",
+      "route": { "method": "DELETE", "path": "/v1/security/tenants/:tenantId/scoped-resources/:resourceKind/:resourceId", "operationId": "security.scopedresources.unregister" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep scoped-resource unregister as a compatibility security/admin surface; scoped-resource metadata is not task completion truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-multi-tenant-security-routes.test.ts",
+      "routeBehavioralTestIncludes": [
+        "DELETE requires idempotencyKey and delegates to unregister",
+        "expect(deps.scopedResources.unregister).toHaveBeenCalledWith(\"t-5\", \"rule\", \"rule-1\")"
+      ],
+      "next_action": "Move scoped-resource unregister to a Rust-owned security projection/mutation entrypoint before claiming it as runtime completion truth."
     },
     {
       "id": "realtime_subscribe_read",
