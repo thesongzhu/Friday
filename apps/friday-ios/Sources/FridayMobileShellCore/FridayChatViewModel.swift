@@ -146,6 +146,56 @@ public struct ChatResumeReceipt: Sendable, Equatable {
   }
 }
 
+public struct ChatHistoryItem: Identifiable, Codable, Sendable, Equatable {
+  public let id: String
+  public let role: String
+  public let text: String
+  public let runId: String?
+  public let createdAtMs: Int64
+
+  public init(
+    id: String,
+    role: String,
+    text: String,
+    runId: String? = nil,
+    createdAtMs: Int64
+  ) {
+    self.id = id
+    self.role = role
+    self.text = text
+    self.runId = runId
+    self.createdAtMs = createdAtMs
+  }
+}
+
+public protocol ChatHistoryStoring {
+  func load() -> [ChatHistoryItem]
+  func save(_ items: [ChatHistoryItem])
+}
+
+public struct UserDefaultsChatHistoryStore: ChatHistoryStoring {
+  private let defaults: UserDefaults
+  private let key: String
+
+  public init(
+    defaults: UserDefaults = .standard,
+    key: String = "friday.mobile.chat.history.v1"
+  ) {
+    self.defaults = defaults
+    self.key = key
+  }
+
+  public func load() -> [ChatHistoryItem] {
+    guard let data = defaults.data(forKey: key) else { return [] }
+    return (try? JSONDecoder().decode([ChatHistoryItem].self, from: data)) ?? []
+  }
+
+  public func save(_ items: [ChatHistoryItem]) {
+    guard let data = try? JSONEncoder().encode(items) else { return }
+    defaults.set(data, forKey: key)
+  }
+}
+
 // MARK: - The 4-state chat phase
 
 /// The chat loop's phase. `.unavailable` is a FIRST-CLASS state (honest-unavailable); a dark
@@ -185,6 +235,7 @@ public enum ChatPhase: Sendable, Equatable {
 @MainActor
 public final class FridayChatViewModel: ObservableObject {
   @Published public private(set) var phase: ChatPhase = .composing
+  @Published public private(set) var history: [ChatHistoryItem]
 
   /// The package's `FridayRustWriteClient` is not `Sendable` (same reason as the read client),
   /// so awaiting its `nonisolated async` dispatch/resume from this `@MainActor` VM would "send"
@@ -197,6 +248,8 @@ public final class FridayChatViewModel: ObservableObject {
   private let readClient: FridayRustReadClient?
   private let signer: OperatorSigner
   private let newId: () -> String
+  private let nowMs: () -> Int64
+  private let historyStore: any ChatHistoryStoring
 
   /// - Parameters:
   ///   - writeClient: the real `SealedWSWriteClient` (or a mock in tests/preview). DEFAULT
@@ -208,13 +261,18 @@ public final class FridayChatViewModel: ObservableObject {
     signer: OperatorSigner,
     missionClient: (any FridayMobileMissionDispatchingWriteClient)? = nil,
     readClient: FridayRustReadClient? = nil,
-    newId: @escaping () -> String = { UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "") }
+    historyStore: any ChatHistoryStoring = UserDefaultsChatHistoryStore(),
+    newId: @escaping () -> String = { UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "") },
+    nowMs: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
   ) {
     self.writeClient = writeClient
     self.signer = signer
     self.missionClient = missionClient
     self.readClient = readClient
+    self.historyStore = historyStore
     self.newId = newId
+    self.nowMs = nowMs
+    self.history = historyStore.load()
   }
 
   // MARK: 1. Compose → Send
@@ -229,6 +287,7 @@ public final class FridayChatViewModel: ObservableObject {
   public func send(_ task: String, constraints: AgentRunConstraintsWire? = nil) async {
     let trimmed = task.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
+    appendHistory(role: "you", text: trimmed)
     phase = .dispatching(task: trimmed)
     if let missionClient {
       await sendMission(trimmed, missionClient: missionClient)
@@ -239,6 +298,7 @@ public final class FridayChatViewModel: ObservableObject {
       switch outcome {
       case .result(let r):
         let answer = await fetchDeliveredAnswerBody(for: r.runId)
+        appendAnswerHistory(runId: r.runId, status: r.status, answerBody: answer?.body)
         phase = .answered(ChatAnswerReceipt(
           r,
           answerBody: answer?.body,
@@ -246,6 +306,10 @@ public final class FridayChatViewModel: ObservableObject {
           answerBodyOutcome: answer?.outcome))
       case .paused(let p):
         // INV-2: a mutating run PAUSED — surface the S6 approval card. No mutation has executed.
+        appendHistory(
+          role: "friday",
+          text: "Approval required: \(p.ownerSealedSummary ?? "mutating action")",
+          runId: p.runId)
         phase = .pendingApproval(ApprovalCard(p))
       }
     } catch {
@@ -286,6 +350,7 @@ public final class FridayChatViewModel: ObservableObject {
         missionClient: missionClient)
       let bodyRunId = followUp?.runId ?? firstReceipt.runId
       let answer = await fetchDeliveredAnswerBody(for: bodyRunId)
+      appendAnswerHistory(runId: bodyRunId, status: firstReceipt.status, answerBody: answer?.body)
       phase = .answered(ChatAnswerReceipt(
         firstReceipt,
         missionId: result.missionId,
@@ -374,6 +439,10 @@ public final class FridayChatViewModel: ObservableObject {
     do {
       // INV-1: relay the OPAQUE blob VERBATIM. The view model inspects/derives nothing in it.
       let receipt = try await writeClient.resumeWithApproval(runId: card.runId, opaqueSignedBlob: blob)
+      appendHistory(
+        role: "friday",
+        text: receipt.accepted ? "Approved action executed." : "Action refused.",
+        runId: receipt.runId)
       phase = .resumed(ChatResumeReceipt(receipt))
     } catch {
       phase = .unavailable(reason: Self.resumeReason(for: error))
@@ -387,7 +456,15 @@ public final class FridayChatViewModel: ObservableObject {
   /// out / is cancelled server-side (the resume is the ONLY thing that could execute it).
   public func reject() {
     guard phase.isAwaitingApproval else { return }
+    if case .pendingApproval(let card) = phase {
+      appendHistory(role: "friday", text: "Approval rejected.", runId: card.runId)
+    }
     phase = .composing
+  }
+
+  public func clearHistory() {
+    history = []
+    historyStore.save(history)
   }
 
   /// Reset to a fresh composer after an answer / receipt / unavailable (start a new turn).
@@ -435,6 +512,30 @@ public final class FridayChatViewModel: ObservableObject {
     case let .transport(why):
       return "Friday is offline — \(why)"
     }
+  }
+
+  private func appendAnswerHistory(runId: String, status: String, answerBody: String?) {
+    let text: String
+    if let body = answerBody?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty {
+      text = body
+    } else {
+      text = "Friday answered (\(status)). Run \(runId)."
+    }
+    appendHistory(role: "friday", text: text, runId: runId)
+  }
+
+  private func appendHistory(role: String, text: String, runId: String? = nil) {
+    let item = ChatHistoryItem(
+      id: newId(),
+      role: role,
+      text: text,
+      runId: runId,
+      createdAtMs: nowMs())
+    history.append(item)
+    if history.count > 100 {
+      history.removeFirst(history.count - 100)
+    }
+    historyStore.save(history)
   }
 
   static func buildMissionIntakeRequest(

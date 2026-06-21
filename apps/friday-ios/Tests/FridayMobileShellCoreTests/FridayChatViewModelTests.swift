@@ -151,6 +151,22 @@ final class FridayChatViewModelTests: XCTestCase {
     }
   }
 
+  final class FakeHistoryStore: ChatHistoryStoring {
+    private(set) var saved: [[ChatHistoryItem]] = []
+    var items: [ChatHistoryItem]
+
+    init(_ items: [ChatHistoryItem] = []) {
+      self.items = items
+    }
+
+    func load() -> [ChatHistoryItem] { items }
+
+    func save(_ items: [ChatHistoryItem]) {
+      self.items = items
+      saved.append(items)
+    }
+  }
+
   private func makeAnswer(_ runId: String = "run-1") -> AgentRunResultWire {
     AgentRunResultWire(runId: runId, status: "completed",
                        answerSha256: String(repeating: "a", count: 64), answerLen: 128, turns: 2, executedTools: 0)
@@ -199,6 +215,53 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertEqual(receipt.answerBodyRunId, "run-readable")
     XCTAssertEqual(receipt.answerBodyOutcome, "delivered")
     XCTAssertEqual(receipt.answerBody, "Readable answer from the owner-gated readback.")
+  }
+
+  func testSend_persistsLocalHistoryWithReadableAnswer() async throws {
+    let client = FakeWriteClient(dispatch: .answer(makeAnswer("run-readable")))
+    let read = FakeReadClient(
+      snapshot: try WorkbenchSnapshot(
+        projectionJSON: Data("""
+        {"missionId":"mission-readable","fridayConversationId":"fconv-readable",\
+        "runtimeFeedStatus":"live_rust_hub_projection","statusLabels":[],"workItems":[]}
+        """.utf8),
+        generatedAtMs: 0),
+      answerBodies: ["run-readable": "Readable answer from the owner-gated readback."])
+    let store = FakeHistoryStore()
+    let vm = FridayChatViewModel(
+      writeClient: client,
+      signer: MockOperatorSigner(),
+      readClient: read,
+      historyStore: store,
+      newId: { "history-id" },
+      nowMs: { 42 })
+
+    await vm.send("summarize my inbox")
+
+    XCTAssertEqual(vm.history.map(\.role), ["you", "friday"])
+    XCTAssertEqual(vm.history.map(\.text), [
+      "summarize my inbox",
+      "Readable answer from the owner-gated readback.",
+    ])
+    XCTAssertEqual(vm.history.last?.runId, "run-readable")
+    XCTAssertEqual(vm.history.last?.createdAtMs, 42)
+    XCTAssertEqual(store.items, vm.history)
+  }
+
+  func testHistory_loadsAndClearsFromStore() {
+    let existing = [
+      ChatHistoryItem(id: "h1", role: "you", text: "hello", createdAtMs: 1)
+    ]
+    let store = FakeHistoryStore(existing)
+    let vm = FridayChatViewModel(
+      writeClient: FakeWriteClient(dispatch: .answer(makeAnswer())),
+      signer: MockOperatorSigner(),
+      historyStore: store)
+
+    XCTAssertEqual(vm.history, existing)
+    vm.clearHistory()
+    XCTAssertTrue(vm.history.isEmpty)
+    XCTAssertEqual(store.items, [])
   }
 
   func testBuildMissionIntakeRequest_usesMobileAutoRoute() {
