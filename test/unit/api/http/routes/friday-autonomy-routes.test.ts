@@ -678,6 +678,69 @@ function createAutonomyLifecycleRoutesDefaultOff() {
   };
 }
 
+function makeRouteContext(
+  input: {
+    body?: Record<string, unknown>;
+    params?: Record<string, string>;
+    query?: Record<string, unknown>;
+  } = {},
+) {
+  return {
+    requestId: "req-1",
+    receivedAt: "2026-05-07T18:00:00.000Z",
+    params: input.params ?? {},
+    query: input.query ?? {},
+    body: input.body ?? {},
+    headers: {},
+    principal,
+  };
+}
+
+function createAutonomyControlRoutesDefaultOff() {
+  const acquisitionMutations = {
+    startRun: vi.fn(async () => ({ id: "run-1" })),
+    approveRun: vi.fn(async () => ({ id: "run-1" })),
+    cancelRun: vi.fn(() => ({ id: "run-1" })),
+  };
+  const policyMutation = vi.fn(() => ({ enabled: false }));
+  const standingAgendaMutations = {
+    createStandingGoal: vi.fn(async () => ({
+      goal: { id: "goal-1", userId: "user-1", objective: "Ship Friday", status: "active" },
+      agendaItem: { id: "agenda-1", userId: "user-1", goalId: "goal-1", status: "pending" },
+    })),
+    updateStandingGoal: vi.fn(() => ({ id: "goal-1", userId: "user-1", objective: "Ship Friday", status: "active" })),
+    approveAgendaItem: vi.fn(() => ({ id: "agenda-1", userId: "user-1", status: "approved" })),
+    runAgendaItem: vi.fn(async () => ({ runId: "run-1", status: "queued" })),
+  };
+  const routes = createFridayAutonomyRoutes({
+    allowTestOnlyCapabilityAcquisitionExecution: false,
+    allowTestOnlyAutonomyPolicyMutation: false,
+    allowTestOnlyStandingAgendaExecution: false,
+    listUpgradeStatus: () => ({ items: [] }),
+    acquisitionService: {
+      plan: vi.fn(async () => ({ id: "plan-1" })),
+      ...acquisitionMutations,
+    },
+    policyService: {
+      getPolicy: vi.fn(() => ({ enabled: false })),
+      updatePolicy: policyMutation,
+    },
+    standingAgendaService: {
+      listStandingGoals: vi.fn(() => []),
+      listAgenda: vi.fn(() => []),
+      ...standingAgendaMutations,
+    },
+  });
+  return {
+    routes,
+    mutations: [
+      ...Object.values(acquisitionMutations),
+      policyMutation,
+      ...Object.values(standingAgendaMutations),
+    ],
+  };
+}
+
 describe("createFridayAutonomyRoutes lifecycle route retirement", () => {
   it.each([
     {
@@ -814,6 +877,78 @@ describe("createFridayAutonomyRoutes lifecycle route retirement", () => {
         details: {
           classification: "fail_closed",
           replacement: "rust_owned_autonomy_subject_upgrade_lifecycle_entrypoint_required",
+        },
+      });
+
+      for (const mutation of deps.mutations) {
+        expect(mutation).not.toHaveBeenCalled();
+      }
+    },
+  );
+});
+
+describe("createFridayAutonomyRoutes control route retirement", () => {
+  it.each([
+    {
+      operationId: "capabilities.acquisition.runs.create",
+      code: "TS_RUNTIME_CAPABILITY_ACQUISITION_RETIRED",
+      replacement: "rust_owned_capability_acquisition_entrypoint_required",
+      ctx: makeRouteContext({ body: { goal: "Ship Friday" } }),
+    },
+    {
+      operationId: "capabilities.acquisition.runs.approve",
+      code: "TS_RUNTIME_CAPABILITY_ACQUISITION_RETIRED",
+      replacement: "rust_owned_capability_acquisition_entrypoint_required",
+      ctx: makeRouteContext({ params: { id: "run-1" } }),
+    },
+    {
+      operationId: "capabilities.acquisition.runs.cancel",
+      code: "TS_RUNTIME_CAPABILITY_ACQUISITION_RETIRED",
+      replacement: "rust_owned_capability_acquisition_entrypoint_required",
+      ctx: makeRouteContext({ params: { id: "run-1" } }),
+    },
+    {
+      operationId: "autonomy.policy.patch",
+      code: "TS_RUNTIME_AUTONOMY_POLICY_MUTATION_RETIRED",
+      replacement: "rust_owned_autonomy_policy_mutation_entrypoint_required",
+      ctx: makeRouteContext({ body: { enabled: true } }),
+    },
+    {
+      operationId: "standing.goals.create",
+      code: "TS_RUNTIME_STANDING_AGENDA_RETIRED",
+      replacement: "rust_owned_autonomy_standing_agenda_entrypoint_required",
+      ctx: makeRouteContext({ body: { objective: "Ship Friday" } }),
+    },
+    {
+      operationId: "standing.goals.patch",
+      code: "TS_RUNTIME_STANDING_AGENDA_RETIRED",
+      replacement: "rust_owned_autonomy_standing_agenda_entrypoint_required",
+      ctx: makeRouteContext({ params: { id: "goal-1" }, body: { objective: "Ship Friday better" } }),
+    },
+    {
+      operationId: "agenda.approve",
+      code: "TS_RUNTIME_STANDING_AGENDA_RETIRED",
+      replacement: "rust_owned_autonomy_standing_agenda_entrypoint_required",
+      ctx: makeRouteContext({ params: { id: "agenda-1" } }),
+    },
+    {
+      operationId: "agenda.run",
+      code: "TS_RUNTIME_STANDING_AGENDA_RETIRED",
+      replacement: "rust_owned_autonomy_standing_agenda_entrypoint_required",
+      ctx: makeRouteContext({ params: { id: "agenda-1" } }),
+    },
+  ])(
+    "fail-closes %s by default before invoking TypeScript autonomy control mutations",
+    async ({ operationId, code, replacement, ctx }) => {
+      const deps = createAutonomyControlRoutesDefaultOff();
+      const route = deps.routes.find((entry) => entry.operationId === operationId)!;
+
+      await expect(route.handler(ctx)).rejects.toMatchObject({
+        code,
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement,
         },
       });
 

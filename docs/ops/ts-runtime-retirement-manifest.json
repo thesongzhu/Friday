@@ -151,7 +151,15 @@
       "providers_validate",
       "capabilities_doctor",
       "providers_routing_pin",
-      "providers_routing_penalty_clear"
+      "providers_routing_penalty_clear",
+      "capabilities_acquisition_runs_create",
+      "capabilities_acquisition_runs_approve",
+      "capabilities_acquisition_runs_cancel",
+      "autonomy_policy_patch",
+      "standing_goals_create",
+      "standing_goals_patch",
+      "agenda_approve",
+      "agenda_run"
     ]
   },
   "classificationValues": [
@@ -2977,6 +2985,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live capabilities.acquisition.runs.create to TS_RUNTIME_CAPABILITY_ACQUISITION_RETIRED after goal/principal validation and before calling the TypeScript capability-acquisition startRun service mutation; legacy behavior is reachable only through explicit allowTestOnlyCapabilityAcquisitionExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned capability-acquisition run-start entrypoint when available."
     },
@@ -2990,6 +2999,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live capabilities.acquisition.runs.approve to TS_RUNTIME_CAPABILITY_ACQUISITION_RETIRED after principal authority checks and before calling the TypeScript capability-acquisition approveRun service mutation; legacy behavior is reachable only through explicit allowTestOnlyCapabilityAcquisitionExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned capability-acquisition run-approve entrypoint when available."
     },
@@ -3003,6 +3013,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live capabilities.acquisition.runs.cancel to TS_RUNTIME_CAPABILITY_ACQUISITION_RETIRED after principal authority checks and before calling the TypeScript capability-acquisition cancelRun service mutation; legacy behavior is reachable only through explicit allowTestOnlyCapabilityAcquisitionExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned capability-acquisition run-cancel entrypoint when available."
     },
@@ -3016,6 +3027,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live autonomy.policy.patch to TS_RUNTIME_AUTONOMY_POLICY_MUTATION_RETIRED after principal authority checks and before calling the TypeScript autonomy policy updatePolicy service mutation; legacy behavior is reachable only through explicit allowTestOnlyAutonomyPolicyMutation test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned autonomy policy mutation entrypoint when available."
     },
@@ -3029,6 +3041,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live standing.goals.create to TS_RUNTIME_STANDING_AGENDA_RETIRED after principal/objective validation and before calling the TypeScript standing-agenda createStandingGoal service mutation; legacy behavior is reachable only through explicit allowTestOnlyStandingAgendaExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned standing-goal create entrypoint when available."
     },
@@ -3042,6 +3055,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live standing.goals.patch to TS_RUNTIME_STANDING_AGENDA_RETIRED after principal authority checks and before calling the TypeScript standing-agenda updateStandingGoal service mutation; legacy behavior is reachable only through explicit allowTestOnlyStandingAgendaExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned standing-goal patch entrypoint when available."
     },
@@ -3055,6 +3069,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live agenda.approve to TS_RUNTIME_STANDING_AGENDA_RETIRED after principal authority checks and before calling the TypeScript standing-agenda approveAgendaItem service mutation; legacy behavior is reachable only through explicit allowTestOnlyStandingAgendaExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned agenda approve entrypoint when available."
     },
@@ -3068,6 +3083,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-autonomy-routes.test.ts",
       "proof": "src/api/http/routes/friday-autonomy-routes.ts fail-closes default/live agenda.run to TS_RUNTIME_STANDING_AGENDA_RETIRED after principal authority checks and before calling the TypeScript standing-agenda runAgendaItem service mutation; legacy behavior is reachable only through explicit allowTestOnlyStandingAgendaExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned agenda run entrypoint when available."
     },
