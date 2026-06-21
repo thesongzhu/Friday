@@ -2643,6 +2643,21 @@ pub(crate) fn a1_run_outcome_learning_preamble_for_principals_flagged(
     Ok(preamble)
 }
 
+fn push_run_outcome_learning_prompt_row(
+    preamble: &mut String,
+    row: &friday_storage::learning_candidate::RunOutcomeLearningCandidateRow,
+) {
+    preamble.push_str("- ");
+    preamble.push_str(row.kind.as_str());
+    preamble.push_str(": ");
+    preamble.push_str(&row.summary);
+    preamble.push_str("; evidence=");
+    preamble.push_str(&row.evidence_ref);
+    preamble.push_str("; run=");
+    preamble.push_str(&row.run_id);
+    preamble.push('\n');
+}
+
 pub(crate) fn a1_run_outcome_learning_consumer_preamble_for_principals_flagged(
     db: &Db,
     principals: &[&str],
@@ -2662,29 +2677,52 @@ pub(crate) fn a1_run_outcome_learning_consumer_preamble_for_principals_flagged(
             row.kind,
             friday_storage::learning_candidate::RunOutcomeLearningKind::Preference
                 | friday_storage::learning_candidate::RunOutcomeLearningKind::WorldModel
+                | friday_storage::learning_candidate::RunOutcomeLearningKind::Reflex
         )
     })?;
     if matched.is_empty() {
         return Ok(String::new());
     }
 
-    let mut preamble =
-        "Confirmed preference/world-model learning signals (refs-only; no answer body):\n"
-            .to_string();
+    let mut preamble = String::new();
     let mut injected_ids = Vec::new();
-    for row in matched {
-        injected_ids.push(row.candidate_id.clone());
-        preamble.push_str("- ");
-        preamble.push_str(row.kind.as_str());
-        preamble.push_str(": ");
-        preamble.push_str(&row.summary);
-        preamble.push_str("; evidence=");
-        preamble.push_str(&row.evidence_ref);
-        preamble.push_str("; run=");
-        preamble.push_str(&row.run_id);
+    let preference_world_model: Vec<_> = matched
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.kind,
+                friday_storage::learning_candidate::RunOutcomeLearningKind::Preference
+                    | friday_storage::learning_candidate::RunOutcomeLearningKind::WorldModel
+            )
+        })
+        .collect();
+    if !preference_world_model.is_empty() {
+        preamble.push_str(
+            "Confirmed preference/world-model learning signals (refs-only; no answer body):\n",
+        );
+        for row in preference_world_model {
+            injected_ids.push(row.candidate_id.clone());
+            push_run_outcome_learning_prompt_row(&mut preamble, row);
+        }
         preamble.push('\n');
     }
-    preamble.push('\n');
+    let reflex_rows: Vec<_> = matched
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.kind,
+                friday_storage::learning_candidate::RunOutcomeLearningKind::Reflex
+            )
+        })
+        .collect();
+    if !reflex_rows.is_empty() {
+        preamble.push_str("Confirmed reflex learning signals (refs-only; no answer body):\n");
+        for row in reflex_rows {
+            injected_ids.push(row.candidate_id.clone());
+            push_run_outcome_learning_prompt_row(&mut preamble, row);
+        }
+        preamble.push('\n');
+    }
 
     let tx = db
         .conn()
@@ -17423,7 +17461,7 @@ mod tests {
     }
 
     #[test]
-    fn a1_run_outcome_learning_consumer_surfaces_preference_world_model_only() {
+    fn a1_run_outcome_learning_consumer_surfaces_preference_world_model_and_reflex() {
         let db = Db::open_hub(&temp_path("a1-consumer-on")).unwrap();
         let now = 1_000_000_000_000_i64;
         seed_confirmed_run_outcome_learning(
@@ -17473,8 +17511,10 @@ mod tests {
             "consumer flag-ON must inject preference/world-model refs-only signals: {preamble:?}"
         );
         assert!(
-            !preamble.contains("- reflex:"),
-            "consumer must not inject reflex candidates: {preamble:?}"
+            preamble.contains("Confirmed reflex learning signals")
+                && preamble.contains("- reflex:")
+                && preamble.contains("consumer=governance-only"),
+            "confirmed reflex candidates must drive a refs-only reflex section after explicit confirm: {preamble:?}"
         );
         assert!(
             !preamble.contains("operator confirmed"),

@@ -7636,10 +7636,10 @@ mod tests {
     }
 
     #[test]
-    fn session_recall_public_path_surfaces_a1_consumer_preference_world_model_only() {
+    fn session_recall_public_path_surfaces_a1_consumer_preference_world_model_and_reflex() {
         // A1 preference/world-model consumer proof: the public session recall path reads the
-        // dark consumer gate and injects only refs-only preference/world_model signals. Reflex
-        // candidates remain governance-only, and operator decision text stays out of prompts.
+        // dark consumer gate and injects refs-only preference/world_model/reflex signals only
+        // after explicit confirmation. Operator decision text stays out of prompts.
         let (rt, _ws, _bodies) = recall_runtime("session-a1-consumer-public", Some("alice"));
         let now = 1_000_000_000_000_i64;
         seed_confirmed_run_outcome_learning_signal(
@@ -7704,8 +7704,10 @@ mod tests {
                 "consumer flag-ON session recall must inject preference/world-model refs-only signals: {on:?}"
             );
             assert!(
-                !on.contains("- reflex:"),
-                "consumer must not inject reflex candidates: {on:?}"
+                on.contains("Confirmed reflex learning signals")
+                    && on.contains("- reflex:")
+                    && on.contains("consumer=governance-only"),
+                "consumer flag-ON session recall must inject confirmed reflex refs-only signals: {on:?}"
             );
             assert!(
                 !on.contains("operator confirmed"),
