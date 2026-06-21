@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { FridayDomainError } from "#errors";
 import { createFridayDesktopRoutes } from "../../../../../src/api/http/routes/friday-desktop-routes.js";
 import type { FridayDesktopRoutesDeps } from "../../../../../src/api/http/routes/friday-desktop-routes.js";
 import type { FridayRouteDefinition } from "../../../../../src/api/model/friday-api-common.types.js";
@@ -69,6 +70,13 @@ function findRoute(
   const route = routes.find((r) => r.operationId === operationId);
   if (!route) throw new Error(`Route ${operationId} not found`);
   return route;
+}
+
+function proofPendingDesktopError(code: "DESKTOP_POLICY_NOT_PERSISTED" | "DESKTOP_PERMISSION_DECISION_NOT_PERSISTED") {
+  return new FridayDomainError(code, "Desktop route dependency is proof-pending and fail-closed.", {
+    httpStatus: 503,
+    details: { status: "proof_pending" },
+  });
 }
 
 // ─── Tests ───
@@ -327,8 +335,28 @@ describe("createFridayDesktopRoutes", () => {
         ),
       ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
       await expect(
+        findRoute(routes, "desktop.recordings.stop").handler(
+          makeCtx({ params: { recordingId: "rec-1" }, body: { idempotencyKey: "k-fc-stop" } }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.recordings.pause").handler(
+          makeCtx({ params: { recordingId: "rec-1" }, body: { idempotencyKey: "k-fc-pause" } }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.recordings.resume").handler(
+          makeCtx({ params: { recordingId: "rec-1" }, body: { idempotencyKey: "k-fc-resume" } }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
+      await expect(
         findRoute(routes, "desktop.recordings.replay").handler(
           makeCtx({ params: { recordingId: "rec-1" }, body: { idempotencyKey: "k-fc-replay" } }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.recordings.delete").handler(
+          makeCtx({ params: { recordingId: "rec-1" }, body: { idempotencyKey: "k-fc-delete" } }),
         ),
       ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
       await expect(
@@ -338,7 +366,11 @@ describe("createFridayDesktopRoutes", () => {
       ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
 
       expect(deps.recordings.start).not.toHaveBeenCalled();
+      expect(deps.recordings.stop).not.toHaveBeenCalled();
+      expect(deps.recordings.pause).not.toHaveBeenCalled();
+      expect(deps.recordings.resume).not.toHaveBeenCalled();
       expect(deps.recordings.replay).not.toHaveBeenCalled();
+      expect(deps.recordings.delete).not.toHaveBeenCalled();
       expect(deps.recordings.listSteps).not.toHaveBeenCalled();
     });
   });
@@ -441,6 +473,50 @@ describe("createFridayDesktopRoutes", () => {
       }));
       expect(deps.policies.removeRule).toHaveBeenCalledWith("pol-1", "rule-1", { etag: "e1", idempotencyKey: "k14" });
     });
+
+    it("propagates default/live bootstrap proof-pending policy 503s", async () => {
+      const deps = makeDeps({
+        policies: {
+          create: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+          get: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+          list: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+          update: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+          delete: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+          addRule: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+          removeRule: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_POLICY_NOT_PERSISTED"); }),
+        },
+      });
+      const routes = createFridayDesktopRoutes(deps);
+
+      await expect(
+        findRoute(routes, "desktop.policies.create").handler(
+          makeCtx({ body: { name: "Safe", rules: [], idempotencyKey: "k-pol-create" } }),
+        ),
+      ).rejects.toMatchObject({ code: "DESKTOP_POLICY_NOT_PERSISTED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.policies.update").handler(
+          makeCtx({ params: { policyId: "pol-1" }, body: { etag: "e1", idempotencyKey: "k-pol-update" } }),
+        ),
+      ).rejects.toMatchObject({ code: "DESKTOP_POLICY_NOT_PERSISTED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.policies.delete").handler(
+          makeCtx({ params: { policyId: "pol-1" }, body: { etag: "e1", idempotencyKey: "k-pol-delete" } }),
+        ),
+      ).rejects.toMatchObject({ code: "DESKTOP_POLICY_NOT_PERSISTED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.policies.rules.create").handler(
+          makeCtx({
+            params: { policyId: "pol-1" },
+            body: { rule: { actionType: "click", appFilter: "*", riskLevel: "low", decision: "allow" }, etag: "e1", idempotencyKey: "k-pol-rule-create" },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: "DESKTOP_POLICY_NOT_PERSISTED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.policies.rules.delete").handler(
+          makeCtx({ params: { policyId: "pol-1", ruleId: "rule-1" }, body: { etag: "e1", idempotencyKey: "k-pol-rule-delete" } }),
+        ),
+      ).rejects.toMatchObject({ code: "DESKTOP_POLICY_NOT_PERSISTED", httpStatus: 503 });
+    });
   });
 
   // ─── Permissions ───
@@ -485,6 +561,26 @@ describe("createFridayDesktopRoutes", () => {
 
       await route.handler(makeCtx({ query: { actionType: "click" } }));
       expect(deps.permissions.listDecisions).toHaveBeenCalled();
+    });
+
+    it("propagates default/live bootstrap proof-pending permission decision 503s", async () => {
+      const deps = makeDeps({
+        permissions: {
+          list: vi.fn().mockResolvedValue({ permissions: [], platform: "darwin" }),
+          respond: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_PERMISSION_DECISION_NOT_PERSISTED"); }),
+          listDecisions: vi.fn(() => { throw proofPendingDesktopError("DESKTOP_PERMISSION_DECISION_NOT_PERSISTED"); }),
+        },
+      });
+      const routes = createFridayDesktopRoutes(deps);
+
+      await expect(
+        findRoute(routes, "desktop.permissions.respond").handler(
+          makeCtx({ params: { promptId: "p-1" }, body: { decision: "allow_once", idempotencyKey: "k-perm-respond" } }),
+        ),
+      ).rejects.toMatchObject({ code: "DESKTOP_PERMISSION_DECISION_NOT_PERSISTED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.permissions.decisions.list").handler(makeCtx({ query: { actionType: "click" } })),
+      ).rejects.toMatchObject({ code: "DESKTOP_PERMISSION_DECISION_NOT_PERSISTED", httpStatus: 503 });
     });
   });
 

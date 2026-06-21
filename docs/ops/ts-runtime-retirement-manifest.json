@@ -2084,6 +2084,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.actions.execute to TS_RUNTIME_DESKTOP_ACTION_EXECUTION_RETIRED after request validation and before calling the TypeScript desktop action service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopActionExecution test-oracle wiring.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace fail-closed response with a Rust-owned desktop action execution entrypoint when available."
     },
     {
@@ -2097,6 +2098,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.actions.batch to TS_RUNTIME_DESKTOP_ACTION_EXECUTION_RETIRED after request validation and before calling the TypeScript desktop batch action service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopActionExecution test-oracle wiring.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace fail-closed response with a Rust-owned desktop batch action execution entrypoint when available."
     },
     {
@@ -2110,6 +2112,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.actions.cancel to TS_RUNTIME_DESKTOP_ACTION_CONTROL_RETIRED after request validation and before calling the TypeScript desktop action cancel service (which aborts an in-flight live action); legacy TS execution is reachable only through explicit allowTestOnlyDesktopActionControlExecution test-oracle wiring.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace fail-closed response with a Rust-owned desktop action control entrypoint when available."
     },
     {
@@ -2136,6 +2139,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.start to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace fail-closed response with a Rust-owned desktop recording entrypoint when available."
     },
     {
@@ -2149,6 +2153,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.stop to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace fail-closed response with a Rust-owned desktop recording entrypoint when available."
     },
     {
@@ -2162,6 +2167,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.pause to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace fail-closed response with a Rust-owned desktop recording entrypoint when available."
     },
     {
@@ -2175,6 +2181,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.resume to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace fail-closed response with a Rust-owned desktop recording entrypoint when available."
     },
     {
@@ -2188,6 +2195,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.replay to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service (which re-executes recorded steps against the live desktop); legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace fail-closed response with a Rust-owned desktop recording replay entrypoint when available."
     },
     {
@@ -2201,6 +2209,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.delete to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace fail-closed response with a Rust-owned desktop recording entrypoint when available."
     },
     {
@@ -2227,6 +2236,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.elements.inspect to TS_RUNTIME_DESKTOP_ELEMENT_INSPECTION_RETIRED after request validation and before calling the TypeScript desktop adapter, which actively queries the live desktop accessibility tree and returns raw element name/value/window title/accessibility attributes; legacy TS execution is reachable only through explicit allowTestOnlyDesktopElementInspectionExecution test-oracle wiring.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace fail-closed response with a Rust-owned desktop element inspection entrypoint when available."
     },
     {
@@ -2303,6 +2313,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.create) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy product logic, persistence, or enforcement; no durable storage/evaluator/audit exists. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior). The route owns no policy truth.",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy create/persist/enforce entrypoint when available."
     },
     {
@@ -2342,6 +2353,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.update) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy mutation; no durable storage/evaluator/audit exists. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy update/persist/enforce entrypoint when available."
     },
     {
@@ -2355,6 +2367,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.delete) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy mutation. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy delete entrypoint when available."
     },
     {
@@ -2368,6 +2381,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.addRule) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy rule mutation. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy rule create entrypoint when available."
     },
     {
@@ -2381,6 +2395,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.policies.removeRule) throws DESKTOP_POLICY_NOT_PERSISTED (503, status proof_pending) before any policy rule mutation. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop policy rule delete entrypoint when available."
     },
     {
@@ -2394,6 +2409,7 @@
       "user_triggerable": true,
       "executes_product_logic": false,
       "proof": "Default/live hub wiring (src/hub/friday-hub-bootstrap.ts desktopRouteDeps.permissions.respond) throws DESKTOP_PERMISSION_DECISION_NOT_PERSISTED (503, status proof_pending) before any permission decision is recorded or enforced; prompt decisions are not durably stored. test/unit/hub/bootstrap/desktop-policy-fail-closed.test.ts is a source-wiring regression guard that asserts these throwing deps remain present (it checks bootstrap source text, not runtime 503 behavior).",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-desktop-routes.test.ts",
       "next_action": "Replace the proof_pending fail-closed response with a Rust-owned desktop permission decision entrypoint when available."
     },
     {
