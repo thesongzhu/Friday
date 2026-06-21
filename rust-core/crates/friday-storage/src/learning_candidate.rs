@@ -7,6 +7,7 @@
 
 use crate::error::{Result, StorageError};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::HashSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunOutcomeLearningKind {
@@ -112,6 +113,10 @@ fn row_from(r: &rusqlite::Row) -> rusqlite::Result<RunOutcomeLearningCandidateRo
 const SELECT_COLS: &str = "candidate_id, run_id, session_id, kind, state, evidence_ref, summary, \
      turns, executed_tools, created_at_ms, decided_at_ms, decision_reason";
 
+const MIN_CONFIRMED_TURNS: i64 = 1;
+const MIN_CONFIRMED_EXECUTED_TOOLS: i64 = 1;
+const MAX_ELIGIBILITY_SCAN_LIMIT: i64 = 256;
+
 pub fn record_run_outcome_candidates(
     conn: &Connection,
     run_id: &str,
@@ -192,6 +197,58 @@ pub fn list_recent_confirmed_run_outcome_candidates(
     Ok(out)
 }
 
+pub fn list_recent_eligible_confirmed_run_outcome_candidates(
+    conn: &Connection,
+    limit: i64,
+) -> Result<Vec<RunOutcomeLearningCandidateRow>> {
+    let limit = limit.max(1);
+    let scan_limit = (limit * 4).clamp(limit, MAX_ELIGIBILITY_SCAN_LIMIT);
+    let confirmed = list_recent_confirmed_run_outcome_candidates(conn, scan_limit)?;
+    let blocked_pairs = reciprocal_contradiction_pairs(&confirmed);
+    let mut out = Vec::new();
+    for row in confirmed {
+        if row.turns < MIN_CONFIRMED_TURNS || row.executed_tools < MIN_CONFIRMED_EXECUTED_TOOLS {
+            continue;
+        }
+        if let Some(pair) = contradiction_pair(&row.summary) {
+            if blocked_pairs.contains(&pair) {
+                continue;
+            }
+        }
+        out.push(row);
+        if out.len() >= limit as usize {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+fn reciprocal_contradiction_pairs(
+    rows: &[RunOutcomeLearningCandidateRow],
+) -> HashSet<(String, String)> {
+    let pairs: HashSet<(String, String)> = rows
+        .iter()
+        .filter_map(|row| contradiction_pair(&row.summary))
+        .collect();
+    pairs
+        .iter()
+        .filter(|(left, right)| pairs.contains(&(right.clone(), left.clone())))
+        .cloned()
+        .collect()
+}
+
+fn contradiction_pair(summary: &str) -> Option<(String, String)> {
+    let (left, right) = summary
+        .split_once('→')
+        .or_else(|| summary.split_once("->"))?;
+    let left = left.trim().to_ascii_lowercase();
+    let right = right.trim().to_ascii_lowercase();
+    if left.is_empty() || right.is_empty() {
+        return None;
+    }
+    Some((left, right))
+}
+
 pub fn get_run_outcome_candidate(
     conn: &Connection,
     candidate_id: &str,
@@ -241,4 +298,113 @@ pub fn decide_run_outcome_candidate(
         )?;
         Ok(next)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Db;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static C: AtomicU64 = AtomicU64::new(0);
+
+    fn tmp(tag: &str) -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "friday-a1-learning-candidate-{}-{}-{}.sqlite",
+                std::process::id(),
+                tag,
+                C.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn confirm_preference(db: &Db, run_id: &str, turns: i64, executed_tools: i64, now: i64) {
+        record_run_outcome_candidates(
+            db.conn(),
+            run_id,
+            Some("sess-a1"),
+            turns,
+            executed_tools,
+            now,
+        )
+        .unwrap();
+        decide_run_outcome_candidate(
+            db.conn(),
+            &format!("a1:{run_id}:preference"),
+            true,
+            now + 1,
+            Some("operator confirmed"),
+        )
+        .unwrap();
+    }
+
+    fn insert_confirmed_summary(db: &Db, id: &str, summary: &str, now: i64) {
+        db.conn()
+            .execute(
+                "INSERT INTO run_outcome_learning_candidate
+                    (candidate_id, run_id, session_id, kind, state, evidence_ref, summary,
+                     turns, executed_tools, created_at_ms, decided_at_ms, decision_reason)
+                 VALUES (?1, ?2, ?3, 'preference', 'confirmed', ?4, ?5, 2, 1, ?6, ?7, 'test')",
+                params![
+                    id,
+                    format!("run-{id}"),
+                    "sess-a1",
+                    format!("friday://agent-run/run-{id}"),
+                    summary,
+                    now,
+                    now + 1,
+                ],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn eligible_confirmed_candidates_enforce_min_evidence() {
+        let db = Db::open_hub(&tmp("min-evidence")).unwrap();
+        confirm_preference(&db, "low", 3, 0, 100);
+        confirm_preference(&db, "ok", 3, 1, 200);
+
+        let ids: Vec<_> = list_recent_eligible_confirmed_run_outcome_candidates(db.conn(), 10)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.candidate_id)
+            .collect();
+        assert_eq!(ids, vec!["a1:ok:preference"]);
+    }
+
+    #[test]
+    fn eligible_confirmed_candidates_drop_reciprocal_contradictions() {
+        let db = Db::open_hub(&tmp("contradiction")).unwrap();
+        insert_confirmed_summary(&db, "ab", "A→B", 100);
+        insert_confirmed_summary(&db, "ba", "B→A", 200);
+        insert_confirmed_summary(&db, "ac", "A→C", 300);
+
+        let rows = list_recent_eligible_confirmed_run_outcome_candidates(db.conn(), 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].candidate_id, "ac");
+    }
+
+    #[test]
+    fn eligible_confirmed_candidates_are_capped_to_recent_rows() {
+        let db = Db::open_hub(&tmp("cap")).unwrap();
+        for i in 0..5 {
+            confirm_preference(&db, &format!("run-{i}"), 2, 1, 100 + i);
+        }
+
+        let ids: Vec<_> = list_recent_eligible_confirmed_run_outcome_candidates(db.conn(), 3)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.candidate_id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "a1:run-4:preference",
+                "a1:run-3:preference",
+                "a1:run-2:preference",
+            ]
+        );
+    }
 }
