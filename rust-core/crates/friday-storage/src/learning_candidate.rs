@@ -116,6 +116,7 @@ const SELECT_COLS: &str = "candidate_id, run_id, session_id, kind, state, eviden
 const MIN_CONFIRMED_TURNS: i64 = 1;
 const MIN_CONFIRMED_EXECUTED_TOOLS: i64 = 1;
 const MAX_ELIGIBILITY_SCAN_LIMIT: i64 = 256;
+pub const MAX_CONFIRMED_SIGNAL_AGE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
 fn run_outcome_candidate_summary(
     kind: RunOutcomeLearningKind,
@@ -219,6 +220,14 @@ pub fn list_recent_eligible_confirmed_run_outcome_candidates(
     conn: &Connection,
     limit: i64,
 ) -> Result<Vec<RunOutcomeLearningCandidateRow>> {
+    list_recent_eligible_confirmed_run_outcome_candidates_at(conn, limit, None)
+}
+
+pub fn list_recent_eligible_confirmed_run_outcome_candidates_at(
+    conn: &Connection,
+    limit: i64,
+    now_ms: Option<i64>,
+) -> Result<Vec<RunOutcomeLearningCandidateRow>> {
     let limit = limit.max(1);
     let scan_limit = (limit * 4).clamp(limit, MAX_ELIGIBILITY_SCAN_LIMIT);
     let confirmed = list_recent_confirmed_run_outcome_candidates(conn, scan_limit)?;
@@ -230,6 +239,12 @@ pub fn list_recent_eligible_confirmed_run_outcome_candidates(
         }
         if let Some(pair) = contradiction_pair(&row.summary) {
             if blocked_pairs.contains(&pair) {
+                continue;
+            }
+        }
+        if let Some(now_ms) = now_ms {
+            let anchor_ms = row.decided_at_ms.unwrap_or(row.created_at_ms);
+            if now_ms.saturating_sub(anchor_ms) > MAX_CONFIRMED_SIGNAL_AGE_MS {
                 continue;
             }
         }
@@ -424,5 +439,21 @@ mod tests {
                 "a1:run-2:preference",
             ]
         );
+    }
+
+    #[test]
+    fn eligible_confirmed_candidates_enforce_freshness_cap_when_clocked() {
+        let db = Db::open_hub(&tmp("freshness")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        confirm_preference(&db, "stale", 2, 1, now - MAX_CONFIRMED_SIGNAL_AGE_MS - 10);
+        confirm_preference(&db, "fresh", 2, 1, now - MAX_CONFIRMED_SIGNAL_AGE_MS + 10);
+
+        let ids: Vec<_> =
+            list_recent_eligible_confirmed_run_outcome_candidates_at(db.conn(), 10, Some(now))
+                .unwrap()
+                .into_iter()
+                .map(|row| row.candidate_id)
+                .collect();
+        assert_eq!(ids, vec!["a1:fresh:preference"]);
     }
 }

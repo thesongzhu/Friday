@@ -2539,15 +2539,17 @@ pub(crate) fn recall_preamble_for_principals_blended(
 fn matched_run_outcome_learning_candidates_for_principals<F>(
     db: &Db,
     principals: &[&str],
+    now_ms: i64,
     keep: F,
 ) -> Result<Vec<friday_storage::learning_candidate::RunOutcomeLearningCandidateRow>, StorageError>
 where
     F: Fn(&friday_storage::learning_candidate::RunOutcomeLearningCandidateRow) -> bool,
 {
     let rows =
-        friday_storage::learning_candidate::list_recent_eligible_confirmed_run_outcome_candidates(
+        friday_storage::learning_candidate::list_recent_eligible_confirmed_run_outcome_candidates_at(
             db.conn(),
             64,
+            Some(now_ms),
         )?;
     let mut matched = Vec::new();
     for row in rows {
@@ -2600,7 +2602,8 @@ pub(crate) fn a1_run_outcome_learning_preamble_for_principals_flagged(
         return Ok(String::new());
     }
 
-    let matched = matched_run_outcome_learning_candidates_for_principals(db, principals, |_| true)?;
+    let matched =
+        matched_run_outcome_learning_candidates_for_principals(db, principals, now_ms, |_| true)?;
     if matched.is_empty() {
         return Ok(String::new());
     }
@@ -2672,14 +2675,15 @@ pub(crate) fn a1_run_outcome_learning_consumer_preamble_for_principals_flagged(
         return Ok(String::new());
     }
 
-    let matched = matched_run_outcome_learning_candidates_for_principals(db, principals, |row| {
-        matches!(
-            row.kind,
-            friday_storage::learning_candidate::RunOutcomeLearningKind::Preference
-                | friday_storage::learning_candidate::RunOutcomeLearningKind::WorldModel
-                | friday_storage::learning_candidate::RunOutcomeLearningKind::Reflex
-        )
-    })?;
+    let matched =
+        matched_run_outcome_learning_candidates_for_principals(db, principals, now_ms, |row| {
+            matches!(
+                row.kind,
+                friday_storage::learning_candidate::RunOutcomeLearningKind::Preference
+                    | friday_storage::learning_candidate::RunOutcomeLearningKind::WorldModel
+                    | friday_storage::learning_candidate::RunOutcomeLearningKind::Reflex
+            )
+        })?;
     if matched.is_empty() {
         return Ok(String::new());
     }
@@ -17457,6 +17461,50 @@ mod tests {
                 && confirmed.contains("- preference:")
                 && confirmed.contains("friday://agent-run/run-a1-confirm"),
             "confirmed preference candidate must be the first point it can affect recall: {confirmed:?}"
+        );
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_consumer_excludes_stale_confirmed_signals() {
+        let db = Db::open_hub(&temp_path("a1-consumer-stale")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        seed_confirmed_run_outcome_learning(
+            &db,
+            "sess-a1-stale",
+            "alice",
+            "run-a1-stale",
+            now - friday_storage::learning_candidate::MAX_CONFIRMED_SIGNAL_AGE_MS - 10,
+        );
+        seed_confirmed_run_outcome_learning(
+            &db,
+            "sess-a1-fresh",
+            "alice",
+            "run-a1-fresh",
+            now - friday_storage::learning_candidate::MAX_CONFIRMED_SIGNAL_AGE_MS + 10,
+        );
+        let alice_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("alice"))
+                .unwrap();
+
+        let preamble = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            RecallPreambleFlags {
+                a1_run_outcome_consumer_on: true,
+                ..RecallPreambleFlags::default()
+            },
+            "audit-a1-consumer-stale",
+            now,
+        )
+        .unwrap();
+        assert!(
+            preamble.contains("run-a1-fresh"),
+            "fresh confirmed signal must still inject: {preamble:?}"
+        );
+        assert!(
+            !preamble.contains("run-a1-stale"),
+            "stale confirmed signal must not inject after the freshness cap: {preamble:?}"
         );
     }
 
