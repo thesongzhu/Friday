@@ -199,8 +199,8 @@ pub fn friday_v1_mechanism_matrix() -> Vec<MechanismRow> {
             owner: RustHub,
             status: RustOwnedPartial,
             rust_entrypoint: "friday_hub::{channels,channel_event,mission_runtime}",
-            proof_gate: "cargo test -p friday-hub authenticated_channel",
-            blocker: "live Telegram proof and all channel product entrypoints remain gated",
+            proof_gate: "cargo test -p friday-hub authenticated_channel && cargo test -p friday-hub workbench_projection",
+            blocker: "local authenticated inbound is Mission/Workbench projection-proven as refs-only observed evidence; live Telegram proof and external channel product entrypoints remain gated",
             user_triggerable_product_logic: true,
         },
         MechanismRow {
