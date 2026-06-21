@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Your private control plane for AI agents.</strong><br>
-  Give it a goal; Friday runs one governed loop — route → verify → approve → remember — across the AIs you bring (Codex, Claude, DeepSeek). You hold the keys.<br>
+  Hand it a goal. It picks the right AI, checks the work, asks before anything risky, and remembers what you told it — so you're steering, not babysitting. You hold the keys.<br>
   Local-first kernel · BYOK · Approval-first · Human-controlled · Evidence-backed
 </p>
 
@@ -20,15 +20,15 @@
 
 ---
 
-> **Friday is not a model, and not a chatbot.** The "brains" are the cloud AIs *you* bring (BYOK: Codex, Claude, DeepSeek, …). Friday is the **kernel that orchestrates them** — and that kernel, plus your keys, your data, and your memory, stay on your own machine. **You own the controller; you rent the brains.**
+> **Friday isn't a model, and it isn't a chatbot.** The "brains" are the cloud AIs *you* already pay for (BYOK: Codex, Claude, DeepSeek, …). Friday is the **boss that puts them to work** — and the boss, plus your keys, your data, and your memory, all live on your own machine. **You own the boss; you just rent the brains.**
 
 ## What Is Friday?
 
-The new way to work with AI agents isn't to prompt them yourself — it's to **design the loop that prompts them**. Friday is that loop, turned into a product and made safe:
+The trick with AI agents isn't prompting them yourself all day — it's building **the loop that prompts them for you**. Friday is that loop, turned into a product and made safe:
 
-> **finds the work → hands it to the right AI → checks it really did it → writes down what's done → decides the next thing** — so the system pokes the agents instead of you.
+> **finds the work → hands it to the right AI → checks it actually did it → writes down what's done → picks the next thing** — the system nags the agents, so you don't have to.
 
-It is built to coordinate Codex, Claude, and DeepSeek as **governed, metered workers** — cheap models think and plan, expensive models do the heavy lifting — to keep a verifiable evidence trail, and to pause risky actions for your sign-off.
+Under the hood it runs Codex, Claude, and DeepSeek like a **metered crew** — cheap models do the thinking and planning, pricey ones do the heavy lifting — keeps the receipts, and hits pause on anything risky until you say go.
 
 ## How The Loop Works
 
@@ -42,7 +42,7 @@ It is built to coordinate Codex, Claude, and DeepSeek as **governed, metered wor
    execute ── governed: risky steps pause for your approval
            │
            ▼
-   verify ── proof it's really done  (never trust "I'm done")
+   verify ── prove it's really done  (don't trust "I'm done")
            │
            ▼
    remember ── candidate → you confirm → it gets smarter
@@ -50,51 +50,51 @@ It is built to coordinate Codex, Claude, and DeepSeek as **governed, metered wor
            └──────────────► the next thing
 ```
 
-The leg most tools skip is **verify**. An agent that grades its own work will cut corners. In Friday, "done" has to carry an attached proof receipt — a model saying *"ok"* or a process merely exiting is **never**, on its own, treated as done.
+The leg everyone else skips is **verify**. An agent grading its own homework will absolutely cut corners — so in Friday, "done" has to come with a **receipt stapled to it**. A model saying *"ok,"* or a process that just quietly exits, doesn't count on its own.
 
-Two things make the loop feel less like a dispatcher: if your goal is ambiguous, Friday hands back **specific clarifying questions** instead of guessing — and spends nothing until it's clear; and when a task needs both code and synthesis, it can run the code leg on one model and only hand off to another **once the first is proven done**.
+Two more things keep it from feeling like a dumb dispatcher: if your goal is vague, Friday **asks you what you actually meant** instead of guessing — and burns zero tokens until it's clear; and when a job needs both coding *and* big-picture synthesis, it can let one model write the code and only tap a second one in **once the first has proven it's done**.
 
 ## What Makes It Different (And Hard To Copy)
 
-Codex and Claude each give you one great agent. They won't govern *each other* for you, and they won't put the controls on your side. Friday is designed to sit one floor above them, across vendors, on your machine — with guarantees that hold *by construction*, not by an honor-system flag the same process could flip:
+Codex and Claude each hand you one great agent. Neither will police the *other* for you, and neither puts the controls on your side. Friday sits one floor up — across vendors, on your machine — with a few guarantees that are **baked into how it's built**, not a checkbox the same program could flip on itself:
 
-- **On the path that guards your dangerous actions, the kernel can't sign for you.** It holds only your public verification key — never the private key that signs — so a dangerous action stays locked until *you* sign it, offline, on your own device.
-- **A model can never wave its own risky action through.** Read-only steps never need your sign-off, but anything that mutates or carries risk can only ever become *needs your approval* or *denied* in the kernel — never *allowed* — and an agent can never approve its own side effects.
-- **"Done" is never a model's say-so.** A task can't be marked complete unless a proof receipt is attached to its record — enforced at the data layer beneath the code, where no write path can route around the check. No receipt, no completion.
-- **No fact is written to memory behind your back.** Friday proposes facts as candidates; nothing enters long-term memory until you confirm it, so a poisoned "fact" stays inert — and recall is isolated to you and redacted before it reaches any model.
-- **No silent model swaps.** Each model is chosen by a deterministic, zero-cost decision before any spend; and if it ever fails over to a backup, the turn is honestly attributed to whichever model actually answered. It never quietly substitutes a model and bills you opaquely.
-- **Tamper-evident by design.** Every routed model call is metered as one attributed, all-or-nothing record, and the audit log is hash-chained — so altering any past entry breaks the chain.
+- **We never gave Friday a pen.** It carries the key that *checks* your signature, never the one that *writes* one — so on anything dangerous it can't fake your "yes"; the sign-off has to come from your own hand, offline, on your own device.
+- **A model can't wave its own risky move through.** Plain read-only stuff never needs your sign-off, but anything that changes the world — or smells risky — can only ever land on *needs your OK* or *nope* inside the kernel, never *sure, go ahead*. And an agent can't rubber-stamp its own side effects.
+- **"Done" is never just a model's word for it.** A task can't flip to "complete" unless a proof receipt is actually clipped to its record — enforced down in the database, where no clever code path can sneak around it. No receipt, no done.
+- **Nothing becomes a real memory behind your back.** Friday floats facts as *candidates*; not one graduates to a real memory until you say yes — so a poisoned "fact" just sits there, harmless. And when it recalls something, it's yours only, scrubbed of secrets before any model ever sees it.
+- **No sneaky model swaps.** Friday picks each model with a quick, free, zero-token decision *before* it spends a cent; and if it ever has to fall back to a backup, the bill honestly says which model actually answered. It never quietly swaps in something else and hands you a mystery charge.
+- **Tamper-evident on purpose.** Every routed agent turn lands as one all-or-nothing entry — who, what, how much — in a hash-chained audit log, so quietly editing the past snaps the chain.
 
-This is the seam single-vendor tools structurally won't fill: *neutral, cross-vendor, owner-side governance.*
+This is the gap a single-vendor tool will never close for you: **a neutral referee, across vendors, on your side.**
 
 ## Why It's Built This Way
 
-Coding agents got powerful fast — but they hit a reliability cliff on longer tasks, and they will quietly cut corners or claim work they didn't finish. The industry's shift in 2026 is **loop engineering**: stop prompting agents by hand, and instead design the system that finds work, hands it out, **checks it**, records what's done, and decides the next thing. Friday takes that idea and makes the missing parts real:
+Coding agents got scary-good scary-fast — but they still hit a wall on long jobs, and they'll cheerfully cut corners or claim they finished something they didn't. The 2026 shift is **loop engineering**: stop hand-prompting agents, and build the system that finds the work, hands it out, **checks it**, records what's done, and picks what's next. Friday takes that idea and builds the missing pieces for real:
 
-- **Verification is the load-bearing leg.** An agent grading its own work isn't trustworthy — so "done" has to carry proof, not a self-report. It's the part most tools skip, and the part Friday is built around.
-- **Governance belongs on your side.** The real agent risks are well-documented — silent memory poisoning, leaking private data to the wrong place, runaway spend, destructive commands. So approval, an explicit context passport, metering, and audit live in *your* kernel, not a vendor's cloud.
-- **Cross-vendor is the point.** Each vendor ships one great agent, but won't govern the others for you. A neutral layer that orchestrates them on your machine, controls on your side, is the seam a single vendor structurally won't fill.
-- **The model is rented, not owned.** Friday deliberately isn't a model. Models will keep changing; the durable value is the harness around them — routing, verification, memory, and governance that stay yours.
+- **Verification is the whole ballgame.** An agent that grades itself can't be trusted — so "done" has to come with proof, not a pinky-promise. It's the part most tools skip, and the part Friday is built around.
+- **Governance belongs on your side of the table.** The horror stories are well-documented — memory quietly poisoned, private data sent somewhere it shouldn't, spend running away, a destructive command. So approval, a context passport, metering, and audit all live in *your* kernel, not some vendor's cloud.
+- **Cross-vendor is the whole point.** Every vendor gives you one great agent and zero interest in refereeing the others. A neutral layer that runs them on your machine, controls on your side, is the seam none of them will fill.
+- **The model is rented, not married.** Friday deliberately isn't a model. Models change every few months; the lasting value is the harness around them — routing, verification, memory, governance — and that part stays yours.
 
 ## The Shape It's Growing Into
 
 A private AI chief-of-staff that lives on your phone and your desktop:
 
-- You hand it a goal in chat; it plans, routes across models, and **shows you the routing so you can change it**.
-- Risky steps arrive as a **one-tap approval you sign**; safe steps just happen — and you hold a **trust dial**: turn it up to pre-approve batches of low-risk work, down to confirm every step. Irreversible actions always ask.
-- It **gets to know you the more you use it** — distilling your preferences and a model of your world from finished work that, once *you* confirm them, quietly shape later runs (reflexes kept governed and separate).
-- **Skills are first-class but leashed**: import a reviewed skill, sign to promote it, and it runs only after you sign the exact invocation, inside a sandbox confined to that skill. Friday doesn't auto-write skills — it governs the ones you bring.
-- Every agent — **and every sub-agent it spawns** — is built to run inside a revocable trust grant with spend, run, and tool ceilings, where a child grant can never be *wider* than its parent.
-- It can watch your own coding sessions, take work in from your channels (Telegram, …), and pick up scheduled work — all under the same governance.
+- Hand it a goal in chat; it plans, spreads the work across models, and **shows you who it picked so you can overrule it**.
+- Risky steps show up as a **one-tap thing you sign**; safe stuff just happens. You also get a **trust dial** — crank it up to pre-approve batches of low-risk work, down to confirm every step. Irreversible things always ask.
+- It's **built to get to know you the more you use it** — turning finished work into a feel for your preferences and your world that, once *you* confirm it, is wired to quietly color later runs (that part isn't switched on yet, and reflexes stay on their own governed leash).
+- **Skills are welcome but kept on a leash**: bring a reviewed skill, sign to switch it on, and it only runs after you sign off on that exact use — boxed into its own little sandbox. Friday won't write skills for you; it just governs the ones you bring.
+- Every agent — **and every sidekick it spins up** — is built to run inside a revocable trust grant with spend, run, and tool limits, where a child can never get *wider* powers than its parent.
+- It can look over your shoulder while you code, take jobs in from your channels (Telegram, …), and pick up scheduled work — all under the same rules.
 
-You stay sovereign the whole way: **the brains are rented, the controller is yours.**
+You stay the boss the whole way: **the brains are rented, the controller is yours.**
 
 ## Principles
 
 **Local-first kernel · BYOK · Approval-first · Human-controlled · Evidence-backed**
 
-> *Local-first* here means the **controller, your keys, your data, and your memory** live on your machine — the models themselves are cloud APIs you connect. Friday is the local **kernel**, not a local model.
+> *Local-first* here means the **controller, your keys, your data, and your memory** live on your machine — the models themselves are cloud APIs you plug in. Friday is the local **kernel**, not a local model.
 
 ## Status
 
-Friday is a **public v1 local candidate**, distributed via npm / source. The engine and safety substrate — the goal→work spine, routing, governance, metering, audit, and sealed transport — are in place, and you bring your own keys. The structural guarantees in this README are properties of the current build; the runtime behaviors have so far been exercised on internal and self-test traffic, **not yet on real end-user workloads**, and the more autonomous capabilities ship dark behind default-off flags. Capability-acquisition and self-upgrade are **review-gated work in progress**, not a fully-autonomous promise. Friday does the work it can safely do, **stops clearly when it needs you**, and leaves evidence behind.
+Friday is a **public v1 local candidate**, shipped via npm / source. The engine and safety substrate — the goal→work spine, routing, governance, metering, audit, and sealed transport — are all in place, and you bring your own keys. Fair warning, since honesty is the whole point: the guarantees above are properties of how it's built *today*; the live behaviors have so far only run on internal and self-test traffic, **not real end-user workloads**, and the more autonomous bits ship dark behind off-by-default flags. Capability-acquisition and self-upgrade are **review-gated works in progress**, not a full-autopilot promise. Friday does what it can safely do, **stops clearly when it needs you**, and always leaves the receipts.
