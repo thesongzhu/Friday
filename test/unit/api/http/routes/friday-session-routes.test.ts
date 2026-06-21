@@ -2071,6 +2071,152 @@ describe("TS runtime retirement — session mutations fail-close by default", ()
     expect(sessionService.alignSessionContext).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      operationId: "sessions.delete",
+      ctx: makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        principal: makeBoundPrincipal(),
+      }),
+      assertNoCall: ({ sessionService }: ReturnType<typeof buildRetiredRoutes>) => {
+        expect(sessionService.archiveSession).not.toHaveBeenCalled();
+      },
+    },
+    {
+      operationId: "sessions.archive",
+      ctx: makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        principal: makeBoundPrincipal(),
+      }),
+      assertNoCall: ({ sessionService }: ReturnType<typeof buildRetiredRoutes>) => {
+        expect(sessionService.archiveSession).not.toHaveBeenCalled();
+      },
+    },
+    {
+      operationId: "sessions.reset",
+      ctx: makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        principal: makeBoundPrincipal(),
+      }),
+      assertNoCall: ({ sessionService }: ReturnType<typeof buildRetiredRoutes>) => {
+        expect(sessionService.resetSession).not.toHaveBeenCalled();
+      },
+    },
+    {
+      operationId: "sessions.prune",
+      ctx: makeMockCtx({
+        body: { olderThan: "2026-01-01T00:00:00.000Z" },
+        principal: makeBoundPrincipal(),
+      }),
+      assertNoCall: ({ sessionService }: ReturnType<typeof buildRetiredRoutes>) => {
+        expect(sessionService.pruneOldSessions).not.toHaveBeenCalled();
+      },
+    },
+    {
+      operationId: "sessions.sweep",
+      ctx: makeMockCtx({ principal: makeBoundPrincipal() }),
+      assertNoCall: ({ sessionService }: ReturnType<typeof buildRetiredRoutes>) => {
+        expect(sessionService.sweepLifecycle).not.toHaveBeenCalled();
+      },
+    },
+    {
+      operationId: "sessions.compact",
+      ctx: makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        body: { summary: "compacted" },
+        principal: makeBoundPrincipal(),
+      }),
+      assertNoCall: ({ sessionService }: ReturnType<typeof buildRetiredRoutes>) => {
+        expect(sessionService.getMessages).not.toHaveBeenCalled();
+        expect(sessionService.setConversationFocus).not.toHaveBeenCalled();
+        expect(sessionService.mergeMetadata).not.toHaveBeenCalled();
+      },
+    },
+    {
+      operationId: "sessions.messages.create",
+      ctx: makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        body: { role: "user", content: "hello" },
+        principal: makeBoundPrincipal(),
+      }),
+      assertNoCall: ({ sessionService }: ReturnType<typeof buildRetiredRoutes>) => {
+        expect(sessionService.getOrCreateSession).not.toHaveBeenCalled();
+        expect(sessionService.addMessage).not.toHaveBeenCalled();
+      },
+    },
+    {
+      operationId: "sessions.forks.create",
+      ctx: makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        body: {},
+        principal: makeBoundPrincipal(),
+      }),
+      assertNoCall: ({ sessionService }: ReturnType<typeof buildRetiredRoutes>) => {
+        expect(sessionService.forkSession).not.toHaveBeenCalled();
+      },
+    },
+    {
+      operationId: "sessions.forks.merge",
+      ctx: makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        body: { forkSessionKey: "subagent:discord:default:user1:task-1", summary: "done" },
+        principal: makeBoundPrincipal(),
+      }),
+      assertNoCall: ({ sessionService }: ReturnType<typeof buildRetiredRoutes>) => {
+        expect(sessionService.mergeForkSummary).not.toHaveBeenCalled();
+      },
+    },
+  ])(
+    "fail-closes $operationId with TS_RUNTIME_SESSION_RETIRED before TypeScript session mutation",
+    async ({ operationId, ctx, assertNoCall }) => {
+      const retired = buildRetiredRoutes();
+      const route = retired.routes.find((r) => r.operationId === operationId)!;
+
+      await expectFailClosed(
+        route.handler(ctx as never),
+        "TS_RUNTIME_SESSION_RETIRED",
+      );
+      assertNoCall(retired);
+    },
+  );
+
+  it.each([
+    {
+      operationId: "sessions.memory.remember",
+      ctx: makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        body: { messageIds: ["msg-1"] },
+        principal: makeBoundPrincipal(),
+      }),
+      assertNoCall: ({ extractionService, sessionService }: ReturnType<typeof buildRetiredRoutes>) => {
+        expect(extractionService.extractSpecificMessages).not.toHaveBeenCalled();
+        expect(sessionService.alignSessionContext).not.toHaveBeenCalled();
+      },
+    },
+    {
+      operationId: "sessions.memory.extraction.retry",
+      ctx: makeMockCtx({
+        body: { sessionKey: "discord:default:user1" },
+        principal: makeBoundPrincipal(),
+      }),
+      assertNoCall: ({ extractionService }: ReturnType<typeof buildRetiredRoutes>) => {
+        expect(extractionService.retryFailedExtractions).not.toHaveBeenCalled();
+      },
+    },
+  ])(
+    "fail-closes $operationId with TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED before extraction mutation",
+    async ({ operationId, ctx, assertNoCall }) => {
+      const retired = buildRetiredRoutes();
+      const route = retired.routes.find((r) => r.operationId === operationId)!;
+
+      await expectFailClosed(
+        route.handler(ctx as never),
+        "TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED",
+      );
+      assertNoCall(retired);
+    },
+  );
+
   it("(d) still rejects a malformed sessions.memory.extract body with the validation error (hoist proof, not 503)", async () => {
     const { routes, extractionService } = buildRetiredRoutes();
     const route = routes.find((r) => r.operationId === "sessions.memory.extract")!;
