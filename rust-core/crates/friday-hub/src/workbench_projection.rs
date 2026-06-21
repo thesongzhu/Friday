@@ -958,6 +958,9 @@ fn reject_forbidden_output(rendered: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel_event::ingest_channel_inbound;
+    use crate::channels::{redact_inbound, VerifiedInbound};
+    use crate::mission_preflight::attach_channel_inbound_receipt;
     use friday_core::{
         ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus,
         RouteDecisionCard, TruthStatus, WorkItem, WorkItemStatus, WorkLane,
@@ -1139,5 +1142,96 @@ mod tests {
                 .and_then(Value::as_str)
                 .is_some_and(|ref_| ref_.starts_with("proof://run-outcome-learning-candidate/"))
         }));
+    }
+
+    #[test]
+    fn channel_inbound_receipt_projects_as_refs_only_observed_evidence() {
+        let mut db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        let redacted = redact_inbound(
+            VerifiedInbound {
+                channel_id: "tg:raw-room-123".into(),
+                sender_id: "raw-sender-456".into(),
+                bound_principal_id: "owner-real".into(),
+            },
+            "hello Friday from me@example.com".into(),
+        );
+        let receipt = ingest_channel_inbound(
+            &mut db,
+            &redacted,
+            "raw-message-789",
+            "message",
+            false,
+            friday_core::Risk::Low,
+            &[],
+            1_780_640_000_020,
+        )
+        .unwrap();
+        assert_eq!(receipt.disposition, "recorded");
+        assert_eq!(receipt.pii_kinds_redacted, vec!["email"]);
+        attach_channel_inbound_receipt(
+            &db,
+            &mission_id,
+            "autodisp-1781492033",
+            &receipt,
+            1_780_640_000_030,
+        )
+        .unwrap();
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        let channel_refs = snapshot
+            .get("channelReceiptRefs")
+            .and_then(Value::as_array)
+            .expect("projection must surface channel receipt refs");
+        assert_eq!(channel_refs.len(), 1);
+        assert!(channel_refs[0]
+            .as_str()
+            .is_some_and(|ref_| ref_.starts_with("proof://channel-receipt/")));
+
+        let sections = snapshot
+            .get("transcriptSections")
+            .and_then(Value::as_array)
+            .unwrap();
+        let channel_section = sections
+            .iter()
+            .find(|section| section.get("id").and_then(Value::as_str) == Some("section_channel"))
+            .expect("channel section");
+        let events = channel_section
+            .get("events")
+            .and_then(Value::as_array)
+            .expect("channel section events");
+        let channel_event = events
+            .iter()
+            .find(|event| event.get("surface").and_then(Value::as_str) == Some("telegram"))
+            .expect("telegram channel event");
+        assert_eq!(
+            channel_event.get("status").and_then(Value::as_str),
+            Some("queued")
+        );
+        assert_eq!(
+            channel_event.get("truthLabel").and_then(Value::as_str),
+            Some("observed_only")
+        );
+        assert!(channel_event
+            .get("evidenceRefs")
+            .and_then(Value::as_object)
+            .and_then(|refs| refs.get("channelRef"))
+            .and_then(Value::as_str)
+            .is_some_and(|ref_| ref_.starts_with("proof://channel-receipt/")));
+
+        let rendered = serde_json::to_string(&snapshot).unwrap();
+        for forbidden in [
+            "tg:raw-room-123",
+            "raw-sender-456",
+            "raw-message-789",
+            "me@example.com",
+            "hello Friday",
+            "completed_with_proof",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "channel projection must not leak or overclaim {forbidden}"
+            );
+        }
     }
 }
