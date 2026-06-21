@@ -7,6 +7,7 @@ import {
   resolveRouteAgentRunViaRust,
   resolveRouteMissionSpineViaRust,
   resolveRouteMemorySpineViaRust,
+  resolveRouteRunOutcomeLearningViaRust,
   resolveMissionAutoDispatch,
   resolveRouteProvidersViaRust,
   resolveRouteWorkflowsViaRust,
@@ -578,6 +579,30 @@ describe("resolveRouteMemorySpineViaRust (Lane M organic memory-confirmation POS
     expect(resolveRouteMemorySpineViaRust(true, emptyEnv())).toBe(true);
     expect(resolveRouteMemorySpineViaRust(false, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "1" })).toBe(false);
     expect(resolveRouteMemorySpineViaRust(false, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "true" })).toBe(false);
+  });
+});
+
+describe("resolveRouteRunOutcomeLearningViaRust (A1 run-outcome learning decision route flag)", () => {
+  it("defaults to false when neither config nor env is set", () => {
+    expect(resolveRouteRunOutcomeLearningViaRust(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("parses FRIDAY_RUN_OUTCOME_LEARNING_ROUTES_VIA_RUST 1/true as true", () => {
+    expect(resolveRouteRunOutcomeLearningViaRust(undefined, { FRIDAY_RUN_OUTCOME_LEARNING_ROUTES_VIA_RUST: "1" })).toBe(true);
+    expect(resolveRouteRunOutcomeLearningViaRust(undefined, { FRIDAY_RUN_OUTCOME_LEARNING_ROUTES_VIA_RUST: "true" })).toBe(true);
+    expect(resolveRouteRunOutcomeLearningViaRust(undefined, { FRIDAY_RUN_OUTCOME_LEARNING_ROUTES_VIA_RUST: " TRUE " })).toBe(true);
+  });
+
+  it("treats false-ish and garbage env values as false", () => {
+    expect(resolveRouteRunOutcomeLearningViaRust(undefined, { FRIDAY_RUN_OUTCOME_LEARNING_ROUTES_VIA_RUST: "0" })).toBe(false);
+    expect(resolveRouteRunOutcomeLearningViaRust(undefined, { FRIDAY_RUN_OUTCOME_LEARNING_ROUTES_VIA_RUST: "false" })).toBe(false);
+    expect(resolveRouteRunOutcomeLearningViaRust(undefined, { FRIDAY_RUN_OUTCOME_LEARNING_ROUTES_VIA_RUST: "on" })).toBe(false);
+    expect(resolveRouteRunOutcomeLearningViaRust(undefined, { FRIDAY_RUN_OUTCOME_LEARNING_ROUTES_VIA_RUST: "" })).toBe(false);
+  });
+
+  it("uses explicit config over env", () => {
+    expect(resolveRouteRunOutcomeLearningViaRust(true, { FRIDAY_RUN_OUTCOME_LEARNING_ROUTES_VIA_RUST: "0" })).toBe(true);
+    expect(resolveRouteRunOutcomeLearningViaRust(false, { FRIDAY_RUN_OUTCOME_LEARNING_ROUTES_VIA_RUST: "1" })).toBe(false);
   });
 });
 

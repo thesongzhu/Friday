@@ -432,6 +432,17 @@
       "next_action": "Keep TypeScript as a redacted HTTP adapter over the Rust memory-confirmation arm."
     },
     {
+      "id": "run_outcome_learning_rust_delegated",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-run-outcome-learning-routes.ts"
+      },
+      "classification": "rust_delegated",
+      "user_triggerable": true,
+      "rust_entrypoint": "rust-core/crates/friday-hub/src/hub_server.rs",
+      "proof": "POST /v1/run-outcome-learning/decide is a redacted HTTP adapter forwarding RunOutcomeLearningDecisionRequest over sealed-WS to the Rust run-outcome learning confirm arm (run_outcome_learning_decision_result_for_db, gated by FRIDAY_RUN_OUTCOME_LEARNING_CONFIRM); dark default-OFF (503) until the operator wires the dispatch adapter and flips the flag",
+      "next_action": "Keep TypeScript as a redacted HTTP adapter over the Rust run-outcome learning confirmation arm; A1 live-done still requires operator-origin organic candidate feed plus explicit confirm."
+    },
+    {
       "id": "agent_runtime_blockers",
       "match": {
         "sourceFile": "src/api/http/routes/friday-agent-routes.ts"

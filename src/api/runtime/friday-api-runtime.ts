@@ -131,6 +131,10 @@ import {
   createFridayMemorySpineRoutes,
   type FridayMemorySpineRoutesDeps,
 } from "../http/routes/friday-memory-spine-routes.js";
+import {
+  createFridayRunOutcomeLearningRoutes,
+  type FridayRunOutcomeLearningRoutesDeps,
+} from "../http/routes/friday-run-outcome-learning-routes.js";
 import { createFridayCrossBorderPackRoutes } from "../http/routes/friday-cross-border-pack-routes.js";
 import { createFridayAssetInventoryRoutes } from "../http/routes/friday-asset-inventory-routes.js";
 import { createFridayStudioRoutes } from "../http/routes/friday-studio-routes.js";
@@ -4130,6 +4134,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     routes.register(route);
   }
 
+  const runOutcomeLearningDeps: FridayRunOutcomeLearningRoutesDeps =
+    deps.runOutcomeLearning ?? {
+      dispatch: null,
+      dispatchDisabledReason: "run-outcome learning decision dispatch deps not provided",
+    };
+  for (const route of createFridayRunOutcomeLearningRoutes(runOutcomeLearningDeps)) {
+    routes.register(route);
+  }
+
   // Register realtime routes
   for (const route of createFridayRealtimeRoutes({
     subscriptionService: subscriptions,
@@ -5449,6 +5462,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     uix: deps.uix,
     missionSpine: deps.missionSpine,
     memorySpine: deps.memorySpine,
+    runOutcomeLearning: deps.runOutcomeLearning,
     system: deps.system,
     guideLens: deps.guideLens,
   };

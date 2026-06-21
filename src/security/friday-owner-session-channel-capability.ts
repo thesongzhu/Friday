@@ -51,6 +51,7 @@ export type FridayPublicMutationOperation =
   | "agent.tool.approve"
   | "agent.tool.reject"
   | "agent.run.resume"
+  | "run.outcome.learning.decide.apply"
   | "satellite.pairing.approve"
   | "satellite.pairing.reject"
   | "satellite.revoke"
