@@ -1454,6 +1454,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/runtime/friday-api-runtime-extra-route-registration.test.ts",
       "proof": "src/api/runtime/friday-api-runtime.ts wires default/live runs.cancel to TS_RUNTIME_WORKFLOW_RUNS_RETIRED before resolving TypeScript workflow run state or calling workflowRuntime.execution.cancelRun; the legacy TS control path is reachable only through explicit allowTestOnlyWorkflowRunExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow run control entrypoint when available."
     },
@@ -1467,6 +1468,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/runtime/friday-api-runtime-extra-route-registration.test.ts",
       "proof": "src/api/runtime/friday-api-runtime.ts wires default/live runs.retry to TS_RUNTIME_WORKFLOW_RUNS_RETIRED before resolving TypeScript workflow run state, enumerating nodes, or calling workflowRuntime.execution.retryRun; the legacy TS control path is reachable only through explicit allowTestOnlyWorkflowRunExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow retry/control entrypoint when available."
     },
@@ -1480,6 +1482,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/runtime/friday-api-runtime-extra-route-registration.test.ts",
       "proof": "src/api/runtime/friday-api-runtime.ts wires default/live workflows.runs.resume to TS_RUNTIME_WORKFLOW_RUNS_RETIRED before resolving TypeScript workflow run state or calling workflowRuntime.execution.resumeRun; the legacy TS control path is reachable only through explicit allowTestOnlyWorkflowRunExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow resume/control entrypoint when available."
     },
@@ -1493,6 +1496,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/runtime/friday-api-runtime-extra-route-registration.test.ts",
       "proof": "src/api/runtime/friday-api-runtime.ts wires default/live runs.evidence.export to TS_RUNTIME_WORKFLOW_RUN_EVIDENCE_EXPORT_RETIRED before resolving TypeScript workflow run evidence state or calling workflowRuntime.evidence.exportRunEvidence; the legacy TS evidence export path is reachable only through explicit allowTestOnlyWorkflowRunExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow run evidence export entrypoint when available."
     },

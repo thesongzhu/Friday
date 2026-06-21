@@ -190,6 +190,9 @@ function makeWorkflowRuntimeSpies(): {
     retryRun: ReturnType<typeof vi.fn>;
     resumeRun: ReturnType<typeof vi.fn>;
   };
+  evidence: {
+    exportRunEvidence: ReturnType<typeof vi.fn>;
+  };
 } {
   const run = {
     id: "workflow-run-1",
@@ -208,21 +211,22 @@ function makeWorkflowRuntimeSpies(): {
     retryRun: vi.fn(async () => ({ ...run, status: "running" })),
     resumeRun: vi.fn(async () => ({ ...run, status: "running" })),
   };
+  const evidence = {
+    getRunEvidenceStatus: vi.fn(() => ({ state: "not_required" })),
+    getRunEvidence: vi.fn(),
+    listRunEvidenceExports: vi.fn(() => []),
+    exportRunEvidence: vi.fn(),
+    getRunEvidenceExport: vi.fn(() => null),
+    downloadRunEvidenceExport: vi.fn(() => null),
+  };
   const workflowRuntime = {
     execution,
-    evidence: {
-      getRunEvidenceStatus: vi.fn(() => ({ state: "not_required" })),
-      getRunEvidence: vi.fn(),
-      listRunEvidenceExports: vi.fn(() => []),
-      exportRunEvidence: vi.fn(),
-      getRunEvidenceExport: vi.fn(() => null),
-      downloadRunEvidenceExport: vi.fn(() => null),
-    },
+    evidence,
     crud: {},
     approval: {},
     triggers: {},
   } as unknown as FridayWorkflowRuntime;
-  return { workflowRuntime, execution };
+  return { workflowRuntime, execution, evidence };
 }
 
 describe("API Runtime — Extended Route Registration", () => {
@@ -745,10 +749,48 @@ describe("API Runtime — Extended Route Registration", () => {
       expect(thrown).toBeInstanceOf(FridayDomainError);
       expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_WORKFLOW_RUNS_RETIRED");
       expect((thrown as FridayDomainError).httpStatus).toBe(503);
+      expect((thrown as FridayDomainError).details).toMatchObject({
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_run_entrypoint_required",
+      });
       expect(execution.getRun).not.toHaveBeenCalled();
       expect(execution[methodName]).not.toHaveBeenCalled();
     },
   );
+
+  it("fail-closes live workflow evidence export wiring before TypeScript evidence mutation", async () => {
+    const { workflowRuntime, evidence } = makeWorkflowRuntimeSpies();
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      workflowRuntime,
+    });
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "runs.evidence.export");
+    expect(route).toBeDefined();
+
+    let thrown: unknown = null;
+    try {
+      await route!.handler({
+        requestId: "req-workflow-evidence-export-retired",
+        receivedAt: NOW,
+        params: { runId: "workflow-run-1" },
+        query: {},
+        body: {},
+        headers: {},
+        principal: makePrincipal({ role: "admin", scopes: ["workflow.write"] }),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_WORKFLOW_RUN_EVIDENCE_EXPORT_RETIRED");
+    expect((thrown as FridayDomainError).httpStatus).toBe(503);
+    expect((thrown as FridayDomainError).details).toMatchObject({
+      classification: "fail_closed",
+      replacement: "rust_owned_workflow_run_evidence_export_entrypoint_required",
+    });
+    expect(evidence.exportRunEvidence).not.toHaveBeenCalled();
+  });
 
   it("registers skills.social.import in disabled state when deps.socialImport is omitted", async () => {
     const runtime = createFridayApiRuntime(makeBaseDeps());
