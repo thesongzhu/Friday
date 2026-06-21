@@ -333,7 +333,14 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
       throw FridayWriteClientError.serverError(code: code, message: message)
     case .agentRunRequest, .agentRunResume, .agentRunControlResult,
          .workbenchProjectionRequest, .workbenchProjectionSnapshot,
+         .runReadbackRequest, .runReadbackSnapshot,
          .runAnswerBodyRequest, .runAnswerBodySnapshot,
+         .providersDoctorRequest, .providersDoctorSnapshot,
+         .sessionListRequest, .sessionListSnapshot,
+         .sessionOpenRequest, .sessionOpenSnapshot,
+         .sessionLinkStateRequest, .sessionLinkStateSnapshot,
+         .runFileViewRequest, .runFileViewSnapshot,
+         .activityNeedsMeRequest, .activityNeedsMeSnapshot,
          .missionIntakeRequest, .missionIntakeResult,
          .memoryDecisionRequest, .memoryDecisionResult,
          .runOutcomeLearningDecisionRequest, .runOutcomeLearningDecisionResult:
@@ -550,8 +557,22 @@ private func dispatchKind(_ message: FridayMessage) -> String {
   switch message {
   case .workbenchProjectionRequest: return "WorkbenchProjectionRequest"
   case .workbenchProjectionSnapshot: return "WorkbenchProjectionSnapshot"
+  case .runReadbackRequest: return "RunReadbackRequest"
+  case .runReadbackSnapshot: return "RunReadbackSnapshot"
   case .runAnswerBodyRequest: return "RunAnswerBodyRequest"
   case .runAnswerBodySnapshot: return "RunAnswerBodySnapshot"
+  case .providersDoctorRequest: return "ProvidersDoctorRequest"
+  case .providersDoctorSnapshot: return "ProvidersDoctorSnapshot"
+  case .sessionListRequest: return "SessionListRequest"
+  case .sessionListSnapshot: return "SessionListSnapshot"
+  case .sessionOpenRequest: return "SessionOpenRequest"
+  case .sessionOpenSnapshot: return "SessionOpenSnapshot"
+  case .sessionLinkStateRequest: return "SessionLinkStateRequest"
+  case .sessionLinkStateSnapshot: return "SessionLinkStateSnapshot"
+  case .runFileViewRequest: return "RunFileViewRequest"
+  case .runFileViewSnapshot: return "RunFileViewSnapshot"
+  case .activityNeedsMeRequest: return "ActivityNeedsMeRequest"
+  case .activityNeedsMeSnapshot: return "ActivityNeedsMeSnapshot"
   case .error: return "Error"
   case .agentRunRequest: return "AgentRunRequest"
   case .agentRunResult: return "AgentRunResult"

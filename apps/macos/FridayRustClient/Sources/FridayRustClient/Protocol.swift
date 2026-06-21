@@ -89,6 +89,284 @@ public struct WorkbenchProjectionSnapshotWire: Codable, Equatable {
   }
 }
 
+public struct RunReadbackRequestWire: Codable, Equatable, Sendable {
+  public var runId: String
+  public var forwardedPrincipal: String
+  public var authProof: [UInt8]
+  public var requestId: String
+
+  public init(runId: String, forwardedPrincipal: String, authProof: [UInt8], requestId: String) {
+    self.runId = runId
+    self.forwardedPrincipal = forwardedPrincipal
+    self.authProof = authProof
+    self.requestId = requestId
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case runId = "run_id"
+    case forwardedPrincipal = "forwarded_principal"
+    case authProof = "auth_proof"
+    case requestId = "request_id"
+  }
+}
+
+public struct RunReadbackSnapshotWire: Codable, Equatable, Sendable {
+  public var requestId: String
+  public var projectionJson: String
+  public var generatedAtMs: Int64
+
+  public init(requestId: String, projectionJson: String, generatedAtMs: Int64) {
+    self.requestId = requestId
+    self.projectionJson = projectionJson
+    self.generatedAtMs = generatedAtMs
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case requestId = "request_id"
+    case projectionJson = "projection_json"
+    case generatedAtMs = "generated_at_ms"
+  }
+}
+
+public struct ProvidersDoctorRequestWire: Codable, Equatable, Sendable {
+  public var probe: String?
+  public var forwardedPrincipal: String
+  public var authProof: [UInt8]
+  public var requestId: String
+
+  public init(probe: String?, forwardedPrincipal: String, authProof: [UInt8], requestId: String) {
+    self.probe = probe
+    self.forwardedPrincipal = forwardedPrincipal
+    self.authProof = authProof
+    self.requestId = requestId
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case probe
+    case forwardedPrincipal = "forwarded_principal"
+    case authProof = "auth_proof"
+    case requestId = "request_id"
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    if let probe { try c.encode(probe, forKey: .probe) }
+    try c.encode(forwardedPrincipal, forKey: .forwardedPrincipal)
+    try c.encode(authProof, forKey: .authProof)
+    try c.encode(requestId, forKey: .requestId)
+  }
+}
+
+public struct ProvidersDoctorSnapshotWire: Codable, Equatable, Sendable {
+  public var requestId: String
+  public var projectionJson: String
+  public var generatedAtMs: Int64
+
+  public init(requestId: String, projectionJson: String, generatedAtMs: Int64) {
+    self.requestId = requestId
+    self.projectionJson = projectionJson
+    self.generatedAtMs = generatedAtMs
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case requestId = "request_id"
+    case projectionJson = "projection_json"
+    case generatedAtMs = "generated_at_ms"
+  }
+}
+
+public struct SessionListRequestWire: Codable, Equatable, Sendable {
+  public var forwardedPrincipal: String
+  public var authProof: [UInt8]
+  public var requestId: String
+
+  public init(forwardedPrincipal: String, authProof: [UInt8], requestId: String) {
+    self.forwardedPrincipal = forwardedPrincipal
+    self.authProof = authProof
+    self.requestId = requestId
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case forwardedPrincipal = "forwarded_principal"
+    case authProof = "auth_proof"
+    case requestId = "request_id"
+  }
+}
+
+public struct SessionListSnapshotWire: Codable, Equatable, Sendable {
+  public var requestId: String
+  public var projectionJson: String
+  public var generatedAtMs: Int64
+
+  public init(requestId: String, projectionJson: String, generatedAtMs: Int64) {
+    self.requestId = requestId
+    self.projectionJson = projectionJson
+    self.generatedAtMs = generatedAtMs
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case requestId = "request_id"
+    case projectionJson = "projection_json"
+    case generatedAtMs = "generated_at_ms"
+  }
+}
+
+public struct SessionOpenRequestWire: Codable, Equatable, Sendable {
+  public var agentSessionId: String
+  public var forwardedPrincipal: String
+  public var authProof: [UInt8]
+  public var requestId: String
+
+  public init(agentSessionId: String, forwardedPrincipal: String, authProof: [UInt8], requestId: String) {
+    self.agentSessionId = agentSessionId
+    self.forwardedPrincipal = forwardedPrincipal
+    self.authProof = authProof
+    self.requestId = requestId
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case agentSessionId = "agent_session_id"
+    case forwardedPrincipal = "forwarded_principal"
+    case authProof = "auth_proof"
+    case requestId = "request_id"
+  }
+}
+
+public struct SessionOpenSnapshotWire: Codable, Equatable, Sendable {
+  public var requestId: String
+  public var projectionJson: String
+  public var generatedAtMs: Int64
+
+  public init(requestId: String, projectionJson: String, generatedAtMs: Int64) {
+    self.requestId = requestId
+    self.projectionJson = projectionJson
+    self.generatedAtMs = generatedAtMs
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case requestId = "request_id"
+    case projectionJson = "projection_json"
+    case generatedAtMs = "generated_at_ms"
+  }
+}
+
+public struct SessionLinkStateRequestWire: Codable, Equatable, Sendable {
+  public var agentSessionId: String
+  public var forwardedPrincipal: String
+  public var authProof: [UInt8]
+  public var requestId: String
+
+  public init(agentSessionId: String, forwardedPrincipal: String, authProof: [UInt8], requestId: String) {
+    self.agentSessionId = agentSessionId
+    self.forwardedPrincipal = forwardedPrincipal
+    self.authProof = authProof
+    self.requestId = requestId
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case agentSessionId = "agent_session_id"
+    case forwardedPrincipal = "forwarded_principal"
+    case authProof = "auth_proof"
+    case requestId = "request_id"
+  }
+}
+
+public struct SessionLinkStateSnapshotWire: Codable, Equatable, Sendable {
+  public var requestId: String
+  public var projectionJson: String
+  public var generatedAtMs: Int64
+
+  public init(requestId: String, projectionJson: String, generatedAtMs: Int64) {
+    self.requestId = requestId
+    self.projectionJson = projectionJson
+    self.generatedAtMs = generatedAtMs
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case requestId = "request_id"
+    case projectionJson = "projection_json"
+    case generatedAtMs = "generated_at_ms"
+  }
+}
+
+public struct RunFileViewRequestWire: Codable, Equatable, Sendable {
+  public var runId: String
+  public var forwardedPrincipal: String
+  public var authProof: [UInt8]
+  public var requestId: String
+
+  public init(runId: String, forwardedPrincipal: String, authProof: [UInt8], requestId: String) {
+    self.runId = runId
+    self.forwardedPrincipal = forwardedPrincipal
+    self.authProof = authProof
+    self.requestId = requestId
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case runId = "run_id"
+    case forwardedPrincipal = "forwarded_principal"
+    case authProof = "auth_proof"
+    case requestId = "request_id"
+  }
+}
+
+public struct RunFileViewSnapshotWire: Codable, Equatable, Sendable {
+  public var requestId: String
+  public var projectionJson: String
+  public var generatedAtMs: Int64
+
+  public init(requestId: String, projectionJson: String, generatedAtMs: Int64) {
+    self.requestId = requestId
+    self.projectionJson = projectionJson
+    self.generatedAtMs = generatedAtMs
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case requestId = "request_id"
+    case projectionJson = "projection_json"
+    case generatedAtMs = "generated_at_ms"
+  }
+}
+
+public struct ActivityNeedsMeRequestWire: Codable, Equatable, Sendable {
+  public var runId: String
+  public var forwardedPrincipal: String
+  public var authProof: [UInt8]
+  public var requestId: String
+
+  public init(runId: String, forwardedPrincipal: String, authProof: [UInt8], requestId: String) {
+    self.runId = runId
+    self.forwardedPrincipal = forwardedPrincipal
+    self.authProof = authProof
+    self.requestId = requestId
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case runId = "run_id"
+    case forwardedPrincipal = "forwarded_principal"
+    case authProof = "auth_proof"
+    case requestId = "request_id"
+  }
+}
+
+public struct ActivityNeedsMeSnapshotWire: Codable, Equatable, Sendable {
+  public var requestId: String
+  public var projectionJson: String
+  public var generatedAtMs: Int64
+
+  public init(requestId: String, projectionJson: String, generatedAtMs: Int64) {
+    self.requestId = requestId
+    self.projectionJson = projectionJson
+    self.generatedAtMs = generatedAtMs
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case requestId = "request_id"
+    case projectionJson = "projection_json"
+    case generatedAtMs = "generated_at_ms"
+  }
+}
+
 // MARK: - Message (tagged enum, `#[serde(tag = "kind")]`)
 
 /// The subset of `friday_protocol::Message` the read seam uses, tagged by `kind` (serde
@@ -99,6 +377,20 @@ public enum FridayMessage: Equatable {
   case workbenchProjectionRequest(WorkbenchProjectionRequestWire)
   case workbenchProjectionSnapshot(WorkbenchProjectionSnapshotWire)
   case error(code: FridayErrorCode, message: String)
+  case runReadbackRequest(RunReadbackRequestWire)
+  case runReadbackSnapshot(RunReadbackSnapshotWire)
+  case providersDoctorRequest(ProvidersDoctorRequestWire)
+  case providersDoctorSnapshot(ProvidersDoctorSnapshotWire)
+  case sessionListRequest(SessionListRequestWire)
+  case sessionListSnapshot(SessionListSnapshotWire)
+  case sessionOpenRequest(SessionOpenRequestWire)
+  case sessionOpenSnapshot(SessionOpenSnapshotWire)
+  case sessionLinkStateRequest(SessionLinkStateRequestWire)
+  case sessionLinkStateSnapshot(SessionLinkStateSnapshotWire)
+  case runFileViewRequest(RunFileViewRequestWire)
+  case runFileViewSnapshot(RunFileViewSnapshotWire)
+  case activityNeedsMeRequest(ActivityNeedsMeRequestWire)
+  case activityNeedsMeSnapshot(ActivityNeedsMeSnapshotWire)
 
   // MARK: - WRITE / agent-run seam (GATE-AGENT-REPLACE)
 
@@ -201,6 +493,48 @@ extension FridayMessage: Codable {
       let c = try decoder.container(keyedBy: ErrorKey.self)
       self = .error(code: try c.decode(FridayErrorCode.self, forKey: .code),
                     message: try c.decode(String.self, forKey: .message))
+    case "RunReadbackRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .runReadbackRequest(try c.decode(RunReadbackRequestWire.self, forKey: .request))
+    case "RunReadbackSnapshot":
+      let c = try decoder.container(keyedBy: SnapshotKey.self)
+      self = .runReadbackSnapshot(try c.decode(RunReadbackSnapshotWire.self, forKey: .snapshot))
+    case "ProvidersDoctorRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .providersDoctorRequest(try c.decode(ProvidersDoctorRequestWire.self, forKey: .request))
+    case "ProvidersDoctorSnapshot":
+      let c = try decoder.container(keyedBy: SnapshotKey.self)
+      self = .providersDoctorSnapshot(try c.decode(ProvidersDoctorSnapshotWire.self, forKey: .snapshot))
+    case "SessionListRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .sessionListRequest(try c.decode(SessionListRequestWire.self, forKey: .request))
+    case "SessionListSnapshot":
+      let c = try decoder.container(keyedBy: SnapshotKey.self)
+      self = .sessionListSnapshot(try c.decode(SessionListSnapshotWire.self, forKey: .snapshot))
+    case "SessionOpenRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .sessionOpenRequest(try c.decode(SessionOpenRequestWire.self, forKey: .request))
+    case "SessionOpenSnapshot":
+      let c = try decoder.container(keyedBy: SnapshotKey.self)
+      self = .sessionOpenSnapshot(try c.decode(SessionOpenSnapshotWire.self, forKey: .snapshot))
+    case "SessionLinkStateRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .sessionLinkStateRequest(try c.decode(SessionLinkStateRequestWire.self, forKey: .request))
+    case "SessionLinkStateSnapshot":
+      let c = try decoder.container(keyedBy: SnapshotKey.self)
+      self = .sessionLinkStateSnapshot(try c.decode(SessionLinkStateSnapshotWire.self, forKey: .snapshot))
+    case "RunFileViewRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .runFileViewRequest(try c.decode(RunFileViewRequestWire.self, forKey: .request))
+    case "RunFileViewSnapshot":
+      let c = try decoder.container(keyedBy: SnapshotKey.self)
+      self = .runFileViewSnapshot(try c.decode(RunFileViewSnapshotWire.self, forKey: .snapshot))
+    case "ActivityNeedsMeRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .activityNeedsMeRequest(try c.decode(ActivityNeedsMeRequestWire.self, forKey: .request))
+    case "ActivityNeedsMeSnapshot":
+      let c = try decoder.container(keyedBy: SnapshotKey.self)
+      self = .activityNeedsMeSnapshot(try c.decode(ActivityNeedsMeSnapshotWire.self, forKey: .snapshot))
     case "AgentRunRequest":
       let c = try decoder.container(keyedBy: WriteKey.self)
       self = .agentRunRequest(AgentRunRequestWire(
@@ -295,6 +629,62 @@ extension FridayMessage: Codable {
       var c = encoder.container(keyedBy: ErrorKey.self)
       try c.encode(code, forKey: .code)
       try c.encode(message, forKey: .message)
+    case .runReadbackRequest(let req):
+      try tag.encode("RunReadbackRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(req, forKey: .request)
+    case .runReadbackSnapshot(let snap):
+      try tag.encode("RunReadbackSnapshot", forKey: .kind)
+      var c = encoder.container(keyedBy: SnapshotKey.self)
+      try c.encode(snap, forKey: .snapshot)
+    case .providersDoctorRequest(let req):
+      try tag.encode("ProvidersDoctorRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(req, forKey: .request)
+    case .providersDoctorSnapshot(let snap):
+      try tag.encode("ProvidersDoctorSnapshot", forKey: .kind)
+      var c = encoder.container(keyedBy: SnapshotKey.self)
+      try c.encode(snap, forKey: .snapshot)
+    case .sessionListRequest(let req):
+      try tag.encode("SessionListRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(req, forKey: .request)
+    case .sessionListSnapshot(let snap):
+      try tag.encode("SessionListSnapshot", forKey: .kind)
+      var c = encoder.container(keyedBy: SnapshotKey.self)
+      try c.encode(snap, forKey: .snapshot)
+    case .sessionOpenRequest(let req):
+      try tag.encode("SessionOpenRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(req, forKey: .request)
+    case .sessionOpenSnapshot(let snap):
+      try tag.encode("SessionOpenSnapshot", forKey: .kind)
+      var c = encoder.container(keyedBy: SnapshotKey.self)
+      try c.encode(snap, forKey: .snapshot)
+    case .sessionLinkStateRequest(let req):
+      try tag.encode("SessionLinkStateRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(req, forKey: .request)
+    case .sessionLinkStateSnapshot(let snap):
+      try tag.encode("SessionLinkStateSnapshot", forKey: .kind)
+      var c = encoder.container(keyedBy: SnapshotKey.self)
+      try c.encode(snap, forKey: .snapshot)
+    case .runFileViewRequest(let req):
+      try tag.encode("RunFileViewRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(req, forKey: .request)
+    case .runFileViewSnapshot(let snap):
+      try tag.encode("RunFileViewSnapshot", forKey: .kind)
+      var c = encoder.container(keyedBy: SnapshotKey.self)
+      try c.encode(snap, forKey: .snapshot)
+    case .activityNeedsMeRequest(let req):
+      try tag.encode("ActivityNeedsMeRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(req, forKey: .request)
+    case .activityNeedsMeSnapshot(let snap):
+      try tag.encode("ActivityNeedsMeSnapshot", forKey: .kind)
+      var c = encoder.container(keyedBy: SnapshotKey.self)
+      try c.encode(snap, forKey: .snapshot)
     case .agentRunRequest(let req):
       var c = encoder.container(keyedBy: WriteKey.self)
       // Field order MIRRORS the Rust serde struct-variant order: kind, run_id, task,
@@ -506,6 +896,26 @@ public struct WorkbenchSnapshot: Equatable {
       self.workItemIds = items.compactMap { ($0["workItemId"] as? String) ?? ($0["id"] as? String) }
     } else {
       self.workItemIds = []
+    }
+    self.generatedAtMs = generatedAtMs
+    self.raw = obj
+  }
+}
+
+// MARK: - Generic owner-gated read projection
+
+public struct ReadProjectionSnapshot: Equatable {
+  public let generatedAtMs: Int64
+  public let raw: [String: Any]
+
+  public static func == (lhs: ReadProjectionSnapshot, rhs: ReadProjectionSnapshot) -> Bool {
+    lhs.generatedAtMs == rhs.generatedAtMs
+      && NSDictionary(dictionary: lhs.raw).isEqual(to: rhs.raw)
+  }
+
+  public init(projectionJSON: Data, generatedAtMs: Int64) throws {
+    guard let obj = try JSONSerialization.jsonObject(with: projectionJSON) as? [String: Any] else {
+      throw FridayReadClientError.malformedProjection("projection JSON is not an object")
     }
     self.generatedAtMs = generatedAtMs
     self.raw = obj
