@@ -99,9 +99,17 @@ describe("createFridayGuideLensRoutes", () => {
         query: {
           sessionId: "s-1",
         },
-      }))).rejects.toThrow("guide-lens routes are fail-closed");
+      }))).rejects.toMatchObject({
+        code: "TS_RUNTIME_GUIDE_LENS_RETIRED",
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_guide_lens_entrypoint_required",
+        },
+      });
     }
 
+    expect(service.assertReadOnlyAction).not.toHaveBeenCalled();
     expect(service.captureSnapshot).not.toHaveBeenCalled();
     expect(service.resolveTarget).not.toHaveBeenCalled();
     expect(service.showOverlay).not.toHaveBeenCalled();
