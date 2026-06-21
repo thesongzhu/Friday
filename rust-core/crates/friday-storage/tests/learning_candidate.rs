@@ -85,8 +85,51 @@ fn record_candidates_is_refs_only_pending_and_idempotent_per_run() {
         assert_eq!(row.evidence_ref, "friday://agent-run/run-a1");
         assert!(row.summary.contains("turns=2"));
         assert!(row.summary.contains("executed_tools=1"));
+        assert!(row.summary.contains("refs_only=true"));
+        assert!(row.summary.contains("confirm_required=true"));
         assert!(!format!("{row:?}").contains("PONG"));
     }
+}
+
+#[test]
+fn record_candidates_builds_distinct_kind_signals_without_body_text() {
+    let db = Db::open_hub(&temp_db_path("a1-learning-kind-signals")).unwrap();
+
+    learning_candidate::record_run_outcome_candidates(
+        db.conn(),
+        "run-kind-signals",
+        Some("sess-kind-signals"),
+        4,
+        2,
+        10_000,
+    )
+    .unwrap();
+
+    let rows =
+        learning_candidate::list_run_outcome_candidates_for_run(db.conn(), "run-kind-signals")
+            .unwrap();
+    let preference = rows
+        .iter()
+        .find(|row| row.kind == RunOutcomeLearningKind::Preference)
+        .unwrap();
+    let reflex = rows
+        .iter()
+        .find(|row| row.kind == RunOutcomeLearningKind::Reflex)
+        .unwrap();
+    let world_model = rows
+        .iter()
+        .find(|row| row.kind == RunOutcomeLearningKind::WorldModel)
+        .unwrap();
+
+    assert!(preference.summary.contains("candidate_kind=preference"));
+    assert!(preference.summary.contains("consumer=recall-preference"));
+    assert!(reflex.summary.contains("candidate_kind=reflex"));
+    assert!(reflex.summary.contains("consumer=governance-only"));
+    assert!(world_model.summary.contains("candidate_kind=world_model"));
+    assert!(world_model.summary.contains("consumer=recall-world-model"));
+    assert_ne!(preference.summary, reflex.summary);
+    assert_ne!(preference.summary, world_model.summary);
+    assert!(rows.iter().all(|row| !row.summary.contains("PONG")));
 }
 
 #[test]

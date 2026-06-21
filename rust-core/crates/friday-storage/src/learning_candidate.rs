@@ -117,6 +117,25 @@ const MIN_CONFIRMED_TURNS: i64 = 1;
 const MIN_CONFIRMED_EXECUTED_TOOLS: i64 = 1;
 const MAX_ELIGIBILITY_SCAN_LIMIT: i64 = 256;
 
+fn run_outcome_candidate_summary(
+    kind: RunOutcomeLearningKind,
+    turns: i64,
+    executed_tools: i64,
+) -> String {
+    let signal = match kind {
+        RunOutcomeLearningKind::Preference => {
+            "candidate_kind=preference; consumer=recall-preference; confirm_required=true"
+        }
+        RunOutcomeLearningKind::Reflex => {
+            "candidate_kind=reflex; consumer=governance-only; confirm_required=true"
+        }
+        RunOutcomeLearningKind::WorldModel => {
+            "candidate_kind=world_model; consumer=recall-world-model; confirm_required=true"
+        }
+    };
+    format!("{signal}; turns={turns}; executed_tools={executed_tools}; refs_only=true")
+}
+
 pub fn record_run_outcome_candidates(
     conn: &Connection,
     run_id: &str,
@@ -130,8 +149,7 @@ pub fn record_run_outcome_candidates(
         let mut inserted = 0usize;
         for kind in RunOutcomeLearningKind::ALL {
             let candidate_id = format!("a1:{run_id}:{}", kind.as_str());
-            let summary =
-                format!("refs-only run outcome: turns={turns}; executed_tools={executed_tools}");
+            let summary = run_outcome_candidate_summary(kind, turns, executed_tools);
             inserted += tx.execute(
                 "INSERT OR IGNORE INTO run_outcome_learning_candidate
                     (candidate_id, run_id, session_id, kind, state, evidence_ref, summary,
