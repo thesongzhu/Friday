@@ -330,15 +330,46 @@ async function modeDispatchMutating(args, createFactory, resolverMod) {
     );
   }
 
+  let recoveredPendingRequest;
   if (!outcome || outcome.outcome !== "paused") {
-    // The gate did NOT pause a mutating run — a REAL problem to surface (NOT the expected S6 path).
-    die(
-      "non-paused-outcome",
-      "dispatchRun did NOT return a PAUSED outcome for a mutating write_file run. The server's " +
-        "loop gate should have paused pending an operator signature. A normal AgentRunResult / " +
-        "no_answer here means the mutation was NOT gated — investigate the hub.",
-      `full outcome:\n${JSON.stringify(outcome, null, 2)}`,
-    );
+    const runIdFromOutcome = typeof outcome?.runId === "string" ? outcome.runId : undefined;
+    if (runIdFromOutcome) {
+      const recovered = pendingRequestRowForRun(runIdFromOutcome);
+      const row = recovered.rows?.[0];
+      if (
+        !recovered.dbMissing &&
+        !recovered.error &&
+        row?.status === "pending" &&
+        row?.action === "write_file"
+      ) {
+        recoveredPendingRequest = recovered;
+        outcome = {
+          outcome: "paused",
+          runId: runIdFromOutcome,
+          approvalId: row.approval_id,
+          actionDigest: row.action_digest,
+          expiresAt: row.expires_at,
+          ownerSealedSummary:
+            "recovered_from_pending_approval_request_after_no_answer_safe_failure",
+        };
+        console.log(
+          "\n[dispatch-mutating] sealed client returned a non-paused terminal status, but " +
+            "rust-hub.sqlite contains a pending write_file approval for this run. Recovering " +
+            "the signable pause artifact from the DB row.",
+        );
+      }
+    }
+    if (!outcome || outcome.outcome !== "paused") {
+      // The gate did NOT pause a mutating run — a REAL problem to surface (NOT the expected S6 path).
+      die(
+        "non-paused-outcome",
+        "dispatchRun did NOT return a PAUSED outcome for a mutating write_file run, and no " +
+          "pending write_file approval row could be recovered for the returned runId. The server's " +
+          "loop gate should have paused pending an operator signature. A normal AgentRunResult / " +
+          "no_answer here means the mutation was NOT gated — investigate the hub.",
+        `full outcome:\n${JSON.stringify(outcome, null, 2)}`,
+      );
+    }
   }
 
   console.log("\n[dispatch-mutating] PAUSED (the mutating tool was gated as expected):");
@@ -354,7 +385,7 @@ async function modeDispatchMutating(args, createFactory, resolverMod) {
 
   // Read the persisted pending_approval_request row and write pending-request.json (EXACT schema
   // friday-operator-approve sign --request consumes — verified to round-trip in the HTTP driver).
-  const pr = pendingRequestRowForRun(outcome.runId);
+  const pr = recoveredPendingRequest ?? pendingRequestRowForRun(outcome.runId);
   if (pr.dbMissing) {
     die(
       "db-missing",
