@@ -631,15 +631,19 @@ pub(crate) fn attach_provider_timeline_state_guarded_with_completion_receipt(
                 attachment.now_ms,
             )?
         };
-        // Mission side is NOT touched by the primitive — replicate the OFF path's mission update
-        // (append the completion proof ref + bump updated_at_ms) so the mission row is identical.
+        // The guarded primitive may now close the Mission when this is the final proven WorkItem.
+        // Re-read before appending the provider proof ref; writing the pre-transition snapshot would
+        // revert that terminal Mission row back to `active`.
         if next_status == WorkItemStatus::CompletedWithProof {
             if let Some(proof_ref) = attachment.proof_ref.as_ref() {
-                push_unique(&mut mission.proof_refs, proof_ref.clone());
-                mission.updated_at_ms = attachment.now_ms;
+                if let Some(mut current_mission) = db.get_mission(&attachment.mission_id)? {
+                    push_unique(&mut current_mission.proof_refs, proof_ref.clone());
+                    current_mission.updated_at_ms =
+                        current_mission.updated_at_ms.max(attachment.now_ms);
+                    db.upsert_mission(&current_mission)?;
+                }
             }
         }
-        db.upsert_mission(&mission)?;
     } else {
         // OFF path (and same-status no-op on both paths): the pre-WI-1 inline write, verbatim.
         work_item.status = next_status;
@@ -2192,12 +2196,20 @@ mod tests {
         let item = db.get_work_item("work-wi1-on").unwrap().unwrap();
         assert_eq!(item.status, WorkItemStatus::CompletedWithProof);
         assert_eq!(item.proof_receipts, vec!["friday://agent-run/run-wi1"]);
-        // Mission proof_refs updated on completion (the primitive does not touch the mission, so
-        // this seam replicates the OFF path's mission update — parity check).
-        assert!(db
-            .get_mission("mission-wi1-on")
-            .unwrap()
-            .unwrap()
+        let mission = db.get_mission("mission-wi1-on").unwrap().unwrap();
+        assert_eq!(
+            mission.status,
+            MissionStatus::Done,
+            "guarded provider timeline must not overwrite storage auto-close with a stale active Mission snapshot"
+        );
+        assert!(
+            mission
+                .proof_refs
+                .iter()
+                .any(|proof_ref| proof_ref.starts_with("audit://")),
+            "storage auto-close audit proof ref must be preserved"
+        );
+        assert!(mission
             .proof_refs
             .contains(&"friday://agent-run/run-wi1".to_string()));
 
