@@ -18,6 +18,24 @@
       "skills_run",
       "skills_import",
       "mcp_server_rpc",
+      "rules_bundles_create",
+      "rules_bundles_update",
+      "rules_evaluate",
+      "rules_simulate",
+      "node_runner_execute",
+      "acceptance_run",
+      "acceptance_tests_create",
+      "acceptance_tests_update",
+      "acceptance_tests_delete",
+      "retry_policies_create",
+      "retry_policies_update",
+      "retry_policies_delete",
+      "retry_classify",
+      "retry_decide",
+      "retry_escalations_acknowledge",
+      "playbook_select",
+      "playbook_candidates_promote",
+      "playbook_rollback",
       "sessions_create",
       "sessions_messages_create",
       "sessions_archive",
@@ -2455,6 +2473,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live rules.bundles.create to TS_RUNTIME_RULES_PIPELINE_RETIRED after request validation and before calling the TypeScript rule bundle create service; legacy behavior is reachable only through explicit allowTestOnlyRulesPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic rules evaluation/authoring entrypoint when available."
     },
@@ -2468,6 +2487,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live rules.bundles.update to TS_RUNTIME_RULES_PIPELINE_RETIRED after request validation and before calling the TypeScript rule bundle update service; legacy behavior is reachable only through explicit allowTestOnlyRulesPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic rules evaluation/authoring entrypoint when available."
     },
@@ -2481,6 +2501,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live rules.evaluate to TS_RUNTIME_RULES_PIPELINE_RETIRED after request validation and before calling the TypeScript rule evaluation engine service; legacy behavior is reachable only through explicit allowTestOnlyRulesPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic rules evaluation/authoring entrypoint when available."
     },
@@ -2494,6 +2515,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live rules.simulate to TS_RUNTIME_RULES_PIPELINE_RETIRED after request validation and before calling the TypeScript rule simulation engine service; legacy behavior is reachable only through explicit allowTestOnlyRulesPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic rules evaluation/authoring entrypoint when available."
     },
@@ -2507,6 +2529,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live node.runner.execute to TS_RUNTIME_NODE_RUNNER_EXECUTION_RETIRED after request validation and before calling the TypeScript node execution (adapter side effects) service; legacy behavior is reachable only through explicit allowTestOnlyNodeRunnerExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic node-runner execution entrypoint when available."
     },
@@ -2520,6 +2543,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live acceptance.run to TS_RUNTIME_ACCEPTANCE_PIPELINE_RETIRED after request validation and before calling the TypeScript acceptance check execution service; legacy behavior is reachable only through explicit allowTestOnlyAcceptancePipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic acceptance entrypoint when available."
     },
@@ -2533,6 +2557,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live acceptance.tests.create to TS_RUNTIME_ACCEPTANCE_PIPELINE_RETIRED after request validation and before calling the TypeScript acceptance test create service; legacy behavior is reachable only through explicit allowTestOnlyAcceptancePipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic acceptance entrypoint when available."
     },
@@ -2546,6 +2571,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live acceptance.tests.update to TS_RUNTIME_ACCEPTANCE_PIPELINE_RETIRED after request validation and before calling the TypeScript acceptance test update service; legacy behavior is reachable only through explicit allowTestOnlyAcceptancePipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic acceptance entrypoint when available."
     },
@@ -2559,6 +2585,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live acceptance.tests.delete to TS_RUNTIME_ACCEPTANCE_PIPELINE_RETIRED after request validation and before calling the TypeScript acceptance test delete service; legacy behavior is reachable only through explicit allowTestOnlyAcceptancePipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic acceptance entrypoint when available."
     },
@@ -2572,6 +2599,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live retry.policies.create to TS_RUNTIME_RETRY_PIPELINE_RETIRED after request validation and before calling the TypeScript retry policy create service; legacy behavior is reachable only through explicit allowTestOnlyRetryPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic retry entrypoint when available."
     },
@@ -2585,6 +2613,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live retry.policies.update to TS_RUNTIME_RETRY_PIPELINE_RETIRED after request validation and before calling the TypeScript retry policy update service; legacy behavior is reachable only through explicit allowTestOnlyRetryPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic retry entrypoint when available."
     },
@@ -2598,6 +2627,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live retry.policies.delete to TS_RUNTIME_RETRY_PIPELINE_RETIRED after request validation and before calling the TypeScript retry policy delete service; legacy behavior is reachable only through explicit allowTestOnlyRetryPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic retry entrypoint when available."
     },
@@ -2611,6 +2641,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live retry.classify to TS_RUNTIME_RETRY_PIPELINE_RETIRED after request validation and before calling the TypeScript retry failure classification engine service; legacy behavior is reachable only through explicit allowTestOnlyRetryPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic retry entrypoint when available."
     },
@@ -2624,6 +2655,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live retry.decide to TS_RUNTIME_RETRY_PIPELINE_RETIRED after request validation and before calling the TypeScript retry decision engine service; legacy behavior is reachable only through explicit allowTestOnlyRetryPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic retry entrypoint when available."
     },
@@ -2637,6 +2669,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live retry.escalations.acknowledge to TS_RUNTIME_RETRY_PIPELINE_RETIRED after request validation and before calling the TypeScript retry escalation acknowledge state write service; legacy behavior is reachable only through explicit allowTestOnlyRetryPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic retry entrypoint when available."
     },
@@ -2650,6 +2683,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live playbook.select to TS_RUNTIME_PLAYBOOK_PIPELINE_RETIRED after request validation and before calling the TypeScript playbook selection engine service; legacy behavior is reachable only through explicit allowTestOnlyPlaybookPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic playbook entrypoint when available."
     },
@@ -2663,6 +2697,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live playbook.candidates.promote to TS_RUNTIME_PLAYBOOK_PIPELINE_RETIRED after request validation and before calling the TypeScript playbook candidate promotion service; legacy behavior is reachable only through explicit allowTestOnlyPlaybookPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic playbook entrypoint when available."
     },
@@ -2676,6 +2711,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-deterministic-pipeline-routes.test.ts",
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live playbook.rollback to TS_RUNTIME_PLAYBOOK_PIPELINE_RETIRED after request validation and before calling the TypeScript playbook version rollback service; legacy behavior is reachable only through explicit allowTestOnlyPlaybookPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic playbook entrypoint when available."
     },
