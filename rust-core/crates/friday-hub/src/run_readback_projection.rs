@@ -32,9 +32,6 @@
 //! This fn takes an ALREADY-OPENED [`Db`] (the bin and the server open it `open_hub_readonly`) and
 //! does pure reads + JSON shaping. It never touches a provider credential or the model path.
 
-use friday_providers::unified::{
-    NeedsMeItem, NeedsMeKind, NeedsMePriority, PlatformProvider, SessionStatus,
-};
 use friday_storage::agent_run_read::{db_wide_token_totals, get_run_summary, list_event_kinds};
 use friday_storage::agent_session::{
     link_state_for_owner, LINK_OFFLINE_AFTER_MS, LINK_STALE_AFTER_MS,
@@ -396,15 +393,30 @@ pub fn project_activity_needs_me(
     // provider is Claude; the sessionless run's `friday_session_id` is the run id.
     let needs_me = crate::agent_run_control::detect_pause(conn, run_id)
         .map_err(|_| "read_failed".to_string())?
-        .map(|pause| NeedsMeItem {
-            item_id: format!("needs-me:{run_id}:{}", pause.nonce),
-            provider: PlatformProvider::Claude,
-            friday_session_id: run_id.to_string(),
-            kind: NeedsMeKind::Approval,
-            priority: NeedsMePriority::High,
-            // The live approval nonce — the real `pending_approval_request.approval_id`.
-            ref_id: pause.nonce,
-            status: SessionStatus::AwaitingApproval,
+        .map(|pause| {
+            let approval_id = pause.nonce;
+            let action_digest = pause.action_digest;
+            let summary = pause.summary;
+            json!({
+                "item_id": format!("needs-me:{run_id}:{approval_id}"),
+                "provider": "claude",
+                "friday_session_id": run_id,
+                "kind": "approval",
+                "priority": "high",
+                // The live approval nonce — the real `pending_approval_request.approval_id`.
+                "ref_id": approval_id,
+                "status": "awaiting_approval",
+                // Refs-only signing material. This is enough for an operator signer to review/sign
+                // the paused action, but still carries no tool body/args/key material.
+                "action_digest": action_digest,
+                "summary": summary,
+                "signing_request": {
+                    "run_id": run_id,
+                    "approval_id": approval_id,
+                    "action_digest": action_digest,
+                    "summary": summary,
+                },
+            })
         });
 
     // ADDITIVE (no-degrade): the actionable activity rows the producers write but the
@@ -475,23 +487,27 @@ fn collect_actionable_needs_me(
 ) -> Result<Vec<Value>, String> {
     // This run's STILL-pending approval nonces (oldest-first). The owner gate already ran, so
     // these are this owner's nonces — `approval-needs-me-{nonce}` is the producer's id scheme.
-    let pending_approval_ids: std::collections::HashSet<String> =
+    let pending_approvals: std::collections::HashMap<String, (String, String)> =
         friday_storage::list_pending_requests_for_run(conn, run_id)
             .map_err(|_| "read_failed".to_string())?
             .into_iter()
             .filter(|p| p.status == "pending")
-            .map(|p| format!("{APPROVAL_ACTIVITY_PREFIX}{}", p.approval_id))
+            .map(|p| {
+                (
+                    format!("{APPROVAL_ACTIVITY_PREFIX}{}", p.approval_id),
+                    (p.approval_id, p.action_digest),
+                )
+            })
             .collect();
 
     let mut out: Vec<Value> = Vec::new();
     for row in db.list_activity().map_err(|_| "read_failed".to_string())? {
         match row.kind.as_str() {
             // approval_required: surface ONLY if it is one of THIS run's live pending nonces.
-            "approval_required" if pending_approval_ids.contains(&row.activity_id) => {
-                let nonce = row
-                    .activity_id
-                    .strip_prefix(APPROVAL_ACTIVITY_PREFIX)
-                    .unwrap_or(&row.activity_id);
+            "approval_required" if pending_approvals.contains_key(&row.activity_id) => {
+                let Some((nonce, action_digest)) = pending_approvals.get(&row.activity_id) else {
+                    continue;
+                };
                 out.push(json!({
                     "kind": "approval_required",
                     // The producer's body-free summary ("approval required for {action} ...").
@@ -502,6 +518,14 @@ fn collect_actionable_needs_me(
                     "ref_id": nonce,
                     "state": row.state,
                     "activity_id": row.activity_id,
+                    "action_digest": action_digest,
+                    "summary": row.summary,
+                    "signing_request": {
+                        "run_id": run_id,
+                        "approval_id": nonce,
+                        "action_digest": action_digest,
+                        "summary": row.summary,
+                    },
                 }));
             }
             // memory_review: owner-scope by joining the parsed memory_id back to its
@@ -897,6 +921,14 @@ mod tests {
         );
         assert_eq!(v["needs_me"]["kind"], "approval");
         assert_eq!(v["needs_me"]["ref_id"], nonce);
+        assert_eq!(v["needs_me"]["action_digest"], format!("digest-{nonce}"));
+        assert_eq!(v["needs_me"]["summary"], "paused on write_file");
+        assert_eq!(v["needs_me"]["signing_request"]["run_id"], run_id);
+        assert_eq!(v["needs_me"]["signing_request"]["approval_id"], nonce);
+        assert_eq!(
+            v["needs_me"]["signing_request"]["action_digest"],
+            format!("digest-{nonce}")
+        );
 
         // The NEW actionable array surfaces BOTH the memory_review and the approval_required rows.
         let actionable = v["actionable_needs_me"].as_array().expect("array");
@@ -933,6 +965,13 @@ mod tests {
             .unwrap();
         assert_eq!(ar["ref_id"], nonce);
         assert_eq!(ar["deep_link"], format!("run/{run_id}/approval/{nonce}"));
+        assert_eq!(ar["action_digest"], format!("digest-{nonce}"));
+        assert_eq!(ar["signing_request"]["run_id"], run_id);
+        assert_eq!(ar["signing_request"]["approval_id"], nonce);
+        assert_eq!(
+            ar["signing_request"]["action_digest"],
+            format!("digest-{nonce}")
+        );
     }
 
     /// no-degrade regression: the pre-existing ask_receipt + detect_pause Needs-Me items still

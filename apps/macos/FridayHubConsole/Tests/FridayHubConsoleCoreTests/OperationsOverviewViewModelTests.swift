@@ -530,7 +530,15 @@ func activityNeedsMeJSON(runId: String, actionableKind: String, refId: String) -
       "kind": "approval",
       "title": "Approval required",
       "ref_id": "approval-pause-\(runId)",
-      "status": "awaiting_approval"
+      "status": "awaiting_approval",
+      "action_digest": "digest-pause-\(runId)",
+      "summary": "paused on write_file",
+      "signing_request": {
+        "run_id": "\(runId)",
+        "approval_id": "approval-pause-\(runId)",
+        "action_digest": "digest-pause-\(runId)",
+        "summary": "paused on write_file"
+      }
     },
     "actionable_needs_me": [
       {
@@ -538,7 +546,9 @@ func activityNeedsMeJSON(runId: String, actionableKind: String, refId: String) -
         "title": "\(actionableKind) ready",
         "ref_id": "\(refId)",
         "state": "pending",
-        "deep_link": "\(actionableKind == "memory_review" ? "memory/session/\(refId)" : "run/\(runId)/approval/\(refId)")"
+        "deep_link": "\(actionableKind == "memory_review" ? "memory/session/\(refId)" : "run/\(runId)/approval/\(refId)")",
+        "action_digest": "digest-\(refId)",
+        "summary": "\(actionableKind) ready"
       }
     ],
     "actionable_needs_me_count": 1
@@ -854,6 +864,9 @@ func submitIntakeDisplaysOwnerGatedRunAnswerBodyWhenDelivered() async {
   }
   #expect(items.map(\.kind).contains("approval_required"))
   #expect(items.map(\.refId).contains("approval-nonce-1"))
+  let approval = items.first { $0.kind == "approval_required" }
+  #expect(approval?.actionDigest == "digest-approval-nonce-1")
+  #expect(approval?.signingSummary == "approval_required ready")
 }
 
 @Test
@@ -869,7 +882,27 @@ func chatNeedsMeItemsParsesComputedPauseAndActionableRows() throws {
 
   #expect(items.map(\.kind) == ["approval", "memory_review"])
   #expect(items.map(\.refId) == ["approval-pause-run-review", "mem-review-1"])
+  #expect(items[0].actionDigest == "digest-pause-run-review")
+  #expect(items[0].signingSummary == "paused on write_file")
   #expect(items[1].deepLink == "memory/session/mem-review-1")
+}
+
+@Test
+func chatNeedsMeItemsParsesApprovalSigningRefsFromActionableRows() throws {
+  let data = activityNeedsMeJSON(
+    runId: "run-approval",
+    actionableKind: "approval_required",
+    refId: "approval-nonce-2"
+  ).data(using: .utf8)!
+  let raw = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+  let items = OperationsOverviewViewModel.chatNeedsMeItems(from: raw, runId: "run-approval")
+  let approval = items.first { $0.kind == "approval_required" }
+
+  #expect(approval?.runId == "run-approval")
+  #expect(approval?.refId == "approval-nonce-2")
+  #expect(approval?.actionDigest == "digest-approval-nonce-2")
+  #expect(approval?.signingSummary == "approval_required ready")
 }
 
 @Test

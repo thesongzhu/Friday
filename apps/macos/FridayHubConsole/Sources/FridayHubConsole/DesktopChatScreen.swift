@@ -336,8 +336,17 @@ struct DesktopChatScreen: View {
           .foregroundStyle(HubTheme.textPrimary)
         RefPill(label: "run_id", ref: item.runId)
         RefPill(label: "ref_id", ref: item.refId)
+        if let actionDigest = item.actionDigest {
+          RefPill(label: "action_digest", ref: actionDigest)
+        }
+        if let signingSummary = item.signingSummary {
+          Text(signingSummary)
+            .font(.system(size: 10))
+            .foregroundStyle(HubTheme.textSecondary)
+            .lineLimit(2)
+        }
         if item.kind == "approval_required" {
-          Text("Approval remains operator-signature gated; this surface shows the nonce and does not mint or relay a signature.")
+          Text("Approval remains operator-signature gated; this surface shows the signer refs and does not mint or relay a signature.")
             .font(.system(size: 10))
             .foregroundStyle(HubTheme.textSecondary)
         }
