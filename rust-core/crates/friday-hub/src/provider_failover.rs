@@ -58,6 +58,7 @@
 //! number of wrapper calls.
 
 use crate::{AgentError, AgentLlmClient, AgentStep, MeteredStep, RawToolCall, TurnTrace};
+use friday_anthropic::ClaudeError;
 use friday_deepseek::DeepSeekError;
 
 /// Is `err` — the OUTER error from the PRIMARY provider's call — a FAILOVER-worthy
@@ -85,12 +86,30 @@ pub fn is_failover_worthy(err: &AgentError) -> bool {
             | DeepSeekError::BadResponse(_)
             | DeepSeekError::Core(_) => false,
         },
+        AgentError::ClaudeRoute(_) => false,
         // "no model available" (discovery selection) — a config issue, not an outage.
         AgentError::Model(_) => false,
         // The model REPLIED but the parse failed — NEVER failover (the double-bill trap is
         // the metered `Ok((Err(Parse), ..))` path, but a direct `propose_tool_call` parse
         // error is likewise not a route failure).
         AgentError::Parse(_) => false,
+    }
+}
+
+/// Is a structured Claude route error worth retrying once on a different provider? This mirrors
+/// [`is_failover_worthy`] without collapsing Claude's error into a string:
+/// transient provider unavailable, quota (402), and rate-limit (429) may use a different provider;
+/// auth, missing credentials, malformed/ordinary 4xx, and bad response fail closed unchanged.
+pub fn is_claude_failover_worthy(err: &AgentError) -> bool {
+    match err {
+        AgentError::ClaudeRoute(e) => match e {
+            ClaudeError::ProviderUnavailable(_) => true,
+            ClaudeError::ClientError { status } => *status == 402 || *status == 429,
+            ClaudeError::Auth(_) | ClaudeError::CredentialMissing | ClaudeError::BadResponse(_) => {
+                false
+            }
+        },
+        AgentError::Route(_) | AgentError::Model(_) | AgentError::Parse(_) => false,
     }
 }
 
@@ -160,6 +179,50 @@ impl<P: AgentLlmClient, F: AgentLlmClient> AgentLlmClient for ProviderFailoverWr
     }
 }
 
+/// The reverse, gated resilience wrapper: Claude primary, DeepSeek fallback. Kept as a distinct
+/// type so each direction has an explicit classifier and billing expectations; it still slots into
+/// the same [`AgentLlmClient`] seam and makes at most one fallback attempt per provider call.
+pub struct ClaudeToDeepSeekFailoverWrapper<P: AgentLlmClient, F: AgentLlmClient> {
+    primary: P,
+    fallback: F,
+}
+
+impl<P: AgentLlmClient, F: AgentLlmClient> ClaudeToDeepSeekFailoverWrapper<P, F> {
+    pub fn new(primary: P, fallback: F) -> Self {
+        Self { primary, fallback }
+    }
+}
+
+impl<P: AgentLlmClient, F: AgentLlmClient> AgentLlmClient
+    for ClaudeToDeepSeekFailoverWrapper<P, F>
+{
+    fn propose_tool_call(&self, task: &str) -> Result<RawToolCall, AgentError> {
+        match self.primary.propose_tool_call(task) {
+            Ok(call) => Ok(call),
+            Err(e) if is_claude_failover_worthy(&e) => self.fallback.propose_tool_call(task),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn next_step(&self, task: &str, history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+        self.next_step_metered(task, history)?.0
+    }
+
+    fn next_step_metered(
+        &self,
+        task: &str,
+        history: &[TurnTrace],
+    ) -> Result<MeteredStep, AgentError> {
+        match self.primary.next_step_metered(task, history) {
+            ok @ Ok(_) => ok,
+            Err(e) if is_claude_failover_worthy(&e) => {
+                self.fallback.next_step_metered(task, history)
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,6 +276,20 @@ mod tests {
                 model: "claude-opus-4-8".to_string(),
                 prompt_tokens: 11,
                 completion_tokens: 8,
+            }),
+        ))
+    }
+
+    fn deepseek_finish_with_deepseek_usage() -> Result<MeteredStep, AgentError> {
+        Ok((
+            Ok(AgentStep::Finish {
+                message: "PONG".to_string(),
+            }),
+            Some(BilledUsage {
+                provider_kind: friday_core::ProviderKind::DeepSeek,
+                model: "deepseek-v4-flash".to_string(),
+                prompt_tokens: 7,
+                completion_tokens: 5,
             }),
         ))
     }
@@ -271,7 +348,47 @@ mod tests {
         assert!(!is_failover_worthy(&AgentError::Model(
             "no model available".into()
         )));
+        assert!(!is_failover_worthy(&AgentError::ClaudeRoute(
+            ClaudeError::ProviderUnavailable("HTTP 503".into())
+        )));
         assert!(!is_failover_worthy(&AgentError::Parse("not json".into())));
+    }
+
+    #[test]
+    fn claude_classifier_failover_triggers() {
+        assert!(is_claude_failover_worthy(&AgentError::ClaudeRoute(
+            ClaudeError::ProviderUnavailable("HTTP 503".into())
+        )));
+        assert!(is_claude_failover_worthy(&AgentError::ClaudeRoute(
+            ClaudeError::ClientError { status: 402 }
+        )));
+        assert!(is_claude_failover_worthy(&AgentError::ClaudeRoute(
+            ClaudeError::ClientError { status: 429 }
+        )));
+    }
+
+    #[test]
+    fn claude_classifier_failover_never_triggers() {
+        for status in [400u16, 404, 413, 422] {
+            assert!(!is_claude_failover_worthy(&AgentError::ClaudeRoute(
+                ClaudeError::ClientError { status }
+            )));
+        }
+        assert!(!is_claude_failover_worthy(&AgentError::ClaudeRoute(
+            ClaudeError::Auth(401)
+        )));
+        assert!(!is_claude_failover_worthy(&AgentError::ClaudeRoute(
+            ClaudeError::CredentialMissing
+        )));
+        assert!(!is_claude_failover_worthy(&AgentError::ClaudeRoute(
+            ClaudeError::BadResponse("garbage".into())
+        )));
+        assert!(!is_claude_failover_worthy(&AgentError::Route(
+            DeepSeekError::ProviderUnavailable("HTTP 503".into())
+        )));
+        assert!(!is_claude_failover_worthy(&AgentError::Parse(
+            "not json".into()
+        )));
     }
 
     // ---- the wrapper: behavior per case -----------------------------------------------
@@ -402,6 +519,43 @@ mod tests {
             0,
             "a broken credential is operator-actionable, not failed over"
         );
+    }
+
+    #[test]
+    fn claude_provider_unavailable_fails_over_to_deepseek_with_deepseek_billing() {
+        let primary = ScriptedClient::new(|| {
+            Err(AgentError::ClaudeRoute(ClaudeError::ProviderUnavailable(
+                "HTTP 503".into(),
+            )))
+        });
+        let fallback = ScriptedClient::new(deepseek_finish_with_deepseek_usage);
+        let wrapper = ClaudeToDeepSeekFailoverWrapper::new(primary, fallback);
+        let (step, usage) = wrapper.next_step_metered("task", &[]).unwrap();
+        assert_eq!(
+            step.unwrap(),
+            AgentStep::Finish {
+                message: "PONG".into()
+            }
+        );
+        assert_eq!(
+            usage.unwrap().provider_kind,
+            friday_core::ProviderKind::DeepSeek
+        );
+        assert_eq!(wrapper.primary.calls(), 1);
+        assert_eq!(wrapper.fallback.calls(), 1);
+    }
+
+    #[test]
+    fn claude_auth_error_never_fails_over() {
+        let primary = ScriptedClient::new(|| Err(AgentError::ClaudeRoute(ClaudeError::Auth(401))));
+        let fallback = ScriptedClient::new(deepseek_finish_with_deepseek_usage);
+        let wrapper = ClaudeToDeepSeekFailoverWrapper::new(primary, fallback);
+        let err = wrapper.next_step_metered("task", &[]).unwrap_err();
+        assert!(matches!(
+            err,
+            AgentError::ClaudeRoute(ClaudeError::Auth(401))
+        ));
+        assert_eq!(wrapper.fallback.calls(), 0);
     }
 
     #[test]

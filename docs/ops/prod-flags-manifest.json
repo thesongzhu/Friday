@@ -210,6 +210,15 @@
       "notes": "Built-but-dark (registry gap #26). RGG is DeepSeek-only, so both provider legs are MOCKED: the named test drives the ProviderFailoverWrapper THROUGH the real friday_hub::run_loop against a real Hub Db — a DeepSeek 402 fails over to a finishing Claude mock, the loop Finishes 'PONG', and EXACTLY ONE token_ledger row is written attributed to anthropic/api.anthropic.com (no double-bill). Sibling e2e proofs in the same file: 429 + 5xx failover, and 400-malformed → loop errors closed with NO failover + NO bill. The wrapper/classifier per-case behavior (incl. the inner-parse-error double-bill guard, auth/no-model no-failover) is pinned in src/provider_failover.rs tests; the WIRING decision (flag-off byte-identical: wrapper not constructed; flag-on-but-Claude-absent: hard boot error; the exact-'1' flag matcher) is pinned in src/runtime.rs tests (failover_flag_off_does_not_construct_wrapper_byte_identical, failover_flag_on_without_claude_is_hard_boot_error, provider_failover_flag_matcher_is_exact_one_default_off). Rust Core CI now names this stress leg explicitly with `cargo test -p friday-hub --test provider_failover -- --nocapture` plus the in-crate provider_failover tests, so this residue is mechanism-verified on every Rust Core gate without model spend. Honest ceiling unchanged: this is mocked-provider loop proof, not a live Claude failover row, not strict OG9 organic, and not a GO-LIVE claim."
     },
     {
+      "flag": "FRIDAY_PROVIDER_FAILOVER_CLAUDE_TO_DEEPSEEK",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "On a FAILOVER-WORTHY primary (claude) route failure (5xx/408/529/transport, 402 quota, 429 rate-limit), the live agent loop retries the SAME call ONCE on the fallback (deepseek) and FINISHES on the fallback's answer, billed truthfully to deepseek; auth/missing-credential/bad-response/malformed primary errors NEVER fail over.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/tests/provider_failover.rs::claude_provider_unavailable_fails_over_to_deepseek_finishes_and_bills_deepseek",
+      "notes": "Built-but-dark. The mapped test drives ClaudeToDeepSeekFailoverWrapper THROUGH the real friday_hub::run_loop against a real Hub Db: a structured ClaudeRoute ProviderUnavailable fails over to a finishing DeepSeek mock, the loop Finishes 'PONG', and EXACTLY ONE token_ledger row is written attributed to deepseek/api.deepseek.com. The classifier and wrapper guards are pinned in src/provider_failover.rs tests (Claude ProviderUnavailable/402/429 fail over; auth/missing credential/bad response/ordinary 4xx/parse do not; no string matching). Runtime wiring stays default-OFF behind exact-'1' FRIDAY_PROVIDER_FAILOVER_CLAUDE_TO_DEEPSEEK; flag-OFF leaves the bare Claude route client in place, and flag-ON without a Claude primary is a hard boot error. Honest ceiling unchanged: this is mocked-provider loop proof, not a live DeepSeek fallback row, not strict OG9 organic, and not a GO-LIVE claim."
+    },
+    {
       "flag": "FRIDAY_STUDIO_RUST_ENABLED",
       "process": "rust-ws-wrapper",
       "prod_state": "dark",

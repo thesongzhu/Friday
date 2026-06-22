@@ -261,12 +261,13 @@ struct WorkItemRecoveryMetadata {
 }
 
 fn recovery_metadata_for_work_item(status: WorkItemStatus) -> WorkItemRecoveryMetadata {
+    let can_cancel = status.can_transition_to(WorkItemStatus::Cancelled);
     match status {
         WorkItemStatus::FailedRetryable => WorkItemRecoveryMetadata {
             kind: "retryable",
             blocking_reason: "failed retryable; operator may retry by returning the WorkItem to ready_to_dispatch",
             can_retry: true,
-            can_cancel: true,
+            can_cancel,
         },
         WorkItemStatus::FailedTerminal => WorkItemRecoveryMetadata {
             kind: "terminal",
@@ -279,23 +280,28 @@ fn recovery_metadata_for_work_item(status: WorkItemStatus) -> WorkItemRecoveryMe
                 kind: "needs_operator",
                 blocking_reason: "waiting on operator input or preflight resolution",
                 can_retry: false,
-                can_cancel: true,
+                can_cancel,
             }
         }
-        WorkItemStatus::Dispatched
-        | WorkItemStatus::HubAccepted
-        | WorkItemStatus::ProviderRouted
-        | WorkItemStatus::ProviderWaiting => WorkItemRecoveryMetadata {
+        WorkItemStatus::Dispatched | WorkItemStatus::HubAccepted | WorkItemStatus::ProviderRouted => {
+            WorkItemRecoveryMetadata {
+                kind: "in_flight",
+                blocking_reason: "provider or hub execution is still in flight; cancel is the only exposed recovery action",
+                can_retry: false,
+                can_cancel,
+            }
+        }
+        WorkItemStatus::ProviderWaiting => WorkItemRecoveryMetadata {
             kind: "in_flight",
-            blocking_reason: "provider or hub execution is still in flight; cancel is the only exposed recovery action",
+            blocking_reason: "provider execution is waiting; no legal recovery action is exposed until the provider returns or crash-recovery reconciles it",
             can_retry: false,
-            can_cancel: true,
+            can_cancel,
         },
         WorkItemStatus::Draft | WorkItemStatus::ReadyToDispatch => WorkItemRecoveryMetadata {
             kind: "dispatchable",
             blocking_reason: "ready for dispatch; no recovery action required",
             can_retry: false,
-            can_cancel: true,
+            can_cancel,
         },
         WorkItemStatus::CompletedWithProof
         | WorkItemStatus::Cancelled
@@ -1077,6 +1083,25 @@ mod tests {
             proof_requirements: vec!["redacted route projection".into()],
             ownership_claim_ids: Vec::new(),
         }
+    }
+
+    #[test]
+    fn recovery_can_cancel_matches_core_cancel_transition() {
+        let provider_waiting = recovery_metadata_for_work_item(WorkItemStatus::ProviderWaiting);
+        assert!(
+            !provider_waiting.can_cancel,
+            "ProviderWaiting has no core ProviderWaiting->Cancelled edge"
+        );
+        let ready = recovery_metadata_for_work_item(WorkItemStatus::ReadyToDispatch);
+        assert!(
+            ready.can_cancel,
+            "ReadyToDispatch keeps its legal core cancel affordance"
+        );
+        let failed = recovery_metadata_for_work_item(WorkItemStatus::FailedRetryable);
+        assert!(
+            failed.can_cancel,
+            "FailedRetryable keeps its legal core cancel affordance"
+        );
     }
 
     /// Seed a Mission EXACTLY the way the REAL live producer mints it — a HYPHEN `mission-{…}` id
