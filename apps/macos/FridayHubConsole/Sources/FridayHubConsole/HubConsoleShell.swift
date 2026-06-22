@@ -13,13 +13,17 @@ struct HubConsoleShell: View {
   init(
     client: FridayRustReadClient,
     writeClient: FridayMissionSpineWriteClient? = nil,
-    missionRunClient: FridayMissionBoundRunWriteClient? = nil
+    missionRunClient: FridayMissionBoundRunWriteClient? = nil,
+    approvalSigner: OperatorApprovalSigner? = nil,
+    approvalResumeClient: FridayRustWriteClient? = nil
   ) {
     _operationsVM = StateObject(
       wrappedValue: OperationsOverviewViewModel(
         client: client,
         writeClient: writeClient,
-        missionRunClient: missionRunClient))
+        missionRunClient: missionRunClient,
+        approvalSigner: approvalSigner,
+        approvalResumeClient: approvalResumeClient))
   }
 
   var body: some View {

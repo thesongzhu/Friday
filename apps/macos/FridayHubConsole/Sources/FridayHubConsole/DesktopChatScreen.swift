@@ -346,7 +346,20 @@ struct DesktopChatScreen: View {
             .lineLimit(2)
         }
         if item.kind == "approval_required" {
-          Text("Approval remains operator-signature gated; this surface shows the signer refs and does not mint or relay a signature.")
+          HStack(spacing: 8) {
+            Button {
+              Task { await viewModel.approveNeedsMeItem(item) }
+            } label: {
+              Label("Approve", systemImage: "checkmark.seal")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(HubTheme.cyan)
+            .disabled(approvalRelayState(for: item).isSent)
+            .accessibilityLabel("Approve and relay operator signature")
+            .accessibilityIdentifier("friday.desktop.chat.approve.\(item.refId)")
+            approvalRelayStatus(for: item)
+          }
+          Text("Approval remains operator-signature gated; this surface relays an external signer blob and does not mint a signature.")
             .font(.system(size: 10))
             .foregroundStyle(HubTheme.textSecondary)
         }
@@ -354,6 +367,30 @@ struct DesktopChatScreen: View {
       .padding(.vertical, 6)
       .accessibilityElement(children: .combine)
       .accessibilityLabel("Needs review \(item.kind). \(item.title)")
+    }
+  }
+
+  private func approvalRelayState(for item: ChatNeedsMeItem) -> WriteActionState {
+    viewModel.approvalRelayStates[item.id] ?? .ready
+  }
+
+  @ViewBuilder
+  private func approvalRelayStatus(for item: ChatNeedsMeItem) -> some View {
+    switch approvalRelayState(for: item) {
+    case .ready:
+      EmptyView()
+    case .sent:
+      ProgressView().scaleEffect(0.7)
+    case let .confirmed(summary, _, _):
+      Text(summary)
+        .font(.system(size: 10))
+        .foregroundStyle(HubTheme.textSecondary)
+        .lineLimit(2)
+    case let .error(reason):
+      Text(reason)
+        .font(.system(size: 10))
+        .foregroundStyle(HubTheme.textSecondary)
+        .lineLimit(2)
     }
   }
 

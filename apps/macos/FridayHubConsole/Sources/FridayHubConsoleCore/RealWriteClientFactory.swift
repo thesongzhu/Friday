@@ -2,7 +2,7 @@ import Foundation
 import FridayRustClient
 
 public typealias FridayMissionSpineDispatchingWriteClient =
-  FridayMissionSpineWriteClient & FridayMissionBoundRunWriteClient
+  FridayMissionSpineWriteClient & FridayMissionBoundRunWriteClient & FridayRustWriteClient
 
 // MARK: - Real mission-spine WRITE-client factory (Lane-D entry-point-A organic driver)
 //
@@ -119,8 +119,17 @@ public enum RealWriteClientFactory {
 
 /// A `FridayMissionSpineWriteClient` that always throws — so the view model renders honest
 /// "unavailable". Never returns a result; it cannot fabricate a confirm.
-struct HonestlyUnavailableWriteClient: FridayMissionSpineWriteClient, FridayMissionBoundRunWriteClient {
+struct HonestlyUnavailableWriteClient: FridayMissionSpineWriteClient, FridayMissionBoundRunWriteClient, FridayRustWriteClient {
   let reason: String
+  func dispatchAgentRun(
+    task: String,
+    constraints: AgentRunConstraintsWire?
+  ) async throws -> AgentRunDispatchOutcome {
+    throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
+  }
+  func resumeWithApproval(runId: String, opaqueSignedBlob: [UInt8]) async throws -> ResumeRelayResult {
+    throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
+  }
   func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire {
     throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
   }
