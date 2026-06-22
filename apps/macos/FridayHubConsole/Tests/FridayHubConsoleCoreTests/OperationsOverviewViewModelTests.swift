@@ -211,6 +211,30 @@ func mockWireSnapshotRoundTripsThroughAdapterToRichDisplay() throws {
 }
 
 @Test
+@MainActor
+func refreshPreservesRenderCriticalProjectionFieldsFromWire() async {
+  let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: .loaded))
+  await vm.refresh()
+
+  guard case let .loaded(snapshot) = vm.state else {
+    Issue.record("expected loaded representative snapshot, got \(vm.state)")
+    return
+  }
+  let expected = MockReadClient.representativeSnapshot
+  #expect(snapshot.missionId == expected.missionId)
+  #expect(snapshot.fridayConversationId == expected.fridayConversationId)
+  #expect(snapshot.providerReceiptRefs == expected.providerReceiptRefs)
+  #expect(snapshot.channelReceiptRefs == expected.channelReceiptRefs)
+  #expect(snapshot.workItems.map(\.id) == expected.workItems.map(\.id))
+  #expect(snapshot.workItems.map(\.state) == expected.workItems.map(\.state))
+  #expect(snapshot.workItems.map(\.owner) == expected.workItems.map(\.owner))
+  #expect(snapshot.memoryCandidates.map(\.evidenceRef) == expected.memoryCandidates.map(\.evidenceRef))
+  #expect(snapshot.runOutcomeLearningCandidates.map(\.evidenceRef) == expected.runOutcomeLearningCandidates.map(\.evidenceRef))
+  #expect(snapshot.transcriptSections.flatMap(\.events).map(\.proofRef) == expected.transcriptSections.flatMap(\.events).map(\.proofRef))
+  #expect(!snapshot.isLoadedEmpty)
+}
+
+@Test
 func adapterSurfacesMalformedProjectionAsUnavailableNotReady() throws {
   // A wire snapshot whose `raw` is NOT a valid Workbench projection must throw (→ honest
   // unavailable), never a partial-but-ready snapshot. We never fabricate readiness from
