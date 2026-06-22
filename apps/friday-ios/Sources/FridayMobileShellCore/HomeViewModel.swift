@@ -365,11 +365,78 @@ public enum HomeLearningDecisionState: Sendable, Equatable {
   }
 }
 
+public enum MobilePairingAttemptMode: String, Sendable, Equatable {
+  case idle
+  case sending
+  case accepted
+  case denied
+  case unavailable
+}
+
+public struct MobilePairingAttempt: Sendable, Equatable {
+  public let mode: MobilePairingAttemptMode
+  public let pairingId: String?
+  public let hubId: String?
+  public let errorCode: String?
+  public let reason: String
+
+  public static let idle = MobilePairingAttempt(
+    mode: .idle,
+    pairingId: nil,
+    hubId: nil,
+    errorCode: nil,
+    reason: "No PairAck has been received.")
+
+  public static func sending(_ projection: FridayPairingManifestProjection?) -> MobilePairingAttempt {
+    MobilePairingAttempt(
+      mode: .sending,
+      pairingId: projection?.pairingId,
+      hubId: projection?.hubId,
+      errorCode: nil,
+      reason: "Pair request sent; waiting for Hub PairAck.")
+  }
+
+  public static func accepted(_ projection: FridayPairingManifestProjection?) -> MobilePairingAttempt {
+    MobilePairingAttempt(
+      mode: .accepted,
+      pairingId: projection?.pairingId,
+      hubId: projection?.hubId,
+      errorCode: nil,
+      reason: "Hub returned PairAck accepted. Trust grant/passport and write authority still require their own governed gates.")
+  }
+
+  public static func denied(
+    _ projection: FridayPairingManifestProjection?,
+    code: FridayErrorCode?
+  ) -> MobilePairingAttempt {
+    MobilePairingAttempt(
+      mode: .denied,
+      pairingId: projection?.pairingId,
+      hubId: projection?.hubId,
+      errorCode: code?.rawValue,
+      reason: "Hub returned PairAck denied.")
+  }
+
+  public static func unavailable(
+    _ projection: FridayPairingManifestProjection?,
+    reason: String
+  ) -> MobilePairingAttempt {
+    MobilePairingAttempt(
+      mode: .unavailable,
+      pairingId: projection?.pairingId,
+      hubId: projection?.hubId,
+      errorCode: nil,
+      reason: reason)
+  }
+}
+
 @MainActor
 public final class HomeViewModel: ObservableObject {
   @Published public private(set) var state: HomeLoadState = .idle
   @Published public private(set) var detailState: HomeReadDetailState = .idle
   @Published public private(set) var runOutcomeLearningDecisionStates: [String: HomeLearningDecisionState] = [:]
+  @Published public private(set) var pairingPreflight: MobilePairingPreflight = .empty
+  @Published public private(set) var pairingAttempt: MobilePairingAttempt = .idle
 
   public let devicePairing: DevicePairingReadiness
 
@@ -377,6 +444,7 @@ public final class HomeViewModel: ObservableObject {
   /// refs-only value projections, never the package snapshot's raw body map.
   private let client: FridayRustReadClient
   private let writeClient: FridayMissionSpineWriteClient?
+  private let makePairingClient: (DeviceKeypair) -> FridayPairingClient?
 
   /// - Parameter client: the read client. In production this is the real `SealedWSReadClient`
   ///   (built by `FridayClientFactory.makeReadClient`); a preview/debug build injects a mock.
@@ -386,11 +454,13 @@ public final class HomeViewModel: ObservableObject {
     devicePairing: DevicePairingReadiness = .evaluate(
       deviceKeypairRequested: false,
       readLiveRequested: false,
-      writeLiveRequested: false)
+      writeLiveRequested: false),
+    makePairingClient: @escaping (DeviceKeypair) -> FridayPairingClient? = { _ in nil }
   ) {
     self.client = client
     self.writeClient = writeClient
     self.devicePairing = devicePairing
+    self.makePairingClient = makePairingClient
   }
 
   /// Whether the Home is online — derived from the load state (ONLY a real loaded projection is
@@ -446,6 +516,96 @@ public final class HomeViewModel: ObservableObject {
     }
   }
 
+  public func preflightPairingQR(
+    _ qrPayload: String,
+    nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
+    backend: DeviceKeypairBackend = KeychainDeviceKeypairBackend()
+  ) {
+    pairingPreflight = MobilePairingPreflight.evaluate(
+      qrPayload: qrPayload,
+      nowMs: nowMs,
+      backend: backend)
+  }
+
+  public func clearPairingPreflight() {
+    pairingPreflight = .empty
+    pairingAttempt = .idle
+  }
+
+  public func pairScannedQR(
+    _ qrPayload: String,
+    deviceId: String = "",
+    nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
+    backend: DeviceKeypairBackend = KeychainDeviceKeypairBackend()
+  ) async {
+    let payload = qrPayload.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !payload.isEmpty else {
+      pairingPreflight = .empty
+      pairingAttempt = .idle
+      return
+    }
+
+    let manifest: FridayPairingManifest
+    do {
+      manifest = try JSONDecoder().decode(FridayPairingManifest.self, from: Data(payload.utf8))
+      try manifest.validate(nowMs: nowMs)
+    } catch {
+      pairingPreflight = MobilePairingPreflight.evaluate(
+        qrPayload: payload,
+        nowMs: nowMs,
+        backend: backend)
+      pairingAttempt = .unavailable(pairingPreflight.projection, reason: Self.pairingReason(for: error))
+      return
+    }
+
+    let device: DeviceKeypair
+    do {
+      device = try DeviceKeypairStore.loadOrGenerate(backend: backend)
+      _ = try manifest.pairingProof(forDevicePublicKey: device.keypair.publicKey)
+    } catch {
+      pairingPreflight = MobilePairingPreflight.evaluate(
+        qrPayload: payload,
+        nowMs: nowMs,
+        backend: backend)
+      pairingAttempt = .unavailable(
+        manifest.redactedProjection,
+        reason: "Device keypair store is unavailable.")
+      return
+    }
+
+    pairingPreflight = MobilePairingPreflight(
+      mode: .ready,
+      projection: manifest.redactedProjection,
+      devicePublicKeyHex: device.publicKeyHex,
+      proofReady: true,
+      reason: "Pairing QR is valid and this device key is ready.",
+      nextStep: "Pair request is bound to this device key; connected state requires PairAck.")
+
+    guard let pairingClient = makePairingClient(device) else {
+      pairingAttempt = .unavailable(
+        manifest.redactedProjection,
+        reason: "Pairing channel is not configured for this launch.")
+      return
+    }
+
+    let resolvedDeviceId = deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+    let finalDeviceId = resolvedDeviceId.isEmpty
+      ? "ios-\(device.publicKeyHex.prefix(12))"
+      : resolvedDeviceId
+    pairingAttempt = .sending(manifest.redactedProjection)
+    do {
+      let ack = try await pairingClient.pairDevice(manifest: manifest, deviceId: finalDeviceId)
+      if ack.accepted {
+        pairingAttempt = .accepted(manifest.redactedProjection)
+        await refresh()
+      } else {
+        pairingAttempt = .denied(manifest.redactedProjection, code: ack.errorCode)
+      }
+    } catch {
+      pairingAttempt = .unavailable(manifest.redactedProjection, reason: Self.pairingReason(for: error))
+    }
+  }
+
   private func readDetail(_ arm: HomeReadDetailArm) async throws -> ReadProjectionSnapshot {
     switch arm {
     case let .runReadback(runId):
@@ -484,6 +644,30 @@ public final class HomeViewModel: ObservableObject {
       }
     }
     return "Friday is unavailable — \(error)"
+  }
+
+  static func pairingReason(for error: Error) -> String {
+    if let e = error as? FridayPairingManifestError {
+      switch e {
+      case .expired:
+        return "Pairing QR has expired."
+      case .unsupportedKind, .badHubPublicKey, .missingWebSocketEndpoint:
+        return "Pairing QR cannot be trusted."
+      }
+    }
+    if let e = error as? FridayPairingClientError {
+      switch e {
+      case .badServerPubkey, .badSessionNonce, .serverPubkeyMismatch:
+        return "Friday could not establish a trusted pairing connection."
+      case let .serverError(code, message):
+        return "Pairing unavailable (\(code.rawValue)) — \(message)"
+      case let .unexpectedResponse(kind):
+        return "Pairing returned an unexpected response (\(kind))."
+      case let .transport(why):
+        return "Pairing channel is offline — \(why)"
+      }
+    }
+    return "Pairing unavailable — \(error)"
   }
 }
 
