@@ -318,6 +318,17 @@ final class ReadClientFactoryTests: XCTestCase {
     XCTAssertEqual(p.missionId, "mission-emulated")
     XCTAssertEqual(p.runtimeFeedStatus, "live_rust_hub_projection")
     XCTAssertEqual(p.workItemIds, ["wi-a"])
+    XCTAssertEqual(p.routeSelected, "codex")
+    XCTAssertEqual(p.routeAlternatives, ["claude"])
+    XCTAssertEqual(p.providerReceiptRefs, ["proof://provider/emulated"])
+    XCTAssertEqual(p.channelReceiptRefs, ["proof://surface/mobile/emulated"])
+    XCTAssertEqual(p.workItems.map(\.title), ["Rendered answer-ready work item"])
+    XCTAssertEqual(p.workItems.first?.owner, "friday_owned")
+    XCTAssertEqual(p.memoryCandidates.first?.grantsMemoryAuthority, false)
+    XCTAssertEqual(p.runOutcomeLearningCandidates.first?.evidenceRef, "proof://learning/emulated")
+    XCTAssertEqual(p.capabilityStates.first?.dispatchAllowed, false)
+    XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile UI consumed the owner-gated projection.")
+    XCTAssertEqual(p.needsMeCount, 3)
   }
 
   /// A non-allowlisted peer is rejected at the handshake ⇒ honest-unavailable (fail-closed).
@@ -334,6 +345,31 @@ final class ReadClientFactoryTests: XCTestCase {
     let vm = HomeViewModel(client: client)
     await vm.refresh()
     guard case .unavailable = vm.state else { return XCTFail("a non-allowlisted peer must be unavailable, got \(vm.state)") }
+    XCTAssertFalse(vm.state.isOnline)
+  }
+
+  /// A peer can be enrolled but still fail the owner-gate. The UI must render unavailable, not a
+  /// loaded-empty or stale cached snapshot.
+  func testRealClient_mismatchedOwnerPrincipal_failsClosed() async throws {
+    let owner = "principal:owner-allowlisted"
+    let clientKp = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(TestKeys.clientSecret))
+    let serverKp = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(TestKeys.serverSecret))
+    let nonce = TestKeys.sessionNonce
+    let transport = EmulatedReadServerTransport(
+      serverKeypair: serverKp, sessionNonce: nonce,
+      peerAllowlist: [clientKp.publicKey], ownerAllowlist: [owner])
+    let client = FridayClientFactory.makeReadClient(
+      keypair: clientKp,
+      endpoint: .init(forwardedPrincipal: "principal:not-the-owner"),
+      makeTransport: { transport })
+    let vm = HomeViewModel(client: client)
+
+    await vm.refresh()
+
+    guard case .unavailable = vm.state else {
+      return XCTFail("a mismatched owner principal must be unavailable, got \(vm.state)")
+    }
+    XCTAssertNil(vm.state.projection)
     XCTAssertFalse(vm.state.isOnline)
   }
 }
@@ -407,7 +443,27 @@ final class EmulatedReadServerTransport: SealedWSTransport {
     let projection = """
     {"missionId":"mission-emulated","fridayConversationId":"conv-emulated",\
     "runtimeFeedStatus":"live_rust_hub_projection","statusLabels":[],\
-    "workItems":[{"workItemId":"wi-a"}]}
+    "routeDecision":{"advisorSummary":"Use Codex first, then Claude when needed.",\
+    "selectedRoute":"codex","alternatives":["claude"],"truthLabel":"friday_owned"},\
+    "providerReceiptRefs":["proof://provider/emulated"],\
+    "channelReceiptRefs":["proof://surface/mobile/emulated"],\
+    "workItems":[{"workItemId":"wi-a","title":"Rendered answer-ready work item",\
+    "state":"waiting","owner":"friday_owned","proofRef":"proof://wi/a","done":false}],\
+    "memoryCandidates":[{"id":"mem-a","preview":"Remember the preferred routing shape.",\
+    "state":"candidate_review_only","grantsMemoryAuthority":false,\
+    "evidenceRef":"proof://memory/emulated"}],\
+    "runOutcomeLearningCandidates":[{"id":"learn-a","runId":"run-a","workItemId":"wi-a",\
+    "kind":"preference","state":"candidate","summary":"Codex handled the first leg.",\
+    "evidenceRef":"proof://learning/emulated"}],\
+    "capabilityStates":[{"id":"cap-route","label":"Route advisor","kind":"advisor",\
+    "truthLabel":"friday_owned","approvalState":"not_required","dispatchAllowed":false,\
+    "summary":"Advisory only","proofRef":"proof://cap/route"}],\
+    "transcriptSections":[{"id":"sec-a","title":"Mission","groupKind":"mission",\
+    "missionId":"mission-emulated","truthLabel":"friday_owned","status":"waiting",\
+    "events":[{"id":"evt-a","missionId":"mission-emulated","surface":"mobile",\
+    "status":"waiting","truthLabel":"friday_owned",\
+    "summary":"Mobile UI consumed the owner-gated projection.",\
+    "proofRef":"proof://event/a","capturedAt":"2026-06-22T00:00:00Z"}]}]}
     """
     let innerSealed = try FridayCrypto.seal(key: sessionKey, plaintext: Array(projection.utf8), aad: readSessionAad)
     let projectionHex = Hex.encode(FridayCrypto.encodeSealed(innerSealed))
@@ -420,7 +476,7 @@ final class EmulatedReadServerTransport: SealedWSTransport {
     let snap = try JSONDecoder().decode(WorkbenchProjectionSnapshotWire.self, from: Data(snapJSON.utf8))
     let resp = FridayEnvelope(msgId: "snap-\(req.requestId)", sentAt: 1_780_640_000_000,
                               message: .workbenchProjectionSnapshot(snap)).withCorrelation(env.msgId)
-    queued.append(try FridayCrypto.encodeSealed(try FridayCrypto.seal(
+    queued.append(FridayCrypto.encodeSealed(try FridayCrypto.seal(
       key: sessionKey, plaintext: [UInt8](resp.encodeJSON()), aad: readSessionAad)))
   }
 
