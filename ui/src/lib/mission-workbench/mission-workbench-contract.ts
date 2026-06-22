@@ -23,6 +23,14 @@ export type MissionWorkbenchRuntimeFeedStatus =
   | "live_rust_hub_projection"
   | "pending_rust_hub_projection";
 
+export type MissionWorkItemRecoveryKind =
+  | "none"
+  | "dispatchable"
+  | "in_flight"
+  | "needs_operator"
+  | "retryable"
+  | "terminal";
+
 export interface MissionWorkbenchWorkItem {
   id: string;
   title: string;
@@ -30,6 +38,10 @@ export interface MissionWorkbenchWorkItem {
   owner: MissionTruthLabel;
   proofRef?: string;
   done: boolean;
+  blockingReason: string;
+  recoveryKind: MissionWorkItemRecoveryKind;
+  canRetry: boolean;
+  canCancel: boolean;
 }
 
 export interface MissionWorkbenchTimelinePage {

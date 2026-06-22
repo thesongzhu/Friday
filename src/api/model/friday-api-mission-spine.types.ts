@@ -23,6 +23,14 @@ export type FridayMissionSpineRuntimeFeedStatus =
   | "live_rust_hub_projection"
   | "pending_rust_hub_projection";
 
+export type FridayMissionSpineWorkItemRecoveryKind =
+  | "none"
+  | "dispatchable"
+  | "in_flight"
+  | "needs_operator"
+  | "retryable"
+  | "terminal";
+
 export interface FridayMissionSpineWorkbenchWorkItem {
   id: string;
   title: string;
@@ -30,6 +38,10 @@ export interface FridayMissionSpineWorkbenchWorkItem {
   owner: FridayMissionSpineTruthLabel;
   proofRef?: string;
   done: boolean;
+  blockingReason: string;
+  recoveryKind: FridayMissionSpineWorkItemRecoveryKind;
+  canRetry: boolean;
+  canCancel: boolean;
 }
 
 export interface FridayMissionSpineWorkbenchTimelinePage {

@@ -107,7 +107,11 @@ public struct HomeProjection: Sendable, Equatable {
         state: (row["state"] as? String) ?? "unknown",
         owner: (row["owner"] as? String) ?? "unknown",
         proofRef: row["proofRef"] as? String,
-        done: row["done"] as? Bool ?? false)
+        done: row["done"] as? Bool ?? false,
+        blockingReason: (row["blockingReason"] as? String) ?? "",
+        recoveryKind: (row["recoveryKind"] as? String) ?? "none",
+        canRetry: row["canRetry"] as? Bool ?? false,
+        canCancel: row["canCancel"] as? Bool ?? false)
     }
   }
 
@@ -192,9 +196,13 @@ public struct HomeWorkItem: Sendable, Identifiable, Equatable {
   public let owner: String
   public let proofRef: String?
   public let done: Bool
+  public let blockingReason: String
+  public let recoveryKind: String
+  public let canRetry: Bool
+  public let canCancel: Bool
 
   public var needsAttention: Bool {
-    !done && ["blocked", "waiting", "error", "stale"].contains(state)
+    !done && (["blocked", "waiting", "error", "stale"].contains(state) || canRetry || canCancel)
   }
 }
 

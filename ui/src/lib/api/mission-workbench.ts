@@ -32,6 +32,27 @@ interface ControlMissionRouteDecisionResponse {
   result: MissionRouteDecisionControlResult;
 }
 
+export interface MissionWorkItemStatusRequest {
+  targetStatus: string;
+  actorRef: string;
+  reason: string;
+  proofReceipt?: string;
+}
+
+export interface MissionWorkItemStatusResult {
+  truthLabel: "rust_wired";
+  workItemId: string;
+  status: string;
+  actorRef: string;
+  reason: string;
+  proofReceipt?: string;
+  updatedAtMs: number;
+}
+
+interface TransitionMissionWorkItemStatusResponse {
+  result: MissionWorkItemStatusResult;
+}
+
 export const missionWorkbenchApi = {
   async getSnapshot(missionId?: string): Promise<MissionWorkbenchSnapshot> {
     const path = missionId
@@ -49,6 +70,18 @@ export const missionWorkbenchApi = {
     const data = await apiClient.post<
       MissionRouteDecisionControlRequest,
       ControlMissionRouteDecisionResponse
+    >(path, request);
+    return data.result;
+  },
+
+  async transitionWorkItemStatus(
+    workItemId: string,
+    request: MissionWorkItemStatusRequest,
+  ): Promise<MissionWorkItemStatusResult> {
+    const path = `/v1/mission-spine/work-items/${encodeURIComponent(workItemId)}/status`;
+    const data = await apiClient.post<
+      MissionWorkItemStatusRequest,
+      TransitionMissionWorkItemStatusResponse
     >(path, request);
     return data.result;
   },

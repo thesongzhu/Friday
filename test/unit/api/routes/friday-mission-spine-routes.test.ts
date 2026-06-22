@@ -54,6 +54,10 @@ const snapshot: FridayMissionSpineWorkbenchSnapshot = {
       owner: "friday_owned",
       proofRef: "proof://provider/ack/not-completion",
       done: false,
+      blockingReason: "provider or hub execution is still in flight; cancel is the only exposed recovery action",
+      recoveryKind: "in_flight",
+      canRetry: false,
+      canCancel: true,
     },
     {
       id: "work_timeline_projection_test",
@@ -62,6 +66,10 @@ const snapshot: FridayMissionSpineWorkbenchSnapshot = {
       owner: "friday_owned",
       proofRef: "proof://timeline/page-2/cursor",
       done: false,
+      blockingReason: "bounded timeline read only; no WorkItem recovery action applies",
+      recoveryKind: "none",
+      canRetry: false,
+      canCancel: false,
     },
     {
       id: "work_completed_projection_test",
@@ -70,6 +78,10 @@ const snapshot: FridayMissionSpineWorkbenchSnapshot = {
       owner: "friday_owned",
       proofRef: "proof://provider/receipt/redacted",
       done: true,
+      blockingReason: "terminal or archived WorkItem; no recovery action applies",
+      recoveryKind: "none",
+      canRetry: false,
+      canCancel: false,
     },
   ],
   timelinePages: [
@@ -423,6 +435,40 @@ describe("createFridayMissionSpineRoutes", () => {
     const error = thrown as FridayDomainError;
     expect(error.code).toBe("MISSION_SPINE_WORKBENCH_SNAPSHOT_INVALID");
     expect(JSON.stringify(error.details)).toContain("non_completion_state_marked_done");
+  });
+
+  it("fails closed when stale WorkItems omit the retry recovery affordance", async () => {
+    const invalidSnapshot = cloneSnapshot({
+      workItems: snapshot.workItems.map((item, index) => (
+        index === 0
+          ? {
+            ...item,
+            state: "stale",
+            recoveryKind: "in_flight",
+            canRetry: false,
+            canCancel: true,
+          }
+          : item
+      )),
+    });
+    const routes = createFridayMissionSpineRoutes({
+      workbench: { getSnapshot: vi.fn(async () => invalidSnapshot) },
+      disabledReason: null,
+    });
+    const route = findRoute(routes);
+
+    let thrown: unknown = null;
+    try {
+      await route.handler(makeCtx() as never);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    const error = thrown as FridayDomainError;
+    expect(error.code).toBe("MISSION_SPINE_WORKBENCH_SNAPSHOT_INVALID");
+    expect(JSON.stringify(error.details)).toContain("stale_work_item_not_retryable");
+    expect(JSON.stringify(error.details)).toContain("stale_work_item_retry_not_exposed");
   });
 
   it("fails closed when observed or approval-gated capability state can dispatch", async () => {

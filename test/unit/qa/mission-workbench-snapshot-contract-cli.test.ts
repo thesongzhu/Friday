@@ -45,6 +45,10 @@ function makeSnapshot(overrides: Record<string, unknown> = {}) {
         owner: "friday_owned",
         proofRef: "proof://provider/ack/not-completion",
         done: false,
+        blockingReason: "provider or hub execution is still in flight; cancel is the only exposed recovery action",
+        recoveryKind: "in_flight",
+        canRetry: false,
+        canCancel: true,
       },
       {
         id: "work_timeline",
@@ -53,6 +57,10 @@ function makeSnapshot(overrides: Record<string, unknown> = {}) {
         owner: "friday_owned",
         proofRef: "proof://timeline/page-2/cursor",
         done: false,
+        blockingReason: "bounded timeline read only; no WorkItem recovery action applies",
+        recoveryKind: "none",
+        canRetry: false,
+        canCancel: false,
       },
       {
         id: "work_completed",
@@ -61,6 +69,10 @@ function makeSnapshot(overrides: Record<string, unknown> = {}) {
         owner: "friday_owned",
         proofRef: "proof://provider/receipt/redacted",
         done: true,
+        blockingReason: "terminal or archived WorkItem; no recovery action applies",
+        recoveryKind: "none",
+        canRetry: false,
+        canCancel: false,
       },
     ],
     timelinePages: [

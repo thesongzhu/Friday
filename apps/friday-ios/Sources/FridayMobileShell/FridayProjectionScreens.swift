@@ -543,6 +543,23 @@ struct FridayProjectionScreen: View {
       HStack(spacing: 6) {
         statusChip(item.state)
         statusChip(item.owner)
+        statusChip(item.recoveryKind)
+      }
+      if !item.blockingReason.isEmpty {
+        Text(item.blockingReason)
+          .font(.system(size: 11))
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      if item.canRetry || item.canCancel {
+        HStack(spacing: 6) {
+          if item.canRetry {
+            statusChip("retry available")
+          }
+          if item.canCancel {
+            statusChip("cancel available")
+          }
+        }
       }
       if let proofRef = item.proofRef {
         RefPill(label: "proofRef", ref: proofRef)

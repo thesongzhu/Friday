@@ -219,6 +219,7 @@ fn work_items_json(work_items: &[WorkItem]) -> Vec<Value> {
         .map(|item| {
             let state = lifecycle_state_for_work_item(item.status);
             let done = item.completion_is_proven();
+            let recovery = recovery_metadata_for_work_item(item.status);
             json!({
                 "id": item.work_item_id,
                 "title": item.judgment_memory.task,
@@ -227,7 +228,11 @@ fn work_items_json(work_items: &[WorkItem]) -> Vec<Value> {
                 "proofRef": item.proof_receipts.first()
                     .map(|proof| redacted_ref("work-item-proof", proof))
                     .unwrap_or_else(|| redacted_ref("work-item-required", &item.work_item_id)),
-                "done": done
+                "done": done,
+                "blockingReason": recovery.blocking_reason,
+                "recoveryKind": recovery.kind,
+                "canRetry": recovery.can_retry,
+                "canCancel": recovery.can_cancel
             })
         })
         .collect::<Vec<_>>();
@@ -238,10 +243,70 @@ fn work_items_json(work_items: &[WorkItem]) -> Vec<Value> {
             "state": "timeline_read",
             "owner": "friday_owned",
             "proofRef": redacted_ref("timeline-read", &first.mission_id),
-            "done": false
+            "done": false,
+            "blockingReason": "bounded timeline read only; no WorkItem recovery action applies",
+            "recoveryKind": "none",
+            "canRetry": false,
+            "canCancel": false
         }));
     }
     rows
+}
+
+struct WorkItemRecoveryMetadata {
+    kind: &'static str,
+    blocking_reason: &'static str,
+    can_retry: bool,
+    can_cancel: bool,
+}
+
+fn recovery_metadata_for_work_item(status: WorkItemStatus) -> WorkItemRecoveryMetadata {
+    match status {
+        WorkItemStatus::FailedRetryable => WorkItemRecoveryMetadata {
+            kind: "retryable",
+            blocking_reason: "failed retryable; operator may retry by returning the WorkItem to ready_to_dispatch",
+            can_retry: true,
+            can_cancel: true,
+        },
+        WorkItemStatus::FailedTerminal => WorkItemRecoveryMetadata {
+            kind: "terminal",
+            blocking_reason: "terminal failure; no automatic retry is exposed from the Workbench",
+            can_retry: false,
+            can_cancel: false,
+        },
+        WorkItemStatus::PreflightBlocked | WorkItemStatus::WaitingForUser => {
+            WorkItemRecoveryMetadata {
+                kind: "needs_operator",
+                blocking_reason: "waiting on operator input or preflight resolution",
+                can_retry: false,
+                can_cancel: true,
+            }
+        }
+        WorkItemStatus::Dispatched
+        | WorkItemStatus::HubAccepted
+        | WorkItemStatus::ProviderRouted
+        | WorkItemStatus::ProviderWaiting => WorkItemRecoveryMetadata {
+            kind: "in_flight",
+            blocking_reason: "provider or hub execution is still in flight; cancel is the only exposed recovery action",
+            can_retry: false,
+            can_cancel: true,
+        },
+        WorkItemStatus::Draft | WorkItemStatus::ReadyToDispatch => WorkItemRecoveryMetadata {
+            kind: "dispatchable",
+            blocking_reason: "ready for dispatch; no recovery action required",
+            can_retry: false,
+            can_cancel: true,
+        },
+        WorkItemStatus::CompletedWithProof
+        | WorkItemStatus::Cancelled
+        | WorkItemStatus::Merged
+        | WorkItemStatus::Archived => WorkItemRecoveryMetadata {
+            kind: "none",
+            blocking_reason: "terminal or archived WorkItem; no recovery action applies",
+            can_retry: false,
+            can_cancel: false,
+        },
+    }
 }
 
 fn memory_candidates_json(
