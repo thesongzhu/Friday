@@ -161,6 +161,11 @@ pub mod provider_key_validation;
 /// mockable testing. Registers NO route; confers no v1 GO.
 pub mod capability_doctor;
 
+/// Read-only provider route/failover readiness projection for the capability-doctor.
+/// Composes existing CLI/key truth with the route registry and explicit failover flags;
+/// never selects, flips, or substitutes providers.
+pub mod provider_route_readiness;
+
 /// Step-3 — setup-readiness blocker labels (truth-labeled): the runtime analog of the file-57
 /// external-prep checklist. Every prep item is `Ready { evidence }` ONLY when verified, else
 /// `NotReady { blocker }` — never falsely ready. `is_release_ready()` is the prep half of the
