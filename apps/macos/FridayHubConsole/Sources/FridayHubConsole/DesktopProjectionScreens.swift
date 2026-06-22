@@ -10,7 +10,7 @@ private enum DesktopProjectionSurface {
 
   init?(_ destination: HubDestination) {
     switch destination {
-    case .operations:
+    case .operations, .chat:
       return nil
     case .providerAdmin:
       self = .providerAdmin

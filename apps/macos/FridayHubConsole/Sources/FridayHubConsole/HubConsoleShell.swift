@@ -56,6 +56,8 @@ struct HubConsoleShell: View {
     switch destination {
     case .operations:
       OperationsOverviewScreen(viewModel: operationsVM)
+    case .chat:
+      DesktopChatScreen(viewModel: operationsVM)
     default:
       DesktopProjectionScreen(destination: destination, viewModel: operationsVM)
     }

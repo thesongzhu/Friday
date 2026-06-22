@@ -36,6 +36,7 @@ enum StateRenderProof {
     // this screenshot — this just confirms the view renders the empty case honestly.
     let cases: [(String, HubDestination, MockReadClient.Behavior)] = [
       ("operations-loaded-mock", .operations, .loaded),
+      ("chat-loaded-mock", .chat, .loaded),
       ("provider-admin-loaded-mock", .providerAdmin, .loaded),
       ("provider-parity-loaded-mock", .parity, .loaded),
       ("workflow-loaded-mock", .workflow, .loaded),
@@ -67,6 +68,8 @@ enum StateRenderProof {
           switch destination {
           case .operations:
             loaded = AnyView(OperationsOverviewScreen(viewModel: vm).loadedContent(snapshot))
+          case .chat:
+            loaded = AnyView(DesktopChatScreen(viewModel: vm).loadedContent(snapshot))
           default:
             loaded = AnyView(DesktopProjectionScreen(destination: destination, viewModel: vm).loadedContent(snapshot))
           }
