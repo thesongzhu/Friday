@@ -861,6 +861,7 @@ impl<T: Transport> HubRuntime<T> {
                 task,
                 &approve,
                 observe_context.as_ref(),
+                work_item_id,
                 now_ms,
             )?;
             // D1 OWNER-WIRING parity: persist a Finished answer Hub-side keyed by `run_id` with
@@ -1015,6 +1016,12 @@ impl<T: Transport> HubRuntime<T> {
     /// turn), `executed_tools: 0` (Codex runs its side effects in its OWN runtime; Friday's
     /// executor is never invoked on a codex turn — the gate routes Codex's pre-execution approval
     /// requests, it does not execute them).
+    ///
+    /// When this routed turn is mission-bound, `work_item_id` carries the same durable execution
+    /// marker the generic DeepSeek/Claude loop uses: SET immediately before the Codex app-server
+    /// turn and CLEAR on every returned outcome/error. That lets boot crash-recovery distinguish a
+    /// Codex process that died mid-turn from an ordinary ready/paused WorkItem without changing
+    /// unbound Codex chat (`None` remains a byte-identical no-op).
     #[allow(clippy::too_many_arguments)]
     fn run_codex_route_turn(
         &self,
@@ -1030,6 +1037,7 @@ impl<T: Transport> HubRuntime<T> {
         task: &str,
         approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
         observe_context: Option<&crate::observe_wrapper::CodexObserveMissionContext>,
+        work_item_id: Option<&str>,
         now_ms: i64,
     ) -> Result<LoopOutcome, RoutedLoopError> {
         // Plan classification + the SAME recall-preamble prompt the loop records/builds, so a
@@ -1077,7 +1085,8 @@ impl<T: Transport> HubRuntime<T> {
         // The ONLY codex execution path: the gated turn (gate + pending-persist live inside it).
         // `Err` is a Friday-side fault (the pending-persist for a RequiresApproval failed) — fail
         // CLOSED to `Errored` (the pause is not durably recoverable; never a phantom success).
-        let codex_outcome = match codex.run_gated_turn(
+        crate::heartbeat_work_item_executing(self.db.conn(), work_item_id, true);
+        let codex_result = codex.run_gated_turn(
             self.db.conn(),
             policy,
             &self.secret,
@@ -1087,7 +1096,9 @@ impl<T: Transport> HubRuntime<T> {
             run_id,
             observe_context,
             now_ms,
-        ) {
+        );
+        crate::heartbeat_work_item_executing(self.db.conn(), work_item_id, false);
+        let codex_outcome = match codex_result {
             Ok(outcome) => outcome,
             Err(e) => {
                 let reason = format!("codex_gated_turn_error:{e}");
@@ -5090,6 +5101,16 @@ mod tests {
     // byte-streams). NO codex CLI, NO creds, NO network/spawn is needed (the route promotion uses
     // the private `mark_route_*` helpers).
 
+    type CodexObserveProbe =
+        Rc<RefCell<Option<crate::observe_wrapper::CodexObserveMissionContext>>>;
+    type CodexHeartbeatProbe = Rc<Cell<Option<bool>>>;
+    type RuntimeWithCodexObserveProbe = (
+        HubRuntime<ScriptTransport>,
+        TempDir,
+        CodexObserveProbe,
+        CodexHeartbeatProbe,
+    );
+
     /// A stub Codex executor: each `run_gated_turn` returns the next scripted
     /// [`crate::codex_gated_turn::CodexTurnOutcome`] (Finished/Paused/Errored) EXACTLY as the live
     /// `LocalCodexGatedTurnExecutor` maps from a real gated app-server turn. A Finished outcome
@@ -5109,8 +5130,8 @@ mod tests {
         /// probe proves the SEAM that selects which one. The stub never inspects the key's BYTES
         /// (it holds none) — only its presence — so this adds no signing-key reference.
         last_vk_some: Rc<Cell<bool>>,
-        last_observe_context:
-            Rc<RefCell<Option<crate::observe_wrapper::CodexObserveMissionContext>>>,
+        last_observe_context: CodexObserveProbe,
+        observed_executing_during_call: CodexHeartbeatProbe,
     }
     impl StubCodexGatedExecutor {
         /// A Finished-with-usage outcome carrying the C1-row token counts (13 prompt + 5 completion).
@@ -5131,6 +5152,7 @@ mod tests {
                 calls: Cell::new(0),
                 last_vk_some: Rc::new(Cell::new(false)),
                 last_observe_context: Rc::new(RefCell::new(None)),
+                observed_executing_during_call: Rc::new(Cell::new(None)),
             }
         }
         /// Like [`Self::new`] but with an EXTERNAL probe the caller retains a handle to, so it can
@@ -5144,26 +5166,27 @@ mod tests {
                 calls: Cell::new(0),
                 last_vk_some,
                 last_observe_context: Rc::new(RefCell::new(None)),
+                observed_executing_during_call: Rc::new(Cell::new(None)),
             }
         }
         fn with_observe_probe(
             outcomes: Vec<crate::codex_gated_turn::CodexTurnOutcome>,
-            last_observe_context: Rc<
-                RefCell<Option<crate::observe_wrapper::CodexObserveMissionContext>>,
-            >,
+            last_observe_context: CodexObserveProbe,
+            observed_executing_during_call: CodexHeartbeatProbe,
         ) -> Self {
             Self {
                 outcomes,
                 calls: Cell::new(0),
                 last_vk_some: Rc::new(Cell::new(false)),
                 last_observe_context,
+                observed_executing_during_call,
             }
         }
     }
     impl crate::CodexTurnExecutor for StubCodexGatedExecutor {
         fn run_gated_turn(
             &self,
-            _conn: &rusqlite::Connection,
+            conn: &rusqlite::Connection,
             _policy: &RunPolicy,
             _secret: &[u8],
             operator_vk: Option<&OperatorVerifyingKey>,
@@ -5181,6 +5204,16 @@ mod tests {
             // Record what the runtime threaded (presence only — the stub holds no key bytes).
             self.last_vk_some.set(operator_vk.is_some());
             *self.last_observe_context.borrow_mut() = observe_context.cloned();
+            if let Some(context) = observe_context {
+                let executing = friday_storage::mission::get_work_item_execution_state(
+                    conn,
+                    &context.work_item_id,
+                )
+                .ok()
+                .flatten()
+                .is_some_and(|state| state.executing);
+                self.observed_executing_during_call.set(Some(executing));
+            }
             let i = self.calls.get();
             self.calls.set(i + 1);
             Ok(self
@@ -5235,16 +5268,13 @@ mod tests {
     fn runtime_with_codex_wired_observe_probe(
         tag: &str,
         outcomes: Vec<crate::codex_gated_turn::CodexTurnOutcome>,
-    ) -> (
-        HubRuntime<ScriptTransport>,
-        TempDir,
-        Rc<RefCell<Option<crate::observe_wrapper::CodexObserveMissionContext>>>,
-    ) {
+    ) -> RuntimeWithCodexObserveProbe {
         let ws = TempDir::new(tag);
         let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
         let client = DeepSeekClient::with_transport(transport, "k".into());
         let agent = DeepSeekAgentLlmClient::new(client);
         let probe = Rc::new(RefCell::new(None));
+        let heartbeat_probe = Rc::new(Cell::new(None));
         let mut rt = HubRuntime::new(
             HubConfig {
                 db_path: tmp(tag),
@@ -5263,10 +5293,11 @@ mod tests {
         rt = rt.with_codex(Box::new(StubCodexGatedExecutor::with_observe_probe(
             outcomes,
             Rc::clone(&probe),
+            Rc::clone(&heartbeat_probe),
         )));
         rt.mark_route_available("codex");
         rt.mark_route_validated("codex");
-        (rt, ws, probe)
+        (rt, ws, probe, heartbeat_probe)
     }
 
     #[test]
@@ -5651,6 +5682,7 @@ mod tests {
                 "",
                 "say done",
                 &no_approval,
+                None,
                 None,
                 1_000,
             )
@@ -8777,7 +8809,7 @@ mod tests {
     #[test]
     fn mission_bound_codex_loop_threads_observe_claim_context_and_records_binding() {
         let run_id = "run-mloop-codex-observe";
-        let (rt, _ws, observe_probe) = runtime_with_codex_wired_observe_probe(
+        let (rt, _ws, observe_probe, heartbeat_probe) = runtime_with_codex_wired_observe_probe(
             "mloop-codex-observe",
             vec![StubCodexGatedExecutor::finished("PONG")],
         );
@@ -8848,9 +8880,22 @@ mod tests {
         assert_eq!(observed_context.mission_id, "mission-loop");
         assert_eq!(observed_context.work_item_id, "work-loop");
         assert_eq!(observed_context.owner_claim_ids, vec![claim_id]);
+        assert_eq!(
+            heartbeat_probe.get(),
+            Some(true),
+            "mission-bound Codex turn sets the durable executing marker while the gated turn runs"
+        );
 
         let work_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
         assert_eq!(work_item.status, WorkItemStatus::CompletedWithProof);
+        assert!(
+            !rt.db()
+                .get_work_item_execution_state("work-loop")
+                .unwrap()
+                .unwrap()
+                .executing,
+            "mission-bound Codex turn clears the durable executing marker after the turn returns"
+        );
         assert!(work_item
             .proof_receipts
             .contains(&format!("friday://agent-run/{run_id}")));
@@ -8884,7 +8929,7 @@ mod tests {
     fn mission_bound_codex_vague_code_repair_clarifies_before_model_call() {
         std::env::set_var(crate::FRIDAY_CLARIFICATION_GATE, "1");
         let run_id = "run-mloop-codex-vague-code-clar";
-        let (rt, _ws, observe_probe) = runtime_with_codex_wired_observe_probe(
+        let (rt, _ws, observe_probe, heartbeat_probe) = runtime_with_codex_wired_observe_probe(
             "mloop-codex-vague-code-clar",
             vec![StubCodexGatedExecutor::finished("SHOULD_NOT_RUN")],
         );
@@ -8938,6 +8983,11 @@ mod tests {
         assert!(
             observe_probe.borrow().is_none(),
             "the Codex executor must not be called when the clarification gate stops first"
+        );
+        assert_eq!(
+            heartbeat_probe.get(),
+            None,
+            "clarification stops before Codex execution, so no heartbeat is written"
         );
         assert!(matches!(
             attachment,
