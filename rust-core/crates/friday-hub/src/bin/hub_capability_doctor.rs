@@ -72,6 +72,15 @@ use std::ffi::OsString;
 use friday_hub::capability_doctor::{CapabilityDoctor, KeyValidationSignal};
 use friday_hub::provider_doctor::ProviderDoctor;
 use friday_hub::provider_key_validation::LiveKeyValidationProbe;
+use friday_hub::provider_route_readiness::{
+    backend_kind_label, model_size_label, provider_api_label, FailoverReadiness,
+    ProviderReadinessFlags, ProviderReadinessReport, ProviderRouteReadiness,
+};
+use friday_hub::routing::{ProviderRoute, RouteRegistry};
+use friday_hub::runtime::{
+    ENV_CLAUDE_ROUTE_ENABLED, ENV_CODEX_ROUTE_ENABLED, ENV_DEEPSEEK_PRO_ROUTE_ENABLED,
+    ENV_PROVIDER_FAILOVER, ENV_PROVIDER_FAILOVER_CLAUDE_TO_DEEPSEEK,
+};
 use friday_providers::{CliProbe, Provider, ProviderAuthStatus};
 use serde_json::{json, Value};
 
@@ -218,6 +227,10 @@ fn render_cli_only(statuses: &[ProviderAuthStatus]) -> Result<String, BridgeErro
         "key_validation_probed": false,
         "key_validation": Value::Null,
         "confirmed_valid_keys": Value::Null,
+        "route_readiness": Value::Null,
+        "suggested_text_route": Value::Null,
+        "suggested_strong_route": Value::Null,
+        "failover_readiness": Value::Null,
     });
     finish(payload)
 }
@@ -237,6 +250,15 @@ fn render_with_keys(doctor: &CapabilityDoctor) -> Result<String, BridgeError> {
         .iter()
         .map(|kp| kp.as_str())
         .collect();
+    let readiness = doctor.provider_readiness_report(
+        &runtime_readiness_registry(),
+        ProviderReadinessFlags {
+            deepseek_to_claude_failover: env_exact_one(ENV_PROVIDER_FAILOVER),
+            claude_to_deepseek_failover: env_exact_one(ENV_PROVIDER_FAILOVER_CLAUDE_TO_DEEPSEEK),
+        },
+    );
+    let route_readiness = route_readiness_entries(&readiness);
+    let failover_readiness = failover_readiness_entries(&readiness);
 
     let payload = json!({
         "truth_label": "rust_capability_doctor",
@@ -247,8 +269,99 @@ fn render_with_keys(doctor: &CapabilityDoctor) -> Result<String, BridgeError> {
         "key_validation_probed": true,
         "key_validation": key_validation,
         "confirmed_valid_keys": confirmed,
+        "route_readiness": route_readiness,
+        "suggested_text_route": readiness.suggested_text_route,
+        "suggested_strong_route": readiness.suggested_strong_route,
+        "failover_readiness": failover_readiness,
     });
     finish(payload)
+}
+
+fn runtime_readiness_registry() -> RouteRegistry {
+    let mut registry = RouteRegistry::autonomous_baseline();
+    if !env_exact_one(ENV_DEEPSEEK_PRO_ROUTE_ENABLED) {
+        set_route_state(&mut registry, "deepseek-pro", false, false);
+    }
+    if env_exact_one(ENV_CLAUDE_ROUTE_ENABLED) {
+        set_route_state(&mut registry, "claude", true, true);
+    }
+    if env_exact_one(ENV_CODEX_ROUTE_ENABLED) {
+        set_route_state(&mut registry, "codex", true, true);
+    }
+    registry
+}
+
+fn set_route_state(
+    registry: &mut RouteRegistry,
+    provider_id: &str,
+    available: bool,
+    validation_ok: bool,
+) {
+    if let Some(route) = registry.get(provider_id).cloned() {
+        registry.register(ProviderRoute {
+            available,
+            validation_ok,
+            ..route
+        });
+    }
+}
+
+fn env_exact_one(key: &str) -> bool {
+    matches!(std::env::var(key), Ok(value) if value.trim() == "1")
+}
+
+fn route_readiness_entries(report: &ProviderReadinessReport) -> Vec<Value> {
+    report.routes.iter().map(route_readiness_entry).collect()
+}
+
+fn route_readiness_entry(route: &ProviderRouteReadiness) -> Value {
+    let blockers: Vec<Value> = route
+        .blockers
+        .iter()
+        .map(|blocker| {
+            json!({
+                "kind": blocker.kind.as_str(),
+                "code": blocker.code,
+            })
+        })
+        .collect();
+    json!({
+        "provider_id": route.provider_id,
+        "api": provider_api_label(route.api),
+        "backend_kind": backend_kind_label(route.backend_kind),
+        "model": route.model,
+        "model_size": model_size_label(route.model_size),
+        "strength": route.strength.as_str(),
+        "dispatchable": route.dispatchable,
+        "blockers": blockers,
+    })
+}
+
+fn failover_readiness_entries(report: &ProviderReadinessReport) -> Vec<Value> {
+    report
+        .failovers
+        .iter()
+        .map(failover_readiness_entry)
+        .collect()
+}
+
+fn failover_readiness_entry(failover: &FailoverReadiness) -> Value {
+    let blockers: Vec<Value> = failover
+        .blockers
+        .iter()
+        .map(|blocker| {
+            json!({
+                "kind": blocker.kind.as_str(),
+                "code": blocker.code,
+            })
+        })
+        .collect();
+    json!({
+        "direction": failover.direction,
+        "flag_enabled": failover.flag_enabled,
+        "can_enable": failover.can_enable,
+        "blockers": blockers,
+    })
 }
 
 /// Serialize + run through the output guard (fail-closed on any forbidden marker).
@@ -397,6 +510,8 @@ mod tests {
             v["confirmed_valid_keys"].is_null(),
             "confirmed list must be null when not probed (not an empty array implying we checked)"
         );
+        assert!(v["route_readiness"].is_null());
+        assert!(v["failover_readiness"].is_null());
 
         // CLI section present + correct.
         let cli = v["cli_detected"].as_array().expect("cli_detected array");
@@ -487,6 +602,19 @@ mod tests {
         assert_eq!(
             v["confirmed_valid_keys"].as_array().unwrap(),
             &vec![serde_json::json!("deepseek")]
+        );
+        let route_readiness = v["route_readiness"]
+            .as_array()
+            .expect("route_readiness array");
+        let deepseek = route_readiness
+            .iter()
+            .find(|entry| entry["provider_id"] == "deepseek")
+            .expect("deepseek route readiness is surfaced");
+        assert_eq!(deepseek["dispatchable"], true);
+        assert_eq!(deepseek["strength"], "cheap");
+        assert!(
+            v["failover_readiness"].is_array(),
+            "failover readiness is surfaced with route readiness"
         );
     }
 
