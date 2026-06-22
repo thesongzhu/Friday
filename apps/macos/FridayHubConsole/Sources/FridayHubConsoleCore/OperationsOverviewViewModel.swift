@@ -128,6 +128,8 @@ public struct ChatNeedsMeItem: Sendable, Equatable, Identifiable {
   public let refId: String
   public let state: String
   public let deepLink: String?
+  public let actionDigest: String?
+  public let signingSummary: String?
 
   public var id: String { "\(runId):\(kind):\(refId)" }
 
@@ -137,7 +139,9 @@ public struct ChatNeedsMeItem: Sendable, Equatable, Identifiable {
     title: String,
     refId: String,
     state: String,
-    deepLink: String?
+    deepLink: String?,
+    actionDigest: String? = nil,
+    signingSummary: String? = nil
   ) {
     self.runId = runId
     self.kind = kind
@@ -145,6 +149,8 @@ public struct ChatNeedsMeItem: Sendable, Equatable, Identifiable {
     self.refId = refId
     self.state = state
     self.deepLink = deepLink
+    self.actionDigest = actionDigest
+    self.signingSummary = signingSummary
   }
 }
 
@@ -716,7 +722,21 @@ public final class OperationsOverviewViewModel: ObservableObject {
       title: title,
       refId: refId,
       state: state,
-      deepLink: string(raw["deep_link"]))
+      deepLink: string(raw["deep_link"]),
+      actionDigest: signingField("action_digest", raw),
+      signingSummary: signingField("summary", raw))
+  }
+
+  nonisolated private static func signingField(_ key: String, _ raw: [String: Any]) -> String? {
+    if let direct = string(raw[key]), !direct.isEmpty {
+      return direct
+    }
+    if let signingRequest = raw["signing_request"] as? [String: Any],
+      let nested = string(signingRequest[key]), !nested.isEmpty
+    {
+      return nested
+    }
+    return nil
   }
 
   nonisolated private static func string(_ value: Any?) -> String? {
