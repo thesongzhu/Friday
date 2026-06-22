@@ -82,7 +82,13 @@ const pkg = readPackageJson(repoRoot);
 const checks = [
   ...[
     ["apps/macos/FridayCompanion/Package.swift", "macOS companion Swift package"],
+    ["apps/macos/FridayHubConsole/Package.swift", "macOS Hub Console Swift package"],
+    ["apps/macos/FridayHubConsole/Info.plist", "Hub Console app bundle Info.plist"],
     ["scripts/ops/release-friday-companion-app.sh", "Companion release script"],
+    ["scripts/ops/build-friday-hub-console-app.sh", "Hub Console app bundle build script"],
+    ["scripts/ops/verify-friday-hub-console-app.sh", "Hub Console app bundle verify script"],
+    ["apps/friday-ios/build-sim.sh", "iOS simulator build script"],
+    ["apps/friday-android/build-emu.sh", "Android emulator build script"],
     ["scripts/ops/check-friday-companion-release-env.sh", "Companion release env check"],
     ["scripts/ops/build-friday-companion-dmg.sh", "DMG build script"],
     ["scripts/ops/build-friday-sparkle-appcast.sh", "Sparkle appcast build script"],
@@ -93,13 +99,18 @@ const checks = [
   ].map(([relativePath, label]) => fileCheck(repoRoot, relativePath, label)),
   ...[
     "check:companion:release-env",
+    "check:client-ship-gate",
     "build:companion:native",
+    "build:hub-console:native",
+    "build:ios:sim",
+    "build:android:emu",
     "build:companion:dmg",
     "build:companion:appcast",
     "publish:homebrew:cask",
     "release:manifest",
     "release:companion:local",
     "release:companion:notarize",
+    "verify:hub-console:native",
   ].map((name) => scriptCheck(pkg, name)),
   runEnvCheck(repoRoot),
 ];

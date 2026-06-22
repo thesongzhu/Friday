@@ -569,7 +569,7 @@ struct FridayProjectionScreen: View {
 
   private func learningCandidateRow(_ candidate: HomeRunOutcomeLearningCandidate) -> some View {
     let decisionState = viewModel.runOutcomeLearningDecisionStates[candidate.id]
-    VStack(alignment: .leading, spacing: 6) {
+    return VStack(alignment: .leading, spacing: 6) {
       HStack(alignment: .top, spacing: 8) {
         Text(candidate.summary)
           .font(.system(size: 13, weight: .medium))

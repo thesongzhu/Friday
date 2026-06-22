@@ -332,11 +332,34 @@ jobs:
       - name: Run L1 method-retired behavior tests
         run: npm run test:mechanism-wiring:behavior
 
+  # ── T1 Client Ship Gate ──
+  # Keeps native client packaging hooks visible to CI so current-code app artifacts
+  # cannot quietly drift behind the server/diagnostic proof path again.
+  client-ship-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate client ship gate wiring
+        run: npm run check:client-ship-gate
+
   # ── Terminal CI Aggregator — single required check for branch protection ──
   quality-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [build, test, migrations, security, contracts, ssd-lint, alignment-guard, agent-parity, secrets, ts-runtime-retirement, prod-flag-tests, mechanism-wiring]
+    needs: [build, test, migrations, security, contracts, ssd-lint, alignment-guard, agent-parity, secrets, ts-runtime-retirement, prod-flag-tests, mechanism-wiring, client-ship-gate]
     if: ${{ always() }}
 
     steps:
@@ -354,6 +377,7 @@ jobs:
           echo "TS Runtime Retire:  ${{ needs.ts-runtime-retirement.result }}"
           echo "Prod-Flag Tests:    ${{ needs.prod-flag-tests.result }}"
           echo "Mechanism Wiring:   ${{ needs.mechanism-wiring.result }}"
+          echo "Client Ship Gate:   ${{ needs.client-ship-gate.result }}"
           echo ""
 
           FAILED=0
@@ -370,6 +394,7 @@ jobs:
             "${{ needs.ts-runtime-retirement.result }}" \
             "${{ needs.prod-flag-tests.result }}" \
             "${{ needs.mechanism-wiring.result }}" \
+            "${{ needs.client-ship-gate.result }}" \
           ; do
             if [ "$result" != "success" ]; then
               FAILED=1
