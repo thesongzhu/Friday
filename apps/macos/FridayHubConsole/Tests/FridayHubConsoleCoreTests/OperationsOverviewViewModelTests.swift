@@ -374,7 +374,7 @@ func realClientFactoryBuildsAgainstLoopbackConfig() {
 /// An in-memory `FridayMissionSpineWriteClient` for view-model tests. Returns a programmed
 /// intake/decision outcome, OR throws to exercise the honest-unavailable path. Captures the last
 /// request so a test can assert the owner_principal / decision the view model wired.
-final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMissionBoundRunWriteClient, @unchecked Sendable {
+final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMissionBoundRunWriteClient, FridayRustWriteClient, @unchecked Sendable {
   enum Behavior: Sendable {
     case intakeReady
     case intakeNeedsClarification
@@ -392,6 +392,8 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   private var _lastLearningDecision: RunOutcomeLearningDecisionRequestWire?
   private var _lastMissionContext: MissionWorkItemContextWire?
   private var _lastMissionRunConstraints: AgentRunConstraintsWire?
+  private var _lastResumeRunId: String?
+  private var _lastResumeBlob: [UInt8]?
   private var _missionContexts: [MissionWorkItemContextWire] = []
   private var _dispatchedTasks: [String] = []
   var lastIntake: MissionIntakeRequestWire? { lock.withLock { _lastIntake } }
@@ -401,6 +403,8 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   }
   var lastMissionContext: MissionWorkItemContextWire? { lock.withLock { _lastMissionContext } }
   var lastMissionRunConstraints: AgentRunConstraintsWire? { lock.withLock { _lastMissionRunConstraints } }
+  var lastResumeRunId: String? { lock.withLock { _lastResumeRunId } }
+  var lastResumeBlob: [UInt8]? { lock.withLock { _lastResumeBlob } }
   var missionContexts: [MissionWorkItemContextWire] { lock.withLock { _missionContexts } }
   var dispatchedTasks: [String] { lock.withLock { _dispatchedTasks } }
 
@@ -483,6 +487,48 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
       throw FridayWriteClientError.transport("connection refused (write server dark)")
     }
     return .result(AgentRunResultWire(runId: "run-bound-1", status: "completed", turns: 1))
+  }
+
+  func dispatchAgentRun(
+    task: String,
+    constraints: AgentRunConstraintsWire?
+  ) async throws -> AgentRunDispatchOutcome {
+    if case .throwsTransport = behavior {
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    }
+    return .result(AgentRunResultWire(runId: "run-direct-1", status: "completed", turns: 1))
+  }
+
+  func resumeWithApproval(runId: String, opaqueSignedBlob: [UInt8]) async throws -> ResumeRelayResult {
+    lock.withLock {
+      _lastResumeRunId = runId
+      _lastResumeBlob = opaqueSignedBlob
+    }
+    if case .throwsTransport = behavior {
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    }
+    if opaqueSignedBlob.isEmpty {
+      throw FridayWriteClientError.emptySignedBlob
+    }
+    return ResumeRelayResult(
+      runId: runId,
+      op: "resume",
+      accepted: true,
+      status: "mutation_completed",
+      auditRef: "audit://resume/1")
+  }
+}
+
+final class MockOperatorApprovalSigner: OperatorApprovalSigner, @unchecked Sendable {
+  private let lock = NSLock()
+  private(set) var lastRequest: OperatorApprovalSigningRequest?
+  var blob: [UInt8] = Array("{\"signed\":\"blob\"}".utf8)
+  var error: Error?
+
+  func signApproval(_ request: OperatorApprovalSigningRequest) async throws -> [UInt8] {
+    lock.withLock { lastRequest = request }
+    if let error { throw error }
+    return blob
   }
 }
 
@@ -903,6 +949,91 @@ func chatNeedsMeItemsParsesApprovalSigningRefsFromActionableRows() throws {
   #expect(approval?.refId == "approval-nonce-2")
   #expect(approval?.actionDigest == "digest-approval-nonce-2")
   #expect(approval?.signingSummary == "approval_required ready")
+}
+
+@Test
+@MainActor
+func approveNeedsMeItemSignsRefsAndRelaysOpaqueBlob() async {
+  let signer = MockOperatorApprovalSigner()
+  signer.blob = Array("{\"decision\":\"approved\"}".utf8)
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let item = ChatNeedsMeItem(
+    runId: "run-paused",
+    kind: "approval_required",
+    title: "approve write_file",
+    refId: "approval-nonce-9",
+    state: "pending",
+    deepLink: nil,
+    actionDigest: String(repeating: "a", count: 64),
+    signingSummary: "write_file paused")
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    writeClient: write,
+    approvalSigner: signer,
+    approvalResumeClient: write,
+    nowMs: { 1_000 })
+
+  await vm.approveNeedsMeItem(item)
+
+  #expect(signer.lastRequest == OperatorApprovalSigningRequest(
+    runId: "run-paused",
+    approvalId: "approval-nonce-9",
+    actionDigest: String(repeating: "a", count: 64),
+    summary: "write_file paused",
+    expiresAtMs: 301_000))
+  #expect(write.lastResumeRunId == "run-paused")
+  #expect(write.lastResumeBlob == Array("{\"decision\":\"approved\"}".utf8))
+  guard case let .confirmed(summary, _, _) = vm.approvalRelayStates[item.id] else {
+    Issue.record("expected approval relay .confirmed, got \(String(describing: vm.approvalRelayStates[item.id]))")
+    return
+  }
+  #expect(summary.contains("mutation_completed"))
+  #expect(summary.contains("audit://resume/1"))
+}
+
+@Test
+@MainActor
+func approveNeedsMeItemWithoutSignerFailsClosedWithoutResume() async {
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let item = ChatNeedsMeItem(
+    runId: "run-paused",
+    kind: "approval_required",
+    title: "approve write_file",
+    refId: "approval-nonce-9",
+    state: "pending",
+    deepLink: nil,
+    actionDigest: String(repeating: "a", count: 64),
+    signingSummary: "write_file paused")
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    approvalResumeClient: write)
+
+  await vm.approveNeedsMeItem(item)
+
+  guard case let .error(reason) = vm.approvalRelayStates[item.id] else {
+    Issue.record("expected approval relay .error, got \(String(describing: vm.approvalRelayStates[item.id]))")
+    return
+  }
+  #expect(reason.contains("not configured"))
+  #expect(write.lastResumeRunId == nil)
+}
+
+@Test
+func operatorApprovalCLISignerRejectsMalformedDigestBeforeInvokingSigner() async {
+  let signer = OperatorApprovalCLISigner(keyPath: "/tmp/not-read-in-this-test")
+  do {
+    _ = try await signer.signApproval(OperatorApprovalSigningRequest(
+      runId: "run-x",
+      approvalId: "approval-x",
+      actionDigest: "not-a-digest",
+      summary: nil,
+      expiresAtMs: 1_000))
+    Issue.record("malformed digest must fail closed")
+  } catch let error as OperatorApprovalSignerError {
+    #expect(error.description.contains("action_digest"))
+  } catch {
+    Issue.record("unexpected error \(error)")
+  }
 }
 
 @Test

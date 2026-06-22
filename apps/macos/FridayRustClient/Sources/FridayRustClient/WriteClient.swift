@@ -138,7 +138,7 @@ public enum FridayWriteClientError: Error, Equatable {
 
 /// The product-facing WRITE client. A UI depends on THIS, not the transport. It dispatches an
 /// agent-run (the chat read-WRITE loop) and relays an operator-signed resume.
-public protocol FridayRustWriteClient {
+public protocol FridayRustWriteClient: Sendable {
   /// Dispatch one agent-run over the sealed-WS WRITE seam. `constraints` DEFAULT read-only /
   /// no-grant (the mutation is operator-gated downstream). Settles refs-only on the first
   /// `AgentRunResult`, or `.paused` when the run-control flag is on AND the server pauses.

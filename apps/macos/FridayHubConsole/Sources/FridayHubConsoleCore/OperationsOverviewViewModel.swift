@@ -222,6 +222,8 @@ public final class OperationsOverviewViewModel: ObservableObject {
   @Published public private(set) var memoryDecisionStates: [String: WriteActionState] = [:]
   /// Per-candidate A1 run-outcome learning decision state, keyed by candidate id.
   @Published public private(set) var runOutcomeLearningDecisionStates: [String: WriteActionState] = [:]
+  /// Per pending approval resume state, keyed by the Needs-Me item id.
+  @Published public private(set) var approvalRelayStates: [String: WriteActionState] = [:]
   /// Structured refs for the latest desktop Chat turn. This avoids parsing status prose in the UI.
   @Published public private(set) var latestChatTurn: ChatTurnRefs?
   /// Refs-only Needs-Me rows for the latest Chat turn's runs.
@@ -236,6 +238,9 @@ public final class OperationsOverviewViewModel: ObservableObject {
   /// Optional model-turn bridge. When present, a ready MissionIntake receipt immediately dispatches
   /// a read-only mission-bound run using the server-produced Mission handle.
   private let missionRunClient: FridayMissionBoundRunWriteClient?
+  /// Optional operator-controlled signer and resume client for paused mutating actions.
+  private let approvalSigner: OperatorApprovalSigner?
+  private let approvalResumeClient: FridayRustWriteClient?
   /// The owner principal the WRITE body self-supplies — MUST equal the server's `--owner`
   /// (`admin-001`); the server fail-closes a mismatch (FIX-Q3b). Wired from config, not UI input.
   private let writeOwnerPrincipal: String
@@ -243,23 +248,30 @@ public final class OperationsOverviewViewModel: ObservableObject {
   /// them). Injectable for deterministic tests.
   private let newId: @Sendable () -> String
   private let missionIdPrefix: String
+  private let nowMs: @Sendable () -> Int64
 
   public init(
     client: FridayRustReadClient,
     writeClient: FridayMissionSpineWriteClient? = nil,
     missionRunClient: FridayMissionBoundRunWriteClient? = nil,
+    approvalSigner: OperatorApprovalSigner? = nil,
+    approvalResumeClient: FridayRustWriteClient? = nil,
     writeOwnerPrincipal: String = liveReadProjectionOwnerPrincipal,
     devicePairing: DesktopDevicePairingReadiness = .evaluate(),
     newId: @escaping @Sendable () -> String = { UUID().uuidString },
-    missionIdPrefix: String = "mission-desktop-"
+    missionIdPrefix: String = "mission-desktop-",
+    nowMs: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
   ) {
     self.client = client
     self.writeClient = writeClient
     self.missionRunClient = missionRunClient
+    self.approvalSigner = approvalSigner
+    self.approvalResumeClient = approvalResumeClient
     self.writeOwnerPrincipal = writeOwnerPrincipal
     self.devicePairing = devicePairing
     self.newId = newId
     self.missionIdPrefix = missionIdPrefix
+    self.nowMs = nowMs
   }
 
   /// Re-fetch the Workbench projection. The only mutating-looking action — and it
@@ -467,6 +479,58 @@ public final class OperationsOverviewViewModel: ObservableObject {
   private struct FollowUpDispatch {
     let summary: String
     let outcome: AgentRunDispatchOutcome
+  }
+
+  // MARK: - Operator approval resume relay
+
+  /// Sign and relay one pending operator approval from the desktop Needs Review queue.
+  ///
+  /// The app is only a courier: it hands refs to an injected signer, receives an opaque signed blob,
+  /// and relays that blob verbatim to the Rust write server. No key material or action body enters
+  /// the app, and a missing signer/resume client renders honest-unavailable.
+  public func approveNeedsMeItem(_ item: ChatNeedsMeItem) async {
+    let key = item.id
+    guard item.kind == "approval_required" || item.kind == "approval" else {
+      approvalRelayStates[key] = .error(reason: "This Needs Review row is not an operator approval.")
+      return
+    }
+    guard let actionDigest = item.actionDigest, !actionDigest.isEmpty else {
+      approvalRelayStates[key] = .error(reason: "Approval is missing action_digest; cannot sign.")
+      return
+    }
+    guard let approvalSigner, let approvalResumeClient else {
+      approvalRelayStates[key] = .error(
+        reason: "Operator signer relay not configured; approval remains paused.")
+      return
+    }
+
+    approvalRelayStates[key] = .sent
+    do {
+      let signedBlob = try await approvalSigner.signApproval(OperatorApprovalSigningRequest(
+        runId: item.runId,
+        approvalId: item.refId,
+        actionDigest: actionDigest,
+        summary: item.signingSummary ?? item.title,
+        expiresAtMs: nowMs() + 300_000))
+      let result = try await approvalResumeClient.resumeWithApproval(
+        runId: item.runId,
+        opaqueSignedBlob: signedBlob)
+      if result.accepted {
+        approvalRelayStates[key] = .confirmed(summary: Self.resumeSummary(for: result))
+        await refresh()
+        await loadLatestChatReview()
+      } else {
+        approvalRelayStates[key] = .error(reason: "Resume refused: \(Self.resumeSummary(for: result))")
+      }
+    } catch {
+      approvalRelayStates[key] = .error(reason: Self.writeReason(for: error))
+    }
+  }
+
+  private static func resumeSummary(for result: ResumeRelayResult) -> String {
+    var summary = "\(result.op) \(result.status) · run_id=\(result.runId)"
+    if let auditRef = result.auditRef { summary += " · audit_ref=\(auditRef)" }
+    return summary
   }
 
   private func answerBodyText(for outcome: AgentRunDispatchOutcome, label: String) async -> String? {

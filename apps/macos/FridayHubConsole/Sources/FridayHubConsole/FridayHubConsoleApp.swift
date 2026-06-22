@@ -50,7 +50,9 @@ struct FridayHubConsoleApp: App {
       HubConsoleShell(
         client: Self.readClient,
         writeClient: Self.writeClient,
-        missionRunClient: Self.writeClient)
+        missionRunClient: Self.writeClient,
+        approvalSigner: Self.approvalSigner,
+        approvalResumeClient: Self.writeClient)
     }
     .windowStyle(.titleBar)
     .defaultSize(width: 1180, height: 720)
@@ -96,5 +98,11 @@ struct FridayHubConsoleApp: App {
     } catch {
       return RealWriteClientFactory.makeHonestlyUnavailableWrite(reason: "\(error)")
     }
+  }
+
+  /// Operator approval signer bridge. It invokes the external operator CLI only after the operator
+  /// clicks Approve; startup never reads or signs with the private key.
+  static var approvalSigner: OperatorApprovalSigner? {
+    useMock ? nil : OperatorApprovalCLISigner()
   }
 }
