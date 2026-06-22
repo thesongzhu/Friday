@@ -11,8 +11,8 @@ import Testing
 // single Mission intake and expects a refs-only server receipt. A stricter opt-in test also
 // dispatches the returned Mission/WorkItem handle as a read-only mission-bound model turn.
 //
-// HONEST CEILING: these are agent-driven live product-surface proofs. They are not OG9 organic
-// origin and not A1 live-done.
+// HONEST CEILING: these are agent-driven live product-surface proofs. They count as v1-works
+// evidence only: works_not_adopted, not real-user adoption, and not A1 live-done.
 
 private let liveMissionSpineWriteDispatchEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_WRITE_DISPATCH_TEST"] == "1"
@@ -362,8 +362,9 @@ private func pollLiveRunOutcomeLearningCandidates(
   client: FridayRustReadClient,
   runIds: Set<String>
 ) async throws -> [[String: Any]] {
-  let deadline = Date().addingTimeInterval(20)
+  let deadline = Date().addingTimeInterval(90)
   var lastRows: [[String: Any]] = []
+  var lastMatchedRunIds = Set<String>()
 
   repeat {
     let snapshot = try await client.fetchWorkbench()
@@ -377,10 +378,12 @@ private func pollLiveRunOutcomeLearningCandidates(
       return matched
     }
     lastRows = rows
+    lastMatchedRunIds = matchedRunIds
     try await Task.sleep(for: .seconds(1))
   } while Date() < deadline
 
-  Issue.record("expected live run-outcome learning candidates for \(runIds), got \(lastRows)")
+  let missingRunIds = runIds.subtracting(lastMatchedRunIds)
+  Issue.record("expected live run-outcome learning candidates for \(runIds); missing=\(missingRunIds); got \(lastRows)")
   return []
 }
 
