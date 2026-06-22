@@ -258,6 +258,54 @@ final class WriteKATTests: XCTestCase {
     XCTAssertEqual(recovered, blob, "the signed blob must round-trip byte-for-byte (verbatim relay)")
   }
 
+  func testWK5_agentRunRejectCarriesOwnerAuthAndApprovalId() throws {
+    let msg = FridayMessage.agentRunReject(
+      runId: "run-1",
+      approvalId: "approval-1",
+      forwardedPrincipal: "owner-1",
+      authProof: [0x09, 0x0A])
+    let env = FridayEnvelope(msgId: "reject-1", sentAt: 1004, message: msg)
+    let json = String(decoding: try env.encodeJSON(), as: UTF8.self)
+    XCTAssertTrue(json.contains("\"kind\":\"AgentRunReject\""))
+    XCTAssertTrue(json.contains("\"approval_id\":\"approval-1\""))
+    XCTAssertTrue(json.contains("\"forwarded_principal\":\"owner-1\""))
+    XCTAssertTrue(json.contains("\"auth_proof\":[9,10]"))
+    XCTAssertFalse(json.contains("signed_blob"))
+    let messageObj = try messageObject(json)
+    XCTAssertEqual(Set(messageObj.keys), ["kind", "run_id", "approval_id", "forwarded_principal", "auth_proof"])
+    XCTAssertEqual(try FridayEnvelope.decodeJSON(Data(json.utf8)).message, msg)
+  }
+
+  func testWK5_agentRunCancelCarriesOwnerAuthAndOptionalReason() throws {
+    let withReason = FridayMessage.agentRunCancel(
+      runId: "run-1",
+      forwardedPrincipal: "owner-1",
+      authProof: [0x01, 0x02, 0x03],
+      reason: "operator stopped it")
+    let json = String(decoding: try FridayEnvelope(
+      msgId: "cancel-1",
+      sentAt: 1005,
+      message: withReason).encodeJSON(), as: UTF8.self)
+    XCTAssertTrue(json.contains("\"kind\":\"AgentRunCancel\""))
+    XCTAssertTrue(json.contains("\"reason\":\"operator stopped it\""))
+    XCTAssertFalse(json.contains("signed_blob"))
+    let messageObj = try messageObject(json)
+    XCTAssertEqual(Set(messageObj.keys), ["kind", "run_id", "forwarded_principal", "auth_proof", "reason"])
+    XCTAssertEqual(try FridayEnvelope.decodeJSON(Data(json.utf8)).message, withReason)
+
+    let withoutReason = FridayMessage.agentRunCancel(
+      runId: "run-2",
+      forwardedPrincipal: "owner-1",
+      authProof: [0x04],
+      reason: nil)
+    let noReasonJSON = String(decoding: try FridayEnvelope(
+      msgId: "cancel-2",
+      sentAt: 1006,
+      message: withoutReason).encodeJSON(), as: UTF8.self)
+    XCTAssertFalse(noReasonJSON.contains("reason"))
+    XCTAssertEqual(try FridayEnvelope.decodeJSON(Data(noReasonJSON.utf8)).message, withoutReason)
+  }
+
   // MARK: WK6 — the AgentRunPaused / AgentRunResult / AgentRunControlResult wire (refs-only)
 
   /// WK6: an `AgentRunPaused` frame round-trips and is REFS-ONLY — it carries the nonce +

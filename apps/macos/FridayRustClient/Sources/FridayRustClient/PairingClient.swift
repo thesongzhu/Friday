@@ -155,6 +155,8 @@ private func pairingKind(_ message: FridayMessage) -> String {
   case .agentRunResult: return "AgentRunResult"
   case .agentRunPaused: return "AgentRunPaused"
   case .agentRunResume: return "AgentRunResume"
+  case .agentRunCancel: return "AgentRunCancel"
+  case .agentRunReject: return "AgentRunReject"
   case .agentRunControlResult: return "AgentRunControlResult"
   case .missionIntakeRequest: return "MissionIntakeRequest"
   case .missionIntakeResult: return "MissionIntakeResult"

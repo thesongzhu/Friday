@@ -147,6 +147,12 @@ public protocol FridayRustWriteClient: Sendable {
   /// inspects NOTHING in `opaqueSignedBlob` and holds NO signing key (INV-1) — it relays VERBATIM.
   /// Fail-closed (`.runControlDisabled`) when the run-control flag is off.
   func resumeWithApproval(runId: String, opaqueSignedBlob: [UInt8]) async throws -> ResumeRelayResult
+  /// Reject one pending approval without resuming the mutation. Owner-authed over the sealed
+  /// session; fail-closed (`.runControlDisabled`) when run-control is off.
+  func rejectApproval(runId: String, approvalId: String) async throws -> ResumeRelayResult
+  /// Cancel one live run. Owner-authed over the sealed session; fail-closed
+  /// (`.runControlDisabled`) when run-control is off.
+  func cancelRun(runId: String, reason: String?) async throws -> ResumeRelayResult
 }
 
 // MARK: - The mission-spine WRITE client protocol (Lane-D entry-point-A organic driver)
@@ -331,7 +337,7 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
       ))
     case .error(let code, let message):
       throw FridayWriteClientError.serverError(code: code, message: message)
-    case .agentRunRequest, .agentRunResume, .agentRunControlResult,
+    case .agentRunRequest, .agentRunResume, .agentRunCancel, .agentRunReject, .agentRunControlResult,
          .pair, .pairAck, .hubStatus,
          .workbenchProjectionRequest, .workbenchProjectionSnapshot,
          .runReadbackRequest, .runReadbackSnapshot,
@@ -479,6 +485,71 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
     return try parseControlResult(respEnvelope.message)
   }
 
+  public func rejectApproval(runId: String, approvalId: String) async throws -> ResumeRelayResult {
+    guard !approvalId.isEmpty else { throw FridayWriteClientError.missingRef("reject requires an approval id") }
+    return try await sendOwnerAuthedControl(
+      runId: runId,
+      msgId: "agent-run-reject-\(runId)-\(approvalId)",
+      message: { authProof in
+        .agentRunReject(
+          runId: runId,
+          approvalId: approvalId,
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof)
+      },
+      closedMessage: "reject: connection closed before a control result")
+  }
+
+  public func cancelRun(runId: String, reason: String? = nil) async throws -> ResumeRelayResult {
+    try await sendOwnerAuthedControl(
+      runId: runId,
+      msgId: "agent-run-cancel-\(runId)",
+      message: { authProof in
+        .agentRunCancel(
+          runId: runId,
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof,
+          reason: reason)
+      },
+      closedMessage: "cancel: connection closed before a control result")
+  }
+
+  private func sendOwnerAuthedControl(
+    runId: String,
+    msgId: String,
+    message: ([UInt8]) -> FridayMessage,
+    closedMessage: String
+  ) async throws -> ResumeRelayResult {
+    guard agentRunControlViaRust else { throw FridayWriteClientError.runControlDisabled }
+    guard !runId.isEmpty else { throw FridayWriteClientError.missingRef("control requires a run id") }
+
+    let transport = try makeTransport()
+    let (sessionKey, sessionNonce) = try handshake(transport)
+    let authProof = try FridayCrypto.buildAuthProof(
+      sessionKey: sessionKey,
+      sessionNonce: sessionNonce,
+      sessionAad: writeSessionAad,
+      authChallenge: writeAuthChallenge,
+      forwardedPrincipal: forwardedPrincipal,
+      boundContext: Array(runId.utf8)
+    )
+    let env = FridayEnvelope(
+      msgId: msgId,
+      sentAt: now(),
+      message: message(authProof)
+    ).withCorrelation(msgId)
+    try transport.sendMessage(try sealEnvelope(env, sessionKey: sessionKey))
+
+    let respBody: [UInt8]
+    do {
+      respBody = try transport.recvMessage()
+    } catch {
+      throw FridayWriteClientError.transport("\(closedMessage): \(error)")
+    }
+    let respEnvelope = try openEnvelope(respBody, sessionKey: sessionKey)
+    return try parseControlResult(respEnvelope.message)
+  }
+
   /// Parse the refs-only `AgentRunControlResult` for a resume relay. A frame missing a required ref
   /// fails closed. A server REFUSAL (`accepted=false`) is a VALID parse — it is a refusal outcome,
   /// not a parse failure (the caller inspects `accepted`). EXPOSED `internal` for unit testing.
@@ -582,6 +653,8 @@ private func dispatchKind(_ message: FridayMessage) -> String {
   case .agentRunResult: return "AgentRunResult"
   case .agentRunPaused: return "AgentRunPaused"
   case .agentRunResume: return "AgentRunResume"
+  case .agentRunCancel: return "AgentRunCancel"
+  case .agentRunReject: return "AgentRunReject"
   case .agentRunControlResult: return "AgentRunControlResult"
   case .missionIntakeRequest: return "MissionIntakeRequest"
   case .missionIntakeResult: return "MissionIntakeResult"

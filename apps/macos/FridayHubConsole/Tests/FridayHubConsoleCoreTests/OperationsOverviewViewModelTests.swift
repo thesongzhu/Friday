@@ -394,6 +394,10 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   private var _lastMissionRunConstraints: AgentRunConstraintsWire?
   private var _lastResumeRunId: String?
   private var _lastResumeBlob: [UInt8]?
+  private var _lastRejectRunId: String?
+  private var _lastRejectApprovalId: String?
+  private var _lastCancelRunId: String?
+  private var _lastCancelReason: String?
   private var _missionContexts: [MissionWorkItemContextWire] = []
   private var _dispatchedTasks: [String] = []
   var lastIntake: MissionIntakeRequestWire? { lock.withLock { _lastIntake } }
@@ -405,6 +409,10 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   var lastMissionRunConstraints: AgentRunConstraintsWire? { lock.withLock { _lastMissionRunConstraints } }
   var lastResumeRunId: String? { lock.withLock { _lastResumeRunId } }
   var lastResumeBlob: [UInt8]? { lock.withLock { _lastResumeBlob } }
+  var lastRejectRunId: String? { lock.withLock { _lastRejectRunId } }
+  var lastRejectApprovalId: String? { lock.withLock { _lastRejectApprovalId } }
+  var lastCancelRunId: String? { lock.withLock { _lastCancelRunId } }
+  var lastCancelReason: String? { lock.withLock { _lastCancelReason } }
   var missionContexts: [MissionWorkItemContextWire] { lock.withLock { _missionContexts } }
   var dispatchedTasks: [String] { lock.withLock { _dispatchedTasks } }
 
@@ -516,6 +524,38 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
       accepted: true,
       status: "mutation_completed",
       auditRef: "audit://resume/1")
+  }
+
+  func rejectApproval(runId: String, approvalId: String) async throws -> ResumeRelayResult {
+    lock.withLock {
+      _lastRejectRunId = runId
+      _lastRejectApprovalId = approvalId
+    }
+    if case .throwsTransport = behavior {
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    }
+    return ResumeRelayResult(
+      runId: runId,
+      op: "reject",
+      accepted: true,
+      status: "rejected",
+      auditRef: "audit://reject/1")
+  }
+
+  func cancelRun(runId: String, reason: String?) async throws -> ResumeRelayResult {
+    lock.withLock {
+      _lastCancelRunId = runId
+      _lastCancelReason = reason
+    }
+    if case .throwsTransport = behavior {
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    }
+    return ResumeRelayResult(
+      runId: runId,
+      op: "cancel",
+      accepted: true,
+      status: "cancelled",
+      auditRef: "audit://cancel/1")
   }
 }
 

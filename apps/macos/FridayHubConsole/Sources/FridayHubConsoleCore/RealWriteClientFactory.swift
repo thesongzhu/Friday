@@ -130,6 +130,12 @@ struct HonestlyUnavailableWriteClient: FridayMissionSpineWriteClient, FridayMiss
   func resumeWithApproval(runId: String, opaqueSignedBlob: [UInt8]) async throws -> ResumeRelayResult {
     throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
   }
+  func rejectApproval(runId: String, approvalId: String) async throws -> ResumeRelayResult {
+    throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
+  }
+  func cancelRun(runId: String, reason: String?) async throws -> ResumeRelayResult {
+    throw FridayWriteClientError.transport("live write client unavailable: \(self.reason)")
+  }
   func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire {
     throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
   }

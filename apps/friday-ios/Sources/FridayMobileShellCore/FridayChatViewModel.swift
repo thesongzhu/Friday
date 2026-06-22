@@ -144,6 +144,36 @@ public struct ChatResumeReceipt: Sendable, Equatable {
     self.auditRef = r.auditRef
     self.truthLabel = r.truthLabel
   }
+
+  public var title: String {
+    switch (op, accepted) {
+    case ("resume", true): return "Approved action executed"
+    case ("reject", true): return "Approval rejected"
+    case ("cancel", true): return "Run cancelled"
+    case (_, false): return "Action refused"
+    default: return "Control accepted"
+    }
+  }
+
+  public var statusLabel: String {
+    switch (op, accepted) {
+    case ("resume", true): return "EXECUTED"
+    case ("reject", true): return "REJECTED"
+    case ("cancel", true): return "CANCELLED"
+    case (_, false): return "REFUSED"
+    default: return "ACCEPTED"
+    }
+  }
+
+  public var detail: String {
+    switch (op, accepted) {
+    case ("resume", true): return "receipt is refs-only — no body"
+    case ("reject", true): return "the pending approval was rejected; the action did NOT execute"
+    case ("cancel", true): return "the run was cancelled; no further mutation executes"
+    case (_, false): return "the action did NOT execute"
+    default: return "control receipt is refs-only — no body"
+    }
+  }
 }
 
 public struct ChatHistoryItem: Identifiable, Codable, Sendable, Equatable {
@@ -211,6 +241,8 @@ public enum ChatPhase: Sendable, Equatable {
   case pendingApproval(ApprovalCard)
   /// An approval is being signed + relayed (the resume is in flight).
   case resuming(ApprovalCard)
+  /// A rejection is being relayed to the hub (no mutation executes).
+  case rejecting(ApprovalCard)
   /// The resume relayed and settled with a refs-only receipt (accepted ⇒ executed; refused ⇒
   /// a successful relay of a refusal — the action did NOT execute).
   case resumed(ChatResumeReceipt)
@@ -226,7 +258,7 @@ public enum ChatPhase: Sendable, Equatable {
 
   public var isBusy: Bool {
     switch self {
-    case .dispatching, .resuming: return true
+    case .dispatching, .resuming, .rejecting: return true
     default: return false
     }
   }
@@ -237,13 +269,8 @@ public final class FridayChatViewModel: ObservableObject {
   @Published public private(set) var phase: ChatPhase = .composing
   @Published public private(set) var history: [ChatHistoryItem]
 
-  /// The package's `FridayRustWriteClient` is not `Sendable` (same reason as the read client),
-  /// so awaiting its `nonisolated async` dispatch/resume from this `@MainActor` VM would "send"
-  /// main-actor state across the hop. `nonisolated(unsafe)` is SOUND here: the package write
-  /// client is a `final class` with immutable `let` stored state, and each dispatch/resume builds
-  /// a FRESH transport — no shared mutable state to race. Resolved on the CONSUMER side (the #677
-  /// package is never edited). The `signer` is already `Sendable` (the protocol requires it).
-  nonisolated(unsafe) private let writeClient: FridayRustWriteClient
+  /// The package write client is `Sendable`; each dispatch/control call builds a fresh transport.
+  private let writeClient: FridayRustWriteClient
   private let missionClient: (any FridayMobileMissionDispatchingWriteClient)?
   private let readClient: FridayRustReadClient?
   private let signer: OperatorSigner
@@ -464,15 +491,21 @@ public final class FridayChatViewModel: ObservableObject {
 
   // MARK: 4. Reject / dismiss (no mutation executes)
 
-  /// Decline the paused mutation WITHOUT approving — the mutation does NOT execute (no resume is
-  /// relayed). Returns the loop to composing. A reject is local-only here; the run's pause times
-  /// out / is cancelled server-side (the resume is the ONLY thing that could execute it).
-  public func reject() {
-    guard phase.isAwaitingApproval else { return }
-    if case .pendingApproval(let card) = phase {
-      appendHistory(role: "friday", text: "Approval rejected.", runId: card.runId)
+  /// Decline the paused mutation WITHOUT approving — no resume is relayed, and the server records
+  /// the pending approval as rejected. This is not a local dismiss; a failure is surfaced honestly.
+  public func reject() async {
+    guard case .pendingApproval(let card) = phase else { return }
+    phase = .rejecting(card)
+    do {
+      let receipt = try await writeClient.rejectApproval(runId: card.runId, approvalId: card.approvalId)
+      appendHistory(
+        role: "friday",
+        text: receipt.accepted ? "Approval rejected." : "Approval rejection refused.",
+        runId: receipt.runId)
+      phase = .resumed(ChatResumeReceipt(receipt))
+    } catch {
+      phase = .unavailable(reason: Self.rejectReason(for: error))
     }
-    phase = .composing
   }
 
   public func clearHistory() {
@@ -501,6 +534,11 @@ public final class FridayChatViewModel: ObservableObject {
   static func resumeReason(for error: Error) -> String {
     if let e = error as? FridayWriteClientError { return writeReason(e, verb: "resume") }
     return "Resume unavailable — \(error)"
+  }
+
+  static func rejectReason(for error: Error) -> String {
+    if let e = error as? FridayWriteClientError { return writeReason(e, verb: "reject") }
+    return "Reject unavailable — \(error)"
   }
 
   static func signerReason(for error: Error) -> String {
