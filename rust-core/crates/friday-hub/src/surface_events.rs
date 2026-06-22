@@ -130,18 +130,33 @@ pub(crate) fn emit_surface_event(
 /// thread inline and does NOT call this). The resolved mission context carries an OPTIONAL
 /// `surface_thread_id` (the `by_mission_work_item` lookup the live mission-bound run uses leaves it
 /// `None`), so the producer resolves the bound thread by the surface_thread row's OWN `mission_id`
-/// column here (index-backed `list_surface_threads_for_mission`). Returns the oldest bound thread
-/// (deterministic). `Ok(None)` ⇒ no bound thread exists ⇒ the caller SKIPS the emit (best-effort:
-/// a run without a bound surface thread simply produces no surface_event — never an error). A
-/// storage error is logged + swallowed (returns `None`) so resolution can never break the run.
-pub(crate) fn resolve_bound_surface_thread(db: &Db, mission_id: &str) -> Option<SurfaceThread> {
+/// column here (index-backed `list_surface_threads_for_mission`).
+///
+/// If a mission has been consumed from multiple surfaces, prefer the thread whose conversation
+/// matches the current mission-bound envelope. This keeps storage's strict
+/// Mission/SurfaceThread/source-surface validation intact instead of accidentally picking the
+/// oldest thread from a different surface. If no matching thread exists, fall back to the oldest
+/// bound thread (the historical single-surface behavior). `Ok(None)` ⇒ no bound thread exists ⇒ the
+/// caller SKIPS the emit (best-effort: a run without a bound surface thread simply produces no
+/// surface_event — never an error). A storage error is logged + swallowed (returns `None`) so
+/// resolution can never break the run.
+pub(crate) fn resolve_bound_surface_thread(
+    db: &Db,
+    mission_id: &str,
+    friday_conversation_id: &str,
+) -> Option<SurfaceThread> {
     match db.list_surface_threads_for_mission(mission_id) {
         Ok(mut threads) => {
-            if threads.is_empty() {
-                None
-            } else {
-                Some(threads.remove(0))
-            }
+            let matching = threads
+                .iter()
+                .position(|thread| thread.friday_conversation_id == friday_conversation_id);
+            matching.map(|idx| threads.remove(idx)).or_else(|| {
+                if threads.is_empty() {
+                    None
+                } else {
+                    Some(threads.remove(0))
+                }
+            })
         }
         Err(err) => {
             eprintln!(
