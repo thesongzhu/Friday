@@ -67,6 +67,7 @@ struct FridayChatScreen: View {
             Button("Clear") { viewModel.clearHistory() }
               .font(.caption)
               .foregroundStyle(MobileTheme.cyan)
+              .accessibilityLabel("Clear Friday chat history")
           }
           ForEach(viewModel.history.suffix(8)) { item in
             VStack(alignment: .leading, spacing: 4) {
@@ -86,6 +87,7 @@ struct FridayChatScreen: View {
           }
         }
       }
+      .accessibilityIdentifier("friday.chat.history")
     }
   }
 
@@ -129,8 +131,12 @@ struct FridayChatScreen: View {
           Text(reason).font(.caption2).foregroundStyle(MobileTheme.textSecondary)
           Button("Start over") { viewModel.newTurn() }
             .font(.caption).foregroundStyle(MobileTheme.cyan)
+            .accessibilityLabel("Start a new Friday chat turn")
         }
       }
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel("Friday unavailable. \(reason)")
+      .accessibilityIdentifier("friday.chat.unavailable")
     }
   }
 
@@ -147,6 +153,8 @@ struct FridayChatScreen: View {
           RoundedRectangle(cornerRadius: 18, style: .continuous)
             .fill(Color.black.opacity(0.05)))
         .disabled(viewModel.phase.isBusy || viewModel.phase.isAwaitingApproval)
+        .accessibilityLabel("Message Friday")
+        .accessibilityIdentifier("friday.chat.composer")
 
       Button {
         let task = draft
@@ -158,6 +166,8 @@ struct FridayChatScreen: View {
           .foregroundStyle(canSend ? MobileTheme.cyan : MobileTheme.cyan.opacity(0.25))
       }
       .disabled(!canSend)
+      .accessibilityLabel("Send message to Friday")
+      .accessibilityIdentifier("friday.chat.send")
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 12)
@@ -207,6 +217,9 @@ struct FridayChatScreen: View {
         if let tools = r.executedTools { RefPill(label: "executed_tools", ref: "\(tools)") }
       }
     }
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("Friday answer")
+    .accessibilityIdentifier("friday.chat.answer")
   }
 
   /// The S6 approval card — summary-then-proof (the verb + summary, then the digest the operator
@@ -238,15 +251,20 @@ struct FridayChatScreen: View {
             Label("Approve", systemImage: "checkmark.seal").bold()
           }
           .buttonStyle(.borderedProminent).tint(MobileTheme.cyan)
+          .accessibilityLabel("Approve Friday action")
           Button(role: .destructive) {
             viewModel.reject()
           } label: {
             Label("Reject", systemImage: "xmark").foregroundStyle(MobileTheme.coral)
           }
           .buttonStyle(.bordered)
+          .accessibilityLabel("Reject Friday action")
         }
       }
     }
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("Approval required for \(card.actionVerb)")
+    .accessibilityIdentifier("friday.chat.approval-card")
   }
 
   /// The refs-only resume receipt (accepted ⇒ executed; refused ⇒ a successful relay of a refusal).
@@ -270,6 +288,9 @@ struct FridayChatScreen: View {
           .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
       }
     }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(r.accepted ? "Approved action executed" : "Action refused")
+    .accessibilityIdentifier("friday.chat.resume-receipt")
   }
 
   private func placeholder(_ title: String, _ sub: String) -> some View {

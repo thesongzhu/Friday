@@ -133,6 +133,25 @@ final class HomeViewModelTests: XCTestCase {
     return try WorkbenchSnapshot(projectionJSON: Data(json.utf8), generatedAtMs: 1_780_640_000_000)
   }
 
+  private func emptySnapshot() throws -> WorkbenchSnapshot {
+    let json = """
+    {
+      "missionId": "mission-empty",
+      "fridayConversationId": "conv-empty",
+      "runtimeFeedStatus": "live_rust_hub_projection",
+      "statusLabels": [],
+      "workItems": [],
+      "providerReceiptRefs": [],
+      "channelReceiptRefs": [],
+      "memoryCandidates": [],
+      "runOutcomeLearningCandidates": [],
+      "capabilityStates": [],
+      "transcriptSections": []
+    }
+    """
+    return try WorkbenchSnapshot(projectionJSON: Data(json.utf8), generatedAtMs: 1_780_640_010_000)
+  }
+
   func testRefresh_loadsRefsOnlyProjection() async throws {
     let snapshot = try sampleSnapshot()
     let vm = HomeViewModel(client: FakeReadClient(.snapshot(snapshot)))
@@ -161,6 +180,24 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.capabilityStates.first?.dispatchAllowed, true)
     XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile surface read the mission projection.")
     XCTAssertEqual(p.needsMeCount, 3)
+  }
+
+  func testRefresh_loadedEmptyIsConnectedEmptyNotUnavailable() async throws {
+    let vm = HomeViewModel(client: FakeReadClient(.snapshot(try emptySnapshot())))
+    await vm.refresh()
+    guard case .loaded(let p) = vm.state else { return XCTFail("expected loaded empty projection, got \(vm.state)") }
+    XCTAssertEqual(p.missionId, "mission-empty")
+    XCTAssertTrue(p.isLoadedEmpty)
+    XCTAssertTrue(vm.state.isOnline)
+    XCTAssertNil(vm.state.projection?.statusLabels.first)
+  }
+
+  func testRefresh_nonEmptyProjectionIsNotLoadedEmpty() async throws {
+    let vm = HomeViewModel(client: FakeReadClient(.snapshot(try sampleSnapshot())))
+    await vm.refresh()
+    guard case .loaded(let p) = vm.state else { return XCTFail("expected loaded projection") }
+    XCTAssertFalse(p.isLoadedEmpty)
+    XCTAssertTrue(vm.state.isOnline)
   }
 
   func testRefresh_transportFailure_isHonestUnavailable() async {
