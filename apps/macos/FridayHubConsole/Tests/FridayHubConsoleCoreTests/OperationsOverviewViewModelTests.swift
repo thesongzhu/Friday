@@ -616,7 +616,45 @@ final class DetailReadClient: FridayRustReadClient, @unchecked Sendable {
   }
 
   func fetchProvidersDoctor(probe: String?) async throws -> ReadProjectionSnapshot {
-    try record("providers:\(probe ?? "")", kind: "providers", status: "ready", proofRef: "proof://provider/doctor")
+    try record(
+      "providers:\(probe ?? "")",
+      kind: "providers",
+      status: "ready",
+      proofRef: "proof://provider/doctor",
+      extra: [
+        "key_validation_probed": true,
+        "suggested_text_route": "deepseek",
+        "suggested_strong_route": "codex",
+        "route_readiness": [
+          [
+            "provider_id": "deepseek",
+            "model": "deepseek-v4-flash",
+            "model_size": "small",
+            "strength": "cheap",
+            "dispatchable": true,
+            "blockers": [],
+          ],
+          [
+            "provider_id": "claude",
+            "model": "claude-opus-4-8",
+            "model_size": "large",
+            "strength": "strong",
+            "dispatchable": false,
+            "blockers": [
+              ["kind": "operator_flag", "code": "friday_claude_route_disabled"],
+              ["kind": "credential", "code": "api_key_missing"],
+            ],
+          ],
+        ],
+        "failover_readiness": [
+          [
+            "direction": "deepseek_to_claude",
+            "flag_enabled": false,
+            "can_enable": false,
+            "blockers": [["kind": "operator_flag", "code": "failover_flag_off"]],
+          ]
+        ],
+      ])
   }
 
   func fetchSessionList() async throws -> ReadProjectionSnapshot {
@@ -648,7 +686,8 @@ final class DetailReadClient: FridayRustReadClient, @unchecked Sendable {
     kind: String,
     status: String,
     runId: String? = nil,
-    proofRef: String
+    proofRef: String,
+    extra: [String: Any] = [:]
   ) throws -> ReadProjectionSnapshot {
     if let failWith { throw failWith }
     lock.withLock { _requested.append(request) }
@@ -660,6 +699,9 @@ final class DetailReadClient: FridayRustReadClient, @unchecked Sendable {
       "evidenceRefs": ["proof://evidence/\(kind)"],
     ]
     if let runId { raw["runId"] = runId }
+    for (key, value) in extra {
+      raw[key] = value
+    }
     let data = try JSONSerialization.data(withJSONObject: raw)
     return try ReadProjectionSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_123)
   }
@@ -714,6 +756,16 @@ func loadDetailCallsProviderDoctorReadArm() async {
   #expect(detail.title == "Provider doctor")
   #expect(detail.summary == "mission=mission-desktop | status=ready | truth=friday_owned")
   #expect(detail.refs == ["proof://provider/doctor", "proof://evidence/providers"])
+  let readiness = detail.providerReadiness
+  #expect(readiness?.keyValidationProbed == true)
+  #expect(readiness?.suggestedTextRoute == "deepseek")
+  #expect(readiness?.suggestedStrongRoute == "codex")
+  #expect(readiness?.routes.first { $0.providerId == "deepseek" }?.dispatchable == true)
+  #expect(readiness?.routes.first { $0.providerId == "claude" }?.blockers == [
+    "friday_claude_route_disabled",
+    "api_key_missing",
+  ])
+  #expect(readiness?.failovers.first?.blockers == ["failover_flag_off"])
 }
 
 @Test
