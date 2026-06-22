@@ -30,10 +30,26 @@ public struct SessionContinuationSnapshot: Sendable, Equatable {
   public let runId: String?
   public let sections: [SessionContinuationSection]
   public let controls: [SessionContinuationControl]
+  public let pendingApproval: SessionContinuationApproval?
 
   public var proofRefs: [String] {
     var seen = Set<String>()
     return sections.flatMap(\.refs).filter { seen.insert($0).inserted }
+  }
+}
+
+public struct SessionContinuationApproval: Sendable, Equatable {
+  public let runId: String
+  public let approvalId: String
+  public let actionDigest: String
+  public let summary: String?
+
+  public var signingRequest: ApprovalSigningRequest {
+    ApprovalSigningRequest(
+      runId: runId,
+      approvalId: approvalId,
+      actionDigest: actionDigest,
+      summary: summary)
   }
 }
 
@@ -63,15 +79,18 @@ public final class SessionContinuationViewModel: ObservableObject {
 
   private let client: FridayRustReadClient
   private let writeClient: FridayRustWriteClient?
+  private let signer: OperatorSigner?
   private let runControlEnabled: Bool
 
   public init(
     client: FridayRustReadClient,
     writeClient: FridayRustWriteClient? = nil,
+    signer: OperatorSigner? = nil,
     runControlEnabled: Bool = false
   ) {
     self.client = client
     self.writeClient = writeClient
+    self.signer = signer
     self.runControlEnabled = runControlEnabled
   }
 
@@ -91,10 +110,13 @@ public final class SessionContinuationViewModel: ObservableObject {
     async let link = Self.fetchSessionLinkState(client: client, agentSessionId: sessionId)
 
     var sections = await [open, link]
+    var pendingApproval: SessionContinuationApproval?
     if let resolvedRunId {
       async let files = Self.fetchRunFileView(client: client, runId: resolvedRunId)
-      async let needsMe = Self.fetchActivityNeedsMe(client: client, runId: resolvedRunId)
-      sections.append(contentsOf: await [files, needsMe])
+      async let needsMe = Self.fetchActivityNeedsMeDetail(client: client, runId: resolvedRunId)
+      let needsMeDetail = await needsMe
+      pendingApproval = needsMeDetail.pendingApproval
+      sections.append(contentsOf: await [files, needsMeDetail.section])
     } else {
       sections.append(SessionContinuationSection(
         id: "run-files",
@@ -118,8 +140,11 @@ public final class SessionContinuationViewModel: ObservableObject {
       sections: sections,
       controls: Self.controls(
         runId: resolvedRunId,
+        hasPendingApproval: pendingApproval != nil,
         hasWriteClient: writeClient != nil,
-        runControlEnabled: runControlEnabled)))
+        hasSigner: signer != nil,
+        runControlEnabled: runControlEnabled),
+      pendingApproval: pendingApproval))
   }
 
   public func stop() async {
@@ -148,6 +173,49 @@ public final class SessionContinuationViewModel: ObservableObject {
       }
     } catch {
       controlStates["stop"] = .error(reason: Self.writeReason(for: error, verb: "stop"))
+    }
+  }
+
+  public func resume() async {
+    guard case .loaded(let snapshot) = state else { return }
+    guard let approval = snapshot.pendingApproval else {
+      controlStates["resume"] = .error(reason: "Resume requires a pending approval ref.")
+      return
+    }
+    guard runControlEnabled else {
+      controlStates["resume"] = .error(reason: "Resume is gated off for this session.")
+      return
+    }
+    guard let writeClient else {
+      controlStates["resume"] = .error(reason: "Resume requires the governed write client.")
+      return
+    }
+    guard let signer else {
+      controlStates["resume"] = .error(reason: "Resume requires the operator signer relay.")
+      return
+    }
+
+    controlStates["resume"] = .sending
+    let blob: [UInt8]
+    do {
+      blob = try await signer.signApproval(approval.signingRequest)
+    } catch {
+      controlStates["resume"] = .error(reason: Self.signerReason(for: error))
+      return
+    }
+    guard !blob.isEmpty else {
+      controlStates["resume"] = .error(reason: "Approval unavailable — the signer returned no signature")
+      return
+    }
+    do {
+      let result = try await writeClient.resumeWithApproval(runId: approval.runId, opaqueSignedBlob: blob)
+      if result.accepted {
+        controlStates["resume"] = .succeeded(summary: Self.controlSummary(for: result))
+      } else {
+        controlStates["resume"] = .error(reason: "Resume refused: \(Self.controlSummary(for: result))")
+      }
+    } catch {
+      controlStates["resume"] = .error(reason: Self.writeReason(for: error, verb: "resume"))
     }
   }
 
@@ -181,14 +249,35 @@ public final class SessionContinuationViewModel: ObservableObject {
       read: { try await client.fetchRunFileView(runId: runId) })
   }
 
-  private nonisolated static func fetchActivityNeedsMe(
+  private nonisolated static func fetchActivityNeedsMeDetail(
     client: FridayRustReadClient,
     runId: String
-  ) async -> SessionContinuationSection {
-    await fetch(
-      id: "needs-me",
-      title: "Needs Me",
-      read: { try await client.fetchActivityNeedsMe(runId: runId) })
+  ) async -> (section: SessionContinuationSection, pendingApproval: SessionContinuationApproval?) {
+    do {
+      let snapshot = try await client.fetchActivityNeedsMe(runId: runId)
+      let detail = HomeReadDetail(title: "Needs Me", snapshot: snapshot)
+      return (
+        SessionContinuationSection(
+          id: "needs-me",
+          title: "Needs Me",
+          status: .loaded,
+          summary: detail.summary,
+          generatedAtMs: detail.generatedAtMs,
+          refs: detail.refs),
+        approval(from: snapshot.raw, fallbackRunId: runId)
+      )
+    } catch {
+      return (
+        SessionContinuationSection(
+          id: "needs-me",
+          title: "Needs Me",
+          status: .unavailable(reason: reason(for: error)),
+          summary: "unavailable",
+          generatedAtMs: nil,
+          refs: []),
+        nil
+      )
+    }
   }
 
   private nonisolated static func fetch(
@@ -218,10 +307,13 @@ public final class SessionContinuationViewModel: ObservableObject {
 
   private nonisolated static func controls(
     runId: String?,
+    hasPendingApproval: Bool,
     hasWriteClient: Bool,
+    hasSigner: Bool,
     runControlEnabled: Bool
   ) -> [SessionContinuationControl] {
     let stopReady = runId != nil && hasWriteClient && runControlEnabled
+    let resumeReady = hasPendingApproval && hasWriteClient && hasSigner && runControlEnabled
     let stopReason: String
     if stopReady {
       stopReason = "Owner-authenticated cancel is wired through the governed write seam."
@@ -231,6 +323,18 @@ public final class SessionContinuationViewModel: ObservableObject {
       stopReason = "Stop is gated off for this session."
     } else {
       stopReason = "Stop requires the governed write client."
+    }
+    let resumeReason: String
+    if resumeReady {
+      resumeReason = "Pending approval refs are present; the operator signer relay can resume through the governed write seam."
+    } else if !hasPendingApproval {
+      resumeReason = "Resume requires a pending approval ref from Needs-Me."
+    } else if !runControlEnabled {
+      resumeReason = "Resume is gated off for this session."
+    } else if !hasSigner {
+      resumeReason = "Resume requires the operator signer relay."
+    } else {
+      resumeReason = "Resume requires the governed write client."
     }
     return [
       SessionContinuationControl(
@@ -251,9 +355,9 @@ public final class SessionContinuationViewModel: ObservableObject {
         id: "resume",
         title: "Resume",
         systemImage: "play.circle",
-        truthLabel: "NO-GO",
-        reason: "Resume is display-only until the governed continuation endpoint exists.",
-        isEnabled: false),
+        truthLabel: resumeReady ? "operator-gated" : "NO-GO",
+        reason: resumeReason,
+        isEnabled: resumeReady),
       SessionContinuationControl(
         id: "fork",
         title: "Fork",
@@ -271,6 +375,47 @@ public final class SessionContinuationViewModel: ObservableObject {
       parts.append(auditRef)
     }
     return parts.joined(separator: " · ")
+  }
+
+  private nonisolated static func approval(
+    from raw: [String: Any],
+    fallbackRunId: String
+  ) -> SessionContinuationApproval? {
+    if let needsMe = raw["needs_me"] as? [String: Any],
+       let approval = approval(fromItem: needsMe, fallbackRunId: fallbackRunId) {
+      return approval
+    }
+    guard let items = raw["actionable_needs_me"] as? [[String: Any]] else { return nil }
+    return items.lazy.compactMap { item in
+      guard (item["kind"] as? String) == "approval_required" else { return nil }
+      return approval(fromItem: item, fallbackRunId: fallbackRunId)
+    }.first
+  }
+
+  private nonisolated static func approval(
+    fromItem item: [String: Any],
+    fallbackRunId: String
+  ) -> SessionContinuationApproval? {
+    let signing = item["signing_request"] as? [String: Any] ?? item
+    let runId = firstNonEmptyString(signing, ["run_id", "runId"]) ?? fallbackRunId
+    guard let approvalId = firstNonEmptyString(signing, ["approval_id", "approvalId", "ref_id", "refId"]),
+          let actionDigest = firstNonEmptyString(signing, ["action_digest", "actionDigest"]) else {
+      return nil
+    }
+    return SessionContinuationApproval(
+      runId: runId,
+      approvalId: approvalId,
+      actionDigest: actionDigest,
+      summary: firstNonEmptyString(signing, ["summary"]) ?? firstNonEmptyString(item, ["summary", "title"]))
+  }
+
+  private nonisolated static func firstNonEmptyString(
+    _ raw: [String: Any],
+    _ keys: [String]
+  ) -> String? {
+    keys.lazy.compactMap { raw[$0] as? String }
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .first { !$0.isEmpty }
   }
 
   private nonisolated static func reason(for error: Error) -> String {
@@ -311,5 +456,10 @@ public final class SessionContinuationViewModel: ObservableObject {
       }
     }
     return "Friday is unavailable — \(error)"
+  }
+
+  private nonisolated static func signerReason(for error: Error) -> String {
+    if let e = error as? OperatorSignerError { return e.description }
+    return "Approval unavailable — \(error)"
   }
 }
