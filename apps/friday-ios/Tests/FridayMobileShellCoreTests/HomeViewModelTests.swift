@@ -199,6 +199,26 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertTrue(vm.state.isOnline)
   }
 
+  func testHomeViewModelCarriesInjectedDevicePairingReadiness() async throws {
+    let readiness = DevicePairingReadiness(
+      mode: .ready,
+      publicKeyHex: String(repeating: "a", count: 64),
+      readLiveRequested: true,
+      writeLiveRequested: false,
+      reason: "Device public key is ready for operator enrollment.",
+      nextStep: "Enroll this public key on the Hub.")
+    let vm = HomeViewModel(
+      client: FakeReadClient(.snapshot(try sampleSnapshot())),
+      devicePairing: readiness)
+
+    await vm.refresh()
+
+    XCTAssertEqual(vm.devicePairing, readiness)
+    XCTAssertEqual(vm.devicePairing.publicKeyHex, String(repeating: "a", count: 64))
+    XCTAssertTrue(vm.devicePairing.readLiveRequested)
+    XCTAssertFalse(vm.devicePairing.writeLiveRequested)
+  }
+
   func testRefresh_liftsConsumerSurfaceProjectionRefs() async throws {
     let vm = HomeViewModel(client: FakeReadClient(.snapshot(try sampleSnapshot())))
     await vm.refresh()

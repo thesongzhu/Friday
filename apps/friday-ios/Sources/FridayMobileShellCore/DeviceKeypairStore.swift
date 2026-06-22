@@ -57,6 +57,62 @@ public struct DeviceKeypair {
   }
 }
 
+public enum DevicePairingReadinessMode: String, Sendable, Equatable {
+  case disabled
+  case ready
+  case unavailable
+}
+
+/// Refs-only device-pairing readiness surfaced to the mobile UI.
+///
+/// This is deliberately local/client-side: it reports whether this app launch has opted into the
+/// device-keypair path and, if so, the PUBLIC X25519 key the operator can enroll. It never claims a
+/// Hub row exists, never writes trust state, and never exposes the private scalar.
+public struct DevicePairingReadiness: Sendable, Equatable {
+  public let mode: DevicePairingReadinessMode
+  public let publicKeyHex: String?
+  public let readLiveRequested: Bool
+  public let writeLiveRequested: Bool
+  public let reason: String
+  public let nextStep: String
+
+  public static func evaluate(
+    deviceKeypairRequested: Bool,
+    readLiveRequested: Bool,
+    writeLiveRequested: Bool,
+    backend: DeviceKeypairBackend = KeychainDeviceKeypairBackend()
+  ) -> DevicePairingReadiness {
+    guard deviceKeypairRequested else {
+      return DevicePairingReadiness(
+        mode: .disabled,
+        publicKeyHex: nil,
+        readLiveRequested: readLiveRequested,
+        writeLiveRequested: writeLiveRequested,
+        reason: "Device keypair mode is not enabled for this launch.",
+        nextStep: "Relaunch with --live-device-keypair when pairing this phone.")
+    }
+
+    do {
+      let device = try DeviceKeypairStore.loadOrGenerate(backend: backend)
+      return DevicePairingReadiness(
+        mode: .ready,
+        publicKeyHex: device.publicKeyHex,
+        readLiveRequested: readLiveRequested,
+        writeLiveRequested: writeLiveRequested,
+        reason: "Device public key is ready for operator enrollment.",
+        nextStep: "Enroll this public key on the Hub; trust rows still require the pairing ceremony.")
+    } catch {
+      return DevicePairingReadiness(
+        mode: .unavailable,
+        publicKeyHex: nil,
+        readLiveRequested: readLiveRequested,
+        writeLiveRequested: writeLiveRequested,
+        reason: "Device keypair store is unavailable.",
+        nextStep: "Repair the device keypair store before pairing.")
+    }
+  }
+}
+
 /// Typed failures for the device-keypair store. The error vocabulary names a failure CATEGORY,
 /// never a secret value.
 public enum DeviceKeypairStoreError: Error, Equatable, CustomStringConvertible {

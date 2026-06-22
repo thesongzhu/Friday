@@ -41,6 +41,7 @@ final class FridaySession: ObservableObject {
   let readClient: FridayRustReadClient
   let writeClient: FridayRustWriteClient
   let missionClient: FridayMobileMissionDispatchingWriteClient?
+  let devicePairing: DevicePairingReadiness
   /// The operator-signing RELAY. Mock today (NOT a real signature); the real desktop signer
   /// (PR #671) is the slice-6 / operator-key gate. The phone holds NO signing key (INV-1).
   let signer: OperatorSigner
@@ -61,6 +62,9 @@ final class FridaySession: ObservableObject {
     // mirroring the desktop `FRIDAY_CONSOLE_LIVE`). The DEFAULT (gate OFF) stays the honest-
     // unavailable client — this PR does NOT flip the shipped default (that is the slice-6 gate).
     self.readClient = preview ? PreviewReadClient() : Self.defaultReadClient()
+    self.devicePairing = preview
+      ? .evaluate(deviceKeypairRequested: false, readLiveRequested: false, writeLiveRequested: false)
+      : Self.defaultDevicePairingReadiness()
 
     // The write client (Friday Chat read-WRITE / S6 surface). DEFAULT (gate OFF) = the throwing
     // `liveTransportNotWired` factory transport ⇒ honest-unavailable, with an ephemeral X25519
@@ -95,7 +99,7 @@ final class FridaySession: ObservableObject {
   static func defaultReadClient() -> FridayRustReadClient {
     let args = ProcessInfo.processInfo.arguments
     let env = ProcessInfo.processInfo.environment
-    let useLive = args.contains("--live-read") || env["FRIDAY_MOBILE_LIVE_READ"] == "1"
+    let useLive = liveReadRequested(args: args, env: env)
     guard useLive else {
       // SHIPPED DEFAULT — unchanged: no key, no socket, no SecureStore touch.
       return HonestlyUnavailableReadClient()
@@ -132,7 +136,7 @@ final class FridaySession: ObservableObject {
   ) -> FridayMobileMissionDispatchingWriteClient? {
     let args = ProcessInfo.processInfo.arguments
     let env = ProcessInfo.processInfo.environment
-    let useLive = args.contains("--live-write") || env["FRIDAY_MOBILE_LIVE_WRITE"] == "1"
+    let useLive = liveWriteRequested(args: args, env: env)
     guard useLive else {
       return nil
     }
@@ -153,6 +157,23 @@ final class FridaySession: ObservableObject {
 
   static func useDeviceKeypair(args: [String], env: [String: String]) -> Bool {
     args.contains("--live-device-keypair") || env["FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR"] == "1"
+  }
+
+  static func liveReadRequested(args: [String], env: [String: String]) -> Bool {
+    args.contains("--live-read") || env["FRIDAY_MOBILE_LIVE_READ"] == "1"
+  }
+
+  static func liveWriteRequested(args: [String], env: [String: String]) -> Bool {
+    args.contains("--live-write") || env["FRIDAY_MOBILE_LIVE_WRITE"] == "1"
+  }
+
+  static func defaultDevicePairingReadiness() -> DevicePairingReadiness {
+    let args = ProcessInfo.processInfo.arguments
+    let env = ProcessInfo.processInfo.environment
+    return DevicePairingReadiness.evaluate(
+      deviceKeypairRequested: useDeviceKeypair(args: args, env: env),
+      readLiveRequested: liveReadRequested(args: args, env: env),
+      writeLiveRequested: liveWriteRequested(args: args, env: env))
   }
 
   /// The honest-unavailable WRITE client: the shared `FridayClientFactory.makeWriteClient` with its
@@ -185,7 +206,8 @@ struct RootView: View {
     self.session = session
     _homeVM = StateObject(wrappedValue: HomeViewModel(
       client: session.readClient,
-      writeClient: session.missionClient))
+      writeClient: session.missionClient,
+      devicePairing: session.devicePairing))
   }
 
   var body: some View {
