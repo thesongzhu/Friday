@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { GitBranch, Search, ShieldX } from "lucide-react";
+import { GitBranch, RotateCcw, Search, ShieldX, XCircle } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
@@ -90,6 +90,24 @@ export function MissionWorkbenchPage() {
           : {}),
         actorRef: "operator:mission-workbench",
         reason: reason.length > 0 ? reason : "operator workbench route control",
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["mission-spine", "workbench", "snapshot", targetMissionId ?? "latest"],
+      });
+    },
+  });
+
+  const workItemRecoveryMutation = useMutation({
+    mutationFn: (input: { workItemId: string; action: "retry" | "cancel" }) => {
+      const targetStatus = input.action === "retry" ? "ready_to_dispatch" : "cancelled";
+      return missionWorkbenchApi.transitionWorkItemStatus(input.workItemId, {
+        targetStatus,
+        actorRef: "operator:mission-workbench",
+        reason: input.action === "retry"
+          ? "operator requested retry from Mission Workbench recovery surface"
+          : "operator cancelled WorkItem from Mission Workbench recovery surface",
       });
     },
     onSuccess: () => {
@@ -196,11 +214,43 @@ export function MissionWorkbenchPage() {
                     <StatusPill tone={item.done ? "success" : "warning"}>
                       {item.done ? "done with proof" : "not completion"}
                     </StatusPill>
+                    <StatusPill tone={item.canRetry ? "warning" : item.canCancel ? "neutral" : "success"}>
+                      {item.recoveryKind.replaceAll("_", " ")}
+                    </StatusPill>
                   </div>
+                  <p className="mt-3 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                    {item.blockingReason}
+                  </p>
                   {item.proofRef ? (
                     <p className="mt-3 break-all rounded-lg bg-[color:var(--color-bg-base)] p-2 text-xs text-[color:var(--color-text-secondary)]">
                       {item.proofRef}
                     </p>
+                  ) : null}
+                  {item.canRetry || item.canCancel ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {item.canRetry ? (
+                        <ActionButton
+                          tone="secondary"
+                          className="gap-2 rounded-lg"
+                          disabled={workItemRecoveryMutation.isPending}
+                          onClick={() => workItemRecoveryMutation.mutate({ workItemId: item.id, action: "retry" })}
+                        >
+                          <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                          Retry
+                        </ActionButton>
+                      ) : null}
+                      {item.canCancel ? (
+                        <ActionButton
+                          tone="danger"
+                          className="gap-2 rounded-lg"
+                          disabled={workItemRecoveryMutation.isPending}
+                          onClick={() => workItemRecoveryMutation.mutate({ workItemId: item.id, action: "cancel" })}
+                        >
+                          <XCircle className="h-4 w-4" aria-hidden="true" />
+                          Cancel
+                        </ActionButton>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               ))}

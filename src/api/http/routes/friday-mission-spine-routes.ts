@@ -104,6 +104,14 @@ const ROUTE_ACTION_REVERSIBILITY = new Set([
   "operator_gate_required",
   "pending_classify",
 ]);
+const WORK_ITEM_RECOVERY_KINDS = new Set([
+  "none",
+  "dispatchable",
+  "in_flight",
+  "needs_operator",
+  "retryable",
+  "terminal",
+]);
 const WORK_LANES = new Set(["friday_hub", "codex", "claude", "deepseek", "workflow", "channel", "human", "future_api"]);
 const PLACEHOLDER_MARKERS = [
   "mission_pending_runtime_projection",
@@ -516,6 +524,19 @@ function validateWorkItems(snapshot: FridayMissionSpineWorkbenchSnapshot, failur
     pushIfInvalid(failures, hasText(item.title), `work_item_title_missing:${item.id}`);
     pushIfInvalid(failures, TRUTH_LABELS.has(item.owner), `work_item_truth_label_invalid:${item.id}`);
     pushIfInvalid(failures, LIFECYCLE_STATES.has(item.state), `work_item_state_invalid:${item.id}:${item.state}`);
+    pushIfInvalid(failures, hasText(item.blockingReason), `work_item_blocking_reason_missing:${item.id}`);
+    pushIfInvalid(failures, WORK_ITEM_RECOVERY_KINDS.has(item.recoveryKind), `work_item_recovery_kind_invalid:${item.id}:${item.recoveryKind}`);
+    pushIfInvalid(failures, typeof item.canRetry === "boolean", `work_item_can_retry_invalid:${item.id}`);
+    pushIfInvalid(failures, typeof item.canCancel === "boolean", `work_item_can_cancel_invalid:${item.id}`);
+    if (item.state === "stale") {
+      pushIfInvalid(failures, item.recoveryKind === "retryable", `stale_work_item_not_retryable:${item.id}`);
+      pushIfInvalid(failures, item.canRetry === true, `stale_work_item_retry_not_exposed:${item.id}`);
+    }
+    if (item.state === "completed_with_proof" || item.state === "timeline_read") {
+      if (item.canRetry || item.canCancel) {
+        failures.push(`non_actionable_work_item_exposes_recovery:${item.id}:${item.state}`);
+      }
+    }
     if (item.state === "provider_ack" && item.done === false) providerAckNotDone = true;
     if (item.state === "timeline_read" && item.done === false) timelineReadNotDone = true;
     if (NON_COMPLETION_STATES.has(item.state) && item.done === true) {

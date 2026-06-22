@@ -145,8 +145,8 @@ final class HomeViewModelTests: XCTestCase {
       "providerReceiptRefs": ["proof://provider/1"],
       "channelReceiptRefs": ["proof://surface/mobile/1"],
       "workItems": [
-        { "workItemId": "wi-1", "title": "Draft mission", "state": "ready", "owner": "friday_owned", "done": false },
-        { "workItemId": "wi-2", "title": "Needs approval", "state": "waiting", "owner": "linked_only", "proofRef": "proof://wi/2", "done": false }
+        { "workItemId": "wi-1", "title": "Draft mission", "state": "ready", "owner": "friday_owned", "done": false, "blockingReason": "ready for dispatch; no recovery action required", "recoveryKind": "dispatchable", "canRetry": false, "canCancel": true },
+        { "workItemId": "wi-2", "title": "Needs approval", "state": "stale", "owner": "linked_only", "proofRef": "proof://wi/2", "done": false, "blockingReason": "failed retryable; operator may retry by returning the WorkItem to ready_to_dispatch", "recoveryKind": "retryable", "canRetry": true, "canCancel": true }
       ],
       "memoryCandidates": [
         { "id": "cand-1", "preview": "Remember route preference.", "state": "candidate_review_only", "grantsMemoryAuthority": false, "evidenceRef": "proof://memory/1" }
@@ -208,12 +208,15 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.providerReceiptRefs, ["proof://provider/1"])
     XCTAssertEqual(p.channelReceiptRefs, ["proof://surface/mobile/1"])
     XCTAssertEqual(p.workItems.map(\.title), ["Draft mission", "Needs approval"])
-    XCTAssertEqual(p.workItems.filter(\.needsAttention).map(\.id), ["wi-2"])
+    XCTAssertEqual(p.workItems.filter(\.needsAttention).map(\.id), ["wi-1", "wi-2"])
+    XCTAssertEqual(p.workItems.last?.recoveryKind, "retryable")
+    XCTAssertEqual(p.workItems.last?.canRetry, true)
+    XCTAssertEqual(p.workItems.last?.blockingReason, "failed retryable; operator may retry by returning the WorkItem to ready_to_dispatch")
     XCTAssertEqual(p.memoryCandidates.first?.grantsMemoryAuthority, false)
     XCTAssertEqual(p.runOutcomeLearningCandidates.first?.runId, "run-1")
     XCTAssertEqual(p.capabilityStates.first?.dispatchAllowed, true)
     XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile surface read the mission projection.")
-    XCTAssertEqual(p.needsMeCount, 3)
+    XCTAssertEqual(p.needsMeCount, 4)
   }
 
   func testRefresh_loadedEmptyIsConnectedEmptyNotUnavailable() async throws {
@@ -536,7 +539,9 @@ final class EmulatedReadServerTransport: SealedWSTransport {
     "providerReceiptRefs":["proof://provider/emulated"],\
     "channelReceiptRefs":["proof://surface/mobile/emulated"],\
     "workItems":[{"workItemId":"wi-a","title":"Rendered answer-ready work item",\
-    "state":"waiting","owner":"friday_owned","proofRef":"proof://wi/a","done":false}],\
+    "state":"waiting","owner":"friday_owned","proofRef":"proof://wi/a","done":false,\
+    "blockingReason":"waiting on operator input or preflight resolution",\
+    "recoveryKind":"needs_operator","canRetry":false,"canCancel":true}],\
     "memoryCandidates":[{"id":"mem-a","preview":"Remember the preferred routing shape.",\
     "state":"candidate_review_only","grantsMemoryAuthority":false,\
     "evidenceRef":"proof://memory/emulated"}],\

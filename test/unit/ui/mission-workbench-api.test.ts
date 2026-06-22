@@ -78,4 +78,33 @@ describe("missionWorkbenchApi", () => {
       },
     );
   });
+
+  it("posts WorkItem recovery status transitions through the encoded WorkItem id", async () => {
+    const result = {
+      truthLabel: "rust_wired",
+      workItemId: "work/retry target",
+      status: "ready_to_dispatch",
+      actorRef: "operator:mission-workbench",
+      reason: "operator requested retry from Mission Workbench recovery surface",
+      updatedAtMs: 1_700_000_000_000,
+    };
+    vi.mocked(apiClient.post).mockResolvedValue({ result });
+
+    await expect(
+      missionWorkbenchApi.transitionWorkItemStatus("work/retry target", {
+        targetStatus: "ready_to_dispatch",
+        actorRef: "operator:mission-workbench",
+        reason: "operator requested retry from Mission Workbench recovery surface",
+      }),
+    ).resolves.toEqual(result);
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      "/v1/mission-spine/work-items/work%2Fretry%20target/status",
+      {
+        targetStatus: "ready_to_dispatch",
+        actorRef: "operator:mission-workbench",
+        reason: "operator requested retry from Mission Workbench recovery surface",
+      },
+    );
+  });
 });
