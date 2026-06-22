@@ -308,15 +308,16 @@ private func liveClaudeFollowUpTask(
 @Test(.enabled(if: liveProductAutoFollowUpRunEnabled))
 @MainActor
 func liveOperationsOverviewSubmitIntakeAutoDispatchesHybridClaudeFollowUp() async throws {
-  let id = "liveauto\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
-  let readClient = try RealReadClientFactory.makeLive(missionId: "mission-desktop-\(id)")
+  let identity = liveUiProofMissionIdentity(defaultSurface: "desktop")
+  let readClient = try RealReadClientFactory.makeLive(missionId: identity.missionId)
   let writeClient = try RealWriteClientFactory.makeLiveWrite(config: hybridFollowUpWriteConfig())
   let vm = OperationsOverviewViewModel(
     client: readClient,
     writeClient: writeClient,
     missionRunClient: writeClient,
     writeOwnerPrincipal: liveReadProjectionOwnerPrincipal,
-    newId: { id })
+    newId: { identity.id },
+    missionIdPrefix: identity.missionIdPrefix)
 
   await vm.submitIntake(
     intent: "In the FridayHubConsole test target, identify the live hybrid route test file path, "
@@ -328,10 +329,10 @@ func liveOperationsOverviewSubmitIntakeAutoDispatchesHybridClaudeFollowUp() asyn
     return
   }
 
-  print("[live-product-auto-followup] id=\(id) summary=\(summary)")
-  #expect(summary.contains("mission-desktop-\(id)"))
-  #expect(summary.contains("work-desktop-\(id)"))
-  #expect(summary.contains("follow_up_work_item_id=work-desktop-\(id)-claude-followup"))
+  print("[live-product-auto-followup] id=\(identity.id) summary=\(summary)")
+  #expect(summary.contains(identity.missionId))
+  #expect(summary.contains("work-desktop-\(identity.id)"))
+  #expect(summary.contains("follow_up_work_item_id=work-desktop-\(identity.id)-claude-followup"))
   #expect(answerBody?.contains("Codex:") == true)
   #expect(answerBody?.contains("Claude follow-up:") == true)
   #expect(answerBody?.contains("FRIDAY_PRODUCT_AUTO_FOLLOWUP_OK") == true)
@@ -347,6 +348,30 @@ func liveOperationsOverviewSubmitIntakeAutoDispatchesHybridClaudeFollowUp() asyn
   #expect(learningRows.allSatisfy {
     (($0["evidenceRef"] as? String)?.hasPrefix("proof://run-outcome-learning-candidate/")) == true
   })
+}
+
+private struct LiveUiProofMissionIdentity {
+  let id: String
+  let missionIdPrefix: String
+  let missionId: String
+}
+
+private func liveUiProofMissionIdentity(defaultSurface: String) -> LiveUiProofMissionIdentity {
+  let rawSharedId = ProcessInfo.processInfo.environment["FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID"]?
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+  if let rawSharedId, !rawSharedId.isEmpty {
+    let id = rawSharedId.hasPrefix("mission_")
+      ? String(rawSharedId.dropFirst("mission_".count))
+      : rawSharedId
+    return LiveUiProofMissionIdentity(id: id, missionIdPrefix: "mission_", missionId: "mission_\(id)")
+  }
+
+  let id = "liveauto\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
+  let missionIdPrefix = "mission-\(defaultSurface)-"
+  return LiveUiProofMissionIdentity(
+    id: id,
+    missionIdPrefix: missionIdPrefix,
+    missionId: "\(missionIdPrefix)\(id)")
 }
 
 private func summaryRunIds(in summary: String) -> [String] {
