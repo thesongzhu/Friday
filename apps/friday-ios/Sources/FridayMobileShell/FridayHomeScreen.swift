@@ -60,6 +60,7 @@ struct FridayHomeScreen: View {
     }
 
     statusCard(projection)
+    devicePairingCard(viewModel.devicePairing)
     if projection.isLoadedEmpty {
       loadedEmptyCard(projection)
     }
@@ -95,6 +96,45 @@ struct FridayHomeScreen: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel(viewModel.isOnline ? "Friday status online" : "Friday status offline or stale")
     .accessibilityIdentifier("friday.home.status-card")
+  }
+
+  private func devicePairingCard(_ readiness: DevicePairingReadiness) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        HStack {
+          Text("Device pairing").font(.headline).foregroundStyle(MobileTheme.textPrimary)
+          Spacer()
+          StatusChip(
+            text: readiness.mode.rawValue,
+            bg: readiness.mode == .ready ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
+            fg: readiness.mode == .ready ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
+        }
+        Text(readiness.reason)
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if let publicKeyHex = readiness.publicKeyHex {
+          RefPill(label: "device_pubkey", ref: publicKeyHex)
+        }
+        HStack(spacing: 8) {
+          StatusChip(
+            text: readiness.readLiveRequested ? "read requested" : "read off",
+            bg: readiness.readLiveRequested ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
+            fg: readiness.readLiveRequested ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
+          StatusChip(
+            text: readiness.writeLiveRequested ? "write requested" : "write off",
+            bg: readiness.writeLiveRequested ? MobileTheme.chipWarnBG : MobileTheme.chipNeutralBG,
+            fg: readiness.writeLiveRequested ? MobileTheme.chipWarnFG : MobileTheme.chipNeutralFG)
+        }
+        Text(readiness.nextStep)
+          .font(.caption2)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Device pairing \(readiness.mode.rawValue). \(readiness.reason)")
+    .accessibilityIdentifier("friday.home.device-pairing-card")
   }
 
   private func loadedEmptyCard(_ projection: HomeProjection) -> some View {

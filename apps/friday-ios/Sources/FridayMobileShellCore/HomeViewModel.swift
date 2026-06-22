@@ -371,6 +371,8 @@ public final class HomeViewModel: ObservableObject {
   @Published public private(set) var detailState: HomeReadDetailState = .idle
   @Published public private(set) var runOutcomeLearningDecisionStates: [String: HomeLearningDecisionState] = [:]
 
+  public let devicePairing: DevicePairingReadiness
+
   /// The package's read protocol is `Sendable`; the view model still publishes only small
   /// refs-only value projections, never the package snapshot's raw body map.
   private let client: FridayRustReadClient
@@ -378,9 +380,17 @@ public final class HomeViewModel: ObservableObject {
 
   /// - Parameter client: the read client. In production this is the real `SealedWSReadClient`
   ///   (built by `FridayClientFactory.makeReadClient`); a preview/debug build injects a mock.
-  public init(client: FridayRustReadClient, writeClient: FridayMissionSpineWriteClient? = nil) {
+  public init(
+    client: FridayRustReadClient,
+    writeClient: FridayMissionSpineWriteClient? = nil,
+    devicePairing: DevicePairingReadiness = .evaluate(
+      deviceKeypairRequested: false,
+      readLiveRequested: false,
+      writeLiveRequested: false)
+  ) {
     self.client = client
     self.writeClient = writeClient
+    self.devicePairing = devicePairing
   }
 
   /// Whether the Home is online — derived from the load state (ONLY a real loaded projection is

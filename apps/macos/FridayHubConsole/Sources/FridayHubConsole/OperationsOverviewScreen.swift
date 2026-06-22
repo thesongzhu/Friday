@@ -89,6 +89,7 @@ struct OperationsOverviewScreen: View {
         StatusBanner(snapshot: snapshot)
       }
 
+      devicePairingCard(viewModel.devicePairing)
       missionCard(snapshot)
       if snapshot.isLoadedEmpty {
         loadedEmptyCard(snapshot)
@@ -127,6 +128,37 @@ struct OperationsOverviewScreen: View {
     .accessibilityElement(children: .contain)
     .accessibilityLabel("Mission \(snapshot.missionId)")
     .accessibilityIdentifier("friday.desktop.mission-card")
+  }
+
+  private func devicePairingCard(_ readiness: DesktopDevicePairingReadiness) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("Device Pairing Readiness")
+          Spacer()
+          StatusChip(
+            text: readiness.mode.rawValue,
+            bg: readiness.mode == .ready ? HubTheme.chipPendingBG : HubTheme.chipWarnBG,
+            fg: readiness.mode == .ready ? HubTheme.chipPendingFG : HubTheme.chipWarnFG)
+        }
+        Text(readiness.reason)
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textSecondary)
+        if let publicKeyHex = readiness.publicKeyHex {
+          RefPill(label: "desktop_peer_pubkey", ref: publicKeyHex)
+        }
+        HStack(spacing: 8) {
+          RefPill(label: "owner", ref: readiness.ownerPrincipal)
+          RefPill(label: "read_seam", ref: "\(readiness.readHost):\(readiness.readPort)")
+        }
+        Text(readiness.nextStep)
+          .font(.system(size: 10))
+          .foregroundStyle(HubTheme.textSecondary)
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Device pairing readiness \(readiness.mode.rawValue). \(readiness.reason)")
+    .accessibilityIdentifier("friday.desktop.device-pairing-readiness")
   }
 
   private func loadedEmptyCard(_ snapshot: WorkbenchSnapshot) -> some View {
