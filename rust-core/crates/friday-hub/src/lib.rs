@@ -17244,6 +17244,41 @@ mod tests {
             .unwrap()
     }
 
+    struct ConfirmedRunOutcomeLearningSummary<'a> {
+        candidate_id: &'a str,
+        session_id: &'a str,
+        run_id: &'a str,
+        summary: &'a str,
+        turns: i64,
+        executed_tools: i64,
+        now: i64,
+    }
+
+    fn insert_confirmed_run_outcome_learning_summary(
+        db: &Db,
+        row: ConfirmedRunOutcomeLearningSummary<'_>,
+    ) {
+        db.conn()
+            .execute(
+                "INSERT INTO run_outcome_learning_candidate
+                    (candidate_id, run_id, session_id, kind, state, evidence_ref, summary,
+                     turns, executed_tools, created_at_ms, decided_at_ms, decision_reason)
+                 VALUES (?1, ?2, ?3, 'preference', 'confirmed', ?4, ?5, ?6, ?7, ?8, ?9, 'test')",
+                rusqlite::params![
+                    row.candidate_id,
+                    row.run_id,
+                    row.session_id,
+                    format!("friday://agent-run/{}", row.run_id),
+                    row.summary,
+                    row.turns,
+                    row.executed_tools,
+                    row.now,
+                    row.now + 1,
+                ],
+            )
+            .unwrap();
+    }
+
     #[test]
     fn a1_run_outcome_learning_recall_flag_on_surfaces_confirmed_refs_only_signal() {
         let db = Db::open_hub(&temp_path("a1-drive-on")).unwrap();
@@ -17465,6 +17500,76 @@ mod tests {
     }
 
     #[test]
+    fn a1_run_outcome_learning_consumer_pending_newer_candidate_does_not_supersede_confirmed() {
+        let db = Db::open_hub(&temp_path("a1-consumer-pending-newer")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        let session_id = "sess-a1-pending-newer";
+        seed_confirmed_run_outcome_learning(
+            &db,
+            session_id,
+            "alice",
+            "run-a1-confirmed-older",
+            now,
+        );
+        friday_storage::learning_candidate::record_run_outcome_candidates(
+            db.conn(),
+            "run-a1-pending-newer",
+            Some(session_id),
+            5,
+            2,
+            now + 10,
+        )
+        .unwrap();
+        let alice_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("alice"))
+                .unwrap();
+
+        let preamble = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            RecallPreambleFlags {
+                a1_run_outcome_consumer_on: true,
+                ..RecallPreambleFlags::default()
+            },
+            "audit-a1-consumer-pending-newer",
+            now + 11,
+        )
+        .unwrap();
+        assert!(preamble.contains("run-a1-confirmed-older"));
+        assert!(
+            !preamble.contains("run-a1-pending-newer"),
+            "a newer pending candidate must not affect recall or supersede an older confirmed signal: {preamble:?}"
+        );
+
+        friday_storage::learning_candidate::decide_run_outcome_candidate(
+            db.conn(),
+            "a1:run-a1-pending-newer:preference",
+            true,
+            now + 12,
+            Some("operator confirmed newer candidate"),
+        )
+        .unwrap();
+        let after_confirm = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            RecallPreambleFlags {
+                a1_run_outcome_consumer_on: true,
+                ..RecallPreambleFlags::default()
+            },
+            "audit-a1-consumer-pending-newer-confirmed",
+            now + 13,
+        )
+        .unwrap();
+        assert!(
+            after_confirm.contains("run-a1-confirmed-older")
+                && after_confirm.contains("run-a1-pending-newer"),
+            "the newer signal may affect recall only after explicit confirm: {after_confirm:?}"
+        );
+    }
+
+    #[test]
     fn a1_run_outcome_learning_consumer_excludes_stale_confirmed_signals() {
         let db = Db::open_hub(&temp_path("a1-consumer-stale")).unwrap();
         let now = 1_000_000_000_000_i64;
@@ -17505,6 +17610,94 @@ mod tests {
         assert!(
             !preamble.contains("run-a1-stale"),
             "stale confirmed signal must not inject after the freshness cap: {preamble:?}"
+        );
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_consumer_filters_low_evidence_and_reciprocal_contradictions() {
+        let db = Db::open_hub(&temp_path("a1-consumer-filters")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        let session_id = "sess-a1-filter";
+        friday_storage::agent_session::ensure_session_with_owner(
+            db.conn(),
+            session_id,
+            &friday_storage::agent_session::SessionOwner {
+                user_id: Some("alice".to_string()),
+                ..friday_storage::agent_session::SessionOwner::default()
+            },
+            now,
+        )
+        .unwrap();
+        insert_confirmed_run_outcome_learning_summary(
+            &db,
+            ConfirmedRunOutcomeLearningSummary {
+                candidate_id: "a1:run-a1-low-evidence:preference",
+                session_id,
+                run_id: "run-a1-low-evidence",
+                summary: "low evidence signal",
+                turns: 2,
+                executed_tools: 0,
+                now: now + 1,
+            },
+        );
+        insert_confirmed_run_outcome_learning_summary(
+            &db,
+            ConfirmedRunOutcomeLearningSummary {
+                candidate_id: "a1:run-a1-ab:preference",
+                session_id,
+                run_id: "run-a1-ab",
+                summary: "A->B",
+                turns: 2,
+                executed_tools: 1,
+                now: now + 2,
+            },
+        );
+        insert_confirmed_run_outcome_learning_summary(
+            &db,
+            ConfirmedRunOutcomeLearningSummary {
+                candidate_id: "a1:run-a1-ba:preference",
+                session_id,
+                run_id: "run-a1-ba",
+                summary: "B->A",
+                turns: 2,
+                executed_tools: 1,
+                now: now + 3,
+            },
+        );
+        insert_confirmed_run_outcome_learning_summary(
+            &db,
+            ConfirmedRunOutcomeLearningSummary {
+                candidate_id: "a1:run-a1-control:preference",
+                session_id,
+                run_id: "run-a1-control",
+                summary: "stable preference signal",
+                turns: 2,
+                executed_tools: 1,
+                now: now + 4,
+            },
+        );
+        let alice_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("alice"))
+                .unwrap();
+
+        let preamble = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            RecallPreambleFlags {
+                a1_run_outcome_consumer_on: true,
+                ..RecallPreambleFlags::default()
+            },
+            "audit-a1-consumer-filters",
+            now + 5,
+        )
+        .unwrap();
+        assert!(preamble.contains("run-a1-control"));
+        assert!(
+            !preamble.contains("run-a1-low-evidence")
+                && !preamble.contains("run-a1-ab")
+                && !preamble.contains("run-a1-ba"),
+            "consumer recall must apply the storage eligibility filters at the prompt boundary: {preamble:?}"
         );
     }
 
