@@ -323,7 +323,7 @@ func liveOperationsOverviewSubmitIntakeAutoDispatchesHybridClaudeFollowUp() asyn
       + "then summarize that the product Operations view should automatically run the generated "
       + "Claude follow-up after the Codex first leg. Answer exactly FRIDAY_PRODUCT_AUTO_FOLLOWUP_OK.")
 
-  guard case let .confirmed(summary, _, _) = vm.intakeState else {
+  guard case let .confirmed(summary, _, answerBody) = vm.intakeState else {
     Issue.record("expected product auto follow-up to confirm, got \(String(describing: vm.intakeState))")
     return
   }
@@ -332,6 +332,9 @@ func liveOperationsOverviewSubmitIntakeAutoDispatchesHybridClaudeFollowUp() asyn
   #expect(summary.contains("mission-desktop-\(id)"))
   #expect(summary.contains("work-desktop-\(id)"))
   #expect(summary.contains("follow_up_work_item_id=work-desktop-\(id)-claude-followup"))
+  #expect(answerBody?.contains("Codex:") == true)
+  #expect(answerBody?.contains("Claude follow-up:") == true)
+  #expect(answerBody?.contains("FRIDAY_PRODUCT_AUTO_FOLLOWUP_OK") == true)
 }
 
 private func hybridFollowUpWriteConfig() -> AgentRunWriteServerConfig {
