@@ -18,7 +18,7 @@ final class FridayChatViewModelTests: XCTestCase {
   /// A scripted `FridayRustWriteClient`. It records the EXACT bytes the view model relays to
   /// `resumeWithApproval` (proving the verbatim INV-1 relay through the view-model layer) and can
   /// be set to throw (proving honest-unavailable).
-  final class FakeWriteClient: FridayRustWriteClient {
+  final class FakeWriteClient: FridayRustWriteClient, @unchecked Sendable {
     enum DispatchScript { case answer(AgentRunResultWire); case pause(PausedOutcome); case fail(FridayWriteClientError) }
     enum ResumeScript { case accepted(ResumeRelayResult); case refused(ResumeRelayResult); case fail(FridayWriteClientError) }
 

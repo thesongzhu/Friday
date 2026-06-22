@@ -42,6 +42,7 @@ final class FridaySession: ObservableObject {
   let writeClient: FridayRustWriteClient
   let missionClient: FridayMobileMissionDispatchingWriteClient?
   let devicePairing: DevicePairingReadiness
+  let makePairingClient: (DeviceKeypair) -> FridayPairingClient?
   /// The operator-signing RELAY. Mock today (NOT a real signature); the real desktop signer
   /// (PR #671) is the slice-6 / operator-key gate. The phone holds NO signing key (INV-1).
   let signer: OperatorSigner
@@ -65,6 +66,7 @@ final class FridaySession: ObservableObject {
     self.devicePairing = preview
       ? .evaluate(deviceKeypairRequested: false, readLiveRequested: false, writeLiveRequested: false)
       : Self.defaultDevicePairingReadiness()
+    self.makePairingClient = preview ? { _ in nil } : Self.defaultPairingClient
 
     // The write client (Friday Chat read-WRITE / S6 surface). DEFAULT (gate OFF) = the throwing
     // `liveTransportNotWired` factory transport ⇒ honest-unavailable, with an ephemeral X25519
@@ -167,6 +169,17 @@ final class FridaySession: ObservableObject {
     args.contains("--live-write") || env["FRIDAY_MOBILE_LIVE_WRITE"] == "1"
   }
 
+  static func livePairingRequested(args: [String], env: [String: String]) -> Bool {
+    args.contains("--live-pairing") || env["FRIDAY_MOBILE_LIVE_PAIRING"] == "1"
+  }
+
+  static func defaultPairingClient(deviceKeypair: DeviceKeypair) -> FridayPairingClient? {
+    let args = ProcessInfo.processInfo.arguments
+    let env = ProcessInfo.processInfo.environment
+    guard livePairingRequested(args: args, env: env) else { return nil }
+    return RealPairingClientFactory.makeLive(deviceKeypair: deviceKeypair)
+  }
+
   static func defaultDevicePairingReadiness() -> DevicePairingReadiness {
     let args = ProcessInfo.processInfo.arguments
     let env = ProcessInfo.processInfo.environment
@@ -207,7 +220,8 @@ struct RootView: View {
     _homeVM = StateObject(wrappedValue: HomeViewModel(
       client: session.readClient,
       writeClient: session.missionClient,
-      devicePairing: session.devicePairing))
+      devicePairing: session.devicePairing,
+      makePairingClient: session.makePairingClient))
   }
 
   var body: some View {

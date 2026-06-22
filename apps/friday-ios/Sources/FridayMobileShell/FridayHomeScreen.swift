@@ -15,6 +15,7 @@ import SwiftUI
 /// is Refresh (re-read) — there is NO mutating action on this surface.
 struct FridayHomeScreen: View {
   @ObservedObject var viewModel: HomeViewModel
+  @State private var pairingQRPayload = ""
 
   var body: some View {
     ScrollView {
@@ -34,6 +35,8 @@ struct FridayHomeScreen: View {
         case let .unavailable(reason):
           UnavailableView(reason: reason)
         }
+
+        devicePairingCard(viewModel.devicePairing)
       }
       .padding(16)
     }
@@ -60,7 +63,6 @@ struct FridayHomeScreen: View {
     }
 
     statusCard(projection)
-    devicePairingCard(viewModel.devicePairing)
     if projection.isLoadedEmpty {
       loadedEmptyCard(projection)
     }
@@ -116,6 +118,9 @@ struct FridayHomeScreen: View {
         if let publicKeyHex = readiness.publicKeyHex {
           RefPill(label: "device_pubkey", ref: publicKeyHex)
         }
+        pairingEntry
+        pairingPreflightRows(viewModel.pairingPreflight)
+        pairingAttemptRows(viewModel.pairingAttempt)
         HStack(spacing: 8) {
           StatusChip(
             text: readiness.readLiveRequested ? "read requested" : "read off",
@@ -135,6 +140,108 @@ struct FridayHomeScreen: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel("Device pairing \(readiness.mode.rawValue). \(readiness.reason)")
     .accessibilityIdentifier("friday.home.device-pairing-card")
+  }
+
+  private var pairingEntry: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      TextField("Paste Hub pairing QR JSON", text: $pairingQRPayload, axis: .vertical)
+        .textInputAutocapitalization(.never)
+        .autocorrectionDisabled()
+        .lineLimit(2...5)
+        .font(.caption)
+        .padding(10)
+        .background(Color.white.opacity(0.54), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("friday.home.pairing-qr-input")
+      HStack(spacing: 8) {
+        Button {
+          viewModel.preflightPairingQR(pairingQRPayload)
+        } label: {
+          Label("Check", systemImage: "checkmark.shield")
+        }
+        .buttonStyle(.bordered)
+        .disabled(pairingQRPayload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .accessibilityIdentifier("friday.home.pairing-preflight-button")
+
+        Button {
+          Task { await viewModel.pairScannedQR(pairingQRPayload) }
+        } label: {
+          Label("Pair", systemImage: "link.badge.plus")
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(pairingQRPayload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          || viewModel.pairingAttempt.mode == .sending)
+        .accessibilityIdentifier("friday.home.pair-button")
+
+        Button {
+          pairingQRPayload = ""
+          viewModel.clearPairingPreflight()
+        } label: {
+          Image(systemName: "xmark.circle")
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel("Clear pairing QR")
+        .accessibilityIdentifier("friday.home.pairing-clear-button")
+      }
+      .font(.caption)
+    }
+  }
+
+  @ViewBuilder
+  private func pairingPreflightRows(_ preflight: MobilePairingPreflight) -> some View {
+    if preflight.mode != .empty {
+      Divider().opacity(0.35)
+      HStack {
+        Text("QR preflight").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
+        Spacer()
+        StatusChip(
+          text: preflight.mode.rawValue,
+          bg: preflight.mode == .ready ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
+          fg: preflight.mode == .ready ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
+      }
+      Text(preflight.reason)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+      if let projection = preflight.projection {
+        RefPill(label: "hub_id", ref: projection.hubId)
+        RefPill(label: "pairing_id", ref: projection.pairingId)
+      }
+      if let publicKeyHex = preflight.devicePublicKeyHex {
+        RefPill(label: "pairing_device_pubkey", ref: publicKeyHex)
+      }
+      Text(preflight.nextStep)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+
+  @ViewBuilder
+  private func pairingAttemptRows(_ attempt: MobilePairingAttempt) -> some View {
+    if attempt.mode != .idle {
+      Divider().opacity(0.35)
+      HStack {
+        Text("PairAck").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
+        Spacer()
+        StatusChip(
+          text: attempt.mode.rawValue,
+          bg: attempt.mode == .accepted ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
+          fg: attempt.mode == .accepted ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
+      }
+      Text(attempt.reason)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+      if let hubId = attempt.hubId {
+        RefPill(label: "ack_hub_id", ref: hubId)
+      }
+      if let pairingId = attempt.pairingId {
+        RefPill(label: "ack_pairing_id", ref: pairingId)
+      }
+      if let errorCode = attempt.errorCode {
+        RefPill(label: "ack_error", ref: errorCode)
+      }
+    }
   }
 
   private func loadedEmptyCard(_ projection: HomeProjection) -> some View {
