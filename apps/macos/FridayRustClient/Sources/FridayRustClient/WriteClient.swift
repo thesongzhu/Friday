@@ -332,6 +332,7 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
     case .error(let code, let message):
       throw FridayWriteClientError.serverError(code: code, message: message)
     case .agentRunRequest, .agentRunResume, .agentRunControlResult,
+         .pair, .pairAck, .hubStatus,
          .workbenchProjectionRequest, .workbenchProjectionSnapshot,
          .runReadbackRequest, .runReadbackSnapshot,
          .runAnswerBodyRequest, .runAnswerBodySnapshot,
@@ -569,6 +570,9 @@ private func dispatchKind(_ message: FridayMessage) -> String {
   case .sessionOpenSnapshot: return "SessionOpenSnapshot"
   case .sessionLinkStateRequest: return "SessionLinkStateRequest"
   case .sessionLinkStateSnapshot: return "SessionLinkStateSnapshot"
+  case .pair: return "Pair"
+  case .pairAck: return "PairAck"
+  case .hubStatus: return "HubStatus"
   case .runFileViewRequest: return "RunFileViewRequest"
   case .runFileViewSnapshot: return "RunFileViewSnapshot"
   case .activityNeedsMeRequest: return "ActivityNeedsMeRequest"

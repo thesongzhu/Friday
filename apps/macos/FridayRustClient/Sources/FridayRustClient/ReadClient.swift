@@ -224,6 +224,12 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunResume")
     case .agentRunControlResult:
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunControlResult")
+    case .pair:
+      throw FridayReadClientError.unexpectedResponse(kind: "Pair")
+    case .pairAck:
+      throw FridayReadClientError.unexpectedResponse(kind: "PairAck")
+    case .hubStatus:
+      throw FridayReadClientError.unexpectedResponse(kind: "HubStatus")
     // The mission-spine WRITE variants share the `FridayMessage` enum but are NEVER answers a READ
     // server gives — surface them as unexpected (the read seam only answers a snapshot / Error).
     case .missionIntakeRequest:
@@ -325,6 +331,12 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunResume")
     case .agentRunControlResult:
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunControlResult")
+    case .pair:
+      throw FridayReadClientError.unexpectedResponse(kind: "Pair")
+    case .pairAck:
+      throw FridayReadClientError.unexpectedResponse(kind: "PairAck")
+    case .hubStatus:
+      throw FridayReadClientError.unexpectedResponse(kind: "HubStatus")
     case .missionIntakeRequest:
       throw FridayReadClientError.unexpectedResponse(kind: "MissionIntakeRequest")
     case .missionIntakeResult:
