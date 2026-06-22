@@ -523,7 +523,7 @@ public final class OperationsOverviewViewModel: ObservableObject {
   }
 
   private static let claudeFollowUpTaskHeader =
-    "Summarize the generated Claude follow-up for this Mission."
+    "Write a concise owner-visible summary for this Mission result."
 
   private static func claudeFollowUpTask(
     sourceWorkItemId: String,
@@ -544,20 +544,37 @@ public final class OperationsOverviewViewModel: ObservableObject {
     lines.append(
       "output destination: owner-visible answer body for \(followUpWorkItemId).")
     lines.append(
-      "success = concise final synthesis that preserves any requested sentinel or outcome from the Codex first-leg answer.")
+      "task: produce the final owner-visible answer for this follow-up WorkItem, not a plan.")
     lines.append(
-      "constraint = read-only; do not mutate the workspace, do not continue file discovery, and do not ask clarifying questions.")
-    if let firstAnswerBody = firstAnswerBody?.trimmingCharacters(in: .whitespacesAndNewlines),
-      !firstAnswerBody.isEmpty
-    {
-      lines.append("Codex first-leg answer:")
-      lines.append(firstAnswerBody)
+      "success = concise final synthesis that preserves the outcome token or requested result below.")
+    lines.append(
+      "constraints = read-only; no file changes; no extra discovery; do not ask clarifying questions.")
+    if let outcomeExcerpt = firstAnswerOutcomeExcerpt(firstAnswerBody) {
+      lines.append("Codex first-leg outcome excerpt:")
+      lines.append(outcomeExcerpt)
     }
     lines.append(
-      "Use the Mission context and the proof/input refs already attached to this WorkItem; do not ask the operator for paths, IDs, or artifact locations that are listed above.")
+      "Use only the Mission context, attached refs, and outcome excerpt above; do not ask the operator for paths, IDs, or artifact locations that are listed above.")
     lines.append(
-      "Keep the run read-only; summarize the Codex first-leg answer and this follow-up outcome, and do not claim you verified unrelated files or artifacts unless that evidence is explicitly present in the provided context.")
+      "Return the owner-visible answer directly; do not continue any first-person action described in the Codex excerpt, and do not claim you verified unrelated files or artifacts.")
     return lines.joined(separator: "\n")
+  }
+
+  private static func firstAnswerOutcomeExcerpt(_ body: String?) -> String? {
+    guard let raw = body?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+      return nil
+    }
+    if let sentinel = raw.range(of: #"FRIDAY_[A-Z0-9_]+_OK"#, options: .regularExpression) {
+      return String(raw[sentinel])
+    }
+    let lines = raw.split(whereSeparator: { $0.isNewline })
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    let excerpt = lines.last ?? raw
+    if excerpt.count <= 800 {
+      return String(excerpt)
+    }
+    return String(excerpt.suffix(800))
   }
 
   private static func runId(for outcome: AgentRunDispatchOutcome) -> String? {

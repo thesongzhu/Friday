@@ -695,7 +695,10 @@ func submitIntakeDispatchesClaudeFollowUpWhenProjectionExposesGeneratedWorkItem(
       missionId: "mission-desktop-fixed",
       fridayConversationId: "fconv_desktop_fixed",
       workItemIds: ["work-desktop-fixed", "work-desktop-fixed-claude-followup"]),
-    answerBodies: ["run-bound-1": "Desktop Codex first answer"])
+    answerBodies: [
+      "run-bound-1":
+        "I am still checking files before the final answer. FRIDAY_DESKTOP_PRODUCT_AUTO_FOLLOWUP_OK"
+    ])
   let vm = OperationsOverviewViewModel(
     client: read, writeClient: write, missionRunClient: write,
     writeOwnerPrincipal: "admin-001", newId: { "fixed" })
@@ -715,9 +718,11 @@ func submitIntakeDispatchesClaudeFollowUpWhenProjectionExposesGeneratedWorkItem(
   #expect(write.dispatchedTasks[1].contains("follow_up_work_item_id=work-desktop-fixed-claude-followup"))
   #expect(write.dispatchedTasks[1].contains("codex_first_run_id=run-bound-1"))
   #expect(write.dispatchedTasks[1].contains("output destination: owner-visible answer body"))
+  #expect(write.dispatchedTasks[1].contains("task: produce the final owner-visible answer"))
   #expect(write.dispatchedTasks[1].contains("success = concise final synthesis"))
-  #expect(write.dispatchedTasks[1].contains("constraint = read-only"))
-  #expect(write.dispatchedTasks[1].contains("Desktop Codex first answer"))
+  #expect(write.dispatchedTasks[1].contains("constraints = read-only"))
+  #expect(write.dispatchedTasks[1].contains("FRIDAY_DESKTOP_PRODUCT_AUTO_FOLLOWUP_OK"))
+  #expect(!write.dispatchedTasks[1].contains("I am still checking files"))
   #expect(write.dispatchedTasks[1].contains("do not ask the operator for paths"))
   #expect(write.dispatchedTasks[1].contains("do not claim you verified unrelated files"))
 }
