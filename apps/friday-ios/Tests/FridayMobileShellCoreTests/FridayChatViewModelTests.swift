@@ -280,6 +280,18 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertNil(request.targetProviderOrAgent)
   }
 
+  func testBuildMissionIntakeRequest_acceptsSharedMissionPrefixForUiProofCapture() {
+    let request = FridayChatViewModel.buildMissionIntakeRequest(
+      intent: "route through Codex first and Claude follow-up",
+      owner: "admin-001",
+      idFactory: { "ui_proof_fixed" },
+      missionIdPrefix: "mission_")
+    XCTAssertEqual(request.missionId, "mission_ui_proof_fixed")
+    XCTAssertEqual(request.workItemId, "work-mobile-ui_proof_fixed")
+    XCTAssertEqual(request.surfaceKind, "mobile")
+    XCTAssertEqual(request.deliveryRoute, "ios://friday-mobile/chat/ui_proof_fixed")
+  }
+
   func testSend_withMissionClient_dispatchesGeneratedClaudeFollowUp() async throws {
     let mission = FakeMissionClient()
     let snapshotJSON = """

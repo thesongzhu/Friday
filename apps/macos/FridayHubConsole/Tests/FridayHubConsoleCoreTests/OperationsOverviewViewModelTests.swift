@@ -651,6 +651,21 @@ func submitIntakeReadyRendersConfirmedAndWiresOwnerAdmin001() async {
 
 @Test
 @MainActor
+func buildIntakeRequestAcceptsSharedMissionPrefixForUiProofCapture() {
+  let request = OperationsOverviewViewModel.buildIntakeRequest(
+    intent: "keep one Mission across every surface",
+    owner: "admin-001",
+    idFactory: { "ui_proof_fixed" },
+    missionIdPrefix: "mission_")
+
+  #expect(request.missionId == "mission_ui_proof_fixed")
+  #expect(request.workItemId == "work-desktop-ui_proof_fixed")
+  #expect(request.surfaceKind == "desktop")
+  #expect(request.deliveryRoute == "desktop://hub-console/operations/ui_proof_fixed")
+}
+
+@Test
+@MainActor
 func submitIntakeReadyDispatchesMissionBoundModelTurnWhenRunClientConfigured() async {
   let write = MockMissionSpineWriteClient(behavior: .intakeReady)
   let vm = OperationsOverviewViewModel(

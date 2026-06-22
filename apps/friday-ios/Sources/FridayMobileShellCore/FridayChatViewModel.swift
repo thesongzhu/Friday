@@ -248,6 +248,7 @@ public final class FridayChatViewModel: ObservableObject {
   private let readClient: FridayRustReadClient?
   private let signer: OperatorSigner
   private let newId: () -> String
+  private let missionIdPrefix: String
   private let nowMs: () -> Int64
   private let historyStore: any ChatHistoryStoring
 
@@ -263,6 +264,7 @@ public final class FridayChatViewModel: ObservableObject {
     readClient: FridayRustReadClient? = nil,
     historyStore: any ChatHistoryStoring = UserDefaultsChatHistoryStore(),
     newId: @escaping () -> String = { UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "") },
+    missionIdPrefix: String = "mission-mobile-",
     nowMs: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
   ) {
     self.writeClient = writeClient
@@ -271,6 +273,7 @@ public final class FridayChatViewModel: ObservableObject {
     self.readClient = readClient
     self.historyStore = historyStore
     self.newId = newId
+    self.missionIdPrefix = missionIdPrefix
     self.nowMs = nowMs
     self.history = historyStore.load()
   }
@@ -325,7 +328,8 @@ public final class FridayChatViewModel: ObservableObject {
       let request = Self.buildMissionIntakeRequest(
         intent: task,
         owner: liveAgentRunOwnerPrincipal,
-        idFactory: newId)
+        idFactory: newId,
+        missionIdPrefix: missionIdPrefix)
       let result = try await missionClient.submitMissionIntake(request)
       guard result.status == "ready", let workItemId = result.workItemId else {
         phase = .unavailable(reason: "Mission intake not ready — \(result.status)")
@@ -550,7 +554,8 @@ public final class FridayChatViewModel: ObservableObject {
   static func buildMissionIntakeRequest(
     intent: String,
     owner: String,
-    idFactory: () -> String
+    idFactory: () -> String,
+    missionIdPrefix: String = "mission-mobile-"
   ) -> MissionIntakeRequestWire {
     let id = idFactory()
     return MissionIntakeRequestWire(
@@ -560,7 +565,7 @@ public final class FridayChatViewModel: ObservableObject {
       surfaceKind: "mobile",
       deliveryRoute: "ios://friday-mobile/chat/\(id)",
       visibilityPolicy: "compact",
-      missionId: "mission-mobile-\(id)",
+      missionId: "\(missionIdPrefix)\(id)",
       workItemId: "work-mobile-\(id)",
       title: String(intent.prefix(72)),
       intent: intent,

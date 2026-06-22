@@ -178,19 +178,22 @@ public final class OperationsOverviewViewModel: ObservableObject {
   /// A fresh-id factory for the client-supplied mission/work-item ids (the server births rows from
   /// them). Injectable for deterministic tests.
   private let newId: @Sendable () -> String
+  private let missionIdPrefix: String
 
   public init(
     client: FridayRustReadClient,
     writeClient: FridayMissionSpineWriteClient? = nil,
     missionRunClient: FridayMissionBoundRunWriteClient? = nil,
     writeOwnerPrincipal: String = liveReadProjectionOwnerPrincipal,
-    newId: @escaping @Sendable () -> String = { UUID().uuidString }
+    newId: @escaping @Sendable () -> String = { UUID().uuidString },
+    missionIdPrefix: String = "mission-desktop-"
   ) {
     self.client = client
     self.writeClient = writeClient
     self.missionRunClient = missionRunClient
     self.writeOwnerPrincipal = writeOwnerPrincipal
     self.newId = newId
+    self.missionIdPrefix = missionIdPrefix
   }
 
   /// Re-fetch the Workbench projection. The only mutating-looking action — and it
@@ -268,7 +271,8 @@ public final class OperationsOverviewViewModel: ObservableObject {
     }
     intakeState = .sent
     let request = Self.buildIntakeRequest(
-      intent: trimmed, owner: writeOwnerPrincipal, idFactory: newId)
+      intent: trimmed, owner: writeOwnerPrincipal, idFactory: newId,
+      missionIdPrefix: missionIdPrefix)
     do {
       let result = try await writeClient.submitMissionIntake(request)
       switch result.status {
@@ -456,7 +460,8 @@ public final class OperationsOverviewViewModel: ObservableObject {
   /// are server-accepted tokens; `delivery_route` is a non-empty desktop route hint. `owner` MUST
   /// equal the server `--owner` (FIX-Q3b). The title is a short prefix of the intent.
   static func buildIntakeRequest(
-    intent: String, owner: String, idFactory: () -> String
+    intent: String, owner: String, idFactory: () -> String,
+    missionIdPrefix: String = "mission-desktop-"
   ) -> MissionIntakeRequestWire {
     let title = String(intent.prefix(72))
     let id = idFactory()
@@ -467,7 +472,7 @@ public final class OperationsOverviewViewModel: ObservableObject {
       surfaceKind: "desktop",
       deliveryRoute: "desktop://hub-console/operations/\(id)",
       visibilityPolicy: "compact",
-      missionId: "mission-desktop-\(id)",
+      missionId: "\(missionIdPrefix)\(id)",
       workItemId: "work-desktop-\(id)",
       title: title,
       intent: intent,

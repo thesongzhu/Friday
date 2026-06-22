@@ -74,15 +74,16 @@ func liveMobileMissionSpineWriteDispatchCanStartMissionBoundRun() async throws {
 @Test(.enabled(if: liveProductAutoFollowUpRunEnabled))
 @MainActor
 func liveMobileChatSendAutoDispatchesHybridClaudeFollowUp() async throws {
-  let id = "liveauto\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
+  let identity = liveUiProofMissionIdentity(defaultSurface: "mobile")
   let writeClient = try RealWriteClientFactory.makeLive(config: mobileProductAutoFollowUpWriteConfig())
-  let readClient = try RealReadClientFactory.makeLive(missionId: "mission-mobile-\(id)")
+  let readClient = try RealReadClientFactory.makeLive(missionId: identity.missionId)
   let vm = FridayChatViewModel(
     writeClient: writeClient,
     signer: MockOperatorSigner(),
     missionClient: writeClient,
     readClient: readClient,
-    newId: { id })
+    newId: { identity.id },
+    missionIdPrefix: identity.missionIdPrefix)
 
   await vm.send(
     "In the Friday mobile shell test target, identify the mobile live mission-spine test file path, "
@@ -95,13 +96,13 @@ func liveMobileChatSendAutoDispatchesHybridClaudeFollowUp() async throws {
   }
 
   print(
-    "[live-mobile-product-auto-followup] id=\(id) firstRunId=\(receipt.runId) "
+    "[live-mobile-product-auto-followup] id=\(identity.id) firstRunId=\(receipt.runId) "
       + "missionId=\(receipt.missionId ?? "<nil>") workItemId=\(receipt.workItemId ?? "<nil>") "
       + "followUpWorkItemId=\(receipt.followUpWorkItemId ?? "<nil>") "
       + "followUpRunId=\(receipt.followUpRunId ?? "<nil>")")
-  #expect(receipt.missionId == "mission-mobile-\(id)")
-  #expect(receipt.workItemId == "work-mobile-\(id)")
-  #expect(receipt.followUpWorkItemId == "work-mobile-\(id)-claude-followup")
+  #expect(receipt.missionId == identity.missionId)
+  #expect(receipt.workItemId == "work-mobile-\(identity.id)")
+  #expect(receipt.followUpWorkItemId == "work-mobile-\(identity.id)-claude-followup")
   #expect(receipt.followUpRunId != nil)
   #expect(receipt.answerBodyRunId == receipt.followUpRunId)
   #expect(receipt.answerBodyOutcome == "delivered")
@@ -117,6 +118,30 @@ func liveMobileChatSendAutoDispatchesHybridClaudeFollowUp() async throws {
   #expect(learningRows.allSatisfy {
     (($0["evidenceRef"] as? String)?.hasPrefix("proof://run-outcome-learning-candidate/")) == true
   })
+}
+
+private struct LiveUiProofMissionIdentity {
+  let id: String
+  let missionIdPrefix: String
+  let missionId: String
+}
+
+private func liveUiProofMissionIdentity(defaultSurface: String) -> LiveUiProofMissionIdentity {
+  let rawSharedId = ProcessInfo.processInfo.environment["FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID"]?
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+  if let rawSharedId, !rawSharedId.isEmpty {
+    let id = rawSharedId.hasPrefix("mission_")
+      ? String(rawSharedId.dropFirst("mission_".count))
+      : rawSharedId
+    return LiveUiProofMissionIdentity(id: id, missionIdPrefix: "mission_", missionId: "mission_\(id)")
+  }
+
+  let id = "liveauto\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
+  let missionIdPrefix = "mission-\(defaultSurface)-"
+  return LiveUiProofMissionIdentity(
+    id: id,
+    missionIdPrefix: missionIdPrefix,
+    missionId: "\(missionIdPrefix)\(id)")
 }
 
 private func pollLiveRunOutcomeLearningCandidates(
