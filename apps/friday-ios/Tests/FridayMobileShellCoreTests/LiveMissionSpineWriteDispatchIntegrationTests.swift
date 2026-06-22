@@ -103,6 +103,9 @@ func liveMobileChatSendAutoDispatchesHybridClaudeFollowUp() async throws {
   #expect(receipt.workItemId == "work-mobile-\(id)")
   #expect(receipt.followUpWorkItemId == "work-mobile-\(id)-claude-followup")
   #expect(receipt.followUpRunId != nil)
+  #expect(receipt.answerBodyRunId == receipt.followUpRunId)
+  #expect(receipt.answerBodyOutcome == "delivered")
+  #expect(receipt.answerBody?.contains("FRIDAY_MOBILE_PRODUCT_AUTO_FOLLOWUP_OK") == true)
 }
 
 private func mobileProductAutoFollowUpWriteConfig() -> AgentRunServerConfig {
