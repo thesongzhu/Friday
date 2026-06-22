@@ -231,6 +231,16 @@ impl PairingListener {
         Ok(Self { hub, listener })
     }
 
+    /// Build a pairing listener from a socket that the caller already bound.
+    ///
+    /// The productizing bin uses this to bind first, read the actual OS-assigned
+    /// port, and then place that exact endpoint in the QR manifest. Callers that
+    /// accept non-loopback sockets must perform their own explicit operator gate
+    /// before reaching this constructor.
+    pub fn from_tcp_listener(hub: PairingHub, listener: TcpListener) -> Self {
+        Self { hub, listener }
+    }
+
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         self.listener.local_addr()
     }
