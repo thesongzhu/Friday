@@ -28,9 +28,11 @@ final class HomeViewModelTests: XCTestCase {
   final class FakeReadClient: FridayRustReadClient, @unchecked Sendable {
     enum Script { case snapshot(WorkbenchSnapshot); case fail(FridayReadClientError) }
     let script: Script
+    private(set) var fetchWorkbenchCount = 0
     private(set) var requestedDetails: [String] = []
     init(_ script: Script) { self.script = script }
     func fetchWorkbench() async throws -> WorkbenchSnapshot {
+      fetchWorkbenchCount += 1
       switch script {
       case .snapshot(let s): return s
       case .fail(let e): throw e
@@ -91,6 +93,38 @@ final class HomeViewModelTests: XCTestCase {
       if let runId { raw["runId"] = runId }
       let data = try JSONSerialization.data(withJSONObject: raw)
       return try ReadProjectionSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_123)
+    }
+  }
+
+  final class FakeLearningWriteClient: FridayMissionSpineWriteClient, @unchecked Sendable {
+    enum Script {
+      case result(RunOutcomeLearningDecisionResultWire)
+      case fail(Error)
+    }
+
+    let script: Script
+    private(set) var learningRequests: [RunOutcomeLearningDecisionRequestWire] = []
+
+    init(_ script: Script) {
+      self.script = script
+    }
+
+    func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire {
+      throw NSError(domain: "unused", code: 1)
+    }
+
+    func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire {
+      throw NSError(domain: "unused", code: 1)
+    }
+
+    func submitRunOutcomeLearningDecision(
+      _ request: RunOutcomeLearningDecisionRequestWire
+    ) async throws -> RunOutcomeLearningDecisionResultWire {
+      learningRequests.append(request)
+      switch script {
+      case .result(let result): return result
+      case .fail(let error): throw error
+      }
     }
   }
 
@@ -269,6 +303,59 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(title, "Session open")
     XCTAssertTrue(reason.contains("offline"), "reason: \(reason)")
   }
+
+  func testDecideRunOutcomeLearningConfirmRendersConfirmedAndRefreshes() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeLearningWriteClient(.result(RunOutcomeLearningDecisionResultWire(
+      candidateId: "learn-1",
+      runId: "run-1",
+      kind: "preference",
+      state: "confirmed",
+      status: "confirmed")))
+    let vm = HomeViewModel(client: read, writeClient: write)
+
+    await vm.decideRunOutcomeLearning(candidateId: "learn-1", confirm: true)
+
+    XCTAssertEqual(write.learningRequests, [
+      RunOutcomeLearningDecisionRequestWire(candidateId: "learn-1", decision: "confirm"),
+    ])
+    XCTAssertEqual(read.fetchWorkbenchCount, 1)
+    XCTAssertEqual(
+      vm.runOutcomeLearningDecisionStates["learn-1"],
+      .confirmed(summary: "confirmed · state=confirmed · kind=preference"))
+  }
+
+  func testDecideRunOutcomeLearningBlockedRendersErrorNotConfirmed() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeLearningWriteClient(.result(RunOutcomeLearningDecisionResultWire(
+      candidateId: "learn-1",
+      state: "unknown",
+      status: "blocked",
+      blocker: "candidate missing")))
+    let vm = HomeViewModel(client: read, writeClient: write)
+
+    await vm.decideRunOutcomeLearning(candidateId: "learn-1", confirm: false)
+
+    XCTAssertEqual(write.learningRequests, [
+      RunOutcomeLearningDecisionRequestWire(candidateId: "learn-1", decision: "reject"),
+    ])
+    XCTAssertEqual(read.fetchWorkbenchCount, 0)
+    XCTAssertEqual(
+      vm.runOutcomeLearningDecisionStates["learn-1"],
+      .error(reason: "Learning decision blocked — candidate missing"))
+  }
+
+  func testDecideRunOutcomeLearningWithoutWriteClientIsUnavailable() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let vm = HomeViewModel(client: read)
+
+    await vm.decideRunOutcomeLearning(candidateId: "learn-1", confirm: true)
+
+    XCTAssertEqual(read.fetchWorkbenchCount, 0)
+    XCTAssertEqual(
+      vm.runOutcomeLearningDecisionStates["learn-1"],
+      .error(reason: "Write seam not configured."))
+  }
 }
 
 /// **Read-client integration over an in-memory read-server transport** — proves the REAL
@@ -372,6 +459,7 @@ final class ReadClientFactoryTests: XCTestCase {
     XCTAssertNil(vm.state.projection)
     XCTAssertFalse(vm.state.isOnline)
   }
+
 }
 
 // MARK: - Emulated read-server transport (mirrors the package's write-server emulator)

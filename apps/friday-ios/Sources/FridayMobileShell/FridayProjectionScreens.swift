@@ -568,14 +568,41 @@ struct FridayProjectionScreen: View {
   }
 
   private func learningCandidateRow(_ candidate: HomeRunOutcomeLearningCandidate) -> some View {
+    let decisionState = viewModel.runOutcomeLearningDecisionStates[candidate.id]
     VStack(alignment: .leading, spacing: 6) {
-      Text(candidate.summary)
-        .font(.system(size: 13, weight: .medium))
-        .foregroundStyle(MobileTheme.textPrimary)
+      HStack(alignment: .top, spacing: 8) {
+        Text(candidate.summary)
+          .font(.system(size: 13, weight: .medium))
+          .foregroundStyle(MobileTheme.textPrimary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 6) {
+          Button {
+            Task { await viewModel.decideRunOutcomeLearning(candidateId: candidate.id, confirm: true) }
+          } label: {
+            Image(systemName: "checkmark")
+              .frame(width: 26, height: 26)
+          }
+          .buttonStyle(.borderedProminent)
+          .tint(MobileTheme.cyan)
+          .disabled(learningDecisionControlsDisabled(decisionState))
+          .accessibilityLabel("Confirm run outcome learning candidate")
+
+          Button {
+            Task { await viewModel.decideRunOutcomeLearning(candidateId: candidate.id, confirm: false) }
+          } label: {
+            Image(systemName: "xmark")
+              .frame(width: 26, height: 26)
+          }
+          .buttonStyle(.bordered)
+          .disabled(learningDecisionControlsDisabled(decisionState))
+          .accessibilityLabel("Reject run outcome learning candidate")
+        }
+      }
       HStack(spacing: 6) {
         statusChip(candidate.kind)
         statusChip(candidate.state)
       }
+      learningDecisionStateView(decisionState)
       if !candidate.runId.isEmpty {
         RefPill(label: "runId", ref: candidate.runId)
       }
@@ -587,6 +614,31 @@ struct FridayProjectionScreen: View {
       }
     }
     .padding(.vertical, 4)
+  }
+
+  private func learningDecisionControlsDisabled(_ state: HomeLearningDecisionState?) -> Bool {
+    guard let state else { return false }
+    return state.isSent || state.isTerminal
+  }
+
+  @ViewBuilder
+  private func learningDecisionStateView(_ state: HomeLearningDecisionState?) -> some View {
+    switch state {
+    case .sent:
+      Text("Applying learning decision…")
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+    case .confirmed(let summary):
+      Text(summary)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+    case .error(let reason):
+      Text(reason)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.coral)
+    case nil:
+      EmptyView()
+    }
   }
 
   private func readinessRow(title: String, value: String, healthy: Bool) -> some View {
