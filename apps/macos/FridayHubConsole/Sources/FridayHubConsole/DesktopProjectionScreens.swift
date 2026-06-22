@@ -243,6 +243,9 @@ struct DesktopProjectionScreen: View {
           Text(detail.summary)
             .font(.system(size: 12))
             .foregroundStyle(HubTheme.textPrimary)
+          if let providerReadiness = detail.providerReadiness {
+            ProviderReadinessDetailView(readiness: providerReadiness)
+          }
           RefPill(label: "generated", ref: "\(detail.generatedAtMs)")
           ForEach(detail.refs, id: \.self) { ref in
             RefPill(label: nil, ref: ref)
@@ -449,5 +452,107 @@ struct DesktopProjectionScreen: View {
     Text(text)
       .font(.system(size: 14, weight: .semibold))
       .foregroundStyle(HubTheme.textPrimary)
+  }
+}
+
+private struct ProviderReadinessDetailView: View {
+  let readiness: ProviderReadinessDetail
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 8) {
+        StatusChip(
+          text: readiness.keyValidationProbed == true ? "keys probed" : "keys not probed",
+          bg: readiness.keyValidationProbed == true ? HubTheme.chipPendingBG : HubTheme.chipNeutralBG,
+          fg: readiness.keyValidationProbed == true ? HubTheme.chipPendingFG : HubTheme.chipNeutralFG)
+        if let suggestedTextRoute = readiness.suggestedTextRoute {
+          RefPill(label: "text route", ref: suggestedTextRoute)
+        }
+        if let suggestedStrongRoute = readiness.suggestedStrongRoute {
+          RefPill(label: "strong route", ref: suggestedStrongRoute)
+        }
+      }
+
+      ForEach(readiness.routes) { route in
+        ProviderRouteReadinessRow(route: route)
+      }
+
+      if !readiness.failovers.isEmpty {
+        Text("Failover")
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(HubTheme.textSecondary)
+        ForEach(readiness.failovers) { failover in
+          ProviderFailoverReadinessRow(failover: failover)
+        }
+      }
+
+      Text("Read-only projection — this surface does not select routes or enable failover.")
+        .font(.system(size: 10))
+        .foregroundStyle(HubTheme.textSecondary)
+    }
+    .accessibilityIdentifier("friday.desktop.provider-readiness-detail")
+  }
+}
+
+private struct ProviderRouteReadinessRow: View {
+  let route: ProviderRouteReadinessDisplay
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 8) {
+        Text(route.providerId)
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(HubTheme.textPrimary)
+        Text(route.model)
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+        Spacer()
+        StatusChip(
+          text: route.dispatchable ? "dispatchable" : "blocked",
+          bg: route.dispatchable ? HubTheme.chipDoneBG : HubTheme.chipWarnBG,
+          fg: route.dispatchable ? HubTheme.chipDoneFG : HubTheme.chipWarnFG)
+      }
+      HStack(spacing: 6) {
+        StatusChip(text: route.strength, bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+        StatusChip(text: route.modelSize, bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+      }
+      if !route.blockers.isEmpty {
+        Text(route.blockers.joined(separator: ", "))
+          .font(.system(size: 10))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .padding(.vertical, 3)
+  }
+}
+
+private struct ProviderFailoverReadinessRow: View {
+  let failover: ProviderFailoverReadinessDisplay
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 8) {
+        Text(failover.direction)
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(HubTheme.textPrimary)
+        Spacer()
+        StatusChip(
+          text: failover.canEnable ? "ready" : "blocked",
+          bg: failover.canEnable ? HubTheme.chipDoneBG : HubTheme.chipWarnBG,
+          fg: failover.canEnable ? HubTheme.chipDoneFG : HubTheme.chipWarnFG)
+        StatusChip(
+          text: failover.flagEnabled ? "flag on" : "flag off",
+          bg: failover.flagEnabled ? HubTheme.chipPendingBG : HubTheme.chipNeutralBG,
+          fg: failover.flagEnabled ? HubTheme.chipPendingFG : HubTheme.chipNeutralFG)
+      }
+      if !failover.blockers.isEmpty {
+        Text(failover.blockers.joined(separator: ", "))
+          .font(.system(size: 10))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .padding(.vertical, 3)
   }
 }

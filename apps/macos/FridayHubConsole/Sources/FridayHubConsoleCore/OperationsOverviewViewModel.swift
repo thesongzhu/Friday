@@ -59,6 +59,7 @@ public struct ReadProjectionDetail: Sendable, Equatable {
   public let generatedAtMs: Int64
   public let summary: String
   public let refs: [String]
+  public let providerReadiness: ProviderReadinessDetail?
 
   public init(title: String, snapshot: ReadProjectionSnapshot) {
     let raw = snapshot.raw
@@ -66,6 +67,7 @@ public struct ReadProjectionDetail: Sendable, Equatable {
     self.generatedAtMs = snapshot.generatedAtMs
     self.summary = Self.summary(from: raw)
     self.refs = Self.refs(from: raw)
+    self.providerReadiness = ProviderReadinessDetail(raw: raw)
   }
 
   private static func summary(from raw: [String: Any]) -> String {
@@ -93,6 +95,65 @@ public struct ReadProjectionDetail: Sendable, Equatable {
 
   private static func firstString(_ raw: [String: Any], _ keys: [String]) -> String? {
     keys.lazy.compactMap { raw[$0] as? String }.first
+  }
+}
+
+public struct ProviderReadinessDetail: Sendable, Equatable {
+  public let routes: [ProviderRouteReadinessDisplay]
+  public let failovers: [ProviderFailoverReadinessDisplay]
+  public let suggestedTextRoute: String?
+  public let suggestedStrongRoute: String?
+  public let keyValidationProbed: Bool?
+
+  init?(raw: [String: Any]) {
+    guard let routeRows = raw["route_readiness"] as? [[String: Any]] else { return nil }
+    self.routes = routeRows.map(ProviderRouteReadinessDisplay.init(raw:))
+    let failoverRows = raw["failover_readiness"] as? [[String: Any]] ?? []
+    self.failovers = failoverRows.map(ProviderFailoverReadinessDisplay.init(raw:))
+    self.suggestedTextRoute = raw["suggested_text_route"] as? String
+    self.suggestedStrongRoute = raw["suggested_strong_route"] as? String
+    self.keyValidationProbed = raw["key_validation_probed"] as? Bool
+  }
+}
+
+public struct ProviderRouteReadinessDisplay: Sendable, Equatable, Identifiable {
+  public let providerId: String
+  public let model: String
+  public let modelSize: String
+  public let strength: String
+  public let dispatchable: Bool
+  public let blockers: [String]
+
+  public var id: String { providerId }
+
+  init(raw: [String: Any]) {
+    self.providerId = raw["provider_id"] as? String ?? "unknown"
+    self.model = raw["model"] as? String ?? "unknown"
+    self.modelSize = raw["model_size"] as? String ?? "unknown"
+    self.strength = raw["strength"] as? String ?? "unknown"
+    self.dispatchable = raw["dispatchable"] as? Bool ?? false
+    self.blockers = Self.blockerCodes(raw["blockers"])
+  }
+
+  static func blockerCodes(_ value: Any?) -> [String] {
+    guard let rows = value as? [[String: Any]] else { return [] }
+    return rows.compactMap { $0["code"] as? String }.filter { !$0.isEmpty }
+  }
+}
+
+public struct ProviderFailoverReadinessDisplay: Sendable, Equatable, Identifiable {
+  public let direction: String
+  public let flagEnabled: Bool
+  public let canEnable: Bool
+  public let blockers: [String]
+
+  public var id: String { direction }
+
+  init(raw: [String: Any]) {
+    self.direction = raw["direction"] as? String ?? "unknown"
+    self.flagEnabled = raw["flag_enabled"] as? Bool ?? false
+    self.canEnable = raw["can_enable"] as? Bool ?? false
+    self.blockers = ProviderRouteReadinessDisplay.blockerCodes(raw["blockers"])
   }
 }
 
