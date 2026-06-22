@@ -87,10 +87,11 @@
 //!     indistinguishable from a freshly-dispatched-not-yet-running row, so unreconciled. The window
 //!     is narrow (no model call happens in it), and the dispatch path already owns re-driving a
 //!     never-started `ReadyToDispatch`.
-//!   * **The codex mission-bound path.** Codex runs bypass `run_loop_with_policy` (the special-cased
-//!     gated-turn path), so they NEVER write the heartbeat — a codex mission-bound run crashing
-//!     mid-turn leaves `executing == 0`, also unreconciled. Dark today (codex unavailable in the
-//!     autonomous baseline); named for when it is wired.
+//!     The special-cased mission-bound Codex gated-turn path now mirrors the same execution marker:
+//!     it SETs immediately before the Codex app-server turn and CLEARs on every returned
+//!     outcome/error, so a Codex process that dies mid-turn leaves the same stale
+//!     `ReadyToDispatch + executing == 1` signal PASS-2 can reconcile. The remaining gap is the
+//!     same dispatch→first-SET window above.
 //!
 //! GATING: none. The boot PASS-1+PASS-2 reconcile is a hard safety sweep. The loop-side marker
 //! writes are also flag-independent (see the no-degrade posture above), while WorkItem-status timing

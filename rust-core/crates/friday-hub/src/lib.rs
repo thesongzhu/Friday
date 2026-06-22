@@ -4703,7 +4703,11 @@ fn wall_clock_now_ms() -> i64 {
 /// 0-row UPDATE no-op inside the helper, never an error. The timestamp is a FRESH wall-clock read
 /// ([`wall_clock_now_ms`]) — NOT the loop's fixed `now_ms` — so a long multi-turn run keeps a fresh
 /// heartbeat and is never mistaken for a crash (see the staleness rationale on the threshold const).
-fn heartbeat_work_item_executing(conn: &Connection, work_item_id: Option<&str>, executing: bool) {
+pub(crate) fn heartbeat_work_item_executing(
+    conn: &Connection,
+    work_item_id: Option<&str>,
+    executing: bool,
+) {
     let Some(work_item_id) = work_item_id else {
         return; // No bound work_item (non-mission / sessionless run) ⇒ byte-identical no-op.
     };
