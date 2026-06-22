@@ -86,6 +86,16 @@ public struct HomeProjection: Sendable, Equatable {
       + runOutcomeLearningCandidates.count
   }
 
+  public var isLoadedEmpty: Bool {
+    workItemIds.isEmpty
+      && providerReceiptRefs.isEmpty
+      && channelReceiptRefs.isEmpty
+      && memoryCandidates.isEmpty
+      && runOutcomeLearningCandidates.isEmpty
+      && capabilityStates.isEmpty
+      && transcriptEvents.isEmpty
+  }
+
   private static func parseWorkItems(_ value: Any?) -> [HomeWorkItem] {
     guard let rows = value as? [[String: Any]] else { return [] }
     return rows.compactMap { row in

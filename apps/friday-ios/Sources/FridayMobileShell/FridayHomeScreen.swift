@@ -60,6 +60,9 @@ struct FridayHomeScreen: View {
     }
 
     statusCard(projection)
+    if projection.isLoadedEmpty {
+      loadedEmptyCard(projection)
+    }
     workItemsCard(projection)
   }
 
@@ -89,6 +92,32 @@ struct FridayHomeScreen: View {
         RefPill(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
       }
     }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(viewModel.isOnline ? "Friday status online" : "Friday status offline or stale")
+    .accessibilityIdentifier("friday.home.status-card")
+  }
+
+  private func loadedEmptyCard(_ projection: HomeProjection) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        HStack(spacing: 8) {
+          Image(systemName: "tray")
+            .foregroundStyle(MobileTheme.textSecondary)
+            .frame(width: 22)
+            .accessibilityHidden(true)
+          Text("No active Friday work yet")
+            .font(.headline)
+            .foregroundStyle(MobileTheme.textPrimary)
+        }
+        Text("Connected to \(projection.runtimeFeedStatus); this owner has no visible missions, work items, or learning candidates in the current projection.")
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Friday is connected, with no active work for this owner")
+    .accessibilityIdentifier("friday.home.loaded-empty")
   }
 
   /// The refs-only work-item view: COUNTS + id refs only (INV-5) — never a body. The read-seam
@@ -116,6 +145,9 @@ struct FridayHomeScreen: View {
         }
       }
     }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Work items, \(projection.workItemIds.count) references")
+    .accessibilityIdentifier("friday.home.work-items-card")
   }
 }
 
@@ -138,6 +170,9 @@ struct StatusBanner: View {
     .background(
       RoundedRectangle(cornerRadius: MobileTheme.cornerRadius, style: .continuous)
         .fill(MobileTheme.coralSoft))
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Friday projection flagged: \(labels.joined(separator: ", "))")
+    .accessibilityIdentifier("friday.home.status-banner")
   }
 }
 
@@ -161,5 +196,8 @@ struct UnavailableView: View {
     }
     .padding(28)
     .frame(maxWidth: .infinity, minHeight: 200)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Friday is offline. \(reason). No cached or fabricated status is shown.")
+    .accessibilityIdentifier("friday.home.unavailable")
   }
 }
