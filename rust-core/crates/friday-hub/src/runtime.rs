@@ -2144,6 +2144,7 @@ impl<T: Transport> HubRuntime<T> {
             crate::surface_events::resolve_bound_surface_thread(
                 &self.db,
                 &envelope.context.mission_id,
+                &envelope.context.friday_conversation_id,
             )
         } else {
             None
@@ -8510,6 +8511,39 @@ mod tests {
         MissionContextLookup::by_work_item("fconv_loop", "mission-loop", "work-loop")
     }
 
+    fn seed_prior_surface_thread_for_same_mission(db: &Db) {
+        let now = 1_699_999_999_000;
+        db.upsert_friday_conversation(&FridayConversation {
+            friday_conversation_id: "fconv_prior_loop".into(),
+            owner_principal: "owner-1".into(),
+            title: "Prior surface".into(),
+            current_focus_summary: "Older surface thread for the same mission".into(),
+            active_mission_ids: vec!["mission-loop".into()],
+            surface_thread_ids: vec!["surface-prior-loop".into()],
+            memory_scope_ref: None,
+            truth_status: TruthStatus::WiredRegistry,
+            proof_refs: vec!["proof://mission-loop-prior-surface".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_surface_thread(&SurfaceThread {
+            surface_thread_id: "surface-prior-loop".into(),
+            friday_conversation_id: "fconv_prior_loop".into(),
+            mission_id: Some("mission-loop".into()),
+            surface_kind: SurfaceKind::Desktop,
+            channel_binding_id: None,
+            delivery_route: "desktop".into(),
+            visibility_policy: VisibilityPolicy::Compact,
+            allowed_actions: vec!["open_mission".into()],
+            last_seen_at_ms: Some(now),
+            last_delivered_event_seq: Some(1),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+    }
+
     fn codex_provider_session_claim() -> WorkspaceClaim {
         WorkspaceClaim {
             claim_id: "claim-codex-provider-session".into(),
@@ -9193,6 +9227,68 @@ mod tests {
             assert_eq!(event.source_surface, SurfaceKind::Mobile);
         }
         assert!(friday_storage::audit::verify_audit_chain(rt_on.db().conn()).is_ok());
+    }
+
+    #[test]
+    fn surface_events_run_path_prefers_thread_for_current_conversation() {
+        let (rt, root, _post) = runtime_with(
+            "surface-current-conversation",
+            &[
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"none\"}",
+            ],
+            Box::new(DenyAllApprovals),
+        );
+        std::fs::write(root.join("notes.md"), b"note").unwrap();
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        seed_prior_surface_thread_for_same_mission(rt.db());
+
+        let outcome = rt
+            .run_agent_loop_for_mission_with_overrides_flagged(
+                loop_lookup(),
+                "friday-hub-session",
+                "run-surface-current-conversation",
+                "read the notes",
+                None,
+                None,
+                false, // passport_mint
+                false, // workitem_guarded
+                true,  // surface_events ON
+                1000,
+            )
+            .unwrap();
+        assert!(matches!(outcome, MissionBoundLoopOutcome::Ran { .. }));
+
+        let events = rt
+            .db()
+            .list_surface_events_for_mission("mission-loop")
+            .unwrap();
+        let kinds: Vec<&str> = events
+            .iter()
+            .map(|event| event.event_kind.as_str())
+            .collect();
+        assert!(
+            kinds.contains(&"provider_trace") && kinds.contains(&"proof_receipt"),
+            "run lifecycle events emitted for current conversation: {events:?}"
+        );
+        assert!(
+            events.iter().all(|event| {
+                event.friday_conversation_id == "fconv_loop"
+                    && event.surface_thread_id == "surface-mobile-loop"
+                    && event.source_surface == SurfaceKind::Mobile
+            }),
+            "surface events must bind to the current conversation's thread, not the older same-mission thread: {events:?}"
+        );
+        assert_eq!(
+            rt.db().get_work_item("work-loop").unwrap().unwrap().status,
+            WorkItemStatus::CompletedWithProof
+        );
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 
     /// A NON-Finished (Paused) loop is still bound to the Mission (link tied to run_id) but
