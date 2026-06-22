@@ -54,17 +54,20 @@ jobs:
       # ~8 min listen window — the trusted user must DM the bot within it.
       TELEGRAM_LISTEN_SECONDS: "480"
       TELEGRAM_PROOF_OUT: ${{ github.workspace }}/telegram_live_proof.json
+      MISSION_SPINE_CHANNEL_LIVE_PROOF_OUT: ${{ github.workspace }}/mission_spine_channel_live_proof.json
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
       - name: Toolchain
         run: rustup show && cargo --version
       - name: Live proof — real Telegram message through the Rust channels pipeline
-        run: cargo test -p friday-hub --test telegram_live -- --ignored --nocapture
+        run: scripts/mission-spine-channel-live-gate.sh
       - name: Upload live-proof evidence (redacted; no token)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: telegram-live-proof-${{ github.run_id }}
-          path: ${{ github.workspace }}/telegram_live_proof.json
+          path: |
+            ${{ github.workspace }}/telegram_live_proof.json
+            ${{ github.workspace }}/mission_spine_channel_live_proof.json
           if-no-files-found: warn
