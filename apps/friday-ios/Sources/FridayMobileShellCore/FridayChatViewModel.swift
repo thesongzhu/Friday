@@ -344,8 +344,11 @@ public final class FridayChatViewModel: ObservableObject {
         return
       }
 
+      let firstAnswer = await fetchDeliveredAnswerBody(for: firstReceipt.runId)
       let followUp = try await dispatchClaudeFollowUpIfPresent(
         sourceWorkItemId: workItemId,
+        firstRunId: firstReceipt.runId,
+        firstAnswerBody: firstAnswer?.body,
         intakeResult: result,
         missionClient: missionClient)
       let bodyRunId = followUp?.runId ?? firstReceipt.runId
@@ -367,6 +370,8 @@ public final class FridayChatViewModel: ObservableObject {
 
   private func dispatchClaudeFollowUpIfPresent(
     sourceWorkItemId: String,
+    firstRunId: String,
+    firstAnswerBody: String?,
     intakeResult: MissionIntakeResultWire,
     missionClient: any FridayMissionBoundRunWriteClient
   ) async throws -> (workItemId: String, runId: String)? {
@@ -380,7 +385,11 @@ public final class FridayChatViewModel: ObservableObject {
     }
 
     let outcome = try await missionClient.dispatchMissionBoundAgentRun(
-      task: Self.claudeFollowUpTask,
+      task: Self.claudeFollowUpTask(
+        sourceWorkItemId: sourceWorkItemId,
+        followUpWorkItemId: followUpWorkItemId,
+        firstRunId: firstRunId,
+        firstAnswerBody: firstAnswerBody),
       missionContext: MissionWorkItemContextWire(
         fridayConversationId: intakeResult.fridayConversationId,
         missionId: intakeResult.missionId,
@@ -558,8 +567,31 @@ public final class FridayChatViewModel: ObservableObject {
       lane: "auto")
   }
 
-  private static let claudeFollowUpTask =
-    "Run the generated Claude follow-up for this Mission. Use the inherited Codex first-leg "
-      + "proof and input refs attached to this WorkItem, keep the run read-only, and summarize "
-      + "the follow-up outcome."
+  private static let claudeFollowUpTaskHeader =
+    "Run the generated Claude follow-up for this Mission."
+
+  private static func claudeFollowUpTask(
+    sourceWorkItemId: String,
+    followUpWorkItemId: String,
+    firstRunId: String,
+    firstAnswerBody: String?
+  ) -> String {
+    var lines = [
+      claudeFollowUpTaskHeader,
+      "source_work_item_id=\(sourceWorkItemId)",
+      "follow_up_work_item_id=\(followUpWorkItemId)",
+      "codex_first_run_id=\(firstRunId)",
+    ]
+    if let firstAnswerBody = firstAnswerBody?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !firstAnswerBody.isEmpty
+    {
+      lines.append("Codex first-leg answer:")
+      lines.append(firstAnswerBody)
+    }
+    lines.append(
+      "Use the Mission context and the proof/input refs already attached to this WorkItem; do not ask the operator for paths, IDs, or artifact locations that are listed above.")
+    lines.append(
+      "Keep the run read-only; summarize the Codex first-leg answer and this follow-up outcome, and do not claim you verified unrelated files or artifacts unless that evidence is explicitly present in the provided context.")
+    return lines.joined(separator: "\n")
+  }
 }

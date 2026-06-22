@@ -298,6 +298,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   private var _lastMissionContext: MissionWorkItemContextWire?
   private var _lastMissionRunConstraints: AgentRunConstraintsWire?
   private var _missionContexts: [MissionWorkItemContextWire] = []
+  private var _dispatchedTasks: [String] = []
   var lastIntake: MissionIntakeRequestWire? { lock.withLock { _lastIntake } }
   var lastDecision: MemoryDecisionRequestWire? { lock.withLock { _lastDecision } }
   var lastLearningDecision: RunOutcomeLearningDecisionRequestWire? {
@@ -306,6 +307,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   var lastMissionContext: MissionWorkItemContextWire? { lock.withLock { _lastMissionContext } }
   var lastMissionRunConstraints: AgentRunConstraintsWire? { lock.withLock { _lastMissionRunConstraints } }
   var missionContexts: [MissionWorkItemContextWire] { lock.withLock { _missionContexts } }
+  var dispatchedTasks: [String] { lock.withLock { _dispatchedTasks } }
 
   init(behavior: Behavior) { self.behavior = behavior }
 
@@ -380,6 +382,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
       _lastMissionContext = missionContext
       _lastMissionRunConstraints = constraints
       _missionContexts.append(missionContext)
+      _dispatchedTasks.append(task)
     }
     if case .throwsTransport = behavior {
       throw FridayWriteClientError.transport("connection refused (write server dark)")
@@ -635,7 +638,8 @@ func submitIntakeDispatchesClaudeFollowUpWhenProjectionExposesGeneratedWorkItem(
     snapshot: snapshotWithWorkItems(
       missionId: "mission-desktop-fixed",
       fridayConversationId: "fconv_desktop_fixed",
-      workItemIds: ["work-desktop-fixed", "work-desktop-fixed-claude-followup"]))
+      workItemIds: ["work-desktop-fixed", "work-desktop-fixed-claude-followup"]),
+    answerBodies: ["run-bound-1": "Desktop Codex first answer"])
   let vm = OperationsOverviewViewModel(
     client: read, writeClient: write, missionRunClient: write,
     writeOwnerPrincipal: "admin-001", newId: { "fixed" })
@@ -650,6 +654,13 @@ func submitIntakeDispatchesClaudeFollowUpWhenProjectionExposesGeneratedWorkItem(
   #expect(
     write.missionContexts.map(\.workItemId)
       == ["work-desktop-fixed", "work-desktop-fixed-claude-followup"])
+  #expect(write.dispatchedTasks.count == 2)
+  #expect(write.dispatchedTasks[1].contains("source_work_item_id=work-desktop-fixed"))
+  #expect(write.dispatchedTasks[1].contains("follow_up_work_item_id=work-desktop-fixed-claude-followup"))
+  #expect(write.dispatchedTasks[1].contains("codex_first_run_id=run-bound-1"))
+  #expect(write.dispatchedTasks[1].contains("Desktop Codex first answer"))
+  #expect(write.dispatchedTasks[1].contains("do not ask the operator for paths"))
+  #expect(write.dispatchedTasks[1].contains("do not claim you verified unrelated files"))
 }
 
 @Test
