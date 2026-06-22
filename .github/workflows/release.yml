@@ -527,6 +527,12 @@ jobs:
           FRIDAY_HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.FRIDAY_HOMEBREW_TAP_GITHUB_TOKEN }}
         run: npm run release:companion:local
 
+      - name: Build Hub Console app bundle
+        run: npm run build:hub-console:native
+
+      - name: Verify Hub Console app bundle
+        run: npm run verify:hub-console:native
+
       - name: Build macOS DMG
         env:
           FRIDAY_RELEASE_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ needs.verify.outputs.tag_name }}
@@ -539,6 +545,7 @@ jobs:
           path: |
             dist/macos/FridayCompanion.release.json
             dist/macos/FridayCompanion.release.md
+            dist/macos/FridayHubConsole.app
             dist/releases/macos
             dist/releases/channels
             dist/releases/homebrew
