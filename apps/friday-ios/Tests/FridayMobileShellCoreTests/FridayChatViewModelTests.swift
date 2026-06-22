@@ -311,7 +311,7 @@ final class FridayChatViewModelTests: XCTestCase {
         projectionJSON: Data(snapshotJSON.utf8),
         generatedAtMs: 0),
       answerBodies: [
-        "run-first": "Mobile Codex first answer",
+        "run-first": "I am still checking files before the final answer. FRIDAY_MOBILE_PRODUCT_AUTO_FOLLOWUP_OK",
         "run-followup": "Claude follow-up body visible to the owner.",
       ])
     let vm = FridayChatViewModel(
@@ -334,9 +334,11 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertTrue(mission.dispatchedTasks[1].contains("follow_up_work_item_id=work-mobile-fixed-claude-followup"))
     XCTAssertTrue(mission.dispatchedTasks[1].contains("codex_first_run_id=run-first"))
     XCTAssertTrue(mission.dispatchedTasks[1].contains("output destination: owner-visible answer body"))
+    XCTAssertTrue(mission.dispatchedTasks[1].contains("task: produce the final owner-visible answer"))
     XCTAssertTrue(mission.dispatchedTasks[1].contains("success = concise final synthesis"))
-    XCTAssertTrue(mission.dispatchedTasks[1].contains("constraint = read-only"))
-    XCTAssertTrue(mission.dispatchedTasks[1].contains("Mobile Codex first answer"))
+    XCTAssertTrue(mission.dispatchedTasks[1].contains("constraints = read-only"))
+    XCTAssertTrue(mission.dispatchedTasks[1].contains("FRIDAY_MOBILE_PRODUCT_AUTO_FOLLOWUP_OK"))
+    XCTAssertFalse(mission.dispatchedTasks[1].contains("I am still checking files"))
     XCTAssertTrue(mission.dispatchedTasks[1].contains("do not ask the operator for paths"))
     XCTAssertTrue(mission.dispatchedTasks[1].contains("do not claim you verified unrelated files"))
     guard case .answered(let receipt) = vm.phase else { return XCTFail("expected answered, got \(vm.phase)") }
