@@ -16,6 +16,7 @@ struct StatusChip: View {
       .padding(.vertical, 3)
       .background(Capsule().fill(bg))
       .foregroundStyle(fg)
+      .accessibilityLabel(text)
   }
 }
 
@@ -131,6 +132,7 @@ struct RefPill: View {
         .foregroundStyle(HubTheme.textMono)
         .textSelection(.enabled)
         .lineLimit(1)
+        .minimumScaleFactor(0.75)
         .truncationMode(.middle)
     }
     .padding(.horizontal, 8)
@@ -139,5 +141,14 @@ struct RefPill: View {
       RoundedRectangle(cornerRadius: 7, style: .continuous)
         .fill(Color.black.opacity(0.04))
     )
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(accessibilityText)
+  }
+
+  private var accessibilityText: String {
+    if let label {
+      return "\(label): \(ref)"
+    }
+    return ref
   }
 }
