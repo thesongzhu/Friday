@@ -21,19 +21,34 @@ final class FridayChatViewModelTests: XCTestCase {
   final class FakeWriteClient: FridayRustWriteClient, @unchecked Sendable {
     enum DispatchScript { case answer(AgentRunResultWire); case pause(PausedOutcome); case fail(FridayWriteClientError) }
     enum ResumeScript { case accepted(ResumeRelayResult); case refused(ResumeRelayResult); case fail(FridayWriteClientError) }
+    enum RejectScript { case accepted(ResumeRelayResult); case refused(ResumeRelayResult); case fail(FridayWriteClientError) }
+    enum CancelScript { case accepted(ResumeRelayResult); case refused(ResumeRelayResult); case fail(FridayWriteClientError) }
 
     let dispatchScript: DispatchScript
     let resumeScript: ResumeScript
+    let rejectScript: RejectScript
+    let cancelScript: CancelScript
 
     private(set) var dispatchedTasks: [String] = []
     private(set) var dispatchedConstraints: [AgentRunConstraintsWire?] = []
     private(set) var resumedRunIds: [String] = []
+    private(set) var rejectedRunIds: [String] = []
+    private(set) var rejectedApprovalIds: [String] = []
+    private(set) var cancelledRunIds: [String] = []
+    private(set) var cancelReasons: [String?] = []
     /// The VERBATIM blob the view model relayed (the INV-1 proof at the view-model boundary).
     private(set) var relayedBlobs: [[UInt8]] = []
 
-    init(dispatch: DispatchScript, resume: ResumeScript = .fail(.runControlDisabled)) {
+    init(
+      dispatch: DispatchScript,
+      resume: ResumeScript = .fail(.runControlDisabled),
+      reject: RejectScript = .fail(.runControlDisabled),
+      cancel: CancelScript = .fail(.runControlDisabled)
+    ) {
       self.dispatchScript = dispatch
       self.resumeScript = resume
+      self.rejectScript = reject
+      self.cancelScript = cancel
     }
 
     func dispatchAgentRun(task: String, constraints: AgentRunConstraintsWire?) async throws -> AgentRunDispatchOutcome {
@@ -50,6 +65,24 @@ final class FridayChatViewModelTests: XCTestCase {
       resumedRunIds.append(runId)
       relayedBlobs.append(opaqueSignedBlob)
       switch resumeScript {
+      case .accepted(let r), .refused(let r): return r
+      case .fail(let e): throw e
+      }
+    }
+
+    func rejectApproval(runId: String, approvalId: String) async throws -> ResumeRelayResult {
+      rejectedRunIds.append(runId)
+      rejectedApprovalIds.append(approvalId)
+      switch rejectScript {
+      case .accepted(let r), .refused(let r): return r
+      case .fail(let e): throw e
+      }
+    }
+
+    func cancelRun(runId: String, reason: String?) async throws -> ResumeRelayResult {
+      cancelledRunIds.append(runId)
+      cancelReasons.append(reason)
+      switch cancelScript {
       case .accepted(let r), .refused(let r): return r
       case .fail(let e): throw e
       }
@@ -72,6 +105,14 @@ final class FridayChatViewModelTests: XCTestCase {
 
     func resumeWithApproval(runId: String, opaqueSignedBlob: [UInt8]) async throws -> ResumeRelayResult {
       ResumeRelayResult(runId: runId, op: "resume", accepted: false, status: "denied", auditRef: nil)
+    }
+
+    func rejectApproval(runId: String, approvalId: String) async throws -> ResumeRelayResult {
+      ResumeRelayResult(runId: runId, op: "reject", accepted: true, status: "rejected", auditRef: nil)
+    }
+
+    func cancelRun(runId: String, reason: String?) async throws -> ResumeRelayResult {
+      ResumeRelayResult(runId: runId, op: "cancel", accepted: true, status: "cancelled", auditRef: nil)
     }
 
     func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire {
@@ -438,14 +479,39 @@ final class FridayChatViewModelTests: XCTestCase {
   }
 
   func testReject_pausedMutation_executesNothing() async {
-    let client = FakeWriteClient(dispatch: .pause(makePause()),
-                                 resume: .accepted(ResumeRelayResult(runId: "run-1", op: "resume", accepted: true, status: "x", auditRef: nil)))
+    let client = FakeWriteClient(
+      dispatch: .pause(makePause()),
+      resume: .accepted(ResumeRelayResult(runId: "run-1", op: "resume", accepted: true, status: "x", auditRef: nil)),
+      reject: .accepted(ResumeRelayResult(
+        runId: "run-1", op: "reject", accepted: true, status: "rejected", auditRef: "audit://reject/run-1")))
     let vm = FridayChatViewModel(writeClient: client, signer: MockOperatorSigner())
     await vm.send("edit notes.md")
     XCTAssertTrue(vm.phase.isAwaitingApproval)
-    vm.reject()
-    XCTAssertEqual(vm.phase, .composing)
+    await vm.reject()
+    guard case .resumed(let receipt) = vm.phase else { return XCTFail("expected .resumed reject receipt, got \(vm.phase)") }
+    XCTAssertEqual(receipt.op, "reject")
+    XCTAssertTrue(receipt.accepted)
+    XCTAssertEqual(receipt.status, "rejected")
+    XCTAssertEqual(receipt.title, "Approval rejected")
+    XCTAssertEqual(receipt.statusLabel, "REJECTED")
+    XCTAssertEqual(client.rejectedRunIds, ["run-1"])
+    XCTAssertEqual(client.rejectedApprovalIds, ["ap-nonce-run-1"])
     XCTAssertTrue(client.resumedRunIds.isEmpty, "a rejected pause relays NO resume — nothing executes")
+  }
+
+  func testReject_transportFailure_isHonestUnavailableAndDoesNotResume() async {
+    let client = FakeWriteClient(
+      dispatch: .pause(makePause()),
+      resume: .accepted(ResumeRelayResult(runId: "run-1", op: "resume", accepted: true, status: "x", auditRef: nil)),
+      reject: .fail(.transport("closed before a control result")))
+    let vm = FridayChatViewModel(writeClient: client, signer: MockOperatorSigner())
+    await vm.send("edit notes.md")
+    await vm.reject()
+    guard case .unavailable(let reason) = vm.phase else { return XCTFail("expected .unavailable, got \(vm.phase)") }
+    XCTAssertTrue(reason.contains("offline"), "reason: \(reason)")
+    XCTAssertEqual(client.rejectedRunIds, ["run-1"])
+    XCTAssertEqual(client.rejectedApprovalIds, ["ap-nonce-run-1"])
+    XCTAssertTrue(client.resumedRunIds.isEmpty, "reject failure must not resume the mutation")
   }
 
   // MARK: INV-1 — the app holds no key; a signer that declines relays nothing

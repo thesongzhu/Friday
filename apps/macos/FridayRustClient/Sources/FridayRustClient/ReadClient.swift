@@ -222,6 +222,10 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunPaused")
     case .agentRunResume:
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunResume")
+    case .agentRunCancel:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunCancel")
+    case .agentRunReject:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunReject")
     case .agentRunControlResult:
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunControlResult")
     case .pair:
@@ -329,6 +333,10 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunPaused")
     case .agentRunResume:
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunResume")
+    case .agentRunCancel:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunCancel")
+    case .agentRunReject:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunReject")
     case .agentRunControlResult:
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunControlResult")
     case .pair:

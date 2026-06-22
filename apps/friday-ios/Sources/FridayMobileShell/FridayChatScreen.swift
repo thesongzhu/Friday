@@ -119,6 +119,14 @@ struct FridayChatScreen: View {
             .font(.caption2).monospaced().foregroundStyle(MobileTheme.textSecondary)
         }
       }
+    case .rejecting(let card):
+      GlassPanel {
+        VStack(alignment: .leading, spacing: 8) {
+          HStack(spacing: 8) { ProgressView(); Text("Rejecting approval…").font(.headline) }
+          Text("\(card.actionVerb) · \(short(card.actionDigest))")
+            .font(.caption2).monospaced().foregroundStyle(MobileTheme.textSecondary)
+        }
+      }
     case .resumed(let r):
       resumeCard(r)
     case .unavailable(let reason):
@@ -253,7 +261,7 @@ struct FridayChatScreen: View {
           .buttonStyle(.borderedProminent).tint(MobileTheme.cyan)
           .accessibilityLabel("Approve Friday action")
           Button(role: .destructive) {
-            viewModel.reject()
+            Task { await viewModel.reject() }
           } label: {
             Label("Reject", systemImage: "xmark").foregroundStyle(MobileTheme.coral)
           }
@@ -267,29 +275,29 @@ struct FridayChatScreen: View {
     .accessibilityIdentifier("friday.chat.approval-card")
   }
 
-  /// The refs-only resume receipt (accepted ⇒ executed; refused ⇒ a successful relay of a refusal).
+  /// The refs-only control receipt (resume/reject/cancel).
   private func resumeCard(_ r: ChatResumeReceipt) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: 8) {
         HStack {
           StatusChip(
-            text: r.accepted ? "EXECUTED" : "REFUSED",
+            text: r.statusLabel,
             bg: r.accepted ? MobileTheme.chipDoneBG : MobileTheme.chipWarnBG,
             fg: r.accepted ? MobileTheme.chipDoneFG : MobileTheme.chipWarnFG)
           Spacer()
           Button("New") { viewModel.newTurn() }.font(.caption).foregroundStyle(MobileTheme.cyan)
         }
-        Text(r.accepted ? "Approved action executed" : "Action refused")
+        Text(r.title)
           .font(.headline).foregroundStyle(MobileTheme.textPrimary)
         RefPill(label: "op", ref: r.op)
         RefPill(label: "status", ref: r.status)
         if let audit = r.auditRef { RefPill(label: "audit_ref", ref: audit) }
-        Text(r.accepted ? "receipt is refs-only — no body" : "the action did NOT execute")
+        Text(r.detail)
           .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
       }
     }
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(r.accepted ? "Approved action executed" : "Action refused")
+    .accessibilityLabel(r.title)
     .accessibilityIdentifier("friday.chat.resume-receipt")
   }
 

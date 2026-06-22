@@ -462,6 +462,12 @@ public enum FridayMessage: Equatable {
   /// trusted-peer→hub: relay an operator's OPAQUE Ed25519-signed approval to resume a paused run.
   /// The courier authors NOTHING in `signed_blob` (INV-1). Mirrors `Message::AgentRunResume`.
   case agentRunResume(runId: String, signedBlob: [UInt8])
+  /// trusted-peer→hub: owner-authed terminal stop for one live run. Mirrors
+  /// `Message::AgentRunCancel`.
+  case agentRunCancel(runId: String, forwardedPrincipal: String, authProof: [UInt8], reason: String?)
+  /// trusted-peer→hub: owner-authed refusal of one pending approval. Mirrors
+  /// `Message::AgentRunReject`.
+  case agentRunReject(runId: String, approvalId: String, forwardedPrincipal: String, authProof: [UInt8])
   /// hub→trusted-peer: the body-free receipt for a control op (resume/cancel/reject). Mirrors
   /// `friday_protocol::Message::AgentRunControlResult`.
   case agentRunControlResult(AgentRunControlResultWire)
@@ -528,9 +534,11 @@ extension FridayMessage: Codable {
     case actionDigest = "action_digest"
     case summary
     case signedBlob = "signed_blob"
+    case approvalId = "approval_id"
     case op
     case accepted
     case auditRef = "audit_ref"
+    case reason
     case deviceId = "device_id"
     case devicePubkey = "device_pubkey"
     case pairingProof = "pairing_proof"
@@ -660,6 +668,20 @@ extension FridayMessage: Codable {
       self = .agentRunResume(
         runId: try c.decode(String.self, forKey: .runId),
         signedBlob: try c.decode([UInt8].self, forKey: .signedBlob))
+    case "AgentRunCancel":
+      let c = try decoder.container(keyedBy: WriteKey.self)
+      self = .agentRunCancel(
+        runId: try c.decode(String.self, forKey: .runId),
+        forwardedPrincipal: try c.decode(String.self, forKey: .forwardedPrincipal),
+        authProof: try c.decode([UInt8].self, forKey: .authProof),
+        reason: try c.decodeIfPresent(String.self, forKey: .reason))
+    case "AgentRunReject":
+      let c = try decoder.container(keyedBy: WriteKey.self)
+      self = .agentRunReject(
+        runId: try c.decode(String.self, forKey: .runId),
+        approvalId: try c.decode(String.self, forKey: .approvalId),
+        forwardedPrincipal: try c.decode(String.self, forKey: .forwardedPrincipal),
+        authProof: try c.decode([UInt8].self, forKey: .authProof))
     case "AgentRunControlResult":
       let c = try decoder.container(keyedBy: WriteKey.self)
       self = .agentRunControlResult(AgentRunControlResultWire(
@@ -839,6 +861,20 @@ extension FridayMessage: Codable {
       try c.encode("AgentRunResume", forKey: .kind)
       try c.encode(runId, forKey: .runId)
       try c.encode(signedBlob, forKey: .signedBlob)
+    case .agentRunCancel(let runId, let forwardedPrincipal, let authProof, let reason):
+      var c = encoder.container(keyedBy: WriteKey.self)
+      try c.encode("AgentRunCancel", forKey: .kind)
+      try c.encode(runId, forKey: .runId)
+      try c.encode(forwardedPrincipal, forKey: .forwardedPrincipal)
+      try c.encode(authProof, forKey: .authProof)
+      if let reason { try c.encode(reason, forKey: .reason) }
+    case .agentRunReject(let runId, let approvalId, let forwardedPrincipal, let authProof):
+      var c = encoder.container(keyedBy: WriteKey.self)
+      try c.encode("AgentRunReject", forKey: .kind)
+      try c.encode(runId, forKey: .runId)
+      try c.encode(approvalId, forKey: .approvalId)
+      try c.encode(forwardedPrincipal, forKey: .forwardedPrincipal)
+      try c.encode(authProof, forKey: .authProof)
     case .agentRunControlResult(let r):
       var c = encoder.container(keyedBy: WriteKey.self)
       try c.encode("AgentRunControlResult", forKey: .kind)

@@ -23,6 +23,8 @@ final class WriteClientWiringTests: XCTestCase {
     case pauseRun            // dispatch → AgentRunPaused(refs only)
     case resumeAccepted      // resume → AgentRunControlResult(accepted, mutation_completed)
     case resumeRefused       // resume → AgentRunControlResult(accepted=false, denied)
+    case rejectAccepted      // reject → AgentRunControlResult(accepted, rejected)
+    case cancelAccepted      // cancel → AgentRunControlResult(accepted, cancelled)
   }
 
   /// An in-memory transport playing the Rust agent-run WRITE server's half, in the byte sequence
@@ -40,9 +42,13 @@ final class WriteClientWiringTests: XCTestCase {
     private var queuedFromServer: [[UInt8]] = []
     private(set) var dispatched = 0
     private(set) var resumed = 0
+    private(set) var rejected = 0
+    private(set) var cancelled = 0
     private(set) var endedFailClosed = false
     /// Captured VERBATIM blob the client relayed (proves INV-1 verbatim relay end-to-end).
     private(set) var receivedSignedBlob: [UInt8]?
+    private(set) var receivedApprovalId: String?
+    private(set) var receivedCancelReason: String?
     private(set) var receivedConstraints: AgentRunConstraintsWire?
     private(set) var receivedSessionId: String?
     private(set) var receivedMissionContext: MissionWorkItemContextWire?
@@ -89,6 +95,34 @@ final class WriteClientWiringTests: XCTestCase {
         try handleDispatch(req, sessionKey: sessionKey, correlation: env.msgId)
       case .agentRunResume(let runId, let signedBlob):
         try handleResume(runId: runId, signedBlob: signedBlob, sessionKey: sessionKey, correlation: env.msgId)
+      case .agentRunReject(let runId, let approvalId, let forwardedPrincipal, let authProof):
+        try handleOwnerAuthedControl(
+          runId: runId,
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof,
+          sessionKey: sessionKey,
+          correlation: env.msgId,
+          op: "reject",
+          acceptedStatus: "rejected",
+          auditRef: "audit://reject/\(runId)",
+          onAccepted: {
+            self.receivedApprovalId = approvalId
+            self.rejected += 1
+          })
+      case .agentRunCancel(let runId, let forwardedPrincipal, let authProof, let reason):
+        try handleOwnerAuthedControl(
+          runId: runId,
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof,
+          sessionKey: sessionKey,
+          correlation: env.msgId,
+          op: "cancel",
+          acceptedStatus: "cancelled",
+          auditRef: "audit://cancel/\(runId)",
+          onAccepted: {
+            self.receivedCancelReason = reason
+            self.cancelled += 1
+          })
       default:
         throw FridayWriteClientError.transport("unexpected inbound on the write session: \(env.msgId)")
       }
@@ -146,6 +180,50 @@ final class WriteClientWiringTests: XCTestCase {
       queuedFromServer.append(try FridayCrypto.encodeSealed(FridayCrypto.seal(
         key: sessionKey, plaintext: [UInt8](resp.encodeJSON()), aad: writeSessionAad)))
       resumed += 1
+    }
+
+    private func handleOwnerAuthedControl(
+      runId: String,
+      forwardedPrincipal: String,
+      authProof: [UInt8],
+      sessionKey: [UInt8],
+      correlation: String,
+      op: String,
+      acceptedStatus: String,
+      auditRef: String,
+      onAccepted: () -> Void
+    ) throws {
+      let reqAad = FridayCrypto.authAad(
+        writeSessionAad,
+        forwardedPrincipal: forwardedPrincipal,
+        boundContext: Array(runId.utf8))
+      let opened: [UInt8]
+      do {
+        opened = try FridayCrypto.open(
+          key: sessionKey,
+          sealed: FridayCrypto.decodeSealed(authProof),
+          aad: reqAad)
+      } catch {
+        endedFailClosed = true
+        return
+      }
+      let expected = FridayCrypto.nonceBoundChallenge(writeAuthChallenge, sessionNonce: sessionNonce)
+      let accepted = opened == expected && ownerAllowlist.contains(forwardedPrincipal)
+      if accepted {
+        onAccepted()
+      }
+      let result = AgentRunControlResultWire(
+        runId: runId,
+        op: op,
+        accepted: accepted,
+        status: accepted ? acceptedStatus : "auth_failed",
+        auditRef: accepted ? auditRef : nil)
+      let resp = FridayEnvelope(
+        msgId: "agent-run-control-result-\(runId)",
+        sentAt: 1_780_640_000_000,
+        message: .agentRunControlResult(result)).withCorrelation(correlation)
+      queuedFromServer.append(try FridayCrypto.encodeSealed(FridayCrypto.seal(
+        key: sessionKey, plaintext: [UInt8](resp.encodeJSON()), aad: writeSessionAad)))
     }
 
     func recvMessage() throws -> [UInt8] {
@@ -326,6 +404,67 @@ final class WriteClientWiringTests: XCTestCase {
     } catch let err as FridayWriteClientError {
       XCTAssertEqual(err, .emptySignedBlob)
       XCTAssertEqual(transport.resumed, 0)
+    }
+  }
+
+  // MARK: reject/cancel (owner-authed run controls)
+
+  func testReject_flagOn_sendsOwnerAuthedApprovalReject() async throws {
+    let (client, transport) = try makeClient(mode: .rejectAccepted, controlEnabled: true)
+    let result = try await client.rejectApproval(runId: "run-paused-9", approvalId: "approval-123")
+    XCTAssertTrue(result.accepted)
+    XCTAssertEqual(result.op, "reject")
+    XCTAssertEqual(result.status, "rejected")
+    XCTAssertEqual(result.auditRef, "audit://reject/run-paused-9")
+    XCTAssertEqual(transport.rejected, 1)
+    XCTAssertEqual(transport.receivedApprovalId, "approval-123")
+    XCTAssertEqual(transport.resumed, 0, "reject must not relay a resume blob")
+  }
+
+  func testReject_flagOff_refusesWithoutOpeningASocket() async throws {
+    let (client, transport) = try makeClient(mode: .rejectAccepted, controlEnabled: false)
+    do {
+      _ = try await client.rejectApproval(runId: "run-x", approvalId: "approval-x")
+      XCTFail("reject with the flag off must fail closed")
+    } catch let err as FridayWriteClientError {
+      XCTAssertEqual(err, .runControlDisabled)
+      XCTAssertEqual(transport.rejected, 0)
+      XCTAssertNil(transport.receivedApprovalId)
+    }
+  }
+
+  func testReject_missingApprovalId_failsClosedBeforeSocket() async throws {
+    let (client, transport) = try makeClient(mode: .rejectAccepted, controlEnabled: true)
+    do {
+      _ = try await client.rejectApproval(runId: "run-x", approvalId: "")
+      XCTFail("reject requires a concrete approval id")
+    } catch let err as FridayWriteClientError {
+      XCTAssertEqual(err, .missingRef("reject requires an approval id"))
+      XCTAssertEqual(transport.rejected, 0)
+    }
+  }
+
+  func testCancel_flagOn_sendsOwnerAuthedCancel() async throws {
+    let (client, transport) = try makeClient(mode: .cancelAccepted, controlEnabled: true)
+    let result = try await client.cancelRun(runId: "run-live-1", reason: "operator stopped it")
+    XCTAssertTrue(result.accepted)
+    XCTAssertEqual(result.op, "cancel")
+    XCTAssertEqual(result.status, "cancelled")
+    XCTAssertEqual(result.auditRef, "audit://cancel/run-live-1")
+    XCTAssertEqual(transport.cancelled, 1)
+    XCTAssertEqual(transport.receivedCancelReason, "operator stopped it")
+    XCTAssertEqual(transport.resumed, 0)
+  }
+
+  func testCancel_flagOff_refusesWithoutOpeningASocket() async throws {
+    let (client, transport) = try makeClient(mode: .cancelAccepted, controlEnabled: false)
+    do {
+      _ = try await client.cancelRun(runId: "run-x", reason: nil)
+      XCTFail("cancel with the flag off must fail closed")
+    } catch let err as FridayWriteClientError {
+      XCTAssertEqual(err, .runControlDisabled)
+      XCTAssertEqual(transport.cancelled, 0)
+      XCTAssertNil(transport.receivedCancelReason)
     }
   }
 }
