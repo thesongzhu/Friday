@@ -183,7 +183,9 @@ struct RootView: View {
 
   init(session: FridaySession) {
     self.session = session
-    _homeVM = StateObject(wrappedValue: HomeViewModel(client: session.readClient))
+    _homeVM = StateObject(wrappedValue: HomeViewModel(
+      client: session.readClient,
+      writeClient: session.missionClient))
   }
 
   var body: some View {

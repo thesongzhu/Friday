@@ -339,19 +339,40 @@ public enum HomeReadDetailState: Sendable, Equatable {
   }
 }
 
+public enum HomeLearningDecisionState: Sendable, Equatable {
+  case sent
+  case confirmed(summary: String)
+  case error(reason: String)
+
+  public var isSent: Bool {
+    if case .sent = self { return true }
+    return false
+  }
+
+  public var isTerminal: Bool {
+    switch self {
+    case .confirmed, .error: return true
+    case .sent: return false
+    }
+  }
+}
+
 @MainActor
 public final class HomeViewModel: ObservableObject {
   @Published public private(set) var state: HomeLoadState = .idle
   @Published public private(set) var detailState: HomeReadDetailState = .idle
+  @Published public private(set) var runOutcomeLearningDecisionStates: [String: HomeLearningDecisionState] = [:]
 
   /// The package's read protocol is `Sendable`; the view model still publishes only small
   /// refs-only value projections, never the package snapshot's raw body map.
   private let client: FridayRustReadClient
+  private let writeClient: FridayMissionSpineWriteClient?
 
   /// - Parameter client: the read client. In production this is the real `SealedWSReadClient`
   ///   (built by `FridayClientFactory.makeReadClient`); a preview/debug build injects a mock.
-  public init(client: FridayRustReadClient) {
+  public init(client: FridayRustReadClient, writeClient: FridayMissionSpineWriteClient? = nil) {
     self.client = client
+    self.writeClient = writeClient
   }
 
   /// Whether the Home is online — derived from the load state (ONLY a real loaded projection is
@@ -377,6 +398,33 @@ public final class HomeViewModel: ObservableObject {
       detailState = .loaded(HomeReadDetail(title: arm.title, snapshot: snapshot))
     } catch {
       detailState = .unavailable(title: arm.title, reason: Self.reason(for: error))
+    }
+  }
+
+  public func decideRunOutcomeLearning(candidateId: String, confirm: Bool) async {
+    guard let writeClient else {
+      runOutcomeLearningDecisionStates[candidateId] = .error(reason: "Write seam not configured.")
+      return
+    }
+    runOutcomeLearningDecisionStates[candidateId] = .sent
+    let request = RunOutcomeLearningDecisionRequestWire(
+      candidateId: candidateId,
+      decision: confirm ? "confirm" : "reject")
+    do {
+      let result = try await writeClient.submitRunOutcomeLearningDecision(request)
+      switch result.status {
+      case "confirmed", "rejected":
+        let kind = result.kind ?? "unknown"
+        runOutcomeLearningDecisionStates[candidateId] = .confirmed(
+          summary: "\(result.status) · state=\(result.state) · kind=\(kind)")
+        await refresh()
+      default:
+        let why = result.blocker ?? "blocked"
+        runOutcomeLearningDecisionStates[candidateId] = .error(
+          reason: "Learning decision blocked — \(why)")
+      }
+    } catch {
+      runOutcomeLearningDecisionStates[candidateId] = .error(reason: Self.reason(for: error))
     }
   }
 
