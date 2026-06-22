@@ -19,7 +19,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use friday_core::gate::MutatingActionRequest;
-use friday_hub::provider_failover::ProviderFailoverWrapper;
+use friday_hub::provider_failover::{ClaudeToDeepSeekFailoverWrapper, ProviderFailoverWrapper};
 use friday_hub::{
     run_loop, AgentError, AgentLlmClient, AgentStep, BilledUsage, FsToolExecutor, LoopStatus,
     MeteredStep, RawToolCall, TurnTrace,
@@ -64,6 +64,27 @@ impl FailingPrimary {
         Self { err }
     }
 }
+
+struct FailingClaudePrimary {
+    err: friday_anthropic::ClaudeError,
+}
+impl FailingClaudePrimary {
+    fn new(err: friday_anthropic::ClaudeError) -> Self {
+        Self { err }
+    }
+}
+impl AgentLlmClient for FailingClaudePrimary {
+    fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+        unreachable!("the loop drives next_step_metered")
+    }
+    fn next_step_metered(
+        &self,
+        _task: &str,
+        _history: &[TurnTrace],
+    ) -> Result<MeteredStep, AgentError> {
+        Err(AgentError::ClaudeRoute(self.err.clone()))
+    }
+}
 impl AgentLlmClient for FailingPrimary {
     fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
         unreachable!("the loop drives next_step_metered")
@@ -88,6 +109,39 @@ impl FinishingFallback {
         Self {
             answer: answer.to_string(),
         }
+    }
+}
+
+struct FinishingDeepSeekFallback {
+    answer: String,
+}
+impl FinishingDeepSeekFallback {
+    fn new(answer: &str) -> Self {
+        Self {
+            answer: answer.to_string(),
+        }
+    }
+}
+impl AgentLlmClient for FinishingDeepSeekFallback {
+    fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+        unreachable!("the loop drives next_step_metered")
+    }
+    fn next_step_metered(
+        &self,
+        _task: &str,
+        _history: &[TurnTrace],
+    ) -> Result<MeteredStep, AgentError> {
+        Ok((
+            Ok(AgentStep::Finish {
+                message: self.answer.clone(),
+            }),
+            Some(BilledUsage {
+                provider_kind: friday_core::ProviderKind::DeepSeek,
+                model: "deepseek-v4-flash".to_string(),
+                prompt_tokens: 7,
+                completion_tokens: 5,
+            }),
+        ))
     }
 }
 impl AgentLlmClient for FinishingFallback {
@@ -152,6 +206,41 @@ fn run_failover_loop(
     (outcome, rows)
 }
 
+fn run_claude_failover_loop(
+    tag: &str,
+    primary_err: friday_anthropic::ClaudeError,
+) -> (
+    friday_hub::LoopOutcome,
+    Vec<friday_storage::RunTokenUsageRow>,
+) {
+    let db = Db::open_hub(&temp_db(tag)).unwrap();
+    let ws = temp_ws(tag);
+    let executor = FsToolExecutor::new(ws);
+    friday_storage::agent_run::create_run(db.conn(), "run-f", "say pong", NOW).unwrap();
+
+    let primary = FailingClaudePrimary::new(primary_err);
+    let fallback = FinishingDeepSeekFallback::new("PONG");
+    let wrapper = ClaudeToDeepSeekFailoverWrapper::new(primary, fallback);
+
+    let no_approve = |_req: &MutatingActionRequest| None;
+    let outcome = run_loop(
+        &wrapper,
+        &executor,
+        db.conn(),
+        "run-f",
+        "say pong",
+        "",
+        SECRET,
+        &no_approve,
+        4,
+        NOW,
+    )
+    .unwrap();
+
+    let rows = db.list_run_token_usage("run-f").unwrap();
+    (outcome, rows)
+}
+
 /// Assert the loop FINISHED on the fallback's answer and billed EXACTLY ONE row, to
 /// Anthropic (api.anthropic.com) — billing-truth across failover, no double-bill, never
 /// mis-attributed as DeepSeek.
@@ -189,6 +278,25 @@ fn assert_failover_finished_billed_anthropic(
     assert_eq!(row.total_tokens, 19);
 }
 
+fn assert_failover_finished_billed_deepseek(
+    outcome: &friday_hub::LoopOutcome,
+    rows: &[friday_storage::RunTokenUsageRow],
+) {
+    assert_eq!(outcome.status, LoopStatus::Finished);
+    assert_eq!(outcome.final_message.as_deref(), Some("PONG"));
+    assert_eq!(
+        rows.len(),
+        1,
+        "EXACTLY one billed row — the DeepSeek fallback turn; the failed Claude attempt bills nothing"
+    );
+    let row = &rows[0];
+    assert_eq!(row.provider_kind, "deepseek");
+    assert_eq!(row.base_url_host, "api.deepseek.com");
+    assert_eq!(row.prompt_tokens, 7);
+    assert_eq!(row.completion_tokens, 5);
+    assert_eq!(row.total_tokens, 12);
+}
+
 /// THE loop-closing e2e the #27 gate maps to: a DeepSeek 402 (quota) on the live loop
 /// FAILS OVER to Claude, the loop FINISHES on Claude's answer, and the turn is BILLED to
 /// Anthropic (one row, never DeepSeek, never double-billed).
@@ -219,6 +327,18 @@ fn provider_unavailable_5xx_fails_over_to_claude_finishes_and_bills_anthropic() 
         friday_deepseek::DeepSeekError::ProviderUnavailable("HTTP 503".into()),
     );
     assert_failover_finished_billed_anthropic(&outcome, &rows);
+}
+
+/// The reverse gated path: a Claude transient outage fails over to DeepSeek, finishes,
+/// and bills the fallback as DeepSeek. This proves the structured ClaudeRoute error shape
+/// drives the same real loop without string matching or double-billing.
+#[test]
+fn claude_provider_unavailable_fails_over_to_deepseek_finishes_and_bills_deepseek() {
+    let (outcome, rows) = run_claude_failover_loop(
+        "claude-5xx",
+        friday_anthropic::ClaudeError::ProviderUnavailable("HTTP 503".into()),
+    );
+    assert_failover_finished_billed_deepseek(&outcome, &rows);
 }
 
 /// NO-FAILOVER through the real loop: a DeepSeek 400 (malformed) does NOT fail over — the

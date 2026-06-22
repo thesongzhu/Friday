@@ -151,6 +151,9 @@ pub enum HubInitError {
     /// enabling failover without a fallback is an operator misconfiguration that must be
     /// surfaced (carries no secret — a fixed message).
     FailoverMisconfigured,
+    /// The reverse Claude→DeepSeek failover gate was ON, but no Claude primary route was wired.
+    /// A wrapper without its primary would be a misleading no-op, so boot fails closed.
+    ClaudeFailoverMisconfigured,
 }
 
 impl std::fmt::Display for HubInitError {
@@ -170,6 +173,12 @@ impl std::fmt::Display for HubInitError {
                 "provider failover ({}) is ON but no Claude fallback is wired \
                  (enable {} with a valid Anthropic key)",
                 ENV_PROVIDER_FAILOVER, ENV_CLAUDE_ROUTE_ENABLED
+            ),
+            HubInitError::ClaudeFailoverMisconfigured => write!(
+                f,
+                "claude provider failover ({}) is ON but no Claude primary is wired \
+                 (enable {} with a valid Anthropic key)",
+                ENV_PROVIDER_FAILOVER_CLAUDE_TO_DEEPSEEK, ENV_CLAUDE_ROUTE_ENABLED
             ),
         }
     }
@@ -203,6 +212,12 @@ pub struct HubRuntime<T: Transport> {
     /// byte-identical to today. `self.deepseek` (and its `.inner()` used by post-run memory
     /// extraction — which must NOT failover) is retained UNTOUCHED alongside this.
     failover: Option<Box<dyn AgentLlmClient>>,
+    /// DARK / default-off reverse provider FAILOVER wrapper (claude→deepseek). `None` in every
+    /// build except `live()` when `FRIDAY_PROVIDER_FAILOVER_CLAUDE_TO_DEEPSEEK=1` and Claude is
+    /// wired. When present it becomes the resolved `claude` route client; selection still reports
+    /// `provider_id="claude"`, while execution may retry once on DeepSeek for a classified
+    /// Claude route outage/quota/rate-limit failure. Default-off keeps the bare Claude client.
+    claude_failover: Option<Box<dyn AgentLlmClient>>,
     /// (PR-A1) DARK / default-off DeepSeek-PRO route client. `None` in every build EXCEPT a
     /// `live()` build whose `FRIDAY_DEEPSEEK_PRO_ROUTE_ENABLED` gate is on. It is the SAME
     /// DeepSeek key/client as `self.deepseek`, but built via
@@ -349,6 +364,9 @@ impl<T: Transport> HubRuntime<T> {
             // may populate this. Tests + the prod default leave it `None` ⇒ the bare
             // `deepseek` client dispatches ⇒ byte-identical to today.
             failover: None,
+            // T4 — DARK reverse failover wrapper. Default-off means the claude route, when wired,
+            // dispatches its bare client exactly as before.
+            claude_failover: None,
             // PR-A1: DARK — no DeepSeek-PRO route client by default. Only
             // `maybe_attach_deepseek_pro_from_env` (reached from `live()` behind the default-OFF
             // `FRIDAY_DEEPSEEK_PRO_ROUTE_ENABLED` gate) may populate this. Tests + the prod
@@ -397,6 +415,11 @@ impl<T: Transport> HubRuntime<T> {
         self
     }
 
+    pub fn with_claude_failover(mut self, failover: Box<dyn AgentLlmClient>) -> Self {
+        self.claude_failover = Some(failover);
+        self
+    }
+
     /// Registry gap #26 — the client the LIVE agent loop drives for a `deepseek`-routed run.
     /// When the failover wrapper is attached (the gated `live()` path with
     /// `FRIDAY_PROVIDER_FAILOVER=1` + Claude present) it returns the WRAPPER (deepseek→claude
@@ -410,6 +433,13 @@ impl<T: Transport> HubRuntime<T> {
         match self.failover.as_deref() {
             Some(wrapper) => wrapper,
             None => &self.deepseek,
+        }
+    }
+
+    fn claude_loop_client(&self) -> Option<&dyn AgentLlmClient> {
+        match self.claude_failover.as_deref() {
+            Some(wrapper) => Some(wrapper),
+            None => self.claude.as_deref(),
         }
     }
 
@@ -472,6 +502,35 @@ impl<T: Transport> HubRuntime<T> {
             Box::new(fallback) as Box<dyn AgentLlmClient>,
         );
         Ok(self.with_failover(Box::new(wrapper)))
+    }
+
+    fn maybe_wrap_for_claude_failover(self) -> Result<Self, HubInitError> {
+        let enabled = provider_failover_claude_to_deepseek_from(
+            std::env::var(ENV_PROVIDER_FAILOVER_CLAUDE_TO_DEEPSEEK)
+                .ok()
+                .as_deref(),
+        );
+        self.wrap_for_claude_failover_flagged(enabled)
+    }
+
+    fn wrap_for_claude_failover_flagged(self, enabled: bool) -> Result<Self, HubInitError> {
+        if !enabled {
+            return Ok(self);
+        }
+        if self.claude.is_none() {
+            return Err(HubInitError::ClaudeFailoverMisconfigured);
+        }
+        let primary_client =
+            friday_anthropic::ClaudeClient::from_env().map_err(HubInitError::Claude)?;
+        let primary =
+            crate::ClaudeAgentLlmClient::new(primary_client, friday_anthropic::DEFAULT_MODEL);
+        let fallback_client = DeepSeekClient::from_env().map_err(HubInitError::DeepSeek)?;
+        let fallback = DeepSeekAgentLlmClient::new(fallback_client);
+        let wrapper = crate::provider_failover::ClaudeToDeepSeekFailoverWrapper::new(
+            primary,
+            Box::new(fallback) as Box<dyn AgentLlmClient>,
+        );
+        Ok(self.with_claude_failover(Box::new(wrapper)))
     }
 
     /// C1 PR-B — attach the DARK Codex route EXECUTOR (builder, default-off). MIRRORS
@@ -2961,7 +3020,8 @@ impl HubRuntime<UreqTransport> {
             .maybe_attach_codex_from_env()
             .maybe_attach_deepseek_pro_from_env()?
             .maybe_attach_escalation_from_env()?
-            .maybe_wrap_for_failover()
+            .maybe_wrap_for_failover()?
+            .maybe_wrap_for_claude_failover()
     }
 
     /// S7 — read the default-OFF gate and, only when it is on, build the live Claude
@@ -3169,6 +3229,16 @@ fn provider_failover_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
+/// Default-OFF gate for the reverse Claude→DeepSeek failover wrapper. This is intentionally
+/// separate from [`ENV_PROVIDER_FAILOVER`] so enabling DeepSeek→Claude resilience never silently
+/// changes a Claude-pinned route's execution semantics.
+pub const ENV_PROVIDER_FAILOVER_CLAUDE_TO_DEEPSEEK: &str =
+    "FRIDAY_PROVIDER_FAILOVER_CLAUDE_TO_DEEPSEEK";
+
+fn provider_failover_claude_to_deepseek_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
 /// (PR-A1) The default-OFF environment gate that governs whether the DARK `deepseek-pro` route
 /// is DISPATCHABLE (and its forced-`deepseek-v4-pro` client wired). MIRRORS the route gates'
 /// narrow discipline: ON only when `FRIDAY_DEEPSEEK_PRO_ROUTE_ENABLED` is exactly `"1"` (after
@@ -3317,7 +3387,7 @@ impl<T: Transport> ProviderClientResolver for HubRuntime<T> {
             // DARK: `as_deref()` yields `None` whenever the Claude client was not wired
             // (the default), so the default-off route fail-closes exactly like any
             // other unwired provider.
-            "claude" => self.claude.as_deref(),
+            "claude" => self.claude_loop_client(),
             _ => None,
         }
     }
@@ -3536,6 +3606,67 @@ mod tests {
             Err(HubInitError::FailoverMisconfigured) => {}
             Err(other) => panic!("expected FailoverMisconfigured, got {other:?}"),
             Ok(_) => panic!("flag-ON with no fallback must be a hard error (no silent no-op)"),
+        }
+    }
+
+    #[test]
+    fn claude_to_deepseek_failover_flag_matcher_is_exact_one_default_off() {
+        assert!(provider_failover_claude_to_deepseek_from(Some("1")));
+        assert!(provider_failover_claude_to_deepseek_from(Some(" 1 ")));
+        for off in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("true"),
+            Some("yes"),
+            Some("11"),
+            Some("1x"),
+        ] {
+            assert!(
+                !provider_failover_claude_to_deepseek_from(off),
+                "{off:?} must be OFF (default)"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_to_deepseek_failover_flag_off_does_not_construct_wrapper() {
+        let (mut rt, _ws, _c) = runtime_with(
+            "claude-failover-off",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        rt = rt.with_claude(Box::new(StubClaudeMeteredClient::new(vec![], 11, 8)));
+        assert!(rt.claude_failover.is_none());
+        let rt = rt
+            .wrap_for_claude_failover_flagged(false)
+            .expect("flag-off is infallible");
+        assert!(
+            rt.claude_failover.is_none(),
+            "flag-OFF must leave the bare Claude route client in place"
+        );
+        let claude_route = ProviderRoute {
+            provider_id: "claude".into(),
+            ..RouteRegistry::autonomous_baseline()
+                .get("claude")
+                .unwrap()
+                .clone()
+        };
+        assert!(rt.resolve(&claude_route).is_some());
+    }
+
+    #[test]
+    fn claude_to_deepseek_failover_flag_on_without_claude_is_hard_boot_error() {
+        let (rt, _ws, _c) = runtime_with(
+            "claude-failover-no-claude",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        assert!(rt.claude.is_none());
+        match rt.wrap_for_claude_failover_flagged(true) {
+            Err(HubInitError::ClaudeFailoverMisconfigured) => {}
+            Err(other) => panic!("expected ClaudeFailoverMisconfigured, got {other:?}"),
+            Ok(_) => panic!("flag-ON without Claude primary must be a hard error"),
         }
     }
 

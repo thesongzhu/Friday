@@ -547,6 +547,12 @@ pub enum AgentError {
     /// or response body — see `map_ureq_err`), so this leaks no more than the prior
     /// `format!("{e:?}")` did.
     Route(friday_deepseek::DeepSeekError),
+    /// The Claude/Anthropic provider route failed with a structured, coarse
+    /// [`friday_anthropic::ClaudeError`]. Kept separate from [`AgentError::Route`] because
+    /// DeepSeek and Claude have different error enums/classifiers; preserving this shape lets
+    /// a gated Claude→DeepSeek failover classify transient/quota failures without string
+    /// matching. Display remains secret-free by delegating to `ClaudeError`.
+    ClaudeRoute(friday_anthropic::ClaudeError),
     /// A model/transport failure that is only available as a string (no structured
     /// `DeepSeekError` to carry — e.g. "no model available" from discovery selection).
     /// Never retried (it is not a transient route failure with a disposition).
@@ -562,6 +568,7 @@ impl std::fmt::Display for AgentError {
             // Coarse, secret-free: delegates to DeepSeekError's own thiserror `Display`
             // (status code / kind only — no API key, no response body).
             AgentError::Route(e) => write!(f, "model_error: {e}"),
+            AgentError::ClaudeRoute(e) => write!(f, "model_error: {e}"),
             AgentError::Model(m) => write!(f, "model_error: {m}"),
             AgentError::Parse(m) => write!(f, "parse_error: {m}"),
         }
@@ -896,12 +903,10 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
 /// [`AgentError`], never a silent substitute. The model id is supplied by the caller
 /// (from the route), so there is no model-discovery step.
 ///
-/// **Error mapping (retry-classification DEFERRED).** [`AgentError::Route`] carries a
-/// concrete `friday_deepseek::DeepSeekError`, so a [`friday_anthropic::ClaudeError`]
-/// cannot go there. The lowest-blast-radius mapping for this dark, never-selected path
-/// is the existing string-bearing [`AgentError::Model`] (never retried by the run-loop's
-/// `classify_deepseek`). A future non-dark slice that actually selects Claude would add
-/// an `AgentError::ClaudeRoute(ClaudeError)` variant + a classifier arm; out of scope here.
+/// **Error mapping.** Claude route failures are preserved as
+/// [`AgentError::ClaudeRoute`], not string-matched. The run-loop's same-route retry still
+/// only retries DeepSeek [`AgentError::Route`] errors; Claude's structured shape is consumed
+/// only by the explicit, default-OFF Claude→DeepSeek failover wrapper.
 ///
 /// **Ledger/metering (C2).** This adapter OVERRIDES `next_step_metered` to surface its
 /// chat usage as a provider-neutral [`BilledUsage`] tagged [`friday_core::ProviderKind::Anthropic`]
@@ -933,9 +938,7 @@ impl<T: friday_anthropic::Transport> AgentLlmClient for ClaudeAgentLlmClient<T> 
         let outcome = self
             .client
             .chat(&self.model, &prompt, AGENTLOOP_MAX_TOKENS)
-            // ClaudeError → string-bearing AgentError::Model (retry-classification deferred;
-            // see the adapter doc). Coarse, secret-free Display.
-            .map_err(|e| AgentError::Model(e.to_string()))?;
+            .map_err(AgentError::ClaudeRoute)?;
         parse_tool_call(&outcome.content)
     }
 
@@ -965,9 +968,7 @@ impl<T: friday_anthropic::Transport> AgentLlmClient for ClaudeAgentLlmClient<T> 
         let outcome = self
             .client
             .chat(&self.model, &prompt, AGENTLOOP_MAX_TOKENS)
-            // ClaudeError → string-bearing AgentError::Model (retry-classification deferred;
-            // see the adapter doc). Coarse, secret-free Display.
-            .map_err(|e| AgentError::Model(e.to_string()))?;
+            .map_err(AgentError::ClaudeRoute)?;
         // The chat SUCCEEDED — `outcome` carries real, billable usage even if the content
         // below fails to parse. Surface it (neutral `BilledUsage`, Anthropic kind) so the
         // loop bills the call with the CORRECT provider regardless of parse.
