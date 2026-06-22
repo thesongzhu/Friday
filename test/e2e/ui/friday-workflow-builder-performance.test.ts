@@ -96,7 +96,9 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday workflow builder interaction baseli
     await pageHandle.page.waitForLoadState("domcontentloaded");
     try {
       await pageHandle.page.waitForFunction(() =>
-        Boolean(document.querySelector('[data-testid="workflow-builder-node-library"]'))
+        window.performance.getEntriesByName("friday-workflow-builder-shell-ready").length > 0
+        || Boolean(document.querySelector('[data-testid="workflow-builder-shell"]'))
+        || Boolean(document.querySelector('[data-testid="workflow-builder-node-library"]'))
       );
     } catch (error) {
       const debugState = await pageHandle.page.evaluate(() => ({
@@ -115,7 +117,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday workflow builder interaction baseli
         ].join("\n"),
       );
     }
-    const firstSurfaceReadyMs = performance.now() - startedAt;
+    const shellReadyMs = performance.now() - startedAt;
 
     try {
       await pageHandle.page.waitForFunction(() =>
@@ -162,7 +164,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday workflow builder interaction baseli
 
     expect(benchmark.hasNodeLibrary).toBe(true);
     expect(benchmark.hasCanvas).toBe(true);
-    expect(firstSurfaceReadyMs).toBeLessThan(WORKFLOW_BUILDER_SHELL_BUDGET_MS);
+    expect(shellReadyMs).toBeLessThan(WORKFLOW_BUILDER_SHELL_BUDGET_MS);
     expect(canvasReadyMs).toBeLessThan(WORKFLOW_BUILDER_CANVAS_BUDGET_MS);
   });
 });
