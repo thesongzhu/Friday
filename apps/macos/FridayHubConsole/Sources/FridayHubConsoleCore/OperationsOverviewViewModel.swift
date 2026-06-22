@@ -523,7 +523,7 @@ public final class OperationsOverviewViewModel: ObservableObject {
   }
 
   private static let claudeFollowUpTaskHeader =
-    "Run the generated Claude follow-up for this Mission."
+    "Summarize the generated Claude follow-up for this Mission."
 
   private static func claudeFollowUpTask(
     sourceWorkItemId: String,
@@ -539,6 +539,14 @@ public final class OperationsOverviewViewModel: ObservableObject {
     if let firstRunId {
       lines.append("codex_first_run_id=\(firstRunId)")
     }
+    lines.append(
+      "input refs: mission context, attached WorkItem refs, and the codex_first_run_id above are sufficient.")
+    lines.append(
+      "output destination: owner-visible answer body for \(followUpWorkItemId).")
+    lines.append(
+      "success = concise final synthesis that preserves any requested sentinel or outcome from the Codex first-leg answer.")
+    lines.append(
+      "constraint = read-only; do not mutate the workspace, do not continue file discovery, and do not ask clarifying questions.")
     if let firstAnswerBody = firstAnswerBody?.trimmingCharacters(in: .whitespacesAndNewlines),
       !firstAnswerBody.isEmpty
     {
