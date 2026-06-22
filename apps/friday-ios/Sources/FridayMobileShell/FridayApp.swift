@@ -210,6 +210,7 @@ final class FridaySession: ObservableObject {
 /// top-bar 💬 Friday Chat entry. Launch screen = Home (locked).
 struct RootView: View {
   @StateObject private var homeVM: HomeViewModel
+  @StateObject private var sessionContinuationVM: SessionContinuationViewModel
   private let session: FridaySession
   @State private var destination: MobileDestination = .home
   @State private var commandOpen = false
@@ -222,6 +223,8 @@ struct RootView: View {
       writeClient: session.missionClient,
       devicePairing: session.devicePairing,
       makePairingClient: session.makePairingClient))
+    _sessionContinuationVM = StateObject(wrappedValue: SessionContinuationViewModel(
+      client: session.readClient))
   }
 
   var body: some View {
@@ -230,6 +233,8 @@ struct RootView: View {
         switch destination {
         case .home:
           FridayHomeScreen(viewModel: homeVM)
+        case .session:
+          FridaySessionDetailScreen(homeViewModel: homeVM, viewModel: sessionContinuationVM)
         case .missions, .needsMe, .memory, .platform, .activity, .workflows, .onboarding,
              .settings:
           FridayProjectionScreen(destination: destination, viewModel: homeVM)

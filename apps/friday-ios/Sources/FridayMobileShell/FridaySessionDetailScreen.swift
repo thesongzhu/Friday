@@ -1,0 +1,323 @@
+import FridayMobileShellCore
+import SwiftUI
+
+struct FridaySessionDetailScreen: View {
+  @ObservedObject var homeViewModel: HomeViewModel
+  @ObservedObject var viewModel: SessionContinuationViewModel
+
+  var body: some View {
+    ScrollView {
+      VStack(spacing: 16) {
+        switch homeViewModel.state {
+        case .idle, .loading:
+          loadingView
+        case .unavailable(let reason):
+          UnavailableView(reason: reason)
+        case .loaded(let projection):
+          loadedContent(projection)
+        }
+      }
+      .padding(16)
+    }
+    .background(MobileTheme.backgroundWarmOffWhite.ignoresSafeArea())
+  }
+
+  private var loadingView: some View {
+    GlassPanel {
+      HStack(spacing: 12) {
+        ProgressView()
+        Text("Reading session refs")
+          .font(.footnote)
+          .foregroundStyle(MobileTheme.textSecondary)
+      }
+      .frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
+    }
+  }
+
+  @ViewBuilder
+  private func loadedContent(_ projection: HomeProjection) -> some View {
+    VStack(spacing: 16) {
+      header(projection)
+      continuationState
+      learningCard(projection)
+    }
+    .task(id: "\(projection.agentSessionId ?? "none")|\(firstRunId(projection) ?? "none")") {
+      await viewModel.refresh(
+        agentSessionId: projection.agentSessionId,
+        runId: firstRunId(projection))
+    }
+  }
+
+  private func header(_ projection: HomeProjection) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        HStack(spacing: 12) {
+          Image(systemName: "rectangle.connected.to.line.below")
+            .font(.system(size: 24, weight: .semibold))
+            .foregroundStyle(MobileTheme.cyan)
+            .frame(width: 34, height: 34)
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Session")
+              .font(.headline)
+              .foregroundStyle(MobileTheme.textPrimary)
+            Text("continuation truth")
+              .font(.caption)
+              .foregroundStyle(MobileTheme.textSecondary)
+          }
+          Spacer()
+          StatusChip(
+            text: projection.agentSessionId == nil ? "no session ref" : "read-only",
+            bg: projection.agentSessionId == nil ? MobileTheme.chipWarnBG : MobileTheme.chipPendingBG,
+            fg: projection.agentSessionId == nil ? MobileTheme.chipWarnFG : MobileTheme.chipPendingFG)
+        }
+        RefPill(label: "mission_id", ref: projection.missionId)
+        if let agentSessionId = projection.agentSessionId {
+          RefPill(label: "agent_session_id", ref: agentSessionId)
+        }
+        if let runId = firstRunId(projection) {
+          RefPill(label: "run_id", ref: runId)
+        }
+        RefPill(label: "generated", ref: generatedText(projection.generatedAtMs))
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var continuationState: some View {
+    switch viewModel.state {
+    case .idle:
+      EmptyView()
+    case .loading:
+      GlassPanel {
+        HStack(spacing: 12) {
+          ProgressView()
+          Text("Reading continuation state")
+            .font(.footnote)
+            .foregroundStyle(MobileTheme.textSecondary)
+        }
+      }
+    case .unavailable(let reason):
+      GlassPanel {
+        VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+          cardHeader("Session Detail", count: nil)
+          Text(reason)
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+        }
+      }
+    case .loaded(let snapshot):
+      VStack(spacing: 16) {
+        controlsCard(snapshot.controls)
+        ForEach(snapshot.sections) { section in
+          sectionCard(section)
+        }
+        proofRefsCard(snapshot.proofRefs)
+      }
+    }
+  }
+
+  private func controlsCard(_ controls: [SessionContinuationControl]) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader("Controls", count: nil)
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+          ForEach(controls) { control in
+            Button {} label: {
+              VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                  Image(systemName: control.systemImage)
+                  Text(control.title)
+                    .font(.system(size: 13, weight: .semibold))
+                  Spacer()
+                  StatusChip(text: control.truthLabel, bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+                }
+                Text(control.reason)
+                  .font(.caption2)
+                  .foregroundStyle(MobileTheme.textSecondary)
+                  .fixedSize(horizontal: false, vertical: true)
+              }
+              .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
+              .padding(10)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!control.isEnabled)
+            .accessibilityLabel("\(control.title) \(control.truthLabel). \(control.reason)")
+          }
+        }
+      }
+    }
+  }
+
+  private func sectionCard(_ section: SessionContinuationSection) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        HStack {
+          cardHeader(section.title, count: section.refs.count)
+          Spacer()
+          sectionStatusChip(section.status)
+        }
+        Text(section.summary)
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textPrimary)
+        switch section.status {
+        case .loaded:
+          if let generatedAtMs = section.generatedAtMs {
+            RefPill(label: "generated", ref: generatedText(generatedAtMs))
+          }
+          ForEach(section.refs, id: \.self) { ref in
+            RefPill(label: nil, ref: ref)
+          }
+        case .unavailable(let reason), .notRequested(let reason):
+          Text(reason)
+            .font(.caption2)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+    }
+  }
+
+  private func proofRefsCard(_ refs: [String]) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader("Proof Refs", count: refs.count)
+        if refs.isEmpty {
+          Text("No proof refs were returned by the session read arms.")
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+        } else {
+          ForEach(refs, id: \.self) { ref in
+            RefPill(label: "proof", ref: ref)
+          }
+        }
+      }
+    }
+  }
+
+  private func learningCard(_ projection: HomeProjection) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader("Learning", count: projection.runOutcomeLearningCandidates.count)
+        if projection.runOutcomeLearningCandidates.isEmpty {
+          Text("No run-outcome learning candidates in this projection.")
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+        } else {
+          ForEach(projection.runOutcomeLearningCandidates) { candidate in
+            learningCandidateRow(candidate)
+          }
+        }
+      }
+    }
+  }
+
+  private func learningCandidateRow(_ candidate: HomeRunOutcomeLearningCandidate) -> some View {
+    let decisionState = homeViewModel.runOutcomeLearningDecisionStates[candidate.id]
+    return VStack(alignment: .leading, spacing: 6) {
+      HStack(alignment: .top, spacing: 8) {
+        Text(candidate.summary)
+          .font(.system(size: 13, weight: .medium))
+          .foregroundStyle(MobileTheme.textPrimary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 6) {
+          Button {
+            Task { await homeViewModel.decideRunOutcomeLearning(candidateId: candidate.id, confirm: true) }
+          } label: {
+            Image(systemName: "checkmark")
+              .frame(width: 26, height: 26)
+          }
+          .buttonStyle(.borderedProminent)
+          .tint(MobileTheme.cyan)
+          .disabled(learningDecisionControlsDisabled(decisionState))
+          .accessibilityLabel("Confirm run outcome learning candidate")
+
+          Button {
+            Task { await homeViewModel.decideRunOutcomeLearning(candidateId: candidate.id, confirm: false) }
+          } label: {
+            Image(systemName: "xmark")
+              .frame(width: 26, height: 26)
+          }
+          .buttonStyle(.bordered)
+          .disabled(learningDecisionControlsDisabled(decisionState))
+          .accessibilityLabel("Reject run outcome learning candidate")
+        }
+      }
+      HStack(spacing: 6) {
+        statusChip(candidate.kind)
+        statusChip(candidate.state)
+      }
+      learningDecisionStateView(decisionState)
+      if !candidate.runId.isEmpty {
+        RefPill(label: "runId", ref: candidate.runId)
+      }
+      if !candidate.workItemId.isEmpty {
+        RefPill(label: "workItemId", ref: candidate.workItemId)
+      }
+      if !candidate.evidenceRef.isEmpty {
+        RefPill(label: "evidenceRef", ref: candidate.evidenceRef)
+      }
+    }
+    .padding(.vertical, 4)
+  }
+
+  private func sectionStatusChip(_ status: SessionContinuationSectionStatus) -> some View {
+    switch status {
+    case .loaded:
+      return StatusChip(text: "loaded", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
+    case .unavailable:
+      return StatusChip(text: "unavailable", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+    case .notRequested:
+      return StatusChip(text: "no ref", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+    }
+  }
+
+  private func learningDecisionControlsDisabled(_ state: HomeLearningDecisionState?) -> Bool {
+    guard let state else { return false }
+    return state.isSent || state.isTerminal
+  }
+
+  @ViewBuilder
+  private func learningDecisionStateView(_ state: HomeLearningDecisionState?) -> some View {
+    switch state {
+    case .sent:
+      Text("Applying learning decision...")
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+    case .confirmed(let summary):
+      Text(summary)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+    case .error(let reason):
+      Text(reason)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.coral)
+    case nil:
+      EmptyView()
+    }
+  }
+
+  private func cardHeader(_ title: String, count: Int?) -> some View {
+    HStack {
+      Text(title)
+        .font(.headline)
+        .foregroundStyle(MobileTheme.textPrimary)
+      if let count {
+        StatusChip(text: "\(count)", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+      }
+    }
+  }
+
+  private func statusChip(_ text: String) -> some View {
+    StatusChip(text: text, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+  }
+
+  private func firstRunId(_ projection: HomeProjection) -> String? {
+    projection.runOutcomeLearningCandidates.first { !$0.runId.isEmpty }?.runId
+  }
+
+  private func generatedText(_ generatedAtMs: Int64) -> String {
+    guard generatedAtMs > 0 else { return "unknown" }
+    let date = Date(timeIntervalSince1970: Double(generatedAtMs) / 1000.0)
+    return date.formatted(date: .abbreviated, time: .shortened)
+  }
+}
