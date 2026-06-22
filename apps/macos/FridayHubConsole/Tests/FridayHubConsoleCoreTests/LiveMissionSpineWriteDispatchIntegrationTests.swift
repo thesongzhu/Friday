@@ -212,8 +212,9 @@ func liveConsoleMissionSpineWriteDispatchCanCompleteHybridCodexThenClaudeFollowU
   #expect(result.workItemId == request.workItemId)
 
   let sourceWorkItemId = try #require(result.workItemId)
+  let readClient = try RealReadClientFactory.makeLive(missionId: result.missionId)
   let firstSnapshot = try await pollLiveProjection(
-    client: RealReadClientFactory.makeLive(missionId: result.missionId),
+    client: readClient,
     missionId: result.missionId,
     workItemId: sourceWorkItemId)
   #expect(firstSnapshot.routeDecisionSummary?.contains("Codex first") == true)
@@ -238,13 +239,23 @@ func liveConsoleMissionSpineWriteDispatchCanCompleteHybridCodexThenClaudeFollowU
 
   let followUpWorkItemId = "\(sourceWorkItemId)-claude-followup"
   _ = try await pollLiveProjection(
-    client: RealReadClientFactory.makeLive(missionId: result.missionId),
+    client: readClient,
     missionId: result.missionId,
     workItemId: followUpWorkItemId)
 
+  var firstAnswerBody: String?
+  do {
+    firstAnswerBody = try await readClient.fetchRunAnswerBody(runId: firstReceipt.runId).deliveredAnswer
+  } catch {
+    firstAnswerBody = nil
+  }
+
   let followUpOutcome = try await client.dispatchMissionBoundAgentRun(
-    task: "Read the completed Codex first-leg evidence already linked to this mission, summarize "
-      + "the follow-up in one sentence, and answer exactly FRIDAY_HYBRID_CLAUDE_FOLLOWUP_OK.",
+    task: liveClaudeFollowUpTask(
+      sourceWorkItemId: sourceWorkItemId,
+      followUpWorkItemId: followUpWorkItemId,
+      firstRunId: firstReceipt.runId,
+      firstAnswerBody: firstAnswerBody),
     missionContext: MissionWorkItemContextWire(
       fridayConversationId: result.fridayConversationId,
       missionId: result.missionId,
@@ -267,6 +278,31 @@ func liveConsoleMissionSpineWriteDispatchCanCompleteHybridCodexThenClaudeFollowU
   #expect((followUpReceipt.turns ?? 0) > 0)
   #expect(followUpReceipt.answerSha256 != nil)
   #expect((followUpReceipt.answerLen ?? 0) > 0)
+}
+
+private func liveClaudeFollowUpTask(
+  sourceWorkItemId: String,
+  followUpWorkItemId: String,
+  firstRunId: String,
+  firstAnswerBody: String?
+) -> String {
+  var lines = [
+    "Run the generated Claude follow-up for this Mission.",
+    "source_work_item_id=\(sourceWorkItemId)",
+    "follow_up_work_item_id=\(followUpWorkItemId)",
+    "codex_first_run_id=\(firstRunId)",
+  ]
+  if let firstAnswerBody = firstAnswerBody?.trimmingCharacters(in: .whitespacesAndNewlines),
+    !firstAnswerBody.isEmpty
+  {
+    lines.append("Codex first-leg answer:")
+    lines.append(firstAnswerBody)
+  }
+  lines.append(
+    "Use the Mission context and the proof/input refs already attached to this WorkItem; do not ask the operator for paths, IDs, or artifact locations that are listed above.")
+  lines.append(
+    "Keep the run read-only; summarize the Codex first-leg answer and this follow-up outcome, and do not claim you verified unrelated files or artifacts unless that evidence is explicitly present in the provided context.")
+  return lines.joined(separator: "\n")
 }
 
 @Test(.enabled(if: liveProductAutoFollowUpRunEnabled))
