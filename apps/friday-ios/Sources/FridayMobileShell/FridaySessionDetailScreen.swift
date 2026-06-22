@@ -126,6 +126,8 @@ struct FridaySessionDetailScreen: View {
             Button {
               if control.id == "stop" {
                 Task { await viewModel.stop() }
+              } else if control.id == "resume" {
+                Task { await viewModel.resume() }
               }
             } label: {
               VStack(alignment: .leading, spacing: 6) {

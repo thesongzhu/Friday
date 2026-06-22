@@ -11,11 +11,13 @@ final class SessionContinuationViewModelTests: XCTestCase {
     }
 
     private let script: Script
+    private let needsMeRaw: [String: Any]?
     private let lock = NSLock()
     private var requested: [String] = []
 
-    init(_ script: Script = .success) {
+    init(_ script: Script = .success, needsMeRaw: [String: Any]? = nil) {
       self.script = script
+      self.needsMeRaw = needsMeRaw
     }
 
     var requests: [String] {
@@ -51,11 +53,28 @@ final class SessionContinuationViewModelTests: XCTestCase {
     }
 
     func fetchActivityNeedsMe(runId: String) async throws -> ReadProjectionSnapshot {
-      try recordAndReturn(
+      if let needsMeRaw {
+        return try recordAndReturnRaw(request: "needs-me:\(runId)", raw: needsMeRaw)
+      }
+      return try recordAndReturn(
         request: "needs-me:\(runId)",
         status: "waiting",
         runId: runId,
         proofRef: "proof://needs/\(runId)")
+    }
+
+    private func recordAndReturnRaw(
+      request: String,
+      raw: [String: Any]
+    ) throws -> ReadProjectionSnapshot {
+      lock.lock()
+      requested.append(request)
+      lock.unlock()
+      if case .fail(let error) = script {
+        throw error
+      }
+      let data = try JSONSerialization.data(withJSONObject: raw)
+      return try ReadProjectionSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_123)
     }
 
     private func recordAndReturn(
@@ -94,6 +113,8 @@ final class SessionContinuationViewModelTests: XCTestCase {
     let script: Script
     private(set) var cancelledRunIds: [String] = []
     private(set) var cancelReasons: [String?] = []
+    private(set) var resumedRunIds: [String] = []
+    private(set) var relayedBlobs: [[UInt8]] = []
 
     init(_ script: Script = .accepted(ResumeRelayResult(
       runId: "run-1",
@@ -112,7 +133,14 @@ final class SessionContinuationViewModelTests: XCTestCase {
     }
 
     func resumeWithApproval(runId: String, opaqueSignedBlob: [UInt8]) async throws -> ResumeRelayResult {
-      throw FridayWriteClientError.transport("unused")
+      resumedRunIds.append(runId)
+      relayedBlobs.append(opaqueSignedBlob)
+      switch script {
+      case .accepted(let result), .refused(let result):
+        return result
+      case .fail(let error):
+        throw error
+      }
     }
 
     func rejectApproval(runId: String, approvalId: String) async throws -> ResumeRelayResult {
@@ -160,6 +188,7 @@ final class SessionContinuationViewModelTests: XCTestCase {
     XCTAssertEqual(snapshot.sections.first?.generatedAtMs, 1_780_640_000_123)
     XCTAssertEqual(snapshot.controls.map(\.title), ["Send", "Stop", "Resume", "Fork"])
     XCTAssertTrue(snapshot.controls.allSatisfy { !$0.isEnabled && $0.truthLabel == "NO-GO" })
+    XCTAssertNil(snapshot.pendingApproval)
   }
 
   func testRefreshWithRunAndGateOnEnablesGuardedStop() async {
@@ -179,6 +208,157 @@ final class SessionContinuationViewModelTests: XCTestCase {
     XCTAssertEqual(stop?.truthLabel, "guarded")
     XCTAssertEqual(stop?.isEnabled, true)
     XCTAssertTrue(stop?.reason.contains("cancel") == true)
+  }
+
+  func testRefreshParsesNeedsMeApprovalAndEnablesOperatorGatedResume() async {
+    let raw: [String: Any] = [
+      "run_id": "run-1",
+      "status": "waiting",
+      "truthLabel": "friday_owned",
+      "proofRef": "proof://needs/run-1",
+      "needs_me": [
+        "kind": "approval",
+        "ref_id": "approval-1",
+        "action_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "summary": "write_file pending",
+        "signing_request": [
+          "run_id": "run-1",
+          "approval_id": "approval-1",
+          "action_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "summary": "write_file pending",
+        ],
+      ],
+    ]
+    let vm = SessionContinuationViewModel(
+      client: FakeSessionReadClient(needsMeRaw: raw),
+      writeClient: FakeSessionWriteClient(),
+      signer: MockOperatorSigner(),
+      runControlEnabled: true)
+
+    await vm.refresh(agentSessionId: "session-1", runId: "run-1")
+
+    guard case .loaded(let snapshot) = vm.state else {
+      return XCTFail("expected loaded session continuation, got \(vm.state)")
+    }
+    XCTAssertEqual(snapshot.pendingApproval, SessionContinuationApproval(
+      runId: "run-1",
+      approvalId: "approval-1",
+      actionDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      summary: "write_file pending"))
+    let resume = snapshot.controls.first { $0.id == "resume" }
+    XCTAssertEqual(resume?.truthLabel, "operator-gated")
+    XCTAssertEqual(resume?.isEnabled, true)
+    XCTAssertTrue(resume?.reason.contains("operator signer") == true)
+  }
+
+  func testRefreshParsesActionableNeedsMeApprovalFallback() async {
+    let raw: [String: Any] = [
+      "run_id": "run-1",
+      "status": "waiting",
+      "truthLabel": "friday_owned",
+      "actionable_needs_me": [[
+        "kind": "approval_required",
+        "title": "approval required for write_file",
+        "ref_id": "approval-2",
+        "action_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "signing_request": [
+          "run_id": "run-1",
+          "approval_id": "approval-2",
+          "action_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "summary": "approval required for write_file",
+        ],
+      ]],
+    ]
+    let vm = SessionContinuationViewModel(
+      client: FakeSessionReadClient(needsMeRaw: raw),
+      writeClient: FakeSessionWriteClient(),
+      signer: MockOperatorSigner(),
+      runControlEnabled: true)
+
+    await vm.refresh(agentSessionId: "session-1", runId: "run-1")
+
+    guard case .loaded(let snapshot) = vm.state else {
+      return XCTFail("expected loaded session continuation, got \(vm.state)")
+    }
+    XCTAssertEqual(snapshot.pendingApproval?.approvalId, "approval-2")
+    XCTAssertEqual(snapshot.pendingApproval?.summary, "approval required for write_file")
+  }
+
+  func testResumeRelaysSignerBlobVerbatimAndSurfacesReceipt() async {
+    let digest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    let raw: [String: Any] = [
+      "run_id": "run-1",
+      "status": "waiting",
+      "truthLabel": "friday_owned",
+      "needs_me": [
+        "signing_request": [
+          "run_id": "run-1",
+          "approval_id": "approval-1",
+          "action_digest": digest,
+          "summary": "write_file pending",
+        ],
+      ],
+    ]
+    let write = FakeSessionWriteClient(.accepted(ResumeRelayResult(
+      runId: "run-1",
+      op: "resume",
+      accepted: true,
+      status: "resumed",
+      auditRef: "audit://resume/run-1")))
+    let signer = MockOperatorSigner()
+    let vm = SessionContinuationViewModel(
+      client: FakeSessionReadClient(needsMeRaw: raw),
+      writeClient: write,
+      signer: signer,
+      runControlEnabled: true)
+
+    await vm.refresh(agentSessionId: "session-1", runId: "run-1")
+    await vm.resume()
+
+    let expectedBlob = try! await signer.signApproval(ApprovalSigningRequest(
+      runId: "run-1",
+      approvalId: "approval-1",
+      actionDigest: digest,
+      summary: "write_file pending"))
+    XCTAssertEqual(write.resumedRunIds, ["run-1"])
+    XCTAssertEqual(write.relayedBlobs, [expectedBlob])
+    XCTAssertEqual(
+      vm.controlStates["resume"],
+      .succeeded(summary: "resume: resumed · accepted · audit://resume/run-1"))
+  }
+
+  func testResumeSignerFailureDoesNotRelay() async {
+    let raw: [String: Any] = [
+      "run_id": "run-1",
+      "needs_me": [
+        "signing_request": [
+          "run_id": "run-1",
+          "approval_id": "approval-1",
+          "action_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "summary": "write_file pending",
+        ],
+      ],
+    ]
+    let write = FakeSessionWriteClient(.accepted(ResumeRelayResult(
+      runId: "run-1",
+      op: "resume",
+      accepted: true,
+      status: "resumed",
+      auditRef: nil)))
+    let vm = SessionContinuationViewModel(
+      client: FakeSessionReadClient(needsMeRaw: raw),
+      writeClient: write,
+      signer: MockOperatorSigner(throwing: .declined),
+      runControlEnabled: true)
+
+    await vm.refresh(agentSessionId: "session-1", runId: "run-1")
+    await vm.resume()
+
+    XCTAssertEqual(write.resumedRunIds, [])
+    guard case .error(let reason) = vm.controlStates["resume"] else {
+      return XCTFail("expected signer error, got \(String(describing: vm.controlStates["resume"]))")
+    }
+    XCTAssertTrue(reason.contains("declined"), "reason: \(reason)")
   }
 
   func testStopUsesGovernedCancelRunAndSurfacesReceipt() async {

@@ -226,6 +226,7 @@ struct RootView: View {
     _sessionContinuationVM = StateObject(wrappedValue: SessionContinuationViewModel(
       client: session.readClient,
       writeClient: session.writeClient,
+      signer: session.signer,
       runControlEnabled: session.runControlEnabled))
   }
 
