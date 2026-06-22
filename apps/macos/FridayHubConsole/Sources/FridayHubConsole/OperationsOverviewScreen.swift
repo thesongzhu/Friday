@@ -53,6 +53,8 @@ struct OperationsOverviewScreen: View {
       .buttonStyle(.borderedProminent)
       .tint(HubTheme.cyan)
       .disabled(viewModel.state.isLoading)
+      .accessibilityLabel("Refresh Operations Overview")
+      .accessibilityIdentifier("friday.desktop.refresh")
     }
     .padding(.horizontal, 20)
     .padding(.vertical, 16)
@@ -88,6 +90,9 @@ struct OperationsOverviewScreen: View {
       }
 
       missionCard(snapshot)
+      if snapshot.isLoadedEmpty {
+        loadedEmptyCard(snapshot)
+      }
       routeDecisionCard(snapshot)
       workItemsCard(snapshot)
       capabilityCard(snapshot)
@@ -119,6 +124,31 @@ struct OperationsOverviewScreen: View {
         missionIntakeCompose
       }
     }
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("Mission \(snapshot.missionId)")
+    .accessibilityIdentifier("friday.desktop.mission-card")
+  }
+
+  private func loadedEmptyCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack(spacing: 8) {
+          Image(systemName: "tray")
+            .foregroundStyle(HubTheme.textSecondary)
+            .accessibilityHidden(true)
+          Text("No active Friday work yet")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(HubTheme.textPrimary)
+        }
+        Text("Connected to \(snapshot.runtimeFeedStatus.displayText); this owner has no visible work items, receipts, candidates, capabilities, or transcript events in the current projection.")
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Friday is connected, with no active desktop work for this owner")
+    .accessibilityIdentifier("friday.desktop.loaded-empty")
   }
 
   /// The spine-WRITE compose affordance — an operator types an intent and submits it as a
@@ -146,12 +176,15 @@ struct OperationsOverviewScreen: View {
         .disabled(
           viewModel.intakeState.isSent
             || intentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .accessibilityLabel("Submit mission intent")
+        .accessibilityIdentifier("friday.desktop.submit-intent")
       }
       WriteActionStateView(state: viewModel.intakeState, pendingText: "Submitting intake…")
       Text("Births a Mission + WorkItem(Draft), then dispatches the governed model run when configured.")
         .font(.system(size: 10))
         .foregroundStyle(HubTheme.textSecondary)
     }
+    .accessibilityIdentifier("friday.desktop.mission-intake")
   }
 
   private func routeDecisionCard(_ snapshot: WorkbenchSnapshot) -> some View {
@@ -344,6 +377,9 @@ struct UnavailableView: View {
     }
     .padding(28)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Hub projection unavailable. \(reason)")
+    .accessibilityIdentifier("friday.desktop.unavailable")
   }
 }
 
@@ -373,6 +409,9 @@ struct StatusBanner: View {
       RoundedRectangle(cornerRadius: HubTheme.cornerRadius, style: .continuous)
         .fill(HubTheme.coralSoft)
     )
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Workbench projection flagged")
+    .accessibilityIdentifier("friday.desktop.status-banner")
   }
 }
 
@@ -458,10 +497,12 @@ struct MemoryCandidateRow: View {
             .tint(HubTheme.cyan)
             .controlSize(.small)
             .disabled(controlsDisabled)
+            .accessibilityLabel("Confirm memory candidate")
           Button("Reject", action: onReject)
             .buttonStyle(.bordered)
             .controlSize(.small)
             .disabled(controlsDisabled)
+            .accessibilityLabel("Reject memory candidate")
         }
       }
       RefPill(label: "evidenceRef", ref: candidate.evidenceRef)
@@ -504,10 +545,12 @@ struct RunOutcomeLearningCandidateRow: View {
             .tint(HubTheme.cyan)
             .controlSize(.small)
             .disabled(controlsDisabled)
+            .accessibilityLabel("Confirm run outcome learning candidate")
           Button("Reject", action: onReject)
             .buttonStyle(.bordered)
             .controlSize(.small)
             .disabled(controlsDisabled)
+            .accessibilityLabel("Reject run outcome learning candidate")
         }
       }
       RefPill(label: "runId", ref: candidate.runId)

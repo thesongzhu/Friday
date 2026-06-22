@@ -73,6 +73,23 @@ func snapshotExercisesEveryHonestRenderingRule() {
 }
 
 @Test
+func loadedEmptySnapshotIsConnectedEmptyNotUnavailable() {
+  let snapshot = snapshotWithWorkItems(
+    missionId: "mission-empty",
+    fridayConversationId: "fconv-empty",
+    workItemIds: [])
+  #expect(snapshot.isLoadedEmpty)
+  #expect(snapshot.runtimeFeedStatus == .liveRustHubProjection)
+  #expect(snapshot.statusLabels.isEmpty)
+}
+
+@Test
+func representativeSnapshotIsNotLoadedEmpty() {
+  let snapshot = MockReadClient.representativeSnapshot
+  #expect(!snapshot.isLoadedEmpty)
+}
+
+@Test
 @MainActor
 func inspectorReturnsRefsOnlyForSelection() async {
   let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: .loaded))

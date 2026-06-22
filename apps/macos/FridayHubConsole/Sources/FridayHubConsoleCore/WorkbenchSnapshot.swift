@@ -455,6 +455,17 @@ public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
     self.capabilityStates = capabilityStates
     self.transcriptSections = transcriptSections
   }
+
+  public var isLoadedEmpty: Bool {
+    providerReceiptRefs.isEmpty
+      && channelReceiptRefs.isEmpty
+      && workItems.isEmpty
+      && timelinePages.isEmpty
+      && memoryCandidates.isEmpty
+      && runOutcomeLearningCandidates.isEmpty
+      && capabilityStates.isEmpty
+      && transcriptSections.isEmpty
+  }
 }
 
 public typealias MissionWorkbenchSnapshot = WorkbenchSnapshot
