@@ -108,6 +108,58 @@ public enum ReadProjectionDetailState: Sendable, Equatable {
   }
 }
 
+public struct ChatTurnRefs: Sendable, Equatable {
+  public let missionId: String
+  public let workItemId: String?
+  public let runIds: [String]
+
+  public init(missionId: String, workItemId: String?, runIds: [String]) {
+    self.missionId = missionId
+    self.workItemId = workItemId
+    var seen = Set<String>()
+    self.runIds = runIds.filter { !$0.isEmpty && seen.insert($0).inserted }
+  }
+}
+
+public struct ChatNeedsMeItem: Sendable, Equatable, Identifiable {
+  public let runId: String
+  public let kind: String
+  public let title: String
+  public let refId: String
+  public let state: String
+  public let deepLink: String?
+
+  public var id: String { "\(runId):\(kind):\(refId)" }
+
+  public init(
+    runId: String,
+    kind: String,
+    title: String,
+    refId: String,
+    state: String,
+    deepLink: String?
+  ) {
+    self.runId = runId
+    self.kind = kind
+    self.title = title
+    self.refId = refId
+    self.state = state
+    self.deepLink = deepLink
+  }
+}
+
+public enum ChatReviewState: Sendable, Equatable {
+  case idle
+  case loading(runIds: [String])
+  case loaded(items: [ChatNeedsMeItem])
+  case unavailable(reason: String)
+
+  public var isLoading: Bool {
+    if case .loading = self { return true }
+    return false
+  }
+}
+
 /// The state of a single spine-WRITE action (mission intake / memory decision).
 ///
 /// Mirrors `WorkbenchLoadState`'s honest vocabulary: a `.sent` action shows pending, a terminal
@@ -164,6 +216,10 @@ public final class OperationsOverviewViewModel: ObservableObject {
   @Published public private(set) var memoryDecisionStates: [String: WriteActionState] = [:]
   /// Per-candidate A1 run-outcome learning decision state, keyed by candidate id.
   @Published public private(set) var runOutcomeLearningDecisionStates: [String: WriteActionState] = [:]
+  /// Structured refs for the latest desktop Chat turn. This avoids parsing status prose in the UI.
+  @Published public private(set) var latestChatTurn: ChatTurnRefs?
+  /// Refs-only Needs-Me rows for the latest Chat turn's runs.
+  @Published public private(set) var chatReviewState: ChatReviewState = .idle
 
   public let devicePairing: DesktopDevicePairingReadiness
 
@@ -234,6 +290,24 @@ public final class OperationsOverviewViewModel: ObservableObject {
     }
   }
 
+  public func loadLatestChatReview() async {
+    guard let turn = latestChatTurn, !turn.runIds.isEmpty else {
+      chatReviewState = .idle
+      return
+    }
+    chatReviewState = .loading(runIds: turn.runIds)
+    do {
+      var items: [ChatNeedsMeItem] = []
+      for runId in turn.runIds {
+        let snapshot = try await client.fetchActivityNeedsMe(runId: runId)
+        items.append(contentsOf: Self.chatNeedsMeItems(from: snapshot.raw, runId: runId))
+      }
+      chatReviewState = .loaded(items: items)
+    } catch {
+      chatReviewState = .unavailable(reason: Self.reason(for: error))
+    }
+  }
+
   private func readDetail(_ arm: ReadProjectionDetailArm) async throws -> ReadProjectionSnapshot {
     switch arm {
     case let .runReadback(runId):
@@ -271,9 +345,13 @@ public final class OperationsOverviewViewModel: ObservableObject {
     }
     guard let writeClient else {
       intakeState = .error(reason: "Write seam not configured — cannot submit an intake.")
+      latestChatTurn = nil
+      chatReviewState = .idle
       return
     }
     intakeState = .sent
+    latestChatTurn = nil
+    chatReviewState = .idle
     let request = Self.buildIntakeRequest(
       intent: trimmed, owner: writeOwnerPrincipal, idFactory: newId,
       missionIdPrefix: missionIdPrefix)
@@ -292,6 +370,7 @@ public final class OperationsOverviewViewModel: ObservableObject {
         // ready / created_or_ready
         var summary = "Mission intake \(result.status) · mission_id=\(result.missionId)"
         var answerBodies: [String] = []
+        var runIds: [String] = []
         if let workItemId = result.workItemId { summary += " · work_item_id=\(workItemId)" }
         if let workItemId = result.workItemId, let missionRunClient {
           let context = MissionWorkItemContextWire(
@@ -304,6 +383,7 @@ public final class OperationsOverviewViewModel: ObservableObject {
               missionContext: context,
               constraints: AgentRunConstraintsWire(readOnly: true))
             summary += Self.dispatchSummary(for: outcome)
+            runIds.append(contentsOf: Self.runIds(for: outcome))
             let codexAnswerBody = await answerBodyText(for: outcome, label: "Codex")
             if let codexAnswerBody {
               answerBodies.append(codexAnswerBody)
@@ -316,6 +396,7 @@ public final class OperationsOverviewViewModel: ObservableObject {
               missionRunClient: missionRunClient)
             {
               summary += followUpSummary.summary
+              runIds.append(contentsOf: Self.runIds(for: followUpSummary.outcome))
               if let answerBody = await answerBodyText(for: followUpSummary.outcome, label: "Claude follow-up") {
                 answerBodies.append(answerBody)
               }
@@ -331,10 +412,17 @@ public final class OperationsOverviewViewModel: ObservableObject {
         } else {
           intakeState = .confirmed(summary: summary, clarificationQuestions: result.clarificationQuestions)
         }
+        latestChatTurn = ChatTurnRefs(
+          missionId: result.missionId,
+          workItemId: result.workItemId,
+          runIds: runIds)
         await refresh()
+        await loadLatestChatReview()
       }
     } catch {
       intakeState = .error(reason: Self.writeReason(for: error))
+      latestChatTurn = nil
+      chatReviewState = .idle
     }
   }
 
@@ -584,6 +672,62 @@ public final class OperationsOverviewViewModel: ObservableObject {
   private static func runId(for outcome: AgentRunDispatchOutcome) -> String? {
     guard case let .result(result) = outcome else { return nil }
     return result.runId
+  }
+
+  private static func runIds(for outcome: AgentRunDispatchOutcome) -> [String] {
+    switch outcome {
+    case .result(let result):
+      return [result.runId]
+    case .paused(let paused):
+      return [paused.runId]
+    }
+  }
+
+  nonisolated static func chatNeedsMeItems(from raw: [String: Any], runId: String) -> [ChatNeedsMeItem] {
+    var items: [ChatNeedsMeItem] = []
+    if let needsMe = raw["needs_me"] as? [String: Any],
+      let item = chatNeedsMeItem(needsMe, runId: runId, fallbackKind: "approval")
+    {
+      items.append(item)
+    }
+    if let actionable = raw["actionable_needs_me"] as? [[String: Any]] {
+      for rawItem in actionable {
+        if let item = chatNeedsMeItem(rawItem, runId: runId, fallbackKind: "review") {
+          items.append(item)
+        }
+      }
+    }
+    var seen = Set<String>()
+    return items.filter { seen.insert($0.id).inserted }
+  }
+
+  nonisolated private static func chatNeedsMeItem(
+    _ raw: [String: Any],
+    runId: String,
+    fallbackKind: String
+  ) -> ChatNeedsMeItem? {
+    let kind = string(raw["kind"]) ?? fallbackKind
+    guard let refId = string(raw["ref_id"]), !refId.isEmpty else { return nil }
+    let title = string(raw["title"]) ?? string(raw["summary"]) ?? kind
+    let state = string(raw["state"]) ?? string(raw["status"]) ?? "pending"
+    return ChatNeedsMeItem(
+      runId: runId,
+      kind: kind,
+      title: title,
+      refId: refId,
+      state: state,
+      deepLink: string(raw["deep_link"]))
+  }
+
+  nonisolated private static func string(_ value: Any?) -> String? {
+    switch value {
+    case let value as String:
+      return value
+    case let value as CustomStringConvertible:
+      return value.description
+    default:
+      return nil
+    }
   }
 
   private static func reason(for error: Error) -> String {
