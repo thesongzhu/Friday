@@ -85,6 +85,7 @@ struct DesktopChatScreen: View {
       continuityCard(snapshot)
       transcriptCard
       stateCard
+      reviewCard(snapshot)
     }
     .padding(20)
   }
@@ -219,6 +220,131 @@ struct DesktopChatScreen: View {
         }
       }
       .accessibilityIdentifier("friday.desktop.chat.unavailable")
+    }
+  }
+
+  @ViewBuilder
+  private func reviewCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    let actionableItems = chatReviewItems()
+    let learningCandidates = snapshot.runOutcomeLearningCandidates
+    if viewModel.latestChatTurn != nil || !actionableItems.isEmpty || !learningCandidates.isEmpty {
+      GlassPanel {
+        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+          HStack {
+            cardTitle("Needs Review")
+            Spacer()
+            if let turn = viewModel.latestChatTurn, !turn.runIds.isEmpty {
+              Button {
+                Task { await viewModel.loadLatestChatReview() }
+              } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+              }
+              .buttonStyle(.borderless)
+              .disabled(viewModel.chatReviewState.isLoading)
+              .accessibilityLabel("Refresh desktop chat review queue")
+            }
+          }
+          if let turn = viewModel.latestChatTurn {
+            RefPill(label: "mission_id", ref: turn.missionId)
+            ForEach(turn.runIds, id: \.self) { runId in
+              RefPill(label: "run_id", ref: runId)
+            }
+          }
+          reviewStateBanner
+          ForEach(actionableItems) { item in
+            needsMeRow(item)
+          }
+          ForEach(learningCandidates) { candidate in
+            RunOutcomeLearningCandidateRow(
+              candidate: candidate,
+              state: viewModel.runOutcomeLearningDecisionStates[candidate.id] ?? .ready,
+              onConfirm: {
+                Task { await viewModel.decideRunOutcomeLearning(candidateId: candidate.id, confirm: true) }
+              },
+              onReject: {
+                Task { await viewModel.decideRunOutcomeLearning(candidateId: candidate.id, confirm: false) }
+              })
+          }
+          if actionableItems.isEmpty && learningCandidates.isEmpty {
+            Text("No approval, memory, or A1 learning rows are currently projected for this turn.")
+              .font(.system(size: 12))
+              .foregroundStyle(HubTheme.textSecondary)
+          }
+        }
+      }
+      .accessibilityIdentifier("friday.desktop.chat.review")
+    }
+  }
+
+  @ViewBuilder
+  private var reviewStateBanner: some View {
+    switch viewModel.chatReviewState {
+    case .idle:
+      EmptyView()
+    case .loading:
+      HStack(spacing: 8) {
+        ProgressView().scaleEffect(0.7)
+        Text("Reading activity needs-me rows...")
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textSecondary)
+      }
+    case .loaded:
+      EmptyView()
+    case let .unavailable(reason):
+      HStack(spacing: 8) {
+        StatusChip(text: "unavailable", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+        Text(reason)
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textSecondary)
+      }
+    }
+  }
+
+  private func chatReviewItems() -> [ChatNeedsMeItem] {
+    guard case let .loaded(items) = viewModel.chatReviewState else { return [] }
+    return items
+  }
+
+  @ViewBuilder
+  private func needsMeRow(_ item: ChatNeedsMeItem) -> some View {
+    if item.kind == "memory_review" {
+      MemoryCandidateRow(
+        candidate: MissionWorkbenchMemoryCandidate(
+          id: item.refId,
+          preview: item.title,
+          state: "candidate_review_only",
+          grantsMemoryAuthority: false,
+          evidenceRef: item.deepLink ?? item.refId),
+        state: viewModel.memoryDecisionStates[item.refId] ?? .ready,
+        onConfirm: {
+          Task { await viewModel.decideMemory(candidateId: item.refId, memoryId: item.refId, confirm: true) }
+        },
+        onReject: {
+          Task { await viewModel.decideMemory(candidateId: item.refId, memoryId: item.refId, confirm: false) }
+        })
+    } else {
+      VStack(alignment: .leading, spacing: 6) {
+        HStack {
+          StatusChip(text: item.kind, bg: HubTheme.chipPendingBG, fg: HubTheme.chipPendingFG)
+          Text(item.state)
+            .font(.system(size: 11))
+            .foregroundStyle(HubTheme.textSecondary)
+          Spacer()
+        }
+        Text(item.title)
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textPrimary)
+        RefPill(label: "run_id", ref: item.runId)
+        RefPill(label: "ref_id", ref: item.refId)
+        if item.kind == "approval_required" {
+          Text("Approval remains operator-signature gated; this surface shows the nonce and does not mint or relay a signature.")
+            .font(.system(size: 10))
+            .foregroundStyle(HubTheme.textSecondary)
+        }
+      }
+      .padding(.vertical, 6)
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel("Needs review \(item.kind). \(item.title)")
     }
   }
 

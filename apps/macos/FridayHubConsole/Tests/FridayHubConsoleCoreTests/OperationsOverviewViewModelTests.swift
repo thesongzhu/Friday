@@ -489,6 +489,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
 struct StaticWorkbenchReadClient: FridayRustReadClient {
   let snapshot: FridayHubConsoleCore.WorkbenchSnapshot
   var answerBodies: [String: String] = [:]
+  var activityNeedsMe: [String: String] = [:]
 
   func fetchWorkbench() async throws -> FridayRustClient.WorkbenchSnapshot {
     let json = try JSONEncoder().encode(snapshot)
@@ -510,6 +511,39 @@ struct StaticWorkbenchReadClient: FridayRustReadClient {
       """.data(using: .utf8)!
     return try RunAnswerBody(answerJSON: data, generatedAtMs: 1)
   }
+
+  func fetchActivityNeedsMe(runId: String) async throws -> ReadProjectionSnapshot {
+    guard let json = activityNeedsMe[runId]?.data(using: .utf8) else {
+      throw FridayReadClientError.transport("activity needs-me unavailable")
+    }
+    return try ReadProjectionSnapshot(projectionJSON: json, generatedAtMs: 1)
+  }
+}
+
+func activityNeedsMeJSON(runId: String, actionableKind: String, refId: String) -> String {
+  """
+  {
+    "run_id": "\(runId)",
+    "status": "waiting",
+    "truth_label": "friday_owned",
+    "needs_me": {
+      "kind": "approval",
+      "title": "Approval required",
+      "ref_id": "approval-pause-\(runId)",
+      "status": "awaiting_approval"
+    },
+    "actionable_needs_me": [
+      {
+        "kind": "\(actionableKind)",
+        "title": "\(actionableKind) ready",
+        "ref_id": "\(refId)",
+        "state": "pending",
+        "deep_link": "\(actionableKind == "memory_review" ? "memory/session/\(refId)" : "run/\(runId)/approval/\(refId)")"
+      }
+    ],
+    "actionable_needs_me_count": 1
+  }
+  """
 }
 
 final class DetailReadClient: FridayRustReadClient, @unchecked Sendable {
@@ -790,7 +824,13 @@ func submitIntakeDisplaysOwnerGatedRunAnswerBodyWhenDelivered() async {
       missionId: "mission-desktop-fixed",
       fridayConversationId: "fconv_desktop_fixed",
       workItemIds: ["work-desktop-fixed"]),
-    answerBodies: ["run-bound-1": "Readable desktop answer body"])
+    answerBodies: ["run-bound-1": "Readable desktop answer body"],
+    activityNeedsMe: [
+      "run-bound-1": activityNeedsMeJSON(
+        runId: "run-bound-1",
+        actionableKind: "approval_required",
+        refId: "approval-nonce-1")
+    ])
   let vm = OperationsOverviewViewModel(
     client: read, writeClient: write, missionRunClient: write,
     writeOwnerPrincipal: "admin-001", newId: { "fixed" })
@@ -804,6 +844,32 @@ func submitIntakeDisplaysOwnerGatedRunAnswerBodyWhenDelivered() async {
   #expect(summary.contains("run_id=run-bound-1"))
   #expect(answerBody?.contains("Readable desktop answer body") == true)
   #expect(answerBody?.contains("Codex:") == true)
+  #expect(vm.latestChatTurn == ChatTurnRefs(
+    missionId: "mission-desktop-fixed",
+    workItemId: "work-desktop-fixed",
+    runIds: ["run-bound-1"]))
+  guard case let .loaded(items) = vm.chatReviewState else {
+    Issue.record("expected loaded review state, got \(vm.chatReviewState)")
+    return
+  }
+  #expect(items.map(\.kind).contains("approval_required"))
+  #expect(items.map(\.refId).contains("approval-nonce-1"))
+}
+
+@Test
+func chatNeedsMeItemsParsesComputedPauseAndActionableRows() throws {
+  let data = activityNeedsMeJSON(
+    runId: "run-review",
+    actionableKind: "memory_review",
+    refId: "mem-review-1"
+  ).data(using: .utf8)!
+  let raw = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+  let items = OperationsOverviewViewModel.chatNeedsMeItems(from: raw, runId: "run-review")
+
+  #expect(items.map(\.kind) == ["approval", "memory_review"])
+  #expect(items.map(\.refId) == ["approval-pause-run-review", "mem-review-1"])
+  #expect(items[1].deepLink == "memory/session/mem-review-1")
 }
 
 @Test
