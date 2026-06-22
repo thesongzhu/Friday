@@ -49,13 +49,18 @@
 //! ```text
 //! hub_pairing_server --db <path> --pairing-secret <≥16 chars> --hub-id <id> --pairing-id <id>
 //!                    --display-name <name> --expires-at-ms <epoch_ms>
-//!                    [--store-dir <path>] [--owner <principal>] [--port <port>] [--once]
+//!                    [--store-dir <path>] [--owner <principal>] [--host <ip>] [--port <port>]
+//!                    [--endpoint <ws-url>] [--qr-json-out <path>] [--allow-non-loopback] [--once]
 //! ```
 //! The pairing secret + hub/pairing ids + display name + expiry are the QR-payload fields the phone
 //! scanned; they MUST match the QR shown to the device. `--once` serves exactly one connection (the
 //! integration KAT path) then exits; the default is a long-lived accept loop.
 
 use std::env;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::net::{Ipv4Addr, TcpListener};
+use std::path::Path;
 
 use friday_core::{
     FridayPairPayload, PairAuthority, PairTransportHint, PairTransportKind,
@@ -64,6 +69,10 @@ use friday_core::{
 use friday_crypto::{DeviceKeypair, FileSecureStore};
 use friday_hub::pair_runtime::{PairOutcome, PairingHub, PairingListener};
 use friday_storage::Db;
+use serde::Serialize;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 /// The sealed-WS AAD binding every pairing envelope to this pairing protocol/version. Fixed, public,
 /// non-secret. The phone seals/opens under the SAME AAD.
@@ -87,6 +96,8 @@ enum ServerError {
     /// NOT enforce a non-empty allowlist at boot: the pairing server's JOB is to POPULATE a possibly
     /// -empty allowlist, so a fresh host with zero enrolled devices must still boot.)
     StoreUnavailable,
+    /// The QR manifest could not be written with restricted permissions.
+    ManifestUnavailable,
 }
 
 fn main() {
@@ -109,6 +120,7 @@ fn boot_error_kind(err: &ServerError) -> &'static str {
         ServerError::DbUnavailable => "db_unavailable",
         ServerError::MasterKeyUnavailable => "master_key_unavailable",
         ServerError::StoreUnavailable => "secure_store_unavailable",
+        ServerError::ManifestUnavailable => "qr_manifest_unavailable",
     }
 }
 
@@ -124,6 +136,18 @@ fn run() -> Result<(), ServerError> {
         .transpose()?
         .unwrap_or(0);
     let once = args.iter().any(|a| a == "--once");
+    let allow_non_loopback = args.iter().any(|a| a == "--allow-non-loopback");
+    let host = parse_host(&args)?;
+    if !host.is_loopback() && !allow_non_loopback {
+        return Err(ServerError::BadArgs(
+            "--allow-non-loopback is required for non-loopback --host",
+        ));
+    }
+    if host.is_unspecified() && arg_value(&args, "--endpoint").is_none() {
+        return Err(ServerError::BadArgs(
+            "--endpoint is required when --host is 0.0.0.0",
+        ));
+    }
 
     // The Hub OWNER (v1 = single configured owner). HUB-SUPPLIED (operator arg), echoed for audit
     // parity with the read server. v1 is single-OWNER, so this is the ceiling — per-principal
@@ -132,16 +156,22 @@ fn run() -> Result<(), ServerError> {
         .map(|o| o.trim().to_string())
         .filter(|o| !o.is_empty());
 
-    // (0) Build the QR payload from the operator-supplied fields (the SAME fields the QR conveyed to
-    // the phone). `FridayPairPayload::new` validates the secret length (≥16) + non-provider-looking
-    // secret + expiry — a bad payload FAILS CLOSED before we bind anything.
-    let payload = build_payload(&args)?;
+    // (0) Bind first so port=0 can still yield a truthful QR endpoint. Non-loopback binds are an
+    // explicit operator gate (`--allow-non-loopback`); the default remains loopback/dark.
+    let socket = TcpListener::bind((host, port)).map_err(|_| ServerError::Bind)?;
+    let addr = socket.local_addr().map_err(|_| ServerError::Bind)?;
+    let default_endpoint = format!("ws://{addr}");
 
-    // (1) Open the hub DB READ-WRITE — pairing WRITES `trusted_device` + audit_ledger (this is the
+    // (1) Build the QR payload from the operator-supplied fields (the SAME fields the QR conveyed to
+    // the phone). `FridayPairPayload::new` validates the secret length (≥16) + non-provider-looking
+    // secret + expiry — a bad payload FAILS CLOSED before we serve anything.
+    let payload = build_payload(&args, &default_endpoint)?;
+
+    // (2) Open the hub DB READ-WRITE — pairing WRITES `trusted_device` + audit_ledger (this is the
     // ONE place this bin differs from the read-projection server, which opens read-only).
     let mut db = Db::open_hub(&db_path).map_err(|_| ServerError::DbUnavailable)?;
 
-    // (2) Open the read-seam FileSecureStore (sealed under the host master KEK) so a successful pair
+    // (3) Open the read-seam FileSecureStore (sealed under the host master KEK) so a successful pair
     // can APPEND the device pubkey. We do NOT load/enforce a non-empty allowlist here: the server's
     // job is to POPULATE it, so a fresh host with zero devices must still boot. Master key absent ⇒
     // REFUSE (never auto-generate).
@@ -157,21 +187,30 @@ fn run() -> Result<(), ServerError> {
     let mut enroll_store =
         FileSecureStore::open(&store_dir, kek).map_err(|_| ServerError::StoreUnavailable)?;
 
-    // (3) The hub's OWN long-lived pairing keypair. Its PUBLIC half is what the QR conveyed to the
-    // phone; the phone's pubkey arrives over the wire. Fresh per-process `generate()` (NOT master-
-    // derived) — the only `generate()` in this bin's non-test code.
+    // (4) The hub's OWN long-lived pairing keypair. Its public half is written into the QR manifest
+    // when requested; the phone's pubkey arrives over the wire. Fresh per-process `generate()` (NOT
+    // master-derived) — the only `generate()` in this bin's non-test code.
     let server_kp = DeviceKeypair::generate();
 
+    if let Some(path) = arg_value(&args, "--qr-json-out") {
+        write_qr_manifest(Path::new(&path), &payload, &server_kp.public_bytes())
+            .map_err(|_| ServerError::ManifestUnavailable)?;
+    }
+
     let hub = PairingHub::new(payload, vec!["pairing".into(), "read_seam_enroll".into()]);
-    let listener = PairingListener::bind_loopback(hub, port).map_err(|_| ServerError::Bind)?;
-    let addr = listener.local_addr().map_err(|_| ServerError::Bind)?;
+    let listener = PairingListener::from_tcp_listener(hub, socket);
     eprintln!(
-        "hub_pairing_server: listening (loopback-only) on {addr} owner={} — DARK (J1 pairing + J2 \
+        "hub_pairing_server: listening on {addr} owner={} exposure={} — DARK (J1 pairing + J2 \
          read-seam enroll bridge, no LaunchAgent, no production caller)",
-        owner.as_deref().unwrap_or("<none>")
+        owner.as_deref().unwrap_or("<none>"),
+        if addr.ip().is_loopback() {
+            "loopback"
+        } else {
+            "operator-enabled-non-loopback"
+        }
     );
 
-    // (4) Accept loop. Each connection: derive the pairing session, handle one sealed pairing
+    // (5) Accept loop. Each connection: derive the pairing session, handle one sealed pairing
     // message, and — on a VALID pair ONLY — enroll the device pubkey into the read-seam allowlist.
     loop {
         match listener.accept_one_live(&mut db, &mut enroll_store, &server_kp, PAIRING_AAD) {
@@ -212,10 +251,13 @@ fn report_outcome(outcome: &PairOutcome) {
     }
 }
 
-/// Build + validate the QR pairing payload from the operator args. A loopback `ws://127.0.0.1:<port>`
-/// transport hint is synthesized (the phone scanned the same endpoint). Fails closed on a bad secret
-/// / blank id / past expiry.
-fn build_payload(args: &[String]) -> Result<FridayPairPayload, ServerError> {
+/// Build + validate the QR pairing payload from the operator args. The transport hint defaults to
+/// the already-bound listener endpoint, so `--port 0` still produces a truthful QR URL. Fails closed
+/// on a bad secret / blank id / past expiry.
+fn build_payload(
+    args: &[String],
+    default_endpoint: &str,
+) -> Result<FridayPairPayload, ServerError> {
     let pairing_secret = arg_value(args, "--pairing-secret")
         .ok_or(ServerError::BadArgs("--pairing-secret is required"))?;
     let hub_id = arg_value(args, "--hub-id").ok_or(ServerError::BadArgs("--hub-id is required"))?;
@@ -227,7 +269,7 @@ fn build_payload(args: &[String]) -> Result<FridayPairPayload, ServerError> {
         .ok_or(ServerError::BadArgs("--expires-at-ms is required"))?
         .parse()
         .map_err(|_| ServerError::BadArgs("--expires-at-ms must be epoch-millis"))?;
-    let endpoint = arg_value(args, "--endpoint").unwrap_or_else(|| "ws://127.0.0.1:0".into());
+    let endpoint = arg_value(args, "--endpoint").unwrap_or_else(|| default_endpoint.into());
 
     let hint = PairTransportHint::new(PairTransportKind::LanWebSocket, endpoint, "LAN WebSocket")
         .map_err(|_| ServerError::BadPayload)?;
@@ -242,6 +284,91 @@ fn build_payload(args: &[String]) -> Result<FridayPairPayload, ServerError> {
         vec![PairAuthority::StatusOnly],
     )
     .map_err(|_| ServerError::BadPayload)
+}
+
+fn parse_host(args: &[String]) -> Result<Ipv4Addr, ServerError> {
+    arg_value(args, "--host")
+        .map(|h| {
+            h.parse::<Ipv4Addr>()
+                .map_err(|_| ServerError::BadArgs("--host must be an IPv4 address"))
+        })
+        .transpose()
+        .map(|h| h.unwrap_or(Ipv4Addr::LOCALHOST))
+}
+
+#[derive(Serialize)]
+struct QrTransportHint<'a> {
+    kind: &'static str,
+    endpoint: &'a str,
+    label: &'a str,
+}
+
+#[derive(Serialize)]
+struct QrManifest<'a> {
+    kind: &'static str,
+    aad: &'static str,
+    hub_public_key_hex: String,
+    v: u16,
+    hub_id: &'a str,
+    pairing_id: &'a str,
+    pairing_secret: &'a str,
+    display_name: &'a str,
+    transport_hints: Vec<QrTransportHint<'a>>,
+    expires_at: i64,
+    capabilities_hint: Vec<&'static str>,
+}
+
+fn write_qr_manifest(
+    path: &Path,
+    payload: &FridayPairPayload,
+    hub_public_key: &[u8; 32],
+) -> std::io::Result<()> {
+    let manifest = QrManifest {
+        kind: "friday.pairing.qr.v1",
+        aad: "friday:pairing:ws:j1:qr-pair-session:aad:v1",
+        hub_public_key_hex: hex_lower(hub_public_key),
+        v: payload.v,
+        hub_id: &payload.hub_id,
+        pairing_id: &payload.pairing_id,
+        pairing_secret: payload.pairing_secret.expose_for_qr(),
+        display_name: &payload.display_name,
+        transport_hints: payload
+            .transport_hints
+            .iter()
+            .map(|hint| QrTransportHint {
+                kind: hint.kind.as_str(),
+                endpoint: &hint.endpoint,
+                label: &hint.label,
+            })
+            .collect(),
+        expires_at: payload.expires_at,
+        capabilities_hint: payload
+            .capabilities_hint
+            .iter()
+            .map(PairAuthority::as_str)
+            .collect(),
+    };
+    let body = serde_json::to_vec_pretty(&manifest)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(&body)?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn arg_value(args: &[String], name: &str) -> Option<String> {
@@ -278,6 +405,10 @@ mod tests {
             boot_error_kind(&ServerError::StoreUnavailable),
             "secure_store_unavailable"
         );
+        assert_eq!(
+            boot_error_kind(&ServerError::ManifestUnavailable),
+            "qr_manifest_unavailable"
+        );
     }
 
     #[test]
@@ -308,7 +439,10 @@ mod tests {
         .into_iter()
         .map(String::from)
         .collect();
-        assert!(matches!(build_payload(&args), Err(ServerError::BadPayload)));
+        assert!(matches!(
+            build_payload(&args, "ws://127.0.0.1:4477"),
+            Err(ServerError::BadPayload)
+        ));
     }
 
     #[test]
@@ -328,8 +462,73 @@ mod tests {
         .into_iter()
         .map(String::from)
         .collect();
-        let payload = build_payload(&args).unwrap();
+        let payload = build_payload(&args, "ws://127.0.0.1:4477").unwrap();
         assert_eq!(payload.hub_id, "hub-1");
         assert_eq!(payload.expires_at, 9999999999999);
+        assert_eq!(payload.transport_hints[0].endpoint, "ws://127.0.0.1:4477");
+    }
+
+    #[test]
+    fn build_payload_honors_explicit_endpoint() {
+        let args: Vec<String> = [
+            "--pairing-secret",
+            "friday-pairing-secret-32-bytes",
+            "--hub-id",
+            "hub-1",
+            "--pairing-id",
+            "pair-1",
+            "--display-name",
+            "Mac",
+            "--expires-at-ms",
+            "9999999999999",
+            "--endpoint",
+            "ws://192.168.1.8:4477",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let payload = build_payload(&args, "ws://127.0.0.1:4477").unwrap();
+        assert_eq!(payload.transport_hints[0].endpoint, "ws://192.168.1.8:4477");
+    }
+
+    #[test]
+    fn host_parsing_defaults_loopback_and_rejects_bad_ip() {
+        let empty: Vec<String> = vec![];
+        assert_eq!(parse_host(&empty).unwrap(), Ipv4Addr::LOCALHOST);
+
+        let bad = vec!["--host".to_string(), "not-ip".to_string()];
+        assert!(matches!(parse_host(&bad), Err(ServerError::BadArgs(_))));
+    }
+
+    #[test]
+    fn qr_manifest_contains_scan_material_but_no_provider_secret_shape() {
+        let args: Vec<String> = [
+            "--pairing-secret",
+            "friday-pairing-secret-32-bytes",
+            "--hub-id",
+            "hub-1",
+            "--pairing-id",
+            "pair-1",
+            "--display-name",
+            "Mac",
+            "--expires-at-ms",
+            "9999999999999",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let payload = build_payload(&args, "ws://127.0.0.1:4477").unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "friday-pairing-manifest-{}.json",
+            std::process::id()
+        ));
+        write_qr_manifest(&path, &payload, &[7; 32]).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(body.contains("\"kind\": \"friday.pairing.qr.v1\""));
+        assert!(body.contains("\"hub_public_key_hex\""));
+        assert!(body.contains("\"pairing_secret\""));
+        assert!(!body.contains("sk-"));
+        assert!(!body.contains("provider_token"));
     }
 }
