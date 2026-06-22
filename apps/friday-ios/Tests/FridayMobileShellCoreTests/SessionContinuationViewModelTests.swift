@@ -84,6 +84,53 @@ final class SessionContinuationViewModelTests: XCTestCase {
     }
   }
 
+  final class FakeSessionWriteClient: FridayRustWriteClient, @unchecked Sendable {
+    enum Script {
+      case accepted(ResumeRelayResult)
+      case refused(ResumeRelayResult)
+      case fail(FridayWriteClientError)
+    }
+
+    let script: Script
+    private(set) var cancelledRunIds: [String] = []
+    private(set) var cancelReasons: [String?] = []
+
+    init(_ script: Script = .accepted(ResumeRelayResult(
+      runId: "run-1",
+      op: "cancel",
+      accepted: true,
+      status: "cancelled",
+      auditRef: "audit://cancel/run-1"))) {
+      self.script = script
+    }
+
+    func dispatchAgentRun(
+      task: String,
+      constraints: AgentRunConstraintsWire?
+    ) async throws -> AgentRunDispatchOutcome {
+      throw FridayWriteClientError.transport("unused")
+    }
+
+    func resumeWithApproval(runId: String, opaqueSignedBlob: [UInt8]) async throws -> ResumeRelayResult {
+      throw FridayWriteClientError.transport("unused")
+    }
+
+    func rejectApproval(runId: String, approvalId: String) async throws -> ResumeRelayResult {
+      throw FridayWriteClientError.transport("unused")
+    }
+
+    func cancelRun(runId: String, reason: String?) async throws -> ResumeRelayResult {
+      cancelledRunIds.append(runId)
+      cancelReasons.append(reason)
+      switch script {
+      case .accepted(let result), .refused(let result):
+        return result
+      case .fail(let error):
+        throw error
+      }
+    }
+  }
+
   func testRefreshWithSessionAndRunReadsAllContinuationArmsAndKeepsControlsNoGo() async {
     let client = FakeSessionReadClient()
     let vm = SessionContinuationViewModel(client: client)
@@ -113,6 +160,74 @@ final class SessionContinuationViewModelTests: XCTestCase {
     XCTAssertEqual(snapshot.sections.first?.generatedAtMs, 1_780_640_000_123)
     XCTAssertEqual(snapshot.controls.map(\.title), ["Send", "Stop", "Resume", "Fork"])
     XCTAssertTrue(snapshot.controls.allSatisfy { !$0.isEnabled && $0.truthLabel == "NO-GO" })
+  }
+
+  func testRefreshWithRunAndGateOnEnablesGuardedStop() async {
+    let client = FakeSessionReadClient()
+    let write = FakeSessionWriteClient()
+    let vm = SessionContinuationViewModel(
+      client: client,
+      writeClient: write,
+      runControlEnabled: true)
+
+    await vm.refresh(agentSessionId: "session-1", runId: "run-1")
+
+    guard case .loaded(let snapshot) = vm.state else {
+      return XCTFail("expected loaded session continuation, got \(vm.state)")
+    }
+    let stop = snapshot.controls.first { $0.id == "stop" }
+    XCTAssertEqual(stop?.truthLabel, "guarded")
+    XCTAssertEqual(stop?.isEnabled, true)
+    XCTAssertTrue(stop?.reason.contains("cancel") == true)
+  }
+
+  func testStopUsesGovernedCancelRunAndSurfacesReceipt() async {
+    let client = FakeSessionReadClient()
+    let write = FakeSessionWriteClient()
+    let vm = SessionContinuationViewModel(
+      client: client,
+      writeClient: write,
+      runControlEnabled: true)
+
+    await vm.refresh(agentSessionId: "session-1", runId: "run-1")
+    await vm.stop()
+
+    XCTAssertEqual(write.cancelledRunIds, ["run-1"])
+    XCTAssertEqual(write.cancelReasons, ["operator stopped run from mobile session detail"])
+    XCTAssertEqual(
+      vm.controlStates["stop"],
+      .succeeded(summary: "cancel: cancelled · accepted · audit://cancel/run-1"))
+  }
+
+  func testStopRefusalAndTransportFailureRenderError() async {
+    let refused = FakeSessionWriteClient(.refused(ResumeRelayResult(
+      runId: "run-1",
+      op: "cancel",
+      accepted: false,
+      status: "already_terminal",
+      auditRef: nil)))
+    let refusedVM = SessionContinuationViewModel(
+      client: FakeSessionReadClient(),
+      writeClient: refused,
+      runControlEnabled: true)
+    await refusedVM.refresh(agentSessionId: "session-1", runId: "run-1")
+    await refusedVM.stop()
+    guard case .error(let refusedReason) = refusedVM.controlStates["stop"] else {
+      return XCTFail("expected refused error, got \(String(describing: refusedVM.controlStates["stop"]))")
+    }
+    XCTAssertTrue(refusedReason.contains("already_terminal"), "reason: \(refusedReason)")
+
+    let failed = FakeSessionWriteClient(.fail(.transport("server dark")))
+    let failedVM = SessionContinuationViewModel(
+      client: FakeSessionReadClient(),
+      writeClient: failed,
+      runControlEnabled: true)
+    await failedVM.refresh(agentSessionId: "session-1", runId: "run-1")
+    await failedVM.stop()
+    guard case .error(let failedReason) = failedVM.controlStates["stop"] else {
+      return XCTFail("expected transport error, got \(String(describing: failedVM.controlStates["stop"]))")
+    }
+    XCTAssertTrue(failedReason.contains("offline"), "reason: \(failedReason)")
   }
 
   func testRefreshWithoutRunRefDoesNotReadRunArms() async {

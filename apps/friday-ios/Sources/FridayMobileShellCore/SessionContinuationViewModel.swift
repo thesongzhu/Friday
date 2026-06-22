@@ -37,6 +37,13 @@ public struct SessionContinuationSnapshot: Sendable, Equatable {
   }
 }
 
+public enum SessionContinuationControlState: Sendable, Equatable {
+  case idle
+  case sending
+  case succeeded(summary: String)
+  case error(reason: String)
+}
+
 public enum SessionContinuationLoadState: Sendable, Equatable {
   case idle
   case loading(agentSessionId: String)
@@ -52,11 +59,20 @@ public enum SessionContinuationLoadState: Sendable, Equatable {
 @MainActor
 public final class SessionContinuationViewModel: ObservableObject {
   @Published public private(set) var state: SessionContinuationLoadState = .idle
+  @Published public private(set) var controlStates: [String: SessionContinuationControlState] = [:]
 
   private let client: FridayRustReadClient
+  private let writeClient: FridayRustWriteClient?
+  private let runControlEnabled: Bool
 
-  public init(client: FridayRustReadClient) {
+  public init(
+    client: FridayRustReadClient,
+    writeClient: FridayRustWriteClient? = nil,
+    runControlEnabled: Bool = false
+  ) {
     self.client = client
+    self.writeClient = writeClient
+    self.runControlEnabled = runControlEnabled
   }
 
   public func refresh(agentSessionId: String?, runId: String?) async {
@@ -68,6 +84,7 @@ public final class SessionContinuationViewModel: ObservableObject {
 
     let trimmedRunId = runId?.trimmingCharacters(in: .whitespacesAndNewlines)
     let resolvedRunId = (trimmedRunId?.isEmpty == false) ? trimmedRunId : nil
+    controlStates = [:]
     state = .loading(agentSessionId: sessionId)
 
     async let open = Self.fetchSessionOpen(client: client, agentSessionId: sessionId)
@@ -99,7 +116,39 @@ public final class SessionContinuationViewModel: ObservableObject {
       agentSessionId: sessionId,
       runId: resolvedRunId,
       sections: sections,
-      controls: Self.disabledControls()))
+      controls: Self.controls(
+        runId: resolvedRunId,
+        hasWriteClient: writeClient != nil,
+        runControlEnabled: runControlEnabled)))
+  }
+
+  public func stop() async {
+    guard case .loaded(let snapshot) = state else { return }
+    guard let runId = snapshot.runId?.trimmingCharacters(in: .whitespacesAndNewlines), !runId.isEmpty else {
+      controlStates["stop"] = .error(reason: "Stop requires a run ref.")
+      return
+    }
+    guard runControlEnabled else {
+      controlStates["stop"] = .error(reason: "Stop is gated off for this session.")
+      return
+    }
+    guard let writeClient else {
+      controlStates["stop"] = .error(reason: "Stop requires the governed write client.")
+      return
+    }
+    controlStates["stop"] = .sending
+    do {
+      let result = try await writeClient.cancelRun(
+        runId: runId,
+        reason: "operator stopped run from mobile session detail")
+      if result.accepted {
+        controlStates["stop"] = .succeeded(summary: Self.controlSummary(for: result))
+      } else {
+        controlStates["stop"] = .error(reason: "Stop refused: \(Self.controlSummary(for: result))")
+      }
+    } catch {
+      controlStates["stop"] = .error(reason: Self.writeReason(for: error, verb: "stop"))
+    }
   }
 
   private nonisolated static func fetchSessionOpen(
@@ -167,8 +216,23 @@ public final class SessionContinuationViewModel: ObservableObject {
     }
   }
 
-  private nonisolated static func disabledControls() -> [SessionContinuationControl] {
-    [
+  private nonisolated static func controls(
+    runId: String?,
+    hasWriteClient: Bool,
+    runControlEnabled: Bool
+  ) -> [SessionContinuationControl] {
+    let stopReady = runId != nil && hasWriteClient && runControlEnabled
+    let stopReason: String
+    if stopReady {
+      stopReason = "Owner-authenticated cancel is wired through the governed write seam."
+    } else if runId == nil {
+      stopReason = "Stop requires a run ref."
+    } else if !runControlEnabled {
+      stopReason = "Stop is gated off for this session."
+    } else {
+      stopReason = "Stop requires the governed write client."
+    }
+    return [
       SessionContinuationControl(
         id: "send",
         title: "Send",
@@ -180,9 +244,9 @@ public final class SessionContinuationViewModel: ObservableObject {
         id: "stop",
         title: "Stop",
         systemImage: "stop.circle",
-        truthLabel: "NO-GO",
-        reason: "Stop requires a governed mutation endpoint; none is wired here.",
-        isEnabled: false),
+        truthLabel: stopReady ? "guarded" : "NO-GO",
+        reason: stopReason,
+        isEnabled: stopReady),
       SessionContinuationControl(
         id: "resume",
         title: "Resume",
@@ -200,6 +264,15 @@ public final class SessionContinuationViewModel: ObservableObject {
     ]
   }
 
+  private nonisolated static func controlSummary(for result: ResumeRelayResult) -> String {
+    var parts = ["\(result.op): \(result.status)"]
+    parts.append(result.accepted ? "accepted" : "refused")
+    if let auditRef = result.auditRef, !auditRef.isEmpty {
+      parts.append(auditRef)
+    }
+    return parts.joined(separator: " · ")
+  }
+
   private nonisolated static func reason(for error: Error) -> String {
     if let e = error as? FridayReadClientError {
       switch e {
@@ -211,6 +284,28 @@ public final class SessionContinuationViewModel: ObservableObject {
         return "Friday returned an unexpected response (\(kind))"
       case let .malformedProjection(why):
         return "Status unavailable — \(why)"
+      case let .transport(why):
+        return "Friday is offline — \(why)"
+      }
+    }
+    return "Friday is unavailable — \(error)"
+  }
+
+  private nonisolated static func writeReason(for error: Error, verb: String) -> String {
+    if let e = error as? FridayWriteClientError {
+      switch e {
+      case .badServerPubkey, .badSessionNonce:
+        return "Friday could not establish a trusted connection"
+      case let .serverError(code, message):
+        return "Friday is unavailable (\(code.rawValue)) — \(message)"
+      case let .unexpectedResponse(kind):
+        return "Friday returned an unexpected response (\(kind))"
+      case let .missingRef(why):
+        return "Friday returned an incomplete \(verb) response — \(why)"
+      case .runControlDisabled:
+        return "Stop is gated off for this session"
+      case .emptySignedBlob:
+        return "Stop unavailable — unexpected empty signature state"
       case let .transport(why):
         return "Friday is offline — \(why)"
       }

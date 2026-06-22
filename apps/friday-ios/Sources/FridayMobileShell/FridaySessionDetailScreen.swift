@@ -122,7 +122,12 @@ struct FridaySessionDetailScreen: View {
         cardHeader("Controls", count: nil)
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
           ForEach(controls) { control in
-            Button {} label: {
+            let controlState = viewModel.controlStates[control.id]
+            Button {
+              if control.id == "stop" {
+                Task { await viewModel.stop() }
+              }
+            } label: {
               VStack(alignment: .leading, spacing: 6) {
                 HStack {
                   Image(systemName: control.systemImage)
@@ -135,16 +140,47 @@ struct FridaySessionDetailScreen: View {
                   .font(.caption2)
                   .foregroundStyle(MobileTheme.textSecondary)
                   .fixedSize(horizontal: false, vertical: true)
+                controlStateView(controlState)
               }
               .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
               .padding(10)
             }
             .buttonStyle(.bordered)
-            .disabled(!control.isEnabled)
+            .disabled(!control.isEnabled || controlStateDisablesButton(controlState))
             .accessibilityLabel("\(control.title) \(control.truthLabel). \(control.reason)")
           }
         }
       }
+    }
+  }
+
+  @ViewBuilder
+  private func controlStateView(_ state: SessionContinuationControlState?) -> some View {
+    switch state {
+    case .sending:
+      Text("Sending control...")
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+    case .succeeded(let summary):
+      Text(summary)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+    case .error(let reason):
+      Text(reason)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.coral)
+    case .idle, nil:
+      EmptyView()
+    }
+  }
+
+  private func controlStateDisablesButton(_ state: SessionContinuationControlState?) -> Bool {
+    guard let state else { return false }
+    switch state {
+    case .sending, .succeeded:
+      return true
+    case .idle, .error:
+      return false
     }
   }
 
