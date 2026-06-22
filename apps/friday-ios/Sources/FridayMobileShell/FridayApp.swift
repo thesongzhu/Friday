@@ -224,7 +224,9 @@ struct RootView: View {
       devicePairing: session.devicePairing,
       makePairingClient: session.makePairingClient))
     _sessionContinuationVM = StateObject(wrappedValue: SessionContinuationViewModel(
-      client: session.readClient))
+      client: session.readClient,
+      writeClient: session.writeClient,
+      runControlEnabled: session.runControlEnabled))
   }
 
   var body: some View {
