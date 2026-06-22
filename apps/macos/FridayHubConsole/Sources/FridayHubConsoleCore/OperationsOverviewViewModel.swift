@@ -165,6 +165,8 @@ public final class OperationsOverviewViewModel: ObservableObject {
   /// Per-candidate A1 run-outcome learning decision state, keyed by candidate id.
   @Published public private(set) var runOutcomeLearningDecisionStates: [String: WriteActionState] = [:]
 
+  public let devicePairing: DesktopDevicePairingReadiness
+
   private let client: FridayRustReadClient
   /// The spine-WRITE collaborator. `nil` ⇒ the write seam is not configured (the drivers render
   /// honest-unavailable). Separate from `client` so the read contract stays a pure read.
@@ -185,6 +187,7 @@ public final class OperationsOverviewViewModel: ObservableObject {
     writeClient: FridayMissionSpineWriteClient? = nil,
     missionRunClient: FridayMissionBoundRunWriteClient? = nil,
     writeOwnerPrincipal: String = liveReadProjectionOwnerPrincipal,
+    devicePairing: DesktopDevicePairingReadiness = .evaluate(),
     newId: @escaping @Sendable () -> String = { UUID().uuidString },
     missionIdPrefix: String = "mission-desktop-"
   ) {
@@ -192,6 +195,7 @@ public final class OperationsOverviewViewModel: ObservableObject {
     self.writeClient = writeClient
     self.missionRunClient = missionRunClient
     self.writeOwnerPrincipal = writeOwnerPrincipal
+    self.devicePairing = devicePairing
     self.newId = newId
     self.missionIdPrefix = missionIdPrefix
   }

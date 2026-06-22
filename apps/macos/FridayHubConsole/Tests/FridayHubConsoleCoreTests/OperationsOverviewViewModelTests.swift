@@ -7,12 +7,23 @@ import Testing
 @Test
 @MainActor
 func refreshLoadsRepresentativeSnapshot() async {
-  let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: .loaded))
+  let readiness = DesktopDevicePairingReadiness(
+    mode: .ready,
+    publicKeyHex: String(repeating: "b", count: 64),
+    readHost: "127.0.0.1",
+    readPort: 48751,
+    ownerPrincipal: "admin-001",
+    reason: "Desktop read-seam peer is derived and ready.",
+    nextStep: "Pair mobile devices separately.")
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    devicePairing: readiness)
   await vm.refresh()
   let snapshot = vm.state.snapshot
   #expect(snapshot != nil)
   #expect(snapshot?.missionId == "mission_workbench_probe_20260605")
   #expect(snapshot?.runtimeFeedStatus == .liveRustHubProjection)
+  #expect(vm.devicePairing == readiness)
 }
 
 @Test
@@ -73,6 +84,42 @@ func snapshotExercisesEveryHonestRenderingRule() {
 }
 
 @Test
+func desktopDevicePairingReadinessSurfacesOnlyMasterDerivedPublicKey() throws {
+  let home = try temporaryHome()
+  let master = String(repeating: "11", count: 32)
+
+  let readiness = DesktopDevicePairingReadiness.evaluate(
+    config: ReadProjectionServerConfig(host: "127.0.0.1", port: 48751),
+    ownerPrincipal: "admin-001",
+    environment: [MasterKeyPeer.masterKeyEnv: master],
+    homeDirectory: home)
+
+  #expect(readiness.mode == .ready)
+  #expect(readiness.publicKeyHex?.count == 64)
+  #expect(readiness.publicKeyHex?.allSatisfy { $0.isHexDigit && ($0.isNumber || $0.isLowercase) } == true)
+  #expect(readiness.readHost == "127.0.0.1")
+  #expect(readiness.readPort == 48751)
+  #expect(readiness.ownerPrincipal == "admin-001")
+  #expect(!readiness.reason.lowercased().contains("secret"))
+  #expect(!readiness.nextStep.lowercased().contains("secret"))
+}
+
+@Test
+func desktopDevicePairingReadinessFailsClosedWhenMasterKeyMissing() throws {
+  let home = try temporaryHome()
+
+  let readiness = DesktopDevicePairingReadiness.evaluate(
+    environment: [:],
+    homeDirectory: home)
+
+  #expect(readiness.mode == .unavailable)
+  #expect(readiness.publicKeyHex == nil)
+  #expect(readiness.readPort == 48751)
+  #expect(!readiness.reason.lowercased().contains("secret"))
+  #expect(!readiness.nextStep.lowercased().contains("secret"))
+}
+
+@Test
 func loadedEmptySnapshotIsConnectedEmptyNotUnavailable() {
   let snapshot = snapshotWithWorkItems(
     missionId: "mission-empty",
@@ -87,6 +134,13 @@ func loadedEmptySnapshotIsConnectedEmptyNotUnavailable() {
 func representativeSnapshotIsNotLoadedEmpty() {
   let snapshot = MockReadClient.representativeSnapshot
   #expect(!snapshot.isLoadedEmpty)
+}
+
+private func temporaryHome() throws -> URL {
+  let url = FileManager.default.temporaryDirectory
+    .appendingPathComponent("friday-console-tests-\(UUID().uuidString)")
+  try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+  return url
 }
 
 @Test

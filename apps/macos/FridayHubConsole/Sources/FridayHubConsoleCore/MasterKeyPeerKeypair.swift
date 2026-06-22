@@ -147,3 +147,52 @@ public enum MasterKeyPeer {
     }
   }
 }
+
+public enum DesktopDevicePairingReadinessMode: String, Sendable, Equatable {
+  case ready
+  case unavailable
+}
+
+/// Read-only desktop pairing/read-seam readiness for Operations Overview.
+///
+/// This reports the PUBLIC master-derived peer key the Hub Console will use against the read seam.
+/// It never enrolls a device, never writes trust state, and never exposes the host master key.
+public struct DesktopDevicePairingReadiness: Sendable, Equatable {
+  public let mode: DesktopDevicePairingReadinessMode
+  public let publicKeyHex: String?
+  public let readHost: String
+  public let readPort: UInt16
+  public let ownerPrincipal: String
+  public let reason: String
+  public let nextStep: String
+
+  public static func evaluate(
+    config: ReadProjectionServerConfig = .liveLoopback,
+    ownerPrincipal: String = liveReadProjectionOwnerPrincipal,
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+  ) -> DesktopDevicePairingReadiness {
+    do {
+      let keypair = try MasterKeyPeer.deriveKeypair(
+        environment: environment,
+        homeDirectory: homeDirectory)
+      return DesktopDevicePairingReadiness(
+        mode: .ready,
+        publicKeyHex: Hex.encode(keypair.publicKey),
+        readHost: config.host,
+        readPort: config.port,
+        ownerPrincipal: ownerPrincipal,
+        reason: "Desktop read-seam peer is derived and ready.",
+        nextStep: "Pair mobile devices separately; this desktop status does not enroll a phone.")
+    } catch {
+      return DesktopDevicePairingReadiness(
+        mode: .unavailable,
+        publicKeyHex: nil,
+        readHost: config.host,
+        readPort: config.port,
+        ownerPrincipal: ownerPrincipal,
+        reason: "Desktop master-derived peer is unavailable.",
+        nextStep: "Provision the host master key before proving desktop read-seam readiness.")
+    }
+  }
+}

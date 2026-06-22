@@ -22,13 +22,17 @@ import Testing
 /// Sendable` to satisfy the protocol's `Sendable` requirement.
 private final class InMemoryDeviceKeypairBackend: DeviceKeypairBackend, @unchecked Sendable {
   private var secret: [UInt8]?
+  private(set) var loadCount = 0
   /// Count of `storeSecret` calls — lets a test assert generation happened exactly once.
   private(set) var storeCount = 0
 
   /// Optionally seed a pre-existing stored secret (e.g. a wrong-length corrupt item).
   init(seed: [UInt8]? = nil) { self.secret = seed }
 
-  func loadSecret() throws -> [UInt8]? { secret }
+  func loadSecret() throws -> [UInt8]? {
+    loadCount += 1
+    return secret
+  }
   func storeSecret(_ secret: [UInt8]) throws {
     self.secret = secret
     storeCount += 1
@@ -132,4 +136,62 @@ func makeLiveWriteWithDeviceKeypairBuildsClientAndIsHonestlyUnavailableWithNoSer
     // write wrapper seals an envelope, surfacing the shared transport error directly. Still
     // fail-closed and never a fabricated run.
   }
+}
+
+@Test
+func devicePairingReadinessDefaultOffDoesNotTouchBackend() {
+  let backend = InMemoryDeviceKeypairBackend()
+
+  let readiness = DevicePairingReadiness.evaluate(
+    deviceKeypairRequested: false,
+    readLiveRequested: false,
+    writeLiveRequested: false,
+    backend: backend)
+
+  #expect(readiness.mode == .disabled)
+  #expect(readiness.publicKeyHex == nil)
+  #expect(readiness.readLiveRequested == false)
+  #expect(readiness.writeLiveRequested == false)
+  #expect(backend.loadCount == 0)
+  #expect(backend.storeCount == 0)
+}
+
+@Test
+func devicePairingReadinessSurfacesOnlyPublicKeyWhenRequested() throws {
+  let backend = InMemoryDeviceKeypairBackend()
+
+  let readiness = DevicePairingReadiness.evaluate(
+    deviceKeypairRequested: true,
+    readLiveRequested: true,
+    writeLiveRequested: true,
+    backend: backend)
+
+  #expect(readiness.mode == .ready)
+  #expect(readiness.publicKeyHex?.count == 64)
+  #expect(readiness.publicKeyHex?.allSatisfy { $0.isHexDigit && ($0.isNumber || $0.isLowercase) } == true)
+  #expect(readiness.readLiveRequested)
+  #expect(readiness.writeLiveRequested)
+  #expect(backend.loadCount == 1)
+  #expect(backend.storeCount == 1)
+  #expect(!readiness.reason.lowercased().contains("secret"))
+  #expect(!readiness.nextStep.lowercased().contains("secret"))
+}
+
+@Test
+func devicePairingReadinessFailsClosedOnCorruptStoredSecret() {
+  let backend = InMemoryDeviceKeypairBackend(seed: [UInt8](repeating: 0x42, count: 16))
+
+  let readiness = DevicePairingReadiness.evaluate(
+    deviceKeypairRequested: true,
+    readLiveRequested: true,
+    writeLiveRequested: false,
+    backend: backend)
+
+  #expect(readiness.mode == .unavailable)
+  #expect(readiness.publicKeyHex == nil)
+  #expect(readiness.readLiveRequested)
+  #expect(readiness.writeLiveRequested == false)
+  #expect(backend.storeCount == 0)
+  #expect(!readiness.reason.lowercased().contains("secret"))
+  #expect(!readiness.nextStep.lowercased().contains("secret"))
 }
