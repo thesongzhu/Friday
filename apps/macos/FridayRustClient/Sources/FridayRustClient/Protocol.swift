@@ -28,6 +28,51 @@ public enum FridayErrorCode: String, Codable, Equatable, Sendable {
   case `internal` = "INTERNAL"
 }
 
+// MARK: - Pairing wire types
+
+/// phone→hub QR pairing request. Mirrors `friday_protocol::Message::Pair`.
+///
+/// This carries the device's public key plus `HMAC(qr_secret, device_pubkey)` proof; it never
+/// carries the raw QR secret. `Vec<u8>` fields serialize as JSON arrays of byte numbers.
+public struct PairingPairWire: Equatable, Sendable {
+  public var deviceId: String
+  public var devicePubkey: [UInt8]
+  public var pairingProof: [UInt8]
+
+  public init(deviceId: String, devicePubkey: [UInt8], pairingProof: [UInt8]) {
+    self.deviceId = deviceId
+    self.devicePubkey = devicePubkey
+    self.pairingProof = pairingProof
+  }
+}
+
+/// hub→phone QR pairing acknowledgement. Mirrors `friday_protocol::Message::PairAck`.
+public struct PairingPairAckWire: Equatable, Sendable {
+  public var accepted: Bool
+  public var errorCode: FridayErrorCode?
+
+  public init(accepted: Bool, errorCode: FridayErrorCode? = nil) {
+    self.accepted = accepted
+    self.errorCode = errorCode
+  }
+}
+
+/// hub→phone status frame available on the pairing channel. Mirrors
+/// `friday_protocol::Message::HubStatus`; it is refs/capabilities only, never a model call.
+public struct PairingHubStatusWire: Equatable, Sendable {
+  public var online: Bool
+  public var capabilities: [String]
+  public var minVersion: UInt16
+  public var maxVersion: UInt16
+
+  public init(online: Bool, capabilities: [String], minVersion: UInt16, maxVersion: UInt16) {
+    self.online = online
+    self.capabilities = capabilities
+    self.minVersion = minVersion
+    self.maxVersion = maxVersion
+  }
+}
+
 // MARK: - WorkbenchProjection wire types
 
 /// Client→read-server request for the Mission Workbench read projection. Mirrors
@@ -374,6 +419,15 @@ public struct ActivityNeedsMeSnapshotWire: Codable, Equatable, Sendable {
 /// `WorkbenchProjectionRequest` and only decodes a `WorkbenchProjectionSnapshot` or an
 /// `Error` — every other inbound kind is surfaced as `.unsupported`, never silently dropped.
 public enum FridayMessage: Equatable {
+  // MARK: - Pairing seam (T3 zero-config QR provisioning)
+
+  /// phone→hub: complete QR pairing handshake. Flattened serde struct-variant shape.
+  case pair(PairingPairWire)
+  /// hub→phone: accept/deny pairing. Flattened serde struct-variant shape.
+  case pairAck(PairingPairAckWire)
+  /// hub→phone: status/capability frame on the pairing channel. No model/provider call.
+  case hubStatus(PairingHubStatusWire)
+
   case workbenchProjectionRequest(WorkbenchProjectionRequestWire)
   case workbenchProjectionSnapshot(WorkbenchProjectionSnapshotWire)
   case error(code: FridayErrorCode, message: String)
@@ -477,12 +531,47 @@ extension FridayMessage: Codable {
     case op
     case accepted
     case auditRef = "audit_ref"
+    case deviceId = "device_id"
+    case devicePubkey = "device_pubkey"
+    case pairingProof = "pairing_proof"
+    case errorCode = "error_code"
+    case online
+    case capabilities
+    case minVersion = "min_version"
+    case maxVersion = "max_version"
   }
 
   public init(from decoder: Decoder) throws {
     let tag = try decoder.container(keyedBy: TagKey.self)
     let kind = try tag.decode(String.self, forKey: .kind)
     switch kind {
+    case "Pair":
+      let c = try decoder.container(keyedBy: WriteKey.self)
+      self = .pair(
+        PairingPairWire(
+          deviceId: try c.decode(String.self, forKey: .deviceId),
+          devicePubkey: try c.decode([UInt8].self, forKey: .devicePubkey),
+          pairingProof: try c.decode([UInt8].self, forKey: .pairingProof)
+        )
+      )
+    case "PairAck":
+      let c = try decoder.container(keyedBy: WriteKey.self)
+      self = .pairAck(
+        PairingPairAckWire(
+          accepted: try c.decode(Bool.self, forKey: .accepted),
+          errorCode: try c.decodeIfPresent(FridayErrorCode.self, forKey: .errorCode)
+        )
+      )
+    case "HubStatus":
+      let c = try decoder.container(keyedBy: WriteKey.self)
+      self = .hubStatus(
+        PairingHubStatusWire(
+          online: try c.decode(Bool.self, forKey: .online),
+          capabilities: try c.decode([String].self, forKey: .capabilities),
+          minVersion: try c.decode(UInt16.self, forKey: .minVersion),
+          maxVersion: try c.decode(UInt16.self, forKey: .maxVersion)
+        )
+      )
     case "WorkbenchProjectionSnapshot":
       let c = try decoder.container(keyedBy: SnapshotKey.self)
       self = .workbenchProjectionSnapshot(try c.decode(WorkbenchProjectionSnapshotWire.self, forKey: .snapshot))
@@ -616,6 +705,26 @@ extension FridayMessage: Codable {
   public func encode(to encoder: Encoder) throws {
     var tag = encoder.container(keyedBy: TagKey.self)
     switch self {
+    case .pair(let p):
+      var c = encoder.container(keyedBy: WriteKey.self)
+      try c.encode("Pair", forKey: .kind)
+      try c.encode(p.deviceId, forKey: .deviceId)
+      try c.encode(p.devicePubkey, forKey: .devicePubkey)
+      try c.encode(p.pairingProof, forKey: .pairingProof)
+    case .pairAck(let a):
+      var c = encoder.container(keyedBy: WriteKey.self)
+      try c.encode("PairAck", forKey: .kind)
+      try c.encode(a.accepted, forKey: .accepted)
+      if let errorCode = a.errorCode {
+        try c.encode(errorCode, forKey: .errorCode)
+      }
+    case .hubStatus(let s):
+      var c = encoder.container(keyedBy: WriteKey.self)
+      try c.encode("HubStatus", forKey: .kind)
+      try c.encode(s.online, forKey: .online)
+      try c.encode(s.capabilities, forKey: .capabilities)
+      try c.encode(s.minVersion, forKey: .minVersion)
+      try c.encode(s.maxVersion, forKey: .maxVersion)
     case .workbenchProjectionRequest(let req):
       try tag.encode("WorkbenchProjectionRequest", forKey: .kind)
       var c = encoder.container(keyedBy: RequestKey.self)
