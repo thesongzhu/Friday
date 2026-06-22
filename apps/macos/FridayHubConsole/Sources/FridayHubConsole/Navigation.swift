@@ -5,6 +5,7 @@ import SwiftUI
 /// Desktop destinations backed by the Rust Hub Workbench projection.
 enum HubDestination: String, CaseIterable, Identifiable {
   case operations
+  case chat
   case providerAdmin
   case parity
   case workflow
@@ -16,6 +17,7 @@ enum HubDestination: String, CaseIterable, Identifiable {
   var title: String {
     switch self {
     case .operations: return "Operations Overview"
+    case .chat: return "Friday Chat"
     case .providerAdmin: return "Provider Admin"
     case .parity: return "Provider Parity"
     case .workflow: return "Workflow Builder"
@@ -27,6 +29,7 @@ enum HubDestination: String, CaseIterable, Identifiable {
   var systemImage: String {
     switch self {
     case .operations: return "gauge.with.dots.needle.bottom.50percent"
+    case .chat: return "bubble.left.and.bubble.right"
     case .providerAdmin: return "person.badge.key"
     case .parity: return "square.grid.3x3"
     case .workflow: return "point.3.connected.trianglepath.dotted"

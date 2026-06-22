@@ -1,0 +1,427 @@
+import FridayHubConsoleCore
+import SwiftUI
+
+struct DesktopChatScreen: View {
+  @ObservedObject var viewModel: OperationsOverviewViewModel
+  @State private var draft = ""
+  @State private var history: [DesktopChatMessage]
+
+  private let historyStore: DesktopChatHistoryStore
+
+  init(
+    viewModel: OperationsOverviewViewModel,
+    historyStore: DesktopChatHistoryStore = DesktopChatHistoryStore()
+  ) {
+    self.viewModel = viewModel
+    self.historyStore = historyStore
+    _history = State(initialValue: historyStore.load())
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      header
+      switch viewModel.state {
+      case .idle, .loading:
+        loadingView
+      case let .loaded(snapshot):
+        ScrollView {
+          loadedContent(snapshot)
+        }
+      case let .unavailable(reason):
+        UnavailableView(reason: reason)
+      }
+      composer
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    .background(HubTheme.backgroundWarmOffWhite)
+  }
+
+  private var header: some View {
+    HStack(alignment: .center, spacing: 10) {
+      Image(systemName: "bubble.left.and.bubble.right")
+        .font(.system(size: 18, weight: .semibold))
+        .foregroundStyle(HubTheme.cyan)
+        .frame(width: 24)
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Friday Chat")
+          .font(.system(size: 20, weight: .semibold))
+          .foregroundStyle(HubTheme.textPrimary)
+        Text("Mission-backed desktop conversation")
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textSecondary)
+      }
+      Spacer()
+      Button {
+        Task { await viewModel.refresh() }
+      } label: {
+        Label("Refresh Status", systemImage: "arrow.clockwise")
+      }
+      .buttonStyle(.borderedProminent)
+      .tint(HubTheme.cyan)
+      .disabled(viewModel.state.isLoading)
+      .accessibilityLabel("Refresh Friday Chat status")
+      .accessibilityIdentifier("friday.desktop.chat.refresh")
+    }
+    .padding(.horizontal, 20)
+    .padding(.vertical, 16)
+  }
+
+  private var loadingView: some View {
+    VStack(spacing: 12) {
+      ProgressView()
+      Text("Reading hub projection...")
+        .font(.system(size: 12))
+        .foregroundStyle(HubTheme.textSecondary)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  @ViewBuilder
+  func loadedContent(_ snapshot: WorkbenchSnapshot) -> some View {
+    VStack(alignment: .leading, spacing: 16) {
+      if !snapshot.statusLabels.isEmpty || !snapshot.runtimeFeedStatus.isHealthy {
+        StatusBanner(snapshot: snapshot)
+      }
+      continuityCard(snapshot)
+      transcriptCard
+      stateCard
+    }
+    .padding(20)
+  }
+
+  private func continuityCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("Conversation")
+          Spacer()
+          snapshot.runtimeFeedStatus.isHealthy
+            ? StatusChip(
+              text: snapshot.runtimeFeedStatus.displayText, bg: HubTheme.chipPendingBG,
+              fg: HubTheme.chipPendingFG)
+            : StatusChip(
+              text: snapshot.runtimeFeedStatus.displayText, bg: HubTheme.chipWarnBG,
+              fg: HubTheme.chipWarnFG)
+        }
+        RefPill(label: "mission_id", ref: snapshot.missionId)
+        RefPill(label: "friday_conversation_id", ref: snapshot.fridayConversationId)
+        if let agentSessionId = snapshot.agentSessionId {
+          RefPill(label: "agent_session_id", ref: agentSessionId)
+        }
+        HStack(spacing: 8) {
+          Button {
+            Task { await viewModel.loadDetail(.sessionList) }
+          } label: {
+            Label("Sessions", systemImage: "rectangle.stack")
+          }
+          .disabled(viewModel.detailState.isLoading)
+          if let agentSessionId = snapshot.agentSessionId {
+            Button {
+              Task { await viewModel.loadDetail(.sessionOpen(agentSessionId: agentSessionId)) }
+            } label: {
+              Label("Open", systemImage: "text.bubble")
+            }
+            .disabled(viewModel.detailState.isLoading)
+            Button {
+              Task { await viewModel.loadDetail(.sessionLinkState(agentSessionId: agentSessionId)) }
+            } label: {
+              Label("Link", systemImage: "link")
+            }
+            .disabled(viewModel.detailState.isLoading)
+          }
+        }
+        detailResult
+      }
+    }
+    .accessibilityIdentifier("friday.desktop.chat.continuity")
+  }
+
+  @ViewBuilder
+  private var transcriptCard: some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("Chat")
+          Spacer()
+          if !history.isEmpty {
+            Button {
+              history.removeAll()
+              historyStore.save(history)
+            } label: {
+              Label("Clear", systemImage: "trash")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(HubTheme.textSecondary)
+            .accessibilityLabel("Clear desktop chat history")
+          }
+        }
+        if history.isEmpty {
+          emptyTranscript
+        } else {
+          ForEach(history.suffix(10)) { message in
+            DesktopChatBubble(message: message)
+          }
+        }
+      }
+    }
+    .accessibilityIdentifier("friday.desktop.chat.transcript")
+  }
+
+  private var emptyTranscript: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text("Ready for a desktop turn.")
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(HubTheme.textPrimary)
+      Text("No local chat history yet.")
+        .font(.system(size: 12))
+        .foregroundStyle(HubTheme.textSecondary)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  @ViewBuilder
+  private var stateCard: some View {
+    switch viewModel.intakeState {
+    case .ready:
+      EmptyView()
+    case .sent:
+      GlassPanel {
+        HStack(spacing: 10) {
+          ProgressView()
+          Text("Friday is working...")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(HubTheme.textPrimary)
+        }
+      }
+    case let .confirmed(summary, questions, answerBody):
+      GlassPanel {
+        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+          StatusChip(text: "confirmed", bg: HubTheme.chipDoneBG, fg: HubTheme.chipDoneFG)
+          Text(answerBodyText(answerBody) ?? summary)
+            .font(.system(size: 13))
+            .foregroundStyle(HubTheme.textPrimary)
+            .textSelection(.enabled)
+          ForEach(questions, id: \.self) { question in
+            Text(question)
+              .font(.system(size: 12))
+              .foregroundStyle(HubTheme.textSecondary)
+          }
+        }
+      }
+      .accessibilityIdentifier("friday.desktop.chat.confirmed")
+    case let .error(reason):
+      GlassPanel {
+        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+          StatusChip(text: "unavailable", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+          Text(reason)
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textSecondary)
+        }
+      }
+      .accessibilityIdentifier("friday.desktop.chat.unavailable")
+    }
+  }
+
+  private var composer: some View {
+    HStack(spacing: 10) {
+      TextField("Ask Friday...", text: $draft, axis: .vertical)
+        .textFieldStyle(.plain)
+        .font(.system(size: 13))
+        .lineLimit(1...4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(Color.black.opacity(0.05)))
+        .disabled(viewModel.intakeState.isSent)
+        .accessibilityLabel("Message Friday on desktop")
+        .accessibilityIdentifier("friday.desktop.chat.composer")
+
+      Button {
+        sendDraft()
+      } label: {
+        Image(systemName: "arrow.up.circle.fill")
+          .font(.system(size: 28))
+          .foregroundStyle(canSend ? HubTheme.cyan : HubTheme.cyan.opacity(0.25))
+      }
+      .buttonStyle(.plain)
+      .disabled(!canSend)
+      .accessibilityLabel("Send desktop chat message")
+      .accessibilityIdentifier("friday.desktop.chat.send")
+    }
+    .padding(.horizontal, 20)
+    .padding(.vertical, 12)
+    .background(.ultraThinMaterial)
+  }
+
+  private var canSend: Bool {
+    !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !viewModel.intakeState.isSent
+  }
+
+  private func sendDraft() {
+    let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return }
+    draft = ""
+    append(.user(text))
+    Task {
+      await viewModel.submitIntake(intent: text)
+      append(DesktopChatMessage.from(viewModel.intakeState))
+    }
+  }
+
+  @ViewBuilder
+  private var detailResult: some View {
+    switch viewModel.detailState {
+    case .idle:
+      EmptyView()
+    case let .loading(arm):
+      HStack(spacing: 10) {
+        ProgressView()
+        Text(arm.title)
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textSecondary)
+      }
+    case let .loaded(detail):
+      VStack(alignment: .leading, spacing: 6) {
+        Text(detail.summary)
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textPrimary)
+        ForEach(detail.refs.prefix(4), id: \.self) { ref in
+          RefPill(label: nil, ref: ref)
+        }
+      }
+    case let .unavailable(title, reason):
+      Text("\(title): \(reason)")
+        .font(.system(size: 12))
+        .foregroundStyle(HubTheme.textSecondary)
+    }
+  }
+
+  private func append(_ message: DesktopChatMessage) {
+    history.append(message)
+    history = Array(history.suffix(30))
+    historyStore.save(history)
+  }
+
+  private func cardTitle(_ text: String) -> some View {
+    Text(text)
+      .font(.system(size: 14, weight: .semibold))
+      .foregroundStyle(HubTheme.textPrimary)
+  }
+}
+
+private struct DesktopChatBubble: View {
+  let message: DesktopChatMessage
+
+  var body: some View {
+    HStack {
+      if message.role == .friday { bubble; Spacer(minLength: 44) } else { Spacer(minLength: 44); bubble }
+    }
+  }
+
+  private var bubble: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(message.role.title)
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(HubTheme.textSecondary)
+      Text(message.text)
+        .font(.system(size: 13))
+        .foregroundStyle(HubTheme.textPrimary)
+        .fixedSize(horizontal: false, vertical: true)
+        .textSelection(.enabled)
+      ForEach(message.refs, id: \.self) { ref in
+        RefPill(label: nil, ref: ref)
+      }
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 9)
+    .background(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(message.role == .friday ? HubTheme.cyanSoft : Color.black.opacity(0.05)))
+    .frame(maxWidth: 520, alignment: .leading)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("\(message.role.title): \(message.text)")
+  }
+}
+
+private enum DesktopChatRole: String, Codable, Sendable {
+  case user
+  case friday
+
+  var title: String {
+    switch self {
+    case .user: return "You"
+    case .friday: return "Friday"
+    }
+  }
+}
+
+private struct DesktopChatMessage: Identifiable, Codable, Equatable, Sendable {
+  let id: String
+  let role: DesktopChatRole
+  let text: String
+  let refs: [String]
+  let createdAtMs: Int64
+
+  static func user(_ text: String) -> Self {
+    DesktopChatMessage(role: .user, text: text, refs: [])
+  }
+
+  static func from(_ state: WriteActionState) -> Self {
+    switch state {
+    case .ready:
+      return DesktopChatMessage(role: .friday, text: "Ready.", refs: [])
+    case .sent:
+      return DesktopChatMessage(role: .friday, text: "Working.", refs: [])
+    case let .confirmed(summary, questions, answerBody):
+      let body = answerBodyText(answerBody) ?? summary
+      return DesktopChatMessage(role: .friday, text: body, refs: questions)
+    case let .error(reason):
+      return DesktopChatMessage(role: .friday, text: reason, refs: [])
+    }
+  }
+
+  init(role: DesktopChatRole, text: String, refs: [String]) {
+    self.id = UUID().uuidString
+    self.role = role
+    self.text = text
+    self.refs = refs
+    self.createdAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+  }
+}
+
+struct DesktopChatHistoryStore {
+  private let defaults: UserDefaults
+  private let key: String
+
+  init(
+    defaults: UserDefaults = .standard,
+    key: String = "friday.desktop.chat.history.v1"
+  ) {
+    self.defaults = defaults
+    self.key = key
+  }
+
+  fileprivate func load() -> [DesktopChatMessage] {
+    guard let data = defaults.data(forKey: key) else { return [] }
+    return (try? JSONDecoder().decode([DesktopChatMessage].self, from: data)) ?? []
+  }
+
+  fileprivate func save(_ messages: [DesktopChatMessage]) {
+    guard let data = try? JSONEncoder().encode(messages) else { return }
+    defaults.set(data, forKey: key)
+  }
+}
+
+private func answerBodyText(_ answerBody: String?) -> String? {
+  guard let trimmed = answerBody?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+    return nil
+  }
+  return trimmed
+}
+
+#Preview("Friday Chat · loaded") {
+  let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: .loaded))
+  DesktopChatScreen(viewModel: vm)
+    .frame(width: 760, height: 720)
+}
