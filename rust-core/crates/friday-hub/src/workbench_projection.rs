@@ -310,16 +310,32 @@ fn run_outcome_learning_candidates_json(
 }
 
 fn work_item_agent_run_ids(item: &WorkItem) -> Vec<String> {
-    let mut ids = Vec::new();
+    let mut ids: Vec<String> = Vec::new();
     for value in item.proof_receipts.iter().chain(item.output_refs.iter()) {
-        if let Some(run_id) = value.strip_prefix("friday://agent-run/") {
-            let run_id = run_id.trim();
-            if !run_id.is_empty() && !ids.iter().any(|seen| seen == run_id) {
-                ids.push(run_id.to_string());
+        if let Some(run_id) = agent_run_id_from_ref(value) {
+            if !ids.iter().any(|seen| seen == &run_id) {
+                ids.push(run_id);
             }
         }
     }
     ids
+}
+
+fn agent_run_id_from_ref(value: &str) -> Option<String> {
+    let mut run_id = value
+        .strip_prefix("friday://agent-run/")
+        .or_else(|| value.strip_prefix("proof://outcome/AnswerProduced/"))?;
+    if let Some((id, _)) = run_id.split_once('?') {
+        run_id = id;
+    }
+    if let Some((id, _)) = run_id.split_once('#') {
+        run_id = id;
+    }
+    let run_id = run_id.trim();
+    if run_id.is_empty() {
+        return None;
+    }
+    Some(run_id.to_string())
 }
 
 fn capability_states_json(work_items: &[WorkItem], route_ref: &str) -> Vec<Value> {
@@ -1141,6 +1157,37 @@ mod tests {
             row.get("evidenceRef")
                 .and_then(Value::as_str)
                 .is_some_and(|ref_| ref_.starts_with("proof://run-outcome-learning-candidate/"))
+        }));
+    }
+
+    #[test]
+    fn projects_run_outcome_learning_candidates_from_answer_produced_proof_refs() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        let mut item = db.get_work_item("autodisp-1781492033").unwrap().unwrap();
+        item.status = WorkItemStatus::CompletedWithProof;
+        item.proof_receipts =
+            vec!["proof://outcome/AnswerProduced/run-follow-up-a1?signal=answer_len=572".into()];
+        db.upsert_work_item(&item).unwrap();
+        friday_storage::learning_candidate::record_run_outcome_candidates(
+            db.conn(),
+            "run-follow-up-a1",
+            Some("run-follow-up-a1"),
+            1,
+            0,
+            1_780_640_000_200,
+        )
+        .unwrap();
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        let candidates = snapshot
+            .get("runOutcomeLearningCandidates")
+            .and_then(Value::as_array)
+            .expect("projection must include runOutcomeLearningCandidates");
+        assert_eq!(candidates.len(), 3);
+        assert!(candidates.iter().all(|row| {
+            row.get("runId").and_then(Value::as_str) == Some("run-follow-up-a1")
+                && row.get("workItemId").and_then(Value::as_str) == Some("autodisp-1781492033")
         }));
     }
 

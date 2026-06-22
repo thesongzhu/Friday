@@ -335,6 +335,53 @@ func liveOperationsOverviewSubmitIntakeAutoDispatchesHybridClaudeFollowUp() asyn
   #expect(answerBody?.contains("Codex:") == true)
   #expect(answerBody?.contains("Claude follow-up:") == true)
   #expect(answerBody?.contains("FRIDAY_PRODUCT_AUTO_FOLLOWUP_OK") == true)
+
+  let expectedRunIds = Set(summaryRunIds(in: summary))
+  #expect(expectedRunIds.count >= 2)
+  let learningRows = try await pollLiveRunOutcomeLearningCandidates(
+    client: readClient,
+    runIds: expectedRunIds)
+  let projectedRunIds = Set(learningRows.compactMap { $0["runId"] as? String })
+  #expect(expectedRunIds.allSatisfy { projectedRunIds.contains($0) })
+  #expect(learningRows.allSatisfy { ($0["state"] as? String) == "pending" })
+  #expect(learningRows.allSatisfy {
+    (($0["evidenceRef"] as? String)?.hasPrefix("proof://run-outcome-learning-candidate/")) == true
+  })
+}
+
+private func summaryRunIds(in summary: String) -> [String] {
+  summary.split(separator: "·")
+    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    .compactMap { part in
+      guard part.hasPrefix("run_id=") else { return nil }
+      return String(part.dropFirst("run_id=".count))
+    }
+}
+
+private func pollLiveRunOutcomeLearningCandidates(
+  client: FridayRustReadClient,
+  runIds: Set<String>
+) async throws -> [[String: Any]] {
+  let deadline = Date().addingTimeInterval(20)
+  var lastRows: [[String: Any]] = []
+
+  repeat {
+    let snapshot = try await client.fetchWorkbench()
+    let rows = snapshot.raw["runOutcomeLearningCandidates"] as? [[String: Any]] ?? []
+    let matched = rows.filter { row in
+      guard let runId = row["runId"] as? String else { return false }
+      return runIds.contains(runId)
+    }
+    let matchedRunIds = Set(matched.compactMap { $0["runId"] as? String })
+    if runIds.isSubset(of: matchedRunIds) {
+      return matched
+    }
+    lastRows = rows
+    try await Task.sleep(for: .seconds(1))
+  } while Date() < deadline
+
+  Issue.record("expected live run-outcome learning candidates for \(runIds), got \(lastRows)")
+  return []
 }
 
 private func hybridFollowUpWriteConfig() -> AgentRunWriteServerConfig {

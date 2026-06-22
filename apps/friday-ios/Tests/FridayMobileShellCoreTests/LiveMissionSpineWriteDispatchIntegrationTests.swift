@@ -106,6 +106,43 @@ func liveMobileChatSendAutoDispatchesHybridClaudeFollowUp() async throws {
   #expect(receipt.answerBodyRunId == receipt.followUpRunId)
   #expect(receipt.answerBodyOutcome == "delivered")
   #expect(receipt.answerBody?.contains("FRIDAY_MOBILE_PRODUCT_AUTO_FOLLOWUP_OK") == true)
+
+  let learningRows = try await pollLiveRunOutcomeLearningCandidates(
+    client: readClient,
+    runIds: Set([receipt.runId, try #require(receipt.followUpRunId)]))
+  let projectedRunIds = Set(learningRows.compactMap { $0["runId"] as? String })
+  #expect(projectedRunIds.contains(receipt.runId))
+  #expect(projectedRunIds.contains(try #require(receipt.followUpRunId)))
+  #expect(learningRows.allSatisfy { ($0["state"] as? String) == "pending" })
+  #expect(learningRows.allSatisfy {
+    (($0["evidenceRef"] as? String)?.hasPrefix("proof://run-outcome-learning-candidate/")) == true
+  })
+}
+
+private func pollLiveRunOutcomeLearningCandidates(
+  client: FridayRustReadClient,
+  runIds: Set<String>
+) async throws -> [[String: Any]] {
+  let deadline = Date().addingTimeInterval(20)
+  var lastRows: [[String: Any]] = []
+
+  repeat {
+    let snapshot = try await client.fetchWorkbench()
+    let rows = snapshot.raw["runOutcomeLearningCandidates"] as? [[String: Any]] ?? []
+    let matched = rows.filter { row in
+      guard let runId = row["runId"] as? String else { return false }
+      return runIds.contains(runId)
+    }
+    let matchedRunIds = Set(matched.compactMap { $0["runId"] as? String })
+    if runIds.isSubset(of: matchedRunIds) {
+      return matched
+    }
+    lastRows = rows
+    try await Task.sleep(for: .seconds(1))
+  } while Date() < deadline
+
+  Issue.record("expected live run-outcome learning candidates for \(runIds), got \(lastRows)")
+  return []
 }
 
 private func mobileProductAutoFollowUpWriteConfig() -> AgentRunServerConfig {
