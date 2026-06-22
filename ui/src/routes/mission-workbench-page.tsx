@@ -8,6 +8,7 @@ import { missionWorkbenchApi } from "@/lib/api/mission-workbench";
 import { localize } from "@/lib/i18n/localized-text";
 import {
   type MissionWorkbenchApprovalState,
+  type MissionWorkbenchCapabilityState,
   type MissionLifecycleState,
   type MissionTranscriptGroupKind,
   type MissionSurfaceKind,
@@ -48,6 +49,18 @@ function stateMeansDone(state: MissionLifecycleState): boolean {
 
 function truthLabelText(label: MissionTruthLabel): string {
   return label.replaceAll("_", "-");
+}
+
+function capabilityStateRenderKey(capability: MissionWorkbenchCapabilityState, index: number): string {
+  return [
+    capability.id,
+    capability.kind,
+    capability.truthLabel,
+    capability.approvalState,
+    capability.dispatchAllowed ? "dispatch" : "gated",
+    capability.proofRef,
+    index,
+  ].join(":");
 }
 
 export function MissionWorkbenchPage() {
@@ -347,8 +360,8 @@ export function MissionWorkbenchPage() {
 
           <ShellCard eyebrow="Capabilities" title={localize(locale, "能力与审批", "Capability gates")}>
             <div className="space-y-3">
-              {snapshot.capabilityStates.map((capability) => (
-                <div key={capability.id} className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+              {snapshot.capabilityStates.map((capability, index) => (
+                <div key={capabilityStateRenderKey(capability, index)} className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{capability.label}</p>
