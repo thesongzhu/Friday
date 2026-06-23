@@ -29,6 +29,9 @@
  *                    leave the identical incident data anonymously readable via the alias.
  *   - /v1/sessions   session details (incl. conversation history; anonymous users must sign in
  *                    to list/read sessions — an accepted trade-off of the targeted scope)
+ *   - /v1/grants     active grants and authorization posture
+ *   - /v1/audit      runtime audit logs / forensic evidence
+ *   - /v1/observability/audit  observability audit entries and detail readback
  *
  * Intentionally NOT gated here (kept anonymous): health, setup, onboarding, auth
  * bootstrap/login/refresh, version/status/capabilities, and the core no-login UX surfaces
@@ -37,8 +40,8 @@
  *
  * Known-ungated personal/posture surfaces deliberately left OUT of this targeted scope
  * (recorded so they are not silently dropped — candidates for a follow-up classification, NOT
- * closed here): /v1/uix/learned-facts, /v1/uix/user-profile, /v1/audit, /v1/observability/audit,
- * /v1/grants, /v1/system/remote/devices, /v1/providers/usage, /v1/providers/budget. Each needs
+ * closed here): /v1/uix/learned-facts, /v1/uix/user-profile, /v1/system/remote/devices,
+ * /v1/providers/usage, /v1/providers/budget. Each needs
  * its own per-handler review before gating.
  */
 export const FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES: readonly string[] = [
@@ -49,6 +52,9 @@ export const FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES: readonly string[] = [
   "/v1/diagnosis",
   "/v1/learning",
   "/v1/sessions",
+  "/v1/grants",
+  "/v1/audit",
+  "/v1/observability/audit",
 ];
 
 /**
