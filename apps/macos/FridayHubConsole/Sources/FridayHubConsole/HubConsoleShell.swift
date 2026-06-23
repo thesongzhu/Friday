@@ -62,6 +62,8 @@ struct HubConsoleShell: View {
       OperationsOverviewScreen(viewModel: operationsVM)
     case .chat:
       DesktopChatScreen(viewModel: operationsVM)
+    case .pairingProvisioning:
+      PairingProvisioningScreen()
     default:
       DesktopProjectionScreen(destination: destination, viewModel: operationsVM)
     }

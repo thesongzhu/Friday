@@ -16,6 +16,7 @@ import SwiftUI
 struct FridayHomeScreen: View {
   @ObservedObject var viewModel: HomeViewModel
   @State private var pairingQRPayload = ""
+  @State private var showingPairingScanner = false
 
   var body: some View {
     ScrollView {
@@ -41,6 +42,18 @@ struct FridayHomeScreen: View {
       .padding(16)
     }
     .background(MobileTheme.backgroundWarmOffWhite.ignoresSafeArea())
+    .sheet(isPresented: $showingPairingScanner) {
+      PairingQRScannerView(
+        onScan: { payload in
+          pairingQRPayload = payload
+          viewModel.preflightPairingQR(payload)
+          showingPairingScanner = false
+        },
+        onCancel: {
+          showingPairingScanner = false
+        })
+        .ignoresSafeArea()
+    }
   }
 
   private var loadingView: some View {
@@ -171,6 +184,14 @@ struct FridayHomeScreen: View {
         .disabled(pairingQRPayload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
           || viewModel.pairingAttempt.mode == .sending)
         .accessibilityIdentifier("friday.home.pair-button")
+
+        Button {
+          showingPairingScanner = true
+        } label: {
+          Label("Scan", systemImage: "qrcode.viewfinder")
+        }
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier("friday.home.pairing-scan-button")
 
         Button {
           pairingQRPayload = ""
