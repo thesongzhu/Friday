@@ -315,12 +315,20 @@ public final class FridayChatViewModel: ObservableObject {
   /// to TIGHTEN the run; the grant/gate admission hints never reach the wire (the mutation is
   /// operator-gated downstream + at the resume).
   public func send(_ task: String, constraints: AgentRunConstraintsWire? = nil) async {
+    await send(task, routePreference: .auto, constraints: constraints)
+  }
+
+  public func send(
+    _ task: String,
+    routePreference: MissionRoutePreference,
+    constraints: AgentRunConstraintsWire? = nil
+  ) async {
     let trimmed = task.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
     appendHistory(role: "you", text: trimmed)
     phase = .dispatching(task: trimmed)
     if let missionClient {
-      await sendMission(trimmed, missionClient: missionClient)
+      await sendMission(trimmed, routePreference: routePreference, missionClient: missionClient)
       return
     }
     do {
@@ -349,6 +357,7 @@ public final class FridayChatViewModel: ObservableObject {
 
   private func sendMission(
     _ task: String,
+    routePreference: MissionRoutePreference,
     missionClient: any FridayMobileMissionDispatchingWriteClient
   ) async {
     do {
@@ -356,7 +365,8 @@ public final class FridayChatViewModel: ObservableObject {
         intent: task,
         owner: liveAgentRunOwnerPrincipal,
         idFactory: newId,
-        missionIdPrefix: missionIdPrefix)
+        missionIdPrefix: missionIdPrefix,
+        routePreference: routePreference)
       let result = try await missionClient.submitMissionIntake(request)
       guard result.status == "ready", let workItemId = result.workItemId else {
         phase = .unavailable(reason: "Mission intake not ready — \(result.status)")
@@ -593,7 +603,8 @@ public final class FridayChatViewModel: ObservableObject {
     intent: String,
     owner: String,
     idFactory: () -> String,
-    missionIdPrefix: String = "mission-mobile-"
+    missionIdPrefix: String = "mission-mobile-",
+    routePreference: MissionRoutePreference = .auto
   ) -> MissionIntakeRequestWire {
     let id = idFactory()
     return MissionIntakeRequestWire(
@@ -607,7 +618,8 @@ public final class FridayChatViewModel: ObservableObject {
       workItemId: "work-mobile-\(id)",
       title: String(intent.prefix(72)),
       intent: intent,
-      lane: "auto")
+      lane: routePreference.lane,
+      targetProviderOrAgent: routePreference.targetProviderOrAgent)
   }
 
   private static let claudeFollowUpTaskHeader =

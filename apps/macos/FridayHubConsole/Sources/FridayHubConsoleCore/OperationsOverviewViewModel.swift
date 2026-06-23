@@ -1,6 +1,8 @@
 import Foundation
 import FridayRustClient
 
+public typealias MissionRoutePreference = FridayRustClient.MissionRoutePreference
+
 /// What the right-docked proof inspector is currently focused on.
 /// Each case carries only refs/labels — never a body to load.
 public enum InspectorSelection: Sendable, Equatable {
@@ -476,7 +478,10 @@ public final class OperationsOverviewViewModel: ObservableObject {
   ///  - `blocked`             ⇒ `.error` (the blockers),
   ///  - a transport/honest-unavailable throw ⇒ `.error` (the truth).
   /// On any SUCCESS path it then `await refresh()`s so the new Mission appears in the read projection.
-  public func submitIntake(intent: String) async {
+  public func submitIntake(
+    intent: String,
+    routePreference: MissionRoutePreference = .auto
+  ) async {
     let trimmed = intent.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else {
       intakeState = .error(reason: "Enter an intent before submitting.")
@@ -493,7 +498,8 @@ public final class OperationsOverviewViewModel: ObservableObject {
     chatReviewState = .idle
     let request = Self.buildIntakeRequest(
       intent: trimmed, owner: writeOwnerPrincipal, idFactory: newId,
-      missionIdPrefix: missionIdPrefix)
+      missionIdPrefix: missionIdPrefix,
+      routePreference: routePreference)
     do {
       let result = try await writeClient.submitMissionIntake(request)
       switch result.status {
@@ -823,7 +829,8 @@ public final class OperationsOverviewViewModel: ObservableObject {
   /// equal the server `--owner` (FIX-Q3b). The title is a short prefix of the intent.
   static func buildIntakeRequest(
     intent: String, owner: String, idFactory: () -> String,
-    missionIdPrefix: String = "mission-desktop-"
+    missionIdPrefix: String = "mission-desktop-",
+    routePreference: MissionRoutePreference = .auto
   ) -> MissionIntakeRequestWire {
     let title = String(intent.prefix(72))
     let id = idFactory()
@@ -838,7 +845,8 @@ public final class OperationsOverviewViewModel: ObservableObject {
       workItemId: "work-desktop-\(id)",
       title: title,
       intent: intent,
-      lane: "auto")
+      lane: routePreference.lane,
+      targetProviderOrAgent: routePreference.targetProviderOrAgent)
   }
 
   /// Map a write-client error to an honest unavailable reason (mirrors `reason(for:)`'s tone).

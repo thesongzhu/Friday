@@ -332,6 +332,16 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertNil(request.targetProviderOrAgent)
   }
 
+  func testBuildMissionIntakeRequest_carriesRoutePreference() {
+    let request = FridayChatViewModel.buildMissionIntakeRequest(
+      intent: "use Claude for this synthesis",
+      owner: "admin-001",
+      idFactory: { "fixed" },
+      routePreference: .claude)
+    XCTAssertEqual(request.lane, "claude")
+    XCTAssertEqual(request.targetProviderOrAgent, "claude")
+  }
+
   func testBuildMissionIntakeRequest_acceptsSharedMissionPrefixForUiProofCapture() {
     let request = FridayChatViewModel.buildMissionIntakeRequest(
       intent: "route through Codex first and Claude follow-up",
@@ -373,9 +383,10 @@ final class FridayChatViewModelTests: XCTestCase {
       readClient: read,
       newId: { "fixed" })
 
-    await vm.send("route through Codex first and Claude follow-up")
+    await vm.send("route through Codex first and Claude follow-up", routePreference: .codex)
 
-    XCTAssertEqual(mission.submittedIntakes.map(\.lane), ["auto"])
+    XCTAssertEqual(mission.submittedIntakes.map(\.lane), ["codex"])
+    XCTAssertEqual(mission.submittedIntakes.first?.targetProviderOrAgent, "codex")
     XCTAssertEqual(mission.submittedIntakes.map(\.surfaceKind), ["mobile"])
     XCTAssertEqual(mission.missionContexts.map(\.workItemId), [
       "work-mobile-fixed",

@@ -12,6 +12,40 @@ import Foundation
 /// path: the WRITE session AAD/challenge (`friday:execrun:ws:s-c:…`) and the agent-run dispatch +
 /// courier pause/resume + S6 approval relay flow (not a single read projection).
 
+public enum MissionRoutePreference: String, CaseIterable, Identifiable, Sendable, Equatable, Hashable {
+  case auto
+  case codex
+  case claude
+  case deepseek
+
+  public var id: String { rawValue }
+
+  public var title: String {
+    switch self {
+    case .auto: return "Auto"
+    case .codex: return "Codex"
+    case .claude: return "Claude"
+    case .deepseek: return "DeepSeek"
+    }
+  }
+
+  public var lane: String {
+    switch self {
+    case .auto: return "auto"
+    case .codex: return "codex"
+    case .claude: return "claude"
+    case .deepseek: return "deepseek"
+    }
+  }
+
+  public var targetProviderOrAgent: String? {
+    switch self {
+    case .auto: return nil
+    case .codex, .claude, .deepseek: return rawValue
+    }
+  }
+}
+
 // MARK: - AgentRunConstraintsWire (per-run restrictions — NEVER a grant)
 
 /// Per-run CONSTRAINTS carried on an `AgentRunRequest`. Mirrors
