@@ -572,14 +572,41 @@ struct FridayProjectionScreen: View {
   }
 
   private func memoryCandidateRow(_ candidate: HomeMemoryCandidate) -> some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Text(candidate.preview)
-        .font(.system(size: 13, weight: .medium))
-        .foregroundStyle(MobileTheme.textPrimary)
+    let decisionState = viewModel.memoryDecisionStates[candidate.id]
+    return VStack(alignment: .leading, spacing: 6) {
+      HStack(alignment: .top, spacing: 8) {
+        Text(candidate.preview)
+          .font(.system(size: 13, weight: .medium))
+          .foregroundStyle(MobileTheme.textPrimary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 6) {
+          Button {
+            Task { await viewModel.decideMemory(candidateId: candidate.id, confirm: true) }
+          } label: {
+            Image(systemName: "checkmark")
+              .frame(width: 26, height: 26)
+          }
+          .buttonStyle(.borderedProminent)
+          .tint(MobileTheme.cyan)
+          .disabled(candidateDecisionControlsDisabled(decisionState))
+          .accessibilityLabel("Confirm memory candidate")
+
+          Button {
+            Task { await viewModel.decideMemory(candidateId: candidate.id, confirm: false) }
+          } label: {
+            Image(systemName: "xmark")
+              .frame(width: 26, height: 26)
+          }
+          .buttonStyle(.bordered)
+          .disabled(candidateDecisionControlsDisabled(decisionState))
+          .accessibilityLabel("Reject memory candidate")
+        }
+      }
       HStack(spacing: 6) {
         statusChip(candidate.state)
         statusChip(candidate.grantsMemoryAuthority ? "grants authority" : "review only")
       }
+      candidateDecisionStateView(decisionState, pendingText: "Applying memory decision...")
       if !candidate.evidenceRef.isEmpty {
         RefPill(label: "evidenceRef", ref: candidate.evidenceRef)
       }
@@ -637,15 +664,24 @@ struct FridayProjectionScreen: View {
   }
 
   private func learningDecisionControlsDisabled(_ state: HomeLearningDecisionState?) -> Bool {
+    candidateDecisionControlsDisabled(state)
+  }
+
+  private func candidateDecisionControlsDisabled(_ state: HomeLearningDecisionState?) -> Bool {
     guard let state else { return false }
     return state.isSent || state.isTerminal
   }
 
   @ViewBuilder
   private func learningDecisionStateView(_ state: HomeLearningDecisionState?) -> some View {
+    candidateDecisionStateView(state, pendingText: "Applying learning decision...")
+  }
+
+  @ViewBuilder
+  private func candidateDecisionStateView(_ state: HomeLearningDecisionState?, pendingText: String) -> some View {
     switch state {
     case .sent:
-      Text("Applying learning decision…")
+      Text(pendingText)
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
     case .confirmed(let summary):

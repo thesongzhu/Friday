@@ -171,17 +171,24 @@ final class HomeViewModelTests: XCTestCase {
     }
   }
 
-  final class FakeLearningWriteClient: FridayMissionSpineWriteClient, @unchecked Sendable {
-    enum Script {
+  final class FakeMissionWriteClient: FridayMissionSpineWriteClient, @unchecked Sendable {
+    enum LearningScript {
       case result(RunOutcomeLearningDecisionResultWire)
       case fail(Error)
     }
+    enum MemoryScript {
+      case result(MemoryDecisionResultWire)
+      case fail(Error)
+    }
 
-    let script: Script
+    let learningScript: LearningScript?
+    let memoryScript: MemoryScript?
+    private(set) var memoryRequests: [MemoryDecisionRequestWire] = []
     private(set) var learningRequests: [RunOutcomeLearningDecisionRequestWire] = []
 
-    init(_ script: Script) {
-      self.script = script
+    init(learningScript: LearningScript? = nil, memoryScript: MemoryScript? = nil) {
+      self.learningScript = learningScript
+      self.memoryScript = memoryScript
     }
 
     func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire {
@@ -189,14 +196,20 @@ final class HomeViewModelTests: XCTestCase {
     }
 
     func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire {
-      throw NSError(domain: "unused", code: 1)
+      memoryRequests.append(request)
+      guard let memoryScript else { throw NSError(domain: "unused", code: 1) }
+      switch memoryScript {
+      case .result(let result): return result
+      case .fail(let error): throw error
+      }
     }
 
     func submitRunOutcomeLearningDecision(
       _ request: RunOutcomeLearningDecisionRequestWire
     ) async throws -> RunOutcomeLearningDecisionResultWire {
       learningRequests.append(request)
-      switch script {
+      guard let learningScript else { throw NSError(domain: "unused", code: 1) }
+      switch learningScript {
       case .result(let result): return result
       case .fail(let error): throw error
       }
@@ -438,12 +451,13 @@ final class HomeViewModelTests: XCTestCase {
 
   func testDecideRunOutcomeLearningConfirmRendersConfirmedAndRefreshes() async throws {
     let read = FakeReadClient(.snapshot(try sampleSnapshot()))
-    let write = FakeLearningWriteClient(.result(RunOutcomeLearningDecisionResultWire(
-      candidateId: "learn-1",
-      runId: "run-1",
-      kind: "preference",
-      state: "confirmed",
-      status: "confirmed")))
+    let write = FakeMissionWriteClient(learningScript: .result(
+      RunOutcomeLearningDecisionResultWire(
+        candidateId: "learn-1",
+        runId: "run-1",
+        kind: "preference",
+        state: "confirmed",
+        status: "confirmed")))
     let vm = HomeViewModel(client: read, writeClient: write)
 
     await vm.decideRunOutcomeLearning(candidateId: "learn-1", confirm: true)
@@ -459,11 +473,12 @@ final class HomeViewModelTests: XCTestCase {
 
   func testDecideRunOutcomeLearningBlockedRendersErrorNotConfirmed() async throws {
     let read = FakeReadClient(.snapshot(try sampleSnapshot()))
-    let write = FakeLearningWriteClient(.result(RunOutcomeLearningDecisionResultWire(
-      candidateId: "learn-1",
-      state: "unknown",
-      status: "blocked",
-      blocker: "candidate missing")))
+    let write = FakeMissionWriteClient(learningScript: .result(
+      RunOutcomeLearningDecisionResultWire(
+        candidateId: "learn-1",
+        state: "unknown",
+        status: "blocked",
+        blocker: "candidate missing")))
     let vm = HomeViewModel(client: read, writeClient: write)
 
     await vm.decideRunOutcomeLearning(candidateId: "learn-1", confirm: false)
@@ -486,6 +501,73 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(read.fetchWorkbenchCount, 0)
     XCTAssertEqual(
       vm.runOutcomeLearningDecisionStates["learn-1"],
+      .error(reason: "Write seam not configured."))
+  }
+
+  func testDecideMemoryConfirmRendersConfirmedAndRefreshes() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeMissionWriteClient(memoryScript: .result(
+      MemoryDecisionResultWire(
+        memoryId: "cand-1",
+        state: "confirmed",
+        status: "confirmed",
+        recallable: true)))
+    let vm = HomeViewModel(
+      client: read,
+      writeClient: write,
+      writeOwnerPrincipal: "owner-ios")
+
+    await vm.decideMemory(candidateId: "cand-1", confirm: true)
+
+    XCTAssertEqual(write.memoryRequests, [
+      MemoryDecisionRequestWire(
+        memoryId: "cand-1",
+        ownerPrincipal: "owner-ios",
+        decision: "confirm"),
+    ])
+    XCTAssertEqual(read.fetchWorkbenchCount, 1)
+    XCTAssertEqual(
+      vm.memoryDecisionStates["cand-1"],
+      .confirmed(summary: "confirmed · state=confirmed · recallable=true"))
+  }
+
+  func testDecideMemoryBlockedRendersErrorNotConfirmed() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeMissionWriteClient(memoryScript: .result(
+      MemoryDecisionResultWire(
+        memoryId: "cand-1",
+        state: "unknown",
+        status: "blocked",
+        blocker: "unknown_candidate",
+        recallable: false)))
+    let vm = HomeViewModel(
+      client: read,
+      writeClient: write,
+      writeOwnerPrincipal: "owner-ios")
+
+    await vm.decideMemory(candidateId: "cand-1", confirm: false)
+
+    XCTAssertEqual(write.memoryRequests, [
+      MemoryDecisionRequestWire(
+        memoryId: "cand-1",
+        ownerPrincipal: "owner-ios",
+        decision: "reject"),
+    ])
+    XCTAssertEqual(read.fetchWorkbenchCount, 0)
+    XCTAssertEqual(
+      vm.memoryDecisionStates["cand-1"],
+      .error(reason: "Memory decision blocked — unknown_candidate"))
+  }
+
+  func testDecideMemoryWithoutWriteClientIsUnavailable() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let vm = HomeViewModel(client: read)
+
+    await vm.decideMemory(candidateId: "cand-1", confirm: true)
+
+    XCTAssertEqual(read.fetchWorkbenchCount, 0)
+    XCTAssertEqual(
+      vm.memoryDecisionStates["cand-1"],
       .error(reason: "Write seam not configured."))
   }
 }

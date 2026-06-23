@@ -551,6 +551,7 @@ public struct MobilePairingAttempt: Sendable, Equatable {
 public final class HomeViewModel: ObservableObject {
   @Published public private(set) var state: HomeLoadState = .idle
   @Published public private(set) var detailState: HomeReadDetailState = .idle
+  @Published public private(set) var memoryDecisionStates: [String: HomeLearningDecisionState] = [:]
   @Published public private(set) var runOutcomeLearningDecisionStates: [String: HomeLearningDecisionState] = [:]
   @Published public private(set) var pairingPreflight: MobilePairingPreflight = .empty
   @Published public private(set) var pairingAttempt: MobilePairingAttempt = .idle
@@ -561,6 +562,7 @@ public final class HomeViewModel: ObservableObject {
   /// refs-only value projections, never the package snapshot's raw body map.
   private let client: FridayRustReadClient
   private let writeClient: FridayMissionSpineWriteClient?
+  private let writeOwnerPrincipal: String
   private let makePairingClient: (DeviceKeypair) -> FridayPairingClient?
 
   /// - Parameter client: the read client. In production this is the real `SealedWSReadClient`
@@ -568,6 +570,7 @@ public final class HomeViewModel: ObservableObject {
   public init(
     client: FridayRustReadClient,
     writeClient: FridayMissionSpineWriteClient? = nil,
+    writeOwnerPrincipal: String = liveAgentRunOwnerPrincipal,
     devicePairing: DevicePairingReadiness = .evaluate(
       deviceKeypairRequested: false,
       readLiveRequested: false,
@@ -576,6 +579,7 @@ public final class HomeViewModel: ObservableObject {
   ) {
     self.client = client
     self.writeClient = writeClient
+    self.writeOwnerPrincipal = writeOwnerPrincipal
     self.devicePairing = devicePairing
     self.makePairingClient = makePairingClient
   }
@@ -603,6 +607,32 @@ public final class HomeViewModel: ObservableObject {
       detailState = .loaded(HomeReadDetail(title: arm.title, snapshot: snapshot))
     } catch {
       detailState = .unavailable(title: arm.title, reason: Self.reason(for: error))
+    }
+  }
+
+  public func decideMemory(candidateId: String, confirm: Bool) async {
+    guard let writeClient else {
+      memoryDecisionStates[candidateId] = .error(reason: "Write seam not configured.")
+      return
+    }
+    memoryDecisionStates[candidateId] = .sent
+    let request = MemoryDecisionRequestWire(
+      memoryId: candidateId,
+      ownerPrincipal: writeOwnerPrincipal,
+      decision: confirm ? "confirm" : "reject")
+    do {
+      let result = try await writeClient.submitMemoryDecision(request)
+      switch result.status {
+      case "confirmed", "rejected":
+        memoryDecisionStates[candidateId] = .confirmed(
+          summary: "\(result.status) · state=\(result.state) · recallable=\(result.recallable)")
+        await refresh()
+      default:
+        let why = result.blocker ?? "blocked"
+        memoryDecisionStates[candidateId] = .error(reason: "Memory decision blocked — \(why)")
+      }
+    } catch {
+      memoryDecisionStates[candidateId] = .error(reason: Self.reason(for: error))
     }
   }
 
