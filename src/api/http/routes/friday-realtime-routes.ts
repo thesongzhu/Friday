@@ -51,6 +51,25 @@ function assertRealtimeTestOracleAllowed(deps: FridayRealtimeRoutesDeps): void {
   }
 }
 
+function readOptionalNonNegativeInteger(
+  body: Record<string, unknown>,
+  fieldName: "afterSeq" | "limit",
+  defaultValue: number,
+): number {
+  if (!(fieldName in body) || body[fieldName] === undefined) {
+    return defaultValue;
+  }
+  const value = body[fieldName];
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${fieldName} must be a non-negative integer`,
+      { httpStatus: 400 },
+    );
+  }
+  return value;
+}
+
 export function createFridayRealtimeRoutes(
   deps: FridayRealtimeRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -96,7 +115,9 @@ export function createFridayRealtimeRoutes(
             { httpStatus: 400 },
           );
         }
-        const { streamId, afterSeq, limit, cursor } = pullBody as unknown as FridayRealtimePullRequest;
+        const { streamId, cursor } = pullBody as unknown as FridayRealtimePullRequest;
+        const requestedAfterSeq = readOptionalNonNegativeInteger(pullBody, "afterSeq", 0);
+        const requestedLimit = readOptionalNonNegativeInteger(pullBody, "limit", 50);
 
         // Verify stream authorization per principal
         if (!deps.subscriptionService.isStreamAuthorized(ctx.principal!, streamId)) {
@@ -107,17 +128,17 @@ export function createFridayRealtimeRoutes(
         }
 
         // Verify cursor HMAC if provided
-        if (cursor && !deps.subscriptionService.verifyCursor(cursor, streamId, afterSeq ?? 0, deps.currentEpoch)) {
+        if (cursor && !deps.subscriptionService.verifyCursor(cursor, streamId, requestedAfterSeq, deps.currentEpoch)) {
           throw Object.assign(new Error("Invalid cursor"), {
             code: "CURSOR_INVALID",
             statusCode: 400,
           });
         }
 
-        const clampedLimit = Math.min(limit ?? 50, REALTIME_MAX_PULL_LIMIT);
+        const clampedLimit = Math.min(requestedLimit, REALTIME_MAX_PULL_LIMIT);
         const events = deps.subscriptionService.pullEvents(
           streamId,
-          afterSeq ?? 0,
+          requestedAfterSeq,
           clampedLimit,
         );
         return {

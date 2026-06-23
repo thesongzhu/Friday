@@ -95,6 +95,46 @@ describe("FridayRealtimeRoutes", () => {
     ).rejects.toThrow(/Not authorized/);
   });
 
+  it("pull rejects negative afterSeq before querying events", async () => {
+    const routes = makeRoutes();
+    const route = routes.find((r) => r.operationId === "realtime.pull")!;
+
+    await expect(
+      route.handler({
+        requestId: "req-1",
+        receivedAt: NOW,
+        params: {},
+        query: {},
+        body: { streamId: "workflow:wf-1", afterSeq: -1, limit: 10 },
+        headers: {},
+        principal: adminPrincipal,
+      }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      httpStatus: 400,
+    } satisfies Partial<FridayDomainError>);
+  });
+
+  it("pull rejects fractional limits before querying events", async () => {
+    const routes = makeRoutes();
+    const route = routes.find((r) => r.operationId === "realtime.pull")!;
+
+    await expect(
+      route.handler({
+        requestId: "req-1",
+        receivedAt: NOW,
+        params: {},
+        query: {},
+        body: { streamId: "workflow:wf-1", afterSeq: 0, limit: 1.5 },
+        headers: {},
+        principal: adminPrincipal,
+      }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      httpStatus: 400,
+    } satisfies Partial<FridayDomainError>);
+  });
+
   it("ack rejects unauthorized stream", async () => {
     const routes = makeRoutes();
     const route = routes.find((r) => r.operationId === "realtime.ack")!;
@@ -160,6 +200,46 @@ describe("FridayRealtimeRoutes", () => {
     expect(result.streamId).toBe("workflow:wf-1");
     expect(result.epoch).toBe(EPOCH);
     expect(result.items.map((item) => item.eventId)).toEqual(["evt-offline-1", "evt-offline-2"]);
+  });
+
+  it("pull clamps oversized limits to the realtime maximum", async () => {
+    const eventRepo = createFridayRealtimeEventRepository();
+    const checkpointRepo = createFridayRealtimeCheckpointRepository();
+    db.withWriteTransaction((w) => {
+      for (let seq = 1; seq <= 201; seq += 1) {
+        eventRepo.append(w, {
+          eventId: `evt-${String(seq)}`,
+          streamId: "workflow:wf-1",
+          seq,
+          event: "workflow.updated",
+          payload: { workflowId: "wf-1", revision: seq, etag: `etag-${String(seq)}` },
+          emittedAt: NOW,
+        });
+      }
+    });
+    const subscriptionService = createFridayRealtimeSubscriptionService({
+      db,
+      eventRepo,
+      checkpointRepo,
+      nowIso: () => NOW,
+      currentEpoch: EPOCH,
+      cursorSecret: "test-secret",
+    });
+    const route = createFridayRealtimeRoutes({ subscriptionService, currentEpoch: EPOCH })
+      .find((r) => r.operationId === "realtime.pull")!;
+
+    const result = await route.handler({
+      requestId: "req-1",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      body: { streamId: "workflow:wf-1", afterSeq: 0, limit: 999 },
+      headers: {},
+      principal: adminPrincipal,
+    }) as { items: Array<{ seq: number; eventId: string }> };
+
+    expect(result.items).toHaveLength(200);
+    expect(result.items.at(-1)?.seq).toBe(200);
   });
 
   describe("TS runtime retirement (allowTestOnlyRealtimeExecution)", () => {
