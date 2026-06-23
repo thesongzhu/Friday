@@ -28,6 +28,7 @@ async function createFixtureRepo(): Promise<string> {
     scripts: {
       "check:companion:release-env": "bash scripts/ops/check-friday-companion-release-env.sh",
       "check:client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
+      "check:cross-platform-client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
       "build:companion:native": "bash scripts/ops/build-friday-companion-app.sh",
       "build:hub-console:native": "bash scripts/ops/build-friday-hub-console-app.sh",
       "build:ios:sim": "bash apps/friday-ios/build-sim.sh",
@@ -46,10 +47,17 @@ async function createFixtureRepo(): Promise<string> {
     "apps/macos/FridayCompanion/Package.swift",
     "apps/macos/FridayHubConsole/Package.swift",
     "apps/macos/FridayHubConsole/Info.plist",
+    "apps/macos/FridayHubConsole/Sources/FridayHubConsole/FridayHubConsoleApp.swift",
     "scripts/ops/release-friday-companion-app.sh",
     "scripts/ops/build-friday-hub-console-app.sh",
     "scripts/ops/verify-friday-hub-console-app.sh",
+    "apps/friday-ios/Package.swift",
+    "apps/friday-ios/Info.plist",
     "apps/friday-ios/build-sim.sh",
+    "apps/friday-ios/Sources/FridayMobileShell/FridayApp.swift",
+    "apps/friday-android/settings.gradle.kts",
+    "apps/friday-android/app/build.gradle.kts",
+    "apps/friday-android/app/src/main/AndroidManifest.xml",
     "apps/friday-android/build-emu.sh",
     "scripts/ops/build-friday-companion-dmg.sh",
     "scripts/ops/build-friday-sparkle-appcast.sh",
@@ -69,8 +77,8 @@ async function createFixtureRepo(): Promise<string> {
   return root;
 }
 
-describe("desktop release pipeline check", () => {
-  it("passes when the release pipeline files, scripts, and env checker are present", async () => {
+describe("client ship gate pipeline check", () => {
+  it("passes when desktop, iOS, and Android packaging hooks are present", async () => {
     const repoRoot = await createFixtureRepo();
     const result = await execFileAsync(
       "node",
@@ -84,10 +92,27 @@ describe("desktop release pipeline check", () => {
     const report = JSON.parse(result.stdout) as {
       status: string;
       summary: { failed: number };
+      checks: Array<{ target: string; status: string }>;
     };
 
     expect(report.status).toBe("passed");
     expect(report.summary.failed).toBe(0);
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          target: "apps/friday-ios/Sources/FridayMobileShell/FridayApp.swift",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "apps/friday-android/app/src/main/AndroidManifest.xml",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "check:cross-platform-client-ship-gate",
+          status: "passed",
+        }),
+      ]),
+    );
   });
 
   it("fails when a required release input is missing", async () => {
@@ -116,6 +141,38 @@ describe("desktop release pipeline check", () => {
       expect.arrayContaining([
         expect.objectContaining({
           target: "packaging/homebrew/Casks/friday.rb.template",
+          status: "failed",
+        }),
+      ]),
+    );
+  });
+
+  it("fails when a mobile client hook drifts out of the gate", async () => {
+    const repoRoot = await createFixtureRepo();
+    await fs.rm(path.join(repoRoot, "apps", "friday-android", "app", "src", "main", "AndroidManifest.xml"));
+
+    const error = await execFileAsync(
+      "node",
+      [path.join(process.cwd(), "scripts/ops/check-friday-desktop-release-pipeline.mjs"), repoRoot],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      },
+    ).then(
+      () => null,
+      (failure) => failure as ExecFailure,
+    );
+
+    expect(error).not.toBeNull();
+    const report = JSON.parse(error!.stdout ?? "{}") as {
+      status: string;
+      checks: Array<{ target: string; status: string }>;
+    };
+    expect(report.status).toBe("failed");
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          target: "apps/friday-android/app/src/main/AndroidManifest.xml",
           status: "failed",
         }),
       ]),
