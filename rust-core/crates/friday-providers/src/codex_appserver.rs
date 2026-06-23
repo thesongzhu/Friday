@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use friday_core::ProviderSessionEvent;
@@ -85,6 +85,7 @@ pub const MODEL_TURN_MAX_MESSAGES: usize = 100_000;
 /// exercise the parser without mutating process env.
 pub const FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS: &str = "FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS";
 pub const DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS: u64 = 300_000;
+pub const CODEX_APP_SERVER_WATCHDOG_WALL_MULTIPLIER: u32 = 4;
 
 pub const REQUIRED_CLIENT_METHODS: &[&str] = &[
     "initialize",
@@ -607,18 +608,34 @@ pub trait CodexAppServerTransport {
 pub struct JsonLineTransport<R, W> {
     reader: BufReader<R>,
     writer: W,
+    watchdog_progress: Option<Sender<AppServerWatchdogSignal>>,
 }
 
 impl<R: Read, W: Write> JsonLineTransport<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
+        Self::with_watchdog_progress(reader, writer, None)
+    }
+
+    fn with_watchdog_progress(
+        reader: R,
+        writer: W,
+        watchdog_progress: Option<Sender<AppServerWatchdogSignal>>,
+    ) -> Self {
         Self {
             reader: BufReader::new(reader),
             writer,
+            watchdog_progress,
         }
     }
 
     pub fn into_parts(self) -> (BufReader<R>, W) {
         (self.reader, self.writer)
+    }
+
+    fn note_stdout_progress(&self) {
+        if let Some(progress) = &self.watchdog_progress {
+            let _ = progress.send(AppServerWatchdogSignal::Progress);
+        }
     }
 }
 
@@ -654,6 +671,7 @@ impl<R: Read, W: Write> CodexAppServerTransport for JsonLineTransport<R, W> {
         if read == 0 {
             return Err(CodexAppServerError::Transport { code: "stream-eof" });
         }
+        self.note_stdout_progress();
         let value: Value =
             serde_json::from_str(&line).map_err(|_| CodexAppServerError::Protocol {
                 code: "stream-json",
@@ -711,6 +729,7 @@ impl<R: Read, W: Write> CodexAppServerTransport for JsonLineTransport<R, W> {
                     code: "response-eof",
                 });
             }
+            self.note_stdout_progress();
             let value: Value =
                 serde_json::from_str(&line).map_err(|_| CodexAppServerError::Protocol {
                     code: "response-json",
@@ -1265,7 +1284,7 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
 pub struct LocalCodexAppServer {
     child: Child,
     client: CodexAppServerClient<JsonLineTransport<ChildStdout, ChildStdin>>,
-    watchdog_release: Option<Sender<()>>,
+    watchdog_control: Option<Sender<AppServerWatchdogSignal>>,
 }
 
 impl LocalCodexAppServer {
@@ -1315,12 +1334,16 @@ impl LocalCodexAppServer {
                 .ok()
                 .as_deref(),
         );
-        let watchdog_release = Some(spawn_app_server_watchdog(child.id(), timeout));
-        let client = CodexAppServerClient::new(JsonLineTransport::new(stdout, stdin));
+        let watchdog_control = Some(spawn_app_server_watchdog(child.id(), timeout));
+        let client = CodexAppServerClient::new(JsonLineTransport::with_watchdog_progress(
+            stdout,
+            stdin,
+            watchdog_control.clone(),
+        ));
         Ok(Self {
             child,
             client,
-            watchdog_release,
+            watchdog_control,
         })
     }
 
@@ -1339,8 +1362,8 @@ impl LocalCodexAppServer {
 
     /// Terminate the spawned `codex app-server --stdio` process (idempotent).
     pub fn kill(&mut self) {
-        if let Some(release) = self.watchdog_release.take() {
-            let _ = release.send(());
+        if let Some(control) = self.watchdog_control.take() {
+            let _ = control.send(AppServerWatchdogSignal::Release);
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -1361,18 +1384,45 @@ fn codex_app_server_watchdog_timeout_from(raw: Option<&str>) -> Duration {
     Duration::from_millis(millis)
 }
 
-fn spawn_app_server_watchdog(pid: u32, timeout: Duration) -> Sender<()> {
-    let (release, released) = mpsc::channel();
+fn codex_app_server_watchdog_wall_timeout_from(idle_timeout: Duration) -> Duration {
+    idle_timeout
+        .checked_mul(CODEX_APP_SERVER_WATCHDOG_WALL_MULTIPLIER)
+        .unwrap_or(Duration::from_millis(u64::MAX))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppServerWatchdogSignal {
+    Progress,
+    Release,
+}
+
+fn spawn_app_server_watchdog(pid: u32, idle_timeout: Duration) -> Sender<AppServerWatchdogSignal> {
+    let (control, events) = mpsc::channel();
     let _ = thread::spawn(move || {
-        if released.recv_timeout(timeout).is_ok() {
-            return;
+        let wall_timeout = codex_app_server_watchdog_wall_timeout_from(idle_timeout);
+        let started = Instant::now();
+        loop {
+            let elapsed = started.elapsed();
+            if elapsed >= wall_timeout {
+                break;
+            }
+            let remaining_wall = wall_timeout.saturating_sub(elapsed);
+            let wait_for = idle_timeout.min(remaining_wall);
+            match events.recv_timeout(wait_for) {
+                Ok(AppServerWatchdogSignal::Release)
+                | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return;
+                }
+                Ok(AppServerWatchdogSignal::Progress) => continue,
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+            }
         }
         let pid = pid.to_string();
         let _ = Command::new("/bin/kill").args(["-TERM", &pid]).status();
         thread::sleep(Duration::from_millis(500));
         let _ = Command::new("/bin/kill").args(["-KILL", &pid]).status();
     });
-    release
+    control
 }
 
 /// (C1-2) The seam a hub-side `AgentLlmClient` adapter drives to run ONE Codex model turn
@@ -1557,6 +1607,7 @@ pub fn map_server_message_to_provider_event(
         "command/exec/outputDelta" | "item/commandExecution/outputDelta" => {
             ("command_output_delta", "command_execution")
         }
+        "terminalInteraction" => ("terminal_interaction", "terminal_interaction"),
         "item/fileChange/outputDelta" => ("file_change_output_delta", "file_change"),
         "item/commandExecution/requestApproval" => ("approval_requested", "approval"),
         "item/fileChange/requestApproval" => ("approval_requested", "approval"),
@@ -2005,6 +2056,56 @@ mod tests {
         assert!(
             !debug.contains("secret transcript text"),
             "PNS-003 mirror event must not inline raw provider text: {debug}"
+        );
+    }
+
+    #[test]
+    fn terminal_interaction_maps_to_first_class_provider_event() {
+        let context = ProviderMirrorContext::codex("friday-session-1");
+        let msg = JsonRpcServerMessage {
+            id: None,
+            method: "terminalInteraction".to_string(),
+            params: json!({
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "terminal-1",
+                "output": "raw terminal text must stay out of the mirror row",
+            }),
+        };
+        let event = map_server_message_to_provider_event(&context, &msg, 123, 10)
+            .unwrap()
+            .unwrap();
+        assert_eq!(event.event_kind, "terminal_interaction");
+        assert_eq!(event.transcript_item_kind, "terminal_interaction");
+        assert_eq!(event.redaction_level, "metadata_only");
+        let debug = format!("{event:?}");
+        assert!(
+            !debug.contains("raw terminal text"),
+            "terminal event must not inline raw provider text: {debug}"
+        );
+    }
+
+    #[test]
+    fn unmapped_provider_events_remain_observable() {
+        let context = ProviderMirrorContext::codex("friday-session-1");
+        let msg = JsonRpcServerMessage {
+            id: None,
+            method: "future/newEvent".to_string(),
+            params: json!({
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "future-1",
+            }),
+        };
+        let event = map_server_message_to_provider_event(&context, &msg, 123, 11)
+            .unwrap()
+            .unwrap();
+        assert_eq!(event.event_kind, "provider_event_unmapped");
+        assert_eq!(event.transcript_item_kind, "provider_event");
+        assert!(
+            event.body_ref.ends_with("/future.newEvent"),
+            "unmapped method should remain visible through body_ref: {}",
+            event.body_ref
         );
     }
 
@@ -2632,6 +2733,7 @@ mod tests {
     #[test]
     fn codex_app_server_watchdog_timeout_defaults_and_requires_positive_millis() {
         assert_eq!(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS, 300_000);
+        assert_eq!(CODEX_APP_SERVER_WATCHDOG_WALL_MULTIPLIER, 4);
         assert_eq!(
             codex_app_server_watchdog_timeout_from(None),
             Duration::from_millis(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS)
@@ -2652,6 +2754,71 @@ mod tests {
             codex_app_server_watchdog_timeout_from(Some(" 250 ")),
             Duration::from_millis(250)
         );
+        assert_eq!(
+            codex_app_server_watchdog_wall_timeout_from(Duration::from_millis(250)),
+            Duration::from_millis(1_000)
+        );
+    }
+
+    #[test]
+    fn json_line_transport_reports_stdout_progress_to_watchdog() {
+        let (progress, observed) = mpsc::channel();
+        let stream = r#"{"method":"turn/started","params":{"turn":{"id":"turn-1"}}}"#;
+        let mut transport = JsonLineTransport::with_watchdog_progress(
+            stream.as_bytes(),
+            Vec::<u8>::new(),
+            Some(progress),
+        );
+        let message = transport.read_message().unwrap();
+        assert!(matches!(
+            message,
+            CodexInboundMessage::Notification { method, .. } if method == "turn/started"
+        ));
+        assert_eq!(
+            observed.recv_timeout(Duration::from_millis(100)).unwrap(),
+            AppServerWatchdogSignal::Progress
+        );
+    }
+
+    #[test]
+    fn codex_app_server_watchdog_progress_resets_idle_timeout() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "sleep 5"])
+            .spawn()
+            .unwrap();
+        let control = spawn_app_server_watchdog(child.id(), Duration::from_millis(120));
+        thread::sleep(Duration::from_millis(70));
+        control.send(AppServerWatchdogSignal::Progress).unwrap();
+        thread::sleep(Duration::from_millis(70));
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "scratch child should still be alive because stdout progress reset idle watchdog"
+        );
+        let _ = control.send(AppServerWatchdogSignal::Release);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn codex_app_server_watchdog_kills_alive_but_silent_child() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "sleep 5"])
+            .spawn()
+            .unwrap();
+        let _control = spawn_app_server_watchdog(child.id(), Duration::from_millis(80));
+        for _ in 0..20 {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(
+                    !status.success(),
+                    "watchdog-killed scratch child must not report successful sleep completion"
+                );
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("watchdog did not kill alive-but-silent scratch child");
     }
 
     #[test]
