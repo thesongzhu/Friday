@@ -374,7 +374,10 @@ struct OperationsOverviewScreen: View {
         ForEach(snapshot.workItems) { item in
           WorkItemRow(
             item: item,
-            isSelected: viewModel.selection == .workItem(id: item.id)
+            isSelected: viewModel.selection == .workItem(id: item.id),
+            recoveryState: viewModel.workItemStatusStates[item.id] ?? .ready,
+            onRetry: { Task { await viewModel.retryWorkItem(item) } },
+            onCancel: { Task { await viewModel.cancelWorkItem(item) } }
           ) {
             viewModel.select(.workItem(id: item.id))
           }
@@ -760,56 +763,93 @@ struct SelectableCard<Content: View>: View {
 struct WorkItemRow: View {
   let item: MissionWorkbenchWorkItem
   let isSelected: Bool
+  let recoveryState: WriteActionState
+  let onRetry: () -> Void
+  let onCancel: () -> Void
   let onSelect: () -> Void
 
   var body: some View {
-    Button(action: onSelect) {
-      VStack(alignment: .leading, spacing: 6) {
-        HStack {
-          Text(item.title)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(HubTheme.textPrimary)
-          Spacer()
-          // `done` strictly from the projection's done field — provider_ack/linked
-          // items are explicitly NOT done.
-          if item.done {
-            StatusChip(text: "done", bg: HubTheme.chipDoneBG, fg: HubTheme.chipDoneFG)
-          } else {
-            StatusChip(text: "not done", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
-          }
-        }
-        HStack(spacing: 6) {
-          item.state.chip
-          item.owner.chip
-          if item.recoveryKind != "none" {
-            StatusChip(text: item.recoveryKind, bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
-          }
-        }
-        if !item.blockingReason.isEmpty {
-          Text(item.blockingReason)
-            .font(.system(size: 10))
-            .foregroundStyle(HubTheme.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        if item.canRetry || item.canCancel {
-          HStack(spacing: 6) {
-            if item.canRetry {
-              StatusChip(text: "retry available", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+    VStack(alignment: .leading, spacing: 8) {
+      Button(action: onSelect) {
+        content
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .buttonStyle(.plain)
+
+      if item.canRetry || item.canCancel {
+        HStack(spacing: 8) {
+          if item.canRetry {
+            Button(action: onRetry) {
+              Label("Retry", systemImage: "arrow.clockwise")
             }
-            if item.canCancel {
-              StatusChip(text: "cancel available", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+            .buttonStyle(.bordered)
+            .disabled(recoveryControlsDisabled)
+            .accessibilityLabel("Retry WorkItem")
+            .accessibilityIdentifier("friday.desktop.workItem.retry.\(item.id)")
+          }
+          if item.canCancel {
+            Button(action: onCancel) {
+              Label("Cancel", systemImage: "stop.circle")
             }
+            .buttonStyle(.bordered)
+            .disabled(recoveryControlsDisabled)
+            .accessibilityLabel("Cancel WorkItem")
+            .accessibilityIdentifier("friday.desktop.workItem.cancel.\(item.id)")
           }
         }
-        if let proof = item.proofRef {
-          RefPill(label: "proofRef", ref: proof)
+        WriteActionStateView(state: recoveryState, pendingText: "Updating WorkItem...")
+      }
+    }
+    .padding(10)
+    .background(rowBackground)
+  }
+
+  private var content: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack {
+        Text(item.title)
+          .font(.system(size: 13, weight: .medium))
+          .foregroundStyle(HubTheme.textPrimary)
+        Spacer()
+        // `done` strictly from the projection's done field — provider_ack/linked
+        // items are explicitly NOT done.
+        if item.done {
+          StatusChip(text: "done", bg: HubTheme.chipDoneBG, fg: HubTheme.chipDoneFG)
+        } else {
+          StatusChip(text: "not done", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
         }
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(10)
-      .background(rowBackground)
+      HStack(spacing: 6) {
+        item.state.chip
+        item.owner.chip
+        if item.recoveryKind != "none" {
+          StatusChip(text: item.recoveryKind, bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+        }
+      }
+      if !item.blockingReason.isEmpty {
+        Text(item.blockingReason)
+          .font(.system(size: 10))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      if item.canRetry || item.canCancel {
+        HStack(spacing: 6) {
+          if item.canRetry {
+            StatusChip(text: "retry available", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+          }
+          if item.canCancel {
+            StatusChip(text: "cancel available", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+          }
+        }
+      }
+      if let proof = item.proofRef {
+        RefPill(label: "proofRef", ref: proof)
+      }
     }
-    .buttonStyle(.plain)
+  }
+
+  private var recoveryControlsDisabled: Bool {
+    recoveryState.isSent || recoveryState.isTerminal
   }
 
   private var rowBackground: some View {

@@ -329,6 +329,8 @@ public enum WriteActionState: Sendable, Equatable {
 ///  - `decideMemory(...)`      — drive ONE owner confirm/reject of a memory candidate.
 ///  - `approve/reject/cancelNeedsMe...` — relay operator choices for a paused run; signing stays
 ///    external and the app never holds the operator key.
+///  - `retry/cancelWorkItem...` — advance ONE existing WorkItem lifecycle row through the Hub's
+///    owner-bound state machine.
 /// The write drivers are gated: with no `writeClient` (or an honest-unavailable one) they render the
 /// truth, never a fabricated confirm. No provider-admin / arbitrary-mutation method is exposed.
 @MainActor
@@ -347,6 +349,8 @@ public final class OperationsOverviewViewModel: ObservableObject {
   @Published public private(set) var approvalRelayStates: [String: WriteActionState] = [:]
   /// Per Activity / Needs-Me mark-done state, keyed by the Needs-Me item id.
   @Published public private(set) var activityMarkDoneStates: [String: WriteActionState] = [:]
+  /// Per WorkItem lifecycle recovery state, keyed by WorkItem id.
+  @Published public private(set) var workItemStatusStates: [String: WriteActionState] = [:]
   /// Structured refs for the latest desktop Chat turn. This avoids parsing status prose in the UI.
   @Published public private(set) var latestChatTurn: ChatTurnRefs?
   /// Refs-only Needs-Me rows for the latest Chat turn's runs.
@@ -732,6 +736,48 @@ public final class OperationsOverviewViewModel: ObservableObject {
       }
     } catch {
       activityMarkDoneStates[key] = .error(reason: Self.writeReason(for: error))
+    }
+  }
+
+  public func retryWorkItem(_ item: MissionWorkbenchWorkItem) async {
+    guard item.canRetry else {
+      workItemStatusStates[item.id] = .error(reason: "This WorkItem is not retryable.")
+      return
+    }
+    await submitWorkItemStatus(
+      workItemId: item.id,
+      targetStatus: "ready_to_dispatch",
+      reason: "operator retries WorkItem from desktop recovery surface")
+  }
+
+  public func cancelWorkItem(_ item: MissionWorkbenchWorkItem) async {
+    guard item.canCancel else {
+      workItemStatusStates[item.id] = .error(reason: "This WorkItem is not cancellable.")
+      return
+    }
+    await submitWorkItemStatus(
+      workItemId: item.id,
+      targetStatus: "cancelled",
+      reason: "operator cancels WorkItem from desktop recovery surface")
+  }
+
+  private func submitWorkItemStatus(workItemId: String, targetStatus: String, reason: String) async {
+    guard let writeClient else {
+      workItemStatusStates[workItemId] = .error(reason: "Write seam not configured.")
+      return
+    }
+    workItemStatusStates[workItemId] = .sent
+    do {
+      let result = try await writeClient.submitWorkItemStatus(WorkItemStatusRequestWire(
+        workItemId: workItemId,
+        targetStatus: targetStatus,
+        actorRef: "desktop:\(writeOwnerPrincipal)",
+        reason: reason))
+      workItemStatusStates[workItemId] = .confirmed(
+        summary: "\(result.status) · work_item_id=\(result.workItemId) · previous=\(result.previousStatus)")
+      await refresh()
+    } catch {
+      workItemStatusStates[workItemId] = .error(reason: Self.writeReason(for: error))
     }
   }
 

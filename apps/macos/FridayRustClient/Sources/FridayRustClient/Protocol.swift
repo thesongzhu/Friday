@@ -538,6 +538,10 @@ public enum FridayMessage: Equatable {
   case activityMarkDoneRequest(ActivityMarkDoneRequestWire)
   /// hub→trusted-peer: refs-only receipt for Activity / Needs-Me mark-done.
   case activityMarkDoneResult(ActivityMarkDoneResultWire)
+  /// trusted-peer→hub: advance ONE WorkItem lifecycle status through the Hub state machine.
+  case workItemStatusRequest(WorkItemStatusRequestWire)
+  /// hub→trusted-peer: refs-only receipt for a WorkItem lifecycle transition.
+  case workItemStatusResult(WorkItemStatusResultWire)
   /// client→read-server: owner-gated run answer body readback. Kept separate from
   /// RunReadback so refs-only projections stay refs-only.
   case runAnswerBodyRequest(RunAnswerBodyRequestWire)
@@ -770,6 +774,12 @@ extension FridayMessage: Codable {
     case "ActivityMarkDoneResult":
       let c = try decoder.container(keyedBy: ResultKey.self)
       self = .activityMarkDoneResult(try c.decode(ActivityMarkDoneResultWire.self, forKey: .result))
+    case "WorkItemStatusRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .workItemStatusRequest(try c.decode(WorkItemStatusRequestWire.self, forKey: .request))
+    case "WorkItemStatusResult":
+      let c = try decoder.container(keyedBy: ResultKey.self)
+      self = .workItemStatusResult(try c.decode(WorkItemStatusResultWire.self, forKey: .result))
     case "RunAnswerBodyRequest":
       let c = try decoder.container(keyedBy: RequestKey.self)
       self = .runAnswerBodyRequest(try c.decode(RunAnswerBodyRequestWire.self, forKey: .request))
@@ -980,6 +990,14 @@ extension FridayMessage: Codable {
       try c.encode(r, forKey: .request)
     case .activityMarkDoneResult(let r):
       try tag.encode("ActivityMarkDoneResult", forKey: .kind)
+      var c = encoder.container(keyedBy: ResultKey.self)
+      try c.encode(r, forKey: .result)
+    case .workItemStatusRequest(let r):
+      try tag.encode("WorkItemStatusRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(r, forKey: .request)
+    case .workItemStatusResult(let r):
+      try tag.encode("WorkItemStatusResult", forKey: .kind)
       var c = encoder.container(keyedBy: ResultKey.self)
       try c.encode(r, forKey: .result)
     case .runAnswerBodyRequest(let r):
