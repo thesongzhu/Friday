@@ -201,6 +201,24 @@ struct FridaySessionDetailScreen: View {
           .foregroundStyle(MobileTheme.textPrimary)
         switch section.status {
         case .loaded:
+          if !section.facts.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+              ForEach(section.facts) { fact in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                  Text(fact.label)
+                    .font(.caption2)
+                    .foregroundStyle(MobileTheme.textSecondary)
+                    .frame(width: 74, alignment: .leading)
+                  Text(fact.value)
+                    .font(.caption2)
+                    .foregroundStyle(MobileTheme.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                }
+              }
+            }
+          }
           if let generatedAtMs = section.generatedAtMs {
             RefPill(label: "generated", ref: generatedText(generatedAtMs))
           }
