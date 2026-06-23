@@ -20,6 +20,10 @@
     <string>1</string>
     <key>NSCameraUsageDescription</key>
     <string>Scan a Friday Hub pairing QR code.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Capture your spoken Friday chat prompt.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Transcribe your spoken Friday chat prompt into the composer.</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>MinimumOSVersion</key>

@@ -1,8 +1,11 @@
 import FridayHubConsoleCore
+import AVFoundation
+@preconcurrency import Speech
 import SwiftUI
 
 struct DesktopChatScreen: View {
   @ObservedObject var viewModel: OperationsOverviewViewModel
+  @StateObject private var voice = DesktopVoiceController()
   @State private var draft = ""
   @State private var history: [DesktopChatMessage]
 
@@ -198,7 +201,26 @@ struct DesktopChatScreen: View {
       GlassPanel {
         VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
           StatusChip(text: "confirmed", bg: HubTheme.chipDoneBG, fg: HubTheme.chipDoneFG)
-          Text(answerBodyText(answerBody) ?? summary)
+          let spokenText = answerBodyText(answerBody) ?? summary
+          HStack(spacing: 8) {
+            Button {
+              voice.speak(spokenText)
+            } label: {
+              Label("Speak", systemImage: "speaker.wave.2.fill")
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Speak Friday desktop answer")
+            .accessibilityIdentifier("friday.desktop.chat.voice-output")
+
+            Button {
+              voice.stopSpeaking()
+            } label: {
+              Image(systemName: "speaker.slash.fill")
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Stop speaking Friday desktop answer")
+          }
+          Text(spokenText)
             .font(.system(size: 13))
             .foregroundStyle(HubTheme.textPrimary)
             .textSelection(.enabled)
@@ -395,31 +417,55 @@ struct DesktopChatScreen: View {
   }
 
   private var composer: some View {
-    HStack(spacing: 10) {
-      TextField("Ask Friday...", text: $draft, axis: .vertical)
-        .textFieldStyle(.plain)
-        .font(.system(size: 13))
-        .lineLimit(1...4)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(
-          RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(Color.black.opacity(0.05)))
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 10) {
+        Button {
+          voice.toggleRecording { transcript in
+            Task { @MainActor in
+              draft = transcript
+            }
+          }
+        } label: {
+          Image(systemName: voice.isRecording ? "stop.circle.fill" : "mic.circle.fill")
+            .font(.system(size: 26))
+            .foregroundStyle(voice.isRecording ? HubTheme.coral : HubTheme.cyan)
+        }
+        .buttonStyle(.plain)
         .disabled(viewModel.intakeState.isSent)
-        .accessibilityLabel("Message Friday on desktop")
-        .accessibilityIdentifier("friday.desktop.chat.composer")
+        .accessibilityLabel(voice.isRecording ? "Stop desktop voice input" : "Start desktop voice input")
+        .accessibilityIdentifier("friday.desktop.chat.voice-input")
 
-      Button {
-        sendDraft()
-      } label: {
-        Image(systemName: "arrow.up.circle.fill")
-          .font(.system(size: 28))
-          .foregroundStyle(canSend ? HubTheme.cyan : HubTheme.cyan.opacity(0.25))
+        TextField("Ask Friday...", text: $draft, axis: .vertical)
+          .textFieldStyle(.plain)
+          .font(.system(size: 13))
+          .lineLimit(1...4)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 9)
+          .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+              .fill(Color.black.opacity(0.05)))
+          .disabled(viewModel.intakeState.isSent)
+          .accessibilityLabel("Message Friday on desktop")
+          .accessibilityIdentifier("friday.desktop.chat.composer")
+
+        Button {
+          voice.stopRecording()
+          sendDraft()
+        } label: {
+          Image(systemName: "arrow.up.circle.fill")
+            .font(.system(size: 28))
+            .foregroundStyle(canSend ? HubTheme.cyan : HubTheme.cyan.opacity(0.25))
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSend)
+        .accessibilityLabel("Send desktop chat message")
+        .accessibilityIdentifier("friday.desktop.chat.send")
       }
-      .buttonStyle(.plain)
-      .disabled(!canSend)
-      .accessibilityLabel("Send desktop chat message")
-      .accessibilityIdentifier("friday.desktop.chat.send")
+      if let status = voice.status {
+        Text(status)
+          .font(.system(size: 10))
+          .foregroundStyle(voice.isRecording ? HubTheme.cyan : HubTheme.textSecondary)
+      }
     }
     .padding(.horizontal, 20)
     .padding(.vertical, 12)
@@ -596,4 +642,114 @@ private func answerBodyText(_ answerBody: String?) -> String? {
   let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: .loaded))
   DesktopChatScreen(viewModel: vm)
     .frame(width: 760, height: 720)
+}
+
+@MainActor
+private final class DesktopVoiceController: ObservableObject {
+  @Published var isRecording = false
+  @Published var status: String?
+
+  private let recognizer = SFSpeechRecognizer()
+  private let audioEngine = AVAudioEngine()
+  private let synthesizer = AVSpeechSynthesizer()
+  private var request: SFSpeechAudioBufferRecognitionRequest?
+  private var task: SFSpeechRecognitionTask?
+
+  func toggleRecording(onTranscript: @escaping @Sendable (String) -> Void) {
+    if isRecording {
+      stopRecording()
+    } else {
+      startRecording(onTranscript: onTranscript)
+    }
+  }
+
+  func startRecording(onTranscript: @escaping @Sendable (String) -> Void) {
+    guard let recognizer, recognizer.isAvailable else {
+      status = "Voice input is unavailable on this Mac."
+      return
+    }
+    SFSpeechRecognizer.requestAuthorization { [weak self] speechStatus in
+      AVCaptureDevice.requestAccess(for: .audio) { micAllowed in
+        Task { @MainActor in
+          guard let self else { return }
+          guard speechStatus == .authorized, micAllowed else {
+            self.status = "Voice input needs microphone and speech recognition permission."
+            return
+          }
+          self.beginRecognition(onTranscript: onTranscript)
+        }
+      }
+    }
+  }
+
+  func stopRecording() {
+    guard isRecording || audioEngine.isRunning else { return }
+    audioEngine.inputNode.removeTap(onBus: 0)
+    audioEngine.stop()
+    request?.endAudio()
+    task?.cancel()
+    request = nil
+    task = nil
+    isRecording = false
+    status = "Voice input stopped."
+  }
+
+  func speak(_ text: String) {
+    stopSpeaking()
+    let utterance = AVSpeechUtterance(string: text)
+    utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+    synthesizer.speak(utterance)
+    status = "Speaking Friday answer."
+  }
+
+  func stopSpeaking() {
+    if synthesizer.isSpeaking {
+      synthesizer.stopSpeaking(at: .immediate)
+      status = "Voice output stopped."
+    }
+  }
+
+  private func beginRecognition(
+    onTranscript: @escaping @Sendable (String) -> Void
+  ) {
+    guard let recognizer else {
+      status = "Voice input is unavailable on this Mac."
+      return
+    }
+    stopRecording()
+    let request = SFSpeechAudioBufferRecognitionRequest()
+    request.shouldReportPartialResults = true
+    self.request = request
+
+    let input = audioEngine.inputNode
+    let format = input.outputFormat(forBus: 0)
+    input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+      request.append(buffer)
+    }
+
+    do {
+      audioEngine.prepare()
+      try audioEngine.start()
+      isRecording = true
+      status = "Listening..."
+      task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+        Task { @MainActor in
+          guard let self else { return }
+          if let result {
+            onTranscript(result.bestTranscription.formattedString)
+          }
+          if let error {
+            self.status = "Voice input stopped: \(error.localizedDescription)"
+            self.stopRecording()
+          } else if result?.isFinal == true {
+            self.stopRecording()
+          }
+        }
+      }
+    } catch {
+      input.removeTap(onBus: 0)
+      self.request = nil
+      status = "Voice input failed: \(error.localizedDescription)"
+    }
+  }
 }

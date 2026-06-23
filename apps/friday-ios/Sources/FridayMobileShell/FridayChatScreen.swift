@@ -1,4 +1,6 @@
 import FridayMobileShellCore
+import AVFoundation
+@preconcurrency import Speech
 import SwiftUI
 
 /// The full-screen, pet-centered Friday Chat read-WRITE surface (locked: the Friday Chat entry
@@ -15,6 +17,7 @@ import SwiftUI
 /// (the write receipt is refs-only; the answer body appears only through the owner-gated readback).
 struct FridayChatScreen: View {
   @StateObject private var viewModel: FridayChatViewModel
+  @StateObject private var voice = MobileVoiceController()
   /// Whether the S6 pause/approve/resume is enabled (the run-control flag). OFF ⇒ read-only.
   private let runControlEnabled: Bool
 
@@ -151,31 +154,55 @@ struct FridayChatScreen: View {
   // MARK: - Composer (Compose → Send)
 
   private var composer: some View {
-    HStack(spacing: 10) {
-      TextField("Ask Friday…", text: $draft, axis: .vertical)
-        .textFieldStyle(.plain)
-        .lineLimit(1...4)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-          RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(Color.black.opacity(0.05)))
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 10) {
+        Button {
+          voice.toggleRecording { transcript in
+            Task { @MainActor in
+              draft = transcript
+            }
+          }
+        } label: {
+          Image(systemName: voice.isRecording ? "stop.circle.fill" : "mic.circle.fill")
+            .font(.system(size: 28))
+            .foregroundStyle(voice.isRecording ? MobileTheme.coral : MobileTheme.cyan)
+        }
         .disabled(viewModel.phase.isBusy || viewModel.phase.isAwaitingApproval)
-        .accessibilityLabel("Message Friday")
-        .accessibilityIdentifier("friday.chat.composer")
+        .accessibilityLabel(voice.isRecording ? "Stop voice input" : "Start voice input")
+        .accessibilityIdentifier("friday.chat.voice-input")
 
-      Button {
-        let task = draft
-        draft = ""
-        Task { await viewModel.send(task) }
-      } label: {
-        Image(systemName: "arrow.up.circle.fill")
-          .font(.system(size: 30))
-          .foregroundStyle(canSend ? MobileTheme.cyan : MobileTheme.cyan.opacity(0.25))
+        TextField("Ask Friday…", text: $draft, axis: .vertical)
+          .textFieldStyle(.plain)
+          .lineLimit(1...4)
+          .padding(.horizontal, 14)
+          .padding(.vertical, 10)
+          .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+              .fill(Color.black.opacity(0.05)))
+          .disabled(viewModel.phase.isBusy || viewModel.phase.isAwaitingApproval)
+          .accessibilityLabel("Message Friday")
+          .accessibilityIdentifier("friday.chat.composer")
+
+        Button {
+          voice.stopRecording()
+          let task = draft
+          draft = ""
+          Task { await viewModel.send(task) }
+        } label: {
+          Image(systemName: "arrow.up.circle.fill")
+            .font(.system(size: 30))
+            .foregroundStyle(canSend ? MobileTheme.cyan : MobileTheme.cyan.opacity(0.25))
+        }
+        .disabled(!canSend)
+        .accessibilityLabel("Send message to Friday")
+        .accessibilityIdentifier("friday.chat.send")
       }
-      .disabled(!canSend)
-      .accessibilityLabel("Send message to Friday")
-      .accessibilityIdentifier("friday.chat.send")
+      if let voiceStatus = voice.status {
+        Text(voiceStatus)
+          .font(.caption2)
+          .foregroundStyle(voice.isRecording ? MobileTheme.cyan : MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 12)
@@ -200,6 +227,25 @@ struct FridayChatScreen: View {
         }
         Text("Friday answered").font(.headline).foregroundStyle(MobileTheme.textPrimary)
         if let answer = readableAnswer(r.answerBody) {
+          HStack {
+            Button {
+              voice.speak(answer)
+            } label: {
+              Label("Speak", systemImage: "speaker.wave.2.fill")
+            }
+            .buttonStyle(.bordered)
+            .tint(MobileTheme.cyan)
+            .accessibilityLabel("Speak Friday answer")
+            .accessibilityIdentifier("friday.chat.voice-output")
+
+            Button {
+              voice.stopSpeaking()
+            } label: {
+              Image(systemName: "speaker.slash.fill")
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Stop speaking Friday answer")
+          }
           Text(answer)
             .font(.body)
             .foregroundStyle(MobileTheme.textPrimary)
@@ -327,3 +373,123 @@ struct FridayChatScreen: View {
   NavigationStack { FridayChatScreen(session: FridaySession()) }
 }
 #endif
+
+@MainActor
+private final class MobileVoiceController: ObservableObject {
+  @Published var isRecording = false
+  @Published var status: String?
+
+  private let recognizer = SFSpeechRecognizer()
+  private let audioEngine = AVAudioEngine()
+  private let synthesizer = AVSpeechSynthesizer()
+  private var request: SFSpeechAudioBufferRecognitionRequest?
+  private var task: SFSpeechRecognitionTask?
+
+  func toggleRecording(onTranscript: @escaping @Sendable (String) -> Void) {
+    if isRecording {
+      stopRecording()
+    } else {
+      startRecording(onTranscript: onTranscript)
+    }
+  }
+
+  func startRecording(onTranscript: @escaping @Sendable (String) -> Void) {
+    guard let recognizer, recognizer.isAvailable else {
+      status = "Voice input is unavailable on this device."
+      return
+    }
+    SFSpeechRecognizer.requestAuthorization { [weak self] speechStatus in
+      Self.requestMicrophoneAccess { micAllowed in
+        Task { @MainActor in
+          guard let self else { return }
+          guard speechStatus == .authorized, micAllowed else {
+            self.status = "Voice input needs microphone and speech recognition permission."
+            return
+          }
+          self.beginRecognition(onTranscript: onTranscript)
+        }
+      }
+    }
+  }
+
+  func stopRecording() {
+    guard isRecording || audioEngine.isRunning else { return }
+    audioEngine.inputNode.removeTap(onBus: 0)
+    audioEngine.stop()
+    request?.endAudio()
+    task?.cancel()
+    request = nil
+    task = nil
+    isRecording = false
+    status = "Voice input stopped."
+  }
+
+  func speak(_ text: String) {
+    stopSpeaking()
+    let utterance = AVSpeechUtterance(string: text)
+    utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+    synthesizer.speak(utterance)
+    status = "Speaking Friday answer."
+  }
+
+  func stopSpeaking() {
+    if synthesizer.isSpeaking {
+      synthesizer.stopSpeaking(at: .immediate)
+      status = "Voice output stopped."
+    }
+  }
+
+  private func beginRecognition(
+    onTranscript: @escaping @Sendable (String) -> Void
+  ) {
+    guard let recognizer else {
+      status = "Voice input is unavailable on this device."
+      return
+    }
+    stopRecording()
+    let request = SFSpeechAudioBufferRecognitionRequest()
+    request.shouldReportPartialResults = true
+    self.request = request
+
+    let input = audioEngine.inputNode
+    let format = input.outputFormat(forBus: 0)
+    input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+      request.append(buffer)
+    }
+
+    do {
+      try AVAudioSession.sharedInstance().setCategory(.record, mode: .measurement, options: .duckOthers)
+      try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+      audioEngine.prepare()
+      try audioEngine.start()
+      isRecording = true
+      status = "Listening..."
+      task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+        Task { @MainActor in
+          guard let self else { return }
+          if let result {
+            onTranscript(result.bestTranscription.formattedString)
+          }
+          if let error {
+            self.status = "Voice input stopped: \(error.localizedDescription)"
+            self.stopRecording()
+          } else if result?.isFinal == true {
+            self.stopRecording()
+          }
+        }
+      }
+    } catch {
+      input.removeTap(onBus: 0)
+      self.request = nil
+      status = "Voice input failed: \(error.localizedDescription)"
+    }
+  }
+
+  private static func requestMicrophoneAccess(_ completion: @escaping @Sendable (Bool) -> Void) {
+    if #available(iOS 17.0, *) {
+      AVAudioApplication.requestRecordPermission(completionHandler: completion)
+    } else {
+      AVAudioSession.sharedInstance().requestRecordPermission(completion)
+    }
+  }
+}
