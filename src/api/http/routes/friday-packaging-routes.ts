@@ -49,6 +49,7 @@ import type {
   FridayMutatingActionGate,
   FridayMutatingActionGateResult,
 } from "../../../security/friday-mutating-action-gate.js";
+import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
 
 // ─── Service Dependencies ───
 
@@ -168,9 +169,15 @@ async function assertPackagingMutationAllowed(input: {
 function actorFromPrincipal(principal: unknown): { kind: string; id: string; principalId?: string } {
   const obj = principal as Record<string, unknown> | null | undefined;
   const principalId = readFirstString(obj, ["principalId", "id", "userId", "subject", "sub"]);
+  if (isUnauthenticatedPublicPrincipal(principal as never) || principalId === undefined) {
+    throw new FridayDomainError(
+      "PACKAGING_MUTATION_BOUND_PRINCIPAL_REQUIRED",
+      "Packaging mutation requires a bound principal before governance evaluation.",
+      { httpStatus: 401 },
+    );
+  }
   const kind = readFirstString(obj, ["kind", "type", "role"]) ?? "api";
-  const id = principalId ?? "anonymous";
-  return { kind, id, principalId };
+  return { kind, id: principalId, principalId };
 }
 
 function readFirstString(obj: Record<string, unknown> | null | undefined, keys: readonly string[]): string | undefined {
