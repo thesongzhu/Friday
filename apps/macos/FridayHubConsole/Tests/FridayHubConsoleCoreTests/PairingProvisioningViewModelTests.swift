@@ -56,11 +56,32 @@ import Testing
   await vm.startPairingSession(nowMs: 1_780_000_000_000)
 
   #expect(launcher.startCount == 1)
+  #expect(launcher.exposureModes == [.loopback])
   #expect(vm.state.mode == .ready)
   #expect(vm.qrPayload.contains(secret))
   #expect(!vm.redactedSummary.contains(secret))
   #expect(vm.state.manifestPath == "/tmp/friday-pairing.json")
   #expect(vm.redactedSummary.contains("/tmp/friday-pairing.json"))
+  #expect(vm.canRenderQRCode)
+}
+
+@MainActor
+@Test func pairingProvisioningCanRequestPrivateLanLauncherExplicitly() async throws {
+  let secret = "friday-pairing-lan-secret" // pragma: allowlist secret
+  let launcher = FakePairingLauncher(result: PairingSessionLaunchResult(
+    manifestJSON: pairingManifestJSON(
+      secret: secret,
+      expiresAt: 1_900_000_000_000,
+      endpoint: "ws://192.168.1.44:48752"),
+    manifestPath: "/tmp/friday-pairing-lan.json"))
+  let vm = PairingProvisioningViewModel(launcher: launcher)
+
+  await vm.startPairingSession(exposureMode: .privateLan, nowMs: 1_780_000_000_000)
+
+  #expect(launcher.exposureModes == [.privateLan])
+  #expect(vm.state.mode == .ready)
+  #expect(vm.state.reason.contains("private-LAN"))
+  #expect(vm.state.projection?.transportLabels.contains("pairing") == true)
   #expect(vm.canRenderQRCode)
 }
 
@@ -107,18 +128,54 @@ import Testing
   #expect(FileManager.default.fileExists(atPath: result.manifestPath))
 }
 
+@MainActor
+@Test func opsScriptPairingLauncherPassesAutoLanOnlyForPrivateLanMode() async throws {
+  let temp = try temporaryDirectory()
+  defer { try? FileManager.default.removeItem(at: temp) }
+  let script = temp.appendingPathComponent("friday-start-pairing-session.sh")
+  let secret = "friday-pairing-script-lan-secret" // pragma: allowlist secret
+  let body = pairingManifestJSON(
+    secret: secret,
+    expiresAt: 1_900_000_000_000,
+    endpoint: "ws://192.168.1.44:48752")
+  try """
+    #!/bin/sh
+    set -eu
+    test "${FRIDAY_PAIRING_HOST:-}" = "auto-lan"
+    mkdir -p "$(dirname "$FRIDAY_PAIRING_QR_JSON_OUT")"
+    cat > "$FRIDAY_PAIRING_QR_JSON_OUT" <<'JSON'
+    \(body)
+    JSON
+    """.write(to: script, atomically: true, encoding: .utf8)
+  try FileManager.default.setAttributes(
+    [.posixPermissions: NSNumber(value: Int16(0o700))],
+    ofItemAtPath: script.path)
+
+  let launcher = OpsScriptPairingSessionLauncher(
+    scriptPath: script.path,
+    outputDirectory: temp.appendingPathComponent("out", isDirectory: true),
+    environment: [:],
+    timeoutSeconds: 2)
+  let result = try await launcher.startPairingSession(exposureMode: .privateLan)
+
+  #expect(result.manifestJSON.contains(secret))
+  #expect(FileManager.default.fileExists(atPath: result.manifestPath))
+}
+
 private final class FakePairingLauncher: PairingSessionLaunching {
   private let result: PairingSessionLaunchResult?
   private let error: PairingSessionLauncherError?
   private(set) var startCount = 0
+  private(set) var exposureModes: [PairingSessionExposureMode] = []
 
   init(result: PairingSessionLaunchResult? = nil, error: PairingSessionLauncherError? = nil) {
     self.result = result
     self.error = error
   }
 
-  func startPairingSession() async throws -> PairingSessionLaunchResult {
+  func startPairingSession(exposureMode: PairingSessionExposureMode) async throws -> PairingSessionLaunchResult {
     startCount += 1
+    exposureModes.append(exposureMode)
     if let error {
       throw error
     }
@@ -133,7 +190,11 @@ private func temporaryDirectory() throws -> URL {
   return url
 }
 
-private func pairingManifestJSON(secret: String, expiresAt: Int64) -> String {
+private func pairingManifestJSON(
+  secret: String,
+  expiresAt: Int64,
+  endpoint: String = "ws://127.0.0.1:48752"
+) -> String {
   """
   {
     "kind": "friday.pairing.qr.v1",
@@ -145,7 +206,7 @@ private func pairingManifestJSON(secret: String, expiresAt: Int64) -> String {
     "pairing_secret": "\(secret)",
     "display_name": "Friday Test Hub",
     "transport_hints": [
-      {"kind":"websocket","endpoint":"ws://127.0.0.1:48752","label":"loopback"}
+      {"kind":"websocket","endpoint":"\(endpoint)","label":"pairing"}
     ],
     "expires_at": \(expiresAt),
     "capabilities_hint": ["read", "write"]

@@ -68,10 +68,19 @@ struct PairingProvisioningScreen: View {
           Button {
             Task { await viewModel.startPairingSession() }
           } label: {
-            Label("Start Session", systemImage: "antenna.radiowaves.left.and.right")
+            Label("Start Local", systemImage: "desktopcomputer")
           }
           .buttonStyle(.borderedProminent)
           .disabled(!viewModel.canStartPairingSession)
+
+          Button {
+            Task { await viewModel.startPairingSession(exposureMode: .privateLan) }
+          } label: {
+            Label("Start LAN QR", systemImage: "wifi")
+          }
+          .buttonStyle(.bordered)
+          .disabled(!viewModel.canStartPairingSession)
+          .help("Start a private-LAN QR pairing server for a real phone on this network.")
 
           Button {
             viewModel.load(qrJSON: inputPayload)

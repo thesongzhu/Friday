@@ -10,6 +10,29 @@ public enum PairingProvisioningMode: String, Sendable, Equatable {
   case unavailable
 }
 
+public enum PairingSessionExposureMode: String, Sendable, Equatable {
+  case loopback
+  case privateLan = "private_lan"
+
+  public var readyReason: String {
+    switch self {
+    case .loopback:
+      return "Short-lived loopback pairing QR is ready to scan."
+    case .privateLan:
+      return "Short-lived private-LAN pairing QR is ready to scan."
+    }
+  }
+
+  public var startingReason: String {
+    switch self {
+    case .loopback:
+      return "Starting a short-lived loopback Hub pairing session."
+    case .privateLan:
+      return "Starting a short-lived private-LAN Hub pairing session."
+    }
+  }
+}
+
 public struct PairingProvisioningState: Sendable, Equatable, CustomStringConvertible,
   CustomDebugStringConvertible
 {
@@ -62,7 +85,10 @@ public final class PairingProvisioningViewModel: ObservableObject {
     state.description
   }
 
-  public func startPairingSession(nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) async {
+  public func startPairingSession(
+    exposureMode: PairingSessionExposureMode = .loopback,
+    nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+  ) async {
     guard let launcher else {
       qrPayload = ""
       state = PairingProvisioningState(
@@ -75,12 +101,16 @@ public final class PairingProvisioningViewModel: ObservableObject {
     qrPayload = ""
       state = PairingProvisioningState(
         mode: .starting,
-        reason: "Starting a short-lived Hub pairing session.",
+        reason: exposureMode.startingReason,
         projection: nil,
         manifestPath: nil)
     do {
-      let result = try await launcher.startPairingSession()
-      load(qrJSON: result.manifestJSON, nowMs: nowMs, manifestPath: result.manifestPath)
+      let result = try await launcher.startPairingSession(exposureMode: exposureMode)
+      load(
+        qrJSON: result.manifestJSON,
+        nowMs: nowMs,
+        manifestPath: result.manifestPath,
+        readyReason: exposureMode.readyReason)
     } catch {
       qrPayload = ""
       state = PairingProvisioningState(
@@ -94,7 +124,8 @@ public final class PairingProvisioningViewModel: ObservableObject {
   public func load(
     qrJSON: String,
     nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
-    manifestPath: String? = nil
+    manifestPath: String? = nil,
+    readyReason: String = PairingSessionExposureMode.loopback.readyReason
   ) {
     let payload = qrJSON.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !payload.isEmpty else {
@@ -109,7 +140,7 @@ public final class PairingProvisioningViewModel: ObservableObject {
       let trimmedManifestPath = manifestPath?.trimmingCharacters(in: .whitespacesAndNewlines)
       state = PairingProvisioningState(
         mode: .ready,
-        reason: "Short-lived pairing QR is ready to scan.",
+        reason: readyReason,
         projection: manifest.redactedProjection,
         manifestPath: trimmedManifestPath?.isEmpty == false ? trimmedManifestPath : nil)
     } catch {
@@ -163,7 +194,7 @@ public struct PairingSessionLaunchResult: Sendable, Equatable {
 
 @MainActor
 public protocol PairingSessionLaunching: AnyObject {
-  func startPairingSession() async throws -> PairingSessionLaunchResult
+  func startPairingSession(exposureMode: PairingSessionExposureMode) async throws -> PairingSessionLaunchResult
 }
 
 public enum PairingSessionLauncherError: Error, Equatable, CustomStringConvertible {
@@ -237,7 +268,9 @@ public final class OpsScriptPairingSessionLauncher: PairingSessionLaunching {
     return nil
   }
 
-  public func startPairingSession() async throws -> PairingSessionLaunchResult {
+  public func startPairingSession(
+    exposureMode: PairingSessionExposureMode = .loopback
+  ) async throws -> PairingSessionLaunchResult {
     guard FileManager.default.fileExists(atPath: scriptPath) else {
       throw PairingSessionLauncherError.scriptUnavailable
     }
@@ -254,6 +287,9 @@ public final class OpsScriptPairingSessionLauncher: PairingSessionLaunching {
     var env = environment
     env["FRIDAY_PAIRING_QR_JSON_OUT"] = manifestURL.path
     env["FRIDAY_PAIRING_OUT_DIR"] = outputDirectory.path
+    if exposureMode == .privateLan {
+      env["FRIDAY_PAIRING_HOST"] = "auto-lan"
+    }
     process.environment = env
 
     do {
