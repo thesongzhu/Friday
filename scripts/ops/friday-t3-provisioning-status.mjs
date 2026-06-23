@@ -64,6 +64,22 @@ function quoteShell(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
+const DEFAULT_CONTEXT_PASSPORT_ITEMS_PATH = "/tmp/friday-t3-passport-items-reviewed.json";
+
+function buildContextPassportItemsTemplateCommand(
+  outputPath = DEFAULT_CONTEXT_PASSPORT_ITEMS_PATH,
+) {
+  return [
+    `/usr/bin/printf '%s\\n' \\`,
+    "  '[' \\",
+    "  '  {\"kind\":\"summary\",\"label\":\"Operator reviewed T3 context passport items.\",\"included\":true,\"sensitive\":false},' \\",
+    "  '  {\"kind\":\"summary\",\"label\":\"Scope: current governed Friday mission only.\",\"included\":true,\"sensitive\":false},' \\",
+    "  '  {\"kind\":\"summary\",\"label\":\"No signing-key custody or irreversible auto-approval granted.\",\"included\":true,\"sensitive\":false}' \\",
+    `  ']' > ${quoteShell(outputPath)} && \\`,
+    `node -e 'JSON.parse(require("fs").readFileSync(${JSON.stringify(outputPath)},"utf8")); console.log("context passport items JSON OK")'`,
+  ].join("\n");
+}
+
 function quoteSqlString(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
@@ -217,6 +233,7 @@ export function buildT3OperatorAction(status) {
     latest_device_id: status.latest_device?.device_id ?? null,
     missing: status.missing,
     command: null,
+    items_json_template_command: null,
     notes: [
       "This is a read-only hint. It never mints rows, reads operator signing keys, flips flags, or creates organic evidence.",
       "Run the suggested command only from an operator-controlled shell with real values for every placeholder.",
@@ -238,10 +255,16 @@ export function buildT3OperatorAction(status) {
   if (missingGrant || missingPassport) {
     const step = missingGrant && missingPassport ? "both" : missingGrant ? "grant" : "passport";
     action.status = "operator_provision_required";
-    action.command = [
+    if (missingPassport) {
+      action.items_json_template_command = buildContextPassportItemsTemplateCommand();
+    }
+    const commandLines = [
       "FRIDAY_T3_OPERATOR_PROVISION_ACK=operator-runs-t3-provisioning \\",
       `FRIDAY_T3_DB_PATH=${quoteShell(status.dbPath)} \\`,
       `FRIDAY_T3_STEP=${step} \\`,
+    ];
+    if (missingGrant) {
+      commandLines.push(
       "FRIDAY_T3_GRANT_ID='<operator-chosen-grant-id>' \\",
       "FRIDAY_T3_AGENT_ID='<agent-or-lane-id>' \\",
       "FRIDAY_T3_RISK_CEILING='<explicit-risk-ceiling>' \\",
@@ -255,18 +278,31 @@ export function buildT3OperatorAction(status) {
       "FRIDAY_T3_CHANNELS='<comma-separated-channels-or-empty>' \\",
       "FRIDAY_T3_WORKFLOW_FAMILIES='<comma-separated-workflows-or-empty>' \\",
       "FRIDAY_T3_SKILL_FAMILIES='<comma-separated-skills-or-empty>' \\",
+      );
+    }
+    if (missingPassport) {
+      commandLines.push(
       "FRIDAY_T3_PASSPORT_ID='<operator-chosen-passport-id>' \\",
       "FRIDAY_T3_MISSION_ID='<real-mission-id>' \\",
       "FRIDAY_T3_WORK_ITEM_ID='<real-work-item-id-or-empty>' \\",
       "FRIDAY_T3_DESTINATION_LANE='<destination-lane>' \\",
       "FRIDAY_T3_DESTINATION_TARGET='<destination-target-or-empty>' \\",
-      "FRIDAY_T3_ITEMS_JSON='<path-to-reviewed-context-passport-items.json>' \\",
+      `FRIDAY_T3_ITEMS_JSON=${quoteShell(DEFAULT_CONTEXT_PASSPORT_ITEMS_PATH)} \\`,
+      );
+    }
+    commandLines.push(
       "scripts/ops/friday-t3-operator-provision.sh",
-    ].join("\n");
+    );
+    action.command = commandLines.join("\n");
     action.notes.push(
       `Latest paired device observed: ${status.latest_device.device_id}. This only proves a paired-device preflight exists; it does not approve grant/passport contents.`,
-      "At least one explicit grant boundary is required by the wrapper.",
     );
+    if (missingPassport) {
+      action.notes.push("Prepare and review the context-passport items JSON file before running passport or both.");
+    }
+    if (missingGrant) {
+      action.notes.push("At least one explicit grant boundary is required by the wrapper.");
+    }
     return action;
   }
 
@@ -286,6 +322,9 @@ export function renderOperatorAction(action) {
   }
   if (action.command) {
     lines.push("", "suggested_command:", action.command);
+  }
+  if (action.items_json_template_command) {
+    lines.push("", "prepare_items_json:", action.items_json_template_command);
   }
   lines.push("", "notes:");
   for (const note of action.notes) {
