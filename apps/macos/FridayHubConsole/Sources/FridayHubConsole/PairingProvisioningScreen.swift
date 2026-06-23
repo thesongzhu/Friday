@@ -8,6 +8,7 @@ struct PairingProvisioningScreen: View {
   @StateObject private var viewModel = PairingProvisioningViewModel()
   @State private var inputPayload = ""
   @State private var showImporter = false
+  private let operatorCommand = PairingProvisioningViewModel.operatorProvisioningCommand()
 
   var body: some View {
     ScrollView {
@@ -15,6 +16,7 @@ struct PairingProvisioningScreen: View {
         header
         inputPanel
         qrPanel
+        operatorPanel
       }
       .padding(20)
       .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -163,6 +165,38 @@ struct PairingProvisioningScreen: View {
     }
   }
 
+  private var operatorPanel: some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Text("Operator Ceremony")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(HubTheme.textPrimary)
+          Spacer()
+          Button {
+            copyOperatorCommand()
+          } label: {
+            Label("Copy", systemImage: "doc.on.doc")
+          }
+          .buttonStyle(.bordered)
+        }
+        Text("Trust grants and context passports stay operator CLI ceremonies; this app only stages the exact command shape.")
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        ScrollView(.horizontal) {
+          Text(operatorCommand)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(HubTheme.textPrimary)
+            .textSelection(.enabled)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 8))
+      }
+    }
+  }
+
   private func importManifest(_ result: Result<[URL], Error>) {
     do {
       guard let url = try result.get().first else { return }
@@ -184,6 +218,11 @@ struct PairingProvisioningScreen: View {
     guard viewModel.canRenderQRCode else { return }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(viewModel.qrPayload, forType: .string)
+  }
+
+  private func copyOperatorCommand() {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(operatorCommand, forType: .string)
   }
 
   private func statusChip(_ text: String) -> some View {

@@ -85,6 +85,25 @@ public final class PairingProvisioningViewModel: ObservableObject {
     state.description
   }
 
+  public static func operatorProvisioningCommand(repoRoot: String = "$FRIDAY_REPO_ROOT") -> String {
+    """
+    cd \(repoRoot)
+    FRIDAY_T3_OPERATOR_PROVISION_ACK=operator-runs-t3-provisioning \\
+    FRIDAY_T3_STEP=both \\
+    FRIDAY_T3_GRANT_ID=<grant-id> \\
+    FRIDAY_T3_AGENT_ID=<agent-or-device-principal> \\
+    FRIDAY_T3_RISK_CEILING=<low|medium|high> \\
+    FRIDAY_T3_WORKSPACE=<absolute-workspace-path> \\
+    FRIDAY_T3_PROVIDERS=<provider-list> \\
+    FRIDAY_T3_TOOLS=<tool-list> \\
+    FRIDAY_T3_PASSPORT_ID=<passport-id> \\
+    FRIDAY_T3_MISSION_ID=<mission-id> \\
+    FRIDAY_T3_DESTINATION_LANE=<codex|claude|deepseek> \\
+    FRIDAY_T3_ITEMS_JSON=<approved-context-items-json> \\
+    scripts/ops/friday-t3-operator-provision.sh
+    """
+  }
+
   public func startPairingSession(
     exposureMode: PairingSessionExposureMode = .loopback,
     nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
@@ -99,11 +118,11 @@ public final class PairingProvisioningViewModel: ObservableObject {
       return
     }
     qrPayload = ""
-      state = PairingProvisioningState(
-        mode: .starting,
-        reason: exposureMode.startingReason,
-        projection: nil,
-        manifestPath: nil)
+    state = PairingProvisioningState(
+      mode: .starting,
+      reason: exposureMode.startingReason,
+      projection: nil,
+      manifestPath: nil)
     do {
       let result = try await launcher.startPairingSession(exposureMode: exposureMode)
       load(
