@@ -359,7 +359,14 @@ export async function loadProviderTruth(): Promise<ProviderTruthSnapshot> {
     });
   }
 
-  const hasFallbackLane = Boolean(routing?.fallbackProviderIds?.length);
+  const hasFallbackLane = (routing?.fallbackProviderIds ?? []).some((providerId) => {
+    const fallbackHealth = healthByProviderId.get(providerId);
+    return (
+      fallbackHealth?.enabled === true &&
+      fallbackHealth.lane !== "disabled" &&
+      classifyHealthSeverity(fallbackHealth) === "healthy"
+    );
+  });
   if (current && routingResult.status === "fulfilled" && !hasFallbackLane) {
     alerts.push({
       id: "fallback-missing",
