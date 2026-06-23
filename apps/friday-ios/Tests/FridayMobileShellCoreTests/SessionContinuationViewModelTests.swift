@@ -337,6 +337,59 @@ final class SessionContinuationViewModelTests: XCTestCase {
     XCTAssertEqual(snapshot.pendingApproval?.summary, "approval required for write_file")
   }
 
+  func testPendingApprovalWithoutSignerKeepsResumeNoGoButAllowsRejectRelay() async {
+    let raw: [String: Any] = [
+      "run_id": "run-1",
+      "status": "waiting",
+      "truthLabel": "friday_owned",
+      "needs_me": [
+        "signing_request": [
+          "run_id": "run-1",
+          "approval_id": "approval-1",
+          "action_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "summary": "write_file pending",
+        ],
+      ],
+    ]
+    let write = FakeSessionWriteClient(.accepted(ResumeRelayResult(
+      runId: "run-1",
+      op: "reject",
+      accepted: true,
+      status: "rejected",
+      auditRef: "audit://reject/run-1")))
+    let vm = SessionContinuationViewModel(
+      client: FakeSessionReadClient(needsMeRaw: raw),
+      writeClient: write,
+      signer: nil,
+      runControlEnabled: true)
+
+    await vm.refresh(agentSessionId: "session-1", runId: "run-1")
+
+    guard case .loaded(let snapshot) = vm.state else {
+      return XCTFail("expected loaded session continuation, got \(vm.state)")
+    }
+    XCTAssertEqual(snapshot.pendingApproval?.approvalId, "approval-1")
+    let resume = snapshot.controls.first { $0.id == "resume" }
+    XCTAssertEqual(resume?.truthLabel, "NO-GO")
+    XCTAssertEqual(resume?.isEnabled, false)
+    XCTAssertTrue(resume?.reason.contains("operator signer relay") == true)
+    let reject = snapshot.controls.first { $0.id == "reject" }
+    XCTAssertEqual(reject?.truthLabel, "guarded")
+    XCTAssertEqual(reject?.isEnabled, true)
+
+    await vm.resume()
+    XCTAssertTrue(write.resumedRunIds.isEmpty, "missing signer must not relay a resume")
+    guard case .error(let resumeReason) = vm.controlStates["resume"] else {
+      return XCTFail("expected resume signer error, got \(String(describing: vm.controlStates["resume"]))")
+    }
+    XCTAssertTrue(resumeReason.contains("operator signer relay"), "reason: \(resumeReason)")
+
+    await vm.reject()
+    XCTAssertEqual(write.rejectedRunIds, ["run-1"])
+    XCTAssertEqual(write.rejectedApprovalIds, ["approval-1"])
+    XCTAssertTrue(write.relayedBlobs.isEmpty, "reject must stay refs-only")
+  }
+
   func testResumeRelaysSignerBlobVerbatimAndSurfacesReceipt() async {
     let digest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     let raw: [String: Any] = [

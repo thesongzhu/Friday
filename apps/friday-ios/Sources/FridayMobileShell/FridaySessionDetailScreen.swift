@@ -107,12 +107,90 @@ struct FridaySessionDetailScreen: View {
       }
     case .loaded(let snapshot):
       VStack(spacing: 16) {
+        approvalPanel(snapshot)
         controlsCard(snapshot.controls)
         ForEach(snapshot.sections) { section in
           sectionCard(section)
         }
         proofRefsCard(snapshot.proofRefs)
       }
+    }
+  }
+
+  @ViewBuilder
+  private func approvalPanel(_ snapshot: SessionContinuationSnapshot) -> some View {
+    if let approval = snapshot.pendingApproval {
+      let resume = snapshot.controls.first { $0.id == "resume" }
+      let reject = snapshot.controls.first { $0.id == "reject" }
+      GlassPanel {
+        VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+          HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark.seal")
+              .font(.system(size: 22, weight: .semibold))
+              .foregroundStyle(MobileTheme.coral)
+              .frame(width: 30, height: 30)
+            VStack(alignment: .leading, spacing: 3) {
+              Text("Approval Required")
+                .font(.headline)
+                .foregroundStyle(MobileTheme.textPrimary)
+              Text("operator-signed relay only")
+                .font(.caption)
+                .foregroundStyle(MobileTheme.textSecondary)
+            }
+            Spacer()
+            StatusChip(
+              text: resume?.truthLabel ?? "NO-GO",
+              bg: resume?.isEnabled == true ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
+              fg: resume?.isEnabled == true ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
+          }
+
+          if let summary = approval.summary, !summary.isEmpty {
+            Text(summary)
+              .font(.callout.weight(.medium))
+              .foregroundStyle(MobileTheme.textPrimary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          RefPill(label: "run_id", ref: approval.runId)
+          RefPill(label: "approval_id", ref: approval.approvalId)
+          RefPill(label: "action_digest", ref: short(approval.actionDigest))
+
+          VStack(alignment: .leading, spacing: 5) {
+            approvalCapabilityRow("Resume", control: resume)
+            approvalCapabilityRow("Reject", control: reject)
+          }
+          Text("The app displays the paused action proof and relays an operator signature when one is available; it never holds signing key material.")
+            .font(.caption2)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+          controlStateView(viewModel.controlStates["resume"])
+          controlStateView(viewModel.controlStates["reject"])
+        }
+      }
+      .accessibilityElement(children: .contain)
+      .accessibilityLabel("Approval required. \(approval.summary ?? "No summary"). Digest \(approval.actionDigest)")
+      .accessibilityIdentifier("friday.session.approval-panel")
+    }
+  }
+
+  @ViewBuilder
+  private func approvalCapabilityRow(_ title: String, control: SessionContinuationControl?) -> some View {
+    HStack(spacing: 8) {
+      Image(systemName: control?.isEnabled == true ? "checkmark.circle" : "exclamationmark.triangle")
+        .foregroundStyle(control?.isEnabled == true ? MobileTheme.cyan : MobileTheme.coral)
+      Text(title)
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(MobileTheme.textPrimary)
+      Spacer()
+      StatusChip(
+        text: control?.truthLabel ?? "NO-GO",
+        bg: control?.isEnabled == true ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
+        fg: control?.isEnabled == true ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
+    }
+    if let reason = control?.reason {
+      Text(reason)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 
@@ -367,6 +445,10 @@ struct FridaySessionDetailScreen: View {
 
   private func statusChip(_ text: String) -> some View {
     StatusChip(text: text, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+  }
+
+  private func short(_ s: String) -> String {
+    s.count > 16 ? "\(s.prefix(10))...\(s.suffix(4))" : s
   }
 
   private func firstRunId(_ projection: HomeProjection) -> String? {
