@@ -7,6 +7,7 @@ import {
 } from "#agent";
 import type { FridayLearningEventAppendInput } from "#ledger";
 import type {
+  FridayAgentExecutionContext,
   FridayAgentAutomationSchedulerBridge,
   FridayAgentAutomationService,
   FridayAgentRuntimeResult,
@@ -25,10 +26,7 @@ describe("FridayAgentAutomationService", () => {
     model?: string;
     timezone?: string;
     timeoutMs?: number;
-    executionContext?: {
-      surface?: string;
-      interactive?: boolean;
-    };
+    executionContext?: FridayAgentExecutionContext;
   }) => Promise<FridayAgentRuntimeResult>>>;
   const NOW = "2026-02-19T10:00:00.000Z";
 
@@ -43,10 +41,7 @@ describe("FridayAgentAutomationService", () => {
       model?: string;
       timezone?: string;
       timeoutMs?: number;
-      executionContext?: {
-        surface?: string;
-        interactive?: boolean;
-      };
+      executionContext?: FridayAgentExecutionContext;
     }) => Promise<FridayAgentRuntimeResult>>().mockResolvedValue({
       runId: "run-result-001",
       status: "completed",
@@ -350,6 +345,9 @@ describe("FridayAgentAutomationService", () => {
         executionContext: {
           surface: "agent.automation",
           interactive: false,
+          automationId: created.id,
+          automationSessionTargetType: "isolated",
+          automationSessionTargetSource: "saved",
         },
       });
       expect(result.runId).toBe("run-result-001");
@@ -370,6 +368,9 @@ describe("FridayAgentAutomationService", () => {
           executionContext: {
             surface: "agent.automation",
             interactive: false,
+            automationId: created.id,
+            automationSessionTargetType: "isolated",
+            automationSessionTargetSource: "saved",
           },
         }),
       );
@@ -397,6 +398,9 @@ describe("FridayAgentAutomationService", () => {
         executionContext: {
           surface: "agent.automation",
           interactive: false,
+          automationId: created.id,
+          automationSessionTargetType: "isolated",
+          automationSessionTargetSource: "saved",
         },
       });
     });
@@ -413,6 +417,12 @@ describe("FridayAgentAutomationService", () => {
       expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
         task: "task",
         sessionKey: "named-session-1",
+        executionContext: expect.objectContaining({
+          automationId: created.id,
+          automationSessionTargetType: "named",
+          automationSessionTargetSource: "saved",
+          automationSessionKey: "named-session-1",
+        }),
       }));
     });
 
@@ -429,7 +439,50 @@ describe("FridayAgentAutomationService", () => {
       expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
         task: "task",
         sessionKey: "override-session",
+        executionContext: expect.objectContaining({
+          automationId: created.id,
+          automationSessionTargetType: "named",
+          automationSessionTargetSource: "run_override",
+          automationSessionKey: "override-session",
+        }),
       }));
+    });
+
+    it("records current-source session target evidence for run oracles", async () => {
+      db.withWriteTransaction((writer) => {
+        writer.prepare(
+          `INSERT INTO friday_agent_runs (id, task, status, session_key, attempt, max_attempts, created_at)
+           VALUES ('run-123', 'seed task', 'completed', 'session-from-source', 0, 3, ?)`,
+        ).run(NOW);
+      });
+
+      const created = service.save({
+        name: "Current Session Evidence",
+        sourceRunId: "run-123",
+        taskTemplate: "continue",
+        sessionTarget: { type: "current" },
+      });
+
+      await service.run(created.id);
+
+      expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+        sessionKey: "session-from-source",
+        executionContext: expect.objectContaining({
+          automationId: created.id,
+          automationSessionTargetType: "current",
+          automationSessionTargetSource: "saved",
+          automationSessionKey: "session-from-source",
+          automationSourceRunId: "run-123",
+        }),
+      }));
+      expect(learningEvents.find((event) => event.kind === "automation_reused")?.payload)
+        .toMatchObject({
+          automationId: created.id,
+          automationSessionTargetType: "current",
+          automationSessionTargetSource: "saved",
+          automationSessionKey: "session-from-source",
+          automationSourceRunId: "run-123",
+        });
     });
 
     it("updates last run info after execution", async () => {

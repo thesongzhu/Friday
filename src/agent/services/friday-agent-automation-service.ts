@@ -126,6 +126,29 @@ export function createFridayAgentAutomationService(
     return sessionTarget.sessionKey;
   }
 
+  function buildAutomationTargetEvidence(input: {
+    automation: FridayAgentAutomationRecord;
+    sessionTarget: FridayAgentAutomationSessionTarget;
+    source: "saved" | "run_override";
+  }): {
+    automationId: string;
+    automationSessionTargetType: FridayAgentAutomationSessionTarget["type"];
+    automationSessionTargetSource: "saved" | "run_override";
+    automationSessionKey?: string;
+    automationSourceRunId?: string;
+  } {
+    const sessionKey = input.sessionTarget.type === "isolated"
+      ? undefined
+      : input.sessionTarget.sessionKey;
+    return {
+      automationId: input.automation.id,
+      automationSessionTargetType: input.sessionTarget.type,
+      automationSessionTargetSource: input.source,
+      ...(sessionKey ? { automationSessionKey: sessionKey } : {}),
+      ...(input.automation.sourceRunId ? { automationSourceRunId: input.automation.sourceRunId } : {}),
+    };
+  }
+
   return {
     attachSchedulerBridge(bridge) {
       schedulerBridge = bridge;
@@ -288,6 +311,7 @@ export function createFridayAgentAutomationService(
       }
 
       const task = input?.taskOverride ?? automation.taskTemplate;
+      const sessionTargetSource = input?.sessionTarget ? "run_override" : "saved";
       const sessionTarget = input?.sessionTarget
         ? resolveSessionTarget({
             sessionTarget: input.sessionTarget,
@@ -297,6 +321,11 @@ export function createFridayAgentAutomationService(
             sessionTarget: automation.sessionTarget,
             sourceRunId: automation.sourceRunId,
           });
+      const targetEvidence = buildAutomationTargetEvidence({
+        automation,
+        sessionTarget,
+        source: sessionTargetSource,
+      });
 
       const result = await startRun({
         task,
@@ -308,6 +337,7 @@ export function createFridayAgentAutomationService(
         executionContext: {
           surface: "agent.automation",
           interactive: false,
+          ...targetEvidence,
         },
       });
 
@@ -339,6 +369,7 @@ export function createFridayAgentAutomationService(
             sourceAutomationId: automationId,
             sourceRunId: automation.sourceRunId ?? null,
             resultRunId: result.runId,
+            ...targetEvidence,
             previousPromotionState: automation.promotionState,
             promotionState: nextInsights.promotionState,
             reuseCount: nextInsights.reuseCount,
@@ -350,9 +381,9 @@ export function createFridayAgentAutomationService(
       writeLearningEvent({
         kind: "automation_reused",
         payload: {
-          automationId,
           sourceRunId: automation.sourceRunId ?? null,
           resultRunId: result.runId,
+          ...targetEvidence,
           reuseCount: nextInsights.reuseCount,
           lastOutcomeScore: nextInsights.lastOutcomeScore,
           success: result.status === "completed",
@@ -362,8 +393,8 @@ export function createFridayAgentAutomationService(
         writeLearningEvent({
           kind: "outcome_confirmed",
           payload: {
-            automationId,
             resultRunId: result.runId,
+            ...targetEvidence,
             outcomeScore: computeAutomationOutcomeScore(result),
             estimatedTimeSavedMinutes: nextInsights.estimatedTimeSavedMinutes,
           },

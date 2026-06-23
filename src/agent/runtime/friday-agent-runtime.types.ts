@@ -41,6 +41,12 @@ export interface FridayAgentExecutionContext {
   interactive?: boolean;
   browserPresentationMode?: "auto" | "headless" | "host_chrome_visible";
   packId?: string;
+  /** Automation run evidence for replay/oracle checks. */
+  automationId?: string;
+  automationSessionTargetType?: "isolated" | "named" | "current";
+  automationSessionTargetSource?: "saved" | "run_override";
+  automationSessionKey?: string;
+  automationSourceRunId?: string;
   /** Channel kind when the run enters through a connected chat channel. */
   channelKind?: string;
   /** Channel chat shape for private-memory defaults. */
