@@ -44,6 +44,21 @@ final class SessionContinuationViewModelTests: XCTestCase {
         proofRef: "proof://session/link/\(agentSessionId)")
     }
 
+    func fetchRunReadback(runId: String) async throws -> ReadProjectionSnapshot {
+      try recordAndReturn(
+        request: "run-readback:\(runId)",
+        status: "finished",
+        runId: runId,
+        proofRef: "proof://run-readback/\(runId)",
+        extra: [
+          "run_state": "finished",
+          "loop_status_derived": "finished",
+          "event_count": 3,
+          "db_wide_token_total": 99,
+          "audit_chain_verified": true,
+        ])
+    }
+
     func fetchRunFileView(runId: String) async throws -> ReadProjectionSnapshot {
       try recordAndReturn(
         request: "run-files:\(runId)",
@@ -81,7 +96,8 @@ final class SessionContinuationViewModelTests: XCTestCase {
       request: String,
       status: String,
       runId: String? = nil,
-      proofRef: String
+      proofRef: String,
+      extra: [String: Any] = [:]
     ) throws -> ReadProjectionSnapshot {
       lock.lock()
       requested.append(request)
@@ -97,6 +113,9 @@ final class SessionContinuationViewModelTests: XCTestCase {
         "evidenceRefs": ["proof://evidence/\(request)"],
         "timelineRef": "proof://timeline/\(request)",
       ]
+      for (key, value) in extra {
+        raw[key] = value
+      }
       if let runId { raw["runId"] = runId }
       let data = try JSONSerialization.data(withJSONObject: raw)
       return try ReadProjectionSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_123)
@@ -171,12 +190,13 @@ final class SessionContinuationViewModelTests: XCTestCase {
     XCTAssertEqual(Set(client.requests), [
       "session-open:session-1",
       "session-link:session-1",
+      "run-readback:run-1",
       "run-files:run-1",
       "needs-me:run-1",
     ])
     XCTAssertEqual(snapshot.agentSessionId, "session-1")
     XCTAssertEqual(snapshot.runId, "run-1")
-    XCTAssertEqual(snapshot.sections.map(\.id), ["session-open", "session-link", "run-files", "needs-me"])
+    XCTAssertEqual(snapshot.sections.map(\.id), ["session-open", "session-link", "run-files", "run-readback", "needs-me"])
     XCTAssertTrue(snapshot.sections.allSatisfy {
       if case .loaded = $0.status { return true }
       return false
@@ -184,7 +204,11 @@ final class SessionContinuationViewModelTests: XCTestCase {
     XCTAssertTrue(snapshot.proofRefs.contains("proof://session/open/session-1"))
     XCTAssertTrue(snapshot.proofRefs.contains("proof://session/link/session-1"))
     XCTAssertTrue(snapshot.proofRefs.contains("proof://run-files/run-1"))
+    XCTAssertTrue(snapshot.proofRefs.contains("proof://run-readback/run-1"))
     XCTAssertTrue(snapshot.proofRefs.contains("proof://needs/run-1"))
+    let readback = snapshot.sections.first { $0.id == "run-readback" }
+    XCTAssertTrue(readback?.summary.contains("db-wide tokens=99") == true)
+    XCTAssertTrue(readback?.summary.contains("audit=verified") == true)
     XCTAssertEqual(snapshot.sections.first?.generatedAtMs, 1_780_640_000_123)
     XCTAssertEqual(snapshot.controls.map(\.title), ["Send", "Stop", "Resume", "Fork"])
     XCTAssertTrue(snapshot.controls.allSatisfy { !$0.isEnabled && $0.truthLabel == "NO-GO" })
@@ -424,8 +448,8 @@ final class SessionContinuationViewModelTests: XCTestCase {
       "session-link:session-1",
     ])
     XCTAssertNil(snapshot.runId)
-    XCTAssertEqual(snapshot.sections.map(\.id), ["session-open", "session-link", "run-files", "needs-me"])
-    let runSections = snapshot.sections.suffix(2)
+    XCTAssertEqual(snapshot.sections.map(\.id), ["session-open", "session-link", "run-files", "run-readback", "needs-me"])
+    let runSections = snapshot.sections.suffix(3)
     XCTAssertTrue(runSections.allSatisfy {
       if case .notRequested(let reason) = $0.status {
         return reason.contains("No run ref")
@@ -457,7 +481,7 @@ final class SessionContinuationViewModelTests: XCTestCase {
       return XCTFail("expected loaded shell with unavailable sections, got \(vm.state)")
     }
     XCTAssertEqual(snapshot.proofRefs, [])
-    XCTAssertEqual(snapshot.sections.count, 4)
+    XCTAssertEqual(snapshot.sections.count, 5)
     XCTAssertTrue(snapshot.sections.allSatisfy {
       if case .unavailable(let reason) = $0.status {
         return reason.contains("offline")

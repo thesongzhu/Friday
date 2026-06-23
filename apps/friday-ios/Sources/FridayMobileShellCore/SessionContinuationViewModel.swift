@@ -113,16 +113,24 @@ public final class SessionContinuationViewModel: ObservableObject {
     var pendingApproval: SessionContinuationApproval?
     if let resolvedRunId {
       async let files = Self.fetchRunFileView(client: client, runId: resolvedRunId)
+      async let readback = Self.fetchRunReadback(client: client, runId: resolvedRunId)
       async let needsMe = Self.fetchActivityNeedsMeDetail(client: client, runId: resolvedRunId)
       let needsMeDetail = await needsMe
       pendingApproval = needsMeDetail.pendingApproval
-      sections.append(contentsOf: await [files, needsMeDetail.section])
+      sections.append(contentsOf: await [files, readback, needsMeDetail.section])
     } else {
       sections.append(SessionContinuationSection(
         id: "run-files",
         title: "Run Files",
         status: .notRequested(reason: "No run ref is available in the current projection."),
         summary: "run file view not requested",
+        generatedAtMs: nil,
+        refs: []))
+      sections.append(SessionContinuationSection(
+        id: "run-readback",
+        title: "Run Readback",
+        status: .notRequested(reason: "No run ref is available in the current projection."),
+        summary: "run readback not requested",
         generatedAtMs: nil,
         refs: []))
       sections.append(SessionContinuationSection(
@@ -247,6 +255,31 @@ public final class SessionContinuationViewModel: ObservableObject {
       id: "run-files",
       title: "Run Files",
       read: { try await client.fetchRunFileView(runId: runId) })
+  }
+
+  private nonisolated static func fetchRunReadback(
+    client: FridayRustReadClient,
+    runId: String
+  ) async -> SessionContinuationSection {
+    do {
+      let snapshot = try await client.fetchRunReadback(runId: runId)
+      let detail = HomeReadDetail(title: "Run Readback", snapshot: snapshot)
+      return SessionContinuationSection(
+        id: "run-readback",
+        title: "Run Readback",
+        status: .loaded,
+        summary: readbackSummary(from: snapshot.raw),
+        generatedAtMs: detail.generatedAtMs,
+        refs: detail.refs)
+    } catch {
+      return SessionContinuationSection(
+        id: "run-readback",
+        title: "Run Readback",
+        status: .unavailable(reason: reason(for: error)),
+        summary: "unavailable",
+        generatedAtMs: nil,
+        refs: [])
+    }
   }
 
   private nonisolated static func fetchActivityNeedsMeDetail(
@@ -377,6 +410,26 @@ public final class SessionContinuationViewModel: ObservableObject {
     return parts.joined(separator: " · ")
   }
 
+  private nonisolated static func readbackSummary(from raw: [String: Any]) -> String {
+    var parts: [String] = []
+    if let state = firstNonEmptyString(raw, ["run_state", "runState", "status"]) {
+      parts.append("state=\(state)")
+    }
+    if let loop = firstNonEmptyString(raw, ["loop_status_derived", "loopStatusDerived"]) {
+      parts.append("loop=\(loop)")
+    }
+    if let events = integerText(raw, ["event_count", "eventCount"]) {
+      parts.append("events=\(events)")
+    }
+    if let total = integerText(raw, ["db_wide_token_total", "dbWideTokenTotal"]) {
+      parts.append("db-wide tokens=\(total)")
+    }
+    if let audit = boolText(raw, ["audit_chain_verified", "auditChainVerified"]) {
+      parts.append("audit=\(audit)")
+    }
+    return parts.isEmpty ? "run readback loaded" : parts.joined(separator: " | ")
+  }
+
   private nonisolated static func approval(
     from raw: [String: Any],
     fallbackRunId: String
@@ -416,6 +469,33 @@ public final class SessionContinuationViewModel: ObservableObject {
     keys.lazy.compactMap { raw[$0] as? String }
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
       .first { !$0.isEmpty }
+  }
+
+  private nonisolated static func integerText(
+    _ raw: [String: Any],
+    _ keys: [String]
+  ) -> String? {
+    for key in keys {
+      if let value = raw[key] as? Int { return "\(value)" }
+      if let value = raw[key] as? UInt64 { return "\(value)" }
+      if let value = raw[key] as? Int64 { return "\(value)" }
+      if let value = raw[key] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() {
+        return value.stringValue
+      }
+    }
+    return nil
+  }
+
+  private nonisolated static func boolText(
+    _ raw: [String: Any],
+    _ keys: [String]
+  ) -> String? {
+    for key in keys {
+      if let value = raw[key] as? Bool {
+        return value ? "verified" : "unverified"
+      }
+    }
+    return nil
   }
 
   private nonisolated static func reason(for error: Error) -> String {
