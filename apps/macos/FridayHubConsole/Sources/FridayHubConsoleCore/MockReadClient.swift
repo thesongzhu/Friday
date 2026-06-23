@@ -132,7 +132,7 @@ public struct MockReadClient: FridayRustReadClient {
 
     let memoryCandidates: [MissionWorkbenchMemoryCandidate] = [
       MissionWorkbenchMemoryCandidate(
-        id: "memory_candidate_mission_workbench_probe_20260605_0",
+        id: "mem-workbench-probe",
         preview: "Review-only memory candidate attached to this Mission.",
         state: "candidate_review_only",
         grantsMemoryAuthority: false,

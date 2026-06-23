@@ -343,9 +343,9 @@ struct OperationsOverviewScreen: View {
             })
         }
         Text(
-          "Confirm/reject drives the owner decision through the Rust spine. NOTE: the read "
-            + "projection surfaces a synthetic candidate id today — a confirm returns "
-            + "\"blocked\" until the durable memory_id is projected (rendered honestly).")
+          "Confirm/reject drives the owner decision through the Rust spine. The projection "
+            + "surfaces the durable memory id; stale or out-of-scope candidates still render "
+            + "as a server block.")
           .font(.system(size: 10))
           .foregroundStyle(HubTheme.textSecondary)
       }
