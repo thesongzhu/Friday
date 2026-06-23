@@ -264,6 +264,9 @@ struct FridayHomeScreen: View {
       if let pairingId = attempt.pairingId {
         RefPill(label: "ack_pairing_id", ref: pairingId)
       }
+      if let deviceId = attempt.deviceId {
+        RefPill(label: "ack_device_id", ref: deviceId)
+      }
       if let errorCode = attempt.errorCode {
         RefPill(label: "ack_error", ref: errorCode)
       }
