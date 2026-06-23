@@ -37,7 +37,7 @@ struct FridayHomeScreen: View {
           UnavailableView(reason: reason)
         }
 
-        devicePairingCard(viewModel.devicePairing)
+        devicePairingCard(viewModel.devicePairing, viewModel.state.projection?.t3ProvisioningStatus)
       }
       .padding(16)
     }
@@ -113,7 +113,10 @@ struct FridayHomeScreen: View {
     .accessibilityIdentifier("friday.home.status-card")
   }
 
-  private func devicePairingCard(_ readiness: DevicePairingReadiness) -> some View {
+  private func devicePairingCard(
+    _ readiness: DevicePairingReadiness,
+    _ t3Status: HomeT3ProvisioningStatus?
+  ) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         HStack {
@@ -134,6 +137,7 @@ struct FridayHomeScreen: View {
         pairingEntry
         pairingPreflightRows(viewModel.pairingPreflight)
         pairingAttemptRows(viewModel.pairingAttempt)
+        hubProvisioningRows(t3Status)
         HStack(spacing: 8) {
           StatusChip(
             text: readiness.readLiveRequested ? "read requested" : "read off",
@@ -151,7 +155,8 @@ struct FridayHomeScreen: View {
       }
     }
     .accessibilityElement(children: .combine)
-    .accessibilityLabel("Device pairing \(readiness.mode.rawValue). \(readiness.reason)")
+    .accessibilityLabel(
+      "Device pairing \(readiness.mode.rawValue). \(readiness.reason). \(t3Status?.homeSummary ?? "Hub T3 projection is not loaded.")")
     .accessibilityIdentifier("friday.home.device-pairing-card")
   }
 
@@ -262,6 +267,42 @@ struct FridayHomeScreen: View {
       if let errorCode = attempt.errorCode {
         RefPill(label: "ack_error", ref: errorCode)
       }
+    }
+  }
+
+  @ViewBuilder
+  private func hubProvisioningRows(_ status: HomeT3ProvisioningStatus?) -> some View {
+    Divider().opacity(0.35)
+    HStack {
+      Text("Hub provisioning").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
+      Spacer()
+      if let status {
+        StatusChip(
+          text: status.homeStatusLabel,
+          bg: status.isFullyProvisioned ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
+          fg: status.isFullyProvisioned ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
+      } else {
+        StatusChip(text: "not loaded", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+      }
+    }
+    if let status {
+      Text(status.homeSummary)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+      if !status.missingOperatorSteps.isEmpty {
+        RefPill(label: "missing", ref: status.missingOperatorSteps.joined(separator: ", "))
+      }
+      if let device = status.latestDevice {
+        RefPill(label: "trusted_device", ref: device.deviceId)
+        RefPill(label: "device_fingerprint", ref: device.pubkeyFingerprint)
+      }
+      RefPill(label: "truth", ref: status.truthLabel)
+    } else {
+      Text("Open a loaded Hub projection to see PairAck, trust grant, and context passport status.")
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 

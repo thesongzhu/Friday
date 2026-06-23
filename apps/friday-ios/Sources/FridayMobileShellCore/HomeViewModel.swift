@@ -268,6 +268,41 @@ public struct HomeT3ProvisioningStatus: Sendable, Equatable {
     paired && activeTrustGrantCount > 0 && contextPassportCount > 0 && contextPassportItemCount > 0
   }
 
+  public var homeStatusLabel: String {
+    if isFullyProvisioned {
+      return "fully provisioned"
+    }
+    if paired {
+      return "operator action needed"
+    }
+    return "pairing needed"
+  }
+
+  public var missingOperatorSteps: [String] {
+    var steps: [String] = []
+    if !paired {
+      steps.append("PairAck")
+    }
+    if activeTrustGrantCount == 0 {
+      steps.append("trust grant")
+    }
+    if contextPassportCount == 0 || contextPassportItemCount == 0 {
+      steps.append("context passport")
+    }
+    return steps
+  }
+
+  public var homeSummary: String {
+    if isFullyProvisioned {
+      return "Hub projection shows paired device, active trust grant, and context passport rows."
+    }
+    let missing = missingOperatorSteps.joined(separator: ", ")
+    if paired {
+      return "Paired device is visible in the Hub; missing \(missing)."
+    }
+    return "No complete T3 device pairing in the Hub projection; missing \(missing)."
+  }
+
   private static func int(_ value: Any?) -> Int {
     if let int = value as? Int { return int }
     if let number = value as? NSNumber { return number.intValue }
