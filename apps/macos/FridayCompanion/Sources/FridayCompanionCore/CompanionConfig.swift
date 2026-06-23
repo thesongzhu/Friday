@@ -13,6 +13,7 @@ public struct CompanionConfig: Sendable {
   public let heartbeatIntervalMs: Int
   public let notificationDatabasePath: String
   public let notificationLimit: Int
+  public let remoteSessionHeartbeat: CompanionRemoteSessionHeartbeat?
 
   public init(
     id: String,
@@ -26,7 +27,8 @@ public struct CompanionConfig: Sendable {
     panicHotkey: CompanionHotkey,
     heartbeatIntervalMs: Int,
     notificationDatabasePath: String,
-    notificationLimit: Int
+    notificationLimit: Int,
+    remoteSessionHeartbeat: CompanionRemoteSessionHeartbeat? = nil
   ) {
     self.id = id
     self.socketPath = socketPath
@@ -40,6 +42,7 @@ public struct CompanionConfig: Sendable {
     self.heartbeatIntervalMs = heartbeatIntervalMs
     self.notificationDatabasePath = notificationDatabasePath
     self.notificationLimit = notificationLimit
+    self.remoteSessionHeartbeat = remoteSessionHeartbeat
   }
 
   public static func fromEnvironment(_ env: [String: String] = ProcessInfo.processInfo.environment) throws -> CompanionConfig {
@@ -62,6 +65,7 @@ public struct CompanionConfig: Sendable {
     let notificationDatabasePath = nonEmpty(env["FRIDAY_SYSTEM_NOTIFICATION_DB_PATH"])
       ?? CompanionUserNotedNotificationReader.defaultDatabasePath(homeDirectory: env["HOME"] ?? NSHomeDirectory())
     let notificationLimit = Int(env["FRIDAY_SYSTEM_NOTIFICATION_LIMIT"] ?? "") ?? 64
+    let remoteSessionHeartbeat = resolveRemoteSessionHeartbeat(env)
 
     return CompanionConfig(
       id: id,
@@ -75,9 +79,20 @@ public struct CompanionConfig: Sendable {
       panicHotkey: panicHotkey,
       heartbeatIntervalMs: max(1_000, heartbeatIntervalMs),
       notificationDatabasePath: notificationDatabasePath,
-      notificationLimit: max(1, notificationLimit)
+      notificationLimit: max(1, notificationLimit),
+      remoteSessionHeartbeat: remoteSessionHeartbeat
     )
   }
+}
+
+private func resolveRemoteSessionHeartbeat(_ env: [String: String]) -> CompanionRemoteSessionHeartbeat? {
+  guard let sessionId = nonEmpty(env["FRIDAY_SYSTEM_REMOTE_SESSION_ID"]) else {
+    return nil
+  }
+  let hubBaseURL = nonEmpty(env["FRIDAY_SYSTEM_REMOTE_HUB_BASE_URL"])
+    ?? nonEmpty(env["FRIDAY_PUBLIC_APP_BASE_URL"])
+    ?? defaultPublicAppBaseURL(env)
+  return CompanionRemoteSessionHeartbeat(hubBaseURL: hubBaseURL, sessionId: sessionId)
 }
 
 private func resolveControlPageURL(_ env: [String: String]) -> String {

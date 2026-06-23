@@ -19,6 +19,8 @@ func configParsesExpectedEnvironment() throws {
     "FRIDAY_SYSTEM_COMPANION_HEARTBEAT_MS": "9000",
     "FRIDAY_SYSTEM_NOTIFICATION_DB_PATH": "/tmp/friday-usernoted.db",
     "FRIDAY_SYSTEM_NOTIFICATION_LIMIT": "8",
+    "FRIDAY_SYSTEM_REMOTE_SESSION_ID": "remote/session 1",
+    "FRIDAY_SYSTEM_REMOTE_HUB_BASE_URL": "https://friday.example/hub/",
   ])
 
   #expect(config.id == "native-companion")
@@ -31,6 +33,10 @@ func configParsesExpectedEnvironment() throws {
   #expect(config.heartbeatIntervalMs == 9000)
   #expect(config.notificationDatabasePath == "/tmp/friday-usernoted.db")
   #expect(config.notificationLimit == 8)
+  #expect(config.remoteSessionHeartbeat == CompanionRemoteSessionHeartbeat(
+    hubBaseURL: "https://friday.example/hub/",
+    sessionId: "remote/session 1"
+  ))
 }
 
 @Test
@@ -70,6 +76,46 @@ func configReadsAuthTokenFromSharedTokenFile() throws {
   ])
 
   #expect(config.authToken == "shared-secret")
+}
+
+@Test
+func configLeavesRemoteSessionHeartbeatDisabledByDefault() throws {
+  let config = try CompanionConfig.fromEnvironment([
+    "FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN": "secret-token",
+  ])
+
+  #expect(config.remoteSessionHeartbeat == nil)
+}
+
+@Test
+func configBuildsRemoteHeartbeatBaseUrlFromPublicBaseUrl() throws {
+  let config = try CompanionConfig.fromEnvironment([
+    "FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN": "secret-token",
+    "FRIDAY_SYSTEM_REMOTE_SESSION_ID": "session-123",
+    "FRIDAY_PUBLIC_APP_BASE_URL": "https://friday.example/app/",
+  ])
+
+  #expect(config.remoteSessionHeartbeat == CompanionRemoteSessionHeartbeat(
+    hubBaseURL: "https://friday.example/app/",
+    sessionId: "session-123"
+  ))
+}
+
+@Test
+func remoteSessionHeartbeatBuildsEncodedPostRequest() throws {
+  let heartbeat = CompanionRemoteSessionHeartbeat(
+    hubBaseURL: "https://friday.example/app/",
+    sessionId: "remote/session 1?x#y"
+  )
+
+  let request = try heartbeat.makeRequest(idempotencyKey: "heartbeat-idem")
+
+  #expect(request.url?.absoluteString == "https://friday.example/app/v1/system/remote/sessions/remote%2Fsession%201%3Fx%23y/heartbeat")
+  #expect(request.httpMethod == "POST")
+  #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+  let body = try #require(request.httpBody)
+  let payload = try #require(JSONSerialization.jsonObject(with: body) as? [String: String])
+  #expect(payload["idempotencyKey"] == "heartbeat-idem")
 }
 
 @Test
