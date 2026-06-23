@@ -74,6 +74,10 @@ describe("isFridaySensitiveReadRoute", () => {
     }
     expect(isFridaySensitiveReadRoute("/v1/memory/items/:id")).toBe(true);
     expect(isFridaySensitiveReadRoute("/v1/secrets")).toBe(true);
+    expect(isFridaySensitiveReadRoute("/v1/grants")).toBe(true);
+    expect(isFridaySensitiveReadRoute("/v1/grants/active")).toBe(true);
+    expect(isFridaySensitiveReadRoute("/v1/audit/logs")).toBe(true);
+    expect(isFridaySensitiveReadRoute("/v1/observability/audit/:entryId")).toBe(true);
   });
 
   it("does NOT match the core no-login UX or minimal-public surfaces", () => {
@@ -94,6 +98,9 @@ describe("isFridaySensitiveReadRoute", () => {
   it("respects the trailing-slash boundary (no sibling-prefix false positives)", () => {
     expect(isFridaySensitiveReadRoute("/v1/secretspolicy")).toBe(false);
     expect(isFridaySensitiveReadRoute("/v1/securityx")).toBe(false);
+    expect(isFridaySensitiveReadRoute("/v1/grantsx")).toBe(false);
+    expect(isFridaySensitiveReadRoute("/v1/auditx")).toBe(false);
+    expect(isFridaySensitiveReadRoute("/v1/observability/auditor")).toBe(false);
   });
 });
 
@@ -176,6 +183,54 @@ describe("FridayHttpServer sensitive-read floor", () => {
     expect(handlerCalls).toBe(0);
   });
 
+  it("negative: anonymous GET on control-plane audit/grant read routes → 401 before handlers run", async () => {
+    const handlerCalls: Record<string, number> = {
+      grants: 0,
+      audit: 0,
+      observabilityAudit: 0,
+    };
+    await startWith((routes) => {
+      routes.register({
+        operationId: "grants.list",
+        method: "GET",
+        path: "/v1/grants",
+        auth: { public: true },
+        async handler() {
+          handlerCalls.grants += 1;
+          return { grants: [] };
+        },
+      });
+      routes.register({
+        operationId: "audit.logs.list",
+        method: "GET",
+        path: "/v1/audit/logs",
+        auth: { public: true },
+        async handler() {
+          handlerCalls.audit += 1;
+          return { logs: [] };
+        },
+      });
+      routes.register({
+        operationId: "observability.audit.get",
+        method: "GET",
+        path: "/v1/observability/audit/:entryId",
+        auth: { public: true },
+        async handler() {
+          handlerCalls.observabilityAudit += 1;
+          return { entry: null };
+        },
+      });
+    });
+
+    for (const path of ["/v1/grants", "/v1/audit/logs", "/v1/observability/audit/entry-1"]) {
+      const response = await fetch(`${baseUrl}${path}`);
+      expect(response.status).toBe(401);
+      const body = await response.json() as { ok: false; error: { code: string } };
+      expect(body.error.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
+    }
+    expect(handlerCalls).toEqual({ grants: 0, audit: 0, observabilityAudit: 0 });
+  });
+
   it("negative: anonymous HEAD on a sensitive read route → 401 (HEAD is a read)", async () => {
     await startWith((routes) => {
       routes.register({
@@ -224,6 +279,59 @@ describe("FridayHttpServer sensitive-read floor", () => {
     const body = await response.json() as { ok: true; data: { principalId: string } };
     expect(body.data.principalId).toBe("user:alice");
     expect(body.data.principalId).not.toBe(FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID);
+  });
+
+  it("positive: valid Bearer still reaches control-plane audit/grant read handlers", async () => {
+    await startWith(
+      (routes) => {
+        routes.register({
+          operationId: "grants.list",
+          method: "GET",
+          path: "/v1/grants",
+          auth: { public: true },
+          async handler(ctx) {
+            return { surface: "grants", principalId: ctx.principal!.principalId };
+          },
+        });
+        routes.register({
+          operationId: "audit.logs.list",
+          method: "GET",
+          path: "/v1/audit/logs",
+          auth: { public: true },
+          async handler(ctx) {
+            return { surface: "audit", principalId: ctx.principal!.principalId };
+          },
+        });
+        routes.register({
+          operationId: "observability.audit.get",
+          method: "GET",
+          path: "/v1/observability/audit/:entryId",
+          auth: { public: true },
+          async handler(ctx) {
+            return { surface: "observabilityAudit", principalId: ctx.principal!.principalId };
+          },
+        });
+      },
+      {
+        "real-token-abc": {
+          principalId: "user:alice",
+          userId: "11111111-1111-1111-1111-111111111111",
+          tenantId: "22222222-2222-2222-2222-222222222222",
+          role: "viewer",
+          scopes: ["session.read"],
+          tokenId: "33333333-3333-3333-3333-333333333333",
+        },
+      },
+    );
+
+    for (const path of ["/v1/grants", "/v1/audit/logs", "/v1/observability/audit/entry-1"]) {
+      const response = await fetch(`${baseUrl}${path}`, {
+        headers: { Authorization: "Bearer real-token-abc" },
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as { ok: true; data: { principalId: string } };
+      expect(body.data.principalId).toBe("user:alice");
+    }
   });
 
   it("negative: malformed/invalid bearer on a sensitive route → 401 (falls back to synthetic, then gated)", async () => {
