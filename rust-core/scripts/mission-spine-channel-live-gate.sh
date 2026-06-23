@@ -4,27 +4,54 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+mode="${1:---live}"
+case "$mode" in
+  --live|--wrap-existing)
+    ;;
+  -h|--help)
+    cat >&2 <<'EOF'
+usage:
+  scripts/mission-spine-channel-live-gate.sh [--live]
+  TELEGRAM_PROOF_OUT=/abs/raw-telegram-proof.json scripts/mission-spine-channel-live-gate.sh --wrap-existing
+
+--live is the default and runs the ignored real Telegram live test.
+--wrap-existing only converts an already-captured raw Telegram proof into the redacted
+mission_spine_channel_live_proof wrapper; it does not contact Telegram and does not make raw
+evidence fresh.
+EOF
+    exit 0
+    ;;
+  *)
+    echo "usage: $0 [--live|--wrap-existing]" >&2
+    exit 64
+    ;;
+esac
+
 generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 channel_live_proof_out="${MISSION_SPINE_CHANNEL_LIVE_PROOF_OUT:-/tmp/friday-mission-spine-channel-live-proof.json}"
-
-if [[ -z "${FRIDAY_TELEGRAM_BOT_TOKEN:-}" ]]; then
-  echo "BLOCKER: FRIDAY_TELEGRAM_BOT_TOKEN not set - cannot run real Telegram/channel inbound proof" >&2
-  exit 2
-fi
-
-if [[ -z "${FRIDAY_TELEGRAM_ALLOWED_USER_ID:-}" ]]; then
-  echo "BLOCKER: FRIDAY_TELEGRAM_ALLOWED_USER_ID not set - cannot run allowlisted Telegram/channel inbound proof" >&2
-  exit 2
-fi
 
 export TELEGRAM_LISTEN_SECONDS="${TELEGRAM_LISTEN_SECONDS:-300}"
 export TELEGRAM_PROOF_OUT="${TELEGRAM_PROOF_OUT:-/tmp/friday-telegram-live-proof.json}"
 
-echo "[mission-spine-channel] live Telegram/channel inbound proof"
-echo "[mission-spine-channel] waiting up to ${TELEGRAM_LISTEN_SECONDS}s for one real message from the allowlisted user"
-cargo test -p friday-hub --test telegram_live \
-  telegram_inbound_through_rust_channels_pipeline \
-  -- --ignored --nocapture
+if [[ "$mode" == "--live" ]]; then
+  if [[ -z "${FRIDAY_TELEGRAM_BOT_TOKEN:-}" ]]; then
+    echo "BLOCKER: FRIDAY_TELEGRAM_BOT_TOKEN not set - cannot run real Telegram/channel inbound proof" >&2
+    exit 2
+  fi
+
+  if [[ -z "${FRIDAY_TELEGRAM_ALLOWED_USER_ID:-}" ]]; then
+    echo "BLOCKER: FRIDAY_TELEGRAM_ALLOWED_USER_ID not set - cannot run allowlisted Telegram/channel inbound proof" >&2
+    exit 2
+  fi
+
+  echo "[mission-spine-channel] live Telegram/channel inbound proof"
+  echo "[mission-spine-channel] waiting up to ${TELEGRAM_LISTEN_SECONDS}s for one real message from the allowlisted user"
+  cargo test -p friday-hub --test telegram_live \
+    telegram_inbound_through_rust_channels_pipeline \
+    -- --ignored --nocapture
+else
+  echo "[mission-spine-channel] wrapping existing Telegram proof artifact: ${TELEGRAM_PROOF_OUT}"
+fi
 
 if [[ ! -s "$TELEGRAM_PROOF_OUT" ]]; then
   echo "BLOCKER: Telegram live test did not write proof artifact at ${TELEGRAM_PROOF_OUT}" >&2
@@ -51,11 +78,13 @@ jq \
   --arg generated_at "$generated_at" \
   --arg worktree "$root" \
   --arg raw_artifact "$TELEGRAM_PROOF_OUT" \
+  --arg mode "$mode" \
   '{
     proof: "mission_spine_channel_live_proof",
     generated_at_utc: $generated_at,
     worktree: $worktree,
     status: "passed",
+    capture_mode: $mode,
     scope: "real Telegram/channel inbound proof through Rust channel auth and redaction pipeline; not real UI/device consumption proof",
     raw_artifact: $raw_artifact,
 	    telegram_live: {
