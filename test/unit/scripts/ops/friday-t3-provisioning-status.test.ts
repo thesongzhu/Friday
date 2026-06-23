@@ -170,8 +170,41 @@ describe("friday-t3-provisioning-status", () => {
       ["FRIDAY_T3_OPERATOR_PROVISION_ACK", "operator-runs-t3-provisioning"].join("="),
     );
     expect(rendered).toContain("FRIDAY_T3_STEP=both");
-    expect(rendered).toContain("FRIDAY_T3_ITEMS_JSON='<path-to-reviewed-context-passport-items.json>'");
+    expect(rendered).toContain("prepare_items_json:");
+    expect(rendered).toContain("/usr/bin/printf");
+    expect(rendered).toContain("context passport items JSON OK");
+    expect(rendered).toContain("FRIDAY_T3_ITEMS_JSON='/tmp/friday-t3-passport-items-reviewed.json'");
     expect(rendered).toContain("At least one explicit grant boundary is required");
+    expect(rendered).not.toContain("<<");
+    expect(rendered).not.toContain("operator-approve.key");
+  });
+
+  it("renders a passport-only hint with a safe items-json template when only passport rows are missing", async () => {
+    const statusModule = await loadStatusModule();
+    const dbPath = makeDbPath();
+    createProvisionTables(dbPath);
+    execSql(
+      dbPath,
+      `
+      INSERT INTO device_identity(device_id, role, public_key, created_at, display_name)
+        VALUES ('device-1', 'ios', X'0101010101010101010101010101010101010101010101010101010101010101', 1700, 'Jarvis iPhone');
+      INSERT INTO trusted_device(device_id, public_key, paired_at, revoked_at, key_rotated_at, label)
+        VALUES ('device-1', X'0101010101010101010101010101010101010101010101010101010101010101', 1800, NULL, NULL, 'Jarvis iPhone');
+      INSERT INTO trust_grant(grant_id, revoked, expires_at) VALUES ('grant-1', 0, 1900000000000);
+    `,
+    );
+
+    const status = statusModule.buildT3ProvisioningStatus(dbPath, 1_780_000_000_000);
+    const action = statusModule.buildT3OperatorAction(status);
+    const rendered = statusModule.renderOperatorAction(action);
+
+    expect(action.status).toBe("operator_provision_required");
+    expect(rendered).toContain("FRIDAY_T3_STEP=passport");
+    expect(rendered).toContain("prepare_items_json:");
+    expect(rendered).toContain("/tmp/friday-t3-passport-items-reviewed.json");
+    expect(rendered).toContain("FRIDAY_T3_ITEMS_JSON='/tmp/friday-t3-passport-items-reviewed.json'");
+    expect(rendered).not.toContain("FRIDAY_T3_GRANT_ID='<operator-chosen-grant-id>'");
+    expect(rendered).not.toContain("<<");
     expect(rendered).not.toContain("operator-approve.key");
   });
 
