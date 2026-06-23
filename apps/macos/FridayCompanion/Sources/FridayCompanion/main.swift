@@ -146,6 +146,8 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
   private var guideOverlayCommand: GuideOverlayCommand?
   private var panicActive = false
   private var lastHeartbeatAt = nowIso()
+  private var lastRemoteHeartbeatAt: String?
+  private var lastRemoteHeartbeatStatus: String = "disabled"
   private var lastNotificationRefreshError: String?
 
   init(config: CompanionConfig) {
@@ -158,6 +160,7 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
       databasePath: config.notificationDatabasePath
     )
     self.updater = makeCompanionUpdater()
+    self.lastRemoteHeartbeatStatus = config.remoteSessionHeartbeat == nil ? "disabled" : "pending"
     super.init()
   }
 
@@ -293,11 +296,56 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
   }
 
   private func installHeartbeatTimer() {
+    recordLocalHeartbeat()
+    Task { @MainActor in
+      await sendRemoteSessionHeartbeatIfConfigured()
+    }
     heartbeatTimer = Timer.scheduledTimer(withTimeInterval: Double(config.heartbeatIntervalMs) / 1000.0, repeats: true) { [weak self] _ in
       Task { @MainActor in
-        self?.lastHeartbeatAt = nowIso()
+        self?.recordLocalHeartbeat()
+        await self?.sendRemoteSessionHeartbeatIfConfigured()
       }
     }
+  }
+
+  private func recordLocalHeartbeat() {
+    lastHeartbeatAt = nowIso()
+  }
+
+  private func sendRemoteSessionHeartbeatIfConfigured() async {
+    guard let remoteHeartbeat = config.remoteSessionHeartbeat else {
+      lastRemoteHeartbeatStatus = "disabled"
+      return
+    }
+    do {
+      let request = try remoteHeartbeat.makeRequest(idempotencyKey: "\(config.id)-\(UUID().uuidString)")
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let http = response as? HTTPURLResponse else {
+        lastRemoteHeartbeatStatus = "failed_non_http"
+        return
+      }
+      if (200...299).contains(http.statusCode) {
+        lastRemoteHeartbeatStatus = remoteSessionHeartbeatStatus(from: data)
+        if lastRemoteHeartbeatStatus == "ok" {
+          lastRemoteHeartbeatAt = nowIso()
+        }
+      } else {
+        lastRemoteHeartbeatStatus = "failed_\(http.statusCode)"
+      }
+    } catch {
+      lastRemoteHeartbeatStatus = "failed"
+    }
+  }
+
+  private func remoteSessionHeartbeatStatus(from data: Data) -> String {
+    guard
+      let object = try? JSONSerialization.jsonObject(with: data),
+      let payload = object as? [String: Any],
+      let session = payload["session"] as? [String: Any]
+    else {
+      return "missing_session"
+    }
+    return session["status"] as? String == "active" ? "ok" : "inactive_session"
   }
 
   private func handleKeyEvent(_ event: NSEvent) {
@@ -718,6 +766,11 @@ final class CompanionAppController: NSObject, NSApplicationDelegate {
       "safeMode": panicActive,
       "overlayVisible": overlayVisible,
       "lastHeartbeatAt": lastHeartbeatAt,
+      "remoteSessionHeartbeat": [
+        "enabled": config.remoteSessionHeartbeat != nil,
+        "status": lastRemoteHeartbeatStatus,
+        "lastHeartbeatAt": lastRemoteHeartbeatAt ?? (NSNull() as Any),
+      ],
       "capabilities": [
         "launchAtLogin": config.launchAtLoginEnabled,
         "menuBar": true,
