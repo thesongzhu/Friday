@@ -268,6 +268,24 @@ struct DesktopProjectionScreen: View {
     VStack(alignment: .leading, spacing: 16) {
       GlassPanel {
         VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+          HStack {
+            cardTitle("Provider Auth")
+            Spacer()
+            Button {
+              Task { await viewModel.loadDetail(.providersDoctor(probe: nil)) }
+            } label: {
+              Label("Check", systemImage: "stethoscope")
+            }
+            .buttonStyle(.bordered)
+            .disabled(viewModel.detailState.isLoading)
+          }
+          Text("Runs the existing read-only provider doctor. It reports installed/authenticated providers, suggested routes, and failover blockers without storing keys or changing routing.")
+            .font(.system(size: 11))
+            .foregroundStyle(HubTheme.textSecondary)
+        }
+      }
+      GlassPanel {
+        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
           cardTitle("Provider State")
           Text("Dispatch is displayed as projected status only; this surface exposes no execute action.")
             .font(.system(size: 11))
@@ -392,7 +410,30 @@ struct DesktopProjectionScreen: View {
   }
 
   private func evidenceStatus(_ snapshot: WorkbenchSnapshot) -> some View {
-    refsCard(title: "Evidence Refs", refs: evidenceRefs(snapshot))
+    VStack(alignment: .leading, spacing: 16) {
+      if let runId = snapshot.runOutcomeLearningCandidates.first?.runId, !runId.isEmpty {
+        GlassPanel {
+          VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+            HStack {
+              cardTitle("Token Ledger")
+              Spacer()
+              Button {
+                Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
+              } label: {
+                Label("Read", systemImage: "chart.bar.doc.horizontal")
+              }
+              .buttonStyle(.bordered)
+              .disabled(viewModel.detailState.isLoading)
+            }
+            Text("Reads the owner-gated run readback. Token totals come from the existing token_ledger projection; this screen does not estimate or mutate spend.")
+              .font(.system(size: 11))
+              .foregroundStyle(HubTheme.textSecondary)
+            RefPill(label: "run_id", ref: runId)
+          }
+        }
+      }
+      refsCard(title: "Evidence Refs", refs: evidenceRefs(snapshot))
+    }
   }
 
   private func refsCard(title: String, refs: [String]) -> some View {

@@ -193,6 +193,23 @@ struct FridayProjectionScreen: View {
           }
           .disabled(viewModel.detailState.isLoading)
         }
+        if let runId = projection.runOutcomeLearningCandidates.first?.runId, !runId.isEmpty {
+          HStack(spacing: 8) {
+            Button {
+              Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
+            } label: {
+              Label("Token Ledger", systemImage: "chart.bar.doc.horizontal")
+            }
+            .disabled(viewModel.detailState.isLoading)
+
+            Button {
+              Task { await viewModel.loadDetail(.activityNeedsMe(runId: runId)) }
+            } label: {
+              Label("Needs Me", systemImage: "bell.badge")
+            }
+            .disabled(viewModel.detailState.isLoading)
+          }
+        }
         if let agentSessionId = projection.agentSessionId {
           HStack(spacing: 8) {
             Button {
@@ -217,25 +234,12 @@ struct FridayProjectionScreen: View {
         if let runId = projection.runOutcomeLearningCandidates.first?.runId, !runId.isEmpty {
           HStack(spacing: 8) {
             Button {
-              Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
-            } label: {
-              Label("Run", systemImage: "doc.text.magnifyingglass")
-            }
-            .disabled(viewModel.detailState.isLoading)
-
-            Button {
               Task { await viewModel.loadDetail(.runFileView(runId: runId)) }
             } label: {
               Label("Files", systemImage: "folder")
             }
             .disabled(viewModel.detailState.isLoading)
           }
-          Button {
-            Task { await viewModel.loadDetail(.activityNeedsMe(runId: runId)) }
-          } label: {
-            Label("Needs Me", systemImage: "bell.badge")
-          }
-          .disabled(viewModel.detailState.isLoading)
         }
       }
     }
@@ -514,6 +518,16 @@ struct FridayProjectionScreen: View {
           title: "Device pairing",
           value: "sim loopback now; physical device later",
           healthy: false)
+        readinessRow(
+          title: "Provider auth",
+          value: "read-only doctor; never stores provider secrets",
+          healthy: viewModel.isOnline)
+        Button {
+          Task { await viewModel.loadDetail(.providersDoctor(probe: nil)) }
+        } label: {
+          Label("Check Provider Auth", systemImage: "stethoscope")
+        }
+        .disabled(viewModel.detailState.isLoading)
         RefPill(label: "mission_id", ref: projection.missionId)
       }
     }
@@ -527,6 +541,24 @@ struct FridayProjectionScreen: View {
         RefPill(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
         RefPill(label: "feed", ref: projection.runtimeFeedStatus)
         RefPill(label: "generated", ref: generatedText(projection.generatedAtMs))
+        Button {
+          Task { await viewModel.loadDetail(.providersDoctor(probe: nil)) }
+        } label: {
+          Label("Provider Auth", systemImage: "person.badge.key")
+        }
+        .disabled(viewModel.detailState.isLoading)
+        if let runId = projection.runOutcomeLearningCandidates.first?.runId, !runId.isEmpty {
+          Button {
+            Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
+          } label: {
+            Label("Token Ledger", systemImage: "chart.bar.doc.horizontal")
+          }
+          .disabled(viewModel.detailState.isLoading)
+        } else {
+          Text("Token ledger appears after a real run ref is present.")
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+        }
       }
     }
   }
