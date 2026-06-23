@@ -1053,6 +1053,7 @@ func submitIntakeReadyRendersConfirmedAndWiresOwnerAdmin001() async {
   #expect(write.lastIntake?.ownerPrincipal == "admin-001")
   #expect(write.lastIntake?.surfaceKind == "desktop")
   #expect(write.lastIntake?.lane == "auto")
+  #expect(write.lastIntake?.targetProviderOrAgent == nil)
 }
 
 @Test
@@ -1068,6 +1069,19 @@ func buildIntakeRequestAcceptsSharedMissionPrefixForUiProofCapture() {
   #expect(request.workItemId == "work-desktop-ui_proof_fixed")
   #expect(request.surfaceKind == "desktop")
   #expect(request.deliveryRoute == "desktop://hub-console/operations/ui_proof_fixed")
+}
+
+@Test
+@MainActor
+func buildIntakeRequestCarriesRoutePreference() {
+  let request = OperationsOverviewViewModel.buildIntakeRequest(
+    intent: "use DeepSeek for the cheap first pass",
+    owner: "admin-001",
+    idFactory: { "fixed" },
+    routePreference: .deepseek)
+
+  #expect(request.lane == "deepseek")
+  #expect(request.targetProviderOrAgent == "deepseek")
 }
 
 @Test

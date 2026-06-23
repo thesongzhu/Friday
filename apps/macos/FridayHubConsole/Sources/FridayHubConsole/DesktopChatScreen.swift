@@ -7,6 +7,7 @@ struct DesktopChatScreen: View {
   @ObservedObject var viewModel: OperationsOverviewViewModel
   @StateObject private var voice = DesktopVoiceController()
   @State private var draft = ""
+  @State private var routePreference: MissionRoutePreference = .auto
   @State private var history: [DesktopChatMessage]
 
   private let historyStore: DesktopChatHistoryStore
@@ -481,6 +482,16 @@ struct DesktopChatScreen: View {
 
   private var composer: some View {
     VStack(alignment: .leading, spacing: 6) {
+      Picker("Route", selection: $routePreference) {
+        ForEach(MissionRoutePreference.allCases) { preference in
+          Text(preference.title).tag(preference)
+        }
+      }
+      .pickerStyle(.segmented)
+      .disabled(viewModel.intakeState.isSent)
+      .accessibilityLabel("Route preference")
+      .accessibilityIdentifier("friday.desktop.chat.route-preference")
+
       HStack(spacing: 10) {
         Button {
           voice.toggleRecording { transcript in
@@ -545,7 +556,7 @@ struct DesktopChatScreen: View {
     draft = ""
     append(.user(text))
     Task {
-      await viewModel.submitIntake(intent: text)
+      await viewModel.submitIntake(intent: text, routePreference: routePreference)
       append(DesktopChatMessage.from(viewModel.intakeState))
     }
   }

@@ -1,5 +1,6 @@
 import FridayMobileShellCore
 import AVFoundation
+import FridayRustClient
 @preconcurrency import Speech
 import SwiftUI
 
@@ -20,6 +21,7 @@ struct FridayChatScreen: View {
   @StateObject private var voice = MobileVoiceController()
   /// Whether the S6 pause/approve/resume is enabled (the run-control flag). OFF ⇒ read-only.
   private let runControlEnabled: Bool
+  @State private var routePreference: MissionRoutePreference = .auto
 
   init(session: FridaySession) {
     self.runControlEnabled = session.runControlEnabled
@@ -155,6 +157,16 @@ struct FridayChatScreen: View {
 
   private var composer: some View {
     VStack(alignment: .leading, spacing: 6) {
+      Picker("Route", selection: $routePreference) {
+        ForEach(MissionRoutePreference.allCases) { preference in
+          Text(preference.title).tag(preference)
+        }
+      }
+      .pickerStyle(.segmented)
+      .disabled(viewModel.phase.isBusy || viewModel.phase.isAwaitingApproval)
+      .accessibilityLabel("Route preference")
+      .accessibilityIdentifier("friday.chat.route-preference")
+
       HStack(spacing: 10) {
         Button {
           voice.toggleRecording { transcript in
@@ -187,7 +199,7 @@ struct FridayChatScreen: View {
           voice.stopRecording()
           let task = draft
           draft = ""
-          Task { await viewModel.send(task) }
+          Task { await viewModel.send(task, routePreference: routePreference) }
         } label: {
           Image(systemName: "arrow.up.circle.fill")
             .font(.system(size: 30))
