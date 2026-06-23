@@ -141,6 +141,8 @@ private func pairingKind(_ message: FridayMessage) -> String {
   case .runReadbackSnapshot: return "RunReadbackSnapshot"
   case .providersDoctorRequest: return "ProvidersDoctorRequest"
   case .providersDoctorSnapshot: return "ProvidersDoctorSnapshot"
+  case .capabilityDoctorRequest: return "CapabilityDoctorRequest"
+  case .capabilityDoctorSnapshot: return "CapabilityDoctorSnapshot"
   case .sessionListRequest: return "SessionListRequest"
   case .sessionListSnapshot: return "SessionListSnapshot"
   case .sessionOpenRequest: return "SessionOpenRequest"

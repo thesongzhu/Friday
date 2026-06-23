@@ -1146,6 +1146,28 @@ pub struct ProvidersDoctorSnapshotWire {
     pub generated_at_ms: i64,
 }
 
+/// **S-R3b** — client->read-server request for the refs-only capability-doctor projection.
+/// PURE READ in the dispatch sense: no prompt/send and no model completion. When
+/// `validate_keys=true`, the Hub runs the existing key-validation doctor, which may perform
+/// provider auth probes and can spend the documented tiny Anthropic validation quota.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityDoctorRequestWire {
+    #[serde(default)]
+    pub validate_keys: bool,
+    pub forwarded_principal: String,
+    pub auth_proof: Vec<u8>,
+    pub request_id: String,
+}
+
+/// **S-R3b** — read-server->client owner-sealed capability-doctor snapshot. Carries
+/// refs-only capability readiness JSON; never raw CLI/account/key material.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityDoctorSnapshotWire {
+    pub request_id: String,
+    pub projection_json: String,
+    pub generated_at_ms: i64,
+}
+
 // ----------------------------------------------------------------------------------------------
 // **C2I-PR2** — the 5 OWNER-GATED C2 READ-PLANE request/snapshot wire shapes for the DARK read
 // server. Every one is the EXACT sibling of [`RunReadbackRequestWire`] / [`RunReadbackSnapshotWire`]:
@@ -1503,6 +1525,14 @@ pub enum Message {
     /// `linked_only` — never upgraded, never raw account info). Guard ran before sealing.
     ProvidersDoctorSnapshot {
         snapshot: ProvidersDoctorSnapshotWire,
+    },
+    /// **S-R3b** — UI->DARK read-server: owner-authenticated capability-doctor read projection.
+    CapabilityDoctorRequest {
+        request: CapabilityDoctorRequestWire,
+    },
+    /// **S-R3b** — DARK read-server->UI: owner-sealed, refs-only capability-doctor snapshot.
+    CapabilityDoctorSnapshot {
+        snapshot: CapabilityDoctorSnapshotWire,
     },
     /// **C2I-PR2 (C2-4)** — UI→DARK read-server: request the OWNER-SCOPED routed-session LIST over
     /// the sealed-WS READ seam. PURE READ — no model/provider call. Owner-scoped (the SAME chain a

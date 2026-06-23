@@ -99,6 +99,7 @@ pub mod runtime;
 /// (never silent / fake-ready); an unknown command fails closed. Closes the contract's
 /// `menu_command_sheet_entrypoints` orphan. The HTTP route-family half stays NO-GO (no API).
 pub mod capability;
+pub mod capability_doctor_projection;
 
 /// A-PR4: channel→Hub event wiring (verified inbound → bound principal → Activity+audit).
 pub mod channel_event;

@@ -342,21 +342,38 @@ public struct HomeProviderReadinessDetail: Sendable, Equatable {
   public let proofOnly: Bool
   public let ok: Bool
   public let detected: [HomeProviderAuthReadiness]
+  public let routes: [HomeProviderRouteReadiness]
+  public let failovers: [HomeProviderFailoverReadiness]
   public let readyProviders: [String]
   public let anyAuthenticated: Bool
   public let allAuthenticated: Bool
+  public let suggestedTextRoute: String?
+  public let suggestedStrongRoute: String?
+  public let keyValidationProbed: Bool?
 
   init?(raw: [String: Any]) {
-    guard let rows = raw["detected"] as? [[String: Any]] else { return nil }
     let truthLabel = Self.firstString(raw, ["truth_label", "truthLabel"]) ?? "unknown"
-    guard truthLabel == "rust_providers_detect" else { return nil }
+    guard truthLabel == "rust_providers_detect" || truthLabel == "rust_capability_doctor" else {
+      return nil
+    }
+    let rows = Self.firstRows(raw, ["detected", "cli_detected", "cliDetected"])
     self.truthLabel = truthLabel
     self.proofOnly = Self.firstBool(raw, ["proof_only", "proofOnly"]) ?? true
     self.ok = Self.firstBool(raw, ["ok"]) ?? false
     self.detected = rows.map(HomeProviderAuthReadiness.init(raw:))
-    self.readyProviders = Self.firstStringArray(raw, ["ready_providers", "readyProviders"])
-    self.anyAuthenticated = Self.firstBool(raw, ["any_authenticated", "anyAuthenticated"]) ?? false
-    self.allAuthenticated = Self.firstBool(raw, ["all_authenticated", "allAuthenticated"]) ?? false
+    self.routes = Self.firstRows(raw, ["route_readiness", "routeReadiness"])
+      .map(HomeProviderRouteReadiness.init(raw:))
+    self.failovers = Self.firstRows(raw, ["failover_readiness", "failoverReadiness"])
+      .map(HomeProviderFailoverReadiness.init(raw:))
+    self.readyProviders = Self.firstStringArray(
+      raw, ["ready_providers", "readyProviders", "cli_logged_in", "cliLoggedIn"])
+    self.anyAuthenticated = Self.firstBool(raw, ["any_authenticated", "anyAuthenticated"])
+      ?? self.detected.contains { $0.authenticated }
+    self.allAuthenticated = Self.firstBool(raw, ["all_authenticated", "allAuthenticated"])
+      ?? (!self.detected.isEmpty && self.detected.allSatisfy { $0.authenticated })
+    self.suggestedTextRoute = Self.firstString(raw, ["suggested_text_route", "suggestedTextRoute"])
+    self.suggestedStrongRoute = Self.firstString(raw, ["suggested_strong_route", "suggestedStrongRoute"])
+    self.keyValidationProbed = Self.firstBool(raw, ["key_validation_probed", "keyValidationProbed"])
   }
 
   private static func firstString(_ raw: [String: Any], _ keys: [String]) -> String? {
@@ -369,6 +386,10 @@ public struct HomeProviderReadinessDetail: Sendable, Equatable {
 
   private static func firstBool(_ raw: [String: Any], _ keys: [String]) -> Bool? {
     keys.lazy.compactMap { raw[$0] as? Bool }.first
+  }
+
+  private static func firstRows(_ raw: [String: Any], _ keys: [String]) -> [[String: Any]] {
+    keys.lazy.compactMap { raw[$0] as? [[String: Any]] }.first ?? []
   }
 }
 
@@ -387,6 +408,47 @@ public struct HomeProviderAuthReadiness: Sendable, Equatable, Identifiable {
     self.authenticated = raw["authenticated"] as? Bool ?? false
     self.detail = raw["detail"] as? String ?? "unknown"
     self.truthLabel = raw["truthLabel"] as? String ?? "linked_only"
+  }
+}
+
+public struct HomeProviderRouteReadiness: Sendable, Equatable, Identifiable {
+  public let providerId: String
+  public let model: String
+  public let modelSize: String
+  public let strength: String
+  public let dispatchable: Bool
+  public let blockers: [String]
+
+  public var id: String { providerId }
+
+  init(raw: [String: Any]) {
+    self.providerId = raw["provider_id"] as? String ?? raw["providerId"] as? String ?? "unknown"
+    self.model = raw["model"] as? String ?? "unknown"
+    self.modelSize = raw["model_size"] as? String ?? raw["modelSize"] as? String ?? "unknown"
+    self.strength = raw["strength"] as? String ?? "unknown"
+    self.dispatchable = raw["dispatchable"] as? Bool ?? false
+    self.blockers = Self.blockerCodes(raw["blockers"])
+  }
+
+  static func blockerCodes(_ value: Any?) -> [String] {
+    guard let rows = value as? [[String: Any]] else { return [] }
+    return rows.compactMap { $0["code"] as? String }.filter { !$0.isEmpty }
+  }
+}
+
+public struct HomeProviderFailoverReadiness: Sendable, Equatable, Identifiable {
+  public let direction: String
+  public let flagEnabled: Bool
+  public let canEnable: Bool
+  public let blockers: [String]
+
+  public var id: String { direction }
+
+  init(raw: [String: Any]) {
+    self.direction = raw["direction"] as? String ?? "unknown"
+    self.flagEnabled = raw["flag_enabled"] as? Bool ?? raw["flagEnabled"] as? Bool ?? false
+    self.canEnable = raw["can_enable"] as? Bool ?? raw["canEnable"] as? Bool ?? false
+    self.blockers = HomeProviderRouteReadiness.blockerCodes(raw["blockers"])
   }
 }
 
@@ -665,8 +727,8 @@ public final class HomeViewModel: ObservableObject {
     switch arm {
     case let .runReadback(runId):
       return try await client.fetchRunReadback(runId: runId)
-    case let .providersDoctor(probe):
-      return try await client.fetchProvidersDoctor(probe: probe)
+    case .providersDoctor:
+      return try await client.fetchCapabilityDoctor(validateKeys: true)
     case .sessionList:
       return try await client.fetchSessionList()
     case let .sessionOpen(agentSessionId):

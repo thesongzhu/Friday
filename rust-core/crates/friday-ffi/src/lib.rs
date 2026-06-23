@@ -1976,6 +1976,8 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         M::RunAnswerBodySnapshot { .. } => "RunAnswerBodySnapshot",
         M::ProvidersDoctorRequest { .. } => "ProvidersDoctorRequest",
         M::ProvidersDoctorSnapshot { .. } => "ProvidersDoctorSnapshot",
+        M::CapabilityDoctorRequest { .. } => "CapabilityDoctorRequest",
+        M::CapabilityDoctorSnapshot { .. } => "CapabilityDoctorSnapshot",
         // C2I-PR2 — the 5 DARK sealed-WS READ-seam owner-gated C2 read-plane kinds. NAMED here for
         // the same reason as S-R1/S-R2/S-R3: nothing on the FFI surface constructs/dispatches them
         // (the UI reads them directly over the sealed-WS read server), but naming them keeps this
