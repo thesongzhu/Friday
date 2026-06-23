@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 const missionId = "mission_cli_ui_proof_inputs";
 
-function writeEvidenceFiles(tempDir: string) {
+function writeEvidenceFiles(tempDir: string, activeMissionId = missionId) {
   const files = {
     mobile: join(tempDir, "mobile-real-consumption.json"),
     desktop: join(tempDir, "desktop-real-consumption.json"),
@@ -17,7 +17,7 @@ function writeEvidenceFiles(tempDir: string) {
   for (const [role, filePath] of Object.entries(files)) {
     writeFileSync(filePath, JSON.stringify({
       role,
-      mission_id: missionId,
+      mission_id: activeMissionId,
       capture: "redacted pre-assemble CLI fixture for harness validation only",
     }));
   }
@@ -25,16 +25,25 @@ function writeEvidenceFiles(tempDir: string) {
   return files;
 }
 
-function makeObservation(surface: string, event: string, evidenceRef: string) {
+function makeObservation(
+  surface: string,
+  event: string,
+  evidenceRef: string,
+  activeMissionId = missionId,
+) {
   return {
     surface,
     event,
-    mission_id: missionId,
+    mission_id: activeMissionId,
     evidence_ref: evidenceRef,
   };
 }
 
-function makeManifest(evidenceRefs: ReturnType<typeof writeEvidenceFiles>, overrides: Record<string, unknown> = {}) {
+function makeManifest(
+  evidenceRefs: ReturnType<typeof writeEvidenceFiles>,
+  overrides: Record<string, unknown> = {},
+  activeMissionId = missionId,
+) {
   const checks = Object.fromEntries([
     "same_mission_id_mobile_desktop",
     "same_mission_id_channel",
@@ -71,34 +80,34 @@ function makeManifest(evidenceRefs: ReturnType<typeof writeEvidenceFiles>, overr
   };
 
   const observations = [
-    makeObservation("mobile", "mission_intake_submitted", evidenceRefs.mobile),
-    makeObservation("mobile", "mission_intake_ready", evidenceRefs.mobile),
-    makeObservation("desktop", "mission_resolve_or_create_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "duplicate_preflight_visible", evidenceRefs.desktop),
-    makeObservation("mobile", "mission_bound_provider_action_visible", evidenceRefs.mobile),
-    makeObservation("desktop", "real_provider_execution_visible", evidenceRefs.desktop),
-    makeObservation("mobile", "proof_receipt_visible_before_done", evidenceRefs.mobile),
-    makeObservation("desktop", "same_mission_projection_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "mission_workbench_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "transcript_browser_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "duplicate_blocked_opens_existing", evidenceRefs.desktop),
-    makeObservation("channel", "same_mission_projection_visible", evidenceRefs.channel),
-    makeObservation("channel", "same_mission_mobile_desktop_channel_visible", evidenceRefs.channel),
-    makeObservation("timeline", "bounded_page_1_visible", evidenceRefs.timeline),
-    makeObservation("timeline", "bounded_page_2_visible", evidenceRefs.timeline),
-    makeObservation("timeline", "memory_candidate_review_only", evidenceRefs.timeline),
-    makeObservation("desktop", "provider_ack_not_done_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "pressure_20_50_consecutive_asks_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "invalid_key_error_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "quota_error_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "network_error_visible", evidenceRefs.desktop),
-    makeObservation("channel", "channel_replay_blocked_visible", evidenceRefs.channel),
-    makeObservation("desktop", "reconnect_stale_verified", evidenceRefs.desktop),
-    makeObservation("desktop", "real_provider_execution_receipt_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "stale_label_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "offline_label_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "error_label_visible", evidenceRefs.desktop),
-    makeObservation("desktop", "no_hidden_fallback_verified", evidenceRefs.desktop),
+    makeObservation("mobile", "mission_intake_submitted", evidenceRefs.mobile, activeMissionId),
+    makeObservation("mobile", "mission_intake_ready", evidenceRefs.mobile, activeMissionId),
+    makeObservation("desktop", "mission_resolve_or_create_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "duplicate_preflight_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("mobile", "mission_bound_provider_action_visible", evidenceRefs.mobile, activeMissionId),
+    makeObservation("desktop", "real_provider_execution_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("mobile", "proof_receipt_visible_before_done", evidenceRefs.mobile, activeMissionId),
+    makeObservation("desktop", "same_mission_projection_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "mission_workbench_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "transcript_browser_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "duplicate_blocked_opens_existing", evidenceRefs.desktop, activeMissionId),
+    makeObservation("channel", "same_mission_projection_visible", evidenceRefs.channel, activeMissionId),
+    makeObservation("channel", "same_mission_mobile_desktop_channel_visible", evidenceRefs.channel, activeMissionId),
+    makeObservation("timeline", "bounded_page_1_visible", evidenceRefs.timeline, activeMissionId),
+    makeObservation("timeline", "bounded_page_2_visible", evidenceRefs.timeline, activeMissionId),
+    makeObservation("timeline", "memory_candidate_review_only", evidenceRefs.timeline, activeMissionId),
+    makeObservation("desktop", "provider_ack_not_done_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "pressure_20_50_consecutive_asks_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "invalid_key_error_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "quota_error_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "network_error_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("channel", "channel_replay_blocked_visible", evidenceRefs.channel, activeMissionId),
+    makeObservation("desktop", "reconnect_stale_verified", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "real_provider_execution_receipt_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "stale_label_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "offline_label_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "error_label_visible", evidenceRefs.desktop, activeMissionId),
+    makeObservation("desktop", "no_hidden_fallback_verified", evidenceRefs.desktop, activeMissionId),
   ];
 
   return {
@@ -197,6 +206,23 @@ describe("check-mission-spine-ui-proof-inputs CLI", () => {
       });
       expect(result.evidence.map((entry) => entry.role)).toEqual(["mobile", "desktop", "channel", "timeline"]);
       expect(result.evidence.every((entry) => /^[a-f0-9]{64}$/.test(entry.sha256) && entry.bytes > 0)).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts real Rust producer hyphen mission ids across evidence and observations", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-proof-inputs-hyphen-"));
+    try {
+      const hyphenMissionId = "mission-autodisp-1781492033";
+      const files = writeEvidenceFiles(tempDir, hyphenMissionId);
+      const manifestPath = join(tempDir, "observations-manifest-hyphen.json");
+      writeFileSync(manifestPath, JSON.stringify(makeManifest(files, {}, hyphenMissionId), null, 2));
+
+      const result = runInputsCli(files, manifestPath, [], hyphenMissionId);
+
+      expect(result.readyForAssemble).toBe(true);
+      expect(result.failures).toEqual([]);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

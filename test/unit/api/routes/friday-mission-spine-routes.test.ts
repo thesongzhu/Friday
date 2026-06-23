@@ -338,6 +338,43 @@ describe("createFridayMissionSpineRoutes", () => {
     expect(JSON.stringify(response)).not.toContain("prep fallback");
   });
 
+  it("accepts real Rust producer hyphen mission ids without weakening exact-match checks", async () => {
+    const missionId = "mission-autodisp-1781492033";
+    const hyphenSnapshot = cloneSnapshot({
+      missionId,
+      duplicatePreflight: {
+        ...snapshot.duplicatePreflight,
+        duplicateMissionId: missionId,
+      },
+      transcriptSections: snapshot.transcriptSections.map((section) => ({
+        ...section,
+        missionId,
+        events: section.events.map((event) => ({
+          ...event,
+          missionId,
+        })),
+      })),
+    });
+    const getSnapshot = vi.fn(async () => hyphenSnapshot);
+    const routes = createFridayMissionSpineRoutes({
+      workbench: { getSnapshot },
+      disabledReason: null,
+    });
+    const route = findRoute(routes);
+
+    const response = await route.handler(makeCtx({
+      query: { missionId },
+    }) as never);
+
+    expect(response).toEqual({ snapshot: hyphenSnapshot });
+    expect(getSnapshot).toHaveBeenCalledWith({
+      missionId,
+      principalId: "principal-1",
+      userId: "user-1",
+      surface: "api:/v1/mission-spine/workbench",
+    });
+  });
+
   it("accepts read-only T3 provisioning status but rejects raw device-key leaks", async () => {
     const routes = createFridayMissionSpineRoutes({
       workbench: { getSnapshot: vi.fn(async () => snapshot) },

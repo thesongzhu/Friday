@@ -248,6 +248,15 @@ function observationExists(observations, requiredSurface, eventName, missionId, 
   });
 }
 
+function isMissionIdProofEligible(value) {
+  if (typeof value !== "string") return false;
+  const missionId = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId)
+    && missionId.toLowerCase().includes("mission")
+    && missionId !== "mission_pending_runtime_projection"
+    && !missionId.includes("TODO");
+}
+
 function validateKnownEvidenceRef(value, knownEvidenceRefs, failures, code, detail) {
   if (!knownEvidenceRefs.has(value)) {
     recordFailure(failures, code, detail);
@@ -499,7 +508,7 @@ if (helpRequested) {
 const failures = [];
 const missionId = argValue("mission-id", "MISSION_ID");
 if (!missionId) recordFailure(failures, "missing_mission_id", "mission-id");
-if (missionId && !missionId.startsWith("mission_")) {
+if (missionId && !isMissionIdProofEligible(missionId)) {
   recordFailure(failures, "mission_id_unexpected_shape", missionId);
 }
 if (missionId === "mission_pending_runtime_projection" || missionId.includes("TODO")) {

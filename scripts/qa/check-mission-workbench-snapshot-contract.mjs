@@ -211,6 +211,15 @@ function validateStringField(value, failures, code, detail) {
   return value;
 }
 
+function isMissionIdProofEligible(value) {
+  if (typeof value !== "string") return false;
+  const missionId = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId)
+    && missionId.toLowerCase().includes("mission")
+    && missionId !== "mission_pending_runtime_projection"
+    && !missionId.includes("TODO");
+}
+
 function validateSnapshot(snapshot, expectedMissionId, failures) {
   if (!snapshot) return null;
   const text = JSON.stringify(snapshot);
@@ -218,7 +227,7 @@ function validateSnapshot(snapshot, expectedMissionId, failures) {
 
   const missionId = validateStringField(snapshot.missionId, failures, "mission_id_missing", "snapshot.missionId");
   validateStringField(snapshot.fridayConversationId, failures, "conversation_id_missing", "snapshot.fridayConversationId");
-  if (missionId && !missionId.startsWith("mission_")) {
+  if (missionId && !isMissionIdProofEligible(missionId)) {
     recordFailure(failures, "mission_id_unexpected_shape", missionId);
   }
   if (expectedMissionId && missionId !== expectedMissionId) {
