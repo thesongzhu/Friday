@@ -78,6 +78,19 @@ private enum ProjectionSurface {
 struct FridayProjectionScreen: View {
   let destination: MobileDestination
   @ObservedObject var viewModel: HomeViewModel
+  @StateObject private var pushNotifications: PushNotificationReadinessViewModel
+
+  @MainActor
+  init(
+    destination: MobileDestination,
+    viewModel: HomeViewModel,
+    pushNotifications: PushNotificationReadinessViewModel? = nil
+  ) {
+    self.destination = destination
+    self.viewModel = viewModel
+    _pushNotifications = StateObject(wrappedValue: pushNotifications
+      ?? PushNotificationReadinessViewModel(authorizer: SystemPushNotificationAuthorizer()))
+  }
 
   var body: some View {
     let surface = ProjectionSurface(destination)
@@ -577,6 +590,7 @@ struct FridayProjectionScreen: View {
     }
   }
 
+  @ViewBuilder
   private func settingsCard(_ projection: HomeProjection) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
@@ -605,6 +619,72 @@ struct FridayProjectionScreen: View {
         }
       }
     }
+    pushNotificationCard()
+  }
+
+  @ViewBuilder
+  private func pushNotificationCard() -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader("Push Notifications", count: nil)
+        switch pushNotifications.state {
+        case .idle:
+          readinessRow(title: "Permission", value: "not checked", healthy: false)
+        case .loading:
+          HStack(spacing: 12) {
+            ProgressView()
+            Text("Checking notification permission")
+              .font(.caption)
+              .foregroundStyle(MobileTheme.textSecondary)
+          }
+        case let .loaded(readiness):
+          HStack(spacing: 6) {
+            statusChip(readiness.settings.authorizationStatus.rawValue)
+            statusChip(readiness.truthLabel)
+          }
+          readinessRow(
+            title: "Local delivery",
+            value: readiness.localNotificationUsable ? "permission usable" : readiness.summary,
+            healthy: readiness.localNotificationUsable)
+          readinessRow(
+            title: "Remote APNs",
+            value: readiness.remoteDeliveryConfigured ? "configured" : "not configured in this build",
+            healthy: readiness.remoteDeliveryConfigured)
+          HStack(spacing: 6) {
+            statusChip(readiness.settings.alertSettingEnabled ? "alerts on" : "alerts off")
+            statusChip(readiness.settings.badgeSettingEnabled ? "badges on" : "badges off")
+            statusChip(readiness.settings.soundSettingEnabled ? "sounds on" : "sounds off")
+          }
+        case let .unavailable(reason):
+          readinessRow(title: "Permission", value: reason, healthy: false)
+        }
+        HStack(spacing: 8) {
+          Button {
+            Task { await pushNotifications.refresh() }
+          } label: {
+            Label("Refresh", systemImage: "arrow.clockwise")
+          }
+          .disabled(pushNotifications.state == .loading)
+
+          if pushNotifications.state.readiness?.canRequestPermission != false {
+            Button {
+              Task { await pushNotifications.requestPermission() }
+            } label: {
+              Label("Allow", systemImage: "bell.badge")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(MobileTheme.cyan)
+            .disabled(pushNotifications.state == .loading)
+          }
+        }
+      }
+    }
+    .task {
+      if pushNotifications.state == .idle {
+        await pushNotifications.refresh()
+      }
+    }
+    .accessibilityIdentifier("friday.settings.push-notifications-card")
   }
 
   private func workItemRow(_ item: HomeWorkItem) -> some View {
