@@ -432,11 +432,20 @@ private final class MobileVoiceController: ObservableObject {
     request = nil
     task = nil
     isRecording = false
+    deactivateAudioSession()
     status = "Voice input stopped."
   }
 
   func speak(_ text: String) {
+    stopRecording()
     stopSpeaking()
+    do {
+      try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: .duckOthers)
+      try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+    } catch {
+      status = "Voice output failed: \(error.localizedDescription)"
+      return
+    }
     let utterance = AVSpeechUtterance(string: text)
     utterance.rate = AVSpeechUtteranceDefaultSpeechRate
     synthesizer.speak(utterance)
@@ -491,9 +500,14 @@ private final class MobileVoiceController: ObservableObject {
       }
     } catch {
       input.removeTap(onBus: 0)
+      deactivateAudioSession()
       self.request = nil
       status = "Voice input failed: \(error.localizedDescription)"
     }
+  }
+
+  private func deactivateAudioSession() {
+    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
   }
 
   private static func requestMicrophoneAccess(_ completion: @escaping @Sendable (Bool) -> Void) {
