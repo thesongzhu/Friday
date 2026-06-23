@@ -180,7 +180,7 @@ struct PairingProvisioningScreen: View {
           }
           .buttonStyle(.bordered)
         }
-        Text("Trust grants and context passports stay operator CLI ceremonies; this app only stages the exact command shape.")
+        Text("Trust grants and context passports stay operator CLI ceremonies; this app opens the read-only action helper so the current DB state chooses the exact command.")
           .font(.system(size: 11))
           .foregroundStyle(HubTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
