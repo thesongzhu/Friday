@@ -283,8 +283,9 @@ impl PairingListener {
     /// Enroll goes through the SHARED [`enroll_read_seam_peer_additive`]: APPEND-only + idempotent,
     /// so the existing desktop master peer (and any other enrolled device) is NEVER evicted.
     ///
-    /// ## Atomicity (HONEST, NOTED): the `trusted_device` DB txn and the read-seam FileSecureStore
-    /// are SEPARATE stores. The enroll runs AFTER `complete_qr_pairing` committed, so a
+    /// ## Atomicity (HONEST, NOTED): the `device_identity` + `trusted_device` DB txn and the
+    /// read-seam FileSecureStore are SEPARATE stores. The enroll runs AFTER `complete_qr_pairing`
+    /// committed, so a
     /// "trust written, enroll failed" window exists. That is surfaced LOUDLY (the returned
     /// [`PairOutcome::enroll_error`]) so the operator can re-run `hub_read_seam_enroll --pubkey …
     /// --add`; acceptable for this DARK bin. The pairing trust itself is never rolled back.
@@ -491,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn pair_message_records_trusted_device_and_no_model_call_rows() {
+    fn pair_message_records_device_identity_trusted_device_and_no_model_call_rows() {
         let tmp = TempDb::new("pair");
         let mut db = Db::open_hub(tmp.path()).unwrap();
         let payload = sample_payload(2000);
@@ -519,6 +520,7 @@ mod tests {
                 error_code: None
             }
         );
+        assert_eq!(db.count("device_identity").unwrap(), 1);
         assert_eq!(db.count("trusted_device").unwrap(), 1);
         assert_eq!(db.count("audit_ledger").unwrap(), 1);
         assert_eq!(db.count("token_ledger").unwrap(), 0);

@@ -6,7 +6,7 @@ mod common;
 
 use common::temp_db_path;
 use friday_core::{
-    FridayPairPayload, PairAuthority, PairTransportHint, PairTransportKind,
+    DeviceRole, FridayPairPayload, PairAuthority, PairTransportHint, PairTransportKind,
     CURRENT_PAIR_PAYLOAD_VERSION,
 };
 use friday_crypto::pairing_proof;
@@ -43,6 +43,8 @@ fn authenticated_pairing_records_trusted_device() {
         db.conn_mut(),
         secret,
         "dev-1",
+        DeviceRole::Ios,
+        "Jarvis iPhone",
         &pubkey,
         &proof,
         100,
@@ -50,6 +52,7 @@ fn authenticated_pairing_records_trusted_device() {
     )
     .unwrap();
     assert!(pairing::is_trusted(db.conn(), "dev-1").unwrap());
+    assert_eq!(db.count("device_identity").unwrap(), 1);
     assert_eq!(db.count("trusted_device").unwrap(), 1);
     assert_eq!(audit::verify_audit_chain(db.conn()).unwrap(), 1);
 }
@@ -66,6 +69,16 @@ fn complete_qr_pairing_uses_payload_secret_and_records_redacted_projection() {
         .unwrap();
 
     assert!(pairing::is_trusted(db.conn(), "dev-1").unwrap());
+    assert_eq!(db.count("device_identity").unwrap(), 1);
+    let identity: (String, Vec<u8>, String) = db
+        .conn()
+        .query_row(
+            "SELECT role, public_key, display_name FROM device_identity WHERE device_id = 'dev-1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(identity, ("ios".into(), pubkey.to_vec(), "dev-1".into()));
     let devices = db.list_trusted_device_projections().unwrap();
     assert_eq!(devices.len(), 1);
     assert_eq!(devices[0].device_id, "dev-1");
@@ -87,6 +100,7 @@ fn expired_payload_and_phone_profile_cannot_complete_qr_pairing() {
     assert!(db
         .complete_qr_pairing(&payload, "dev-1", &pubkey, &proof, 100, "au-expired")
         .is_err());
+    assert_eq!(db.count("device_identity").unwrap(), 0);
     assert_eq!(db.count("trusted_device").unwrap(), 0);
     assert_eq!(db.count("audit_ledger").unwrap(), 0);
 
@@ -120,6 +134,8 @@ fn mitm_substituted_pubkey_is_rejected() {
         db.conn_mut(),
         secret,
         "dev-evil",
+        DeviceRole::Ios,
+        "Evil Phone",
         &attacker_pubkey,
         &proof_for_real_key,
         100,
@@ -130,6 +146,11 @@ fn mitm_substituted_pubkey_is_rejected() {
         db.count("trusted_device").unwrap(),
         0,
         "nothing trusted on denied pairing"
+    );
+    assert_eq!(
+        db.count("device_identity").unwrap(),
+        0,
+        "no identity on denied pairing"
     );
     assert_eq!(
         db.count("audit_ledger").unwrap(),
@@ -148,6 +169,8 @@ fn wrong_secret_is_rejected() {
         db.conn_mut(),
         b"a-guessed-secret",
         "dev-1",
+        DeviceRole::Ios,
+        "Jarvis iPhone",
         &pubkey,
         &proof,
         1,
@@ -167,6 +190,8 @@ fn revoke_blocks_device_and_is_audited() {
         db.conn_mut(),
         secret,
         "dev-1",
+        DeviceRole::Ios,
+        "Jarvis iPhone",
         &pubkey,
         &proof,
         1,
@@ -190,7 +215,18 @@ fn key_rotation_updates_pubkey_and_audits() {
     let secret = b"s";
     let k1 = [1u8; 32];
     let proof = pairing_proof(secret, &k1);
-    pairing::pair_device(db.conn_mut(), secret, "dev-1", &k1, &proof, 1, "au-pair").unwrap();
+    pairing::pair_device(
+        db.conn_mut(),
+        secret,
+        "dev-1",
+        DeviceRole::Ios,
+        "Jarvis iPhone",
+        &k1,
+        &proof,
+        1,
+        "au-pair",
+    )
+    .unwrap();
 
     let k2 = [2u8; 32];
     pairing::rotate_device_key(db.conn_mut(), "dev-1", &k2, 5, "au-rot").unwrap();

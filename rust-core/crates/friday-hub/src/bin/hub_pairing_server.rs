@@ -12,9 +12,10 @@
 //!    test-only (no bin).
 //! 2. **On a SUCCESSFUL pair, enrolls the device's read pubkey.** A valid `Pair` (correct
 //!    `pairing_proof = HMAC(qr_secret, device_pubkey)`, UNEXPIRED, non-replay) writes a
-//!    `trusted_device` row AND THEN — and only then — appends that device's pubkey to the read-seam
-//!    allowlist ([`friday_hub::key_source::READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID`]) so that device can
-//!    read (:48751). An invalid / replayed / expired / revoked pair enrolls NOTHING (fail-closed).
+//!    `device_identity` + `trusted_device` rows AND THEN — and only then — appends that device's
+//!    pubkey to the read-seam allowlist
+//!    ([`friday_hub::key_source::READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID`]) so that device can read
+//!    (:48751). An invalid / replayed / expired / revoked pair enrolls NOTHING (fail-closed).
 //!
 //! ## Security (this bin GRANTS READ enrollment — built defensively)
 //! * **Only a VALID pairing enrolls.** The enroll is bound to a `PairAck { accepted: true }`, which
@@ -36,9 +37,10 @@
 //! * **No secret in logs, no panic path.** Coarse error categories only; the pairing secret + the
 //!   master key + device pubkey bytes are NEVER printed (only counts / fingerprints).
 //!
-//! ## Atomicity (HONEST): the `trusted_device` DB txn and the read-seam FileSecureStore are SEPARATE
-//! stores; a "trust written, enroll failed" window exists. It is surfaced LOUDLY (a stderr line) so
-//! the operator can re-run `hub_read_seam_enroll --pubkey … --add`; acceptable for this DARK bin.
+//! ## Atomicity (HONEST): the `device_identity` + `trusted_device` DB txn and the read-seam
+//! FileSecureStore are SEPARATE stores; a "trust written, enroll failed" window exists. It is
+//! surfaced LOUDLY (a stderr line) so the operator can re-run
+//! `hub_read_seam_enroll --pubkey … --add`; acceptable for this DARK bin.
 //!
 //! ## DARK / default-off — NOT a live flip
 //! There is NO LaunchAgent entry and NO production caller. The bin serves only when explicitly run.
@@ -87,7 +89,7 @@ enum ServerError {
     /// blank, or the payload is already expired. Coarse only (never the secret).
     BadPayload,
     Bind,
-    /// The hub DB could not be opened read-WRITE (pairing WRITES `trusted_device` + audit).
+    /// The hub DB could not be opened read-WRITE (pairing writes identity + trust + audit).
     DbUnavailable,
     /// The master key is absent/unreadable ⇒ REFUSE TO BOOT (never auto-generated). The master key
     /// is for the read-seam store KEK — NOT the pairing ECDH (that key rides the QR/preamble).
@@ -167,8 +169,9 @@ fn run() -> Result<(), ServerError> {
     // secret + expiry — a bad payload FAILS CLOSED before we serve anything.
     let payload = build_payload(&args, &default_endpoint)?;
 
-    // (2) Open the hub DB READ-WRITE — pairing WRITES `trusted_device` + audit_ledger (this is the
-    // ONE place this bin differs from the read-projection server, which opens read-only).
+    // (2) Open the hub DB READ-WRITE — pairing writes device_identity + trusted_device +
+    // audit_ledger (this is the ONE place this bin differs from the read-projection server, which
+    // opens read-only).
     let mut db = Db::open_hub(&db_path).map_err(|_| ServerError::DbUnavailable)?;
 
     // (3) Open the read-seam FileSecureStore (sealed under the host master KEK) so a successful pair

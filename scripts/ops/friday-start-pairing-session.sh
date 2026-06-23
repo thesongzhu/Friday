@@ -3,9 +3,10 @@
 # Start a short-lived Friday QR pairing session.
 #
 # Truth boundary:
-#   This launches the DARK hub_pairing_server explicitly. It can write trusted_device rows and
-#   append the paired device to the read-seam allowlist only after a valid PairAck. It does not mint
-#   trust_grant/context_passport rows, does not read operator signing keys, and does not flip flags.
+#   This launches the DARK hub_pairing_server explicitly. It can write device_identity +
+#   trusted_device rows and append the paired device to the read-seam allowlist only after a valid
+#   PairAck. It does not mint trust_grant/context_passport rows, does not read operator signing keys,
+#   and does not flip flags.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
