@@ -43,6 +43,18 @@ final class ShareIntakeViewModelTests: XCTestCase {
         status: "blocked",
         blocker: "unused")
     }
+
+    func submitWorkItemStatus(_ request: WorkItemStatusRequestWire) async throws -> WorkItemStatusResultWire {
+      WorkItemStatusResultWire(
+        workItemId: request.workItemId,
+        missionId: "unused",
+        previousStatus: "unknown",
+        status: "blocked",
+        actorRef: request.actorRef,
+        reason: request.reason,
+        proofReceiptCount: 0,
+        updatedAtMs: 0)
+    }
   }
 
   func testNoClientFailsClosedWithoutFakeMission() async {

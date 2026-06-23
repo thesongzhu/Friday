@@ -191,6 +191,7 @@ final class HomeViewModelTests: XCTestCase {
     private(set) var memoryRequests: [MemoryDecisionRequestWire] = []
     private(set) var learningRequests: [RunOutcomeLearningDecisionRequestWire] = []
     private(set) var activityMarkDoneRequests: [ActivityMarkDoneRequestWire] = []
+    private(set) var workItemStatusRequests: [WorkItemStatusRequestWire] = []
 
     init(
       learningScript: LearningScript? = nil,
@@ -233,6 +234,19 @@ final class HomeViewModelTests: XCTestCase {
       case .result(let result): return result
       case .fail(let error): throw error
       }
+    }
+
+    func submitWorkItemStatus(_ request: WorkItemStatusRequestWire) async throws -> WorkItemStatusResultWire {
+      workItemStatusRequests.append(request)
+      return WorkItemStatusResultWire(
+        workItemId: request.workItemId,
+        missionId: "unused",
+        previousStatus: "unknown",
+        status: request.targetStatus,
+        actorRef: request.actorRef,
+        reason: request.reason,
+        proofReceiptCount: request.proofReceipt == nil ? 0 : 1,
+        updatedAtMs: 0)
     }
   }
 
@@ -620,6 +634,48 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(
       vm.activityMarkDoneStates["missing-activity"],
       .error(reason: "Activity mark done blocked — unknown_activity"))
+  }
+
+  func testRetryWorkItemSendsLifecycleWriteAndRefreshes() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeMissionWriteClient()
+    let vm = HomeViewModel(client: read, writeClient: write, writeOwnerPrincipal: "owner-ios")
+    let item = try XCTUnwrap(HomeProjection(try sampleSnapshot()).workItems.last)
+
+    await vm.retryWorkItem(item)
+
+    XCTAssertEqual(write.workItemStatusRequests, [
+      WorkItemStatusRequestWire(
+        workItemId: "wi-2",
+        targetStatus: "ready_to_dispatch",
+        actorRef: "mobile:owner-ios",
+        reason: "operator retries WorkItem from mobile recovery surface"),
+    ])
+    XCTAssertEqual(read.fetchWorkbenchCount, 1)
+    XCTAssertEqual(
+      vm.workItemStatusStates["wi-2"],
+      .confirmed(summary: "ready_to_dispatch · work_item_id=wi-2 · previous=unknown"))
+  }
+
+  func testCancelWorkItemSendsLifecycleWriteAndRefreshes() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeMissionWriteClient()
+    let vm = HomeViewModel(client: read, writeClient: write, writeOwnerPrincipal: "owner-ios")
+    let item = try XCTUnwrap(HomeProjection(try sampleSnapshot()).workItems.last)
+
+    await vm.cancelWorkItem(item)
+
+    XCTAssertEqual(write.workItemStatusRequests, [
+      WorkItemStatusRequestWire(
+        workItemId: "wi-2",
+        targetStatus: "cancelled",
+        actorRef: "mobile:owner-ios",
+        reason: "operator cancels WorkItem from mobile recovery surface"),
+    ])
+    XCTAssertEqual(read.fetchWorkbenchCount, 1)
+    XCTAssertEqual(
+      vm.workItemStatusStates["wi-2"],
+      .confirmed(summary: "cancelled · work_item_id=wi-2 · previous=unknown"))
   }
 
   func testDecideMemoryConfirmRendersConfirmedAndRefreshes() async throws {

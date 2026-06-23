@@ -688,7 +688,8 @@ struct FridayProjectionScreen: View {
   }
 
   private func workItemRow(_ item: HomeWorkItem) -> some View {
-    VStack(alignment: .leading, spacing: 6) {
+    let recoveryState = viewModel.workItemStatusStates[item.id]
+    return VStack(alignment: .leading, spacing: 6) {
       HStack {
         Text(item.title)
           .font(.system(size: 13, weight: .medium))
@@ -711,14 +712,31 @@ struct FridayProjectionScreen: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       if item.canRetry || item.canCancel {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
           if item.canRetry {
-            statusChip("retry available")
+            Button {
+              Task { await viewModel.retryWorkItem(item) }
+            } label: {
+              Image(systemName: "arrow.clockwise")
+                .frame(width: 26, height: 26)
+            }
+            .buttonStyle(.bordered)
+            .disabled(candidateDecisionControlsDisabled(recoveryState))
+            .accessibilityLabel("Retry WorkItem")
           }
           if item.canCancel {
-            statusChip("cancel available")
+            Button {
+              Task { await viewModel.cancelWorkItem(item) }
+            } label: {
+              Image(systemName: "stop.circle")
+                .frame(width: 26, height: 26)
+            }
+            .buttonStyle(.bordered)
+            .disabled(candidateDecisionControlsDisabled(recoveryState))
+            .accessibilityLabel("Cancel WorkItem")
           }
         }
+        candidateDecisionStateView(recoveryState, pendingText: "Updating WorkItem...")
       }
       if let proofRef = item.proofRef {
         RefPill(label: "proofRef", ref: proofRef)

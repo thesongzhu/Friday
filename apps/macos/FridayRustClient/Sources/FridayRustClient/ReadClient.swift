@@ -258,6 +258,10 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "ActivityMarkDoneRequest")
     case .activityMarkDoneResult:
       throw FridayReadClientError.unexpectedResponse(kind: "ActivityMarkDoneResult")
+    case .workItemStatusRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "WorkItemStatusRequest")
+    case .workItemStatusResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "WorkItemStatusResult")
     case .runAnswerBodyRequest:
       throw FridayReadClientError.unexpectedResponse(kind: "RunAnswerBodyRequest")
     case .runAnswerBodySnapshot:
@@ -375,6 +379,10 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "ActivityMarkDoneRequest")
     case .activityMarkDoneResult:
       throw FridayReadClientError.unexpectedResponse(kind: "ActivityMarkDoneResult")
+    case .workItemStatusRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "WorkItemStatusRequest")
+    case .workItemStatusResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "WorkItemStatusResult")
     case .runReadbackRequest:
       throw FridayReadClientError.unexpectedResponse(kind: "RunReadbackRequest")
     case .runReadbackSnapshot:

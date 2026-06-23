@@ -181,6 +181,10 @@ public protocol FridayMissionSpineWriteClient: Sendable {
   ) async throws -> RunOutcomeLearningDecisionResultWire
   /// Mark one existing Activity / Needs-Me row done. This is refs-only and never completes a WorkItem.
   func submitActivityMarkDone(_ request: ActivityMarkDoneRequestWire) async throws -> ActivityMarkDoneResultWire
+  /// Advance one existing WorkItem lifecycle status through the Hub state machine. This is refs-only
+  /// recovery/lifecycle control; the Hub enforces owner binding, legal transitions, audit, and
+  /// proof-on-completion.
+  func submitWorkItemStatus(_ request: WorkItemStatusRequestWire) async throws -> WorkItemStatusResultWire
 }
 
 /// Product-facing bridge for MissionIntakeResult -> mission-bound AgentRunRequest. This is the
@@ -354,7 +358,8 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
          .missionIntakeRequest, .missionIntakeResult,
          .memoryDecisionRequest, .memoryDecisionResult,
          .runOutcomeLearningDecisionRequest, .runOutcomeLearningDecisionResult,
-         .activityMarkDoneRequest, .activityMarkDoneResult:
+         .activityMarkDoneRequest, .activityMarkDoneResult,
+         .workItemStatusRequest, .workItemStatusResult:
       throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(message))
     case .unsupported(let kind):
       throw FridayWriteClientError.unexpectedResponse(kind: kind)
@@ -471,6 +476,33 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
     let resp = try openEnvelope(respBody, sessionKey: sessionKey)
     switch resp.message {
     case .activityMarkDoneResult(let r):
+      return r
+    case .error(let code, let message):
+      throw FridayWriteClientError.serverError(code: code, message: message)
+    default:
+      throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(resp.message))
+    }
+  }
+
+  /// Advance one WorkItem's lifecycle through the Rust Hub WorkItem state machine over the sealed
+  /// WRITE session. Like mission intake / memory decisions, the sealed peer session is the channel
+  /// auth; the server binds the write to its authenticated owner and rejects illegal transitions.
+  public func submitWorkItemStatus(_ request: WorkItemStatusRequestWire) async throws -> WorkItemStatusResultWire {
+    let transport = try makeTransport()
+    let (sessionKey, _) = try handshake(transport)
+    let msgId = "work-item-status-\(request.workItemId)"
+    let env = FridayEnvelope(msgId: msgId, sentAt: now(), message: .workItemStatusRequest(request))
+      .withCorrelation(msgId)
+    try transport.sendMessage(try sealEnvelope(env, sessionKey: sessionKey))
+    let respBody: [UInt8]
+    do {
+      respBody = try transport.recvMessage()
+    } catch {
+      throw FridayWriteClientError.transport("no work-item-status result (session ended fail-closed): \(error)")
+    }
+    let resp = try openEnvelope(respBody, sessionKey: sessionKey)
+    switch resp.message {
+    case .workItemStatusResult(let r):
       return r
     case .error(let code, let message):
       throw FridayWriteClientError.serverError(code: code, message: message)
@@ -697,6 +729,8 @@ private func dispatchKind(_ message: FridayMessage) -> String {
   case .runOutcomeLearningDecisionResult: return "RunOutcomeLearningDecisionResult"
   case .activityMarkDoneRequest: return "ActivityMarkDoneRequest"
   case .activityMarkDoneResult: return "ActivityMarkDoneResult"
+  case .workItemStatusRequest: return "WorkItemStatusRequest"
+  case .workItemStatusResult: return "WorkItemStatusResult"
   case .unsupported(let kind): return kind
   }
 }

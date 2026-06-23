@@ -25,6 +25,7 @@ final class WriteClientWiringTests: XCTestCase {
     case resumeRefused       // resume → AgentRunControlResult(accepted=false, denied)
     case rejectAccepted      // reject → AgentRunControlResult(accepted, rejected)
     case cancelAccepted      // cancel → AgentRunControlResult(accepted, cancelled)
+    case workItemStatusAccepted // work item lifecycle → WorkItemStatusResult
   }
 
   /// An in-memory transport playing the Rust agent-run WRITE server's half, in the byte sequence
@@ -52,6 +53,7 @@ final class WriteClientWiringTests: XCTestCase {
     private(set) var receivedConstraints: AgentRunConstraintsWire?
     private(set) var receivedSessionId: String?
     private(set) var receivedMissionContext: MissionWorkItemContextWire?
+    private(set) var receivedWorkItemStatusRequest: WorkItemStatusRequestWire?
 
     init(serverKeypair: FridayCrypto.DeviceKeypair, sessionNonce: [UInt8],
          peerAllowlist: [[UInt8]], ownerAllowlist: [String], mode: ServerMode) {
@@ -123,6 +125,8 @@ final class WriteClientWiringTests: XCTestCase {
             self.receivedCancelReason = reason
             self.cancelled += 1
           })
+      case .workItemStatusRequest(let req):
+        try handleWorkItemStatus(req, sessionKey: sessionKey, correlation: env.msgId)
       default:
         throw FridayWriteClientError.transport("unexpected inbound on the write session: \(env.msgId)")
       }
@@ -222,6 +226,29 @@ final class WriteClientWiringTests: XCTestCase {
         msgId: "agent-run-control-result-\(runId)",
         sentAt: 1_780_640_000_000,
         message: .agentRunControlResult(result)).withCorrelation(correlation)
+      queuedFromServer.append(try FridayCrypto.encodeSealed(FridayCrypto.seal(
+        key: sessionKey, plaintext: [UInt8](resp.encodeJSON()), aad: writeSessionAad)))
+    }
+
+    private func handleWorkItemStatus(
+      _ req: WorkItemStatusRequestWire,
+      sessionKey: [UInt8],
+      correlation: String
+    ) throws {
+      receivedWorkItemStatusRequest = req
+      let result = WorkItemStatusResultWire(
+        workItemId: req.workItemId,
+        missionId: "mission-\(req.workItemId)",
+        previousStatus: "failed_retryable",
+        status: req.targetStatus,
+        actorRef: req.actorRef,
+        reason: req.reason,
+        proofReceiptCount: req.proofReceipt == nil ? 0 : 1,
+        updatedAtMs: 1_780_640_000_123)
+      let resp = FridayEnvelope(
+        msgId: "work-item-status-result-\(req.workItemId)",
+        sentAt: 1_780_640_000_000,
+        message: .workItemStatusResult(result)).withCorrelation(correlation)
       queuedFromServer.append(try FridayCrypto.encodeSealed(FridayCrypto.seal(
         key: sessionKey, plaintext: [UInt8](resp.encodeJSON()), aad: writeSessionAad)))
     }
@@ -466,5 +493,27 @@ final class WriteClientWiringTests: XCTestCase {
       XCTAssertEqual(transport.cancelled, 0)
       XCTAssertNil(transport.receivedCancelReason)
     }
+  }
+
+  // MARK: work-item lifecycle status (T4 recovery write leg)
+
+  func testWorkItemStatus_sendsLifecycleRequestAndParsesRefsOnlyReceipt() async throws {
+    let (client, transport) = try makeClient(mode: .workItemStatusAccepted, controlEnabled: false)
+    let request = WorkItemStatusRequestWire(
+      workItemId: "work-stale-1",
+      targetStatus: "ready_to_dispatch",
+      actorRef: "desktop:operator",
+      reason: "operator retries stale WorkItem from recovery surface")
+
+    let result = try await client.submitWorkItemStatus(request)
+
+    XCTAssertEqual(transport.receivedWorkItemStatusRequest, request)
+    XCTAssertEqual(result.workItemId, "work-stale-1")
+    XCTAssertEqual(result.missionId, "mission-work-stale-1")
+    XCTAssertEqual(result.previousStatus, "failed_retryable")
+    XCTAssertEqual(result.status, "ready_to_dispatch")
+    XCTAssertEqual(result.actorRef, "desktop:operator")
+    XCTAssertEqual(result.reason, "operator retries stale WorkItem from recovery surface")
+    XCTAssertEqual(result.proofReceiptCount, 0)
   }
 }

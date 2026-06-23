@@ -246,6 +246,98 @@ public struct ActivityMarkDoneResultWire: Codable, Equatable, Sendable {
   }
 }
 
+/// Client→hub WorkItem lifecycle command. Mirrors
+/// `friday_protocol::WorkItemStatusRequestWire`.
+///
+/// This is a Hub-owned state-machine mutation over an existing WorkItem, not a provider/model call.
+/// `targetStatus` must be one of the Rust WorkItem lifecycle labels. `proofReceipt` is required only
+/// for `completed_with_proof`; the Hub rejects proofless completion and rejects receipts on every
+/// other target.
+public struct WorkItemStatusRequestWire: Codable, Equatable, Sendable {
+  public var workItemId: String
+  public var targetStatus: String
+  public var actorRef: String
+  public var reason: String
+  public var proofReceipt: String?
+
+  public init(
+    workItemId: String,
+    targetStatus: String,
+    actorRef: String,
+    reason: String,
+    proofReceipt: String? = nil
+  ) {
+    self.workItemId = workItemId
+    self.targetStatus = targetStatus
+    self.actorRef = actorRef
+    self.reason = reason
+    self.proofReceipt = proofReceipt
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case workItemId = "work_item_id"
+    case targetStatus = "target_status"
+    case actorRef = "actor_ref"
+    case reason
+    case proofReceipt = "proof_receipt"
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(workItemId, forKey: .workItemId)
+    try c.encode(targetStatus, forKey: .targetStatus)
+    try c.encode(actorRef, forKey: .actorRef)
+    try c.encode(reason, forKey: .reason)
+    if let proofReceipt {
+      try c.encode(proofReceipt, forKey: .proofReceipt)
+    }
+  }
+}
+
+/// Hub→client WorkItem lifecycle receipt. Refs-only: previous/current status, actor/reason, proof
+/// receipt count, and timestamp. It never carries raw proof refs or provider bodies.
+public struct WorkItemStatusResultWire: Codable, Equatable, Sendable {
+  public var workItemId: String
+  public var missionId: String
+  public var previousStatus: String
+  public var status: String
+  public var actorRef: String
+  public var reason: String
+  public var proofReceiptCount: UInt64
+  public var updatedAtMs: Int64
+
+  public init(
+    workItemId: String,
+    missionId: String,
+    previousStatus: String,
+    status: String,
+    actorRef: String,
+    reason: String,
+    proofReceiptCount: UInt64,
+    updatedAtMs: Int64
+  ) {
+    self.workItemId = workItemId
+    self.missionId = missionId
+    self.previousStatus = previousStatus
+    self.status = status
+    self.actorRef = actorRef
+    self.reason = reason
+    self.proofReceiptCount = proofReceiptCount
+    self.updatedAtMs = updatedAtMs
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case workItemId = "work_item_id"
+    case missionId = "mission_id"
+    case previousStatus = "previous_status"
+    case status
+    case actorRef = "actor_ref"
+    case reason
+    case proofReceiptCount = "proof_receipt_count"
+    case updatedAtMs = "updated_at_ms"
+  }
+}
+
 /// Client→read-server owner-gated answer-body request. This is a READ-seam message, but the shared
 /// wire types live beside the other protocol structs so `FridayMessage` can encode/decode it.
 public struct RunAnswerBodyRequestWire: Codable, Equatable, Sendable {

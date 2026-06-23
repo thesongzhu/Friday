@@ -496,6 +496,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   private var _lastDecision: MemoryDecisionRequestWire?
   private var _lastLearningDecision: RunOutcomeLearningDecisionRequestWire?
   private var _lastActivityMarkDone: ActivityMarkDoneRequestWire?
+  private var _lastWorkItemStatus: WorkItemStatusRequestWire?
   private var _lastMissionContext: MissionWorkItemContextWire?
   private var _lastMissionRunConstraints: AgentRunConstraintsWire?
   private var _lastResumeRunId: String?
@@ -512,6 +513,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
     lock.withLock { _lastLearningDecision }
   }
   var lastActivityMarkDone: ActivityMarkDoneRequestWire? { lock.withLock { _lastActivityMarkDone } }
+  var lastWorkItemStatus: WorkItemStatusRequestWire? { lock.withLock { _lastWorkItemStatus } }
   var lastMissionContext: MissionWorkItemContextWire? { lock.withLock { _lastMissionContext } }
   var lastMissionRunConstraints: AgentRunConstraintsWire? { lock.withLock { _lastMissionRunConstraints } }
   var lastResumeRunId: String? { lock.withLock { _lastResumeRunId } }
@@ -599,6 +601,22 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
     default:
       return ActivityMarkDoneResultWire(activityId: request.activityId, state: "done", status: "done")
     }
+  }
+
+  func submitWorkItemStatus(_ request: WorkItemStatusRequestWire) async throws -> WorkItemStatusResultWire {
+    lock.withLock { _lastWorkItemStatus = request }
+    if case .throwsTransport = behavior {
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    }
+    return WorkItemStatusResultWire(
+      workItemId: request.workItemId,
+      missionId: "mission-\(request.workItemId)",
+      previousStatus: request.targetStatus == "ready_to_dispatch" ? "failed_retryable" : "ready_to_dispatch",
+      status: request.targetStatus,
+      actorRef: request.actorRef,
+      reason: request.reason,
+      proofReceiptCount: request.proofReceipt == nil ? 0 : 1,
+      updatedAtMs: 1_780_640_000_123)
   }
 
   func dispatchMissionBoundAgentRun(
@@ -1403,6 +1421,75 @@ func markNeedsMeItemDoneUsesRefIdAndRefreshesReview() async {
   }
   #expect(summary.contains("done"))
   #expect(summary.contains("activity-review-1"))
+}
+
+@Test
+@MainActor
+func retryWorkItemSendsLifecycleWriteAndRefreshes() async {
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let item = MissionWorkbenchWorkItem(
+    id: "work-stale-1",
+    title: "Retry stale provider turn",
+    state: .stale,
+    owner: .fridayOwned,
+    proofRef: nil,
+    done: false,
+    blockingReason: "failed retryable",
+    recoveryKind: "retryable",
+    canRetry: true,
+    canCancel: true)
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    writeClient: write,
+    writeOwnerPrincipal: "owner-desktop")
+
+  await vm.retryWorkItem(item)
+
+  #expect(write.lastWorkItemStatus == WorkItemStatusRequestWire(
+    workItemId: "work-stale-1",
+    targetStatus: "ready_to_dispatch",
+    actorRef: "desktop:owner-desktop",
+    reason: "operator retries WorkItem from desktop recovery surface"))
+  guard case .confirmed(let summary, _, _) = vm.workItemStatusStates[item.id] else {
+    Issue.record("expected retry .confirmed, got \(String(describing: vm.workItemStatusStates[item.id]))")
+    return
+  }
+  #expect(summary.contains("ready_to_dispatch"))
+  #expect(summary.contains("previous=failed_retryable"))
+}
+
+@Test
+@MainActor
+func cancelWorkItemSendsLifecycleWriteAndRefreshes() async {
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let item = MissionWorkbenchWorkItem(
+    id: "work-inflight-1",
+    title: "Cancel in-flight provider turn",
+    state: .providerAck,
+    owner: .fridayOwned,
+    proofRef: nil,
+    done: false,
+    blockingReason: "provider acknowledged",
+    recoveryKind: "in_flight",
+    canRetry: false,
+    canCancel: true)
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    writeClient: write,
+    writeOwnerPrincipal: "owner-desktop")
+
+  await vm.cancelWorkItem(item)
+
+  #expect(write.lastWorkItemStatus == WorkItemStatusRequestWire(
+    workItemId: "work-inflight-1",
+    targetStatus: "cancelled",
+    actorRef: "desktop:owner-desktop",
+    reason: "operator cancels WorkItem from desktop recovery surface"))
+  guard case .confirmed(let summary, _, _) = vm.workItemStatusStates[item.id] else {
+    Issue.record("expected cancel .confirmed, got \(String(describing: vm.workItemStatusStates[item.id]))")
+    return
+  }
+  #expect(summary.contains("cancelled"))
 }
 
 @Test

@@ -659,6 +659,7 @@ public final class HomeViewModel: ObservableObject {
   @Published public private(set) var memoryDecisionStates: [String: HomeLearningDecisionState] = [:]
   @Published public private(set) var runOutcomeLearningDecisionStates: [String: HomeLearningDecisionState] = [:]
   @Published public private(set) var activityMarkDoneStates: [String: HomeLearningDecisionState] = [:]
+  @Published public private(set) var workItemStatusStates: [String: HomeLearningDecisionState] = [:]
   @Published public private(set) var pairingPreflight: MobilePairingPreflight = .empty
   @Published public private(set) var pairingAttempt: MobilePairingAttempt = .idle
 
@@ -787,6 +788,48 @@ public final class HomeViewModel: ObservableObject {
       }
     } catch {
       activityMarkDoneStates[activityId] = .error(reason: Self.reason(for: error))
+    }
+  }
+
+  public func retryWorkItem(_ item: HomeWorkItem) async {
+    guard item.canRetry else {
+      workItemStatusStates[item.id] = .error(reason: "This WorkItem is not retryable.")
+      return
+    }
+    await submitWorkItemStatus(
+      workItemId: item.id,
+      targetStatus: "ready_to_dispatch",
+      reason: "operator retries WorkItem from mobile recovery surface")
+  }
+
+  public func cancelWorkItem(_ item: HomeWorkItem) async {
+    guard item.canCancel else {
+      workItemStatusStates[item.id] = .error(reason: "This WorkItem is not cancellable.")
+      return
+    }
+    await submitWorkItemStatus(
+      workItemId: item.id,
+      targetStatus: "cancelled",
+      reason: "operator cancels WorkItem from mobile recovery surface")
+  }
+
+  private func submitWorkItemStatus(workItemId: String, targetStatus: String, reason: String) async {
+    guard let writeClient else {
+      workItemStatusStates[workItemId] = .error(reason: "Write seam not configured.")
+      return
+    }
+    workItemStatusStates[workItemId] = .sent
+    do {
+      let result = try await writeClient.submitWorkItemStatus(WorkItemStatusRequestWire(
+        workItemId: workItemId,
+        targetStatus: targetStatus,
+        actorRef: "mobile:\(writeOwnerPrincipal)",
+        reason: reason))
+      workItemStatusStates[workItemId] = .confirmed(
+        summary: "\(result.status) · work_item_id=\(result.workItemId) · previous=\(result.previousStatus)")
+      await refresh()
+    } catch {
+      workItemStatusStates[workItemId] = .error(reason: Self.reason(for: error))
     }
   }
 
