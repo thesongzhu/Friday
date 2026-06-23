@@ -265,6 +265,25 @@ final class HomeViewModelTests: XCTestCase {
       "capabilityStates": [
         { "id": "cap-route", "label": "Route advisor", "kind": "advisor", "truthLabel": "friday_owned", "approvalState": "not_required", "dispatchAllowed": true, "summary": "Routes are advisory.", "proofRef": "proof://cap/1" }
       ],
+      "t3ProvisioningStatus": {
+        "truthLabel": "rust_hub_t3_provisioning_read_only_no_mint",
+        "paired": true,
+        "deviceIdentityCount": 1,
+        "trustedDeviceCount": 1,
+        "activeTrustedDeviceCount": 1,
+        "trustGrantCount": 1,
+        "activeTrustGrantCount": 1,
+        "contextPassportCount": 1,
+        "contextPassportItemCount": 2,
+        "latestDevice": {
+          "deviceId": "proof://device/paired-ios-1",
+          "label": "operator phone",
+          "pairedAt": 1780640000000,
+          "revokedAt": null,
+          "keyRotatedAt": null,
+          "pubkeyFingerprint": "abcd1234:dcba4321"
+        }
+      },
       "transcriptSections": [
         { "id": "sec-1", "title": "Mission", "groupKind": "mission", "missionId": "mission-7", "truthLabel": "friday_owned", "status": "ready", "events": [
           { "id": "evt-1", "missionId": "mission-7", "surface": "mobile", "status": "ready", "truthLabel": "friday_owned", "summary": "Mobile surface read the mission projection.", "capturedAt": "2026-06-21T00:00:00Z" }
@@ -343,6 +362,11 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.memoryCandidates.first?.grantsMemoryAuthority, false)
     XCTAssertEqual(p.runOutcomeLearningCandidates.first?.runId, "run-1")
     XCTAssertEqual(p.capabilityStates.first?.dispatchAllowed, true)
+    XCTAssertEqual(p.t3ProvisioningStatus?.truthLabel, "rust_hub_t3_provisioning_read_only_no_mint")
+    XCTAssertEqual(p.t3ProvisioningStatus?.paired, true)
+    XCTAssertEqual(p.t3ProvisioningStatus?.latestDevice?.deviceId, "proof://device/paired-ios-1")
+    XCTAssertEqual(p.t3ProvisioningStatus?.latestDevice?.pubkeyFingerprint, "abcd1234:dcba4321")
+    XCTAssertEqual(p.t3ProvisioningStatus?.isFullyProvisioned, true)
     XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile surface read the mission projection.")
     XCTAssertEqual(p.needsMeCount, 4)
   }

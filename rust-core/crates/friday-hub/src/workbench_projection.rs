@@ -151,6 +151,7 @@ pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<
         "memoryCandidates": memory_candidates_json(&mission, &links),
         "runOutcomeLearningCandidates": run_outcome_learning_candidates,
         "capabilityStates": capability_states_json(&work_items, route_decision.route_decision_ref.as_str()),
+        "t3ProvisioningStatus": t3_provisioning_status_json(db).map_err(|err| err.to_string())?,
         "transcriptSections": transcript_sections_json(&mission.mission_id, transcript_events)
     });
 
@@ -459,6 +460,45 @@ fn capability_states_json(work_items: &[WorkItem], route_ref: &str) -> Vec<Value
         }
     }
     rows
+}
+
+fn t3_provisioning_status_json(db: &Db) -> friday_storage::Result<Value> {
+    let device_identity_count = db.count("device_identity")?;
+    let trusted_device_count = db.count("trusted_device")?;
+    let active_trusted_device_count: i64 = db.conn().query_row(
+        "SELECT count(*) FROM trusted_device WHERE revoked_at IS NULL",
+        [],
+        |row| row.get(0),
+    )?;
+    let trust_grant_count = db.count("trust_grant")?;
+    let context_passport_count = db.count("context_passport")?;
+    let context_passport_item_count = db.count("context_passport_item")?;
+    let active_trust_grant_count: i64 = db.conn().query_row(
+        "SELECT count(*) FROM trust_grant WHERE revoked = 0 AND (expires_at IS NULL OR expires_at > strftime('%s','now') * 1000)",
+        [],
+        |row| row.get(0),
+    )?;
+    let latest_device = db.list_trusted_device_projections()?.into_iter().next();
+
+    Ok(json!({
+        "truthLabel": "rust_hub_t3_provisioning_read_only_no_mint",
+        "paired": device_identity_count > 0 && active_trusted_device_count > 0,
+        "deviceIdentityCount": device_identity_count,
+        "trustedDeviceCount": trusted_device_count,
+        "activeTrustedDeviceCount": active_trusted_device_count,
+        "trustGrantCount": trust_grant_count,
+        "activeTrustGrantCount": active_trust_grant_count,
+        "contextPassportCount": context_passport_count,
+        "contextPassportItemCount": context_passport_item_count,
+        "latestDevice": latest_device.map(|device| json!({
+            "deviceId": redacted_ref("device", &device.device_id),
+            "label": device.label,
+            "pairedAt": device.paired_at,
+            "revokedAt": device.revoked_at,
+            "keyRotatedAt": device.key_rotated_at,
+            "pubkeyFingerprint": device.pubkey_fingerprint,
+        }))
+    }))
 }
 
 fn transcript_sections_json(mission_id: &str, events: Vec<Value>) -> Vec<Value> {
@@ -1077,6 +1117,7 @@ mod tests {
         MissionStatus, RouteDecisionCard, TruthStatus, WorkItem, WorkItemStatus, WorkLane,
     };
     use friday_storage::memory;
+    use rusqlite::params;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static C: AtomicU64 = AtomicU64::new(0);
@@ -1352,6 +1393,95 @@ mod tests {
             row.get("runId").and_then(Value::as_str) == Some("run-follow-up-a1")
                 && row.get("workItemId").and_then(Value::as_str) == Some("autodisp-1781492033")
         }));
+    }
+
+    #[test]
+    fn projects_t3_provisioning_status_from_hub_tables_without_raw_device_key() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        let device_pubkey = vec![1_u8; 32];
+        db.conn()
+            .execute(
+                "INSERT INTO device_identity
+                    (device_id, role, public_key, created_at, display_name)
+                 VALUES (?1, 'phone', ?2, ?3, ?4)",
+                params![
+                    "ios-real-device-1",
+                    device_pubkey.clone(),
+                    1_780_640_000_010_i64,
+                    "Operator phone"
+                ],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO trusted_device
+                    (device_id, public_key, paired_at, revoked_at, key_rotated_at, sealed_key_ref, label)
+                 VALUES (?1, ?2, ?3, NULL, NULL, NULL, ?4)",
+                params!["ios-real-device-1", device_pubkey, 1_780_640_000_010_i64, "Operator phone"],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO trust_grant
+                    (grant_id, agent_id, granted_at, expires_at, revoked, revoked_at, boundaries)
+                 VALUES ('grant-t3-1', 'agent-codex', ?1, NULL, 0, NULL, '{}')",
+                [1_780_640_000_020_i64],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO context_passport
+                    (passport_id, mission_id, work_item_id, destination_lane, destination_target, approved_sensitive, created_at_ms)
+                 VALUES ('passport-t3-1', ?1, 'autodisp-1781492033', 'codex', 'codex', 0, ?2)",
+                params![mission_id, 1_780_640_000_030_i64],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO context_passport_item
+                    (passport_id, seq, kind, label, included, sensitive)
+                 VALUES ('passport-t3-1', 0, 'mission_link', 'mission refs', 1, 0)",
+                [],
+            )
+            .unwrap();
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        let status = snapshot
+            .get("t3ProvisioningStatus")
+            .and_then(Value::as_object)
+            .expect("projection must include T3 provisioning status");
+        assert_eq!(
+            status.get("truthLabel").and_then(Value::as_str),
+            Some("rust_hub_t3_provisioning_read_only_no_mint")
+        );
+        assert_eq!(status.get("paired").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            status.get("activeTrustGrantCount").and_then(Value::as_i64),
+            Some(1)
+        );
+        assert_eq!(
+            status.get("contextPassportCount").and_then(Value::as_i64),
+            Some(1)
+        );
+        let latest = status
+            .get("latestDevice")
+            .and_then(Value::as_object)
+            .expect("latest trusted device");
+        assert!(latest
+            .get("deviceId")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.starts_with("proof://device/")));
+        let fingerprint = latest
+            .get("pubkeyFingerprint")
+            .and_then(Value::as_str)
+            .expect("redacted public-key fingerprint");
+        assert!(fingerprint.contains(':'));
+        let rendered = serde_json::to_string(&snapshot).unwrap();
+        assert!(!rendered.contains("ios-real-device-1"));
+        assert!(
+            !rendered.contains("0101010101010101010101010101010101010101010101010101010101010101")
+        );
     }
 
     #[test]

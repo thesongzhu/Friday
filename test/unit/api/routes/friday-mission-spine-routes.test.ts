@@ -128,6 +128,25 @@ const snapshot: FridayMissionSpineWorkbenchSnapshot = {
       proofRef: "proof://skill/observed-only/no-dispatch",
     },
   ],
+  t3ProvisioningStatus: {
+    truthLabel: "rust_hub_t3_provisioning_read_only_no_mint",
+    paired: true,
+    deviceIdentityCount: 1,
+    trustedDeviceCount: 1,
+    activeTrustedDeviceCount: 1,
+    trustGrantCount: 1,
+    activeTrustGrantCount: 1,
+    contextPassportCount: 1,
+    contextPassportItemCount: 2,
+    latestDevice: {
+      deviceId: "proof://device/paired-ios-1",
+      label: "operator phone",
+      pairedAt: 1_780_640_000_000,
+      revokedAt: null,
+      keyRotatedAt: null,
+      pubkeyFingerprint: "abcd1234:dcba4321",
+    },
+  },
   transcriptSections: [
     {
       id: "section_live_projection_test",
@@ -317,6 +336,41 @@ describe("createFridayMissionSpineRoutes", () => {
     });
     expect(JSON.stringify(response)).not.toContain("mission_pending_runtime_projection");
     expect(JSON.stringify(response)).not.toContain("prep fallback");
+  });
+
+  it("accepts read-only T3 provisioning status but rejects raw device-key leaks", async () => {
+    const routes = createFridayMissionSpineRoutes({
+      workbench: { getSnapshot: vi.fn(async () => snapshot) },
+      disabledReason: null,
+    });
+    const route = findRoute(routes);
+    const response = await route.handler(makeCtx() as never);
+
+    expect(response).toEqual({ snapshot });
+    expect(JSON.stringify(response)).toContain("rust_hub_t3_provisioning_read_only_no_mint");
+    expect(JSON.stringify(response)).not.toContain("0101010101010101010101010101010101010101010101010101010101010101");
+
+    const leaked = cloneSnapshot({
+      t3ProvisioningStatus: {
+        ...snapshot.t3ProvisioningStatus!,
+        latestDevice: {
+          ...snapshot.t3ProvisioningStatus!.latestDevice!,
+          pubkeyFingerprint: "0101010101010101010101010101010101010101010101010101010101010101",
+        },
+      },
+    });
+    const leakedRoutes = createFridayMissionSpineRoutes({
+      workbench: { getSnapshot: vi.fn(async () => leaked) },
+      disabledReason: null,
+    });
+    let thrown: unknown = null;
+    try {
+      await findRoute(leakedRoutes).handler(makeCtx() as never);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    expect(JSON.stringify((thrown as FridayDomainError).details)).toContain("t3_latest_device_raw_pubkey_leak");
   });
 
   it("fails closed when the live snapshot does not match the requested Mission id", async () => {

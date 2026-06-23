@@ -531,8 +531,9 @@ struct FridayProjectionScreen: View {
           healthy: false)
         readinessRow(
           title: "Device pairing",
-          value: "sim loopback now; physical device later",
-          healthy: false)
+          value: projection.t3ProvisioningStatus?.paired == true ? "paired in Hub" : "no paired device in Hub",
+          healthy: projection.t3ProvisioningStatus?.paired == true)
+        t3ProvisioningRows(projection.t3ProvisioningStatus)
         readinessRow(
           title: "Provider auth",
           value: "read-only doctor; never stores provider secrets",
@@ -545,6 +546,34 @@ struct FridayProjectionScreen: View {
         .disabled(viewModel.detailState.isLoading)
         RefPill(label: "mission_id", ref: projection.missionId)
       }
+    }
+  }
+
+  @ViewBuilder
+  private func t3ProvisioningRows(_ status: HomeT3ProvisioningStatus?) -> some View {
+    if let status {
+      readinessRow(
+        title: "Trust grant",
+        value: status.activeTrustGrantCount > 0 ? "active grant present" : "operator grant not present",
+        healthy: status.activeTrustGrantCount > 0)
+      readinessRow(
+        title: "Context passport",
+        value: status.contextPassportCount > 0 ? "\(status.contextPassportCount) passport(s)" : "not minted",
+        healthy: status.contextPassportCount > 0 && status.contextPassportItemCount > 0)
+      if let device = status.latestDevice {
+        RefPill(label: "trusted_device", ref: device.deviceId)
+        RefPill(label: "device_fingerprint", ref: device.pubkeyFingerprint)
+      }
+      RefPill(label: "truth", ref: status.truthLabel)
+    } else {
+      readinessRow(
+        title: "Trust grant",
+        value: "not in projection",
+        healthy: false)
+      readinessRow(
+        title: "Context passport",
+        value: "not in projection",
+        healthy: false)
     }
   }
 
