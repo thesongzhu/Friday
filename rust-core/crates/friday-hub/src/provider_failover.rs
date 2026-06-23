@@ -104,7 +104,12 @@ pub fn is_claude_failover_worthy(err: &AgentError) -> bool {
     match err {
         AgentError::ClaudeRoute(e) => match e {
             ClaudeError::ProviderUnavailable(_) => true,
-            ClaudeError::ClientError { status } => *status == 402 || *status == 429,
+            ClaudeError::ClientError { status } => {
+                // 402 is Anthropic's billing/quota error: the Claude route cannot
+                // serve this call, but another provider may. 429 remains worth
+                // failover after friday-anthropic exhausts its bounded backoff.
+                *status == 402 || *status == 429
+            }
             ClaudeError::Auth(_) | ClaudeError::CredentialMissing | ClaudeError::BadResponse(_) => {
                 false
             }

@@ -35,6 +35,7 @@
 //! the friday-deepseek assertion).
 
 use serde_json::{json, Value};
+use std::time::Duration;
 use thiserror::Error;
 
 /// Anthropic API base URL (the Messages API root).
@@ -64,6 +65,13 @@ pub const ENV_KEY: &str = "FRIDAY_ANTHROPIC_API_KEY";
 /// (transient) ⇒ [`crate`-external `is_failover_worthy`] treats it as a transient outage — the run
 /// is never silently wedged.
 pub const ANTHROPIC_REQUEST_TIMEOUT_MS: u64 = 60_000;
+/// Bounded same-provider 429 retry budget. This gives Anthropic a short,
+/// Retry-After-aware recovery window before surfacing the unchanged terminal
+/// `ClientError { status: 429 }` to Friday's failover layer.
+pub const ANTHROPIC_RATE_LIMIT_MAX_RETRIES: u32 = 2;
+pub const ANTHROPIC_RATE_LIMIT_BASE_BACKOFF_MS: u64 = 250;
+pub const ANTHROPIC_RATE_LIMIT_MAX_BACKOFF_MS: u64 = 1_000;
+pub const ANTHROPIC_RATE_LIMIT_MAX_TOTAL_BACKOFF_MS: u64 = 2_000;
 
 // `Clone + PartialEq + Eq` mirrors `DeepSeekError` so the structured error could be
 // carried (not stringified) if a future slice adds an `AgentError::ClaudeRoute`
@@ -86,11 +94,9 @@ pub enum ClaudeError {
     #[error("Anthropic provider unavailable: {0}")]
     ProviderUnavailable(String),
     /// A TERMINAL client-side HTTP error: other 4xx (400 bad-request / 404 /
-    /// 413 request-too-large / 422) and 429 rate-limit. Retrying cannot fix a
-    /// malformed/unauthorized/not-found request, and — absent any backoff
-    /// mechanism — retrying a 429 would only hammer a rate-limited provider, so
-    /// 429 is treated as terminal here (mirrors DeepSeek's no-backoff choice).
-    /// Never a fallback. Display is COARSE: status code only, never the body.
+    /// 413 request-too-large / 422) and 429 rate-limit after the bounded
+    /// Retry-After-aware backoff budget is exhausted. Never a fallback. Display
+    /// is COARSE: status code only, never the body.
     #[error("Anthropic client error (HTTP {status})")]
     ClientError { status: u16 },
     /// Response did not match the documented Messages API shape.
@@ -143,6 +149,32 @@ impl Default for UreqTransport {
     }
 }
 
+fn parse_retry_after_ms(raw: Option<&str>) -> Option<u64> {
+    raw.and_then(|v| v.trim().parse::<u64>().ok())
+        .map(|secs| secs.saturating_mul(1_000))
+}
+
+fn bounded_429_backoff_ms(
+    attempt: u32,
+    retry_after_ms: Option<u64>,
+    total_backoff_ms: u64,
+) -> Option<u64> {
+    if total_backoff_ms >= ANTHROPIC_RATE_LIMIT_MAX_TOTAL_BACKOFF_MS {
+        return None;
+    }
+    let remaining = ANTHROPIC_RATE_LIMIT_MAX_TOTAL_BACKOFF_MS - total_backoff_ms;
+    let exponential =
+        ANTHROPIC_RATE_LIMIT_BASE_BACKOFF_MS.saturating_mul(2u64.saturating_pow(attempt));
+    // Deterministic jitter keeps tests stable while avoiding perfectly aligned retries.
+    let jitter = ((attempt as u64 + 1) * 37) % 101;
+    let requested = retry_after_ms.unwrap_or_else(|| exponential.saturating_add(jitter));
+    Some(
+        requested
+            .min(ANTHROPIC_RATE_LIMIT_MAX_BACKOFF_MS)
+            .min(remaining),
+    )
+}
+
 fn map_ureq_err(e: ureq::Error) -> ClaudeError {
     match e {
         ureq::Error::Status(code, _resp) => {
@@ -154,7 +186,8 @@ fn map_ureq_err(e: ureq::Error) -> ClaudeError {
                 // or any server-side 5xx — retrying the SAME route may succeed.
                 ClaudeError::ProviderUnavailable(format!("HTTP {code}"))
             } else {
-                // Terminal client error: other 4xx (400/404/413/422) and 429 rate-limit.
+                // Terminal client error: other 4xx (400/404/413/422) and 429 rate-limit
+                // after the bounded same-provider backoff budget is exhausted.
                 ClaudeError::ClientError { status: code }
             }
         }
@@ -170,15 +203,36 @@ impl Transport for UreqTransport {
     fn post_json(&self, url: &str, api_key: &str, body: &Value) -> Result<Value, ClaudeError> {
         // (#24b degrade-4, hardening) Route through the timeout-bounded shared agent (see
         // UreqTransport) — never a bare `ureq::post()` (which has no timeout).
-        let resp = self
-            .agent
-            .post(url)
-            .set("x-api-key", api_key)
-            .set("anthropic-version", ANTHROPIC_VERSION)
-            .set("content-type", "application/json")
-            .set("accept", "application/json")
-            .send_json(body.clone())
-            .map_err(map_ureq_err)?;
+        let mut total_backoff_ms = 0u64;
+        let mut retry_count = 0u32;
+        let resp = loop {
+            match self
+                .agent
+                .post(url)
+                .set("x-api-key", api_key)
+                .set("anthropic-version", ANTHROPIC_VERSION)
+                .set("content-type", "application/json")
+                .set("accept", "application/json")
+                .send_json(body.clone())
+            {
+                Ok(resp) => break resp,
+                Err(ureq::Error::Status(429, resp)) => {
+                    if retry_count >= ANTHROPIC_RATE_LIMIT_MAX_RETRIES {
+                        return Err(ClaudeError::ClientError { status: 429 });
+                    }
+                    let retry_after_ms = parse_retry_after_ms(resp.header("Retry-After"));
+                    let Some(delay_ms) =
+                        bounded_429_backoff_ms(retry_count, retry_after_ms, total_backoff_ms)
+                    else {
+                        return Err(ClaudeError::ClientError { status: 429 });
+                    };
+                    std::thread::sleep(Duration::from_millis(delay_ms));
+                    total_backoff_ms = total_backoff_ms.saturating_add(delay_ms);
+                    retry_count += 1;
+                }
+                Err(e) => return Err(map_ureq_err(e)),
+            }
+        };
         resp.into_json::<Value>()
             .map_err(|e| ClaudeError::BadResponse(format!("invalid JSON: {e}")))
     }
@@ -463,6 +517,65 @@ mod tests {
         (format!("http://{addr}"), handle)
     }
 
+    type HttpResponseSpec = (
+        u16,
+        &'static str,
+        Vec<(&'static str, &'static str)>,
+        &'static str,
+    );
+
+    fn serve_http_sequence(
+        responses: Vec<HttpResponseSpec>,
+    ) -> (String, thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let mut captured_requests = Vec::new();
+            for (status, reason, headers, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut captured: Vec<u8> = Vec::new();
+                let mut tmp = [0u8; 1024];
+                loop {
+                    match stream.read(&mut tmp) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            captured.extend_from_slice(&tmp[..n]);
+                            if captured.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let mut response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
+                    body.len()
+                );
+                for (name, value) in headers {
+                    response.push_str(name);
+                    response.push_str(": ");
+                    response.push_str(value);
+                    response.push_str("\r\n");
+                }
+                response.push_str("\r\n");
+                response.push_str(body);
+                stream.write_all(response.as_bytes()).unwrap();
+                stream.flush().unwrap();
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+                let mut sink = [0u8; 1024];
+                while let Ok(n) = stream.read(&mut sink) {
+                    if n == 0 {
+                        break;
+                    }
+                }
+                captured_requests.push(String::from_utf8_lossy(&captured).into_owned());
+            }
+            captured_requests
+        });
+        (format!("http://{addr}"), handle)
+    }
+
     // ---- from_env fail-closed ----
 
     #[test]
@@ -732,22 +845,75 @@ mod tests {
     }
 
     #[test]
-    fn real_transport_maps_rate_limit_to_terminal_client_error_without_body_or_secret() {
-        // 429 is a TERMINAL ClientError (no backoff ⇒ treat as terminal rather than
-        // hammer a rate-limited provider). Display/Debug stays COARSE: the status
-        // code only — never the response body nor the x-api-key. Leak-lens.
-        let (base_url, handle) = serve_http_once(
-            429,
-            "Too Many Requests",
-            r#"{"type":"error","error":{"type":"rate_limit_error","message":"SECRET-QUOTA-BODY"}}"#,
+    fn real_transport_retries_rate_limit_then_succeeds() {
+        let (base_url, handle) = serve_http_sequence(vec![
+            (
+                429,
+                "Too Many Requests",
+                vec![("Retry-After", "0")],
+                r#"{"type":"error","error":{"type":"rate_limit_error","message":"SECRET-QUOTA-BODY"}}"#,
+            ),
+            (
+                200,
+                "OK",
+                vec![],
+                r#"{"model":"claude-opus-4-8","content":[{"type":"text","text":"PONG"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"#,
+            ),
+        ]);
+        let c = ClaudeClient::with_transport_and_base_url(
+            UreqTransport::new(),
+            "test-key-not-real".to_string(),
+            base_url,
         );
+        let out = c.chat("claude-opus-4-8", "hi", 16).unwrap();
+        let requests = handle.join().unwrap();
+        assert_eq!(out.content, "PONG");
+        assert_eq!(
+            requests.len(),
+            2,
+            "429 should be retried once before success"
+        );
+    }
+
+    #[test]
+    fn real_transport_maps_rate_limit_to_terminal_client_error_without_body_or_secret() {
+        // After the bounded backoff budget is exhausted, 429 remains the SAME terminal
+        // ClientError so Friday's failover layer still matches `status == 429`.
+        // Display/Debug stays COARSE: the status code only — never the response body nor
+        // the x-api-key. Leak-lens.
+        let quota_body =
+            r#"{"type":"error","error":{"type":"rate_limit_error","message":"SECRET-QUOTA-BODY"}}"#;
+        let (base_url, handle) = serve_http_sequence(vec![
+            (
+                429,
+                "Too Many Requests",
+                vec![("Retry-After", "0")],
+                quota_body,
+            ),
+            (
+                429,
+                "Too Many Requests",
+                vec![("Retry-After", "0")],
+                quota_body,
+            ),
+            (
+                429,
+                "Too Many Requests",
+                vec![("Retry-After", "0")],
+                quota_body,
+            ),
+        ]);
         let c = ClaudeClient::with_transport_and_base_url(
             UreqTransport::new(),
             "test-key-not-real".to_string(),
             base_url,
         );
         let err = c.chat("claude-opus-4-8", "hi", 16).unwrap_err();
-        handle.join().unwrap();
+        let requests = handle.join().unwrap();
+        assert_eq!(
+            requests.len(),
+            (ANTHROPIC_RATE_LIMIT_MAX_RETRIES + 1) as usize
+        );
         assert!(matches!(err, ClaudeError::ClientError { status: 429 }));
         // Both Debug and Display must be coarse and secret-free.
         for rendered in [format!("{err:?}"), format!("{err}")] {
@@ -760,6 +926,20 @@ mod tests {
             // Positively: the status code IS present (a coarse, useful label).
             assert!(rendered.contains("429"), "status code missing: {rendered}");
         }
+    }
+
+    #[test]
+    fn retry_after_backoff_is_bounded() {
+        assert_eq!(parse_retry_after_ms(Some("2")), Some(2_000));
+        assert_eq!(parse_retry_after_ms(Some("not-a-number")), None);
+        assert_eq!(
+            bounded_429_backoff_ms(0, Some(999_000), 0),
+            Some(ANTHROPIC_RATE_LIMIT_MAX_BACKOFF_MS)
+        );
+        assert_eq!(
+            bounded_429_backoff_ms(0, Some(999_000), ANTHROPIC_RATE_LIMIT_MAX_TOTAL_BACKOFF_MS),
+            None
+        );
     }
 
     #[test]
