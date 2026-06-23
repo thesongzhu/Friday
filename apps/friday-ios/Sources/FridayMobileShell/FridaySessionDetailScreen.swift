@@ -128,6 +128,8 @@ struct FridaySessionDetailScreen: View {
                 Task { await viewModel.stop() }
               } else if control.id == "resume" {
                 Task { await viewModel.resume() }
+              } else if control.id == "reject" {
+                Task { await viewModel.reject() }
               }
             } label: {
               VStack(alignment: .leading, spacing: 6) {

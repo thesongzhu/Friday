@@ -227,6 +227,36 @@ public final class SessionContinuationViewModel: ObservableObject {
     }
   }
 
+  public func reject() async {
+    guard case .loaded(let snapshot) = state else { return }
+    guard let approval = snapshot.pendingApproval else {
+      controlStates["reject"] = .error(reason: "Reject requires a pending approval ref.")
+      return
+    }
+    guard runControlEnabled else {
+      controlStates["reject"] = .error(reason: "Reject is gated off for this session.")
+      return
+    }
+    guard let writeClient else {
+      controlStates["reject"] = .error(reason: "Reject requires the governed write client.")
+      return
+    }
+
+    controlStates["reject"] = .sending
+    do {
+      let result = try await writeClient.rejectApproval(
+        runId: approval.runId,
+        approvalId: approval.approvalId)
+      if result.accepted {
+        controlStates["reject"] = .succeeded(summary: Self.controlSummary(for: result))
+      } else {
+        controlStates["reject"] = .error(reason: "Reject refused: \(Self.controlSummary(for: result))")
+      }
+    } catch {
+      controlStates["reject"] = .error(reason: Self.writeReason(for: error, verb: "reject"))
+    }
+  }
+
   private nonisolated static func fetchSessionOpen(
     client: FridayRustReadClient,
     agentSessionId: String
@@ -347,6 +377,7 @@ public final class SessionContinuationViewModel: ObservableObject {
   ) -> [SessionContinuationControl] {
     let stopReady = runId != nil && hasWriteClient && runControlEnabled
     let resumeReady = hasPendingApproval && hasWriteClient && hasSigner && runControlEnabled
+    let rejectReady = hasPendingApproval && hasWriteClient && runControlEnabled
     let stopReason: String
     if stopReady {
       stopReason = "Owner-authenticated cancel is wired through the governed write seam."
@@ -368,6 +399,16 @@ public final class SessionContinuationViewModel: ObservableObject {
       resumeReason = "Resume requires the operator signer relay."
     } else {
       resumeReason = "Resume requires the governed write client."
+    }
+    let rejectReason: String
+    if rejectReady {
+      rejectReason = "Pending approval refs are present; reject relays through the governed write seam without executing the mutation."
+    } else if !hasPendingApproval {
+      rejectReason = "Reject requires a pending approval ref from Needs-Me."
+    } else if !runControlEnabled {
+      rejectReason = "Reject is gated off for this session."
+    } else {
+      rejectReason = "Reject requires the governed write client."
     }
     return [
       SessionContinuationControl(
@@ -391,6 +432,13 @@ public final class SessionContinuationViewModel: ObservableObject {
         truthLabel: resumeReady ? "operator-gated" : "NO-GO",
         reason: resumeReason,
         isEnabled: resumeReady),
+      SessionContinuationControl(
+        id: "reject",
+        title: "Reject",
+        systemImage: "xmark.circle",
+        truthLabel: rejectReady ? "guarded" : "NO-GO",
+        reason: rejectReason,
+        isEnabled: rejectReady),
       SessionContinuationControl(
         id: "fork",
         title: "Fork",
