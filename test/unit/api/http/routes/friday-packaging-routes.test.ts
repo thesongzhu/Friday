@@ -18,6 +18,7 @@ import type {
   FridayMutatingActionGate,
   FridayMutatingActionGateResult,
 } from "../../../../../src/security/friday-mutating-action-gate.js";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 
 // ─── Helpers ───
 
@@ -180,6 +181,50 @@ describe("B-008 FridayPackagingRoutes", () => {
         }),
       }));
       expect(deps.installs.uninstall).toHaveBeenCalledWith("@friday/test", { etag: "etag-1", idempotencyKey: "key-1" });
+    });
+
+    it("rejects anonymous packaging mutations before canonical governance", async () => {
+      const gate = makeAllowGate();
+      const deps = makeDeps({
+        allowTestOnlyPackagingMutationExecution: false,
+        packagingMutationGate: gate,
+      });
+      const routes = createFridayPackagingRoutes(deps);
+      const route = findRoute(routes, "packaging.installs.install");
+
+      await expect(route.handler(makeCtx({
+        principal: null,
+        params: { packageName: "@friday/test" },
+        body: { tenantId: "tenant-1", idempotencyKey: "key-1" },
+      }))).rejects.toMatchObject({
+        code: "PACKAGING_MUTATION_BOUND_PRINCIPAL_REQUIRED",
+        httpStatus: 401,
+      });
+
+      expect(gate.evaluate).not.toHaveBeenCalled();
+      expect(deps.installs.install).not.toHaveBeenCalled();
+    });
+
+    it("rejects the synthetic public principal before canonical governance", async () => {
+      const gate = makeAllowGate();
+      const deps = makeDeps({
+        allowTestOnlyPackagingMutationExecution: false,
+        packagingMutationGate: gate,
+      });
+      const routes = createFridayPackagingRoutes(deps);
+      const route = findRoute(routes, "packaging.installs.install");
+
+      await expect(route.handler(makeCtx({
+        principal: createFridayDefaultPublicHttpPrincipal(),
+        params: { packageName: "@friday/test" },
+        body: { tenantId: "tenant-1", idempotencyKey: "key-1" },
+      }))).rejects.toMatchObject({
+        code: "PACKAGING_MUTATION_BOUND_PRINCIPAL_REQUIRED",
+        httpStatus: 401,
+      });
+
+      expect(gate.evaluate).not.toHaveBeenCalled();
+      expect(deps.installs.install).not.toHaveBeenCalled();
     });
 
     it("fails closed before dependency dry-run when packaging deps have no governance gate", async () => {
