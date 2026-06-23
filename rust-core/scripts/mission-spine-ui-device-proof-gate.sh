@@ -99,6 +99,10 @@ jq -e '
   def sha256_hex: type == "string" and test("^[0-9a-f]{64}$");
   def ok_bool($path): getpath($path) == true;
   def has_status_label($needle): (.status_labels // []) | index($needle) != null;
+  def has_all_strings($items):
+    . as $values
+    | ($values | type == "array")
+    and ($items | all($values | index(.) != null));
   def evidence_file_ok($role; $mission_id):
     .role == $role
     and (.path | nonempty_string)
@@ -129,6 +133,7 @@ jq -e '
   def has_evidence_role($role; $mission_id): (.evidence_files // []) | any(evidence_file_ok($role; $mission_id));
   def evidence_ref_matches($role; $ref; $mission_id): (.evidence_files // []) | any(evidence_file_ok($role; $mission_id) and .path == $ref);
   def evidence_ref_known($root; $ref): ($root.evidence_files // []) | any(evidence_any_ok($root.mission_id) and .path == $ref);
+  def desktop_consumption_ref($root; $ref): evidence_ref_matches("desktop"; $ref; $root.mission_id);
   def observation($surface; $event; $root):
     ($root.observations // [])
     | any(
@@ -211,6 +216,22 @@ jq -e '
   and (.timeline.cursor_verified == true)
   and (.timeline.evidence_ref | nonempty_string)
   and (. as $root | evidence_ref_matches("timeline"; $root.timeline.evidence_ref; $root.mission_id))
+  and (.mission_workbench | type == "object")
+  and (.mission_workbench.visible == true)
+  and (.mission_workbench.same_mission_projection_visible == true)
+  and (.mission_workbench.provider_ack_not_done_visible == true)
+  and (.mission_workbench.memory_candidate_review_only_visible == true)
+  and (.mission_workbench.evidence_ref | nonempty_string)
+  and (. as $root | desktop_consumption_ref($root; $root.mission_workbench.evidence_ref))
+  and (.transcript_browser | type == "object")
+  and (.transcript_browser.visible == true)
+  and (.transcript_browser.collapsed_by_default == true)
+  and (.transcript_browser.redacted == true)
+  and (.transcript_browser.bounded_timeline_linked == true)
+  and (.transcript_browser.evidence_ref | nonempty_string)
+  and (. as $root | desktop_consumption_ref($root; $root.transcript_browser.evidence_ref))
+  and (.transcript_browser.search_facets | has_all_strings(["mission", "work_item", "surface", "provider", "skill", "channel", "status", "proof_receipt", "time"]))
+  and (.transcript_browser.evidence_facets | has_all_strings(["providerRef", "skillRunRef", "channelRef", "workflowRef", "surfaceThreadRef", "timelineRef", "proofReceiptRef"]))
   and (. as $root | (($root.observations // []) | length >= 18))
   and (. as $root | (($root.observations // []) | all(
     (.surface | nonempty_string)
@@ -238,6 +259,8 @@ jq -e '
   and (. as $root | observation_any("real_provider_execution_visible"; $root))
   and (. as $root | observation("mobile"; "proof_receipt_visible_before_done"; $root))
   and (. as $root | observation("desktop"; "same_mission_projection_visible"; $root))
+  and (. as $root | observation("desktop"; "mission_workbench_visible"; $root))
+  and (. as $root | observation("desktop"; "transcript_browser_visible"; $root))
   and (. as $root | observation("desktop"; "duplicate_blocked_opens_existing"; $root))
   and (. as $root | observation("channel"; "same_mission_projection_visible"; $root))
   and (. as $root | observation_any("same_mission_mobile_desktop_channel_visible"; $root))

@@ -184,6 +184,40 @@ write_proof() {
       "grants_memory_authority": false
     }
   ],
+  "mission_workbench": {
+    "visible": true,
+    "same_mission_projection_visible": true,
+    "provider_ack_not_done_visible": true,
+    "memory_candidate_review_only_visible": true,
+    "evidence_ref": "$desktop"
+  },
+  "transcript_browser": {
+    "visible": true,
+    "collapsed_by_default": true,
+    "redacted": true,
+    "bounded_timeline_linked": true,
+    "evidence_ref": "$desktop",
+    "search_facets": [
+      "mission",
+      "work_item",
+      "surface",
+      "provider",
+      "skill",
+      "channel",
+      "status",
+      "proof_receipt",
+      "time"
+    ],
+    "evidence_facets": [
+      "providerRef",
+      "skillRunRef",
+      "channelRef",
+      "workflowRef",
+      "surfaceThreadRef",
+      "timelineRef",
+      "proofReceiptRef"
+    ]
+  },
   "event_order": [
     "mission_intake_submitted",
     "mission_resolve_or_create",
@@ -243,6 +277,18 @@ write_proof() {
     {
       "surface": "desktop",
       "event": "same_mission_projection_visible",
+      "mission_id": "mission_ui_gate_self_test",
+      "evidence_ref": "$desktop"
+    },
+    {
+      "surface": "desktop",
+      "event": "mission_workbench_visible",
+      "mission_id": "mission_ui_gate_self_test",
+      "evidence_ref": "$desktop"
+    },
+    {
+      "surface": "desktop",
+      "event": "transcript_browser_visible",
       "mission_id": "mission_ui_gate_self_test",
       "evidence_ref": "$desktop"
     },
@@ -378,6 +424,7 @@ missing_evidence="$tmpdir/missing-evidence.json"
 missing_metadata="$tmpdir/missing-metadata.json"
 missing_observations="$tmpdir/missing-observations.json"
 missing_stress="$tmpdir/missing-stress.json"
+missing_workbench="$tmpdir/missing-workbench.json"
 hash_mismatch="$tmpdir/hash-mismatch.json"
 bytes_mismatch="$tmpdir/bytes-mismatch.json"
 secret_evidence="$tmpdir/secret-evidence.json"
@@ -434,6 +481,12 @@ jq 'del(.stress)' "$missing_stress" >"$missing_stress.tmp"
 mv "$missing_stress.tmp" "$missing_stress"
 expect_exit 6 env MISSION_SPINE_UI_DEVICE_PROOF="$missing_stress" "$gate"
 
+echo "[mission-spine-ui-self-test] missing workbench/transcript desktop proof is rejected"
+write_proof "$missing_workbench" "$mobile" "$desktop" "$channel" "$timeline"
+jq 'del(.mission_workbench) | .transcript_browser.evidence_ref = .surfaces.mobile.evidence_ref' "$missing_workbench" >"$missing_workbench.tmp"
+mv "$missing_workbench.tmp" "$missing_workbench"
+expect_exit 6 env MISSION_SPINE_UI_DEVICE_PROOF="$missing_workbench" "$gate"
+
 echo "[mission-spine-ui-self-test] evidence hash mismatch is rejected"
 write_proof "$hash_mismatch" "$mobile" "$desktop" "$channel" "$timeline"
 jq '.evidence_files[0].sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$hash_mismatch" >"$hash_mismatch.tmp"
@@ -460,7 +513,7 @@ write_proof "$valid" "$mobile" "$desktop" "$channel" "$timeline"
 env MISSION_SPINE_UI_DEVICE_PROOF="$valid" "$gate" >/tmp/friday-ui-proof-gate-self-test.out
 
 echo "[mission-spine-ui-self-test] assembler output passes current gate"
-jq '{checks, stress, timeline, status_labels, memory_candidates, event_order, observations}' "$valid" >"$observations_manifest"
+jq '{checks, stress, timeline, mission_workbench, transcript_browser, status_labels, memory_candidates, event_order, observations}' "$valid" >"$observations_manifest"
 MISSION_ID="mission_ui_gate_self_test" \
   MOBILE_EVIDENCE="$mobile" \
   DESKTOP_EVIDENCE="$desktop" \
@@ -478,7 +531,7 @@ MISSION_ID="mission_ui_gate_self_test" \
   TIMELINE_EVIDENCE_REF="$timeline" \
   OUT="$template_manifest" \
   scripts/mission-spine-ui-observations-manifest-template.sh >/tmp/friday-ui-proof-template-self-test.out
-expect_exit 5 env \
+expect_exit 6 env \
   MISSION_ID="mission_ui_gate_self_test" \
   MOBILE_EVIDENCE="$mobile" \
   DESKTOP_EVIDENCE="$desktop" \
@@ -498,7 +551,7 @@ expect_exit 64 env \
   OUT="$assembled" \
   scripts/mission-spine-ui-device-proof-assemble.sh
 
-rm "$valid" "$assembled" "$observations_manifest" "$template_manifest" "$fixture" "$organic" "$placeholder" "$pending_marker" "$missing_evidence" "$missing_metadata" "$missing_observations" "$missing_stress" "$hash_mismatch" "$bytes_mismatch" "$secret_evidence" "$template_assembled" "$mobile" "$desktop" "$channel" "$timeline" "$secret_mobile"
+rm -f "$valid" "$assembled" "$observations_manifest" "$template_manifest" "$fixture" "$organic" "$placeholder" "$pending_marker" "$missing_evidence" "$missing_metadata" "$missing_observations" "$missing_stress" "$missing_workbench" "$hash_mismatch" "$bytes_mismatch" "$secret_evidence" "$template_assembled" "$mobile" "$desktop" "$channel" "$timeline" "$secret_mobile"
 rmdir "$tmpdir"
 
 echo "[mission-spine-ui-self-test] PASS"
