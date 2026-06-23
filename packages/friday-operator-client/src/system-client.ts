@@ -38,6 +38,8 @@ import type {
   FridayIssueCard,
   FridayGetWorkflowOverviewResponse,
   FridayGetWorkflowVisualizationResponse,
+  FridayHeartbeatSystemRemoteSessionRequest,
+  FridayHeartbeatSystemRemoteSessionResponse,
   FridayListAutoFixActionsResponse,
   FridayListAgentLoopRunsResponse,
   FridayListExpertAgentLoopRunsResponse,
@@ -334,6 +336,15 @@ export function createFridayOperatorClient(options: FridayOperatorClientOptions)
       >("/v1/system/remote/sessions", {
         deviceId: input.deviceId,
         assertionToken: input.assertionToken,
+        idempotencyKey: createIdempotencyKey(),
+      });
+    },
+
+    async heartbeatRemoteSession(sessionId: string): Promise<FridayHeartbeatSystemRemoteSessionResponse> {
+      return transport.post<
+        FridayHeartbeatSystemRemoteSessionRequest,
+        FridayHeartbeatSystemRemoteSessionResponse
+      >(`/v1/system/remote/sessions/${encodeURIComponent(sessionId)}/heartbeat`, {
         idempotencyKey: createIdempotencyKey(),
       });
     },

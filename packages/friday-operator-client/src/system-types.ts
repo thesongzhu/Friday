@@ -872,6 +872,14 @@ export interface FridayCreateSystemRemoteSessionResponse {
   session: FridaySystemRemoteSession;
 }
 
+export interface FridayHeartbeatSystemRemoteSessionRequest {
+  idempotencyKey?: string;
+}
+
+export interface FridayHeartbeatSystemRemoteSessionResponse {
+  session: FridaySystemRemoteSession | null;
+}
+
 export interface FridayBeginSystemRemotePasskeyRegistrationRequest {
   deviceId: string;
   idempotencyKey?: string;

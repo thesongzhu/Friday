@@ -61,6 +61,56 @@ describe("createFridayOperatorClient", () => {
     );
   });
 
+  it("posts a governed heartbeat for remote sessions with idempotency", async () => {
+    const activeSession = {
+      id: "remote-session-1",
+      deviceId: "device-1",
+      devicePlatform: "browser",
+      status: "active",
+      connectedAt: "2026-06-22T00:00:00.000Z",
+      lastSeenAt: "2026-06-22T00:01:00.000Z",
+    };
+    const transport = {
+      get: vi.fn(),
+      post: vi.fn().mockResolvedValue({ session: activeSession }),
+      patch: vi.fn(),
+      del: vi.fn(),
+    };
+
+    const client = createFridayOperatorClient({
+      transport,
+      createIdempotencyKey: () => "heartbeat-idem",
+    });
+    const result = await client.heartbeatRemoteSession("remote/session 1");
+
+    expect(transport.post).toHaveBeenCalledWith(
+      "/v1/system/remote/sessions/remote%2Fsession%201/heartbeat",
+      { idempotencyKey: "heartbeat-idem" },
+    );
+    expect(result.session).toEqual(activeSession);
+  });
+
+  it("passes through missing remote session heartbeat responses", async () => {
+    const transport = {
+      get: vi.fn(),
+      post: vi.fn().mockResolvedValue({ session: null }),
+      patch: vi.fn(),
+      del: vi.fn(),
+    };
+
+    const client = createFridayOperatorClient({
+      transport,
+      createIdempotencyKey: () => "heartbeat-null-idem",
+    });
+    const result = await client.heartbeatRemoteSession("missing-session");
+
+    expect(transport.post).toHaveBeenCalledWith(
+      "/v1/system/remote/sessions/missing-session/heartbeat",
+      { idempotencyKey: "heartbeat-null-idem" },
+    );
+    expect(result.session).toBeNull();
+  });
+
   it("builds system event listing routes in JSON mode by default", async () => {
     const transport = {
       get: vi.fn().mockResolvedValue({ items: [] }),
