@@ -35,7 +35,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use friday_operator_cli::trust_grant;
+use friday_operator_cli::{context_passport, trust_grant};
 use friday_operator_cli::{
     keygen_to_path, prepare_batch_request, sign_batch_request, sign_request, PendingBatchRequest,
     PendingRequest, PrepareBatchRequest,
@@ -57,6 +57,10 @@ USAGE:
                                     [--tools a,b] [--providers a,b] [--channels a,b] \\
                                     [--workflow-families a,b] [--skill-families a,b]
     friday-operator-approve revoke --db <hub.sqlite> --grant-id <id>
+    friday-operator-approve passport-mint --db <hub.sqlite> --passport-id <id> \\
+                                    --mission-id <id> --destination-lane <lane> \\
+                                    --items <items.json> [--work-item-id <id>] \\
+                                    [--destination-target <target>] [--approved-sensitive]
 
 keygen writes the operator PRIVATE key (mode 0600) to --out and prints the PUBLIC
 verifying key (JSON) to stdout for Hub provisioning. The private key is never printed.
@@ -76,7 +80,13 @@ per-action manual gates.
 grant mints a TrustGrant for --agent with the given boundaries (operator POLICY action;
 the allowlists are fail-closed — an omitted dimension is DENY-ALL) and prints the
 persisted grant (JSON). revoke marks the grant --grant-id revoked. Both write a
-hash-chained audit row. DARK: this does NOT enable enforcement (NS-2 owns that flag).";
+hash-chained audit row. DARK: this does NOT enable enforcement (NS-2 owns that flag).
+
+passport-mint builds a ContextPassport through the fail-closed transfer gate, persists it,
+and binds it to the Mission refs/link set so the existing preflight gate can authorize
+that exact lane/target transfer. It is an operator ceremony; it reads no signing key and
+does not expose a Hub/app/agent mint endpoint. --items is a JSON array of objects:
+[{\"kind\":\"summary\",\"label\":\"...\",\"included\":true,\"sensitive\":false}].";
 
 fn main() -> ExitCode {
     match run() {
@@ -97,6 +107,7 @@ fn run() -> Result<(), String> {
         Some("sign-batch") => cmd_sign_batch(&args[2..]),
         Some("grant") => cmd_grant(&args[2..]),
         Some("revoke") => cmd_revoke(&args[2..]),
+        Some("passport-mint") => cmd_passport_mint(&args[2..]),
         Some("help") | Some("--help") | Some("-h") | None => {
             println!("{USAGE}");
             Ok(())
@@ -261,6 +272,80 @@ fn cmd_revoke(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(serde::Deserialize)]
+struct ItemSpec {
+    kind: String,
+    label: String,
+    #[serde(default = "default_true")]
+    included: bool,
+    #[serde(default)]
+    sensitive: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn cmd_passport_mint(args: &[String]) -> Result<(), String> {
+    let db_path = arg_value(args, "--db")
+        .ok_or_else(|| format!("passport-mint requires --db <hub.sqlite>\n\n{USAGE}"))?;
+    let passport_id = arg_value(args, "--passport-id")
+        .ok_or_else(|| format!("passport-mint requires --passport-id <id>\n\n{USAGE}"))?;
+    let mission_id = arg_value(args, "--mission-id")
+        .ok_or_else(|| format!("passport-mint requires --mission-id <id>\n\n{USAGE}"))?;
+    let destination_lane = arg_value(args, "--destination-lane")
+        .ok_or_else(|| format!("passport-mint requires --destination-lane <lane>\n\n{USAGE}"))?;
+    let items_path = arg_value(args, "--items")
+        .ok_or_else(|| format!("passport-mint requires --items <items.json>\n\n{USAGE}"))?;
+
+    let raw = std::fs::read_to_string(&items_path)
+        .map_err(|_| format!("could not read items file {items_path}"))?;
+    let item_specs: Vec<ItemSpec> =
+        serde_json::from_str(&raw).map_err(|e| format!("invalid items JSON: {e}"))?;
+    let items = item_specs
+        .into_iter()
+        .map(|item| {
+            Ok(friday_core::PassportItem {
+                kind: context_passport::parse_item_kind(&item.kind).map_err(|e| e.to_string())?,
+                label: item.label,
+                included: item.included,
+                sensitive: item.sensitive,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let spec = context_passport::PassportSpec {
+        passport_id,
+        mission_id,
+        work_item_id: arg_value(args, "--work-item-id"),
+        destination_lane: context_passport::parse_lane(&destination_lane)
+            .map_err(|e| e.to_string())?,
+        destination_target: arg_value(args, "--destination-target"),
+        items,
+        approved_sensitive: has_flag(args, "--approved-sensitive"),
+    };
+
+    let db = context_passport::open_hub(&db_path).map_err(|e| e.to_string())?;
+    let minted = context_passport::mint(&db, &spec, now_ms()?).map_err(|e| e.to_string())?;
+    let out = serde_json::json!({
+        "result": "context_passport_minted",
+        "truth_label": "operator_cli_context_passport_ceremony_not_app_or_agent_mint",
+        "passport_id": minted.passport_id,
+        "mission_id": minted.mission_id,
+        "work_item_id": minted.work_item_id,
+        "destination_lane": minted.destination_lane.as_str(),
+        "destination_target": minted.destination_target,
+        "shared_item_count": minted.shared_item_count,
+        "mission_ref_count": minted.mission_ref_count,
+        "link_id": minted.link_id,
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
 /// Current wall-clock as epoch-ms. The CLI supplies the clock; the library issuance fn
 /// takes `now` as an argument so a test can pin it.
 fn now_ms() -> Result<i64, String> {
@@ -292,4 +377,8 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
             args.iter()
                 .find_map(|arg| arg.strip_prefix(&prefix).map(str::to_string))
         })
+}
+
+fn has_flag(args: &[String], name: &str) -> bool {
+    args.iter().any(|arg| arg == name)
 }

@@ -15,12 +15,14 @@ use std::process::{Command, Output};
 
 use friday_core::gate::canonical_action_bytes;
 use friday_core::gate::ApprovalDecision;
+use friday_core::{FridayConversation, Mission, MissionStatus, TruthStatus, WorkLane};
 use friday_crypto::verify_ed25519_approval;
 use friday_hub::{build_request, RawToolCall};
 use friday_operator_cli::{
     build_prepared_action_request, canonical_batch_bytes, canonical_bytes, decode_signature_hex,
     decode_verifying_key_hex, parse_decision, ActionParam, BatchActionSpec,
 };
+use friday_storage::Db;
 
 const BIN: &str = env!("CARGO_BIN_EXE_friday-operator-approve");
 
@@ -35,6 +37,44 @@ fn run_bin(args: &[&str]) -> Output {
         .args(args)
         .output()
         .expect("spawn friday-operator-approve")
+}
+
+fn conversation_for_passport(now: i64) -> FridayConversation {
+    FridayConversation {
+        friday_conversation_id: "fconv_cli_passport".into(),
+        owner_principal: "owner-cli".into(),
+        title: "CLI passport proof".into(),
+        current_focus_summary: "Operator CLI passport ceremony proof.".into(),
+        active_mission_ids: vec!["mission-cli-passport".into()],
+        surface_thread_ids: vec![],
+        memory_scope_ref: None,
+        truth_status: TruthStatus::Proven,
+        proof_refs: vec![],
+        created_at_ms: now,
+        updated_at_ms: now,
+    }
+}
+
+fn mission_for_passport(now: i64) -> Mission {
+    Mission {
+        mission_id: "mission-cli-passport".into(),
+        friday_conversation_id: "fconv_cli_passport".into(),
+        title: "CLI passport proof".into(),
+        intent: "Mint a context passport from the operator CLI.".into(),
+        status: MissionStatus::Active,
+        why_now: "T3 provisioning needs a real operator ceremony.".into(),
+        decision_path_summary: "Use CLI ceremony, not app mint.".into(),
+        considered_options: vec![],
+        deferred_options: vec![],
+        known_pitfalls: vec![],
+        handoff_inheritance: vec![],
+        work_item_ids: vec![],
+        memory_candidate_refs: vec![],
+        context_passport_refs: vec![],
+        proof_refs: vec![],
+        created_at_ms: now,
+        updated_at_ms: now,
+    }
 }
 
 fn sample_req() -> serde_json::Value {
@@ -735,4 +775,65 @@ fn keygen_refuses_to_overwrite_existing_key() {
         "keygen must refuse to clobber an existing key file"
     );
     assert!(String::from_utf8_lossy(&again.stderr).contains("already exists"));
+}
+
+#[test]
+fn passport_mint_cli_persists_mission_bound_passport_without_echoing_items() {
+    let dir = tmp_dir("passport-mint-cli");
+    let db_path = dir.join("hub.sqlite");
+    let _ = std::fs::remove_file(&db_path);
+    let db = Db::open_hub(db_path.to_str().unwrap()).unwrap();
+    let now = 1_780_000_010_000i64;
+    db.upsert_friday_conversation(&conversation_for_passport(now))
+        .unwrap();
+    db.upsert_mission(&mission_for_passport(now)).unwrap();
+
+    let items_path = dir.join("items.json");
+    std::fs::write(
+        &items_path,
+        br#"[{"kind":"summary","label":"approved operator summary","included":true,"sensitive":false}]"#,
+    )
+    .unwrap();
+    let out = run_bin(&[
+        "passport-mint",
+        "--db",
+        db_path.to_str().unwrap(),
+        "--passport-id",
+        "passport-cli-1",
+        "--mission-id",
+        "mission-cli-passport",
+        "--destination-lane",
+        "codex",
+        "--destination-target",
+        "codex",
+        "--items",
+        items_path.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "passport-mint failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains("approved operator summary"),
+        "receipt must not echo passport item labels"
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(receipt["result"], "context_passport_minted");
+    assert_eq!(
+        receipt["truth_label"],
+        "operator_cli_context_passport_ceremony_not_app_or_agent_mint"
+    );
+    assert_eq!(receipt["destination_lane"], WorkLane::Codex.as_str());
+    assert_eq!(receipt["shared_item_count"], 1);
+
+    let db = Db::open_hub(db_path.to_str().unwrap()).unwrap();
+    let mission = db.get_mission("mission-cli-passport").unwrap().unwrap();
+    assert_eq!(mission.context_passport_refs, vec!["passport-cli-1"]);
+    assert!(db.get_context_passport("passport-cli-1").unwrap().is_some());
+    assert!(db
+        .list_mission_links("mission-cli-passport")
+        .unwrap()
+        .iter()
+        .any(|link| link.proof_ref.as_deref() == Some("passport-cli-1")));
 }
