@@ -182,9 +182,10 @@ final class FridaySession: ObservableObject {
   }
 
   static func defaultPairingClient(deviceKeypair: DeviceKeypair) -> FridayPairingClient? {
-    let args = ProcessInfo.processInfo.arguments
-    let env = ProcessInfo.processInfo.environment
-    guard livePairingRequested(args: args, env: env) else { return nil }
+    // Explicit QR pairing is a user-initiated enrollment ceremony, not a shipped live-read/write
+    // flip. It still fails closed through manifest proof validation, PairingServerConfig's
+    // loopback/private-LAN allowlist, and the Hub's PairAck. Read, write, run-control, signing, and
+    // trust minting remain on their separate gates.
     return RealPairingClientFactory.makeLive(deviceKeypair: deviceKeypair)
   }
 
