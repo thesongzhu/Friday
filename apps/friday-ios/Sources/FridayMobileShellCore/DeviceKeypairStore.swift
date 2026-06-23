@@ -88,8 +88,8 @@ public struct DevicePairingReadiness: Sendable, Equatable {
         publicKeyHex: nil,
         readLiveRequested: readLiveRequested,
         writeLiveRequested: writeLiveRequested,
-        reason: "Live read/write device-keypair mode is not enabled for this launch.",
-        nextStep: "Paste a Hub pairing QR below; live read/write still require their launch flags after PairAck.")
+        reason: "QR pairing is available; live read/write device-keypair mode is not enabled for this launch.",
+        nextStep: "Scan or paste a Hub pairing QR below; live read/write still require their launch flags after PairAck.")
     }
 
     do {
