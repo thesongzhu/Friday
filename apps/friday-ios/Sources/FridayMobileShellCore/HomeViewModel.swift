@@ -591,6 +591,7 @@ public struct MobilePairingAttempt: Sendable, Equatable {
   public let mode: MobilePairingAttemptMode
   public let pairingId: String?
   public let hubId: String?
+  public let deviceId: String?
   public let errorCode: String?
   public let reason: String
 
@@ -598,47 +599,54 @@ public struct MobilePairingAttempt: Sendable, Equatable {
     mode: .idle,
     pairingId: nil,
     hubId: nil,
+    deviceId: nil,
     errorCode: nil,
     reason: "No PairAck has been received.")
 
-  public static func sending(_ projection: FridayPairingManifestProjection?) -> MobilePairingAttempt {
+  public static func sending(_ projection: FridayPairingManifestProjection?, deviceId: String?) -> MobilePairingAttempt {
     MobilePairingAttempt(
       mode: .sending,
       pairingId: projection?.pairingId,
       hubId: projection?.hubId,
+      deviceId: deviceId,
       errorCode: nil,
       reason: "Pair request sent; waiting for Hub PairAck.")
   }
 
-  public static func accepted(_ projection: FridayPairingManifestProjection?) -> MobilePairingAttempt {
+  public static func accepted(_ projection: FridayPairingManifestProjection?, deviceId: String?) -> MobilePairingAttempt {
     MobilePairingAttempt(
       mode: .accepted,
       pairingId: projection?.pairingId,
       hubId: projection?.hubId,
+      deviceId: deviceId,
       errorCode: nil,
       reason: "Hub returned PairAck accepted. Trust grant/passport and write authority still require their own governed gates.")
   }
 
   public static func denied(
     _ projection: FridayPairingManifestProjection?,
-    code: FridayErrorCode?
+    code: FridayErrorCode?,
+    deviceId: String?
   ) -> MobilePairingAttempt {
     MobilePairingAttempt(
       mode: .denied,
       pairingId: projection?.pairingId,
       hubId: projection?.hubId,
+      deviceId: deviceId,
       errorCode: code?.rawValue,
       reason: "Hub returned PairAck denied.")
   }
 
   public static func unavailable(
     _ projection: FridayPairingManifestProjection?,
-    reason: String
+    reason: String,
+    deviceId: String? = nil
   ) -> MobilePairingAttempt {
     MobilePairingAttempt(
       mode: .unavailable,
       pairingId: projection?.pairingId,
       hubId: projection?.hubId,
+      deviceId: deviceId,
       errorCode: nil,
       reason: reason)
   }
@@ -847,28 +855,33 @@ public final class HomeViewModel: ObservableObject {
       reason: "Pairing QR is valid and this device key is ready.",
       nextStep: "Pair request is bound to this device key; connected state requires PairAck.")
 
-    guard let pairingClient = makePairingClient(device) else {
-      pairingAttempt = .unavailable(
-        manifest.redactedProjection,
-        reason: "Pairing channel is not configured for this launch.")
-      return
-    }
-
     let resolvedDeviceId = deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
     let finalDeviceId = resolvedDeviceId.isEmpty
       ? "ios-\(device.publicKeyHex.prefix(12))"
       : resolvedDeviceId
-    pairingAttempt = .sending(manifest.redactedProjection)
+
+    guard let pairingClient = makePairingClient(device) else {
+      pairingAttempt = .unavailable(
+        manifest.redactedProjection,
+        reason: "Pairing channel is not configured for this launch.",
+        deviceId: finalDeviceId)
+      return
+    }
+
+    pairingAttempt = .sending(manifest.redactedProjection, deviceId: finalDeviceId)
     do {
       let ack = try await pairingClient.pairDevice(manifest: manifest, deviceId: finalDeviceId)
       if ack.accepted {
-        pairingAttempt = .accepted(manifest.redactedProjection)
+        pairingAttempt = .accepted(manifest.redactedProjection, deviceId: finalDeviceId)
         await refresh()
       } else {
-        pairingAttempt = .denied(manifest.redactedProjection, code: ack.errorCode)
+        pairingAttempt = .denied(manifest.redactedProjection, code: ack.errorCode, deviceId: finalDeviceId)
       }
     } catch {
-      pairingAttempt = .unavailable(manifest.redactedProjection, reason: Self.pairingReason(for: error))
+      pairingAttempt = .unavailable(
+        manifest.redactedProjection,
+        reason: Self.pairingReason(for: error),
+        deviceId: finalDeviceId)
     }
   }
 

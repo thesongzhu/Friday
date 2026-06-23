@@ -158,6 +158,7 @@ func homeViewModelPairScannedQrDrivesPairAckAcceptedWithoutLeakingSecret() async
   #expect(vm.pairingAttempt.pairingId == "pair-123")
   #expect(fake.pairedDeviceIds.count == 1)
   #expect(fake.pairedDeviceIds.first?.hasPrefix("ios-") == true)
+  #expect(vm.pairingAttempt.deviceId == fake.pairedDeviceIds.first)
   #expect(!String(describing: vm.pairingPreflight).contains(secret))
   #expect(!String(describing: vm.pairingAttempt).contains(secret))
   #expect(!fake.sawRawSecret)
@@ -181,6 +182,7 @@ func homeViewModelPairScannedQrCarriesDeniedPairAckAsTruth() async throws {
   #expect(vm.pairingPreflight.mode == .ready)
   #expect(vm.pairingAttempt.mode == .denied)
   #expect(vm.pairingAttempt.errorCode == "PAIRING_DENIED")
+  #expect(vm.pairingAttempt.deviceId == "phone-1")
   #expect(fake.pairedDeviceIds == ["phone-1"])
 }
 
@@ -198,6 +200,7 @@ func homeViewModelPairScannedQrFailsClosedWhenPairingChannelNotConfigured() asyn
   #expect(vm.pairingPreflight.mode == .ready)
   #expect(vm.pairingAttempt.mode == .unavailable)
   #expect(vm.pairingAttempt.reason == "Pairing channel is not configured for this launch.")
+  #expect(vm.pairingAttempt.deviceId?.hasPrefix("ios-") == true)
 }
 
 @Test
