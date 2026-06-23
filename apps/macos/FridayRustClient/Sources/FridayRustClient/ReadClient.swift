@@ -254,6 +254,10 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionRequest")
     case .runOutcomeLearningDecisionResult:
       throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionResult")
+    case .activityMarkDoneRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "ActivityMarkDoneRequest")
+    case .activityMarkDoneResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "ActivityMarkDoneResult")
     case .runAnswerBodyRequest:
       throw FridayReadClientError.unexpectedResponse(kind: "RunAnswerBodyRequest")
     case .runAnswerBodySnapshot:
@@ -367,6 +371,10 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionRequest")
     case .runOutcomeLearningDecisionResult:
       throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionResult")
+    case .activityMarkDoneRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "ActivityMarkDoneRequest")
+    case .activityMarkDoneResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "ActivityMarkDoneResult")
     case .runReadbackRequest:
       throw FridayReadClientError.unexpectedResponse(kind: "RunReadbackRequest")
     case .runReadbackSnapshot:

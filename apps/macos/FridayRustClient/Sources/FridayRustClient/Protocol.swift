@@ -12,7 +12,7 @@ import Foundation
 
 /// Inclusive supported schema-version range / current version. Mirrors
 /// `friday_protocol::CURRENT_SCHEMA_VERSION`. Kept in step with the read-seam branch.
-public let fridayCurrentSchemaVersion: UInt16 = 13
+public let fridayCurrentSchemaVersion: UInt16 = 16
 
 // MARK: - ErrorCode
 
@@ -534,6 +534,10 @@ public enum FridayMessage: Equatable {
   /// hub→trusted-peer: A1 run-outcome learning decision receipt (refs-only). Mirrors
   /// `friday_protocol::Message::RunOutcomeLearningDecisionResult`.
   case runOutcomeLearningDecisionResult(RunOutcomeLearningDecisionResultWire)
+  /// trusted-peer→hub: mark ONE existing Activity / Needs-Me row done. Refs-only owner action.
+  case activityMarkDoneRequest(ActivityMarkDoneRequestWire)
+  /// hub→trusted-peer: refs-only receipt for Activity / Needs-Me mark-done.
+  case activityMarkDoneResult(ActivityMarkDoneResultWire)
   /// client→read-server: owner-gated run answer body readback. Kept separate from
   /// RunReadback so refs-only projections stay refs-only.
   case runAnswerBodyRequest(RunAnswerBodyRequestWire)
@@ -760,6 +764,12 @@ extension FridayMessage: Codable {
       let c = try decoder.container(keyedBy: ResultKey.self)
       self = .runOutcomeLearningDecisionResult(
         try c.decode(RunOutcomeLearningDecisionResultWire.self, forKey: .result))
+    case "ActivityMarkDoneRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .activityMarkDoneRequest(try c.decode(ActivityMarkDoneRequestWire.self, forKey: .request))
+    case "ActivityMarkDoneResult":
+      let c = try decoder.container(keyedBy: ResultKey.self)
+      self = .activityMarkDoneResult(try c.decode(ActivityMarkDoneResultWire.self, forKey: .result))
     case "RunAnswerBodyRequest":
       let c = try decoder.container(keyedBy: RequestKey.self)
       self = .runAnswerBodyRequest(try c.decode(RunAnswerBodyRequestWire.self, forKey: .request))
@@ -962,6 +972,14 @@ extension FridayMessage: Codable {
       try c.encode(r, forKey: .request)
     case .runOutcomeLearningDecisionResult(let r):
       try tag.encode("RunOutcomeLearningDecisionResult", forKey: .kind)
+      var c = encoder.container(keyedBy: ResultKey.self)
+      try c.encode(r, forKey: .result)
+    case .activityMarkDoneRequest(let r):
+      try tag.encode("ActivityMarkDoneRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(r, forKey: .request)
+    case .activityMarkDoneResult(let r):
+      try tag.encode("ActivityMarkDoneResult", forKey: .kind)
       var c = encoder.container(keyedBy: ResultKey.self)
       try c.encode(r, forKey: .result)
     case .runAnswerBodyRequest(let r):

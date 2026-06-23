@@ -1992,6 +1992,10 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         M::RunFileViewSnapshot { .. } => "RunFileViewSnapshot",
         M::ActivityNeedsMeRequest { .. } => "ActivityNeedsMeRequest",
         M::ActivityNeedsMeSnapshot { .. } => "ActivityNeedsMeSnapshot",
+        // Activity mark-done rides the sealed-WS write surface, not FFI. Keep it named so
+        // unsupported out-of-slice envelopes carry their real truth label.
+        M::ActivityMarkDoneRequest { .. } => "ActivityMarkDoneRequest",
+        M::ActivityMarkDoneResult { .. } => "ActivityMarkDoneResult",
         // WS-transport substrate (S-A..S-F) message kinds. Still DARK on the FFI
         // surface (nothing here constructs or dispatches them), but they are
         // NAMED so the truth label carries the real kind — and so this match

@@ -173,6 +173,45 @@ public struct RunOutcomeLearningDecisionResultWire: Codable, Equatable, Sendable
   }
 }
 
+/// Client→hub Activity / Needs-Me mark-done request. Mirrors
+/// `friday_protocol::ActivityMarkDoneRequestWire`. Refs-only over an existing activity row; this
+/// never carries transcript/body material and never completes a WorkItem.
+public struct ActivityMarkDoneRequestWire: Codable, Equatable, Sendable {
+  public var activityId: String
+  public var reason: String?
+
+  public init(activityId: String, reason: String? = nil) {
+    self.activityId = activityId
+    self.reason = reason
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case activityId = "activity_id"
+    case reason
+  }
+}
+
+/// Hub→client Activity / Needs-Me mark-done receipt. Refs-only: id, resulting state, status, and
+/// optional blocker.
+public struct ActivityMarkDoneResultWire: Codable, Equatable, Sendable {
+  public var activityId: String
+  public var state: String
+  public var status: String
+  public var blocker: String?
+
+  public init(activityId: String, state: String, status: String, blocker: String? = nil) {
+    self.activityId = activityId
+    self.state = state
+    self.status = status
+    self.blocker = blocker
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case activityId = "activity_id"
+    case state, status, blocker
+  }
+}
+
 /// Client→read-server owner-gated answer-body request. This is a READ-seam message, but the shared
 /// wire types live beside the other protocol structs so `FridayMessage` can encode/decode it.
 public struct RunAnswerBodyRequestWire: Codable, Equatable, Sendable {

@@ -145,6 +145,14 @@ final class FridayChatViewModelTests: XCTestCase {
         blocker: "unused")
     }
 
+    func submitActivityMarkDone(_ request: ActivityMarkDoneRequestWire) async throws -> ActivityMarkDoneResultWire {
+      ActivityMarkDoneResultWire(
+        activityId: request.activityId,
+        state: "unknown",
+        status: "blocked",
+        blocker: "unused")
+    }
+
     func dispatchMissionBoundAgentRun(
       task: String,
       missionContext: MissionWorkItemContextWire,

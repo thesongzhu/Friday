@@ -179,6 +179,8 @@ public protocol FridayMissionSpineWriteClient: Sendable {
   func submitRunOutcomeLearningDecision(
     _ request: RunOutcomeLearningDecisionRequestWire
   ) async throws -> RunOutcomeLearningDecisionResultWire
+  /// Mark one existing Activity / Needs-Me row done. This is refs-only and never completes a WorkItem.
+  func submitActivityMarkDone(_ request: ActivityMarkDoneRequestWire) async throws -> ActivityMarkDoneResultWire
 }
 
 /// Product-facing bridge for MissionIntakeResult -> mission-bound AgentRunRequest. This is the
@@ -351,7 +353,8 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
          .activityNeedsMeRequest, .activityNeedsMeSnapshot,
          .missionIntakeRequest, .missionIntakeResult,
          .memoryDecisionRequest, .memoryDecisionResult,
-         .runOutcomeLearningDecisionRequest, .runOutcomeLearningDecisionResult:
+         .runOutcomeLearningDecisionRequest, .runOutcomeLearningDecisionResult,
+         .activityMarkDoneRequest, .activityMarkDoneResult:
       throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(message))
     case .unsupported(let kind):
       throw FridayWriteClientError.unexpectedResponse(kind: kind)
@@ -441,6 +444,33 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
     let resp = try openEnvelope(respBody, sessionKey: sessionKey)
     switch resp.message {
     case .runOutcomeLearningDecisionResult(let r):
+      return r
+    case .error(let code, let message):
+      throw FridayWriteClientError.serverError(code: code, message: message)
+    default:
+      throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(resp.message))
+    }
+  }
+
+  /// Mark ONE existing Activity / Needs-Me row done over the sealed WRITE session. This is a
+  /// refs-only owner action; a `status:"blocked"` result is returned to the caller as truth.
+  public func submitActivityMarkDone(_ request: ActivityMarkDoneRequestWire) async throws -> ActivityMarkDoneResultWire {
+    let transport = try makeTransport()
+    let (sessionKey, _) = try handshake(transport)
+    let msgId = "activity-mark-done-\(request.activityId)"
+    let env = FridayEnvelope(msgId: msgId, sentAt: now(), message: .activityMarkDoneRequest(request))
+      .withCorrelation(msgId)
+    try transport.sendMessage(try sealEnvelope(env, sessionKey: sessionKey))
+    let respBody: [UInt8]
+    do {
+      respBody = try transport.recvMessage()
+    } catch {
+      throw FridayWriteClientError.transport(
+        "no activity-mark-done result (session ended fail-closed): \(error)")
+    }
+    let resp = try openEnvelope(respBody, sessionKey: sessionKey)
+    switch resp.message {
+    case .activityMarkDoneResult(let r):
       return r
     case .error(let code, let message):
       throw FridayWriteClientError.serverError(code: code, message: message)
@@ -665,6 +695,8 @@ private func dispatchKind(_ message: FridayMessage) -> String {
   case .memoryDecisionResult: return "MemoryDecisionResult"
   case .runOutcomeLearningDecisionRequest: return "RunOutcomeLearningDecisionRequest"
   case .runOutcomeLearningDecisionResult: return "RunOutcomeLearningDecisionResult"
+  case .activityMarkDoneRequest: return "ActivityMarkDoneRequest"
+  case .activityMarkDoneResult: return "ActivityMarkDoneResult"
   case .unsupported(let kind): return kind
   }
 }

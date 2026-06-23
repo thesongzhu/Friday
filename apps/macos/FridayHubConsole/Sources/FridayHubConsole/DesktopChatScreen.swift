@@ -384,6 +384,19 @@ struct DesktopChatScreen: View {
           Text("Approval remains operator-signature gated; this surface relays an external signer blob and does not mint a signature.")
             .font(.system(size: 10))
             .foregroundStyle(HubTheme.textSecondary)
+        } else {
+          HStack(spacing: 8) {
+            Button {
+              Task { await viewModel.markNeedsMeItemDone(item) }
+            } label: {
+              Label("Done", systemImage: "checkmark.circle")
+            }
+            .buttonStyle(.bordered)
+            .disabled(activityMarkDoneState(for: item).isSent || activityMarkDoneState(for: item).isTerminal)
+            .accessibilityLabel("Mark Needs Review row done")
+            .accessibilityIdentifier("friday.desktop.chat.markDone.\(item.refId)")
+            activityMarkDoneStatus(for: item)
+          }
         }
       }
       .padding(.vertical, 6)
@@ -396,9 +409,33 @@ struct DesktopChatScreen: View {
     viewModel.approvalRelayStates[item.id] ?? .ready
   }
 
+  private func activityMarkDoneState(for item: ChatNeedsMeItem) -> WriteActionState {
+    viewModel.activityMarkDoneStates[item.id] ?? .ready
+  }
+
   @ViewBuilder
   private func approvalRelayStatus(for item: ChatNeedsMeItem) -> some View {
     switch approvalRelayState(for: item) {
+    case .ready:
+      EmptyView()
+    case .sent:
+      ProgressView().scaleEffect(0.7)
+    case let .confirmed(summary, _, _):
+      Text(summary)
+        .font(.system(size: 10))
+        .foregroundStyle(HubTheme.textSecondary)
+        .lineLimit(2)
+    case let .error(reason):
+      Text(reason)
+        .font(.system(size: 10))
+        .foregroundStyle(HubTheme.textSecondary)
+        .lineLimit(2)
+    }
+  }
+
+  @ViewBuilder
+  private func activityMarkDoneStatus(for item: ChatNeedsMeItem) -> some View {
+    switch activityMarkDoneState(for: item) {
     case .ready:
       EmptyView()
     case .sent:

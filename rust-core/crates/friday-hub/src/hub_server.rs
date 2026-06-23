@@ -22,13 +22,14 @@
 use friday_crypto::{open, DataKey, Sealed};
 use friday_deepseek::{DeepSeekClient, Transport};
 use friday_protocol::{
-    Envelope, ErrorCode, MemoryDecisionRequestWire, MemoryDecisionResultWire, Message,
-    MissionIntakeRequestWire, MissionIntakeResultWire, MissionLifecycleRequestWire,
-    MissionLifecycleResultWire, MissionProjectionSnapshotWire, MissionTimelineLinkWire,
-    MissionTimelineMissionWire, MissionTimelineRequestWire, MissionTimelineSnapshotWire,
-    MissionTimelineSurfaceEventWire, MissionTimelineWorkItemWire, MissionWorkItemContextWire,
-    ProviderWorkspaceActionRequestWire, ProviderWorkspaceActionResultWire,
-    RouteDecisionControlRequestWire, RouteDecisionControlResultWire, RouteDecisionProjectionWire,
+    ActivityMarkDoneRequestWire, ActivityMarkDoneResultWire, Envelope, ErrorCode,
+    MemoryDecisionRequestWire, MemoryDecisionResultWire, Message, MissionIntakeRequestWire,
+    MissionIntakeResultWire, MissionLifecycleRequestWire, MissionLifecycleResultWire,
+    MissionProjectionSnapshotWire, MissionTimelineLinkWire, MissionTimelineMissionWire,
+    MissionTimelineRequestWire, MissionTimelineSnapshotWire, MissionTimelineSurfaceEventWire,
+    MissionTimelineWorkItemWire, MissionWorkItemContextWire, ProviderWorkspaceActionRequestWire,
+    ProviderWorkspaceActionResultWire, RouteDecisionControlRequestWire,
+    RouteDecisionControlResultWire, RouteDecisionProjectionWire,
     RunOutcomeLearningDecisionRequestWire, RunOutcomeLearningDecisionResultWire,
     WorkItemStatusRequestWire, WorkItemStatusResultWire, SUPPORTED,
 };
@@ -1764,6 +1765,68 @@ fn run_outcome_learning_decision_blocked(
                 candidate_id: candidate_id.to_string(),
                 run_id: run_id.map(str::to_string),
                 kind: kind.map(str::to_string),
+                state: state.to_string(),
+                status: "blocked".to_string(),
+                blocker: Some(blocker.to_string()),
+            },
+        },
+    )
+    .with_correlation(msg_id.to_string())
+}
+
+/// Mark one Activity / Needs-Me row done. This is a refs-only owner action over `activity_item`;
+/// it never completes a WorkItem, writes proof receipts, or calls a provider/model.
+pub fn activity_mark_done_result_for_db(
+    db: &Db,
+    msg_id: &str,
+    request: ActivityMarkDoneRequestWire,
+    now_ms: i64,
+) -> Envelope {
+    let activity_id = request.activity_id.trim();
+    if activity_id.is_empty() {
+        return activity_mark_done_blocked(msg_id, now_ms, "", "unknown", "activity_id_required");
+    }
+
+    match db.mark_activity_done(activity_id, now_ms) {
+        Ok(true) => Envelope::new(
+            format!("{msg_id}-activity-mark-done"),
+            now_ms,
+            Message::ActivityMarkDoneResult {
+                result: ActivityMarkDoneResultWire {
+                    activity_id: activity_id.to_string(),
+                    state: "done".to_string(),
+                    status: "done".to_string(),
+                    blocker: None,
+                },
+            },
+        )
+        .with_correlation(msg_id.to_string()),
+        Ok(false) => {
+            activity_mark_done_blocked(msg_id, now_ms, activity_id, "unknown", "unknown_activity")
+        }
+        Err(_) => activity_mark_done_blocked(
+            msg_id,
+            now_ms,
+            activity_id,
+            "unknown",
+            "activity_write_failed",
+        ),
+    }
+}
+
+fn activity_mark_done_blocked(
+    msg_id: &str,
+    now_ms: i64,
+    activity_id: &str,
+    state: &str,
+    blocker: &str,
+) -> Envelope {
+    Envelope::new(
+        format!("{msg_id}-activity-mark-done"),
+        now_ms,
+        Message::ActivityMarkDoneResult {
+            result: ActivityMarkDoneResultWire {
+                activity_id: activity_id.to_string(),
                 state: state.to_string(),
                 status: "blocked".to_string(),
                 blocker: Some(blocker.to_string()),
@@ -7539,6 +7602,82 @@ mod tests {
             Message::RunOutcomeLearningDecisionResult { result } => result,
             other => panic!("expected RunOutcomeLearningDecisionResult, got {other:?}"),
         }
+    }
+
+    fn decode_activity_mark_done(env: &Envelope) -> &ActivityMarkDoneResultWire {
+        match &env.message {
+            Message::ActivityMarkDoneResult { result } => result,
+            other => panic!("expected ActivityMarkDoneResult, got {other:?}"),
+        }
+    }
+
+    fn seed_activity(db: &Db, activity_id: &str) {
+        db.insert_activity(&friday_storage::ActivityRow {
+            activity_id: activity_id.to_string(),
+            session_id: Some("session-activity".to_string()),
+            kind: friday_core::ActivityType::ApprovalRequired,
+            state: friday_core::ActivityState::Pending,
+            summary: "approval required · refs only".to_string(),
+            created_at: 1_000,
+            updated_at: 1_000,
+            deep_link: Some("friday://activity/session-activity".to_string()),
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn activity_mark_done_marks_only_activity_row_done() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_activity(&db, "activity-mark-done-1");
+
+        let env = activity_mark_done_result_for_db(
+            &db,
+            "msg-activity-done",
+            ActivityMarkDoneRequestWire {
+                activity_id: "activity-mark-done-1".into(),
+                reason: Some("owner cleared it".into()),
+            },
+            1_200,
+        );
+        let result = decode_activity_mark_done(&env);
+        assert_eq!(result.status, "done");
+        assert_eq!(result.state, "done");
+        assert_eq!(result.activity_id, "activity-mark-done-1");
+        assert!(result.blocker.is_none());
+
+        let rows = db.list_activity().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].activity_id, "activity-mark-done-1");
+        assert_eq!(rows[0].state, "done");
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            0,
+            "marking activity done makes NO model call"
+        );
+        assert_eq!(
+            db.count("work_item").unwrap(),
+            0,
+            "marking activity done must not complete or create WorkItems"
+        );
+    }
+
+    #[test]
+    fn activity_mark_done_unknown_id_is_blocked_and_changes_nothing() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let env = activity_mark_done_result_for_db(
+            &db,
+            "msg-activity-unknown",
+            ActivityMarkDoneRequestWire {
+                activity_id: "missing-activity".into(),
+                reason: None,
+            },
+            1_200,
+        );
+        let result = decode_activity_mark_done(&env);
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.state, "unknown");
+        assert_eq!(result.blocker.as_deref(), Some("unknown_activity"));
+        assert_eq!(db.count("activity_item").unwrap(), 0);
     }
 
     #[test]

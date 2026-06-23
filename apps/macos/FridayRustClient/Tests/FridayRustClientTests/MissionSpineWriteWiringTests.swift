@@ -2,7 +2,8 @@ import XCTest
 @testable import FridayRustClient
 
 /// **Tier-2 mission-spine-write wiring tests** — drive `SealedWSWriteClient.submitMissionIntake` +
-/// `submitMemoryDecision` + `submitRunOutcomeLearningDecision` end-to-end over an IN-MEMORY transport that emulates the Rust
+/// `submitMemoryDecision` + `submitRunOutcomeLearningDecision` + `submitActivityMarkDone`
+/// end-to-end over an IN-MEMORY transport that emulates the Rust
 /// `hub_agent_run_server`'s mission-spine arms: the cleartext preamble (server pubkey + 64-byte
 /// nonce), the SEALED session (the channel auth — NO per-request `auth_proof` for these messages),
 /// and a `MissionIntakeResult` / `MemoryDecisionResult` reply.
@@ -23,6 +24,8 @@ final class MissionSpineWriteWiringTests: XCTestCase {
     case memoryBlocked         // the synthetic-candidate-id reality today
     case learningConfirmed
     case learningBlocked
+    case activityDone
+    case activityBlocked
     case serverError           // a typed Error frame
   }
 
@@ -43,6 +46,7 @@ final class MissionSpineWriteWiringTests: XCTestCase {
     private(set) var receivedIntake: MissionIntakeRequestWire?
     private(set) var receivedDecision: MemoryDecisionRequestWire?
     private(set) var receivedLearningDecision: RunOutcomeLearningDecisionRequestWire?
+    private(set) var receivedActivityMarkDone: ActivityMarkDoneRequestWire?
     /// Proves the inbound message object carried NO `auth_proof` (sealed session is the channel auth).
     private(set) var sawAuthProof = false
 
@@ -140,6 +144,19 @@ final class MissionSpineWriteWiringTests: XCTestCase {
             kind: "preference",
             state: req.decision == "confirm" ? "confirmed" : "rejected",
             status: req.decision == "confirm" ? "confirmed" : "rejected"))
+        }
+      case .activityMarkDoneRequest(let req):
+        receivedActivityMarkDone = req
+        switch mode {
+        case .serverError:
+          reply = .error(code: .internal, message: "activity mark done failed")
+        case .activityBlocked:
+          reply = .activityMarkDoneResult(ActivityMarkDoneResultWire(
+            activityId: req.activityId, state: "unknown", status: "blocked",
+            blocker: "unknown_activity"))
+        default:
+          reply = .activityMarkDoneResult(ActivityMarkDoneResultWire(
+            activityId: req.activityId, state: "done", status: "done"))
         }
       default:
         throw FridayWriteClientError.transport("unexpected inbound on the spine session: \(env.msgId)")
@@ -289,6 +306,37 @@ final class MissionSpineWriteWiringTests: XCTestCase {
     do {
       _ = try await client.submitRunOutcomeLearningDecision(
         RunOutcomeLearningDecisionRequestWire(candidateId: "a1:run-a1:preference", decision: "confirm"))
+      XCTFail("a typed Error frame must throw")
+    } catch let err as FridayWriteClientError {
+      guard case .serverError = err else { return XCTFail("expected serverError, got \(err)") }
+    }
+  }
+
+  // MARK: submitActivityMarkDone
+
+  func testSubmitActivityMarkDone_returnsDoneNoAuthProof() async throws {
+    let (client, transport) = try makeClient(mode: .activityDone)
+    let result = try await client.submitActivityMarkDone(
+      ActivityMarkDoneRequestWire(activityId: "activity-1", reason: "owner cleared row"))
+    XCTAssertEqual(result.activityId, "activity-1")
+    XCTAssertEqual(result.status, "done")
+    XCTAssertEqual(result.state, "done")
+    XCTAssertEqual(transport.receivedActivityMarkDone?.activityId, "activity-1")
+    XCTAssertEqual(transport.receivedActivityMarkDone?.reason, "owner cleared row")
+    XCTAssertFalse(transport.sawAuthProof, "the activity mark-done request must carry NO auth_proof")
+  }
+
+  func testSubmitActivityMarkDone_blocked_isAReturnedReceiptNotAThrow() async throws {
+    let (client, _) = try makeClient(mode: .activityBlocked)
+    let result = try await client.submitActivityMarkDone(ActivityMarkDoneRequestWire(activityId: "missing-activity"))
+    XCTAssertEqual(result.status, "blocked")
+    XCTAssertEqual(result.blocker, "unknown_activity")
+  }
+
+  func testSubmitActivityMarkDone_serverError_throwsServerError() async throws {
+    let (client, _) = try makeClient(mode: .serverError)
+    do {
+      _ = try await client.submitActivityMarkDone(ActivityMarkDoneRequestWire(activityId: "activity-1"))
       XCTFail("a typed Error frame must throw")
     } catch let err as FridayWriteClientError {
       guard case .serverError = err else { return XCTFail("expected serverError, got \(err)") }
