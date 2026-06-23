@@ -152,6 +152,10 @@ func devicePairingReadinessDefaultOffDoesNotTouchBackend() {
   #expect(readiness.publicKeyHex == nil)
   #expect(readiness.readLiveRequested == false)
   #expect(readiness.writeLiveRequested == false)
+  #expect(readiness.reason.contains("QR pairing is available"))
+  #expect(readiness.nextStep.contains("Scan or paste"))
+  #expect(!readiness.reason.lowercased().contains("secret"))
+  #expect(!readiness.nextStep.lowercased().contains("secret"))
   #expect(backend.loadCount == 0)
   #expect(backend.storeCount == 0)
 }
