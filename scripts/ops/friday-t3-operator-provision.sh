@@ -5,9 +5,9 @@
 # Truth boundary:
 #   This is a local operator ceremony wrapper around the existing
 #   friday-operator-approve CLI. It can mint trust_grant/context_passport rows only
-#   when the operator supplies an explicit ACK and explicit boundaries. It does not
-#   read an operator signing key, sign anything, flip flags, expose a Hub/app/agent
-#   mint endpoint, or insert fake organic evidence.
+#   when the operator supplies an explicit ACK, explicit boundaries, and a real paired-device row
+#   already exists. It does not read an operator signing key, sign anything, flip flags, expose a
+#   Hub/app/agent mint endpoint, or insert fake organic evidence.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +16,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ACK="${FRIDAY_T3_OPERATOR_PROVISION_ACK:-}"
 DB_PATH="${FRIDAY_T3_DB_PATH:-${HOME}/Library/Application Support/Friday/state/rust-hub.sqlite}"
 STEP="${FRIDAY_T3_STEP:-both}"
+REQUIRE_PAIRED_DEVICE="${FRIDAY_T3_REQUIRE_PAIRED_DEVICE:-1}"
 
 GRANT_ID="${FRIDAY_T3_GRANT_ID:-}"
 AGENT_ID="${FRIDAY_T3_AGENT_ID:-}"
@@ -60,6 +61,43 @@ case "${STEP}" in
   grant|passport|both) ;;
   *) fail "FRIDAY_T3_STEP must be grant, passport, or both." ;;
 esac
+case "${REQUIRE_PAIRED_DEVICE}" in
+  0|1) ;;
+  *) fail "FRIDAY_T3_REQUIRE_PAIRED_DEVICE must be 0 or 1." ;;
+esac
+
+query_scalar() {
+  local sql="$1"
+  sqlite3 -readonly "${DB_PATH}" "${sql}"
+}
+
+table_count() {
+  local table="$1"
+  local present
+  present="$(query_scalar "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='${table}'")"
+  if [[ "${present}" != "1" ]]; then
+    echo "0"
+    return
+  fi
+  query_scalar "SELECT count(*) FROM ${table}"
+}
+
+require_paired_device() {
+  if [[ "${REQUIRE_PAIRED_DEVICE}" = "0" ]]; then
+    echo "WARNING: FRIDAY_T3_REQUIRE_PAIRED_DEVICE=0 bypasses the paired-device preflight." >&2
+    echo "truth_label=t3_operator_provisioning_paired_device_preflight_bypassed" >&2
+    return
+  fi
+
+  local device_count trusted_count
+  device_count="$(table_count device_identity)"
+  trusted_count="$(table_count trusted_device)"
+  if [[ "${device_count}" -lt 1 || "${trusted_count}" -lt 1 ]]; then
+    fail "T3 provisioning requires a completed QR pairing first (device_identity=${device_count}, trusted_device=${trusted_count}). Run scripts/ops/friday-start-pairing-session.sh and pair a real client before minting trust_grant/context_passport rows."
+  fi
+
+  echo "paired_device_preflight=pass device_identity=${device_count} trusted_device=${trusted_count}" >&2
+}
 
 run_operator_cli() {
   cargo run --quiet --manifest-path "${REPO_ROOT}/rust-core/Cargo.toml" \
@@ -132,6 +170,8 @@ DB: ${DB_PATH}
 Step: ${STEP}
 Truth: operator ACK required; no signing key read; no flags flipped; no app/agent mint endpoint.
 EOF
+
+require_paired_device
 
 if [[ "${STEP}" = "grant" || "${STEP}" = "both" ]]; then
   run_grant
