@@ -781,6 +781,25 @@ struct WorkItemRow: View {
         HStack(spacing: 6) {
           item.state.chip
           item.owner.chip
+          if item.recoveryKind != "none" {
+            StatusChip(text: item.recoveryKind, bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+          }
+        }
+        if !item.blockingReason.isEmpty {
+          Text(item.blockingReason)
+            .font(.system(size: 10))
+            .foregroundStyle(HubTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        if item.canRetry || item.canCancel {
+          HStack(spacing: 6) {
+            if item.canRetry {
+              StatusChip(text: "retry available", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+            }
+            if item.canCancel {
+              StatusChip(text: "cancel available", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+            }
+          }
         }
         if let proof = item.proofRef {
           RefPill(label: "proofRef", ref: proof)

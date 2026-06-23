@@ -64,7 +64,11 @@ public struct MockReadClient: FridayRustReadClient {
         state: .providerAck,
         owner: .linkedOnly,
         proofRef: "proof://provider-receipt/3f9a1c2b7e004d18",
-        done: false
+        done: false,
+        blockingReason: "provider acknowledged; cancel is the only safe recovery action",
+        recoveryKind: "in_flight",
+        canRetry: false,
+        canCancel: true
       ),
       // Friday-owned item: completed and backed by a proof receipt.
       MissionWorkbenchWorkItem(
@@ -82,7 +86,24 @@ public struct MockReadClient: FridayRustReadClient {
         state: .blocked,
         owner: .linkedOnly,
         proofRef: "proof://work-item-required/0c0ffee0deadbeef",
-        done: false
+        done: false,
+        blockingReason: "provider login required before dispatch can resume",
+        recoveryKind: "needs_operator",
+        canRetry: false,
+        canCancel: true
+      ),
+      // Retryable stale row — desktop must surface recovery affordance facts as truth.
+      MissionWorkbenchWorkItem(
+        id: "work_probe_stale_retryable",
+        title: "Retry stale provider turn",
+        state: .stale,
+        owner: .fridayOwned,
+        proofRef: "proof://work-item-stale/1122334455667788",
+        done: false,
+        blockingReason: "failed retryable; operator may retry by returning the WorkItem to ready_to_dispatch",
+        recoveryKind: "retryable",
+        canRetry: true,
+        canCancel: true
       ),
       // Bounded timeline read appended by the projection — not completion.
       MissionWorkbenchWorkItem(
