@@ -226,6 +226,7 @@ struct RootView: View {
   @StateObject private var homeVM: HomeViewModel
   @StateObject private var sessionContinuationVM: SessionContinuationViewModel
   @StateObject private var shareIntakeVM: ShareIntakeViewModel
+  @StateObject private var voiceVM: VoiceReadinessViewModel
   private let session: FridaySession
   @State private var destination: MobileDestination = .home
   @State private var commandOpen = false
@@ -244,6 +245,8 @@ struct RootView: View {
       signer: session.signer,
       runControlEnabled: session.runControlEnabled))
     _shareIntakeVM = StateObject(wrappedValue: ShareIntakeViewModel(client: session.missionClient))
+    _voiceVM = StateObject(wrappedValue: VoiceReadinessViewModel(
+      authorizer: SystemVoiceReadinessAuthorizer()))
   }
 
   var body: some View {
@@ -256,6 +259,8 @@ struct RootView: View {
           FridaySessionDetailScreen(homeViewModel: homeVM, viewModel: sessionContinuationVM)
         case .shareIntake:
           FridayShareIntakeScreen(viewModel: shareIntakeVM)
+        case .voice:
+          FridayVoiceScreen(viewModel: voiceVM)
         case .missions, .needsMe, .memory, .platform, .activity, .workflows, .onboarding,
              .settings:
           FridayProjectionScreen(destination: destination, viewModel: homeVM)
