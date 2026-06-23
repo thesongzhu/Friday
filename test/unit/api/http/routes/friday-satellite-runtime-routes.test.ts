@@ -261,6 +261,25 @@ describe("FridaySatelliteRuntimeRoutes", () => {
     expect(result).toEqual({ acked: false, resultAccepted: true });
   });
 
+  it("rejects unknown command ack statuses before reporting or acking", async () => {
+    const route = findRoute("satellites.commands.ack");
+
+    await expect(
+      route.handler(
+        makeCtx("sat-1", {
+          params: { satelliteId: "sat-1", commandId: "cmd-1" },
+          body: { status: "complete" },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      httpStatus: 400,
+    } satisfies Partial<FridayDomainError>);
+
+    expect(deps.reportCommandResult).not.toHaveBeenCalled();
+    expect(deps.ackCommand).not.toHaveBeenCalled();
+  });
+
   it("rejects non-terminal ack when the command is not leased", async () => {
     deps.ackCommand.mockResolvedValueOnce({ acked: false });
 
