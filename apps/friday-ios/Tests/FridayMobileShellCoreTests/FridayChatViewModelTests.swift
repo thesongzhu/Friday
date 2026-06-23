@@ -220,7 +220,8 @@ final class FridayChatViewModelTests: XCTestCase {
 
   private func makeAnswer(_ runId: String = "run-1") -> AgentRunResultWire {
     AgentRunResultWire(runId: runId, status: "completed",
-                       answerSha256: String(repeating: "a", count: 64), answerLen: 128, turns: 2, executedTools: 0)
+                       answerSha256: String(repeating: "a", count: 64), answerLen: 128, turns: 2, executedTools: 0,
+                       promptTokens: 41, completionTokens: 58)
   }
 
   private func makePause(_ runId: String = "run-1") -> PausedOutcome {
@@ -238,6 +239,8 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertEqual(receipt.status, "completed")
     XCTAssertEqual(receipt.answerLen, 128)         // refs/counts only (INV-5)
     XCTAssertEqual(receipt.answerSha256?.count, 64) // a fingerprint, never a body
+    XCTAssertEqual(receipt.promptTokens, 41)
+    XCTAssertEqual(receipt.completionTokens, 58)
     XCTAssertNil(receipt.answerBody)
     XCTAssertEqual(client.dispatchedTasks, ["summarize my inbox"])
     // DEFAULT read-only/no-grant: a plain send carries NO constraints block.
