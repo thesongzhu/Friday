@@ -94,6 +94,8 @@ func snapshotExercisesEveryHonestRenderingRule() {
   #expect(snapshot.runOutcomeLearningCandidates.first?.evidenceRef.hasPrefix("proof://") == true)
   #expect(snapshot.t3ProvisioningStatus?.truthLabel == "rust_hub_t3_provisioning_read_only_no_mint")
   #expect(snapshot.t3ProvisioningStatus?.isFullyProvisioned == true)
+  #expect(snapshot.t3ProvisioningStatus?.desktopStatusLabel == "fully provisioned")
+  #expect(snapshot.t3ProvisioningStatus?.missingOperatorSteps == [])
   #expect(snapshot.t3ProvisioningStatus?.latestDevice?.deviceId.hasPrefix("proof://device/") == true)
   #expect(snapshot.t3ProvisioningStatus?.latestDevice?.pubkeyFingerprint == "abcd1234:dcba4321")
 }
@@ -348,7 +350,32 @@ func decodesRustProjectionShapedJSON() throws {
   #expect(snapshot.t3ProvisioningStatus?.paired == true)
   #expect(snapshot.t3ProvisioningStatus?.latestDevice?.deviceId == "proof://device/paired-desktop-1")
   #expect(snapshot.t3ProvisioningStatus?.latestDevice?.pubkeyFingerprint == "abcd1234:dcba4321")
+  #expect(snapshot.t3ProvisioningStatus?.missingOperatorSteps == [])
   #expect(snapshot.transcriptSections.first?.events.first?.evidenceRefs.timelineRef != nil)
+}
+
+@Test
+func desktopT3ProvisioningStatusNamesOperatorGapsWithoutClaimingReady() throws {
+  let status = MissionWorkbenchT3ProvisioningStatus(
+    truthLabel: "rust_hub_t3_provisioning_read_only_no_mint",
+    paired: true,
+    deviceIdentityCount: 1,
+    trustedDeviceCount: 1,
+    activeTrustedDeviceCount: 1,
+    trustGrantCount: 0,
+    activeTrustGrantCount: 0,
+    contextPassportCount: 0,
+    contextPassportItemCount: 0,
+    latestDevice: MissionWorkbenchTrustedDeviceSummary(
+      deviceId: "proof://device/friday-iphone",
+      label: "Friday iPhone",
+      pairedAt: 1782208748151,
+      pubkeyFingerprint: "f2ccff9e:69f7de33"))
+
+  #expect(status.isFullyProvisioned == false)
+  #expect(status.desktopStatusLabel == "operator action needed")
+  #expect(status.missingOperatorSteps == ["trust grant", "context passport"])
+  #expect(status.desktopSummary == "Missing trust grant, context passport.")
 }
 
 // MARK: - Real FridayRustClient integration (wire → display reconciliation)

@@ -603,6 +603,37 @@ public struct MissionWorkbenchT3ProvisioningStatus: Codable, Sendable, Equatable
   public var isFullyProvisioned: Bool {
     paired && activeTrustGrantCount > 0 && contextPassportCount > 0 && contextPassportItemCount > 0
   }
+
+  public var missingOperatorSteps: [String] {
+    var steps: [String] = []
+    if !paired {
+      steps.append("paired device")
+    }
+    if activeTrustGrantCount == 0 {
+      steps.append("trust grant")
+    }
+    if contextPassportCount == 0 || contextPassportItemCount == 0 {
+      steps.append("context passport")
+    }
+    return steps
+  }
+
+  public var desktopStatusLabel: String {
+    if isFullyProvisioned {
+      return "fully provisioned"
+    }
+    return paired ? "operator action needed" : "pairing needed"
+  }
+
+  public var desktopSummary: String {
+    if isFullyProvisioned {
+      return "Hub projection shows paired device, active trust grant, and context passport rows."
+    }
+    if missingOperatorSteps.isEmpty {
+      return "Hub projection is incomplete."
+    }
+    return "Missing \(missingOperatorSteps.joined(separator: ", "))."
+  }
 }
 
 public struct MissionWorkbenchTrustedDeviceSummary: Codable, Sendable, Equatable {
