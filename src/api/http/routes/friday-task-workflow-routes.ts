@@ -1152,6 +1152,10 @@ export function createFridayTaskWorkflowRoutes(
       auth: { public: true },
       async handler(ctx) {
         const service = requireService(deps);
+        assertTaskWorkflowMutationPrincipal(
+          ctx.principal ?? null,
+          "task.workflow.evidence.raw.read",
+        );
         const { evidenceRefId } = ctx.params as { evidenceRefId: string };
         const queryRecord = (ctx.query ?? {}) as Record<string, unknown>;
         const rawGate = queryRecord.gateConfirmed;

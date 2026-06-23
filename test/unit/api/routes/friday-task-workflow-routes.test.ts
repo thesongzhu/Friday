@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../src/api/http/friday-default-public-principal.js";
 import { createFridayTaskWorkflowRoutes } from "../../../../src/api/http/routes/friday-task-workflow-routes.js";
 import { FridayDomainError } from "../../../../src/errors/friday-domain-error.js";
+import { ERROR_CODE_BOUND_PRINCIPAL_REQUIRED } from "../../../../src/security/friday-owner-session-channel-capability.js";
 import {
   FRIDAY_TASK_WORKFLOW_BUILTIN_BOUNDARIES,
   FRIDAY_TASK_WORKFLOW_BUILTIN_GATES,
@@ -470,6 +472,40 @@ describe("Phase 13.5D supervisor + channel + evidence-explorer routes", () => {
     // gated raw drilldown remains server-redacted only).
     expect(success.drilldown.refId).toBeUndefined();
     expect("refId" in success.drilldown).toBe(false);
+  });
+
+  it("evidence explorer raw drilldown rejects unbound public principals before service access", async () => {
+    let serviceCalls = 0;
+    const routes = createFridayTaskWorkflowRoutes({
+      service: {
+        ...makeStubService(),
+        getEvidenceRefRawDrilldown: () => {
+          serviceCalls += 1;
+          throw new Error("raw drilldown service must not be reached");
+        },
+      },
+      disabledReason: null,
+    });
+    const route = findRoute(routes, "task.workflows.evidence.explorer.raw");
+
+    for (const principal of [null, createFridayDefaultPublicHttpPrincipal()]) {
+      try {
+        await route.handler(
+          makeCtx({
+            params: { evidenceRefId: "ref-1" },
+            query: { gateConfirmed: "true" },
+            principal,
+          }) as never,
+        );
+        throw new Error("expected bound-principal refusal");
+      } catch (error) {
+        expect(error).toBeInstanceOf(FridayDomainError);
+        const domain = error as FridayDomainError;
+        expect(domain.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
+        expect(domain.httpStatus).toBe(401);
+      }
+    }
+    expect(serviceCalls).toBe(0);
   });
 
   it("channel command issue route refuses unknown intentKind values", async () => {

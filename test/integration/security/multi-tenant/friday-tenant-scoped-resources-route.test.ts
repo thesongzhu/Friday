@@ -45,7 +45,20 @@ import type {
   FridayRouteDefinition,
   FridayHttpContext,
 } from "../../../../src/api/model/friday-api-common.types.js";
+import type { FridayAuthPrincipal } from "../../../../src/api/model/friday-api-auth.types.js";
 import { FridayDomainError } from "../../../../src/errors/friday-domain-error.js";
+
+const TEST_ADMIN_PRINCIPAL: FridayAuthPrincipal = {
+  principalType: "user",
+  principalId: "user:multi-tenant-admin",
+  tenantId: "22222222-2222-4222-8222-222222222222",
+  userId: "11111111-1111-4111-8111-111111111111",
+  role: "admin",
+  scopes: ["hub.admin", "security.write"],
+  tokenId: "33333333-3333-4333-8333-333333333333",
+  tokenKind: "access",
+  issuedAt: "2026-05-14T00:00:00Z",
+};
 
 function buildLayer(dbPath: string): FridaySqliteLayer {
   return createFridaySqliteLayer({
@@ -65,7 +78,7 @@ function makeCtx<TParams = unknown, TQuery = unknown, TBody = unknown>(
     query: {} as TQuery,
     body: null as TBody,
     headers: {},
-    principal: null,
+    principal: TEST_ADMIN_PRINCIPAL,
     ...overrides,
   };
 }

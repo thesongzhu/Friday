@@ -16,6 +16,7 @@ import type {
   FridayHttpContext,
   FridayRouteDefinition,
 } from "../../../src/api/model/friday-api-common.types.js";
+import type { FridayAuthPrincipal } from "../../../src/api/model/friday-api-auth.types.js";
 import { FridayDomainError } from "../../../src/errors/friday-domain-error.js";
 import { createFridayPackagingApiHandlers } from "../../../src/packaging/api/index.js";
 import {
@@ -48,6 +49,17 @@ import {
 
 const NOW = "2026-05-27T00:00:00.000Z";
 const PLATFORM_VERSION = "1.0.2";
+const TEST_ADMIN_PRINCIPAL: FridayAuthPrincipal = {
+  principalType: "user",
+  principalId: "user:release-proof-admin",
+  tenantId: "22222222-2222-4222-8222-222222222222",
+  userId: "11111111-1111-4111-8111-111111111111",
+  role: "admin",
+  scopes: ["hub.admin", "security.write"],
+  tokenId: "33333333-3333-4333-8333-333333333333",
+  tokenKind: "access",
+  issuedAt: NOW,
+};
 
 function makeCtx<TParams = unknown, TQuery = unknown, TBody = unknown>(
   overrides: Partial<FridayHttpContext<TParams, TQuery, TBody>> = {},
@@ -59,7 +71,7 @@ function makeCtx<TParams = unknown, TQuery = unknown, TBody = unknown>(
     query: {} as TQuery,
     body: null as TBody,
     headers: {},
-    principal: null,
+    principal: TEST_ADMIN_PRINCIPAL,
     ...overrides,
   };
 }
