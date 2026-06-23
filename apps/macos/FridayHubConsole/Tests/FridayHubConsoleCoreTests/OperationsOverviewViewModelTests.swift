@@ -826,7 +826,23 @@ final class DetailReadClient: FridayRustReadClient, @unchecked Sendable {
   }
 
   func fetchRunReadback(runId: String) async throws -> ReadProjectionSnapshot {
-    try record("run:\(runId)", kind: "run", status: "complete", runId: runId, proofRef: "proof://run/\(runId)")
+    try record(
+      "run:\(runId)",
+      kind: "run",
+      status: "complete",
+      runId: runId,
+      proofRef: "proof://run/\(runId)",
+      extra: [
+        "run_state": "complete",
+        "loop_status_derived": "complete",
+        "event_count": 7,
+        "db_wide_token_total": 321,
+        "prompt_tokens": 120,
+        "completion_tokens": 201,
+        "total_tokens": 321,
+        "cost_usd": "0.0456",
+        "audit_chain_verified": true,
+      ])
   }
 
   func fetchRunFileView(runId: String) async throws -> ReadProjectionSnapshot {
@@ -930,6 +946,23 @@ func loadDetailCallsRunAndNeedsMeReadArms() async {
   let client = DetailReadClient()
   let vm = OperationsOverviewViewModel(client: client)
   await vm.loadDetail(.runReadback(runId: "run-desktop"))
+  guard case let .loaded(runDetail) = vm.detailState else {
+    Issue.record("expected run detail .loaded, got \(vm.detailState)")
+    return
+  }
+  #expect(runDetail.title == "Run readback")
+  #expect(runDetail.facts == [
+    ReadProjectionDetailFact(id: "run-id", label: "run", value: "run-desktop"),
+    ReadProjectionDetailFact(id: "state", label: "state", value: "complete"),
+    ReadProjectionDetailFact(id: "loop", label: "loop", value: "complete"),
+    ReadProjectionDetailFact(id: "events", label: "events", value: "7"),
+    ReadProjectionDetailFact(id: "db-wide-tokens", label: "db tokens", value: "321"),
+    ReadProjectionDetailFact(id: "prompt-tokens", label: "prompt", value: "120"),
+    ReadProjectionDetailFact(id: "completion-tokens", label: "completion", value: "201"),
+    ReadProjectionDetailFact(id: "total-tokens", label: "total", value: "321"),
+    ReadProjectionDetailFact(id: "cost", label: "cost", value: "0.0456"),
+    ReadProjectionDetailFact(id: "audit", label: "audit", value: "verified"),
+  ])
   await vm.loadDetail(.activityNeedsMe(runId: "run-desktop"))
 
   #expect(client.requested == ["run:run-desktop", "needs-me:run-desktop"])
