@@ -91,6 +91,7 @@ struct OperationsOverviewScreen: View {
 
       devicePairingCard(viewModel.devicePairing)
       t3ProvisioningCard(snapshot.t3ProvisioningStatus)
+      attentionCard(snapshot)
       missionCard(snapshot)
       if snapshot.isLoadedEmpty {
         loadedEmptyCard(snapshot)
@@ -248,6 +249,65 @@ struct OperationsOverviewScreen: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel("Friday is connected, with no active desktop work for this owner")
     .accessibilityIdentifier("friday.desktop.loaded-empty")
+  }
+
+  private func attentionCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("Needs Attention")
+          Spacer()
+          let count = snapshot.attentionWorkItems.count
+          StatusChip(
+            text: count == 0 ? "clear" : "\(count) open",
+            bg: count == 0 ? HubTheme.chipDoneBG : HubTheme.chipWarnBG,
+            fg: count == 0 ? HubTheme.chipDoneFG : HubTheme.chipWarnFG)
+        }
+        Text(snapshot.attentionSummary)
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textSecondary)
+
+        if snapshot.attentionWorkItems.isEmpty {
+          Text("No blocked, stale, waiting, or provider-ack work items are visible in this projection.")
+            .font(.system(size: 10))
+            .foregroundStyle(HubTheme.textSecondary)
+        } else {
+          ForEach(snapshot.attentionWorkItems.prefix(5)) { item in
+            VStack(alignment: .leading, spacing: 4) {
+              HStack(spacing: 6) {
+                item.state.chip
+                item.owner.chip
+                Text(item.title)
+                  .font(.system(size: 12, weight: .medium))
+                  .foregroundStyle(HubTheme.textPrimary)
+                  .lineLimit(1)
+              }
+              Text(item.attentionReason)
+                .font(.system(size: 10))
+                .foregroundStyle(HubTheme.textSecondary)
+              RefPill(label: "workItemId", ref: item.id)
+              if let proof = item.proofRef {
+                RefPill(label: "proofRef", ref: proof)
+              }
+            }
+            .padding(.vertical, 2)
+          }
+          if snapshot.attentionWorkItems.count > 5 {
+            Text("+ \(snapshot.attentionWorkItems.count - 5) more attention item(s) in Work Items.")
+              .font(.system(size: 10))
+              .foregroundStyle(HubTheme.textSecondary)
+          }
+        }
+
+        Text("Read-only recovery visibility; no dispatch, retry, signing, or close action is exposed here.")
+          .font(.system(size: 10))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Needs attention. \(snapshot.attentionSummary)")
+    .accessibilityIdentifier("friday.desktop.needs-attention")
   }
 
   /// The spine-WRITE compose affordance — an operator types an intent and submits it as a

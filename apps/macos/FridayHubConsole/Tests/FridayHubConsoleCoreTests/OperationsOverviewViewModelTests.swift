@@ -140,6 +140,62 @@ func representativeSnapshotIsNotLoadedEmpty() {
   #expect(!snapshot.isLoadedEmpty)
 }
 
+@Test
+func attentionSummarySurfacesOnlyUnfinishedRecoveryRelevantWorkItems() {
+  let snapshot = MockReadClient.representativeSnapshot
+  let attentionIds = snapshot.attentionWorkItems.map(\.id)
+
+  #expect(attentionIds.contains("work_probe_provider"))
+  #expect(attentionIds.contains("work_probe_blocked"))
+  #expect(!attentionIds.contains("work_probe_done"))
+  #expect(!attentionIds.contains("workbench_timeline_read_mission_workbench_probe_20260605"))
+  #expect(snapshot.attentionSummary == "2 work items need attention.")
+  #expect(
+    snapshot.attentionWorkItems.first { $0.id == "work_probe_provider" }?.attentionReason
+      == "provider acknowledged; waiting for proof")
+}
+
+@Test
+func attentionSummaryStaysClearForCompletedAndTimelineOnlySnapshots() {
+  let snapshot = FridayHubConsoleCore.WorkbenchSnapshot(
+    missionId: "mission-clear",
+    fridayConversationId: "fconv-clear",
+    runtimeFeedStatus: .liveRustHubProjection,
+    statusLabels: [],
+    duplicatePreflight: MissionWorkbenchDuplicatePreflight(
+      status: "none", duplicateMissionId: "", duplicateWorkItemId: ""),
+    routeDecision: MissionWorkbenchRouteDecision(
+      advisorSummary: "complete",
+      selectedRoute: "proof://route-decision/clear",
+      alternatives: [],
+      truthLabel: .fridayOwned),
+    providerReceiptRefs: [],
+    channelReceiptRefs: [],
+    workItems: [
+      MissionWorkbenchWorkItem(
+        id: "work-done",
+        title: "Done",
+        state: .completedWithProof,
+        owner: .fridayOwned,
+        proofRef: "proof://done",
+        done: true),
+      MissionWorkbenchWorkItem(
+        id: "work-timeline",
+        title: "Timeline read",
+        state: .timelineRead,
+        owner: .fridayOwned,
+        proofRef: "proof://timeline",
+        done: false),
+    ],
+    timelinePages: [],
+    memoryCandidates: [],
+    capabilityStates: [],
+    transcriptSections: [])
+
+  #expect(snapshot.attentionWorkItems.isEmpty)
+  #expect(snapshot.attentionSummary == "No work items need attention.")
+}
+
 private func temporaryHome() throws -> URL {
   let url = FileManager.default.temporaryDirectory
     .appendingPathComponent("friday-console-tests-\(UUID().uuidString)")
@@ -1168,6 +1224,89 @@ func approveNeedsMeItemWithoutSignerFailsClosedWithoutResume() async {
   }
   #expect(reason.contains("not configured"))
   #expect(write.lastResumeRunId == nil)
+}
+
+@Test
+@MainActor
+func rejectNeedsMeApprovalUsesRunControlWithoutSigner() async {
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let item = ChatNeedsMeItem(
+    runId: "run-paused",
+    kind: "approval_required",
+    title: "reject write_file",
+    refId: "approval-nonce-10",
+    state: "pending",
+    deepLink: nil,
+    actionDigest: String(repeating: "b", count: 64),
+    signingSummary: "write_file paused")
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    approvalResumeClient: write)
+
+  await vm.rejectNeedsMeApproval(item)
+
+  #expect(write.lastRejectRunId == "run-paused")
+  #expect(write.lastRejectApprovalId == "approval-nonce-10")
+  #expect(write.lastResumeRunId == nil)
+  guard case let .confirmed(summary, _, _) = vm.approvalRelayStates[item.id] else {
+    Issue.record("expected approval reject .confirmed, got \(String(describing: vm.approvalRelayStates[item.id]))")
+    return
+  }
+  #expect(summary.contains("reject"))
+  #expect(summary.contains("audit://reject/1"))
+}
+
+@Test
+@MainActor
+func cancelNeedsMeRunUsesRunControlReason() async {
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let item = ChatNeedsMeItem(
+    runId: "run-paused",
+    kind: "approval_required",
+    title: "cancel paused run",
+    refId: "approval-nonce-11",
+    state: "pending",
+    deepLink: nil,
+    actionDigest: nil,
+    signingSummary: nil)
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    approvalResumeClient: write)
+
+  await vm.cancelNeedsMeRun(item)
+
+  #expect(write.lastCancelRunId == "run-paused")
+  #expect(write.lastCancelReason == "operator cancelled from desktop Needs Review")
+  #expect(write.lastResumeRunId == nil)
+  guard case let .confirmed(summary, _, _) = vm.approvalRelayStates[item.id] else {
+    Issue.record("expected cancel .confirmed, got \(String(describing: vm.approvalRelayStates[item.id]))")
+    return
+  }
+  #expect(summary.contains("cancel"))
+  #expect(summary.contains("audit://cancel/1"))
+}
+
+@Test
+@MainActor
+func rejectNeedsMeApprovalWithoutRunControlFailsClosed() async {
+  let item = ChatNeedsMeItem(
+    runId: "run-paused",
+    kind: "approval_required",
+    title: "reject write_file",
+    refId: "approval-nonce-12",
+    state: "pending",
+    deepLink: nil,
+    actionDigest: nil,
+    signingSummary: nil)
+  let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: .loaded))
+
+  await vm.rejectNeedsMeApproval(item)
+
+  guard case let .error(reason) = vm.approvalRelayStates[item.id] else {
+    Issue.record("expected reject .error, got \(String(describing: vm.approvalRelayStates[item.id]))")
+    return
+  }
+  #expect(reason.contains("not configured"))
 }
 
 @Test
