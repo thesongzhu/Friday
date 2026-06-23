@@ -170,7 +170,7 @@ struct OperationsOverviewScreen: View {
           cardTitle("T3 Provisioning")
           Spacer()
           StatusChip(
-            text: status?.isFullyProvisioned == true ? "fully provisioned" : "operator gated",
+            text: status?.desktopStatusLabel ?? "not projected",
             bg: status?.isFullyProvisioned == true ? HubTheme.chipPendingBG : HubTheme.chipWarnBG,
             fg: status?.isFullyProvisioned == true ? HubTheme.chipPendingFG : HubTheme.chipWarnFG)
         }
@@ -211,6 +211,11 @@ struct OperationsOverviewScreen: View {
               .font(.system(size: 12))
               .foregroundStyle(HubTheme.textSecondary)
           }
+
+          Text(status.desktopSummary)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(status.isFullyProvisioned ? HubTheme.textSecondary : HubTheme.coral)
+            .fixedSize(horizontal: false, vertical: true)
 
           Text("Read-only status from Hub DB; trust grant and context passport minting remain operator CLI ceremonies.")
             .font(.system(size: 10))
