@@ -109,4 +109,46 @@ describe("loadProviderTruth", () => {
     expect(truth.hasFallbackLane).toBe(true);
     expect(truth.alerts.some((alert) => alert.code === "fallback_missing")).toBe(false);
   });
+
+  it("does not treat a disabled fallback provider as a working fallback lane", async () => {
+    vi.mocked(providersApi.list).mockResolvedValue([
+      provider,
+      { ...provider, id: "provider-2", name: "Disabled fallback", enabled: false },
+    ] as never);
+    vi.mocked(providersApi.listHealth).mockResolvedValue([
+      health,
+      {
+        ...health,
+        providerId: "provider-2",
+        lane: "disabled",
+        enabled: false,
+        routingEligible: false,
+        reasons: ["provider_disabled"],
+      },
+    ] as never);
+    vi.mocked(providersApi.getRouting).mockResolvedValue({
+      defaultProviderId: "provider-1",
+      defaultModel: "gpt-4o-mini",
+      fallbackProviderIds: ["provider-2"],
+    });
+    vi.mocked(providersApi.explainRouting).mockResolvedValue({
+      selected: {
+        providerId: "provider-1",
+        providerKind: "openai",
+        model: "gpt-4o-mini",
+        backendKind: "http",
+        pinned: false,
+      },
+      selectedAdjusted: false,
+      candidates: [],
+      reasonText: "default",
+    } as never);
+
+    const truth = await loadProviderTruth();
+
+    expect(truth.currentStatus).toBe("healthy");
+    expect(truth.status).toBe("degraded");
+    expect(truth.hasFallbackLane).toBe(false);
+    expect(truth.alerts.some((alert) => alert.code === "fallback_missing")).toBe(true);
+  });
 });
