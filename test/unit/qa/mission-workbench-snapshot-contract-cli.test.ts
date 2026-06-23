@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-function makeSnapshot(overrides: Record<string, unknown> = {}) {
-  const missionId = "mission_cli_snapshot_contract";
+function makeSnapshot(
+  overrides: Record<string, unknown> = {},
+  missionId = "mission_cli_snapshot_contract",
+) {
   const snapshot = {
     missionId,
     fridayConversationId: "conversation_cli_snapshot_contract",
@@ -19,7 +21,7 @@ function makeSnapshot(overrides: Record<string, unknown> = {}) {
     routeDecision: {
       advisorSummary: "Rust Hub route decision projection.",
       selectedRoute: "route_decision_ref",
-      controlRef: "friday://route-decision-projection/mission_cli_snapshot_contract/work_provider/1700000000000",
+      controlRef: `friday://route-decision-projection/${missionId}/work_provider/1700000000000`,
       workItemId: "work_provider",
       alternatives: ["alternate_ref"],
       actionItems: [
@@ -225,11 +227,15 @@ function makeSnapshot(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function runSnapshotContract(filePath: string, extraArgs: string[] = []) {
+function runSnapshotContract(
+  filePath: string,
+  extraArgs: string[] = [],
+  missionId = "mission_cli_snapshot_contract",
+) {
   const stdout = execFileSync(process.execPath, [
     "scripts/qa/check-mission-workbench-snapshot-contract.mjs",
     `--file=${filePath}`,
-    "--mission-id=mission_cli_snapshot_contract",
+    `--mission-id=${missionId}`,
     ...extraArgs,
   ], {
     cwd: process.cwd(),
@@ -272,6 +278,23 @@ describe("check-mission-workbench-snapshot-contract CLI", () => {
         "timelineRef",
         "workflowRef",
       ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts real Rust producer hyphen mission ids without downgrading the contract", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-workbench-contract-hyphen-"));
+    try {
+      const missionId = "mission-autodisp-1781492033";
+      const filePath = join(tempDir, "snapshot.json");
+      writeFileSync(filePath, JSON.stringify({ snapshot: makeSnapshot({}, missionId) }, null, 2));
+
+      const result = runSnapshotContract(filePath, [], missionId);
+
+      expect(result.readyForLiveCaptureInput).toBe(true);
+      expect(result.failures).toEqual([]);
+      expect(result.summary?.transcriptSurfaces).toEqual(["desktop", "mobile", "telegram", "timeline"]);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

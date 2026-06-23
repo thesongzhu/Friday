@@ -431,6 +431,15 @@ function hasText(value: unknown): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function isMissionIdProofEligible(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const missionId = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId)
+    && missionId.toLowerCase().includes("mission")
+    && missionId !== "mission_pending_runtime_projection"
+    && !missionId.includes("TODO");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -459,7 +468,7 @@ function validateSnapshotHeader(
   failures: string[],
   requestedMissionId?: string,
 ): void {
-  pushIfInvalid(failures, hasText(snapshot.missionId) && snapshot.missionId.startsWith("mission_"), "mission_id_missing_or_invalid");
+  pushIfInvalid(failures, isMissionIdProofEligible(snapshot.missionId), "mission_id_missing_or_invalid");
   if (requestedMissionId) {
     pushIfInvalid(
       failures,
