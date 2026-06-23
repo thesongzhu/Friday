@@ -14,6 +14,31 @@ public struct SessionContinuationSection: Sendable, Identifiable, Equatable {
   public let summary: String
   public let generatedAtMs: Int64?
   public let refs: [String]
+  public let facts: [SessionContinuationFact]
+
+  public init(
+    id: String,
+    title: String,
+    status: SessionContinuationSectionStatus,
+    summary: String,
+    generatedAtMs: Int64?,
+    refs: [String],
+    facts: [SessionContinuationFact] = []
+  ) {
+    self.id = id
+    self.title = title
+    self.status = status
+    self.summary = summary
+    self.generatedAtMs = generatedAtMs
+    self.refs = refs
+    self.facts = facts
+  }
+}
+
+public struct SessionContinuationFact: Sendable, Identifiable, Equatable {
+  public let id: String
+  public let label: String
+  public let value: String
 }
 
 public struct SessionContinuationControl: Sendable, Identifiable, Equatable {
@@ -300,7 +325,8 @@ public final class SessionContinuationViewModel: ObservableObject {
         status: .loaded,
         summary: readbackSummary(from: snapshot.raw),
         generatedAtMs: detail.generatedAtMs,
-        refs: detail.refs)
+        refs: detail.refs,
+        facts: readbackFacts(from: snapshot.raw, fallbackRunId: runId))
     } catch {
       return SessionContinuationSection(
         id: "run-readback",
@@ -476,6 +502,29 @@ public final class SessionContinuationViewModel: ObservableObject {
       parts.append("audit=\(audit)")
     }
     return parts.isEmpty ? "run readback loaded" : parts.joined(separator: " | ")
+  }
+
+  private nonisolated static func readbackFacts(
+    from raw: [String: Any],
+    fallbackRunId: String
+  ) -> [SessionContinuationFact] {
+    var facts: [SessionContinuationFact] = []
+    func append(_ id: String, _ label: String, _ value: String?) {
+      guard let value, !value.isEmpty else { return }
+      facts.append(SessionContinuationFact(id: id, label: label, value: value))
+    }
+    append("run-id", "run", firstNonEmptyString(raw, ["run_id", "runId"]) ?? fallbackRunId)
+    append("state", "state", firstNonEmptyString(raw, ["run_state", "runState", "status"]))
+    append("loop", "loop", firstNonEmptyString(raw, ["loop_status_derived", "loopStatusDerived"]))
+    append("events", "events", integerText(raw, ["event_count", "eventCount"]))
+    append("db-wide-tokens", "db tokens", integerText(raw, ["db_wide_token_total", "dbWideTokenTotal"]))
+    append("prompt-tokens", "prompt", integerText(raw, ["prompt_tokens", "promptTokens"]))
+    append("completion-tokens", "completion", integerText(raw, ["completion_tokens", "completionTokens"]))
+    append("total-tokens", "total", integerText(raw, ["total_tokens", "totalTokens"]))
+    let costKeys = ["cost_usd", "costUsd", "estimated_cost_usd", "estimatedCostUsd"]
+    append("cost", "cost", firstNonEmptyString(raw, costKeys) ?? integerText(raw, costKeys))
+    append("audit", "audit", boolText(raw, ["audit_chain_verified", "auditChainVerified"]))
+    return facts
   }
 
   private nonisolated static func approval(

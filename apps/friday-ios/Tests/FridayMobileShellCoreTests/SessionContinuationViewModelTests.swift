@@ -55,6 +55,10 @@ final class SessionContinuationViewModelTests: XCTestCase {
           "loop_status_derived": "finished",
           "event_count": 3,
           "db_wide_token_total": 99,
+          "prompt_tokens": 41,
+          "completion_tokens": 58,
+          "total_tokens": 99,
+          "cost_usd": "0.0123",
           "audit_chain_verified": true,
         ])
     }
@@ -218,6 +222,18 @@ final class SessionContinuationViewModelTests: XCTestCase {
     let readback = snapshot.sections.first { $0.id == "run-readback" }
     XCTAssertTrue(readback?.summary.contains("db-wide tokens=99") == true)
     XCTAssertTrue(readback?.summary.contains("audit=verified") == true)
+    XCTAssertEqual(readback?.facts, [
+      SessionContinuationFact(id: "run-id", label: "run", value: "run-1"),
+      SessionContinuationFact(id: "state", label: "state", value: "finished"),
+      SessionContinuationFact(id: "loop", label: "loop", value: "finished"),
+      SessionContinuationFact(id: "events", label: "events", value: "3"),
+      SessionContinuationFact(id: "db-wide-tokens", label: "db tokens", value: "99"),
+      SessionContinuationFact(id: "prompt-tokens", label: "prompt", value: "41"),
+      SessionContinuationFact(id: "completion-tokens", label: "completion", value: "58"),
+      SessionContinuationFact(id: "total-tokens", label: "total", value: "99"),
+      SessionContinuationFact(id: "cost", label: "cost", value: "0.0123"),
+      SessionContinuationFact(id: "audit", label: "audit", value: "verified"),
+    ])
     XCTAssertEqual(snapshot.sections.first?.generatedAtMs, 1_780_640_000_123)
     XCTAssertEqual(snapshot.controls.map(\.title), ["Send", "Stop", "Resume", "Reject", "Fork"])
     XCTAssertTrue(snapshot.controls.allSatisfy { !$0.isEnabled && $0.truthLabel == "NO-GO" })
