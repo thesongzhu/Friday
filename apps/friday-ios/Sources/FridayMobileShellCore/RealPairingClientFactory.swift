@@ -3,15 +3,15 @@ import FridayRustClient
 
 public enum PairingServerConfigError: Error, Sendable, Equatable, CustomStringConvertible {
   case badEndpoint(String)
-  case nonLoopbackHost(String)
+  case disallowedHost(String)
   case missingPort(String)
 
   public var description: String {
     switch self {
     case let .badEndpoint(endpoint):
       return "bad pairing endpoint \(endpoint)"
-    case let .nonLoopbackHost(host):
-      return "pairing endpoint must be loopback, got \(host)"
+    case let .disallowedHost(host):
+      return "pairing endpoint must be loopback or private LAN, got \(host)"
     case let .missingPort(endpoint):
       return "pairing endpoint missing port \(endpoint)"
     }
@@ -44,13 +44,25 @@ public struct PairingServerConfig: Sendable, Equatable {
       throw PairingServerConfigError.badEndpoint(endpoint)
     }
     let host = url.host ?? ""
-    guard ["127.0.0.1", "localhost", "::1"].contains(host) else {
-      throw PairingServerConfigError.nonLoopbackHost(host)
+    guard Self.isAllowedPairingHost(host) else {
+      throw PairingServerConfigError.disallowedHost(host)
     }
     guard let port = url.port, let p = UInt16(exactly: port) else {
       throw PairingServerConfigError.missingPort(endpoint)
     }
     self.init(host: host == "localhost" ? "127.0.0.1" : host, port: p)
+  }
+
+  static func isAllowedPairingHost(_ host: String) -> Bool {
+    let h = host.lowercased()
+    if ["127.0.0.1", "localhost", "::1"].contains(h) { return true }
+    let parts = h.split(separator: ".").compactMap { UInt8(String($0)) }
+    guard parts.count == 4 else { return false }
+    if parts[0] == 10 { return true }
+    if parts[0] == 172 && (UInt8(16)...UInt8(31)).contains(parts[1]) { return true }
+    if parts[0] == 192 && parts[1] == 168 { return true }
+    if parts[0] == 169 && parts[1] == 254 { return true }
+    return false
   }
 }
 

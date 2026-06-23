@@ -200,8 +200,48 @@ func homeViewModelPairScannedQrFailsClosedWhenPairingChannelNotConfigured() asyn
   #expect(vm.pairingAttempt.reason == "Pairing channel is not configured for this launch.")
 }
 
+@Test
+func pairingServerConfigAllowsLoopbackAndPrivateLanOnly() throws {
+  #expect(try PairingServerConfig(manifest: manifest(endpoint: "ws://127.0.0.1:49152")).host == "127.0.0.1")
+  #expect(try PairingServerConfig(manifest: manifest(endpoint: "ws://localhost:49152")).host == "127.0.0.1")
+  #expect(try PairingServerConfig(manifest: manifest(endpoint: "ws://10.0.0.8:49152")).host == "10.0.0.8")
+  #expect(try PairingServerConfig(manifest: manifest(endpoint: "ws://172.16.2.8:49152")).host == "172.16.2.8")
+  #expect(try PairingServerConfig(manifest: manifest(endpoint: "ws://172.31.2.8:49152")).host == "172.31.2.8")
+  #expect(try PairingServerConfig(manifest: manifest(endpoint: "ws://192.168.1.8:49152")).host == "192.168.1.8")
+  #expect(try PairingServerConfig(manifest: manifest(endpoint: "ws://169.254.1.8:49152")).host == "169.254.1.8")
+
+  #expect(throws: PairingServerConfigError.self) {
+    try PairingServerConfig(manifest: manifest(endpoint: "ws://8.8.8.8:49152"))
+  }
+  #expect(throws: PairingServerConfigError.self) {
+    try PairingServerConfig(manifest: manifest(endpoint: "ws://172.32.2.8:49152"))
+  }
+  #expect(throws: PairingServerConfigError.self) {
+    try PairingServerConfig(manifest: manifest(endpoint: "ws://friday.example.com:49152"))
+  }
+}
+
 private func pairingManifest(
   pairingSecret: String = "qr-secret-1234567890", // pragma: allowlist secret
+  expiresAt: Int64
+) throws -> String {
+  try manifestJSON(endpoint: "ws://127.0.0.1:49152", pairingSecret: pairingSecret, expiresAt: expiresAt)
+}
+
+private func manifest(
+  endpoint: String,
+  pairingSecret: String = "qr-secret-1234567890", // pragma: allowlist secret
+  expiresAt: Int64 = 1_900_000_000_000
+) throws -> FridayPairingManifest {
+  try JSONDecoder().decode(FridayPairingManifest.self, from: Data(manifestJSON(
+    endpoint: endpoint,
+    pairingSecret: pairingSecret,
+    expiresAt: expiresAt).utf8))
+}
+
+private func manifestJSON(
+  endpoint: String,
+  pairingSecret: String,
   expiresAt: Int64
 ) throws -> String {
   let hub = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(TestKeys.serverSecret))
@@ -216,7 +256,7 @@ private func pairingManifest(
       "pairing_secret": "\(pairingSecret)",
       "display_name": "Friday Local Hub",
       "transport_hints": [
-        {"kind": "websocket", "endpoint": "ws://127.0.0.1:49152", "label": "Local pairing"}
+        {"kind": "websocket", "endpoint": "\(endpoint)", "label": "Local pairing"}
       ],
       "expires_at": \(expiresAt),
       "capabilities_hint": ["pairing", "read_seam_enroll"]
