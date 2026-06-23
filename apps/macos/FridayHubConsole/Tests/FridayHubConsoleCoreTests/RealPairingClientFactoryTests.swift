@@ -16,6 +16,12 @@ import Testing
   #expect(throws: PairingEndpointConfigError.disallowedHost("example.com")) {
     try PairingEndpointConfig(manifest: manifest(endpoint: "ws://example.com:49152"))
   }
+  #expect(throws: PairingEndpointConfigError.missingPort("ws://127.0.0.1")) {
+    try PairingEndpointConfig(manifest: manifest(endpoint: "ws://127.0.0.1"))
+  }
+  #expect(throws: PairingEndpointConfigError.missingPort("ws://127.0.0.1:0")) {
+    try PairingEndpointConfig(manifest: manifest(endpoint: "ws://127.0.0.1:0"))
+  }
 }
 
 @Test func realPairingProofFactoryBuildsASealedPairingClient() throws {

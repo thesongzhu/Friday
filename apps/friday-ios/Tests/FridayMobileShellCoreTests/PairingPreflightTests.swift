@@ -222,6 +222,12 @@ func pairingServerConfigAllowsLoopbackAndPrivateLanOnly() throws {
   #expect(throws: PairingServerConfigError.self) {
     try PairingServerConfig(manifest: manifest(endpoint: "ws://friday.example.com:49152"))
   }
+  #expect(throws: PairingServerConfigError.missingPort("ws://127.0.0.1")) {
+    try PairingServerConfig(manifest: manifest(endpoint: "ws://127.0.0.1"))
+  }
+  #expect(throws: PairingServerConfigError.missingPort("ws://127.0.0.1:0")) {
+    try PairingServerConfig(manifest: manifest(endpoint: "ws://127.0.0.1:0"))
+  }
 }
 
 private func pairingManifest(

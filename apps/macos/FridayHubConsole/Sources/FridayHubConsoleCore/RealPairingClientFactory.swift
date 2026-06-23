@@ -47,7 +47,7 @@ public struct PairingEndpointConfig: Sendable, Equatable {
     guard Self.isAllowedPairingHost(host) else {
       throw PairingEndpointConfigError.disallowedHost(host)
     }
-    guard let port = url.port, let p = UInt16(exactly: port) else {
+    guard let port = url.port, let p = UInt16(exactly: port), p > 0 else {
       throw PairingEndpointConfigError.missingPort(endpoint)
     }
     self.init(host: host == "localhost" ? "127.0.0.1" : host, port: p)
