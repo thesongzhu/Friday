@@ -129,6 +129,7 @@
     "ops:phase24h:telegram-natural-trigger": "node scripts/ops/phase24h-telegram-natural-trigger-listener.mjs",
     "ops:real-green-gate": "node scripts/ops/run-real-green-gate.mjs",
     "proof:d4:trust-passport": "bash scripts/ops/friday-d4-trust-passport-proof.sh",
+    "ops:t3:provisioning-status": "node scripts/ops/friday-t3-provisioning-status.mjs",
     "ops:harden-local-enablement": "bash scripts/ops/harden-local-enablement.sh",
     "ops:agent-adoption:doctor": "node dist/cli/friday-cli.js phases doctor",
     "ops:agent-adoption:list": "node dist/cli/friday-cli.js phases list",
