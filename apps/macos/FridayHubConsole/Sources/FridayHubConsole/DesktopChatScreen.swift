@@ -376,9 +376,30 @@ struct DesktopChatScreen: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(HubTheme.cyan)
-            .disabled(approvalRelayState(for: item).isSent)
+            .disabled(approvalRelayControlsDisabled(for: item))
             .accessibilityLabel("Approve and relay operator signature")
             .accessibilityIdentifier("friday.desktop.chat.approve.\(item.refId)")
+
+            Button {
+              Task { await viewModel.rejectNeedsMeApproval(item) }
+            } label: {
+              Label("Reject", systemImage: "xmark.seal")
+            }
+            .buttonStyle(.bordered)
+            .disabled(approvalRelayControlsDisabled(for: item))
+            .accessibilityLabel("Reject pending operator approval")
+            .accessibilityIdentifier("friday.desktop.chat.reject.\(item.refId)")
+
+            Button {
+              Task { await viewModel.cancelNeedsMeRun(item) }
+            } label: {
+              Label("Cancel Run", systemImage: "stop.circle")
+            }
+            .buttonStyle(.bordered)
+            .disabled(approvalRelayControlsDisabled(for: item))
+            .accessibilityLabel("Cancel paused run")
+            .accessibilityIdentifier("friday.desktop.chat.cancelRun.\(item.refId)")
+
             approvalRelayStatus(for: item)
           }
           Text("Approval remains operator-signature gated; this surface relays an external signer blob and does not mint a signature.")
@@ -407,6 +428,11 @@ struct DesktopChatScreen: View {
 
   private func approvalRelayState(for item: ChatNeedsMeItem) -> WriteActionState {
     viewModel.approvalRelayStates[item.id] ?? .ready
+  }
+
+  private func approvalRelayControlsDisabled(for item: ChatNeedsMeItem) -> Bool {
+    let state = approvalRelayState(for: item)
+    return state.isSent || state.isTerminal
   }
 
   private func activityMarkDoneState(for item: ChatNeedsMeItem) -> WriteActionState {

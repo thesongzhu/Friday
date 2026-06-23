@@ -269,6 +269,8 @@ public enum WriteActionState: Sendable, Equatable {
 ///  - `select(_:)`             — focus a row in the proof inspector (OpenEvidence-class nav),
 ///  - `submitIntake(intent:)`  — drive ONE operator-typed Mission intake over the sealed WRITE seam,
 ///  - `decideMemory(...)`      — drive ONE owner confirm/reject of a memory candidate.
+///  - `approve/reject/cancelNeedsMe...` — relay operator choices for a paused run; signing stays
+///    external and the app never holds the operator key.
 /// The write drivers are gated: with no `writeClient` (or an honest-unavailable one) they render the
 /// truth, never a fabricated confirm. No provider-admin / arbitrary-mutation method is exposed.
 @MainActor
@@ -584,6 +586,62 @@ public final class OperationsOverviewViewModel: ObservableObject {
         await loadLatestChatReview()
       } else {
         approvalRelayStates[key] = .error(reason: "Resume refused: \(Self.resumeSummary(for: result))")
+      }
+    } catch {
+      approvalRelayStates[key] = .error(reason: Self.writeReason(for: error))
+    }
+  }
+
+  /// Reject one pending operator approval from the desktop Needs Review queue without resuming the
+  /// paused mutation. This is owner-authenticated run-control, not signing.
+  public func rejectNeedsMeApproval(_ item: ChatNeedsMeItem) async {
+    let key = item.id
+    guard item.kind == "approval_required" || item.kind == "approval" else {
+      approvalRelayStates[key] = .error(reason: "This Needs Review row is not an operator approval.")
+      return
+    }
+    guard let approvalResumeClient else {
+      approvalRelayStates[key] = .error(reason: "Run-control write seam not configured.")
+      return
+    }
+
+    approvalRelayStates[key] = .sent
+    do {
+      let result = try await approvalResumeClient.rejectApproval(
+        runId: item.runId,
+        approvalId: item.refId)
+      if result.accepted {
+        approvalRelayStates[key] = .confirmed(summary: Self.resumeSummary(for: result))
+        await refresh()
+        await loadLatestChatReview()
+      } else {
+        approvalRelayStates[key] = .error(reason: "Reject refused: \(Self.resumeSummary(for: result))")
+      }
+    } catch {
+      approvalRelayStates[key] = .error(reason: Self.writeReason(for: error))
+    }
+  }
+
+  /// Cancel the paused run backing a Needs Review row. This is a recovery/stop affordance for a
+  /// real run; it does not complete work, mint proof, or sign approval.
+  public func cancelNeedsMeRun(_ item: ChatNeedsMeItem) async {
+    let key = item.id
+    guard let approvalResumeClient else {
+      approvalRelayStates[key] = .error(reason: "Run-control write seam not configured.")
+      return
+    }
+
+    approvalRelayStates[key] = .sent
+    do {
+      let result = try await approvalResumeClient.cancelRun(
+        runId: item.runId,
+        reason: "operator cancelled from desktop Needs Review")
+      if result.accepted {
+        approvalRelayStates[key] = .confirmed(summary: Self.resumeSummary(for: result))
+        await refresh()
+        await loadLatestChatReview()
+      } else {
+        approvalRelayStates[key] = .error(reason: "Cancel refused: \(Self.resumeSummary(for: result))")
       }
     } catch {
       approvalRelayStates[key] = .error(reason: Self.writeReason(for: error))

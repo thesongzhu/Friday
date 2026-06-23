@@ -155,6 +155,45 @@ public struct MissionWorkbenchWorkItem: Codable, Sendable, Identifiable, Equatab
     self.proofRef = proofRef
     self.done = done
   }
+
+  public var needsAttention: Bool {
+    guard !done else { return false }
+    switch state {
+    case .completedWithProof, .timelineRead:
+      return false
+    case .ready:
+      return owner != .fridayOwned
+    case .queued, .providerAck, .waiting, .stale, .reconnecting, .blocked, .error, .unknown:
+      return true
+    }
+  }
+
+  public var attentionReason: String {
+    switch state {
+    case .providerAck:
+      return "provider acknowledged; waiting for proof"
+    case .waiting:
+      return "waiting for user, provider, or recovery path"
+    case .stale:
+      return "stale projection state"
+    case .reconnecting:
+      return "reconnecting"
+    case .blocked:
+      return "blocked"
+    case .error:
+      return "error"
+    case .unknown:
+      return "unknown lifecycle state"
+    case .queued:
+      return "queued"
+    case .ready:
+      return owner == .fridayOwned ? "ready" : "linked item not owned by Friday"
+    case .completedWithProof:
+      return "completed with proof"
+    case .timelineRead:
+      return "timeline read only"
+    }
+  }
 }
 
 public struct MissionWorkbenchTimelinePage: Codable, Sendable, Identifiable, Equatable {
@@ -469,6 +508,16 @@ public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
       && capabilityStates.isEmpty
       && t3ProvisioningStatus == nil
       && transcriptSections.isEmpty
+  }
+
+  public var attentionWorkItems: [MissionWorkbenchWorkItem] {
+    workItems.filter(\.needsAttention)
+  }
+
+  public var attentionSummary: String {
+    let count = attentionWorkItems.count
+    if count == 0 { return "No work items need attention." }
+    return "\(count) work item\(count == 1 ? "" : "s") need attention."
   }
 }
 
