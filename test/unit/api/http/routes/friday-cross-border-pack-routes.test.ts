@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FridayDomainError } from "#errors";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 import { createFridayCrossBorderPackRoutes } from "../../../../../src/api/http/routes/friday-cross-border-pack-routes.js";
 
 function makeCtx(overrides: Record<string, unknown> = {}) {
@@ -131,6 +132,35 @@ describe("createFridayCrossBorderPackRoutes", () => {
   it("requires a user-scoped principal", async () => {
     const { route } = findRoute("packs.cross.border.profile.get");
     await expect(route.handler(makeCtx({ principal: null }))).rejects.toBeInstanceOf(FridayDomainError);
+  });
+
+  it("rejects the synthetic public principal before reading user pack state", async () => {
+    const { route, service } = findRoute("packs.cross.border.profile.get");
+
+    await expect(
+      route.handler(makeCtx({ principal: createFridayDefaultPublicHttpPrincipal() })),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      httpStatus: 401,
+    } satisfies Partial<FridayDomainError>);
+
+    expect(service.getProfile).not.toHaveBeenCalled();
+  });
+
+  it("rejects the synthetic public principal before test-oracle mutations", async () => {
+    const { route, service } = findRoute("packs.cross.border.import.post");
+
+    await expect(
+      route.handler(makeCtx({
+        principal: createFridayDefaultPublicHttpPrincipal(),
+        body: { kind: "store_report", source: "paste", title: "x" },
+      })),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      httpStatus: 401,
+    } satisfies Partial<FridayDomainError>);
+
+    expect(service.importBatch).not.toHaveBeenCalled();
   });
 
   it("forwards profile updates and snapshot reads to the service", async () => {

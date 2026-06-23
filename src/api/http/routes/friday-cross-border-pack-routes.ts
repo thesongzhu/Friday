@@ -1,5 +1,6 @@
 import { FridayDomainError } from "#errors";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import type { FridayAuthPrincipal } from "../../model/friday-api-auth.types.js";
 import type {
   FridayCrossBorderDisableAllResponse,
   FridayCrossBorderImportRequest,
@@ -15,6 +16,7 @@ import type {
 } from "../../model/friday-api-cross-border-pack.types.js";
 import type { FridayCrossBorderPackService } from "../../../packs/cross-border/friday-cross-border-pack-service.js";
 import type { FridayCrossBorderWorkflowId } from "../../../packs/cross-border/friday-cross-border-pack.types.js";
+import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
 
 export interface FridayCrossBorderPackRoutesDeps {
   service: FridayCrossBorderPackService;
@@ -55,8 +57,8 @@ function assertCrossBorderPackTestOracleAllowed(deps: FridayCrossBorderPackRoute
   }
 }
 
-function requireUserId(principal: { userId?: string } | null): string {
-  if (!principal?.userId) {
+function requireUserId(principal: FridayAuthPrincipal | null | undefined): string {
+  if (isUnauthenticatedPublicPrincipal(principal) || !principal?.userId) {
     throw new FridayDomainError("UNAUTHORIZED", "A user-scoped assistant principal is required", {
       httpStatus: 401,
     });
