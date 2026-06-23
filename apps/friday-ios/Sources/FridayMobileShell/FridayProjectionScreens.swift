@@ -263,6 +263,9 @@ struct FridayProjectionScreen: View {
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
           RefPill(label: "generated", ref: generatedText(detail.generatedAtMs))
+          if let providerReadiness = detail.providerReadiness {
+            providerReadinessRows(providerReadiness)
+          }
           ForEach(detail.refs, id: \.self) { ref in
             RefPill(label: nil, ref: ref)
           }
@@ -671,6 +674,53 @@ struct FridayProjectionScreen: View {
           .foregroundStyle(MobileTheme.textSecondary)
       }
       Spacer()
+    }
+  }
+
+  @ViewBuilder
+  private func providerReadinessRows(_ detail: HomeProviderReadinessDetail) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 6) {
+        statusChip(detail.truthLabel)
+        statusChip(detail.proofOnly ? "proof only" : "not proof only")
+        StatusChip(
+          text: detail.ok ? "doctor ok" : "doctor not ok",
+          bg: detail.ok ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
+          fg: detail.ok ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
+      }
+      HStack(spacing: 6) {
+        statusChip(detail.anyAuthenticated ? "some auth" : "none auth")
+        statusChip(detail.allAuthenticated ? "all auth" : "partial auth")
+      }
+      if !detail.readyProviders.isEmpty {
+        Text("ready: \(detail.readyProviders.joined(separator: ", "))")
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      ForEach(detail.detected) { provider in
+        VStack(alignment: .leading, spacing: 5) {
+          HStack {
+            Text(provider.provider)
+              .font(.system(size: 13, weight: .medium))
+              .foregroundStyle(MobileTheme.textPrimary)
+            Spacer()
+            StatusChip(
+              text: provider.authenticated ? "authenticated" : "not authenticated",
+              bg: provider.authenticated ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
+              fg: provider.authenticated ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
+          }
+          Text(provider.detail)
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+          HStack(spacing: 6) {
+            statusChip(provider.installed ? "installed" : "not installed")
+            statusChip(provider.truthLabel)
+          }
+        }
+        .padding(.vertical, 3)
+      }
     }
   }
 

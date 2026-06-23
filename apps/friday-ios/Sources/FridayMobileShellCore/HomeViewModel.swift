@@ -298,6 +298,7 @@ public struct HomeReadDetail: Sendable, Equatable {
   public let generatedAtMs: Int64
   public let summary: String
   public let refs: [String]
+  public let providerReadiness: HomeProviderReadinessDetail?
 
   public init(title: String, snapshot: ReadProjectionSnapshot) {
     let raw = snapshot.raw
@@ -305,6 +306,7 @@ public struct HomeReadDetail: Sendable, Equatable {
     self.generatedAtMs = snapshot.generatedAtMs
     self.summary = Self.summary(from: raw)
     self.refs = Self.refs(from: raw)
+    self.providerReadiness = HomeProviderReadinessDetail(raw: raw)
   }
 
   private static func summary(from raw: [String: Any]) -> String {
@@ -332,6 +334,59 @@ public struct HomeReadDetail: Sendable, Equatable {
 
   private static func firstString(_ raw: [String: Any], _ keys: [String]) -> String? {
     keys.lazy.compactMap { raw[$0] as? String }.first
+  }
+}
+
+public struct HomeProviderReadinessDetail: Sendable, Equatable {
+  public let truthLabel: String
+  public let proofOnly: Bool
+  public let ok: Bool
+  public let detected: [HomeProviderAuthReadiness]
+  public let readyProviders: [String]
+  public let anyAuthenticated: Bool
+  public let allAuthenticated: Bool
+
+  init?(raw: [String: Any]) {
+    guard let rows = raw["detected"] as? [[String: Any]] else { return nil }
+    let truthLabel = Self.firstString(raw, ["truth_label", "truthLabel"]) ?? "unknown"
+    guard truthLabel == "rust_providers_detect" else { return nil }
+    self.truthLabel = truthLabel
+    self.proofOnly = Self.firstBool(raw, ["proof_only", "proofOnly"]) ?? true
+    self.ok = Self.firstBool(raw, ["ok"]) ?? false
+    self.detected = rows.map(HomeProviderAuthReadiness.init(raw:))
+    self.readyProviders = Self.firstStringArray(raw, ["ready_providers", "readyProviders"])
+    self.anyAuthenticated = Self.firstBool(raw, ["any_authenticated", "anyAuthenticated"]) ?? false
+    self.allAuthenticated = Self.firstBool(raw, ["all_authenticated", "allAuthenticated"]) ?? false
+  }
+
+  private static func firstString(_ raw: [String: Any], _ keys: [String]) -> String? {
+    keys.lazy.compactMap { raw[$0] as? String }.first
+  }
+
+  private static func firstStringArray(_ raw: [String: Any], _ keys: [String]) -> [String] {
+    keys.lazy.compactMap { raw[$0] as? [String] }.first ?? []
+  }
+
+  private static func firstBool(_ raw: [String: Any], _ keys: [String]) -> Bool? {
+    keys.lazy.compactMap { raw[$0] as? Bool }.first
+  }
+}
+
+public struct HomeProviderAuthReadiness: Sendable, Equatable, Identifiable {
+  public let provider: String
+  public let installed: Bool
+  public let authenticated: Bool
+  public let detail: String
+  public let truthLabel: String
+
+  public var id: String { provider }
+
+  init(raw: [String: Any]) {
+    self.provider = raw["provider"] as? String ?? "unknown"
+    self.installed = raw["installed"] as? Bool ?? false
+    self.authenticated = raw["authenticated"] as? Bool ?? false
+    self.detail = raw["detail"] as? String ?? "unknown"
+    self.truthLabel = raw["truthLabel"] as? String ?? "linked_only"
   }
 }
 
