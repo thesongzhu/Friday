@@ -367,8 +367,47 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.t3ProvisioningStatus?.latestDevice?.deviceId, "proof://device/paired-ios-1")
     XCTAssertEqual(p.t3ProvisioningStatus?.latestDevice?.pubkeyFingerprint, "abcd1234:dcba4321")
     XCTAssertEqual(p.t3ProvisioningStatus?.isFullyProvisioned, true)
+    XCTAssertEqual(p.t3ProvisioningStatus?.homeStatusLabel, "fully provisioned")
+    XCTAssertEqual(p.t3ProvisioningStatus?.missingOperatorSteps, [])
     XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile surface read the mission projection.")
     XCTAssertEqual(p.needsMeCount, 4)
+  }
+
+  func testT3ProvisioningHomeSummarySurfacesOperatorGapsWithoutClaimingReady() throws {
+    let data = Data("""
+    {
+      "missionId": "mission-t3",
+      "fridayConversationId": "conv-t3",
+      "runtimeFeedStatus": "live_rust_hub_projection",
+      "statusLabels": [],
+      "t3ProvisioningStatus": {
+        "truthLabel": "rust_hub_t3_provisioning_read_only_no_mint",
+        "paired": true,
+        "deviceIdentityCount": 1,
+        "trustedDeviceCount": 1,
+        "activeTrustedDeviceCount": 1,
+        "trustGrantCount": 0,
+        "activeTrustGrantCount": 0,
+        "contextPassportCount": 0,
+        "contextPassportItemCount": 0,
+        "latestDevice": {
+          "deviceId": "proof://device/paired-ios-1",
+          "label": "operator phone",
+          "pairedAt": 1780640000000,
+          "pubkeyFingerprint": "abcd1234:dcba4321"
+        }
+      }
+    }
+    """.utf8)
+    let snapshot = try WorkbenchSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_000)
+    let projection = HomeProjection(snapshot)
+
+    XCTAssertEqual(projection.t3ProvisioningStatus?.isFullyProvisioned, false)
+    XCTAssertEqual(projection.t3ProvisioningStatus?.homeStatusLabel, "operator action needed")
+    XCTAssertEqual(projection.t3ProvisioningStatus?.missingOperatorSteps, ["trust grant", "context passport"])
+    XCTAssertEqual(
+      projection.t3ProvisioningStatus?.homeSummary,
+      "Paired device is visible in the Hub; missing trust grant, context passport.")
   }
 
   func testRefresh_loadedEmptyIsConnectedEmptyNotUnavailable() async throws {
