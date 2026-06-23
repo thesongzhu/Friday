@@ -9,6 +9,10 @@
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import { FridayDomainError } from "../../../errors/friday-domain-error.js";
+import {
+  assertBoundPrincipalAuthorityForOperation,
+  type FridayPublicMutationOperation,
+} from "../../../security/friday-owner-session-channel-capability.js";
 import type {
   FridayAddMemberRequest,
   FridayAddMemberResponse,
@@ -215,12 +219,40 @@ function requireEtag(body: unknown): void {
   requireString(body, "etag");
 }
 
+function assertSecurityPrincipal(
+  principal: Parameters<typeof assertBoundPrincipalAuthorityForOperation>[0],
+  operation: Extract<FridayPublicMutationOperation, "security.multi_tenant.read" | "security.multi_tenant.write">,
+): void {
+  const write = operation === "security.multi_tenant.write";
+  assertBoundPrincipalAuthorityForOperation(principal, operation, "api", {
+    anyOfScopes: write
+      ? ["hub.admin", "security.write"]
+      : ["hub.admin", "security.read", "security.write"],
+    anyOfRoles: ["owner", "admin"],
+  });
+}
+
+function withSecurityPrincipalGate(
+  route: FridayRouteDefinition<unknown, unknown, unknown, unknown>,
+): FridayRouteDefinition<unknown, unknown, unknown, unknown> {
+  return {
+    ...route,
+    async handler(ctx) {
+      assertSecurityPrincipal(
+        ctx.principal ?? null,
+        route.method === "GET" ? "security.multi_tenant.read" : "security.multi_tenant.write",
+      );
+      return route.handler(ctx);
+    },
+  };
+}
+
 // ─── Factory ───
 
 export function createFridayMultiTenantSecurityRoutes(
   deps: FridayMultiTenantSecurityRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
-  return [
+  const routes: FridayRouteDefinition<unknown, unknown, unknown, unknown>[] = [
     // ═══════════════════════════════════════════════════════════════
     // TENANTS
     // ═══════════════════════════════════════════════════════════════
@@ -785,4 +817,5 @@ export function createFridayMultiTenantSecurityRoutes(
       },
     },
   ];
+  return routes.map(withSecurityPrincipalGate);
 }

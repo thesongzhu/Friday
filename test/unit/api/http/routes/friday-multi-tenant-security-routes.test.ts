@@ -10,10 +10,12 @@ import {
   createFridayMultiTenantSecurityRoutes,
   type FridayMultiTenantSecurityRoutesDeps,
 } from "../../../../../src/api/http/routes/friday-multi-tenant-security-routes.js";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 import type {
   FridayRouteDefinition,
   FridayHttpContext,
 } from "../../../../../src/api/model/friday-api-common.types.js";
+import { ERROR_CODE_BOUND_PRINCIPAL_REQUIRED } from "../../../../../src/security/friday-owner-session-channel-capability.js";
 
 // ─── Helpers ───
 
@@ -25,7 +27,17 @@ function makeCtx(overrides: Partial<FridayHttpContext<unknown, unknown, unknown>
     query: {},
     body: null,
     headers: {},
-    principal: null,
+    principal: {
+      principalType: "user",
+      principalId: "security-admin-1",
+      tenantId: "t-1",
+      userId: "user-1",
+      role: "admin",
+      scopes: ["security.read", "security.write"],
+      tokenId: "token-1",
+      tokenKind: "access",
+      issuedAt: "2026-01-01T00:00:00.000Z",
+    },
     ...overrides,
   };
 }
@@ -125,6 +137,31 @@ describe("B-002 FridayMultiTenantSecurityRoutes", () => {
       const routes = createFridayMultiTenantSecurityRoutes(makeDeps());
       for (const route of routes) {
         expect(route.auth).toEqual({ public: true });
+      }
+    });
+
+    it("all handlers reject unbound public principals before service access", async () => {
+      const deps = makeDeps();
+      const routes = createFridayMultiTenantSecurityRoutes(deps);
+      const serviceFns = Object.values(deps)
+        .flatMap((group) => Object.values(group))
+        .filter((fn): fn is ReturnType<typeof vi.fn> => vi.isMockFunction(fn));
+
+      for (const route of routes) {
+        for (const principal of [null, createFridayDefaultPublicHttpPrincipal()]) {
+          try {
+            await route.handler(makeCtx({ principal }));
+            throw new Error(`expected bound-principal refusal for ${route.operationId}`);
+          } catch (error) {
+            expect(error).toMatchObject({
+              code: ERROR_CODE_BOUND_PRINCIPAL_REQUIRED,
+              httpStatus: 401,
+            });
+          }
+        }
+      }
+      for (const fn of serviceFns) {
+        expect(fn).not.toHaveBeenCalled();
       }
     });
 
