@@ -1278,10 +1278,14 @@ impl LocalCodexAppServer {
     /// `initialize` handshake round-trips against the logged-in account with no broker in
     /// between. (The `app-server daemon start` + `app-server proxy --sock` bridge fails the
     /// handshake on 0.140.0 — the daemon closes the proxy's control connection, so the
-    /// client's `initialize` reads `response-eof`; remote-control enabled does not help. This
-    /// is the same single-process model the pre-0.140 bare `codex app-server` used, now made
-    /// explicit with the `--stdio` flag.) The handshake, methods, approval routing, and gating
-    /// downstream are all unchanged.
+    /// client's `initialize` reads `response-eof`; remote-control enabled does not help. That
+    /// proxy EOF was not evidence that stock bare `codex app-server` stopped speaking
+    /// newline-delimited JSON over stdio: the stock bare process and this explicit `--stdio`
+    /// path both answer JSON-RPC when driven on their stdio transport. The failure mode was
+    /// sending newline JSON to the WS-only control/proxy path.) This is the same
+    /// single-process model the pre-0.140 bare `codex app-server` used, now made explicit with
+    /// the `--stdio` flag. The handshake, methods, approval routing, and gating downstream are
+    /// all unchanged.
     ///
     /// The owned `child` IS the app-server process; `child_id`/`kill`/`Drop` manage it
     /// directly (killed on drop). Spawning requires the Codex CLI installed + logged in; a

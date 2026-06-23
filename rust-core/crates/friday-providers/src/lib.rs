@@ -60,6 +60,11 @@ pub enum ProviderError {
     #[error("provider CLI not found or not runnable: {0}")]
     NotInstalled(String),
 
+    /// The provider CLI was runnable, but its read-only status command exited
+    /// non-zero. Carries only the exit code, never stdout/stderr.
+    #[error("provider status command failed (exit code {code:?})")]
+    StatusFailed { code: Option<i32> },
+
     /// A send was requested for a provider that is not authenticated. Refused —
     /// never silently routed to a different provider (no fallback, `04` §2/§4.5).
     #[error("provider {0} is not authenticated; refusing to send (no fallback)")]
@@ -118,10 +123,17 @@ impl Default for CliProbe {
 impl CliProbe {
     fn run(bin: &str, args: &[&str]) -> Result<ProbeOutput, ProviderError> {
         match Command::new(bin).args(args).output() {
-            Ok(out) => Ok(ProbeOutput {
-                stdout: String::from_utf8_lossy(&out.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&out.stderr).to_string(),
-            }),
+            Ok(out) => {
+                if !out.status.success() {
+                    return Err(ProviderError::StatusFailed {
+                        code: out.status.code(),
+                    });
+                }
+                Ok(ProbeOutput {
+                    stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+                    stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+                })
+            }
             Err(e) => Err(ProviderError::NotInstalled(format!("{bin}: {e}"))),
         }
     }
@@ -154,6 +166,12 @@ pub fn parse_status(
     probe: Result<ProbeOutput, ProviderError>,
 ) -> ProviderAuthStatus {
     match probe {
+        Err(ProviderError::StatusFailed { .. }) => ProviderAuthStatus {
+            provider,
+            installed: true,
+            authenticated: false,
+            detail: "not_logged_in",
+        },
         Err(_) => ProviderAuthStatus {
             provider,
             installed: false,
@@ -260,6 +278,17 @@ mod tests {
     }
 
     #[test]
+    fn codex_nonzero_status_never_authenticates_logged_in_text() {
+        let s = parse_status(
+            Provider::Codex,
+            Err(ProviderError::StatusFailed { code: Some(1) }),
+        );
+        assert!(s.installed);
+        assert!(!s.authenticated);
+        assert_eq!(s.detail, "not_logged_in");
+    }
+
+    #[test]
     fn codex_not_logged_in_detected() {
         let p = MockProbe::new().set(Provider::Codex, "Not logged in");
         let s = detect(&p, Provider::Codex);
@@ -275,6 +304,17 @@ mod tests {
         );
         let s = detect(&p, Provider::Claude);
         assert!(s.installed && s.authenticated);
+    }
+
+    #[test]
+    fn claude_nonzero_status_never_authenticates_logged_in_json() {
+        let s = parse_status(
+            Provider::Claude,
+            Err(ProviderError::StatusFailed { code: Some(1) }),
+        );
+        assert!(s.installed);
+        assert!(!s.authenticated);
+        assert_eq!(s.detail, "not_logged_in");
     }
 
     #[test]
