@@ -9,8 +9,11 @@ const source = readFileSync(scriptPath, "utf8");
 describe("friday-start-pairing-session.sh", () => {
   it("launches the dark pairing server with a QR manifest output", () => {
     expect(source).toContain("hub_pairing_server");
+    expect(source).toContain('run --quiet --manifest-path "${REPO_ROOT}/rust-core/Cargo.toml"');
     expect(source).toContain("--qr-json-out");
     expect(source).toContain("FRIDAY_PAIRING_QR_JSON_OUT");
+    expect(source).toContain("FRIDAY_PAIRING_STORE_DIR");
+    expect(source).toContain("--store-dir");
   });
 
   it("keeps non-loopback exposure behind an explicit operator env", () => {

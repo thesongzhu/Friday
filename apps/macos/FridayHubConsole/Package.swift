@@ -8,6 +8,7 @@ let package = Package(
   ],
   products: [
     .executable(name: "FridayHubConsole", targets: ["FridayHubConsole"]),
+    .executable(name: "FridayPairingProof", targets: ["FridayPairingProof"]),
     .library(name: "FridayHubConsoleCore", targets: ["FridayHubConsoleCore"]),
   ],
   dependencies: [
@@ -40,6 +41,11 @@ let package = Package(
       resources: [
         .copy("PetResources"),
       ]
+    ),
+    .executableTarget(
+      name: "FridayPairingProof",
+      dependencies: ["FridayHubConsoleCore"],
+      path: "Sources/FridayPairingProof"
     ),
     .testTarget(
       name: "FridayHubConsoleCoreTests",

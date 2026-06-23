@@ -35,6 +35,12 @@ final class PairingManifestTests: XCTestCase {
       "b82be6373123d412b180127398c090c940663a12574035523b71c629549282fc")  // pragma: allowlist secret
   }
 
+  func testAcceptsRustQrLanWebSocketTransportKind() throws {
+    let manifest = try decodeManifest(replacing: (#""websocket""#, #""lan_websocket""#))
+
+    XCTAssertEqual(try manifest.webSocketEndpoint, "ws://127.0.0.1:49152")
+  }
+
   func testValidationFailsClosedForBadManifestShapes() throws {
     let manifest = try decodeManifest()
     try manifest.validate(nowMs: 1_780_000_000_000)

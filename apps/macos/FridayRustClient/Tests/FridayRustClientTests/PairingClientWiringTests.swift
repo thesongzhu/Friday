@@ -16,7 +16,6 @@ final class PairingClientWiringTests: XCTestCase {
 
   final class EmulatedPairingServerTransport: SealedWSTransport {
     private let serverKeypair: FridayCrypto.DeviceKeypair
-    private let sessionNonce: [UInt8]
     private let aad: [UInt8]
     private let mode: ServerMode
 
@@ -28,12 +27,10 @@ final class PairingClientWiringTests: XCTestCase {
 
     init(
       serverKeypair: FridayCrypto.DeviceKeypair,
-      sessionNonce: [UInt8],
       aad: [UInt8],
       mode: ServerMode
     ) {
       self.serverKeypair = serverKeypair
-      self.sessionNonce = sessionNonce
       self.aad = aad
       self.mode = mode
     }
@@ -42,7 +39,6 @@ final class PairingClientWiringTests: XCTestCase {
       if clientPub == nil {
         clientPub = payload
         queuedFromServer.append(serverKeypair.publicKey)
-        queuedFromServer.append(sessionNonce)
       }
     }
 
@@ -200,7 +196,6 @@ final class PairingClientWiringTests: XCTestCase {
     )
     let transport = EmulatedPairingServerTransport(
       serverKeypair: serverKp,
-      sessionNonce: try Hex.decode(B1KAT.k3Auth.sessionNonce),
       aad: Array(manifest.aad.utf8),
       mode: mode
     )

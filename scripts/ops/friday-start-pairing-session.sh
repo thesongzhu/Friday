@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 DB_PATH="${FRIDAY_PAIRING_DB_PATH:-${HOME}/Library/Application Support/Friday/state/rust-hub.sqlite}"
+STORE_DIR="${FRIDAY_PAIRING_STORE_DIR:-}"
 HOST="${FRIDAY_PAIRING_HOST:-127.0.0.1}"
 PORT="${FRIDAY_PAIRING_PORT:-0}"
 OWNER="${FRIDAY_PAIRING_OWNER:-jarvis}"
@@ -76,7 +77,7 @@ PAIRING_SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomByt
 EXPIRES_AT_MS="$(node -e "process.stdout.write(String(Date.now() + Number(${TTL_SECONDS}) * 1000))")"
 
 ARGS=(
-  run -p friday-hub --bin hub_pairing_server --
+  run --quiet --manifest-path "${REPO_ROOT}/rust-core/Cargo.toml" -p friday-hub --bin hub_pairing_server --
   --db "${DB_PATH}"
   --pairing-secret "${PAIRING_SECRET}"
   --hub-id "${HUB_ID}"
@@ -89,6 +90,9 @@ ARGS=(
   --qr-json-out "${QR_JSON_OUT}"
 )
 
+if [ -n "${STORE_DIR}" ]; then
+  ARGS+=(--store-dir "${STORE_DIR}")
+fi
 if [ "${ALLOW_NON_LOOPBACK}" = "1" ]; then
   ARGS+=(--allow-non-loopback)
 fi
@@ -99,6 +103,7 @@ fi
 cat >&2 <<EOF
 Friday pairing session starting.
 DB: ${DB_PATH}
+Store dir: ${STORE_DIR:-<default>}
 Host: ${HOST}
 Port: ${PORT}
 QR manifest: ${QR_JSON_OUT}
@@ -106,5 +111,4 @@ TTL seconds: ${TTL_SECONDS}
 Truth: explicit DARK pairing server; no trust_grant/context_passport mint, no operator signing key.
 EOF
 
-cd "${REPO_ROOT}"
 exec cargo "${ARGS[@]}"
