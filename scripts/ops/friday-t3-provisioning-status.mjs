@@ -21,12 +21,15 @@ export function parseArgs(argv) {
   const options = {
     dbPath: process.env.FRIDAY_T3_DB_PATH || DEFAULT_DB,
     json: false,
+    operatorAction: false,
     requireReady: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--json") {
       options.json = true;
+    } else if (arg === "--operator-action") {
+      options.operatorAction = true;
     } else if (arg === "--require-ready") {
       options.requireReady = true;
     } else if (arg === "--db") {
@@ -51,10 +54,14 @@ export function usage() {
   return `Friday T3 provisioning status (read-only)
 
 USAGE:
-  node scripts/ops/friday-t3-provisioning-status.mjs [--db <hub.sqlite>] [--json] [--require-ready]
+  node scripts/ops/friday-t3-provisioning-status.mjs [--db <hub.sqlite>] [--json] [--operator-action] [--require-ready]
 
 This verifier only reads T3 provision tables. It never mints trust grants, context
 passports, device rows, signatures, or fake organic evidence.`;
+}
+
+function quoteShell(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
 function quoteSqlString(value) {
@@ -185,6 +192,95 @@ export function buildT3ProvisioningStatus(dbPath, nowMs = Date.now()) {
   };
 }
 
+export function buildT3OperatorAction(status) {
+  const missingDevice = status.missing.includes("device_identity") || status.missing.includes("trusted_device");
+  const missingGrant =
+    status.missing.includes("trust_grant") || status.missing.includes("active_trust_grant");
+  const missingPassport =
+    status.missing.includes("context_passport") || status.missing.includes("context_passport_item");
+  const action = {
+    truth_label: "t3_operator_action_hint_read_only_no_mint_no_signature",
+    status: "ready",
+    latest_device_id: status.latest_device?.device_id ?? null,
+    missing: status.missing,
+    command: null,
+    notes: [
+      "This is a read-only hint. It never mints rows, reads operator signing keys, flips flags, or creates organic evidence.",
+      "Run the suggested command only from an operator-controlled shell with real values for every placeholder.",
+    ],
+  };
+
+  if (missingDevice) {
+    action.status = "pairing_required";
+    action.command = [
+      "FRIDAY_T3_PAIRING_PROOF_ACK=operator-runs-t3-pairing-proof \\",
+      "  scripts/ops/friday-t3-pairing-proof.sh --pair --device-id '<real-device-id>'",
+    ].join("\n");
+    action.notes.push(
+      "Pairing writes device_identity/trusted_device only after a real PairAck; it does not mint trust_grant or context_passport rows.",
+    );
+    return action;
+  }
+
+  if (missingGrant || missingPassport) {
+    const step = missingGrant && missingPassport ? "both" : missingGrant ? "grant" : "passport";
+    action.status = "operator_provision_required";
+    action.command = [
+      "FRIDAY_T3_OPERATOR_PROVISION_ACK=operator-runs-t3-provisioning \\",
+      `FRIDAY_T3_DB_PATH=${quoteShell(status.dbPath)} \\`,
+      `FRIDAY_T3_STEP=${step} \\`,
+      "FRIDAY_T3_GRANT_ID='<operator-chosen-grant-id>' \\",
+      "FRIDAY_T3_AGENT_ID='<agent-or-lane-id>' \\",
+      "FRIDAY_T3_RISK_CEILING='<explicit-risk-ceiling>' \\",
+      "FRIDAY_T3_EXPIRES_AT='<unix-ms-or-empty>' \\",
+      "FRIDAY_T3_WORKSPACE='<canonical-workspace-or-empty>' \\",
+      "FRIDAY_T3_TOKEN_CEILING='<token-ceiling-or-empty>' \\",
+      "FRIDAY_T3_MAX_RUNS='<max-runs-or-empty>' \\",
+      "FRIDAY_T3_AUTO_ALLOW_REVERSIBLE_CEILING='<ceiling-or-empty>' \\",
+      "FRIDAY_T3_TOOLS='<comma-separated-tools-or-empty>' \\",
+      "FRIDAY_T3_PROVIDERS='<comma-separated-providers-or-empty>' \\",
+      "FRIDAY_T3_CHANNELS='<comma-separated-channels-or-empty>' \\",
+      "FRIDAY_T3_WORKFLOW_FAMILIES='<comma-separated-workflows-or-empty>' \\",
+      "FRIDAY_T3_SKILL_FAMILIES='<comma-separated-skills-or-empty>' \\",
+      "FRIDAY_T3_PASSPORT_ID='<operator-chosen-passport-id>' \\",
+      "FRIDAY_T3_MISSION_ID='<real-mission-id>' \\",
+      "FRIDAY_T3_WORK_ITEM_ID='<real-work-item-id-or-empty>' \\",
+      "FRIDAY_T3_DESTINATION_LANE='<destination-lane>' \\",
+      "FRIDAY_T3_DESTINATION_TARGET='<destination-target-or-empty>' \\",
+      "FRIDAY_T3_ITEMS_JSON='<path-to-reviewed-context-passport-items.json>' \\",
+      "scripts/ops/friday-t3-operator-provision.sh",
+    ].join("\n");
+    action.notes.push(
+      `Latest paired device observed: ${status.latest_device.device_id}. This only proves a paired-device preflight exists; it does not approve grant/passport contents.`,
+      "At least one explicit grant boundary is required by the wrapper.",
+    );
+    return action;
+  }
+
+  action.notes.push("No missing T3 provision row family was observed. This still does not claim END-BAR, GO-LIVE, adoption, or release.");
+  return action;
+}
+
+export function renderOperatorAction(action) {
+  const lines = [
+    "Friday T3 operator action hint",
+    `truth_label=${action.truth_label}`,
+    `status=${action.status}`,
+    `latest_device_id=${action.latest_device_id ?? "<none>"}`,
+  ];
+  if (action.missing.length > 0) {
+    lines.push(`missing=${action.missing.join(",")}`);
+  }
+  if (action.command) {
+    lines.push("", "suggested_command:", action.command);
+  }
+  lines.push("", "notes:");
+  for (const note of action.notes) {
+    lines.push(`  - ${note}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export function renderText(status) {
   const lines = [
     "Friday T3 provisioning status",
@@ -226,10 +322,16 @@ async function main() {
     return;
   }
   const status = buildT3ProvisioningStatus(options.dbPath);
+  const operatorAction = options.operatorAction ? buildT3OperatorAction(status) : null;
   if (options.json) {
-    process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+    const payload = operatorAction ? { ...status, operator_action: operatorAction } : status;
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   } else {
     process.stdout.write(renderText(status));
+    if (operatorAction) {
+      process.stdout.write("\n");
+      process.stdout.write(renderOperatorAction(operatorAction));
+    }
   }
   if (options.requireReady && !status.t3_provisioned) {
     process.exitCode = 2;

@@ -88,6 +88,23 @@ describe("friday-t3-provisioning-status", () => {
     expect(status.latest_device).toBeNull();
   });
 
+  it("renders a pairing-only operator hint before a trusted device exists", async () => {
+    const statusModule = await loadStatusModule();
+    const dbPath = makeDbPath();
+    createProvisionTables(dbPath);
+
+    const status = statusModule.buildT3ProvisioningStatus(dbPath, 1_780_000_000_000);
+    const action = statusModule.buildT3OperatorAction(status);
+    const rendered = statusModule.renderOperatorAction(action);
+
+    expect(action.status).toBe("pairing_required");
+    expect(action.truth_label).toContain("read_only");
+    expect(rendered).toContain("friday-t3-pairing-proof.sh --pair");
+    expect(rendered).toContain("PairAck");
+    expect(rendered).not.toContain("friday-t3-operator-provision.sh");
+    expect(rendered).not.toContain("operator-approve.key");
+  });
+
   it("requires active grant and every T3 row family before reporting ready", async () => {
     const statusModule = await loadStatusModule();
     const dbPath = makeDbPath();
@@ -124,6 +141,62 @@ describe("friday-t3-provisioning-status", () => {
     expect(JSON.stringify(status.latest_device)).not.toContain(
       "0101010101010101010101010101010101010101010101010101010101010101",
     );
+  });
+
+  it("renders an operator-only provisioning hint after device pairing but before grant/passport rows", async () => {
+    const statusModule = await loadStatusModule();
+    const dbPath = makeDbPath();
+    createProvisionTables(dbPath);
+    execSql(
+      dbPath,
+      `
+      INSERT INTO device_identity(device_id, role, public_key, created_at, display_name)
+        VALUES ('device-1', 'ios', X'0101010101010101010101010101010101010101010101010101010101010101', 1700, 'Jarvis iPhone');
+      INSERT INTO trusted_device(device_id, public_key, paired_at, revoked_at, key_rotated_at, label)
+        VALUES ('device-1', X'0101010101010101010101010101010101010101010101010101010101010101', 1800, NULL, NULL, 'Jarvis iPhone');
+    `,
+    );
+
+    const status = statusModule.buildT3ProvisioningStatus(dbPath, 1_780_000_000_000);
+    const action = statusModule.buildT3OperatorAction(status);
+    const rendered = statusModule.renderOperatorAction(action);
+
+    expect(action.status).toBe("operator_provision_required");
+    expect(action.latest_device_id).toBe("device-1");
+    expect(rendered).toContain(
+      ["FRIDAY_T3_OPERATOR_PROVISION_ACK", "operator-runs-t3-provisioning"].join("="),
+    );
+    expect(rendered).toContain("FRIDAY_T3_STEP=both");
+    expect(rendered).toContain("FRIDAY_T3_ITEMS_JSON='<path-to-reviewed-context-passport-items.json>'");
+    expect(rendered).toContain("At least one explicit grant boundary is required");
+    expect(rendered).not.toContain("operator-approve.key");
+  });
+
+  it("renders a no-action hint for fully provisioned T3 rows without claiming release", async () => {
+    const statusModule = await loadStatusModule();
+    const dbPath = makeDbPath();
+    createProvisionTables(dbPath);
+    execSql(
+      dbPath,
+      `
+      INSERT INTO device_identity(device_id, role, public_key, created_at, display_name)
+        VALUES ('device-1', 'ios', X'0101010101010101010101010101010101010101010101010101010101010101', 1700, 'Jarvis iPhone');
+      INSERT INTO trusted_device(device_id, public_key, paired_at, revoked_at, key_rotated_at, label)
+        VALUES ('device-1', X'0101010101010101010101010101010101010101010101010101010101010101', 1800, NULL, NULL, 'Jarvis iPhone');
+      INSERT INTO trust_grant(grant_id, revoked, expires_at) VALUES ('grant-1', 0, 1900000000000);
+      INSERT INTO context_passport(passport_id) VALUES ('passport-1');
+      INSERT INTO context_passport_item(passport_id, item_id) VALUES ('passport-1', 'item-1');
+    `,
+    );
+
+    const status = statusModule.buildT3ProvisioningStatus(dbPath, 1_780_000_000_000);
+    const action = statusModule.buildT3OperatorAction(status);
+    const rendered = statusModule.renderOperatorAction(action);
+
+    expect(action.status).toBe("ready");
+    expect(action.command).toBeNull();
+    expect(rendered).toContain("No missing T3 provision row family");
+    expect(rendered).toContain("does not claim END-BAR");
   });
 
   it("treats revoked or expired grants as not ready even when rows exist", async () => {
