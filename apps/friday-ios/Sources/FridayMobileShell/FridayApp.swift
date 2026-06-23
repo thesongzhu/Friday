@@ -225,6 +225,7 @@ final class FridaySession: ObservableObject {
 struct RootView: View {
   @StateObject private var homeVM: HomeViewModel
   @StateObject private var sessionContinuationVM: SessionContinuationViewModel
+  @StateObject private var shareIntakeVM: ShareIntakeViewModel
   private let session: FridaySession
   @State private var destination: MobileDestination = .home
   @State private var commandOpen = false
@@ -242,6 +243,7 @@ struct RootView: View {
       writeClient: session.writeClient,
       signer: session.signer,
       runControlEnabled: session.runControlEnabled))
+    _shareIntakeVM = StateObject(wrappedValue: ShareIntakeViewModel(client: session.missionClient))
   }
 
   var body: some View {
@@ -252,6 +254,8 @@ struct RootView: View {
           FridayHomeScreen(viewModel: homeVM)
         case .session:
           FridaySessionDetailScreen(homeViewModel: homeVM, viewModel: sessionContinuationVM)
+        case .shareIntake:
+          FridayShareIntakeScreen(viewModel: shareIntakeVM)
         case .missions, .needsMe, .memory, .platform, .activity, .workflows, .onboarding,
              .settings:
           FridayProjectionScreen(destination: destination, viewModel: homeVM)
@@ -299,12 +303,26 @@ struct RootView: View {
     .sheet(isPresented: $commandOpen) {
       CommandSheet(destination: $destination, isOpen: $commandOpen)
     }
+    .onOpenURL { url in
+      applyShareURL(url)
+    }
     .task {
       // Initial read on launch (dark server ⇒ honest-unavailable).
       if case .idle = homeVM.state {
         await homeVM.refresh()
       }
     }
+  }
+
+  private func applyShareURL(_ url: URL) {
+    guard url.scheme == "friday", url.host == "share" else { return }
+    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    let text = components?.queryItems?.first(where: { $0.name == "text" })?.value
+    let rawURL = components?.queryItems?.first(where: { $0.name == "url" })?.value
+    shareIntakeVM.applyIncomingShare(
+      text: text,
+      url: rawURL.flatMap(URL.init(string:)))
+    destination = .shareIntake
   }
 }
 

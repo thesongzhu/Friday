@@ -12,6 +12,17 @@
     <string>6.0</string>
     <key>CFBundleName</key>
     <string>FridayShell</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.friday.shell.share</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>friday</string>
+            </array>
+        </dict>
+    </array>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
