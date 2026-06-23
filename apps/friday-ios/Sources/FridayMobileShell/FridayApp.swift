@@ -70,7 +70,9 @@ final class FridaySession: ObservableObject {
     self.devicePairing = preview
       ? .evaluate(deviceKeypairRequested: false, readLiveRequested: false, writeLiveRequested: false)
       : Self.defaultDevicePairingReadiness()
-    self.makePairingClient = preview ? { _ in nil } : Self.defaultPairingClient
+    self.makePairingClient = preview || !Self.livePairingRequested(args: args, env: env)
+      ? { _ in nil }
+      : Self.defaultPairingClient
 
     // The write client (Friday Chat read-WRITE / S6 surface). DEFAULT (gate OFF) = the throwing
     // `liveTransportNotWired` factory transport ⇒ honest-unavailable, with an ephemeral X25519
@@ -183,9 +185,12 @@ final class FridaySession: ObservableObject {
 
   static func defaultPairingClient(deviceKeypair: DeviceKeypair) -> FridayPairingClient? {
     // Explicit QR pairing is a user-initiated enrollment ceremony, not a shipped live-read/write
-    // flip. It still fails closed through manifest proof validation, PairingServerConfig's
-    // loopback/private-LAN allowlist, and the Hub's PairAck. Read, write, run-control, signing, and
-    // trust minting remain on their separate gates.
+    // flip. The network PairAck leg is wired only when `FRIDAY_MOBILE_LIVE_PAIRING=1` /
+    // `--live-pairing` selects this factory; otherwise Home can still scan/preflight a QR but
+    // `pairScannedQR` reports "Pairing channel is not configured for this launch." It still fails
+    // closed through manifest proof validation, PairingServerConfig's loopback/private-LAN
+    // allowlist, and the Hub's PairAck. Read, write, run-control, signing, and trust minting remain
+    // on their separate gates.
     return RealPairingClientFactory.makeLive(deviceKeypair: deviceKeypair)
   }
 
