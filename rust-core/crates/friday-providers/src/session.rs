@@ -281,6 +281,9 @@ impl SessionRunner for MockSession {
             }),
             Err(ProviderError::NotAuthenticated(p)) => Err(ProviderError::NotAuthenticated(p)),
             Err(ProviderError::NotInstalled(s)) => Err(ProviderError::NotInstalled(s.clone())),
+            Err(ProviderError::StatusFailed { code }) => {
+                Err(ProviderError::StatusFailed { code: *code })
+            }
         }
     }
 }
