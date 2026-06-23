@@ -3,7 +3,7 @@ import XCTest
 
 /// T3 pairing wire contract tests. These lock the Swift client to the Rust
 /// `friday_protocol::Message::{Pair,PairAck,HubStatus}` serde shapes before a socket client is
-/// allowed to write `trusted_device` through `hub_pairing_server`.
+/// allowed to write `device_identity` + `trusted_device` through `hub_pairing_server`.
 final class PairingWireKATTests: XCTestCase {
   func testPairMessageWireContractIsRefsAndProofOnly() throws {
     let pair = PairingPairWire(

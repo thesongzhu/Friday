@@ -84,7 +84,7 @@ pub use trust_grant::{
 };
 
 use friday_core::{
-    ActivityState, ActivityType, ContextPassport, DeviceIdentity, FridayConversation,
+    ActivityState, ActivityType, ContextPassport, DeviceIdentity, DeviceRole, FridayConversation,
     FridayPairPayload, LedgerEntry, Mission, MissionLink, MissionSurfaceProjection,
     ProviderSessionEvent, ProviderSessionLink, ProviderSessionProjection, RouteDecisionCard,
     RouteDecisionProjection, SessionState, SurfaceEvent, SurfaceThread, ToolUsageMeasurement,
@@ -1384,6 +1384,8 @@ impl Db {
         pairing::pair_device(
             &mut self.conn,
             payload.pairing_secret.expose_for_qr().as_bytes(),
+            device_id,
+            DeviceRole::Ios,
             device_id,
             device_pubkey,
             pairing_proof,
