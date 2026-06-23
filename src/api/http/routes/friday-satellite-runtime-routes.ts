@@ -158,6 +158,17 @@ function requireString(body: Record<string, unknown>, field: string): string {
   return value;
 }
 
+function requireCommandAckStatus(status: string): "received" | "completed" | "failed" {
+  if (status === "received" || status === "completed" || status === "failed") {
+    return status;
+  }
+  throw new FridayDomainError(
+    "VALIDATION_ERROR",
+    "status must be one of: received, completed, failed",
+    { httpStatus: 400 },
+  );
+}
+
 function parseCapabilities(
   body: Record<string, unknown>,
 ): FridaySatelliteCapabilityReport["capabilities"] {
@@ -364,7 +375,7 @@ export function createFridaySatelliteRuntimeRoutes(
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);
         const body = ctx.body as Record<string, unknown>;
-        const status = requireString(body, "status");
+        const status = requireCommandAckStatus(requireString(body, "status"));
         const hasTerminalResult = status === "completed" || status === "failed";
         const reportTerminal = deps.reportCommandResult !== undefined && hasTerminalResult;
         // Hoist terminal-ack field validation above the retirement guard so a
