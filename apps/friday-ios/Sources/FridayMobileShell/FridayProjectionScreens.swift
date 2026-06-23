@@ -14,7 +14,7 @@ private enum ProjectionSurface {
 
   init?(_ destination: MobileDestination) {
     switch destination {
-    case .home, .session, .shareIntake:
+    case .home, .session, .shareIntake, .voice:
       return nil
     case .missions:
       self = .missions
