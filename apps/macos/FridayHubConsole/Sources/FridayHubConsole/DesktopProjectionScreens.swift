@@ -243,6 +243,24 @@ struct DesktopProjectionScreen: View {
           Text(detail.summary)
             .font(.system(size: 12))
             .foregroundStyle(HubTheme.textPrimary)
+          if !detail.facts.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+              ForEach(detail.facts) { fact in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                  Text(fact.label)
+                    .font(.system(size: 11))
+                    .foregroundStyle(HubTheme.textSecondary)
+                    .frame(width: 78, alignment: .leading)
+                  Text(fact.value)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(HubTheme.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                }
+              }
+            }
+          }
           if let providerReadiness = detail.providerReadiness {
             ProviderReadinessDetailView(readiness: providerReadiness)
           }
