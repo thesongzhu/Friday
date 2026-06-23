@@ -3,6 +3,18 @@ import Testing
 @testable import FridayHubConsoleCore
 
 @MainActor
+@Test func operatorProvisioningCommandStaysOperatorOnlyAndPlaceholderBased() async throws {
+  let command = PairingProvisioningViewModel.operatorProvisioningCommand(repoRoot: "/repo")
+
+  #expect(command.contains("cd /repo"))
+  #expect(command.contains("FRIDAY_T3_OPERATOR_PROVISION_ACK=operator-runs-t3-provisioning")) // pragma: allowlist secret
+  #expect(command.contains("scripts/ops/friday-t3-operator-provision.sh"))
+  #expect(command.contains("<grant-id>"))
+  #expect(!command.contains("operator-approve.key"))
+  #expect(!command.contains("operator-signer.key"))
+}
+
+@MainActor
 @Test func pairingProvisioningAcceptsValidManifestWithoutDisplayingSecret() async throws {
   let secret = "friday-pairing-secret-for-test" // pragma: allowlist secret
   let payload = pairingManifestJSON(secret: secret, expiresAt: 1_900_000_000_000)
