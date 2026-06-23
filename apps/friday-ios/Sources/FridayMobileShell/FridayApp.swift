@@ -36,7 +36,7 @@ import SwiftUI
 final class FridaySession: ObservableObject {
   /// DEFAULT-OFF run-control (the S6 pause/approve/resume). Flipping this ON in production is
   /// part of the slice-6 operator gate; OFF ⇒ the chat loop is read-only (a pause fails closed).
-  let runControlEnabled = false
+  let runControlEnabled: Bool
 
   let readClient: FridayRustReadClient
   let writeClient: FridayRustWriteClient
@@ -52,6 +52,10 @@ final class FridaySession: ObservableObject {
   ///   without a live Hub. DEFAULT `false` ⇒ the REAL `SealedWSReadClient` (honest-unavailable
   ///   while the servers are dark). A real build NEVER passes `preview: true`.
   init(preview: Bool = false) {
+    let args = ProcessInfo.processInfo.arguments
+    let env = ProcessInfo.processInfo.environment
+    self.runControlEnabled = preview ? false : Self.runControlRequested(args: args, env: env)
+
     // SINGLE-PEER-TRAP SAFETY: the DEFAULT read client mints NO X25519 keypair, opens NO socket,
     // and touches NO SecureStore — it is the no-key `HonestlyUnavailableReadClient`, which always
     // renders the honest dark-server state. This deliberately does NOT generate a fresh peer key:
@@ -158,19 +162,23 @@ final class FridaySession: ObservableObject {
   }
 
   static func useDeviceKeypair(args: [String], env: [String: String]) -> Bool {
-    args.contains("--live-device-keypair") || env["FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR"] == "1"
+    MobileRuntimeGates.useDeviceKeypair(args: args, env: env)
   }
 
   static func liveReadRequested(args: [String], env: [String: String]) -> Bool {
-    args.contains("--live-read") || env["FRIDAY_MOBILE_LIVE_READ"] == "1"
+    MobileRuntimeGates.liveReadRequested(args: args, env: env)
   }
 
   static func liveWriteRequested(args: [String], env: [String: String]) -> Bool {
-    args.contains("--live-write") || env["FRIDAY_MOBILE_LIVE_WRITE"] == "1"
+    MobileRuntimeGates.liveWriteRequested(args: args, env: env)
   }
 
   static func livePairingRequested(args: [String], env: [String: String]) -> Bool {
-    args.contains("--live-pairing") || env["FRIDAY_MOBILE_LIVE_PAIRING"] == "1"
+    MobileRuntimeGates.livePairingRequested(args: args, env: env)
+  }
+
+  static func runControlRequested(args: [String], env: [String: String]) -> Bool {
+    MobileRuntimeGates.runControlRequested(args: args, env: env)
   }
 
   static func defaultPairingClient(deviceKeypair: DeviceKeypair) -> FridayPairingClient? {
