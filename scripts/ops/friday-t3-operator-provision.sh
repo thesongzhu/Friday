@@ -82,6 +82,16 @@ table_count() {
   query_scalar "SELECT count(*) FROM ${table}"
 }
 
+active_trusted_device_count() {
+  local present
+  present="$(query_scalar "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='trusted_device'")"
+  if [[ "${present}" != "1" ]]; then
+    echo "0"
+    return
+  fi
+  query_scalar "SELECT count(*) FROM trusted_device WHERE revoked_at IS NULL"
+}
+
 require_paired_device() {
   if [[ "${REQUIRE_PAIRED_DEVICE}" = "0" ]]; then
     echo "WARNING: FRIDAY_T3_REQUIRE_PAIRED_DEVICE=0 bypasses the paired-device preflight." >&2
@@ -89,14 +99,15 @@ require_paired_device() {
     return
   fi
 
-  local device_count trusted_count
+  local device_count trusted_count active_trusted_count
   device_count="$(table_count device_identity)"
   trusted_count="$(table_count trusted_device)"
-  if [[ "${device_count}" -lt 1 || "${trusted_count}" -lt 1 ]]; then
-    fail "T3 provisioning requires a completed QR pairing first (device_identity=${device_count}, trusted_device=${trusted_count}). Run scripts/ops/friday-start-pairing-session.sh and pair a real client before minting trust_grant/context_passport rows."
+  active_trusted_count="$(active_trusted_device_count)"
+  if [[ "${device_count}" -lt 1 || "${active_trusted_count}" -lt 1 ]]; then
+    fail "T3 provisioning requires a completed active QR pairing first (device_identity=${device_count}, trusted_device=${trusted_count}, active_trusted_device=${active_trusted_count}). Run scripts/ops/friday-start-pairing-session.sh and pair a real client before minting trust_grant/context_passport rows."
   fi
 
-  echo "paired_device_preflight=pass device_identity=${device_count} trusted_device=${trusted_count}" >&2
+  echo "paired_device_preflight=pass device_identity=${device_count} trusted_device=${trusted_count} active_trusted_device=${active_trusted_count}" >&2
 }
 
 run_operator_cli() {
