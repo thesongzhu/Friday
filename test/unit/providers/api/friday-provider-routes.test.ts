@@ -998,6 +998,36 @@ describe("FridayProviderRoutes", () => {
       expect(mockService.setRoutingConfig).not.toHaveBeenCalled();
     });
 
+    it("providers.routing.set rejects empty provider ids before service mutation", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({
+        providerService: mockService,
+      });
+      const setRoutingRoute = routes.find(
+        (r) => r.operationId === "providers.routing.set",
+      )!;
+
+      await expect(
+        setRoutingRoute.handler(makeCtx({
+          body: {
+            defaultProviderId: " ",
+            fallbackProviderIds: [],
+          },
+        })),
+      ).rejects.toThrow("defaultProviderId is required and must be a non-empty string");
+
+      await expect(
+        setRoutingRoute.handler(makeCtx({
+          body: {
+            defaultProviderId: "prov-001",
+            fallbackProviderIds: ["prov-002", ""],
+          },
+        })),
+      ).rejects.toThrow("fallbackProviderIds must be an array of non-empty strings when provided");
+
+      expect(mockService.setRoutingConfig).not.toHaveBeenCalled();
+    });
+
     it("providers.routing.set requires canonical approval in gate-required profile before service mutation", async () => {
       const mockService = makeMockService();
       const routes = createProviderRoutesWithGate(mockService);
