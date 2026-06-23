@@ -105,8 +105,22 @@ if ! jq -e '
   and (.timeline.cursor_verified | type == "boolean")
   and (.status_labels | type == "array")
   and (.memory_candidates | type == "array" and length >= 1)
+  and (.mission_workbench | type == "object")
+  and (.mission_workbench.visible == true)
+  and (.mission_workbench.same_mission_projection_visible == true)
+  and (.mission_workbench.provider_ack_not_done_visible == true)
+  and (.mission_workbench.memory_candidate_review_only_visible == true)
+  and (.mission_workbench.evidence_ref | type == "string" and length > 0)
+  and (.transcript_browser | type == "object")
+  and (.transcript_browser.visible == true)
+  and (.transcript_browser.collapsed_by_default == true)
+  and (.transcript_browser.redacted == true)
+  and (.transcript_browser.bounded_timeline_linked == true)
+  and (.transcript_browser.evidence_ref | type == "string" and length > 0)
+  and (.transcript_browser.search_facets | type == "array" and length >= 9)
+  and (.transcript_browser.evidence_facets | type == "array" and length >= 7)
 ' "$observations_manifest" >/dev/null; then
-  echo "BLOCKER: observations manifest is missing required checks/timeline/status/memory/observation shape: $observations_manifest" >&2
+  echo "BLOCKER: observations manifest is missing required checks/timeline/status/memory/workbench/transcript/observation shape: $observations_manifest" >&2
   exit 6
 fi
 
@@ -239,6 +253,8 @@ jq -n \
         cursor_verified: $manifest.timeline.cursor_verified,
         evidence_ref: $timeline
       },
+      mission_workbench: $manifest.mission_workbench,
+      transcript_browser: $manifest.transcript_browser,
       status_labels: $manifest.status_labels,
       memory_candidates: $manifest.memory_candidates
     }' >"$out"
