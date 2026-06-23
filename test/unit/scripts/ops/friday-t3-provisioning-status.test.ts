@@ -31,8 +31,21 @@ function createProvisionTables(dbPath: string): void {
   execSql(
     dbPath,
     `
-    CREATE TABLE device_identity (device_id TEXT);
-    CREATE TABLE trusted_device (device_id TEXT);
+    CREATE TABLE device_identity (
+      device_id TEXT,
+      role TEXT,
+      public_key BLOB,
+      created_at INTEGER,
+      display_name TEXT
+    );
+    CREATE TABLE trusted_device (
+      device_id TEXT,
+      public_key BLOB,
+      paired_at INTEGER,
+      revoked_at INTEGER,
+      key_rotated_at INTEGER,
+      label TEXT
+    );
     CREATE TABLE trust_grant (grant_id TEXT, revoked INTEGER, expires_at INTEGER);
     CREATE TABLE context_passport (passport_id TEXT);
     CREATE TABLE context_passport_item (passport_id TEXT, item_id TEXT);
@@ -72,6 +85,7 @@ describe("friday-t3-provisioning-status", () => {
       context_passport: 0,
       context_passport_item: 0,
     });
+    expect(status.latest_device).toBeNull();
   });
 
   it("requires active grant and every T3 row family before reporting ready", async () => {
@@ -81,8 +95,10 @@ describe("friday-t3-provisioning-status", () => {
     execSql(
       dbPath,
       `
-      INSERT INTO device_identity(device_id) VALUES ('device-1');
-      INSERT INTO trusted_device(device_id) VALUES ('device-1');
+      INSERT INTO device_identity(device_id, role, public_key, created_at, display_name)
+        VALUES ('device-1', 'ios', X'0101010101010101010101010101010101010101010101010101010101010101', 1700, 'Jarvis iPhone');
+      INSERT INTO trusted_device(device_id, public_key, paired_at, revoked_at, key_rotated_at, label)
+        VALUES ('device-1', X'0101010101010101010101010101010101010101010101010101010101010101', 1800, NULL, NULL, 'Jarvis iPhone');
       INSERT INTO trust_grant(grant_id, revoked, expires_at) VALUES ('grant-1', 0, 1900000000000);
       INSERT INTO context_passport(passport_id) VALUES ('passport-1');
       INSERT INTO context_passport_item(passport_id, item_id) VALUES ('passport-1', 'item-1');
@@ -96,6 +112,18 @@ describe("friday-t3-provisioning-status", () => {
     expect(status.active_trust_grants).toBe(1);
     expect(status.missing).toEqual([]);
     expect(status.caveat).toContain("does not claim END-BAR");
+    expect(status.latest_device).toMatchObject({
+      device_id: "device-1",
+      role: "ios",
+      label: "Jarvis iPhone",
+      paired_at: 1800,
+      revoked_at: null,
+      key_rotated_at: null,
+      pubkey_fingerprint: "01010101:01010101",
+    });
+    expect(JSON.stringify(status.latest_device)).not.toContain(
+      "0101010101010101010101010101010101010101010101010101010101010101",
+    );
   });
 
   it("treats revoked or expired grants as not ready even when rows exist", async () => {
@@ -105,8 +133,10 @@ describe("friday-t3-provisioning-status", () => {
     execSql(
       dbPath,
       `
-      INSERT INTO device_identity(device_id) VALUES ('device-1');
-      INSERT INTO trusted_device(device_id) VALUES ('device-1');
+      INSERT INTO device_identity(device_id, role, public_key, created_at, display_name)
+        VALUES ('device-1', 'ios', X'0101010101010101010101010101010101010101010101010101010101010101', 1700, 'Jarvis iPhone');
+      INSERT INTO trusted_device(device_id, public_key, paired_at, revoked_at, key_rotated_at, label)
+        VALUES ('device-1', X'0101010101010101010101010101010101010101010101010101010101010101', 1800, NULL, NULL, 'Jarvis iPhone');
       INSERT INTO trust_grant(grant_id, revoked, expires_at) VALUES ('grant-1', 1, 1900000000000);
       INSERT INTO trust_grant(grant_id, revoked, expires_at) VALUES ('grant-2', 0, 1000);
       INSERT INTO context_passport(passport_id) VALUES ('passport-1');
