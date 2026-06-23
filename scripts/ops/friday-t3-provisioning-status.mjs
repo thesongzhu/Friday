@@ -75,12 +75,61 @@ function queryScalar(dbPath, sql) {
   return result.stdout.trim();
 }
 
+function queryRowFields(dbPath, sql) {
+  const result = spawnSync("sqlite3", ["-readonly", "-separator", "\u001f", dbPath, sql], {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(result.stderr.trim() || `sqlite3 exited ${result.status}`);
+  }
+  const row = result.stdout.trim();
+  return row ? row.split("\u001f") : null;
+}
+
 function tableExists(dbPath, tableName) {
   const present = queryScalar(
     dbPath,
     `SELECT count(*) FROM sqlite_master WHERE type='table' AND name=${quoteSqlString(tableName)}`,
   );
   return Number(present) > 0;
+}
+
+function latestTrustedDevice(dbPath) {
+  if (!tableExists(dbPath, "trusted_device") || !tableExists(dbPath, "device_identity")) {
+    return null;
+  }
+  const row = queryRowFields(
+    dbPath,
+    `SELECT
+       td.device_id,
+       COALESCE(di.role, ''),
+       COALESCE(NULLIF(td.label, ''), NULLIF(di.display_name, ''), ''),
+       td.paired_at,
+       COALESCE(td.revoked_at, ''),
+       COALESCE(td.key_rotated_at, ''),
+       lower(hex(substr(td.public_key, 1, 4))) || ':' || lower(hex(substr(td.public_key, -4)))
+     FROM trusted_device AS td
+     LEFT JOIN device_identity AS di ON di.device_id = td.device_id
+     ORDER BY td.paired_at DESC, td.device_id
+     LIMIT 1`,
+  );
+  if (!row) {
+    return null;
+  }
+  const [deviceId, role, label, pairedAt, revokedAt, keyRotatedAt, pubkeyFingerprint] = row;
+  return {
+    device_id: deviceId,
+    role: role || "unknown",
+    label: label || "",
+    paired_at: Number(pairedAt),
+    revoked_at: revokedAt === "" ? null : Number(revokedAt),
+    key_rotated_at: keyRotatedAt === "" ? null : Number(keyRotatedAt),
+    pubkey_fingerprint: pubkeyFingerprint,
+  };
 }
 
 function countTable(dbPath, tableName) {
@@ -108,6 +157,7 @@ export function buildT3ProvisioningStatus(dbPath, nowMs = Date.now()) {
     T3_TABLES.map((tableName) => [tableName, countTable(dbPath, tableName)]),
   );
   const activeTrustGrants = countActiveTrustGrants(dbPath, nowMs);
+  const latest_device = latestTrustedDevice(dbPath);
   const checks = {
     device_identity: (counts.device_identity ?? 0) > 0,
     trusted_device: (counts.trusted_device ?? 0) > 0,
@@ -124,6 +174,7 @@ export function buildT3ProvisioningStatus(dbPath, nowMs = Date.now()) {
     truth_label: "t3_provisioning_status_read_only_no_mint_no_signature",
     generated_at_utc: new Date(nowMs).toISOString(),
     counts,
+    latest_device,
     active_trust_grants: activeTrustGrants,
     checks,
     status: missing.length === 0 ? "ready" : "incomplete",
@@ -148,6 +199,19 @@ export function renderText(status) {
     lines.push(`  ${tableName}=${status.counts[tableName] ?? "missing-table"}`);
   }
   lines.push(`  active_trust_grants=${status.active_trust_grants ?? "missing-table"}`);
+  if (status.latest_device) {
+    lines.push(
+      "",
+      "latest_device:",
+      `  device_id=${status.latest_device.device_id}`,
+      `  role=${status.latest_device.role}`,
+      `  label=${status.latest_device.label || "<empty>"}`,
+      `  paired_at=${status.latest_device.paired_at}`,
+      `  revoked_at=${status.latest_device.revoked_at ?? "<active>"}`,
+      `  key_rotated_at=${status.latest_device.key_rotated_at ?? "<never>"}`,
+      `  pubkey_fingerprint=${status.latest_device.pubkey_fingerprint}`,
+    );
+  }
   if (status.missing.length > 0) {
     lines.push("", `missing=${status.missing.join(",")}`);
   }
