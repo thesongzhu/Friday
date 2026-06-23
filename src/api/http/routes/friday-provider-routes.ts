@@ -372,13 +372,16 @@ function validateRoutingBody(body: unknown): asserts body is FridaySetRoutingCon
   const b = body as Record<string, unknown>;
   const errors: string[] = [];
 
-  if (typeof b.defaultProviderId !== "string") {
-    errors.push("defaultProviderId is required and must be a string");
+  if (typeof b.defaultProviderId !== "string" || b.defaultProviderId.trim() === "") {
+    errors.push("defaultProviderId is required and must be a non-empty string");
   }
   if (b.fallbackProviderIds === undefined) {
     (b as Record<string, unknown>).fallbackProviderIds = [];
-  } else if (!Array.isArray(b.fallbackProviderIds) || !b.fallbackProviderIds.every((id: unknown) => typeof id === "string")) {
-    errors.push("fallbackProviderIds must be an array of strings when provided");
+  } else if (
+    !Array.isArray(b.fallbackProviderIds)
+    || !b.fallbackProviderIds.every((id: unknown) => typeof id === "string" && id.trim() !== "")
+  ) {
+    errors.push("fallbackProviderIds must be an array of non-empty strings when provided");
   }
   if (b.defaultModel !== undefined && typeof b.defaultModel !== "string") {
     errors.push("defaultModel must be a string when provided");
