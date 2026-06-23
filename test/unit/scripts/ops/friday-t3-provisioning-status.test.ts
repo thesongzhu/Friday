@@ -73,6 +73,7 @@ describe("friday-t3-provisioning-status", () => {
     expect(status.missing).toEqual([
       "device_identity",
       "trusted_device",
+      "active_trusted_device",
       "trust_grant",
       "active_trust_grant",
       "context_passport",
@@ -85,6 +86,7 @@ describe("friday-t3-provisioning-status", () => {
       context_passport: 0,
       context_passport_item: 0,
     });
+    expect(status.active_trusted_devices).toBe(0);
     expect(status.latest_device).toBeNull();
   });
 
@@ -126,6 +128,7 @@ describe("friday-t3-provisioning-status", () => {
 
     expect(status.status).toBe("ready");
     expect(status.t3_provisioned).toBe(true);
+    expect(status.active_trusted_devices).toBe(1);
     expect(status.active_trust_grants).toBe(1);
     expect(status.missing).toEqual([]);
     expect(status.caveat).toContain("does not claim END-BAR");
@@ -170,6 +173,36 @@ describe("friday-t3-provisioning-status", () => {
     expect(rendered).toContain("FRIDAY_T3_ITEMS_JSON='<path-to-reviewed-context-passport-items.json>'");
     expect(rendered).toContain("At least one explicit grant boundary is required");
     expect(rendered).not.toContain("operator-approve.key");
+  });
+
+  it("treats revoked-only trusted devices as pairing-required before provisioning", async () => {
+    const statusModule = await loadStatusModule();
+    const dbPath = makeDbPath();
+    createProvisionTables(dbPath);
+    execSql(
+      dbPath,
+      `
+      INSERT INTO device_identity(device_id, role, public_key, created_at, display_name)
+        VALUES ('device-revoked', 'ios', X'0101010101010101010101010101010101010101010101010101010101010101', 1700, 'Revoked iPhone');
+      INSERT INTO trusted_device(device_id, public_key, paired_at, revoked_at, key_rotated_at, label)
+        VALUES ('device-revoked', X'0101010101010101010101010101010101010101010101010101010101010101', 1800, 1900, NULL, 'Revoked iPhone');
+    `,
+    );
+
+    const status = statusModule.buildT3ProvisioningStatus(dbPath, 1_780_000_000_000);
+    const action = statusModule.buildT3OperatorAction(status);
+    const rendered = statusModule.renderOperatorAction(action);
+
+    expect(status.status).toBe("incomplete");
+    expect(status.active_trusted_devices).toBe(0);
+    expect(status.missing).toContain("active_trusted_device");
+    expect(status.latest_device).toMatchObject({
+      device_id: "device-revoked",
+      revoked_at: 1900,
+    });
+    expect(action.status).toBe("pairing_required");
+    expect(rendered).toContain("friday-t3-pairing-proof.sh --pair");
+    expect(rendered).not.toContain("friday-t3-operator-provision.sh");
   });
 
   it("renders a no-action hint for fully provisioned T3 rows without claiming release", async () => {
@@ -220,6 +253,7 @@ describe("friday-t3-provisioning-status", () => {
     const status = statusModule.buildT3ProvisioningStatus(dbPath, 1_780_000_000_000);
 
     expect(status.status).toBe("incomplete");
+    expect(status.active_trusted_devices).toBe(1);
     expect(status.active_trust_grants).toBe(0);
     expect(status.missing).toEqual(["active_trust_grant"]);
   });
