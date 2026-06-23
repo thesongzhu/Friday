@@ -966,6 +966,184 @@ pub mod trust_grant {
     }
 }
 
+/// Operator-side Context Passport ceremony.
+///
+/// This is deliberately an operator CLI path, not a Hub/app/agent mint endpoint. It builds
+/// a destination-bound passport through the same fail-closed core constructor used by
+/// Hub preflight, persists the object, binds it to the Mission refs, and records a
+/// MissionLink so the existing preflight gate can satisfy a sensitive external transfer.
+pub mod context_passport {
+    use super::CliError;
+    use friday_core::{
+        build_context_passport, MissionLink, MissionLinkKind, PassportItem, PassportItemKind,
+        WorkLane,
+    };
+    use friday_storage::Db;
+
+    #[derive(Debug, Clone)]
+    pub struct PassportSpec {
+        pub passport_id: String,
+        pub mission_id: String,
+        pub work_item_id: Option<String>,
+        pub destination_lane: WorkLane,
+        pub destination_target: Option<String>,
+        pub items: Vec<PassportItem>,
+        pub approved_sensitive: bool,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct MintedPassport {
+        pub passport_id: String,
+        pub mission_id: String,
+        pub work_item_id: Option<String>,
+        pub destination_lane: WorkLane,
+        pub destination_target: Option<String>,
+        pub shared_item_count: usize,
+        pub mission_ref_count: usize,
+        pub link_id: String,
+    }
+
+    pub fn parse_lane(value: &str) -> Result<WorkLane, CliError> {
+        match value {
+            "friday_hub" => Ok(WorkLane::FridayHub),
+            "codex" => Ok(WorkLane::Codex),
+            "claude" => Ok(WorkLane::Claude),
+            "deepseek" => Ok(WorkLane::DeepSeek),
+            "workflow" => Ok(WorkLane::Workflow),
+            "channel" => Ok(WorkLane::Channel),
+            "human" => Ok(WorkLane::Human),
+            "future_api" => Ok(WorkLane::FutureApi),
+            other => Err(CliError::BadGrant(format!(
+                "unknown destination lane {other:?}: expected one of \
+                 friday_hub|codex|claude|deepseek|workflow|channel|human|future_api"
+            ))),
+        }
+    }
+
+    pub fn parse_item_kind(value: &str) -> Result<PassportItemKind, CliError> {
+        match value {
+            "memory_snippet" => Ok(PassportItemKind::MemorySnippet),
+            "summary" => Ok(PassportItemKind::Summary),
+            "file" => Ok(PassportItemKind::File),
+            "screenshot" => Ok(PassportItemKind::Screenshot),
+            "attachment" => Ok(PassportItemKind::Attachment),
+            "provider_secret" => Ok(PassportItemKind::ProviderSecret), // pragma: allowlist secret
+            "raw_token" => Ok(PassportItemKind::RawToken),
+            other => Err(CliError::BadGrant(format!(
+                "unknown passport item kind {other:?}: expected one of \
+                 memory_snippet|summary|file|screenshot|attachment|provider_secret|raw_token"
+            ))),
+        }
+    }
+
+    pub fn open_hub(path: &str) -> Result<Db, CliError> {
+        Db::open_hub(path).map_err(|_| CliError::OpenDb(path.to_string()))
+    }
+
+    pub fn mint(db: &Db, spec: &PassportSpec, now_ms: i64) -> Result<MintedPassport, CliError> {
+        if spec.passport_id.trim().is_empty() {
+            return Err(CliError::BadGrant(
+                "passport_id must not be empty".to_string(),
+            ));
+        }
+        if spec.mission_id.trim().is_empty() {
+            return Err(CliError::BadGrant(
+                "mission_id must not be empty".to_string(),
+            ));
+        }
+        if spec.items.is_empty() {
+            return Err(CliError::BadGrant(
+                "context passport requires at least one item".to_string(),
+            ));
+        }
+
+        let mut mission = db
+            .get_mission(&spec.mission_id)
+            .map_err(|e| CliError::Storage(e.to_string()))?
+            .ok_or_else(|| {
+                CliError::BadGrant(format!(
+                    "mission {:?} not found; create/stage the Mission before minting a passport",
+                    spec.mission_id
+                ))
+            })?;
+        if let Some(work_item_id) = &spec.work_item_id {
+            let work_item = db
+                .get_work_item(work_item_id)
+                .map_err(|e| CliError::Storage(e.to_string()))?
+                .ok_or_else(|| {
+                    CliError::BadGrant(format!(
+                        "work item {work_item_id:?} not found; omit --work-item-id for a \
+                         mission-scoped passport or stage the WorkItem first"
+                    ))
+                })?;
+            if work_item.mission_id != spec.mission_id {
+                return Err(CliError::BadGrant(format!(
+                    "work item {work_item_id:?} belongs to mission {:?}, not {:?}",
+                    work_item.mission_id, spec.mission_id
+                )));
+            }
+        }
+
+        let passport = build_context_passport(
+            spec.passport_id.clone(),
+            spec.mission_id.clone(),
+            spec.work_item_id.clone(),
+            spec.destination_lane,
+            spec.destination_target.clone(),
+            spec.items.clone(),
+            spec.approved_sensitive,
+            now_ms,
+        )
+        .map_err(|e| CliError::BadGrant(format!("context_passport_blocked:{e}")))?;
+
+        let link_id = format!(
+            "context-passport-{}-{}",
+            ref_id_part(&spec.passport_id),
+            now_ms
+        );
+        db.upsert_context_passport(&passport)
+            .map_err(|e| CliError::Storage(e.to_string()))?;
+        db.upsert_mission_link(&MissionLink {
+            link_id: link_id.clone(),
+            mission_id: spec.mission_id.clone(),
+            work_item_id: spec.work_item_id.clone(),
+            link_kind: MissionLinkKind::ContextPassport,
+            target_ref: format!("friday://context-passport/{}", spec.passport_id),
+            proof_ref: Some(spec.passport_id.clone()),
+            created_at_ms: now_ms,
+        })
+        .map_err(|e| CliError::Storage(e.to_string()))?;
+        push_unique(&mut mission.context_passport_refs, spec.passport_id.clone());
+        mission.updated_at_ms = now_ms;
+        db.upsert_mission(&mission)
+            .map_err(|e| CliError::Storage(e.to_string()))?;
+
+        Ok(MintedPassport {
+            passport_id: spec.passport_id.clone(),
+            mission_id: spec.mission_id.clone(),
+            work_item_id: spec.work_item_id.clone(),
+            destination_lane: spec.destination_lane,
+            destination_target: spec.destination_target.clone(),
+            shared_item_count: passport.shared_items().len(),
+            mission_ref_count: mission.context_passport_refs.len(),
+            link_id,
+        })
+    }
+
+    fn push_unique(values: &mut Vec<String>, value: String) {
+        if !values.iter().any(|existing| existing == &value) {
+            values.push(value);
+        }
+    }
+
+    fn ref_id_part(value: &str) -> String {
+        value
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
