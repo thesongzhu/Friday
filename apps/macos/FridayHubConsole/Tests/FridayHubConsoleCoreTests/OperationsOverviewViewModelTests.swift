@@ -383,6 +383,8 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
     case memoryBlocked
     case learningConfirmed
     case learningBlocked
+    case activityDone
+    case activityBlocked
     case throwsTransport
   }
   let behavior: Behavior
@@ -390,6 +392,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   private var _lastIntake: MissionIntakeRequestWire?
   private var _lastDecision: MemoryDecisionRequestWire?
   private var _lastLearningDecision: RunOutcomeLearningDecisionRequestWire?
+  private var _lastActivityMarkDone: ActivityMarkDoneRequestWire?
   private var _lastMissionContext: MissionWorkItemContextWire?
   private var _lastMissionRunConstraints: AgentRunConstraintsWire?
   private var _lastResumeRunId: String?
@@ -405,6 +408,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   var lastLearningDecision: RunOutcomeLearningDecisionRequestWire? {
     lock.withLock { _lastLearningDecision }
   }
+  var lastActivityMarkDone: ActivityMarkDoneRequestWire? { lock.withLock { _lastActivityMarkDone } }
   var lastMissionContext: MissionWorkItemContextWire? { lock.withLock { _lastMissionContext } }
   var lastMissionRunConstraints: AgentRunConstraintsWire? { lock.withLock { _lastMissionRunConstraints } }
   var lastResumeRunId: String? { lock.withLock { _lastResumeRunId } }
@@ -477,6 +481,20 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
         kind: "preference",
         state: request.decision == "confirm" ? "confirmed" : "rejected",
         status: request.decision == "confirm" ? "confirmed" : "rejected")
+    }
+  }
+
+  func submitActivityMarkDone(_ request: ActivityMarkDoneRequestWire) async throws -> ActivityMarkDoneResultWire {
+    lock.withLock { _lastActivityMarkDone = request }
+    switch behavior {
+    case .throwsTransport:
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    case .activityBlocked:
+      return ActivityMarkDoneResultWire(
+        activityId: request.activityId, state: "unknown", status: "blocked",
+        blocker: "unknown_activity")
+    default:
+      return ActivityMarkDoneResultWire(activityId: request.activityId, state: "done", status: "done")
     }
   }
 
@@ -1124,6 +1142,34 @@ func approveNeedsMeItemWithoutSignerFailsClosedWithoutResume() async {
   }
   #expect(reason.contains("not configured"))
   #expect(write.lastResumeRunId == nil)
+}
+
+@Test
+@MainActor
+func markNeedsMeItemDoneUsesRefIdAndRefreshesReview() async {
+  let write = MockMissionSpineWriteClient(behavior: .activityDone)
+  let item = ChatNeedsMeItem(
+    runId: "run-review",
+    kind: "review",
+    title: "review ready",
+    refId: "activity-review-1",
+    state: "pending",
+    deepLink: "friday://activity/activity-review-1")
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    writeClient: write)
+
+  await vm.markNeedsMeItemDone(item)
+
+  #expect(write.lastActivityMarkDone == ActivityMarkDoneRequestWire(
+    activityId: "activity-review-1",
+    reason: "owner cleared needs-me row"))
+  guard case let .confirmed(summary, _, _) = vm.activityMarkDoneStates[item.id] else {
+    Issue.record("expected activity mark-done .confirmed, got \(String(describing: vm.activityMarkDoneStates[item.id]))")
+    return
+  }
+  #expect(summary.contains("done"))
+  #expect(summary.contains("activity-review-1"))
 }
 
 @Test

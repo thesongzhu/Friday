@@ -285,6 +285,8 @@ public final class OperationsOverviewViewModel: ObservableObject {
   @Published public private(set) var runOutcomeLearningDecisionStates: [String: WriteActionState] = [:]
   /// Per pending approval resume state, keyed by the Needs-Me item id.
   @Published public private(set) var approvalRelayStates: [String: WriteActionState] = [:]
+  /// Per Activity / Needs-Me mark-done state, keyed by the Needs-Me item id.
+  @Published public private(set) var activityMarkDoneStates: [String: WriteActionState] = [:]
   /// Structured refs for the latest desktop Chat turn. This avoids parsing status prose in the UI.
   @Published public private(set) var latestChatTurn: ChatTurnRefs?
   /// Refs-only Needs-Me rows for the latest Chat turn's runs.
@@ -585,6 +587,31 @@ public final class OperationsOverviewViewModel: ObservableObject {
       }
     } catch {
       approvalRelayStates[key] = .error(reason: Self.writeReason(for: error))
+    }
+  }
+
+  /// Mark one existing Activity / Needs-Me row done. This is a refs-only owner action; it never
+  /// completes a WorkItem or mints proof.
+  public func markNeedsMeItemDone(_ item: ChatNeedsMeItem) async {
+    let key = item.id
+    guard let writeClient else {
+      activityMarkDoneStates[key] = .error(reason: "Write seam not configured.")
+      return
+    }
+    activityMarkDoneStates[key] = .sent
+    do {
+      let result = try await writeClient.submitActivityMarkDone(
+        ActivityMarkDoneRequestWire(activityId: item.refId, reason: "owner cleared needs-me row"))
+      if result.status == "done" {
+        activityMarkDoneStates[key] = .confirmed(summary: "done · activity_id=\(result.activityId)")
+        await refresh()
+        await loadLatestChatReview()
+      } else {
+        let why = result.blocker ?? "blocked"
+        activityMarkDoneStates[key] = .error(reason: "Activity mark done blocked — \(why)")
+      }
+    } catch {
+      activityMarkDoneStates[key] = .error(reason: Self.writeReason(for: error))
     }
   }
 

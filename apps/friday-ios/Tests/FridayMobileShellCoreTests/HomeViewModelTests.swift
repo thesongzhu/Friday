@@ -180,15 +180,26 @@ final class HomeViewModelTests: XCTestCase {
       case result(MemoryDecisionResultWire)
       case fail(Error)
     }
+    enum ActivityScript {
+      case result(ActivityMarkDoneResultWire)
+      case fail(Error)
+    }
 
     let learningScript: LearningScript?
     let memoryScript: MemoryScript?
+    let activityScript: ActivityScript?
     private(set) var memoryRequests: [MemoryDecisionRequestWire] = []
     private(set) var learningRequests: [RunOutcomeLearningDecisionRequestWire] = []
+    private(set) var activityMarkDoneRequests: [ActivityMarkDoneRequestWire] = []
 
-    init(learningScript: LearningScript? = nil, memoryScript: MemoryScript? = nil) {
+    init(
+      learningScript: LearningScript? = nil,
+      memoryScript: MemoryScript? = nil,
+      activityScript: ActivityScript? = nil
+    ) {
       self.learningScript = learningScript
       self.memoryScript = memoryScript
+      self.activityScript = activityScript
     }
 
     func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire {
@@ -210,6 +221,15 @@ final class HomeViewModelTests: XCTestCase {
       learningRequests.append(request)
       guard let learningScript else { throw NSError(domain: "unused", code: 1) }
       switch learningScript {
+      case .result(let result): return result
+      case .fail(let error): throw error
+      }
+    }
+
+    func submitActivityMarkDone(_ request: ActivityMarkDoneRequestWire) async throws -> ActivityMarkDoneResultWire {
+      activityMarkDoneRequests.append(request)
+      guard let activityScript else { throw NSError(domain: "unused", code: 1) }
+      switch activityScript {
       case .result(let result): return result
       case .fail(let error): throw error
       }
@@ -502,6 +522,41 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(
       vm.runOutcomeLearningDecisionStates["learn-1"],
       .error(reason: "Write seam not configured."))
+  }
+
+  func testMarkActivityDoneRendersConfirmedAndRefreshes() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeMissionWriteClient(activityScript: .result(
+      ActivityMarkDoneResultWire(activityId: "activity-1", state: "done", status: "done")))
+    let vm = HomeViewModel(client: read, writeClient: write)
+
+    await vm.markActivityDone(activityId: "activity-1")
+
+    XCTAssertEqual(write.activityMarkDoneRequests, [
+      ActivityMarkDoneRequestWire(activityId: "activity-1", reason: "owner cleared activity"),
+    ])
+    XCTAssertEqual(read.fetchWorkbenchCount, 1)
+    XCTAssertEqual(
+      vm.activityMarkDoneStates["activity-1"],
+      .confirmed(summary: "done · activity_id=activity-1"))
+  }
+
+  func testMarkActivityDoneBlockedRendersErrorNotConfirmed() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeMissionWriteClient(activityScript: .result(
+      ActivityMarkDoneResultWire(
+        activityId: "missing-activity",
+        state: "unknown",
+        status: "blocked",
+        blocker: "unknown_activity")))
+    let vm = HomeViewModel(client: read, writeClient: write)
+
+    await vm.markActivityDone(activityId: "missing-activity")
+
+    XCTAssertEqual(read.fetchWorkbenchCount, 0)
+    XCTAssertEqual(
+      vm.activityMarkDoneStates["missing-activity"],
+      .error(reason: "Activity mark done blocked — unknown_activity"))
   }
 
   func testDecideMemoryConfirmRendersConfirmedAndRefreshes() async throws {

@@ -553,6 +553,7 @@ public final class HomeViewModel: ObservableObject {
   @Published public private(set) var detailState: HomeReadDetailState = .idle
   @Published public private(set) var memoryDecisionStates: [String: HomeLearningDecisionState] = [:]
   @Published public private(set) var runOutcomeLearningDecisionStates: [String: HomeLearningDecisionState] = [:]
+  @Published public private(set) var activityMarkDoneStates: [String: HomeLearningDecisionState] = [:]
   @Published public private(set) var pairingPreflight: MobilePairingPreflight = .empty
   @Published public private(set) var pairingAttempt: MobilePairingAttempt = .idle
 
@@ -660,6 +661,27 @@ public final class HomeViewModel: ObservableObject {
       }
     } catch {
       runOutcomeLearningDecisionStates[candidateId] = .error(reason: Self.reason(for: error))
+    }
+  }
+
+  public func markActivityDone(activityId: String) async {
+    guard let writeClient else {
+      activityMarkDoneStates[activityId] = .error(reason: "Write seam not configured.")
+      return
+    }
+    activityMarkDoneStates[activityId] = .sent
+    do {
+      let result = try await writeClient.submitActivityMarkDone(
+        ActivityMarkDoneRequestWire(activityId: activityId, reason: "owner cleared activity"))
+      if result.status == "done" {
+        activityMarkDoneStates[activityId] = .confirmed(summary: "done · activity_id=\(result.activityId)")
+        await refresh()
+      } else {
+        let why = result.blocker ?? "blocked"
+        activityMarkDoneStates[activityId] = .error(reason: "Activity mark done blocked — \(why)")
+      }
+    } catch {
+      activityMarkDoneStates[activityId] = .error(reason: Self.reason(for: error))
     }
   }
 

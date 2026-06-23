@@ -295,4 +295,38 @@ final class MissionSpineWriteKATTests: XCTestCase {
     XCTAssertTrue(json.contains("\"result\":{"))
     XCTAssertTrue(json.contains("\"blocker\":\"unknown_candidate\""))
   }
+
+  // MARK: MS7 — ActivityMarkDone wire shape (nested + refs-only)
+
+  func testMS7_activityMarkDoneRequestNestedShapeRefsOnly() throws {
+    let req = ActivityMarkDoneRequestWire(activityId: "activity-1", reason: "owner cleared row")
+    let env = FridayEnvelope(msgId: "activity-done", sentAt: 1000, message: .activityMarkDoneRequest(req))
+    let json = String(decoding: try env.encodeJSON(), as: UTF8.self)
+
+    XCTAssertTrue(json.contains("\"kind\":\"ActivityMarkDoneRequest\""))
+    XCTAssertTrue(json.contains("\"request\":{"))
+    XCTAssertTrue(json.contains("\"activity_id\":\"activity-1\""))
+    XCTAssertFalse(json.contains("auth_proof"))
+    XCTAssertFalse(json.contains("transcript"))
+    XCTAssertFalse(json.contains("body"))
+
+    let messageObj = try messageObject(json)
+    XCTAssertEqual(Set(messageObj.keys), ["kind", "request"])
+    let request = try XCTUnwrap(messageObj["request"] as? [String: Any])
+    XCTAssertEqual(Set(request.keys), ["activity_id", "reason"])
+    XCTAssertEqual(try FridayEnvelope.decodeJSON(Data(json.utf8)).message, .activityMarkDoneRequest(req))
+  }
+
+  func testMS7_activityMarkDoneResultBlockedCarriesBlocker() throws {
+    let blocked = ActivityMarkDoneResultWire(
+      activityId: "missing-activity",
+      state: "unknown",
+      status: "blocked",
+      blocker: "unknown_activity")
+    let env = FridayEnvelope(msgId: "activity-result", sentAt: 1, message: .activityMarkDoneResult(blocked))
+    XCTAssertEqual(try FridayEnvelope.decodeJSON(try env.encodeJSON()).message, .activityMarkDoneResult(blocked))
+    let json = String(decoding: try env.encodeJSON(), as: UTF8.self)
+    XCTAssertTrue(json.contains("\"result\":{"))
+    XCTAssertTrue(json.contains("\"blocker\":\"unknown_activity\""))
+  }
 }

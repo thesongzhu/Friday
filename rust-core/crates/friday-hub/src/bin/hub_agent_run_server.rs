@@ -525,6 +525,18 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    let activity_mark_done_enabled =
+        activity_mark_done_enabled_from(env::var(ACTIVITY_MARK_DONE_ENABLED_ENV).ok().as_deref());
+    if activity_mark_done_enabled {
+        eprintln!(
+            "hub_agent_run_server: ACTIVITY-MARK-DONE ingress ENABLED (FRIDAY_ACTIVITY_MARK_DONE) — an inbound owner-authed ActivityMarkDoneRequest marks one existing activity_item done (no model call)"
+        );
+    } else {
+        eprintln!(
+            "hub_agent_run_server: ACTIVITY-MARK-DONE ingress DISABLED (set FRIDAY_ACTIVITY_MARK_DONE=1 to enable) — an ActivityMarkDoneRequest is a benign keepalive echo"
+        );
+    }
+
     // (C1/C2 §3) Read the PROVIDER-WORKSPACE-DISPATCH flag ONCE at boot (default-off). It gates the
     // serve-bin's `ProviderWorkspaceActionRequest` arm: when false the dispatch arm NEVER handles a
     // `ProviderWorkspaceActionRequest` — it falls through to the EXISTING catch-all keepalive echo
@@ -753,6 +765,12 @@ fn memory_confirm_enabled_from(raw: Option<&str>) -> bool {
 const RUN_OUTCOME_LEARNING_CONFIRM_ENABLED_ENV: &str = "FRIDAY_RUN_OUTCOME_LEARNING_CONFIRM";
 
 fn run_outcome_learning_confirm_enabled_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+const ACTIVITY_MARK_DONE_ENABLED_ENV: &str = "FRIDAY_ACTIVITY_MARK_DONE";
+
+fn activity_mark_done_enabled_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
@@ -1329,6 +1347,8 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
     provider_workspace_dispatch_enabled: bool,
 ) -> Result<usize, TransportError> {
     let mut processed = 0usize;
+    let activity_mark_done_enabled =
+        activity_mark_done_enabled_from(env::var(ACTIVITY_MARK_DONE_ENABLED_ENV).ok().as_deref());
     // S-E: per-session msg_id dedup. A reconnect mints a FRESH tracker (so it is not a
     // cross-connection store) — combined with the per-handshake nonce, a captured envelope is
     // useless both within a session (dedup) and across handshakes (nonce).
@@ -2027,6 +2047,21 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 );
                 eprintln!(
                     "hub_agent_run_server_dispatch: msg_id={} leg=run_outcome_learning_decision (run-outcome-learning confirm enabled)",
+                    env.msg_id
+                );
+                ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
+                processed += 1;
+            }
+            Message::ActivityMarkDoneRequest { request } if activity_mark_done_enabled => {
+                let now_ms = now_ms();
+                let result = friday_hub::hub_server::activity_mark_done_result_for_db(
+                    runtime.db(),
+                    &env.msg_id,
+                    request,
+                    now_ms,
+                );
+                eprintln!(
+                    "hub_agent_run_server_dispatch: msg_id={} leg=activity_mark_done (activity-mark-done enabled)",
                     env.msg_id
                 );
                 ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
@@ -4327,6 +4362,17 @@ mod tests {
         assert!(!run_outcome_learning_confirm_enabled_from(Some("true")));
         assert!(run_outcome_learning_confirm_enabled_from(Some("1")));
         assert!(run_outcome_learning_confirm_enabled_from(Some(" 1 ")));
+    }
+
+    #[test]
+    fn activity_mark_done_flag_is_default_off_and_fail_closed() {
+        assert!(!activity_mark_done_enabled_from(None));
+        assert!(!activity_mark_done_enabled_from(Some("")));
+        assert!(!activity_mark_done_enabled_from(Some("0")));
+        assert!(!activity_mark_done_enabled_from(Some("true")));
+        assert!(!activity_mark_done_enabled_from(Some("on")));
+        assert!(activity_mark_done_enabled_from(Some("1")));
+        assert!(activity_mark_done_enabled_from(Some(" 1 ")));
     }
 
     fn seed_run_outcome_learning_candidate<T: Transport>(

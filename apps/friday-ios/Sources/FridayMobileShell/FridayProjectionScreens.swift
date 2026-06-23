@@ -435,6 +435,7 @@ struct FridayProjectionScreen: View {
           emptyText("No transcript events in this projection.")
         } else {
           ForEach(projection.transcriptEvents.prefix(12)) { event in
+            let doneState = viewModel.activityMarkDoneStates[event.id]
             VStack(alignment: .leading, spacing: 5) {
               HStack {
                 Text(event.sectionTitle)
@@ -446,6 +447,20 @@ struct FridayProjectionScreen: View {
               Text(event.summary)
                 .font(.caption)
                 .foregroundStyle(MobileTheme.textSecondary)
+              HStack(spacing: 8) {
+                RefPill(label: "activity_id", ref: event.id)
+                Spacer()
+                Button {
+                  Task { await viewModel.markActivityDone(activityId: event.id) }
+                } label: {
+                  Image(systemName: "checkmark.circle")
+                    .frame(width: 26, height: 26)
+                }
+                .buttonStyle(.bordered)
+                .disabled(candidateDecisionControlsDisabled(doneState))
+                .accessibilityLabel("Mark activity done")
+              }
+              candidateDecisionStateView(doneState, pendingText: "Marking activity done...")
               if let proofRef = event.proofRef {
                 RefPill(label: "proofRef", ref: proofRef)
               }

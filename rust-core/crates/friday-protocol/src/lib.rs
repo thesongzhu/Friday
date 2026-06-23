@@ -61,9 +61,9 @@ use thiserror::Error;
 /// `RunOutcomeLearningDecisionRequest/Result`: the owner-authed, refs-only terminal
 /// confirm/reject caller for pending run-outcome learning candidates. It is a pure
 /// Hub DB mutation, default-dark behind the serving flag, and carries no answer body.
-pub const CURRENT_SCHEMA_VERSION: u16 = 15;
+pub const CURRENT_SCHEMA_VERSION: u16 = 16;
 /// The inclusive range of versions this build supports.
-pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 15 };
+pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 16 };
 
 /// A surface-safe Mission projection. This is the wire shape mobile, desktop, and
 /// channel surfaces may render. It intentionally has no raw provider ids, channel
@@ -452,6 +452,28 @@ pub struct RunOutcomeLearningDecisionResultWire {
     pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    pub state: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+}
+
+/// Client request to mark one Activity / Needs-Me item as `done`.
+///
+/// This is a refs-only owner action over an existing `activity_item`; it never carries a
+/// transcript/body, never completes a WorkItem, and never calls a provider/model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityMarkDoneRequestWire {
+    pub activity_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Hub response for an Activity / Needs-Me `done` action. Refs-only: the activity id,
+/// resulting state, coarse status, and optional blocker.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityMarkDoneResultWire {
+    pub activity_id: String,
     pub state: String,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1487,6 +1509,13 @@ pub enum Message {
     RunOutcomeLearningDecisionResult {
         result: RunOutcomeLearningDecisionResultWire,
     },
+    /// client->hub: mark ONE Activity / Needs-Me item done. This changes only
+    /// `activity_item.state`, never a WorkItem/proof/provider row.
+    ActivityMarkDoneRequest {
+        request: ActivityMarkDoneRequestWire,
+    },
+    /// hub->client: refs-only Activity / Needs-Me mark-done receipt.
+    ActivityMarkDoneResult { result: ActivityMarkDoneResultWire },
     /// **S-R1** — UI→DARK read-server: request the Mission Workbench read projection over the
     /// sealed-WS READ seam. PURE READ — no model/provider call. Owner-scoped: the read server
     /// authenticates `forwarded_principal`/`auth_proof` against the sealed session (the SAME chain a
@@ -2367,6 +2396,20 @@ mod tests {
                     blocker: None,
                 },
             },
+            Message::ActivityMarkDoneRequest {
+                request: ActivityMarkDoneRequestWire {
+                    activity_id: "activity-1".into(),
+                    reason: Some("owner cleared the row".into()),
+                },
+            },
+            Message::ActivityMarkDoneResult {
+                result: ActivityMarkDoneResultWire {
+                    activity_id: "activity-1".into(),
+                    state: "done".into(),
+                    status: "done".into(),
+                    blocker: None,
+                },
+            },
             Message::RunAnswerBodyRequest {
                 request: RunAnswerBodyRequestWire {
                     run_id: "run-readable".into(),
@@ -2434,6 +2477,50 @@ mod tests {
         assert!(json.contains("\"kind\":\"RunOutcomeLearningDecisionResult\""));
         assert!(json.contains("\"result\":{"));
         assert!(json.contains("\"blocker\":\"owner_scope_mismatch\""));
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+    }
+
+    #[test]
+    fn activity_mark_done_wire_is_refs_only_and_round_trips() {
+        let request = Message::ActivityMarkDoneRequest {
+            request: ActivityMarkDoneRequestWire {
+                activity_id: "activity-1".into(),
+                reason: Some("owner cleared the row".into()),
+            },
+        };
+        let env = Envelope::new("activity-done-req", 1000, request).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"ActivityMarkDoneRequest\""));
+        assert!(json.contains("\"request\":{"));
+        assert!(json.contains("\"activity_id\":\"activity-1\""));
+        for forbidden in [
+            "transcript",
+            "answer body",
+            "proof_receipt",
+            "completed_with_proof",
+            "sk-",
+            "/Users/jarvis/private",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "activity mark-done request leaked {forbidden}: {json}"
+            );
+        }
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+
+        let result = Message::ActivityMarkDoneResult {
+            result: ActivityMarkDoneResultWire {
+                activity_id: "activity-1".into(),
+                state: "done".into(),
+                status: "blocked".into(),
+                blocker: Some("unknown_activity".into()),
+            },
+        };
+        let env = Envelope::new("activity-done-res", 1001, result).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"ActivityMarkDoneResult\""));
+        assert!(json.contains("\"result\":{"));
+        assert!(json.contains("\"blocker\":\"unknown_activity\""));
         assert_eq!(Envelope::decode(&json).unwrap(), env);
     }
 
@@ -3226,13 +3313,11 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_bumped_to_fifteen_for_run_outcome_learning_decision() {
-        // A1 bumps the wire version so a v13 peer advertises the run-CONTROL kinds
-        // (Paused/Resume/Cancel/Reject/ControlResult) exist — wire-compat honesty — even
-        // while nothing emits them yet (DARK, behind the default-off flag). S-A's v12
-        // substrate kinds are still present and unchanged.
-        assert_eq!(CURRENT_SCHEMA_VERSION, 15);
-        assert_eq!(SUPPORTED.max, 15);
+    fn schema_version_bumped_to_sixteen_for_activity_mark_done() {
+        // Activity mark-done adds a new refs-only owner action over Activity / Needs-Me rows.
+        // Bump the advertised wire version so peers can tell the request/result kinds exist.
+        assert_eq!(CURRENT_SCHEMA_VERSION, 16);
+        assert_eq!(SUPPORTED.max, 16);
         assert_eq!(SUPPORTED.min, 1);
     }
 

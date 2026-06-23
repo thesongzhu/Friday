@@ -83,6 +83,19 @@
       "notes": "This is the governance leg for A1 run-outcome learning. The mapped dispatch test seeds one pending owner-owned run-outcome candidate, sends the live sealed-message request shape through the flag-on server dispatch arm, and asserts the row transitions to Confirmed. Sibling proofs cover exact-'1' flag parsing and flag-off keepalive byte-identical behavior. Truth boundary: this enables product confirmation of candidates; A1 live-done still requires an operator-origin organic turn to feed a candidate and a real confirm decision."
     },
     {
+      "flag": "FRIDAY_ACTIVITY_MARK_DONE",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "An owner-authed ActivityMarkDoneRequest marks one existing Activity / Needs-Me row done, without completing a WorkItem, minting proof, or calling a provider/model.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/src/hub_server.rs::activity_mark_done_marks_only_activity_row_done",
+      "additional_e2e_tests": [
+        "rust-core/crates/friday-hub/src/bin/hub_agent_run_server.rs::activity_mark_done_flag_is_default_off_and_fail_closed",
+        "rust-core/crates/friday-protocol/src/lib.rs::activity_mark_done_wire_is_refs_only_and_round_trips"
+      ],
+      "notes": "Default-OFF product action for clearing Activity / Needs-Me rows from mobile/desktop surfaces. The mapped test drives the shared DB result producer and asserts only activity_item.state becomes done: no WorkItem completion, no proof receipt, no token_ledger row. The protocol proof pins the refs-only nested request/result shape. The serve-bin matcher proof pins exact-'1' opt-in and default-off fail-closed behavior; with the flag OFF, the sealed request is a benign keepalive echo."
+    },
+    {
       "flag": "FRIDAY_A1_RUN_OUTCOME_LEARNING_RECALL",
       "process": "rust-ws-wrapper",
       "prod_state": "dark",

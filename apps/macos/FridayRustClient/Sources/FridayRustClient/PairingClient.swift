@@ -162,6 +162,8 @@ private func pairingKind(_ message: FridayMessage) -> String {
   case .memoryDecisionResult: return "MemoryDecisionResult"
   case .runOutcomeLearningDecisionRequest: return "RunOutcomeLearningDecisionRequest"
   case .runOutcomeLearningDecisionResult: return "RunOutcomeLearningDecisionResult"
+  case .activityMarkDoneRequest: return "ActivityMarkDoneRequest"
+  case .activityMarkDoneResult: return "ActivityMarkDoneResult"
   case .runAnswerBodyRequest: return "RunAnswerBodyRequest"
   case .runAnswerBodySnapshot: return "RunAnswerBodySnapshot"
   }
