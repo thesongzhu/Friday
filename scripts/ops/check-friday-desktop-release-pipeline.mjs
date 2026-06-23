@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
+
 function resolveRepoRoot() {
   const explicit = process.argv[2]?.trim() || process.env.FRIDAY_DESKTOP_RELEASE_REPO_ROOT?.trim();
   if (explicit) {
@@ -37,6 +39,145 @@ function scriptCheck(pkg, name) {
       ? "passed"
       : "failed",
   };
+}
+
+function isTrue(value) {
+  return TRUE_VALUES.has(String(value ?? "").trim().toLowerCase());
+}
+
+function resolveRepoPath(repoRoot, value) {
+  return path.isAbsolute(value) ? value : path.join(repoRoot, value);
+}
+
+function latestMtimeMs(targetPath) {
+  const stat = fs.statSync(targetPath);
+  if (!stat.isDirectory()) {
+    return stat.mtimeMs;
+  }
+
+  let latest = 0;
+  for (const entry of fs.readdirSync(targetPath, { withFileTypes: true })) {
+    const childPath = path.join(targetPath, entry.name);
+    latest = Math.max(latest, latestMtimeMs(childPath));
+  }
+  return latest || stat.mtimeMs;
+}
+
+function readArtifactFreshnessSpecs(repoRoot) {
+  const specPath = process.env.FRIDAY_CLIENT_SHIP_ARTIFACTS_JSON?.trim();
+  if (!specPath) {
+    return [];
+  }
+
+  const absolutePath = resolveRepoPath(repoRoot, specPath);
+  const parsed = JSON.parse(fs.readFileSync(absolutePath, "utf8"));
+  if (!Array.isArray(parsed)) {
+    throw new Error("artifact freshness spec must be a JSON array");
+  }
+  return parsed;
+}
+
+function artifactFreshnessCheck(repoRoot, spec) {
+  const name = typeof spec?.name === "string" && spec.name.trim()
+    ? spec.name.trim()
+    : String(spec?.artifact ?? "unnamed artifact");
+  const artifact = typeof spec?.artifact === "string" ? spec.artifact.trim() : "";
+  const sources = Array.isArray(spec?.sources)
+    ? spec.sources.filter((source) => typeof source === "string" && source.trim()).map((source) => source.trim())
+    : [];
+
+  if (!artifact || sources.length === 0) {
+    return {
+      kind: "artifact-freshness",
+      label: `Fresh client artifact "${name}"`,
+      target: artifact || name,
+      status: "failed",
+      stderr: "artifact freshness specs require an artifact path and at least one source path",
+    };
+  }
+
+  const artifactPath = resolveRepoPath(repoRoot, artifact);
+  if (!fs.existsSync(artifactPath)) {
+    return {
+      kind: "artifact-freshness",
+      label: `Fresh client artifact "${name}"`,
+      target: artifact,
+      status: "failed",
+      stderr: "artifact is missing",
+    };
+  }
+
+  const missingSource = sources.find((source) => !fs.existsSync(resolveRepoPath(repoRoot, source)));
+  if (missingSource) {
+    return {
+      kind: "artifact-freshness",
+      label: `Fresh client artifact "${name}"`,
+      target: artifact,
+      status: "failed",
+      stderr: `source path is missing: ${missingSource}`,
+    };
+  }
+
+  const artifactMtime = latestMtimeMs(artifactPath);
+  const newestSource = sources
+    .map((source) => ({ source, mtimeMs: latestMtimeMs(resolveRepoPath(repoRoot, source)) }))
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)[0];
+
+  if (newestSource && newestSource.mtimeMs > artifactMtime) {
+    return {
+      kind: "artifact-freshness",
+      label: `Fresh client artifact "${name}"`,
+      target: artifact,
+      status: "failed",
+      stderr: `source newer than artifact: ${newestSource.source}`,
+    };
+  }
+
+  return {
+    kind: "artifact-freshness",
+    label: `Fresh client artifact "${name}"`,
+    target: artifact,
+    status: "passed",
+  };
+}
+
+function artifactFreshnessChecks(repoRoot) {
+  const requireFreshArtifacts = isTrue(process.env.FRIDAY_CLIENT_SHIP_REQUIRE_FRESH_ARTIFACTS);
+  const specPath = process.env.FRIDAY_CLIENT_SHIP_ARTIFACTS_JSON?.trim();
+
+  if (!specPath) {
+    return [{
+      kind: "artifact-freshness",
+      label: "Fresh client artifact manifest",
+      target: "FRIDAY_CLIENT_SHIP_ARTIFACTS_JSON",
+      status: requireFreshArtifacts ? "failed" : "skipped",
+      stderr: requireFreshArtifacts
+        ? "FRIDAY_CLIENT_SHIP_REQUIRE_FRESH_ARTIFACTS is set but no artifact freshness manifest was provided"
+        : "",
+    }];
+  }
+
+  try {
+    const specs = readArtifactFreshnessSpecs(repoRoot);
+    if (specs.length === 0) {
+      return [{
+        kind: "artifact-freshness",
+        label: "Fresh client artifact manifest",
+        target: specPath,
+        status: requireFreshArtifacts ? "failed" : "skipped",
+        stderr: requireFreshArtifacts ? "artifact freshness manifest is empty" : "",
+      }];
+    }
+    return specs.map((spec) => artifactFreshnessCheck(repoRoot, spec));
+  } catch (error) {
+    return [{
+      kind: "artifact-freshness",
+      label: "Fresh client artifact manifest",
+      target: specPath,
+      status: "failed",
+      stderr: error instanceof Error ? error.message : String(error),
+    }];
+  }
 }
 
 function runEnvCheck(repoRoot) {
@@ -121,6 +262,7 @@ const checks = [
     "verify:hub-console:native",
   ].map((name) => scriptCheck(pkg, name)),
   runEnvCheck(repoRoot),
+  ...artifactFreshnessChecks(repoRoot),
 ];
 
 const failedChecks = checks.filter((check) => check.status === "failed");

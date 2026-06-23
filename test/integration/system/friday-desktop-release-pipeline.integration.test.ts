@@ -20,6 +20,11 @@ async function writeFileWithParents(root: string, relativePath: string, content:
   await fs.writeFile(target, content, "utf8");
 }
 
+async function touch(root: string, relativePath: string, date: Date) {
+  const target = path.join(root, relativePath);
+  await fs.utimes(target, date, date);
+}
+
 async function createFixtureRepo(): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "friday-desktop-release-pipeline-"));
   await writeFileWithParents(root, "package.json", JSON.stringify({
@@ -113,6 +118,15 @@ describe("client ship gate pipeline check", () => {
         }),
       ]),
     );
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "artifact-freshness",
+          target: "FRIDAY_CLIENT_SHIP_ARTIFACTS_JSON",
+          status: "skipped",
+        }),
+      ]),
+    );
   });
 
   it("fails when a required release input is missing", async () => {
@@ -174,6 +188,103 @@ describe("client ship gate pipeline check", () => {
         expect.objectContaining({
           target: "apps/friday-android/app/src/main/AndroidManifest.xml",
           status: "failed",
+        }),
+      ]),
+    );
+  });
+
+  it("passes fresh artifact checks when declared artifacts are newer than sources", async () => {
+    const repoRoot = await createFixtureRepo();
+    await writeFileWithParents(repoRoot, "dist/macos/FridayHubConsole.app/Contents/MacOS/FridayHubConsole", "binary\n");
+    await writeFileWithParents(repoRoot, "client-artifacts.json", JSON.stringify([{
+      name: "hub-console-app",
+      artifact: "dist/macos/FridayHubConsole.app",
+      sources: [
+        "apps/macos/FridayHubConsole/Sources",
+        "apps/macos/FridayHubConsole/Package.swift",
+      ],
+    }], null, 2));
+
+    await touch(repoRoot, "apps/macos/FridayHubConsole/Sources/FridayHubConsole/FridayHubConsoleApp.swift", new Date("2026-06-22T00:00:00Z"));
+    await touch(repoRoot, "apps/macos/FridayHubConsole/Package.swift", new Date("2026-06-22T00:00:00Z"));
+    await touch(repoRoot, "dist/macos/FridayHubConsole.app/Contents/MacOS/FridayHubConsole", new Date("2026-06-23T00:00:00Z"));
+
+    const result = await execFileAsync(
+      "node",
+      [path.join(process.cwd(), "scripts/ops/check-friday-desktop-release-pipeline.mjs"), repoRoot],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FRIDAY_CLIENT_SHIP_REQUIRE_FRESH_ARTIFACTS: "1",
+          FRIDAY_CLIENT_SHIP_ARTIFACTS_JSON: "client-artifacts.json",
+        },
+      },
+    );
+
+    const report = JSON.parse(result.stdout) as {
+      status: string;
+      checks: Array<{ kind: string; target: string; status: string }>;
+    };
+    expect(report.status).toBe("passed");
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "artifact-freshness",
+          target: "dist/macos/FridayHubConsole.app",
+          status: "passed",
+        }),
+      ]),
+    );
+  });
+
+  it("fails fresh artifact checks when a client source is newer than the artifact", async () => {
+    const repoRoot = await createFixtureRepo();
+    await writeFileWithParents(repoRoot, "dist/macos/FridayHubConsole.app/Contents/MacOS/FridayHubConsole", "binary\n");
+    await writeFileWithParents(repoRoot, "client-artifacts.json", JSON.stringify([{
+      name: "hub-console-app",
+      artifact: "dist/macos/FridayHubConsole.app",
+      sources: [
+        "apps/macos/FridayHubConsole/Sources",
+        "apps/macos/FridayHubConsole/Package.swift",
+      ],
+    }], null, 2));
+
+    await touch(repoRoot, "dist/macos/FridayHubConsole.app/Contents/MacOS/FridayHubConsole", new Date("2026-06-22T00:00:00Z"));
+    await touch(repoRoot, "apps/macos/FridayHubConsole/Package.swift", new Date("2026-06-22T00:00:00Z"));
+    await touch(repoRoot, "apps/macos/FridayHubConsole/Sources/FridayHubConsole/FridayHubConsoleApp.swift", new Date("2026-06-23T00:00:00Z"));
+
+    const error = await execFileAsync(
+      "node",
+      [path.join(process.cwd(), "scripts/ops/check-friday-desktop-release-pipeline.mjs"), repoRoot],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FRIDAY_CLIENT_SHIP_REQUIRE_FRESH_ARTIFACTS: "1",
+          FRIDAY_CLIENT_SHIP_ARTIFACTS_JSON: "client-artifacts.json",
+        },
+      },
+    ).then(
+      () => null,
+      (failure) => failure as ExecFailure,
+    );
+
+    expect(error).not.toBeNull();
+    const report = JSON.parse(error!.stdout ?? "{}") as {
+      status: string;
+      checks: Array<{ kind: string; target: string; status: string; stderr?: string }>;
+    };
+    expect(report.status).toBe("failed");
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "artifact-freshness",
+          target: "dist/macos/FridayHubConsole.app",
+          status: "failed",
+          stderr: "source newer than artifact: apps/macos/FridayHubConsole/Sources",
         }),
       ]),
     );
