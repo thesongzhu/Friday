@@ -90,6 +90,7 @@ struct OperationsOverviewScreen: View {
       }
 
       devicePairingCard(viewModel.devicePairing)
+      t3ProvisioningCard(snapshot.t3ProvisioningStatus)
       missionCard(snapshot)
       if snapshot.isLoadedEmpty {
         loadedEmptyCard(snapshot)
@@ -159,6 +160,72 @@ struct OperationsOverviewScreen: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel("Device pairing readiness \(readiness.mode.rawValue). \(readiness.reason)")
     .accessibilityIdentifier("friday.desktop.device-pairing-readiness")
+  }
+
+  private func t3ProvisioningCard(_ status: MissionWorkbenchT3ProvisioningStatus?) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("T3 Provisioning")
+          Spacer()
+          StatusChip(
+            text: status?.isFullyProvisioned == true ? "fully provisioned" : "operator gated",
+            bg: status?.isFullyProvisioned == true ? HubTheme.chipPendingBG : HubTheme.chipWarnBG,
+            fg: status?.isFullyProvisioned == true ? HubTheme.chipPendingFG : HubTheme.chipWarnFG)
+        }
+
+        if let status {
+          Text(status.truthLabel)
+            .font(.system(size: 10))
+            .foregroundStyle(HubTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+          HStack(spacing: 8) {
+            StatusChip(
+              text: status.paired ? "paired" : "not paired",
+              bg: status.paired ? HubTheme.chipPendingBG : HubTheme.chipWarnBG,
+              fg: status.paired ? HubTheme.chipPendingFG : HubTheme.chipWarnFG)
+            StatusChip(
+              text: "active devices \(status.activeTrustedDeviceCount)",
+              bg: HubTheme.chipPendingBG,
+              fg: HubTheme.chipPendingFG)
+            StatusChip(
+              text: "active grants \(status.activeTrustGrantCount)",
+              bg: status.activeTrustGrantCount > 0 ? HubTheme.chipPendingBG : HubTheme.chipWarnBG,
+              fg: status.activeTrustGrantCount > 0 ? HubTheme.chipPendingFG : HubTheme.chipWarnFG)
+            StatusChip(
+              text: "passports \(status.contextPassportCount)",
+              bg: status.contextPassportCount > 0 ? HubTheme.chipPendingBG : HubTheme.chipWarnBG,
+              fg: status.contextPassportCount > 0 ? HubTheme.chipPendingFG : HubTheme.chipWarnFG)
+          }
+          .lineLimit(1)
+
+          if let device = status.latestDevice {
+            RefPill(label: "latest_device", ref: device.deviceId)
+            HStack(spacing: 8) {
+              RefPill(label: "device_label", ref: device.label.isEmpty ? "unlabeled" : device.label)
+              RefPill(label: "pubkey_fingerprint", ref: device.pubkeyFingerprint)
+            }
+          } else {
+            Text("No active trusted device row is visible in the Hub projection.")
+              .font(.system(size: 12))
+              .foregroundStyle(HubTheme.textSecondary)
+          }
+
+          Text("Read-only status from Hub DB; trust grant and context passport minting remain operator CLI ceremonies.")
+            .font(.system(size: 10))
+            .foregroundStyle(HubTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+          Text("This Hub projection does not expose T3 provisioning status yet.")
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textSecondary)
+        }
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(
+      "T3 provisioning \(status?.isFullyProvisioned == true ? "fully provisioned" : "operator gated")")
+    .accessibilityIdentifier("friday.desktop.t3-provisioning-status")
   }
 
   private func loadedEmptyCard(_ snapshot: WorkbenchSnapshot) -> some View {
