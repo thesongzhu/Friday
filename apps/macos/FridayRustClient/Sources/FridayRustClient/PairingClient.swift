@@ -85,10 +85,6 @@ public final class SealedWSPairingClient: FridayPairingClient, @unchecked Sendab
     guard serverPub == (try manifest.hubPublicKey) else {
       throw FridayPairingClientError.serverPubkeyMismatch
     }
-    let sessionNonce = try transport.readFrame()
-    guard sessionNonce.count == 64 else {
-      throw FridayPairingClientError.badSessionNonce
-    }
     try transport.upgrade()
 
     let sessionKey: [UInt8]

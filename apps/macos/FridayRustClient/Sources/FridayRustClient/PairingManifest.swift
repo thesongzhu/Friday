@@ -69,7 +69,8 @@ public struct FridayPairingManifest: Codable, Equatable, Sendable, CustomStringC
 
   public var webSocketEndpoint: String {
     get throws {
-      guard let endpoint = transportHints.first(where: { $0.kind == "websocket" })?.endpoint,
+      let wsKinds = Set(["websocket", "lan_websocket", "manual_url"])
+      guard let endpoint = transportHints.first(where: { wsKinds.contains($0.kind) })?.endpoint,
         !endpoint.isEmpty
       else {
         throw FridayPairingManifestError.missingWebSocketEndpoint
