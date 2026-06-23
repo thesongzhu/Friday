@@ -269,6 +269,11 @@ struct FridayChatScreen: View {
         if let outcome = r.answerBodyOutcome { RefPill(label: "answer_body", ref: outcome) }
         if let turns = r.turns { RefPill(label: "turns", ref: "\(turns)") }
         if let tools = r.executedTools { RefPill(label: "executed_tools", ref: "\(tools)") }
+        if let prompt = r.promptTokens { RefPill(label: "prompt_tokens", ref: "\(prompt)") }
+        if let completion = r.completionTokens { RefPill(label: "completion_tokens", ref: "\(completion)") }
+        if let total = tokenTotal(prompt: r.promptTokens, completion: r.completionTokens) {
+          RefPill(label: "total_tokens", ref: "\(total)")
+        }
       }
     }
     .accessibilityElement(children: .contain)
@@ -365,6 +370,12 @@ struct FridayChatScreen: View {
       return nil
     }
     return trimmed
+  }
+
+  private func tokenTotal(prompt: UInt64?, completion: UInt64?) -> UInt64? {
+    guard let prompt, let completion else { return nil }
+    let sum = prompt.addingReportingOverflow(completion)
+    return sum.overflow ? nil : sum.partialValue
   }
 }
 
