@@ -618,11 +618,9 @@ public final class OperationsOverviewViewModel: ObservableObject {
   /// Submit ONE owner confirm/reject for a memory candidate over the sealed WRITE seam, keyed by the
   /// candidate's display id. `memoryId` is what the server decides on.
   ///
-  /// HONEST-STATE NOTE (Layer-D prerequisite): the read projection currently surfaces a SYNTHETIC
-  /// candidate id, not the durable `memory_item` row id, so a confirm against it returns
-  /// `status:"blocked"` (`unknown_candidate`) — which is rendered AS `.error` (never a fake confirm).
-  /// A real confirm closes only once the read projection surfaces the real memory_id (a cross-team
-  /// Rust change, out of scope here). Either way the control is wired end-to-end and honest.
+  /// Submit ONE owner confirm/reject for a memory candidate over the sealed WRITE seam. The read
+  /// projection surfaces the durable `memory_item` id; the server still owns all owner/namespace
+  /// gates and can return `status:"blocked"` for stale, malformed, or out-of-scope candidates.
   public func decideMemory(candidateId: String, memoryId: String, confirm: Bool) async {
     guard let writeClient else {
       memoryDecisionStates[candidateId] = .error(reason: "Write seam not configured.")

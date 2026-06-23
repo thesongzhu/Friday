@@ -319,30 +319,54 @@ fn memory_candidates_json(
     mission: &friday_core::Mission,
     links: &[friday_core::MissionLink],
 ) -> Vec<Value> {
+    let mut seen_memory_ids: Vec<String> = Vec::new();
     let mut rows = links
         .iter()
         .filter(|link| link.link_kind == MissionLinkKind::MemoryCandidate)
-        .enumerate()
-        .map(|(index, link)| {
-            json!({
-                "id": format!("memory_candidate_{}_{}", safe_ref_part(&mission.mission_id), index),
-                "preview": "Review-only memory candidate attached to this Mission.",
-                "state": "candidate_review_only",
-                "grantsMemoryAuthority": false,
-                "evidenceRef": redacted_link_proof_ref("memory-candidate", link)
-            })
+        .filter_map(|link| {
+            let memory_id = memory_id_from_ref(&link.target_ref)?;
+            if seen_memory_ids.iter().any(|seen| seen == &memory_id) {
+                return None;
+            }
+            seen_memory_ids.push(memory_id.clone());
+            Some(memory_candidate_row(
+                &memory_id,
+                redacted_link_proof_ref("memory-candidate", link),
+            ))
         })
         .collect::<Vec<_>>();
-    for (index, _candidate_ref) in mission.memory_candidate_refs.iter().enumerate() {
-        rows.push(json!({
-            "id": format!("memory_candidate_{}_mission_{}", safe_ref_part(&mission.mission_id), index),
-            "preview": "Review-only memory candidate attached to this Mission.",
-            "state": "candidate_review_only",
-            "grantsMemoryAuthority": false,
-            "evidenceRef": redacted_ref("memory-candidate", &format!("{}:{index}", mission.mission_id))
-        }));
+    for candidate_ref in &mission.memory_candidate_refs {
+        let Some(memory_id) = memory_id_from_ref(candidate_ref) else {
+            continue;
+        };
+        if seen_memory_ids.iter().any(|seen| seen == &memory_id) {
+            continue;
+        }
+        seen_memory_ids.push(memory_id.clone());
+        rows.push(memory_candidate_row(
+            &memory_id,
+            redacted_ref("memory-candidate", candidate_ref),
+        ));
     }
     rows
+}
+
+fn memory_id_from_ref(memory_ref: &str) -> Option<String> {
+    let id = memory_ref.strip_prefix("friday://memory/")?.trim();
+    if id.is_empty() || id.contains('/') || id.contains('#') {
+        return None;
+    }
+    Some(id.to_string())
+}
+
+fn memory_candidate_row(memory_id: &str, evidence_ref: String) -> Value {
+    json!({
+        "id": memory_id,
+        "preview": "Review-only memory candidate attached to this Mission.",
+        "state": "candidate_review_only",
+        "grantsMemoryAuthority": false,
+        "evidenceRef": evidence_ref
+    })
 }
 
 fn run_outcome_learning_candidates_json(
@@ -1047,11 +1071,12 @@ mod tests {
     use super::*;
     use crate::channel_event::ingest_channel_inbound;
     use crate::channels::{redact_inbound, VerifiedInbound};
-    use crate::mission_preflight::attach_channel_inbound_receipt;
+    use crate::mission_preflight::{attach_channel_inbound_receipt, attach_memory_candidate_ref};
     use friday_core::{
-        ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus,
-        RouteDecisionCard, TruthStatus, WorkItem, WorkItemStatus, WorkLane,
+        ApprovalState, FridayConversation, HandoffJudgmentMemory, MemoryScope, Mission,
+        MissionStatus, RouteDecisionCard, TruthStatus, WorkItem, WorkItemStatus, WorkLane,
     };
+    use friday_storage::memory;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static C: AtomicU64 = AtomicU64::new(0);
@@ -1212,6 +1237,54 @@ mod tests {
             snapshot.get("missionId").and_then(Value::as_str),
             Some(mission_id.as_str()),
             "the snapshot must carry the EXACT real hyphen mission id, not a rewritten/synthetic shape"
+        );
+    }
+
+    #[test]
+    fn memory_candidates_project_durable_memory_id_once() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        memory::record_candidate(
+            db.conn(),
+            &memory::NewMemoryCandidate {
+                memory_id: "mem-workbench-confirm",
+                scope: MemoryScope::Global,
+                content_ref: Some("blob://mem-workbench-confirm"),
+                content: Some("User wants precise Friday progress reports."),
+                principal_id: Some("owner-real"),
+                sensitive: false,
+                created_at: 1_780_640_000_200,
+            },
+        )
+        .unwrap();
+        attach_memory_candidate_ref(&db, &mission_id, "mem-workbench-confirm", 1_780_640_000_300)
+            .unwrap();
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        let candidates = snapshot
+            .get("memoryCandidates")
+            .and_then(Value::as_array)
+            .expect("memoryCandidates array");
+        assert_eq!(
+            candidates.len(),
+            1,
+            "mission links + mission refs point at the same durable memory id and must dedupe"
+        );
+        assert_eq!(
+            candidates[0].get("id").and_then(Value::as_str),
+            Some("mem-workbench-confirm"),
+            "projection must surface the server-decidable memory_id, not a synthetic display id"
+        );
+        assert_eq!(
+            candidates[0]
+                .get("grantsMemoryAuthority")
+                .and_then(Value::as_bool),
+            Some(false),
+            "candidate projection remains review-only until the write decision confirms it"
+        );
+        assert_ne!(
+            candidates[0].get("id").and_then(Value::as_str),
+            Some("memory_candidate_mission_x_0")
         );
     }
 

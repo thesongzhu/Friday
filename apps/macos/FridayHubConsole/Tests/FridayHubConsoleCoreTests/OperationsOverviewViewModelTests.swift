@@ -1216,15 +1216,15 @@ func decideMemoryConfirmRendersConfirmedRecallable() async {
 @Test
 @MainActor
 func decideMemoryBlockedRendersErrorNotConfirmed() async {
-  // THE synthetic-candidate-id reality today: a confirm against the synthetic id returns
-  // status:"blocked" — which MUST render .error (never a fabricated confirm).
+  // A stale or out-of-scope durable id still returns status:"blocked" and MUST render .error
+  // rather than a fabricated confirm.
   let vm = OperationsOverviewViewModel(
     client: MockReadClient(behavior: .loaded),
     writeClient: MockMissionSpineWriteClient(behavior: .memoryBlocked))
   await vm.decideMemory(
-    candidateId: "cand-synthetic", memoryId: "memory_candidate_mission_x_0", confirm: true)
-  guard case let .error(reason) = vm.memoryDecisionStates["cand-synthetic"] else {
-    Issue.record("a blocked decision must render .error, got \(String(describing: vm.memoryDecisionStates["cand-synthetic"]))")
+    candidateId: "mem-stale", memoryId: "mem-stale", confirm: true)
+  guard case let .error(reason) = vm.memoryDecisionStates["mem-stale"] else {
+    Issue.record("a blocked decision must render .error, got \(String(describing: vm.memoryDecisionStates["mem-stale"]))")
     return
   }
   #expect(reason.contains("unknown_candidate") || reason.contains("blocked"))
