@@ -41,7 +41,35 @@ final class HomeViewModelTests: XCTestCase {
 
     func fetchProvidersDoctor(probe: String?) async throws -> ReadProjectionSnapshot {
       requestedDetails.append("providers:\(probe ?? "")")
-      return try detailSnapshot(kind: "providers", status: "ready", proofRef: "proof://provider/doctor")
+      if case .fail(let error) = script {
+        throw error
+      }
+      let raw: [String: Any] = [
+        "truth_label": "rust_providers_detect",
+        "proof_only": true,
+        "ok": true,
+        "detected": [
+          [
+            "provider": "codex",
+            "installed": true,
+            "authenticated": true,
+            "detail": "codex cli authenticated",
+            "truthLabel": "linked_only",
+          ],
+          [
+            "provider": "claude",
+            "installed": true,
+            "authenticated": false,
+            "detail": "claude auth missing",
+            "truthLabel": "linked_only",
+          ],
+        ],
+        "ready_providers": ["codex"],
+        "any_authenticated": true,
+        "all_authenticated": false,
+      ]
+      let data = try JSONSerialization.data(withJSONObject: raw)
+      return try ReadProjectionSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_123)
     }
 
     func fetchSessionList() async throws -> ReadProjectionSnapshot {
@@ -78,7 +106,8 @@ final class HomeViewModelTests: XCTestCase {
       kind: String,
       status: String,
       runId: String? = nil,
-      proofRef: String
+      proofRef: String,
+      extra: [String: Any] = [:]
     ) throws -> ReadProjectionSnapshot {
       if case .fail(let error) = script {
         throw error
@@ -86,11 +115,16 @@ final class HomeViewModelTests: XCTestCase {
       var raw: [String: Any] = [
         "missionId": "mission-7",
         "status": status,
-        "truthLabel": "friday_owned",
         "proofRef": proofRef,
         "evidenceRefs": ["proof://evidence/\(kind)"],
       ]
+      if extra["truth_label"] == nil && extra["truthLabel"] == nil {
+        raw["truthLabel"] = "friday_owned"
+      }
       if let runId { raw["runId"] = runId }
+      for (key, value) in extra {
+        raw[key] = value
+      }
       let data = try JSONSerialization.data(withJSONObject: raw)
       return try ReadProjectionSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_123)
     }
@@ -282,8 +316,32 @@ final class HomeViewModelTests: XCTestCase {
     }
     XCTAssertEqual(client.requestedDetails, ["providers:anthropic"])
     XCTAssertEqual(detail.title, "Provider doctor")
-    XCTAssertEqual(detail.summary, "mission=mission-7 | status=ready | truth=friday_owned")
-    XCTAssertEqual(detail.refs, ["proof://provider/doctor", "proof://evidence/providers"])
+    XCTAssertEqual(detail.summary, "truth=rust_providers_detect")
+    XCTAssertEqual(detail.refs, [])
+    XCTAssertEqual(detail.providerReadiness?.truthLabel, "rust_providers_detect")
+    XCTAssertEqual(detail.providerReadiness?.proofOnly, true)
+    XCTAssertEqual(detail.providerReadiness?.ok, true)
+    XCTAssertEqual(detail.providerReadiness?.readyProviders, ["codex"])
+    XCTAssertEqual(detail.providerReadiness?.anyAuthenticated, true)
+    XCTAssertEqual(detail.providerReadiness?.allAuthenticated, false)
+    XCTAssertEqual(detail.providerReadiness?.detected.map(\.provider), ["codex", "claude"])
+    XCTAssertEqual(detail.providerReadiness?.detected.first?.authenticated, true)
+    XCTAssertEqual(detail.providerReadiness?.detected.last?.detail, "claude auth missing")
+    XCTAssertEqual(detail.providerReadiness?.detected.last?.truthLabel, "linked_only")
+  }
+
+  func testProviderReadinessRequiresProviderDoctorTruthLabel() throws {
+    let raw: [String: Any] = [
+      "truth_label": "not_provider_doctor",
+      "detected": [
+        ["provider": "codex", "installed": true, "authenticated": true, "detail": "logged_in", "truthLabel": "linked_only"],
+      ],
+    ]
+    let data = try JSONSerialization.data(withJSONObject: raw)
+    let snapshot = try ReadProjectionSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_123)
+    let detail = HomeReadDetail(title: "Non-provider detail", snapshot: snapshot)
+
+    XCTAssertNil(detail.providerReadiness)
   }
 
   func testLoadDetail_callsRunAndNeedsMeReadArms() async throws {
