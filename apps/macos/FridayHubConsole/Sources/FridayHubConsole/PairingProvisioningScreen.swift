@@ -66,11 +66,19 @@ struct PairingProvisioningScreen: View {
           .accessibilityIdentifier("friday.desktop.pairing-qr-json-input")
         HStack(spacing: 8) {
           Button {
+            Task { await viewModel.startPairingSession() }
+          } label: {
+            Label("Start Session", systemImage: "antenna.radiowaves.left.and.right")
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(!viewModel.canStartPairingSession)
+
+          Button {
             viewModel.load(qrJSON: inputPayload)
           } label: {
             Label("Decode", systemImage: "checkmark.shield")
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(.bordered)
           .disabled(inputPayload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
           Button {
