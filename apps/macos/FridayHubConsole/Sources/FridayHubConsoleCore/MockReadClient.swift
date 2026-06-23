@@ -152,6 +152,23 @@ public struct MockReadClient: FridayRustReadClient {
         executedTools: 0
       )
     ]
+    let t3ProvisioningStatus = MissionWorkbenchT3ProvisioningStatus(
+      truthLabel: "rust_hub_t3_provisioning_read_only_no_mint",
+      paired: true,
+      deviceIdentityCount: 1,
+      trustedDeviceCount: 1,
+      activeTrustedDeviceCount: 1,
+      trustGrantCount: 1,
+      activeTrustGrantCount: 1,
+      contextPassportCount: 1,
+      contextPassportItemCount: 2,
+      latestDevice: MissionWorkbenchTrustedDeviceSummary(
+        deviceId: "proof://device/paired-desktop-1",
+        label: "Friday iPhone",
+        pairedAt: 1_780_640_000_123,
+        pubkeyFingerprint: "abcd1234:dcba4321"
+      )
+    )
 
     let providerReceiptRefs = [
       "proof://provider-receipt/3f9a1c2b7e004d18",
@@ -315,6 +332,7 @@ public struct MockReadClient: FridayRustReadClient {
       memoryCandidates: memoryCandidates,
       runOutcomeLearningCandidates: runOutcomeLearningCandidates,
       capabilityStates: capabilityStates,
+      t3ProvisioningStatus: t3ProvisioningStatus,
       transcriptSections: [missionSection, providerSection, channelSection, statusSection]
     )
   }()

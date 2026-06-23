@@ -50,6 +50,7 @@ public struct HomeProjection: Sendable, Equatable {
   public let memoryCandidates: [HomeMemoryCandidate]
   public let runOutcomeLearningCandidates: [HomeRunOutcomeLearningCandidate]
   public let capabilityStates: [HomeCapabilityState]
+  public let t3ProvisioningStatus: HomeT3ProvisioningStatus?
   public let transcriptEvents: [HomeTranscriptEvent]
   /// The Hub epoch-millis the snapshot was generated (lets the UI flag staleness).
   public let generatedAtMs: Int64
@@ -76,6 +77,7 @@ public struct HomeProjection: Sendable, Equatable {
     self.runOutcomeLearningCandidates = Self.parseRunOutcomeLearningCandidates(
       raw["runOutcomeLearningCandidates"])
     self.capabilityStates = Self.parseCapabilityStates(raw["capabilityStates"])
+    self.t3ProvisioningStatus = HomeT3ProvisioningStatus(raw: raw["t3ProvisioningStatus"])
     self.transcriptEvents = Self.parseTranscriptEvents(raw["transcriptSections"])
     self.generatedAtMs = snapshot.generatedAtMs
   }
@@ -93,6 +95,7 @@ public struct HomeProjection: Sendable, Equatable {
       && memoryCandidates.isEmpty
       && runOutcomeLearningCandidates.isEmpty
       && capabilityStates.isEmpty
+      && t3ProvisioningStatus == nil
       && transcriptEvents.isEmpty
   }
 
@@ -233,6 +236,65 @@ public struct HomeCapabilityState: Sendable, Identifiable, Equatable {
   public let dispatchAllowed: Bool
   public let summary: String
   public let proofRef: String
+}
+
+public struct HomeT3ProvisioningStatus: Sendable, Equatable {
+  public let truthLabel: String
+  public let paired: Bool
+  public let deviceIdentityCount: Int
+  public let trustedDeviceCount: Int
+  public let activeTrustedDeviceCount: Int
+  public let trustGrantCount: Int
+  public let activeTrustGrantCount: Int
+  public let contextPassportCount: Int
+  public let contextPassportItemCount: Int
+  public let latestDevice: HomeTrustedDeviceSummary?
+
+  init?(raw: Any?) {
+    guard let row = raw as? [String: Any] else { return nil }
+    self.truthLabel = row["truthLabel"] as? String ?? "unknown"
+    self.paired = row["paired"] as? Bool ?? false
+    self.deviceIdentityCount = Self.int(row["deviceIdentityCount"])
+    self.trustedDeviceCount = Self.int(row["trustedDeviceCount"])
+    self.activeTrustedDeviceCount = Self.int(row["activeTrustedDeviceCount"])
+    self.trustGrantCount = Self.int(row["trustGrantCount"])
+    self.activeTrustGrantCount = Self.int(row["activeTrustGrantCount"])
+    self.contextPassportCount = Self.int(row["contextPassportCount"])
+    self.contextPassportItemCount = Self.int(row["contextPassportItemCount"])
+    self.latestDevice = HomeTrustedDeviceSummary(raw: row["latestDevice"])
+  }
+
+  public var isFullyProvisioned: Bool {
+    paired && activeTrustGrantCount > 0 && contextPassportCount > 0 && contextPassportItemCount > 0
+  }
+
+  private static func int(_ value: Any?) -> Int {
+    if let int = value as? Int { return int }
+    if let number = value as? NSNumber { return number.intValue }
+    return 0
+  }
+}
+
+public struct HomeTrustedDeviceSummary: Sendable, Equatable {
+  public let deviceId: String
+  public let label: String
+  public let pairedAt: Int64
+  public let pubkeyFingerprint: String
+
+  init?(raw: Any?) {
+    guard let row = raw as? [String: Any] else { return nil }
+    self.deviceId = row["deviceId"] as? String ?? ""
+    self.label = row["label"] as? String ?? ""
+    self.pairedAt = Self.int64(row["pairedAt"])
+    self.pubkeyFingerprint = row["pubkeyFingerprint"] as? String ?? ""
+  }
+
+  private static func int64(_ value: Any?) -> Int64 {
+    if let int = value as? Int64 { return int }
+    if let int = value as? Int { return Int64(int) }
+    if let number = value as? NSNumber { return number.int64Value }
+    return 0
+  }
 }
 
 public struct HomeTranscriptEvent: Sendable, Identifiable, Equatable {

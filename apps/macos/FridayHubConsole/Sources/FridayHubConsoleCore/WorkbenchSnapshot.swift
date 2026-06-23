@@ -420,6 +420,7 @@ public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
   public let memoryCandidates: [MissionWorkbenchMemoryCandidate]
   public let runOutcomeLearningCandidates: [MissionWorkbenchRunOutcomeLearningCandidate]
   public let capabilityStates: [MissionWorkbenchCapabilityState]
+  public let t3ProvisioningStatus: MissionWorkbenchT3ProvisioningStatus?
   public let transcriptSections: [MissionTranscriptSection]
 
   public init(
@@ -437,6 +438,7 @@ public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
     memoryCandidates: [MissionWorkbenchMemoryCandidate],
     runOutcomeLearningCandidates: [MissionWorkbenchRunOutcomeLearningCandidate] = [],
     capabilityStates: [MissionWorkbenchCapabilityState],
+    t3ProvisioningStatus: MissionWorkbenchT3ProvisioningStatus? = nil,
     transcriptSections: [MissionTranscriptSection]
   ) {
     self.missionId = missionId
@@ -453,6 +455,7 @@ public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
     self.memoryCandidates = memoryCandidates
     self.runOutcomeLearningCandidates = runOutcomeLearningCandidates
     self.capabilityStates = capabilityStates
+    self.t3ProvisioningStatus = t3ProvisioningStatus
     self.transcriptSections = transcriptSections
   }
 
@@ -464,8 +467,75 @@ public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
       && memoryCandidates.isEmpty
       && runOutcomeLearningCandidates.isEmpty
       && capabilityStates.isEmpty
+      && t3ProvisioningStatus == nil
       && transcriptSections.isEmpty
   }
 }
 
 public typealias MissionWorkbenchSnapshot = WorkbenchSnapshot
+
+public struct MissionWorkbenchT3ProvisioningStatus: Codable, Sendable, Equatable {
+  public let truthLabel: String
+  public let paired: Bool
+  public let deviceIdentityCount: Int
+  public let trustedDeviceCount: Int
+  public let activeTrustedDeviceCount: Int
+  public let trustGrantCount: Int
+  public let activeTrustGrantCount: Int
+  public let contextPassportCount: Int
+  public let contextPassportItemCount: Int
+  public let latestDevice: MissionWorkbenchTrustedDeviceSummary?
+
+  public init(
+    truthLabel: String,
+    paired: Bool,
+    deviceIdentityCount: Int,
+    trustedDeviceCount: Int,
+    activeTrustedDeviceCount: Int,
+    trustGrantCount: Int,
+    activeTrustGrantCount: Int,
+    contextPassportCount: Int,
+    contextPassportItemCount: Int,
+    latestDevice: MissionWorkbenchTrustedDeviceSummary?
+  ) {
+    self.truthLabel = truthLabel
+    self.paired = paired
+    self.deviceIdentityCount = deviceIdentityCount
+    self.trustedDeviceCount = trustedDeviceCount
+    self.activeTrustedDeviceCount = activeTrustedDeviceCount
+    self.trustGrantCount = trustGrantCount
+    self.activeTrustGrantCount = activeTrustGrantCount
+    self.contextPassportCount = contextPassportCount
+    self.contextPassportItemCount = contextPassportItemCount
+    self.latestDevice = latestDevice
+  }
+
+  public var isFullyProvisioned: Bool {
+    paired && activeTrustGrantCount > 0 && contextPassportCount > 0 && contextPassportItemCount > 0
+  }
+}
+
+public struct MissionWorkbenchTrustedDeviceSummary: Codable, Sendable, Equatable {
+  public let deviceId: String
+  public let label: String
+  public let pairedAt: Int64
+  public let revokedAt: Int64?
+  public let keyRotatedAt: Int64?
+  public let pubkeyFingerprint: String
+
+  public init(
+    deviceId: String,
+    label: String,
+    pairedAt: Int64,
+    revokedAt: Int64? = nil,
+    keyRotatedAt: Int64? = nil,
+    pubkeyFingerprint: String
+  ) {
+    self.deviceId = deviceId
+    self.label = label
+    self.pairedAt = pairedAt
+    self.revokedAt = revokedAt
+    self.keyRotatedAt = keyRotatedAt
+    self.pubkeyFingerprint = pubkeyFingerprint
+  }
+}

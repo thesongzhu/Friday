@@ -140,6 +140,26 @@ export interface FridayMissionSpineTranscriptSection {
   events: FridayMissionSpineTranscriptEvent[];
 }
 
+export interface FridayMissionSpineT3ProvisioningStatus {
+  truthLabel: "rust_hub_t3_provisioning_read_only_no_mint";
+  paired: boolean;
+  deviceIdentityCount: number;
+  trustedDeviceCount: number;
+  activeTrustedDeviceCount: number;
+  trustGrantCount: number;
+  activeTrustGrantCount: number;
+  contextPassportCount: number;
+  contextPassportItemCount: number;
+  latestDevice?: {
+    deviceId: string;
+    label: string;
+    pairedAt: number;
+    revokedAt?: number | null;
+    keyRotatedAt?: number | null;
+    pubkeyFingerprint: string;
+  } | null;
+}
+
 export interface FridayMissionSpineWorkbenchSnapshot {
   missionId: string;
   fridayConversationId: string;
@@ -165,6 +185,7 @@ export interface FridayMissionSpineWorkbenchSnapshot {
   timelinePages: FridayMissionSpineWorkbenchTimelinePage[];
   memoryCandidates: FridayMissionSpineWorkbenchMemoryCandidate[];
   capabilityStates: FridayMissionSpineWorkbenchCapabilityState[];
+  t3ProvisioningStatus?: FridayMissionSpineT3ProvisioningStatus;
   transcriptSections: FridayMissionSpineTranscriptSection[];
 }
 

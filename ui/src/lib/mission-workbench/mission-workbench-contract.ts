@@ -78,6 +78,28 @@ export interface MissionWorkbenchCapabilityState {
   proofRef: string;
 }
 
+export interface MissionWorkbenchTrustedDeviceSummary {
+  deviceId: string;
+  label: string;
+  pairedAt: number;
+  revokedAt?: number | null;
+  keyRotatedAt?: number | null;
+  pubkeyFingerprint: string;
+}
+
+export interface MissionWorkbenchT3ProvisioningStatus {
+  truthLabel: "rust_hub_t3_provisioning_read_only_no_mint" | string;
+  paired: boolean;
+  deviceIdentityCount: number;
+  trustedDeviceCount: number;
+  activeTrustedDeviceCount: number;
+  trustGrantCount: number;
+  activeTrustGrantCount: number;
+  contextPassportCount: number;
+  contextPassportItemCount: number;
+  latestDevice?: MissionWorkbenchTrustedDeviceSummary | null;
+}
+
 export type MissionRouteActionTargetKind = "file" | "command" | "subtask";
 
 export type MissionRouteActionReversibility =
@@ -165,5 +187,6 @@ export interface MissionWorkbenchSnapshot {
   timelinePages: MissionWorkbenchTimelinePage[];
   memoryCandidates: MissionWorkbenchMemoryCandidate[];
   capabilityStates: MissionWorkbenchCapabilityState[];
+  t3ProvisioningStatus?: MissionWorkbenchT3ProvisioningStatus;
   transcriptSections: MissionTranscriptSection[];
 }

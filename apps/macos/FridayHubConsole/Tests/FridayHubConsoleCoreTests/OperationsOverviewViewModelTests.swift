@@ -81,6 +81,10 @@ func snapshotExercisesEveryHonestRenderingRule() {
   #expect(snapshot.memoryCandidates.allSatisfy { !$0.grantsMemoryAuthority })
   #expect(snapshot.runOutcomeLearningCandidates.first?.state == "pending")
   #expect(snapshot.runOutcomeLearningCandidates.first?.evidenceRef.hasPrefix("proof://") == true)
+  #expect(snapshot.t3ProvisioningStatus?.truthLabel == "rust_hub_t3_provisioning_read_only_no_mint")
+  #expect(snapshot.t3ProvisioningStatus?.isFullyProvisioned == true)
+  #expect(snapshot.t3ProvisioningStatus?.latestDevice?.deviceId.hasPrefix("proof://device/") == true)
+  #expect(snapshot.t3ProvisioningStatus?.latestDevice?.pubkeyFingerprint == "abcd1234:dcba4321")
 }
 
 @Test
@@ -231,6 +235,23 @@ func decodesRustProjectionShapedJSON() throws {
          "approvalState": "not_required", "dispatchAllowed": false, "summary": "s",
          "proofRef": "proof://route-decision/abc"}
       ],
+      "t3ProvisioningStatus": {
+        "truthLabel": "rust_hub_t3_provisioning_read_only_no_mint",
+        "paired": true,
+        "deviceIdentityCount": 1,
+        "trustedDeviceCount": 1,
+        "activeTrustedDeviceCount": 1,
+        "trustGrantCount": 1,
+        "activeTrustGrantCount": 1,
+        "contextPassportCount": 1,
+        "contextPassportItemCount": 2,
+        "latestDevice": {
+          "deviceId": "proof://device/paired-desktop-1",
+          "label": "Friday iPhone",
+          "pairedAt": 1780640000123,
+          "pubkeyFingerprint": "abcd1234:dcba4321"
+        }
+      },
       "transcriptSections": [
         {"id": "sec", "title": "Mission", "groupKind": "mission", "missionId": "mission_x",
          "truthLabel": "friday_owned", "status": "waiting", "events": [
@@ -247,6 +268,9 @@ func decodesRustProjectionShapedJSON() throws {
   #expect(snapshot.statusLabels == [.stale, .offline, .error])
   #expect(snapshot.workItems.first?.state == .providerAck)
   #expect(snapshot.runOutcomeLearningCandidates.first?.id == "a1:run_x:preference")
+  #expect(snapshot.t3ProvisioningStatus?.paired == true)
+  #expect(snapshot.t3ProvisioningStatus?.latestDevice?.deviceId == "proof://device/paired-desktop-1")
+  #expect(snapshot.t3ProvisioningStatus?.latestDevice?.pubkeyFingerprint == "abcd1234:dcba4321")
   #expect(snapshot.transcriptSections.first?.events.first?.evidenceRefs.timelineRef != nil)
 }
 
@@ -284,6 +308,8 @@ func refreshPreservesRenderCriticalProjectionFieldsFromWire() async {
   #expect(snapshot.workItems.map(\.owner) == expected.workItems.map(\.owner))
   #expect(snapshot.memoryCandidates.map(\.evidenceRef) == expected.memoryCandidates.map(\.evidenceRef))
   #expect(snapshot.runOutcomeLearningCandidates.map(\.evidenceRef) == expected.runOutcomeLearningCandidates.map(\.evidenceRef))
+  #expect(snapshot.t3ProvisioningStatus == expected.t3ProvisioningStatus)
+  #expect(snapshot.t3ProvisioningStatus?.latestDevice?.deviceId.hasPrefix("proof://device/") == true)
   #expect(snapshot.transcriptSections.flatMap(\.events).map(\.proofRef) == expected.transcriptSections.flatMap(\.events).map(\.proofRef))
   #expect(!snapshot.isLoadedEmpty)
 }

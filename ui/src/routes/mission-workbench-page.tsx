@@ -393,6 +393,54 @@ export function MissionWorkbenchPage() {
             </div>
           </ShellCard>
 
+          <ShellCard
+            eyebrow="T3"
+            title={localize(locale, "设备与授权", "Device provisioning")}
+            aside={
+              <StatusPill tone={snapshot.t3ProvisioningStatus?.paired ? "success" : "warning"}>
+                {snapshot.t3ProvisioningStatus?.paired ? "paired" : "operator gated"}
+              </StatusPill>
+            }
+          >
+            {snapshot.t3ProvisioningStatus ? (
+              <div className="space-y-3">
+                <p className="break-all text-xs text-[color:var(--color-text-tertiary)]">
+                  {snapshot.t3ProvisioningStatus.truthLabel}
+                </p>
+                <div className="grid gap-2 text-xs text-[color:var(--color-text-secondary)] sm:grid-cols-2">
+                  <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
+                    active devices: {snapshot.t3ProvisioningStatus.activeTrustedDeviceCount}
+                  </div>
+                  <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
+                    active grants: {snapshot.t3ProvisioningStatus.activeTrustGrantCount}
+                  </div>
+                  <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
+                    passports: {snapshot.t3ProvisioningStatus.contextPassportCount}
+                  </div>
+                  <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
+                    passport items: {snapshot.t3ProvisioningStatus.contextPassportItemCount}
+                  </div>
+                </div>
+                {snapshot.t3ProvisioningStatus.latestDevice ? (
+                  <div className="space-y-2 rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3 text-xs text-[color:var(--color-text-secondary)]">
+                    <p className="break-all">device: {snapshot.t3ProvisioningStatus.latestDevice.deviceId}</p>
+                    <p>label: {snapshot.t3ProvisioningStatus.latestDevice.label || "unlabeled"}</p>
+                    <p>fingerprint: {snapshot.t3ProvisioningStatus.latestDevice.pubkeyFingerprint}</p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-[color:var(--color-text-secondary)]">No active trusted device row is visible.</p>
+                )}
+                <p className="text-xs leading-5 text-[color:var(--color-text-tertiary)]">
+                  Read-only Hub DB projection. Trust grants and context passports remain operator CLI ceremonies.
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm leading-6 text-[color:var(--color-text-secondary)]">
+                This projection does not expose T3 provisioning status yet.
+              </p>
+            )}
+          </ShellCard>
+
           <ShellCard eyebrow="Memory" title={localize(locale, "候选记忆", "Memory candidates")}>
             <div className="space-y-3">
               {snapshot.memoryCandidates.map((candidate) => (

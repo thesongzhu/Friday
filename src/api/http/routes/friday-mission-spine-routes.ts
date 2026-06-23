@@ -608,6 +608,47 @@ function validateCapabilityStates(snapshot: FridayMissionSpineWorkbenchSnapshot,
   }
 }
 
+function validateT3ProvisioningStatus(snapshot: FridayMissionSpineWorkbenchSnapshot, failures: string[]): void {
+  const status = snapshot.t3ProvisioningStatus;
+  if (!status) return;
+  pushIfInvalid(
+    failures,
+    status.truthLabel === "rust_hub_t3_provisioning_read_only_no_mint",
+    "t3_provisioning_truth_label_invalid",
+  );
+  for (const [key, value] of Object.entries({
+    deviceIdentityCount: status.deviceIdentityCount,
+    trustedDeviceCount: status.trustedDeviceCount,
+    activeTrustedDeviceCount: status.activeTrustedDeviceCount,
+    trustGrantCount: status.trustGrantCount,
+    activeTrustGrantCount: status.activeTrustGrantCount,
+    contextPassportCount: status.contextPassportCount,
+    contextPassportItemCount: status.contextPassportItemCount,
+  })) {
+    pushIfInvalid(failures, Number.isInteger(value) && value >= 0, `t3_provisioning_count_invalid:${key}`);
+  }
+  pushIfInvalid(failures, typeof status.paired === "boolean", "t3_provisioning_paired_invalid");
+  if (status.latestDevice != null) {
+    pushIfInvalid(failures, isRecord(status.latestDevice), "t3_provisioning_latest_device_invalid");
+    if (isRecord(status.latestDevice)) {
+      pushIfInvalid(failures, hasText(status.latestDevice.deviceId), "t3_latest_device_id_missing");
+      pushIfInvalid(
+        failures,
+        typeof status.latestDevice.deviceId === "string" && status.latestDevice.deviceId.startsWith("proof://device/"),
+        "t3_latest_device_id_not_redacted",
+      );
+      pushIfInvalid(failures, hasText(status.latestDevice.pubkeyFingerprint), "t3_latest_device_fingerprint_missing");
+      pushIfInvalid(
+        failures,
+        typeof status.latestDevice.pubkeyFingerprint === "string"
+          && !/^[0-9a-f]{64}$/i.test(status.latestDevice.pubkeyFingerprint),
+        "t3_latest_device_raw_pubkey_leak",
+      );
+      pushIfInvalid(failures, Number.isInteger(status.latestDevice.pairedAt), "t3_latest_device_paired_at_invalid");
+    }
+  }
+}
+
 function validateTranscript(
   snapshot: FridayMissionSpineWorkbenchSnapshot,
   workItemIds: Set<string>,
@@ -698,6 +739,7 @@ function validateMissionSpineWorkbenchSnapshot(
   const timelineEventRefs = validateTimeline(snapshot, failures);
   validateMemoryCandidates(snapshot, failures);
   validateCapabilityStates(snapshot, failures);
+  validateT3ProvisioningStatus(snapshot, failures);
   validateTranscript(snapshot, workItemIds, timelineEventRefs, failures);
 
   return failures;
