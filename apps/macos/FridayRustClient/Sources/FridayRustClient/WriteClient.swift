@@ -343,6 +343,7 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
          .runReadbackRequest, .runReadbackSnapshot,
          .runAnswerBodyRequest, .runAnswerBodySnapshot,
          .providersDoctorRequest, .providersDoctorSnapshot,
+         .capabilityDoctorRequest, .capabilityDoctorSnapshot,
          .sessionListRequest, .sessionListSnapshot,
          .sessionOpenRequest, .sessionOpenSnapshot,
          .sessionLinkStateRequest, .sessionLinkStateSnapshot,
@@ -635,6 +636,8 @@ private func dispatchKind(_ message: FridayMessage) -> String {
   case .runAnswerBodySnapshot: return "RunAnswerBodySnapshot"
   case .providersDoctorRequest: return "ProvidersDoctorRequest"
   case .providersDoctorSnapshot: return "ProvidersDoctorSnapshot"
+  case .capabilityDoctorRequest: return "CapabilityDoctorRequest"
+  case .capabilityDoctorSnapshot: return "CapabilityDoctorSnapshot"
   case .sessionListRequest: return "SessionListRequest"
   case .sessionListSnapshot: return "SessionListSnapshot"
   case .sessionOpenRequest: return "SessionOpenRequest"

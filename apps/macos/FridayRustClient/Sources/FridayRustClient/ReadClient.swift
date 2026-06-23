@@ -101,6 +101,8 @@ public protocol FridayRustReadClient: Sendable {
   func fetchRunAnswerBody(runId: String) async throws -> RunAnswerBody
   /// Fetch provider readiness labels through the read-only providers-doctor arm.
   func fetchProvidersDoctor(probe: String?) async throws -> ReadProjectionSnapshot
+  /// Fetch route/failover readiness through the owner-authenticated capability-doctor read arm.
+  func fetchCapabilityDoctor(validateKeys: Bool) async throws -> ReadProjectionSnapshot
   /// Fetch the owner's routed-session refs.
   func fetchSessionList() async throws -> ReadProjectionSnapshot
   /// Fetch one owner-gated routed session transcript. This is a deliberate owner-only body carve-out.
@@ -124,6 +126,10 @@ public extension FridayRustReadClient {
 
   func fetchProvidersDoctor(probe: String? = nil) async throws -> ReadProjectionSnapshot {
     throw FridayReadClientError.transport("providers doctor readback unavailable")
+  }
+
+  func fetchCapabilityDoctor(validateKeys: Bool = true) async throws -> ReadProjectionSnapshot {
+    throw FridayReadClientError.transport("capability doctor readback unavailable")
   }
 
   func fetchSessionList() async throws -> ReadProjectionSnapshot {
@@ -260,6 +266,10 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "ProvidersDoctorRequest")
     case .providersDoctorSnapshot:
       throw FridayReadClientError.unexpectedResponse(kind: "ProvidersDoctorSnapshot")
+    case .capabilityDoctorRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "CapabilityDoctorRequest")
+    case .capabilityDoctorSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "CapabilityDoctorSnapshot")
     case .sessionListRequest:
       throw FridayReadClientError.unexpectedResponse(kind: "SessionListRequest")
     case .sessionListSnapshot:
@@ -365,6 +375,10 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "ProvidersDoctorRequest")
     case .providersDoctorSnapshot:
       throw FridayReadClientError.unexpectedResponse(kind: "ProvidersDoctorSnapshot")
+    case .capabilityDoctorRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "CapabilityDoctorRequest")
+    case .capabilityDoctorSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "CapabilityDoctorSnapshot")
     case .sessionListRequest:
       throw FridayReadClientError.unexpectedResponse(kind: "SessionListRequest")
     case .sessionListSnapshot:
@@ -406,6 +420,24 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
         return nil
       },
       expected: "ProvidersDoctorSnapshot")
+  }
+
+  public func fetchCapabilityDoctor(validateKeys: Bool = true) async throws -> ReadProjectionSnapshot {
+    try await fetchProjection(
+      makeMessage: { requestId, authProof in
+        .capabilityDoctorRequest(CapabilityDoctorRequestWire(
+          validateKeys: validateKeys,
+          forwardedPrincipal: forwardedPrincipal,
+          authProof: authProof,
+          requestId: requestId))
+      },
+      extract: { message in
+        if case .capabilityDoctorSnapshot(let snap) = message {
+          return (snap.projectionJson, snap.generatedAtMs)
+        }
+        return nil
+      },
+      expected: "CapabilityDoctorSnapshot")
   }
 
   public func fetchSessionList() async throws -> ReadProjectionSnapshot {

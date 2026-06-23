@@ -122,6 +122,14 @@ final class ReadClientWiringTests: XCTestCase {
           .providersDoctorSnapshot(ProvidersDoctorSnapshotWire(
             requestId: requestId, projectionJson: sealedHex, generatedAtMs: generatedAtMs))
         }
+      case .capabilityDoctorRequest(let req):
+        reqPrincipal = req.forwardedPrincipal
+        reqId = req.requestId
+        authProof = req.authProof
+        responseKind = .projection { requestId, sealedHex, generatedAtMs in
+          .capabilityDoctorSnapshot(CapabilityDoctorSnapshotWire(
+            requestId: requestId, projectionJson: sealedHex, generatedAtMs: generatedAtMs))
+        }
       case .sessionListRequest(let req):
         reqPrincipal = req.forwardedPrincipal
         reqId = req.requestId
@@ -231,6 +239,11 @@ final class ReadClientWiringTests: XCTestCase {
           generatedAtMs: snap.generatedAtMs))
       case .providersDoctorSnapshot(let snap):
         finalMessage = .providersDoctorSnapshot(ProvidersDoctorSnapshotWire(
+          requestId: snap.requestId,
+          projectionJson: sealedHex,
+          generatedAtMs: snap.generatedAtMs))
+      case .capabilityDoctorSnapshot(let snap):
+        finalMessage = .capabilityDoctorSnapshot(CapabilityDoctorSnapshotWire(
           requestId: snap.requestId,
           projectionJson: sealedHex,
           generatedAtMs: snap.generatedAtMs))
@@ -402,6 +415,11 @@ final class ReadClientWiringTests: XCTestCase {
     let providersDoctorSnapshot = try await providersDoctor.0.fetchProvidersDoctor(probe: "both")
     XCTAssertEqual(providersDoctorSnapshot.raw["missionId"] as? String, "mission_read_seam_probe_20260611")
     XCTAssertEqual(providersDoctor.1.processed, 1)
+
+    let capabilityDoctor = try makeClient(requestId: "req-capability-doctor")
+    let capabilityDoctorSnapshot = try await capabilityDoctor.0.fetchCapabilityDoctor(validateKeys: true)
+    XCTAssertEqual(capabilityDoctorSnapshot.raw["missionId"] as? String, "mission_read_seam_probe_20260611")
+    XCTAssertEqual(capabilityDoctor.1.processed, 1)
 
     let sessionList = try makeClient(requestId: "req-session-list")
     let sessionListSnapshot = try await sessionList.0.fetchSessionList()

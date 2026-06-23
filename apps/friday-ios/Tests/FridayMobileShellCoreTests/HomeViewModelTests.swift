@@ -41,14 +41,23 @@ final class HomeViewModelTests: XCTestCase {
 
     func fetchProvidersDoctor(probe: String?) async throws -> ReadProjectionSnapshot {
       requestedDetails.append("providers:\(probe ?? "")")
+      return try capabilityDoctorSnapshot()
+    }
+
+    func fetchCapabilityDoctor(validateKeys: Bool) async throws -> ReadProjectionSnapshot {
+      requestedDetails.append("capabilities:\(validateKeys)")
+      return try capabilityDoctorSnapshot()
+    }
+
+    private func capabilityDoctorSnapshot() throws -> ReadProjectionSnapshot {
       if case .fail(let error) = script {
         throw error
       }
       let raw: [String: Any] = [
-        "truth_label": "rust_providers_detect",
+        "truth_label": "rust_capability_doctor",
         "proof_only": true,
         "ok": true,
-        "detected": [
+        "cli_detected": [
           [
             "provider": "codex",
             "installed": true,
@@ -64,9 +73,41 @@ final class HomeViewModelTests: XCTestCase {
             "truthLabel": "linked_only",
           ],
         ],
-        "ready_providers": ["codex"],
-        "any_authenticated": true,
-        "all_authenticated": false,
+        "cli_logged_in": ["codex"],
+        "key_validation_probed": true,
+        "key_validation": [
+          ["provider": "deepseek", "label": "valid"],
+          ["provider": "anthropic", "label": "credential_missing"],
+        ],
+        "confirmed_valid_keys": ["deepseek"],
+        "route_readiness": [
+          [
+            "provider_id": "codex",
+            "model": "gpt-5.5",
+            "model_size": "frontier",
+            "strength": "strong",
+            "dispatchable": true,
+            "blockers": [],
+          ],
+          [
+            "provider_id": "claude",
+            "model": "claude-opus",
+            "model_size": "frontier",
+            "strength": "strong",
+            "dispatchable": false,
+            "blockers": [["code": "auth_missing"]],
+          ],
+        ],
+        "failover_readiness": [
+          [
+            "direction": "deepseek_to_claude",
+            "flag_enabled": true,
+            "can_enable": false,
+            "blockers": [["code": "fallback_route_not_dispatchable"]],
+          ],
+        ],
+        "suggested_text_route": "codex",
+        "suggested_strong_route": "codex",
       ]
       let data = try JSONSerialization.data(withJSONObject: raw)
       return try ReadProjectionSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_123)
@@ -314,11 +355,11 @@ final class HomeViewModelTests: XCTestCase {
     guard case let .loaded(detail) = vm.detailState else {
       return XCTFail("expected detail .loaded, got \(vm.detailState)")
     }
-    XCTAssertEqual(client.requestedDetails, ["providers:anthropic"])
+    XCTAssertEqual(client.requestedDetails, ["capabilities:true"])
     XCTAssertEqual(detail.title, "Provider doctor")
-    XCTAssertEqual(detail.summary, "truth=rust_providers_detect")
+    XCTAssertEqual(detail.summary, "truth=rust_capability_doctor")
     XCTAssertEqual(detail.refs, [])
-    XCTAssertEqual(detail.providerReadiness?.truthLabel, "rust_providers_detect")
+    XCTAssertEqual(detail.providerReadiness?.truthLabel, "rust_capability_doctor")
     XCTAssertEqual(detail.providerReadiness?.proofOnly, true)
     XCTAssertEqual(detail.providerReadiness?.ok, true)
     XCTAssertEqual(detail.providerReadiness?.readyProviders, ["codex"])
@@ -328,6 +369,16 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(detail.providerReadiness?.detected.first?.authenticated, true)
     XCTAssertEqual(detail.providerReadiness?.detected.last?.detail, "claude auth missing")
     XCTAssertEqual(detail.providerReadiness?.detected.last?.truthLabel, "linked_only")
+    XCTAssertEqual(detail.providerReadiness?.routes.map(\.providerId), ["codex", "claude"])
+    XCTAssertEqual(detail.providerReadiness?.routes.first?.dispatchable, true)
+    XCTAssertEqual(detail.providerReadiness?.routes.last?.blockers, ["auth_missing"])
+    XCTAssertEqual(detail.providerReadiness?.failovers.first?.direction, "deepseek_to_claude")
+    XCTAssertEqual(detail.providerReadiness?.failovers.first?.flagEnabled, true)
+    XCTAssertEqual(detail.providerReadiness?.failovers.first?.canEnable, false)
+    XCTAssertEqual(detail.providerReadiness?.failovers.first?.blockers, ["fallback_route_not_dispatchable"])
+    XCTAssertEqual(detail.providerReadiness?.suggestedTextRoute, "codex")
+    XCTAssertEqual(detail.providerReadiness?.suggestedStrongRoute, "codex")
+    XCTAssertEqual(detail.providerReadiness?.keyValidationProbed, true)
   }
 
   func testProviderReadinessRequiresProviderDoctorTruthLabel() throws {

@@ -68,8 +68,10 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use friday_crypto::{seal, DataKey, DeviceKeypair, FileSecureStore};
+use friday_hub::capability_doctor_projection::project_capability_doctor;
 use friday_hub::hub_server::{AuthedPrincipal, ForwardedAuth};
 use friday_hub::key_source::{READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID, X25519_PUBKEY_LEN};
+use friday_hub::provider_key_validation::LiveKeyValidationProbe;
 use friday_hub::providers_doctor_projection::{parse_provider_selection, project_providers_doctor};
 use friday_hub::run_readback_projection::{
     project_activity_needs_me, project_run_file_view, project_run_readback,
@@ -80,8 +82,8 @@ use friday_hub::sealed_ws::{
 };
 use friday_hub::workbench_projection::project_workbench;
 use friday_protocol::{
-    ActivityNeedsMeSnapshotWire, Envelope, IdempotencyTracker, Message,
-    ProvidersDoctorSnapshotWire, RunAnswerBodySnapshotWire, RunFileViewSnapshotWire,
+    ActivityNeedsMeSnapshotWire, CapabilityDoctorSnapshotWire, Envelope, IdempotencyTracker,
+    Message, ProvidersDoctorSnapshotWire, RunAnswerBodySnapshotWire, RunFileViewSnapshotWire,
     RunReadbackSnapshotWire, Seen, SessionLinkStateSnapshotWire, SessionListSnapshotWire,
     SessionOpenSnapshotWire, WorkbenchProjectionSnapshotWire,
 };
@@ -480,6 +482,40 @@ fn serve_read_session<S: Read + Write>(
                     projection,
                     |sealed_hex| Message::ProvidersDoctorSnapshot {
                         snapshot: ProvidersDoctorSnapshotWire {
+                            request_id: request_id.clone(),
+                            projection_json: sealed_hex,
+                            generated_at_ms: now_ms,
+                        },
+                    },
+                )?
+            }
+            Message::CapabilityDoctorRequest { request } => {
+                // Auth-before-doctor. This projection can run provider readiness probes, so the
+                // owner-auth chain must pass before constructing the key-validation probe.
+                if authenticate_read_request(
+                    session_key,
+                    session_nonce,
+                    &request.auth_proof,
+                    &request.forwarded_principal,
+                    &request.request_id,
+                    owner_allowlist,
+                )
+                .is_none()
+                {
+                    return Ok(processed);
+                }
+                let request_id = request.request_id.clone();
+                let key_probe = LiveKeyValidationProbe::new();
+                let projection =
+                    project_capability_doctor(probe, &key_probe, request.validate_keys);
+                seal_and_frame(
+                    session_key,
+                    &env.msg_id,
+                    &request_id,
+                    now_ms,
+                    projection,
+                    |sealed_hex| Message::CapabilityDoctorSnapshot {
+                        snapshot: CapabilityDoctorSnapshotWire {
                             request_id: request_id.clone(),
                             projection_json: sealed_hex,
                             generated_at_ms: now_ms,

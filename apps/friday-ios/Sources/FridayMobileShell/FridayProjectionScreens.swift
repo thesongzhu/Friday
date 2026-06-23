@@ -698,6 +698,21 @@ struct FridayProjectionScreen: View {
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
       }
+      if let suggestedTextRoute = detail.suggestedTextRoute {
+        Text("text route: \(suggestedTextRoute)")
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      if let suggestedStrongRoute = detail.suggestedStrongRoute {
+        Text("strong route: \(suggestedStrongRoute)")
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      if let keyValidationProbed = detail.keyValidationProbed {
+        statusChip(keyValidationProbed ? "keys probed" : "keys not probed")
+      }
       ForEach(detail.detected) { provider in
         VStack(alignment: .leading, spacing: 5) {
           HStack {
@@ -717,6 +732,52 @@ struct FridayProjectionScreen: View {
           HStack(spacing: 6) {
             statusChip(provider.installed ? "installed" : "not installed")
             statusChip(provider.truthLabel)
+          }
+        }
+        .padding(.vertical, 3)
+      }
+      ForEach(detail.routes) { route in
+        VStack(alignment: .leading, spacing: 5) {
+          HStack {
+            Text(route.providerId)
+              .font(.system(size: 13, weight: .medium))
+              .foregroundStyle(MobileTheme.textPrimary)
+            Spacer()
+            StatusChip(
+              text: route.dispatchable ? "dispatchable" : "blocked",
+              bg: route.dispatchable ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
+              fg: route.dispatchable ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
+          }
+          Text("\(route.model) - \(route.modelSize) - \(route.strength)")
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+          if !route.blockers.isEmpty {
+            Text("blockers: \(route.blockers.joined(separator: ", "))")
+              .font(.caption2)
+              .foregroundStyle(MobileTheme.textSecondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+        .padding(.vertical, 3)
+      }
+      ForEach(detail.failovers) { failover in
+        VStack(alignment: .leading, spacing: 5) {
+          HStack {
+            Text(failover.direction)
+              .font(.system(size: 13, weight: .medium))
+              .foregroundStyle(MobileTheme.textPrimary)
+            Spacer()
+            StatusChip(
+              text: failover.flagEnabled ? "armed" : "off",
+              bg: failover.flagEnabled ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
+              fg: failover.flagEnabled ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
+          }
+          HStack(spacing: 6) {
+            statusChip(failover.canEnable ? "can enable" : "blocked")
+            if !failover.blockers.isEmpty {
+              statusChip("blockers \(failover.blockers.count)")
+            }
           }
         }
         .padding(.vertical, 3)

@@ -220,6 +220,45 @@ public struct ProvidersDoctorSnapshotWire: Codable, Equatable, Sendable {
   }
 }
 
+public struct CapabilityDoctorRequestWire: Codable, Equatable, Sendable {
+  public var validateKeys: Bool
+  public var forwardedPrincipal: String
+  public var authProof: [UInt8]
+  public var requestId: String
+
+  public init(validateKeys: Bool, forwardedPrincipal: String, authProof: [UInt8], requestId: String) {
+    self.validateKeys = validateKeys
+    self.forwardedPrincipal = forwardedPrincipal
+    self.authProof = authProof
+    self.requestId = requestId
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case validateKeys = "validate_keys"
+    case forwardedPrincipal = "forwarded_principal"
+    case authProof = "auth_proof"
+    case requestId = "request_id"
+  }
+}
+
+public struct CapabilityDoctorSnapshotWire: Codable, Equatable, Sendable {
+  public var requestId: String
+  public var projectionJson: String
+  public var generatedAtMs: Int64
+
+  public init(requestId: String, projectionJson: String, generatedAtMs: Int64) {
+    self.requestId = requestId
+    self.projectionJson = projectionJson
+    self.generatedAtMs = generatedAtMs
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case requestId = "request_id"
+    case projectionJson = "projection_json"
+    case generatedAtMs = "generated_at_ms"
+  }
+}
+
 public struct SessionListRequestWire: Codable, Equatable, Sendable {
   public var forwardedPrincipal: String
   public var authProof: [UInt8]
@@ -435,6 +474,8 @@ public enum FridayMessage: Equatable {
   case runReadbackSnapshot(RunReadbackSnapshotWire)
   case providersDoctorRequest(ProvidersDoctorRequestWire)
   case providersDoctorSnapshot(ProvidersDoctorSnapshotWire)
+  case capabilityDoctorRequest(CapabilityDoctorRequestWire)
+  case capabilityDoctorSnapshot(CapabilityDoctorSnapshotWire)
   case sessionListRequest(SessionListRequestWire)
   case sessionListSnapshot(SessionListSnapshotWire)
   case sessionOpenRequest(SessionOpenRequestWire)
@@ -602,6 +643,12 @@ extension FridayMessage: Codable {
     case "ProvidersDoctorSnapshot":
       let c = try decoder.container(keyedBy: SnapshotKey.self)
       self = .providersDoctorSnapshot(try c.decode(ProvidersDoctorSnapshotWire.self, forKey: .snapshot))
+    case "CapabilityDoctorRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .capabilityDoctorRequest(try c.decode(CapabilityDoctorRequestWire.self, forKey: .request))
+    case "CapabilityDoctorSnapshot":
+      let c = try decoder.container(keyedBy: SnapshotKey.self)
+      self = .capabilityDoctorSnapshot(try c.decode(CapabilityDoctorSnapshotWire.self, forKey: .snapshot))
     case "SessionListRequest":
       let c = try decoder.container(keyedBy: RequestKey.self)
       self = .sessionListRequest(try c.decode(SessionListRequestWire.self, forKey: .request))
@@ -774,6 +821,14 @@ extension FridayMessage: Codable {
       try c.encode(req, forKey: .request)
     case .providersDoctorSnapshot(let snap):
       try tag.encode("ProvidersDoctorSnapshot", forKey: .kind)
+      var c = encoder.container(keyedBy: SnapshotKey.self)
+      try c.encode(snap, forKey: .snapshot)
+    case .capabilityDoctorRequest(let req):
+      try tag.encode("CapabilityDoctorRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(req, forKey: .request)
+    case .capabilityDoctorSnapshot(let snap):
+      try tag.encode("CapabilityDoctorSnapshot", forKey: .kind)
       var c = encoder.container(keyedBy: SnapshotKey.self)
       try c.encode(snap, forKey: .snapshot)
     case .sessionListRequest(let req):

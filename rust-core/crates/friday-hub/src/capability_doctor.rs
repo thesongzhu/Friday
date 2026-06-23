@@ -79,7 +79,10 @@ impl CapabilityDoctor {
     /// CLI detect + `KeyProvider::all()` for key-validation) — the onboarding
     /// default. Generic over both probes so production injects the real probes and
     /// tests inject mocks through the identical path.
-    pub fn run<P: ProviderProbe, K: KeyValidationProbe>(cli_probe: &P, key_probe: &K) -> Self {
+    pub fn run<P: ProviderProbe + ?Sized, K: KeyValidationProbe + ?Sized>(
+        cli_probe: &P,
+        key_probe: &K,
+    ) -> Self {
         let cli_statuses = Provider::all()
             .iter()
             .map(|&p| detect(cli_probe, p))
