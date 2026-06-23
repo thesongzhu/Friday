@@ -16,12 +16,14 @@ public struct PairingProvisioningState: Sendable, Equatable, CustomStringConvert
   public let mode: PairingProvisioningMode
   public let reason: String
   public let projection: FridayPairingManifestProjection?
+  public let manifestPath: String?
 
   public var description: String {
     [
       "mode=\(mode.rawValue)",
       projection.map { "hub=\($0.hubId)" },
       projection.map { "pairing=\($0.pairingId)" },
+      manifestPath.map { "manifest=\($0)" },
       "reason=\(reason)",
     ]
     .compactMap { $0 }
@@ -33,7 +35,8 @@ public struct PairingProvisioningState: Sendable, Equatable, CustomStringConvert
   public static let empty = PairingProvisioningState(
     mode: .empty,
     reason: "Paste or import a Hub pairing QR manifest.",
-    projection: nil)
+    projection: nil,
+    manifestPath: nil)
 }
 
 @MainActor
@@ -65,27 +68,34 @@ public final class PairingProvisioningViewModel: ObservableObject {
       state = PairingProvisioningState(
         mode: .unavailable,
         reason: "Pairing launcher is not configured for this build.",
-        projection: nil)
+        projection: nil,
+        manifestPath: nil)
       return
     }
     qrPayload = ""
-    state = PairingProvisioningState(
-      mode: .starting,
-      reason: "Starting a short-lived Hub pairing session.",
-      projection: nil)
+      state = PairingProvisioningState(
+        mode: .starting,
+        reason: "Starting a short-lived Hub pairing session.",
+        projection: nil,
+        manifestPath: nil)
     do {
       let result = try await launcher.startPairingSession()
-      load(qrJSON: result.manifestJSON, nowMs: nowMs)
+      load(qrJSON: result.manifestJSON, nowMs: nowMs, manifestPath: result.manifestPath)
     } catch {
       qrPayload = ""
       state = PairingProvisioningState(
         mode: .unavailable,
         reason: Self.reason(forLaunchError: error),
-        projection: nil)
+        projection: nil,
+        manifestPath: nil)
     }
   }
 
-  public func load(qrJSON: String, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) {
+  public func load(
+    qrJSON: String,
+    nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
+    manifestPath: String? = nil
+  ) {
     let payload = qrJSON.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !payload.isEmpty else {
       clear()
@@ -96,16 +106,19 @@ public final class PairingProvisioningViewModel: ObservableObject {
       let manifest = try JSONDecoder().decode(FridayPairingManifest.self, from: Data(payload.utf8))
       try manifest.validate(nowMs: nowMs)
       qrPayload = payload
+      let trimmedManifestPath = manifestPath?.trimmingCharacters(in: .whitespacesAndNewlines)
       state = PairingProvisioningState(
         mode: .ready,
         reason: "Short-lived pairing QR is ready to scan.",
-        projection: manifest.redactedProjection)
+        projection: manifest.redactedProjection,
+        manifestPath: trimmedManifestPath?.isEmpty == false ? trimmedManifestPath : nil)
     } catch {
       qrPayload = ""
       state = PairingProvisioningState(
         mode: .invalid,
         reason: Self.reason(for: error),
-        projection: nil)
+        projection: nil,
+        manifestPath: nil)
     }
   }
 

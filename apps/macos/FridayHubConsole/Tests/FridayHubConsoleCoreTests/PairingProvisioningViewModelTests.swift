@@ -15,6 +15,7 @@ import Testing
   #expect(vm.qrPayload.contains(secret))
   #expect(!vm.redactedSummary.contains(secret))
   #expect(!vm.state.description.contains(secret))
+  #expect(vm.state.manifestPath == nil)
   #expect(vm.canRenderQRCode)
 }
 
@@ -58,6 +59,8 @@ import Testing
   #expect(vm.state.mode == .ready)
   #expect(vm.qrPayload.contains(secret))
   #expect(!vm.redactedSummary.contains(secret))
+  #expect(vm.state.manifestPath == "/tmp/friday-pairing.json")
+  #expect(vm.redactedSummary.contains("/tmp/friday-pairing.json"))
   #expect(vm.canRenderQRCode)
 }
 

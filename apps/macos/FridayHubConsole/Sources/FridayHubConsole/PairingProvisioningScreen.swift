@@ -132,6 +132,9 @@ struct PairingProvisioningScreen: View {
               RefPill(label: "hub_id", ref: projection.hubId)
               RefPill(label: "pairing_id", ref: projection.pairingId)
               RefPill(label: "expires_at", ref: String(projection.expiresAt))
+              if let manifestPath = viewModel.state.manifestPath, !manifestPath.isEmpty {
+                RefPill(label: "manifest", ref: manifestPath)
+              }
               ForEach(projection.transportLabels, id: \.self) { label in
                 statusChip(label)
               }
