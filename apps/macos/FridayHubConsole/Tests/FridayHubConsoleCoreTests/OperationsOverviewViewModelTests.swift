@@ -73,6 +73,17 @@ func snapshotExercisesEveryHonestRenderingRule() {
   let blocked = snapshot.workItems.first { $0.state == .blocked }
   #expect(blocked != nil)
   #expect(blocked?.done == false)
+  #expect(blocked?.recoveryKind == "needs_operator")
+  #expect(blocked?.canRetry == false)
+  #expect(blocked?.canCancel == true)
+
+  // A stale retryable row must keep its recovery affordance facts on desktop.
+  let retryable = snapshot.workItems.first { $0.id == "work_probe_stale_retryable" }
+  #expect(retryable?.state == .stale)
+  #expect(retryable?.blockingReason.contains("operator may retry") == true)
+  #expect(retryable?.recoveryKind == "retryable")
+  #expect(retryable?.canRetry == true)
+  #expect(retryable?.canCancel == true)
 
   // Honest status: stale must be present.
   #expect(snapshot.statusLabels.contains(.stale))
@@ -147,12 +158,16 @@ func attentionSummarySurfacesOnlyUnfinishedRecoveryRelevantWorkItems() {
 
   #expect(attentionIds.contains("work_probe_provider"))
   #expect(attentionIds.contains("work_probe_blocked"))
+  #expect(attentionIds.contains("work_probe_stale_retryable"))
   #expect(!attentionIds.contains("work_probe_done"))
   #expect(!attentionIds.contains("workbench_timeline_read_mission_workbench_probe_20260605"))
-  #expect(snapshot.attentionSummary == "2 work items need attention.")
+  #expect(snapshot.attentionSummary == "3 work items need attention.")
   #expect(
     snapshot.attentionWorkItems.first { $0.id == "work_probe_provider" }?.attentionReason
-      == "provider acknowledged; waiting for proof")
+      == "provider acknowledged; cancel is the only safe recovery action")
+  #expect(
+    snapshot.attentionWorkItems.first { $0.id == "work_probe_stale_retryable" }?.recoveryKind
+      == "retryable")
 }
 
 @Test
@@ -273,7 +288,9 @@ func decodesRustProjectionShapedJSON() throws {
       "channelReceiptRefs": [],
       "workItems": [
         {"id": "wi_x", "title": "t", "state": "provider_ack", "owner": "linked_only",
-         "proofRef": "proof://provider-receipt/1", "done": false}
+         "proofRef": "proof://provider-receipt/1", "done": false,
+         "blockingReason": "provider acknowledged; cancel only",
+         "recoveryKind": "in_flight", "canRetry": false, "canCancel": true}
       ],
       "timelinePages": [
         {"page": 1, "cursor": "start", "nextCursor": "offset:1", "eventRefs": ["e0"]}
@@ -323,6 +340,10 @@ func decodesRustProjectionShapedJSON() throws {
   #expect(snapshot.missionId == "mission_x")
   #expect(snapshot.statusLabels == [.stale, .offline, .error])
   #expect(snapshot.workItems.first?.state == .providerAck)
+  #expect(snapshot.workItems.first?.blockingReason == "provider acknowledged; cancel only")
+  #expect(snapshot.workItems.first?.recoveryKind == "in_flight")
+  #expect(snapshot.workItems.first?.canRetry == false)
+  #expect(snapshot.workItems.first?.canCancel == true)
   #expect(snapshot.runOutcomeLearningCandidates.first?.id == "a1:run_x:preference")
   #expect(snapshot.t3ProvisioningStatus?.paired == true)
   #expect(snapshot.t3ProvisioningStatus?.latestDevice?.deviceId == "proof://device/paired-desktop-1")

@@ -139,6 +139,10 @@ public struct MissionWorkbenchWorkItem: Codable, Sendable, Identifiable, Equatab
   public let owner: MissionTruthLabel
   public let proofRef: String?
   public let done: Bool
+  public let blockingReason: String
+  public let recoveryKind: String
+  public let canRetry: Bool
+  public let canCancel: Bool
 
   public init(
     id: String,
@@ -146,7 +150,11 @@ public struct MissionWorkbenchWorkItem: Codable, Sendable, Identifiable, Equatab
     state: MissionLifecycleState,
     owner: MissionTruthLabel,
     proofRef: String?,
-    done: Bool
+    done: Bool,
+    blockingReason: String = "",
+    recoveryKind: String = "none",
+    canRetry: Bool = false,
+    canCancel: Bool = false
   ) {
     self.id = id
     self.title = title
@@ -154,10 +162,42 @@ public struct MissionWorkbenchWorkItem: Codable, Sendable, Identifiable, Equatab
     self.owner = owner
     self.proofRef = proofRef
     self.done = done
+    self.blockingReason = blockingReason
+    self.recoveryKind = recoveryKind
+    self.canRetry = canRetry
+    self.canCancel = canCancel
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case title
+    case state
+    case owner
+    case proofRef
+    case done
+    case blockingReason
+    case recoveryKind
+    case canRetry
+    case canCancel
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.id = try container.decode(String.self, forKey: .id)
+    self.title = try container.decode(String.self, forKey: .title)
+    self.state = try container.decode(MissionLifecycleState.self, forKey: .state)
+    self.owner = try container.decode(MissionTruthLabel.self, forKey: .owner)
+    self.proofRef = try container.decodeIfPresent(String.self, forKey: .proofRef)
+    self.done = try container.decode(Bool.self, forKey: .done)
+    self.blockingReason = try container.decodeIfPresent(String.self, forKey: .blockingReason) ?? ""
+    self.recoveryKind = try container.decodeIfPresent(String.self, forKey: .recoveryKind) ?? "none"
+    self.canRetry = try container.decodeIfPresent(Bool.self, forKey: .canRetry) ?? false
+    self.canCancel = try container.decodeIfPresent(Bool.self, forKey: .canCancel) ?? false
   }
 
   public var needsAttention: Bool {
     guard !done else { return false }
+    if canRetry || canCancel { return true }
     switch state {
     case .completedWithProof, .timelineRead:
       return false
@@ -169,6 +209,7 @@ public struct MissionWorkbenchWorkItem: Codable, Sendable, Identifiable, Equatab
   }
 
   public var attentionReason: String {
+    if !blockingReason.isEmpty { return blockingReason }
     switch state {
     case .providerAck:
       return "provider acknowledged; waiting for proof"
