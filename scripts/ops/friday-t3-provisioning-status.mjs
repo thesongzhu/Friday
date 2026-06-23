@@ -159,15 +159,24 @@ function countActiveTrustGrants(dbPath, nowMs) {
   );
 }
 
+function countActiveTrustedDevices(dbPath) {
+  if (!tableExists(dbPath, "trusted_device")) {
+    return null;
+  }
+  return Number(queryScalar(dbPath, "SELECT count(*) FROM trusted_device WHERE revoked_at IS NULL"));
+}
+
 export function buildT3ProvisioningStatus(dbPath, nowMs = Date.now()) {
   const counts = Object.fromEntries(
     T3_TABLES.map((tableName) => [tableName, countTable(dbPath, tableName)]),
   );
   const activeTrustGrants = countActiveTrustGrants(dbPath, nowMs);
+  const activeTrustedDevices = countActiveTrustedDevices(dbPath);
   const latest_device = latestTrustedDevice(dbPath);
   const checks = {
     device_identity: (counts.device_identity ?? 0) > 0,
     trusted_device: (counts.trusted_device ?? 0) > 0,
+    active_trusted_device: (activeTrustedDevices ?? 0) > 0,
     trust_grant: (counts.trust_grant ?? 0) > 0,
     active_trust_grant: (activeTrustGrants ?? 0) > 0,
     context_passport: (counts.context_passport ?? 0) > 0,
@@ -182,6 +191,7 @@ export function buildT3ProvisioningStatus(dbPath, nowMs = Date.now()) {
     generated_at_utc: new Date(nowMs).toISOString(),
     counts,
     latest_device,
+    active_trusted_devices: activeTrustedDevices,
     active_trust_grants: activeTrustGrants,
     checks,
     status: missing.length === 0 ? "ready" : "incomplete",
@@ -193,7 +203,10 @@ export function buildT3ProvisioningStatus(dbPath, nowMs = Date.now()) {
 }
 
 export function buildT3OperatorAction(status) {
-  const missingDevice = status.missing.includes("device_identity") || status.missing.includes("trusted_device");
+  const missingDevice =
+    status.missing.includes("device_identity") ||
+    status.missing.includes("trusted_device") ||
+    status.missing.includes("active_trusted_device");
   const missingGrant =
     status.missing.includes("trust_grant") || status.missing.includes("active_trust_grant");
   const missingPassport =
@@ -294,6 +307,7 @@ export function renderText(status) {
   for (const tableName of T3_TABLES) {
     lines.push(`  ${tableName}=${status.counts[tableName] ?? "missing-table"}`);
   }
+  lines.push(`  active_trusted_devices=${status.active_trusted_devices ?? "missing-table"}`);
   lines.push(`  active_trust_grants=${status.active_trust_grants ?? "missing-table"}`);
   if (status.latest_device) {
     lines.push(
