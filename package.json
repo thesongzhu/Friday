@@ -98,6 +98,7 @@
     "check:enablement-gaps": "bash scripts/ops/check-enablement-gaps.sh",
     "check:cross-platform-release-inputs": "bash scripts/ops/check-friday-cross-platform-release-inputs.sh",
     "check:client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
+    "check:cross-platform-client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
     "check:agent-rollout:phase1": "node scripts/ops/run-agent-rollout-acceptance.mjs phase1",
     "check:agent-rollout:phase2": "node scripts/ops/run-agent-rollout-acceptance.mjs phase2",
     "check:agent-rollout:phase3": "node scripts/ops/run-agent-rollout-acceptance.mjs phase3",
