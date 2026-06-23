@@ -26,6 +26,7 @@ import Testing
 }
 
 private func manifest(endpoint: String) throws -> FridayPairingManifest {
+  let pairingSecret = "friday-pairing-secret-for-test" // pragma: allowlist secret
   let json = """
     {
       "kind": "friday.pairing.qr.v1",
@@ -34,7 +35,7 @@ private func manifest(endpoint: String) throws -> FridayPairingManifest {
       "v": 1,
       "hub_id": "hub-test",
       "pairing_id": "pair-test",
-      "pairing_secret": "friday-pairing-secret-for-test", // pragma: allowlist secret
+      "pairing_secret": "\(pairingSecret)",
       "display_name": "Friday Test Hub",
       "transport_hints": [
         {"kind":"lan_websocket","endpoint":"\(endpoint)","label":"pairing"}

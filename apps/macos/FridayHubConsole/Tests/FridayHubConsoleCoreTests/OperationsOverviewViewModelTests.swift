@@ -572,6 +572,22 @@ final class MockOperatorApprovalSigner: OperatorApprovalSigner, @unchecked Senda
   }
 }
 
+private struct ApprovalRequestFileMirror: Decodable {
+  let approvalId: String
+  let actionDigest: String
+  let expiresAt: Int64
+  let decision: String
+  let surface: String
+  let summary: String?
+
+  enum CodingKeys: String, CodingKey {
+    case approvalId = "approval_id"
+    case actionDigest = "action_digest"
+    case expiresAt = "expires_at"
+    case decision, surface, summary
+  }
+}
+
 struct StaticWorkbenchReadClient: FridayRustReadClient {
   let snapshot: FridayHubConsoleCore.WorkbenchSnapshot
   var answerBodies: [String: String] = [:]
@@ -1126,6 +1142,71 @@ func operatorApprovalCLISignerRejectsMalformedDigestBeforeInvokingSigner() async
   } catch {
     Issue.record("unexpected error \(error)")
   }
+}
+
+@Test
+func operatorApprovalCLISignerWritesRefsOnlyRequestAndRelaysOpaqueStdout() async throws {
+  let temp = try temporaryHome()
+  defer { try? FileManager.default.removeItem(at: temp) }
+
+  let capturedArgs = temp.appendingPathComponent("args.txt")
+  let capturedRequest = temp.appendingPathComponent("request.json")
+  let fakeSigner = temp.appendingPathComponent("friday-operator-approve")
+  let fakeKey = temp.appendingPathComponent("operator-test.key")
+  try Data("not-a-real-key\n".utf8).write(to: fakeKey)
+  let signedApproval = #"{"truth_label":"fake_cli_signed_approval","signature":"opaque"}"#
+  let script = """
+    #!/bin/sh
+    set -eu
+    printf '%s\\n' "$@" > '\(capturedArgs.path)'
+    test "$1" = "sign"
+    test "$2" = "--key"
+    test "$3" = "\(fakeKey.path)"
+    test "$4" = "--request"
+    test -f "$5"
+    cat "$5" > '\(capturedRequest.path)'
+    printf '%s' '\(signedApproval)'
+    """
+  try script.write(to: fakeSigner, atomically: true, encoding: .utf8)
+  try FileManager.default.setAttributes(
+    [.posixPermissions: NSNumber(value: Int16(0o700))],
+    ofItemAtPath: fakeSigner.path)
+
+  let signer = OperatorApprovalCLISigner(
+    executablePath: fakeSigner.path,
+    keyPath: fakeKey.path,
+    tempDirectory: temp)
+  let blob = try await signer.signApproval(OperatorApprovalSigningRequest(
+    runId: "run-paused-bridge",
+    approvalId: "approval-bridge-1",
+    actionDigest: String(repeating: "b", count: 64),
+    summary: "write_file paused",
+    expiresAtMs: 1_900_000_000_000))
+
+  #expect(String(decoding: blob, as: UTF8.self) == signedApproval)
+
+  let requestData = try Data(contentsOf: capturedRequest)
+  let requestText = String(decoding: requestData, as: UTF8.self)
+  let request = try JSONDecoder().decode(ApprovalRequestFileMirror.self, from: requestData)
+  #expect(request.approvalId == "approval-bridge-1")
+  #expect(request.actionDigest == String(repeating: "b", count: 64))
+  #expect(request.expiresAt == 1_900_000_000_000)
+  #expect(request.decision == "approved")
+  #expect(request.surface == "desktop")
+  #expect(request.summary == "write_file paused")
+  #expect(!requestText.contains("run-paused-bridge"))
+  #expect(!requestText.contains("private"))
+  #expect(!requestText.contains("body"))
+
+  let args = try String(contentsOf: capturedArgs, encoding: .utf8)
+    .split(separator: "\n")
+    .map(String.init)
+  #expect(args.count == 5)
+  #expect(args[0] == "sign")
+  #expect(args[1] == "--key")
+  #expect(args[2] == fakeKey.path)
+  #expect(args[3] == "--request")
+  #expect(!FileManager.default.fileExists(atPath: args[4]))
 }
 
 @Test
