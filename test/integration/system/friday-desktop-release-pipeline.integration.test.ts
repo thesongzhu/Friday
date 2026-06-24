@@ -37,6 +37,10 @@ async function createFixtureRepo(): Promise<string> {
       "check:client-design-contract": "node scripts/ops/check-friday-client-design-contract.mjs",
       "check:native-action-closure": "node scripts/ops/check-friday-native-action-closure.mjs",
       "check:ios-t2-surface-contract": "node scripts/ops/check-friday-ios-t2-surface-contract.mjs",
+      "check:ios-design-destination-capture-contract": "node scripts/ops/check-friday-ios-design-destination-capture-contract.mjs",
+      "proof:ios:design-destinations": "bash scripts/ops/friday-ios-design-destination-capture.sh --out-dir \"${FRIDAY_IOS_DESIGN_CAPTURE_OUT:-/tmp/friday-ios-design-destination-capture}\"",
+      "proof:desktop:live-write-read": "bash scripts/ops/friday-macos-live-write-read-capture.sh --out-dir \"${FRIDAY_DESKTOP_LIVE_WRITE_READ_CAPTURE_OUT:-/tmp/friday-desktop-live-write-read-capture}\"",
+      "proof:ui-device:live-write-read-bundle": "bash scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh --out-dir \"${FRIDAY_UI_DEVICE_LIVE_WRITE_READ_BUNDLE_OUT:-/tmp/friday-ui-device-live-write-read-bundle}\"",
       "check:product-auto-followup-contract": "node scripts/ops/check-friday-product-auto-followup-contract.mjs",
       "proof:product:auto-followup": "bash scripts/ops/friday-product-auto-followup-proof.sh",
       "check:desktop-approval-relay-contract": "node scripts/ops/check-friday-desktop-approval-relay-contract.mjs",
@@ -66,6 +70,10 @@ async function createFixtureRepo(): Promise<string> {
     "scripts/ops/check-friday-client-design-contract.mjs",
     "scripts/ops/check-friday-native-action-closure.mjs",
     "scripts/ops/check-friday-ios-t2-surface-contract.mjs",
+    "scripts/ops/check-friday-ios-design-destination-capture-contract.mjs",
+    "scripts/ops/friday-ios-design-destination-capture.sh",
+    "scripts/ops/friday-macos-live-write-read-capture.sh",
+    "scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh",
     "scripts/ops/check-friday-product-auto-followup-contract.mjs",
     "scripts/ops/friday-product-auto-followup-proof.sh",
     "scripts/ops/check-friday-desktop-approval-relay-contract.mjs",
@@ -107,6 +115,26 @@ async function createFixtureRepo(): Promise<string> {
     root,
     "scripts/ops/check-friday-ios-t2-surface-contract.mjs",
     "#!/usr/bin/env node\nconsole.log(JSON.stringify({status:\"passed\", truthLabel:\"fixture_ios_t2_surface_contract\"}));\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/check-friday-ios-design-destination-capture-contract.mjs",
+    "#!/usr/bin/env node\nconsole.log(JSON.stringify({status:\"passed\", truthLabel:\"fixture_ios_design_destination_capture_contract\"}));\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/friday-ios-design-destination-capture.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture ios design destination capture\"\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/friday-macos-live-write-read-capture.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture desktop live write-read capture\"\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture ui device live write-read bundle\"\n",
   );
   await writeFileWithParents(
     root,
@@ -187,6 +215,22 @@ describe("client ship gate pipeline check", () => {
         }),
         expect.objectContaining({
           target: "check:ios-t2-surface-contract",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "scripts/ops/check-friday-ios-design-destination-capture-contract.mjs",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "proof:ios:design-destinations",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "proof:desktop:live-write-read",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "proof:ui-device:live-write-read-bundle",
           status: "passed",
         }),
         expect.objectContaining({
