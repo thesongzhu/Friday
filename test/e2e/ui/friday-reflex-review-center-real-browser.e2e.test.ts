@@ -1422,7 +1422,8 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
         { accessToken: token },
       );
       const page = await customContext.newPage();
-      await page.goto(`${baseUrl}/reflex`, { waitUntil: "domcontentloaded" });
+      page.setDefaultNavigationTimeout(60_000);
+      await page.goto(`${baseUrl}/reflex`, { waitUntil: "commit" });
       await page.getByText("Friday Reflex").first().waitFor({ state: "visible", timeout: 60_000 });
       await page.locator(`[data-testid="reflex-candidate-card-${approveCandidate!.id}"]`).waitFor({
         state: "visible",
