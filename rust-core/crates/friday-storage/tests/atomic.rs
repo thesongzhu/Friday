@@ -221,6 +221,107 @@ fn record_event_is_hub_only() {
     assert_eq!(db.count("activity_item").unwrap(), 0);
 }
 
+// The M1 audit event a background memory-extraction billing call appends: action
+// "memory.extract.model_call", payload_ref = the ledger id (carries run attribution).
+fn extraction_audit_event(id: &str) -> AuditEvent {
+    AuditEvent {
+        audit_id: id.into(),
+        actor: "hub-agent".into(),
+        action: "memory.extract.model_call".into(),
+        payload_ref: Some("led:run-1:100".into()),
+        created_at: 100,
+    }
+}
+
+#[test]
+fn record_extraction_model_call_writes_ledger_plus_exactly_one_audit_no_activity() {
+    // M1 audit-coverage fix: extraction billing now pairs the token_ledger row with EXACTLY
+    // one hash-chained audit_ledger row (action "memory.extract.model_call") in one tx — and
+    // does NOT mint an activity row (extraction never has). The audit chain stays valid.
+    let p = temp_db_path("extract-bill-ok");
+    let db = Db::open_hub(&p).unwrap();
+    db.record_extraction_model_call(&ledger("le1"), &extraction_audit_event("le1:modelcall"))
+        .unwrap();
+
+    assert_eq!(db.count("token_ledger").unwrap(), 1);
+    assert_eq!(
+        db.count("activity_item").unwrap(),
+        0,
+        "extraction billing writes NO activity row (ledger + audit only)"
+    );
+    assert_eq!(
+        db.count("audit_ledger").unwrap(),
+        1,
+        "extraction billing appends EXACTLY one audit row"
+    );
+    // The single audit row carries the M1 action.
+    let action: String = db
+        .conn()
+        .query_row("SELECT action FROM audit_ledger LIMIT 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(action, "memory.extract.model_call");
+    // The hash chain remains intact after the extraction audit append.
+    assert_eq!(audit::verify_audit_chain(db.conn()).unwrap(), 1);
+
+    // Extraction is its OWN cost dimension: the ledger row stays run-unattributed (run_id =
+    // NULL), so it is excluded from any run's metered total (M1 must not re-attribute).
+    let run_id: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT run_id FROM token_ledger WHERE ledger_id = 'le1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        run_id, None,
+        "extraction ledger row carries no run attribution"
+    );
+    let run = friday_storage::agent_run_read::run_token_totals(db.conn(), "run-1").unwrap();
+    assert_eq!(
+        run.total, 0,
+        "extraction cost is excluded from the run total"
+    );
+}
+
+#[test]
+fn record_extraction_model_call_rolls_back_both_on_failure() {
+    // Atomicity: if the audit insert collides (PK clash), the token_ledger row must NOT
+    // persist — an extraction can never leave a charge with no audit row.
+    let p = temp_db_path("extract-bill-fail");
+    let db = Db::open_hub(&p).unwrap();
+    {
+        let tx = db.conn().unchecked_transaction().unwrap();
+        audit::append_audit(&tx, "dup", "x", "seed", None, 1).unwrap();
+        tx.commit().unwrap();
+    }
+    let res = db.record_extraction_model_call(&ledger("le1"), &extraction_audit_event("dup"));
+    assert!(res.is_err(), "duplicate audit_id must fail the call");
+    assert_eq!(
+        db.count("token_ledger").unwrap(),
+        0,
+        "the billing ledger row must roll back with the failed audit append"
+    );
+    assert_eq!(
+        db.count("audit_ledger").unwrap(),
+        1,
+        "only the seed row remains"
+    );
+    assert_eq!(audit::verify_audit_chain(db.conn()).unwrap(), 1);
+}
+
+#[test]
+fn record_extraction_model_call_is_hub_only() {
+    let p = temp_db_path("extract-bill-phone");
+    let db = Db::open_phone(&p).unwrap();
+    let res =
+        db.record_extraction_model_call(&ledger("le1"), &extraction_audit_event("le1:modelcall"));
+    assert!(matches!(res, Err(StorageError::Unsupported(_))));
+    // No billing row persisted; `audit_ledger` does not exist on a phone profile at all
+    // (so it is not counted here — the guard fires before any write).
+    assert_eq!(db.count("token_ledger").unwrap(), 0);
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // CONCURRENCY: the billing busy-retry (MED bug, hardening audit).
 //
