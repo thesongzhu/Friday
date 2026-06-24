@@ -69,7 +69,8 @@ const checks = checkSourceSet(repoRoot, [
     ],
     requiredStrings: [
       "Command Sheet",
-      "Live truth",
+      "Route coverage is not END-BAR",
+      "Provider Workspace",
       "Device Pairing",
     ],
   },
