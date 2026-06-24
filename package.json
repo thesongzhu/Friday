@@ -102,6 +102,7 @@
     "check:cross-platform-release-inputs": "bash scripts/ops/check-friday-cross-platform-release-inputs.sh",
     "check:client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
     "check:ios-live-evidence-contract": "node scripts/ops/check-friday-ios-live-evidence-contract.mjs",
+    "check:ios-t2-surface-contract": "node scripts/ops/check-friday-ios-t2-surface-contract.mjs",
     "check:product-auto-followup-contract": "node scripts/ops/check-friday-product-auto-followup-contract.mjs",
     "check:desktop-approval-relay-contract": "node scripts/ops/check-friday-desktop-approval-relay-contract.mjs",
     "check:cross-platform-client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
