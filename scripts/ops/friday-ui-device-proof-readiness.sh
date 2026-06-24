@@ -191,7 +191,7 @@ export SAME_RUN_EVENTS="${SAME_RUN_EVENTS:-}"
 export FRIDAY_WORKBENCH_SNAPSHOT_FILE="${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}"
 
 derive_workbench_events_if_possible() {
-  if [ -n "${SAME_RUN_EVENTS:-}" ] || [ -z "${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}" ]; then
+  if [ -z "${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}" ]; then
     return 0
   fi
   if [ -z "${MISSION_ID:-}" ] || [ -z "${MOBILE_EVIDENCE:-}" ] || [ -z "${DESKTOP_EVIDENCE:-}" ] || [ -z "${CHANNEL_EVIDENCE:-}" ] || [ -z "${TIMELINE_EVIDENCE:-}" ]; then
@@ -199,14 +199,19 @@ derive_workbench_events_if_possible() {
   fi
 
   local derived_out
+  local existing_events
+  local merged_out
   local stdout_out
   if [ -n "$EVIDENCE_DIR" ]; then
     derived_out="$(abs_path "$EVIDENCE_DIR")/workbench-derived-events.jsonl"
+    merged_out="$(abs_path "$EVIDENCE_DIR")/same-run-events.merged.jsonl"
   else
     derived_out="/tmp/friday-workbench-derived-events-${MISSION_ID}.jsonl"
+    merged_out="/tmp/friday-same-run-events-merged-${MISSION_ID}.jsonl"
   fi
   stdout_out="${derived_out}.stdout"
   mkdir -p "$(dirname "$derived_out")"
+  existing_events="${SAME_RUN_EVENTS:-}"
 
   if node "${REPO_ROOT}/scripts/ops/friday-workbench-snapshot-events.mjs" \
     "--mission-id=${MISSION_ID}" \
@@ -216,7 +221,13 @@ derive_workbench_events_if_possible() {
     "--channel=${CHANNEL_EVIDENCE}" \
     "--timeline=${TIMELINE_EVIDENCE}" \
     "--out=${derived_out}" >"$stdout_out"; then
-    SAME_RUN_EVENTS="$derived_out"
+    if [ -n "$existing_events" ]; then
+      awk '!seen[$0]++' "$existing_events" "$derived_out" >"$merged_out"
+      SAME_RUN_EVENTS="$merged_out"
+      notes+=("workbench_snapshot_events_merge:ready:${merged_out}")
+    else
+      SAME_RUN_EVENTS="$derived_out"
+    fi
     export SAME_RUN_EVENTS
     notes+=("workbench_snapshot_events_bridge:ready:${derived_out}")
   else

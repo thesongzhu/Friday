@@ -477,4 +477,37 @@ describe("friday-ui-device-proof-readiness", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("merges workbench-derived events with discovered same-run events instead of replacing them", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-merge-"));
+    try {
+      writePartialEvidenceDir(tempDir);
+      writeFileSync(join(tempDir, "workbench-snapshot.json"), JSON.stringify({ snapshot: makeWorkbenchSnapshot() }, null, 2));
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        notes?: string[];
+      };
+
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_bridge:ready"))).toBe(true);
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_merge:ready"))).toBe(true);
+      expect(result.notes?.some((note) => note.includes("resolved_SAME_RUN_EVENTS") && note.includes("same-run-events.merged.jsonl"))).toBe(true);
+
+      const rows = readFileSync(join(tempDir, "same-run-events.merged.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { event?: string });
+      expect(rows).toContainEqual(expect.objectContaining({ event: "proof_receipt_visible_before_done" }));
+      expect(rows).toContainEqual(expect.objectContaining({ event: "mission_workbench_visible" }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
