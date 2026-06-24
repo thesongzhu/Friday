@@ -25,8 +25,8 @@ usage() {
   cat <<'USAGE'
 Usage:
   apps/friday-ios/build-sim.sh [screenshot-path]
-  apps/friday-ios/build-sim.sh --mode offline-truth [--shot screenshot-path]
-  apps/friday-ios/build-sim.sh --mode live-loopback [--shot screenshot-path]
+  apps/friday-ios/build-sim.sh --mode offline-truth [--destination pairing] [--shot screenshot-path]
+  apps/friday-ios/build-sim.sh --mode live-loopback [--destination pairing] [--shot screenshot-path]
 
 Modes:
   offline-truth  Default. Launches with all FRIDAY_MOBILE_LIVE_* gates OFF and proves the
@@ -42,6 +42,7 @@ BUILD="$HERE/.build-sim"
 APP="$BUILD/FridayShell.app"
 MODE="offline-truth"
 SHOT="$BUILD/friday-ios-sim.png"
+DESTINATION=""
 IOS_VERSION="17.0"
 TRIPLE="arm64-apple-ios${IOS_VERSION}-simulator"   # Apple-Silicon host (arm64 sim slice)
 
@@ -66,6 +67,19 @@ while [[ $# -gt 0 ]]; do
       fi
       SHOT="$2"
       shift 2
+      ;;
+    --destination)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --destination requires a value" >&2
+        usage >&2
+        exit 2
+      fi
+      DESTINATION="$2"
+      shift 2
+      ;;
+    --destination=*)
+      DESTINATION="${1#--destination=}"
+      shift
       ;;
     -h|--help)
       usage
@@ -97,6 +111,10 @@ case "$MODE" in
     exit 2
     ;;
 esac
+if [[ -n "$DESTINATION" && ! "$DESTINATION" =~ ^[A-Za-z][A-Za-z0-9]*$ ]]; then
+  echo "ERROR: --destination must be a MobileDestination raw value such as pairing or providerAuth" >&2
+  exit 2
+fi
 
 rm -rf "$BUILD"; mkdir -p "$BUILD" "$APP"
 
@@ -190,6 +208,10 @@ case "$MODE" in
     ;;
 esac
 LAUNCH_CMD=(xcrun simctl launch --terminate-running-process "$UDID" com.friday.shell)
+if [[ -n "$DESTINATION" ]]; then
+  LAUNCH_ARGS+=("--initial-destination=$DESTINATION")
+  LAUNCH_ENV+=(SIMCTL_CHILD_FRIDAY_MOBILE_INITIAL_DESTINATION="$DESTINATION")
+fi
 if ((${#LAUNCH_ARGS[@]} > 0)); then
   LAUNCH_CMD+=("${LAUNCH_ARGS[@]}")
 fi

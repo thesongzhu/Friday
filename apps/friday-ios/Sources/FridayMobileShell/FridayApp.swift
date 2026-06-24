@@ -337,6 +337,8 @@ struct RootView: View {
 
   init(session: FridaySession) {
     self.session = session
+    let initialDestination = Self.initialDestinationFromLaunch()
+    _destination = State(initialValue: initialDestination)
     _homeVM = StateObject(wrappedValue: HomeViewModel(
       client: session.readClient,
       writeClient: session.missionClient,
@@ -438,6 +440,33 @@ struct RootView: View {
         await homeVM.refresh()
       }
     }
+  }
+
+  private static func initialDestinationFromLaunch(
+    args: [String] = ProcessInfo.processInfo.arguments,
+    env: [String: String] = ProcessInfo.processInfo.environment
+  ) -> MobileDestination {
+    let envValue = env["FRIDAY_MOBILE_INITIAL_DESTINATION"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let envValue, let destination = MobileDestination(rawValue: envValue) {
+      return destination
+    }
+
+    for (index, arg) in args.enumerated() {
+      if arg.hasPrefix("--initial-destination=") {
+        let rawValue = String(arg.dropFirst("--initial-destination=".count))
+        if let destination = MobileDestination(rawValue: rawValue) {
+          return destination
+        }
+      }
+      if arg == "--initial-destination", args.indices.contains(index + 1) {
+        let rawValue = args[index + 1]
+        if let destination = MobileDestination(rawValue: rawValue) {
+          return destination
+        }
+      }
+    }
+
+    return .home
   }
 
   private func applyShareURL(_ url: URL) {
