@@ -309,6 +309,26 @@ fn final_completed_work_item_closes_active_mission_with_audit_proof() {
         .decision_path_summary
         .contains("auto-close after WorkItem 'work-wi' completed_with_proof"));
 
+    // M2 (audit-coverage hardening): the auto-close is itself a Mission status hop (active->done),
+    // so it leaves its OWN hash-chained receipt (distinct `mission_autoclose:` id) inside the SAME
+    // txn as the triggering WorkItem completion — not only the WorkItem's `workitem_lifecycle:` row.
+    let autoclose_action: String = db
+        .conn()
+        .query_row(
+            "SELECT action FROM audit_ledger WHERE audit_id = 'mission_autoclose:mission-wi:10'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        autoclose_action,
+        "mission.lifecycle:active->done:auto_close_after_work_item:work-wi"
+    );
+    assert!(
+        friday_storage::audit::verify_audit_chain(db.conn()).is_ok(),
+        "WorkItem lifecycle row + auto-close mission row both verify in the chain"
+    );
+
     let conversation = db
         .get_friday_conversation("fconv_wi_lifecycle")
         .unwrap()

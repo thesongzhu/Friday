@@ -16,7 +16,7 @@ use friday_core::{
     RouteDecisionProjection, SurfaceEvent, SurfaceEventKind, SurfaceKind, SurfaceThread,
     TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
 };
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
 
 fn unsupported(message: impl Into<String>) -> StorageError {
@@ -879,6 +879,29 @@ pub fn transition_mission_status(
         }
         mission.decision_path_summary =
             append_lifecycle_summary(&mission.decision_path_summary, &lifecycle_entry);
+
+        // M2 (audit-coverage hardening): record the Mission status hop in the hash-chained audit
+        // ledger inside the SAME txn as the state write — the WorkItem sibling
+        // (`transition_work_item_status_inner`, audit row at the `work_item.lifecycle:` action)
+        // already chains its hop, but a Mission's transition was recorded ONLY in the mutable,
+        // free-text `decision_path_summary` (above), which is not tamper-evident. The summary entry
+        // is preserved (no-degrade); this ADDS the append-only, verifiable receipt so a mission
+        // lifecycle transition can never be silently rewritten. The audit read+insert and the
+        // upserts share this one txn, so a `with_busy_retry` re-run rolls back ALL of it first and
+        // re-appends from the live prev-hash — never a double-append or a forked chain.
+        crate::audit::append_audit(
+            &tx,
+            &format!("mission_lifecycle:{}:{now_ms}", mission.mission_id),
+            actor_ref,
+            &format!(
+                "mission.lifecycle:{}->{}:{}",
+                previous_status.as_str(),
+                mission.status.as_str(),
+                reason
+            ),
+            Some(mission.mission_id.as_str()),
+            now_ms,
+        )?;
         upsert_mission(&tx, &mission)?;
 
         let mut conversation = get_conversation(&tx, friday_conversation_id)?.ok_or_else(|| {
@@ -1148,7 +1171,7 @@ fn transition_work_item_status_inner(
 }
 
 fn maybe_close_mission_after_work_item_completion(
-    conn: &Connection,
+    tx: &Transaction<'_>,
     item: &WorkItem,
     previous_status: WorkItemStatus,
     work_item_audit_id: &str,
@@ -1162,14 +1185,14 @@ fn maybe_close_mission_after_work_item_completion(
         return Ok(());
     }
 
-    let Some(mut mission) = get_mission(conn, &item.mission_id)? else {
+    let Some(mut mission) = get_mission(tx, &item.mission_id)? else {
         return Ok(());
     };
     if !mission.status.can_transition_to(MissionStatus::Done) {
         return Ok(());
     }
 
-    let work_items = list_work_items_for_mission(conn, &item.mission_id)?;
+    let work_items = list_work_items_for_mission(tx, &item.mission_id)?;
     if work_items.is_empty()
         || !work_items
             .iter()
@@ -1177,11 +1200,12 @@ fn maybe_close_mission_after_work_item_completion(
     {
         return Ok(());
     }
-    if has_unmaterialized_deferred_follow_up(conn, &item.mission_id, &work_items)? {
+    if has_unmaterialized_deferred_follow_up(tx, &item.mission_id, &work_items)? {
         return Ok(());
     }
 
     let proof_ref = format!("audit://{work_item_audit_id}");
+    let previous_mission_status = mission.status;
     mission.status = mission
         .status
         .try_transition(MissionStatus::Done)
@@ -1196,10 +1220,31 @@ fn maybe_close_mission_after_work_item_completion(
     );
     mission.decision_path_summary =
         append_lifecycle_summary(&mission.decision_path_summary, &lifecycle_entry);
-    upsert_mission(conn, &mission)?;
+
+    // M2 (audit-coverage hardening): the auto-close is a Mission status hop (active->Done) exactly
+    // like an explicit `transition_mission_status`, so it gets the SAME hash-chained receipt — the
+    // caller (`transition_work_item_status_inner`) passes its OPEN `tx`, so this audit row + the
+    // mission/conversation upserts below land atomically with the triggering WorkItem completion.
+    // A distinct `mission_autoclose:` audit_id prefix guarantees no collision with an explicit
+    // `mission_lifecycle:` row at the same `now_ms`. `decision_path_summary` is preserved
+    // (no-degrade); this ADDS the tamper-evident record the close previously lacked.
+    crate::audit::append_audit(
+        tx,
+        &format!("mission_autoclose:{}:{now_ms}", mission.mission_id),
+        actor_ref,
+        &format!(
+            "mission.lifecycle:{}->{}:auto_close_after_work_item:{}",
+            previous_mission_status.as_str(),
+            mission.status.as_str(),
+            item.work_item_id
+        ),
+        Some(mission.mission_id.as_str()),
+        now_ms,
+    )?;
+    upsert_mission(tx, &mission)?;
 
     let mut conversation =
-        get_conversation(conn, &mission.friday_conversation_id)?.ok_or_else(|| {
+        get_conversation(tx, &mission.friday_conversation_id)?.ok_or_else(|| {
             unsupported(format!(
                 "mission_auto_close conversation '{}' not found",
                 mission.friday_conversation_id
@@ -1209,7 +1254,7 @@ fn maybe_close_mission_after_work_item_completion(
         .active_mission_ids
         .retain(|id| id != &mission.mission_id);
     conversation.updated_at_ms = now_ms;
-    upsert_conversation(conn, &conversation)?;
+    upsert_conversation(tx, &conversation)?;
 
     Ok(())
 }
