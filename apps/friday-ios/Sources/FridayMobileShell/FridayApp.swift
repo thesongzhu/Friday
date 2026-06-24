@@ -18,7 +18,44 @@
 
 import FridayMobileShellCore
 import FridayRustClient
+import Foundation
 import SwiftUI
+
+#if targetEnvironment(simulator)
+private struct SimulatorFileDeviceKeypairBackend: DeviceKeypairBackend {
+  private let url: URL
+  private let publicKeyURL: URL
+
+  init(fileManager: FileManager = .default) {
+    let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+      ?? fileManager.temporaryDirectory
+    let directory = base.appendingPathComponent("FridayShellSimulatorProof", isDirectory: true)
+    try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    self.url = directory.appendingPathComponent("device-keypair-v1.bin")
+    self.publicKeyURL = directory.appendingPathComponent("device-pubkey-v1.txt")
+  }
+
+  func loadSecret() throws -> [UInt8]? {
+    guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+    let secret = [UInt8](try Data(contentsOf: url))
+    writePublicKeySidecar(for: secret)
+    return secret
+  }
+
+  func storeSecret(_ secret: [UInt8]) throws {
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true)
+    try Data(secret).write(to: url, options: [.atomic])
+    writePublicKeySidecar(for: secret)
+  }
+
+  private func writePublicKeySidecar(for secret: [UInt8]) {
+    guard let keypair = try? FridayCrypto.DeviceKeypair(secretBytes: secret) else { return }
+    try? Hex.encode(keypair.publicKey).write(to: publicKeyURL, atomically: true, encoding: .utf8)
+  }
+}
+#endif
 
 /// The app's real-client wiring: the device X25519 transport keypair + the REAL sealed-WS
 /// read/write clients (built via `FridayClientFactory`) + the operator-signer RELAY seam.
@@ -42,6 +79,7 @@ final class FridaySession: ObservableObject {
   let writeClient: FridayRustWriteClient
   let missionClient: FridayMobileMissionDispatchingWriteClient?
   let devicePairing: DevicePairingReadiness
+  let deviceKeypairBackend: DeviceKeypairBackend
   let makePairingClient: (DeviceKeypair) -> FridayPairingClient?
   /// The operator-signing RELAY. Mock today (NOT a real signature); the real desktop signer
   /// (PR #671) is the slice-6 / operator-key gate. The phone holds NO signing key (INV-1).
@@ -55,6 +93,10 @@ final class FridaySession: ObservableObject {
     let args = ProcessInfo.processInfo.arguments
     let env = ProcessInfo.processInfo.environment
     self.runControlEnabled = preview ? false : Self.runControlRequested(args: args, env: env)
+    let selectedDeviceKeypairBackend: DeviceKeypairBackend = preview
+      ? KeychainDeviceKeypairBackend()
+      : Self.defaultDeviceKeypairBackend(args: args, env: env)
+    self.deviceKeypairBackend = selectedDeviceKeypairBackend
 
     // SINGLE-PEER-TRAP SAFETY: the DEFAULT read client mints NO X25519 keypair, opens NO socket,
     // and touches NO SecureStore — it is the no-key `HonestlyUnavailableReadClient`, which always
@@ -66,10 +108,12 @@ final class FridaySession: ObservableObject {
     // wired here behind an OPT-IN env/arg gate (`FRIDAY_MOBILE_LIVE_READ=1` / `--live-read`,
     // mirroring the desktop `FRIDAY_CONSOLE_LIVE`). The DEFAULT (gate OFF) stays the honest-
     // unavailable client — this PR does NOT flip the shipped default (that is the slice-6 gate).
-    self.readClient = preview ? PreviewReadClient() : Self.defaultReadClient()
+    self.readClient = preview
+      ? PreviewReadClient()
+      : Self.defaultReadClient(deviceKeypairBackend: selectedDeviceKeypairBackend)
     self.devicePairing = preview
       ? .evaluate(deviceKeypairRequested: false, readLiveRequested: false, writeLiveRequested: false)
-      : Self.defaultDevicePairingReadiness()
+      : Self.defaultDevicePairingReadiness(deviceKeypairBackend: selectedDeviceKeypairBackend)
     self.makePairingClient = preview || !Self.livePairingRequested(args: args, env: env)
       ? { _ in nil }
       : Self.defaultPairingClient
@@ -87,7 +131,9 @@ final class FridaySession: ObservableObject {
       self.writeClient = Self.honestUnavailableWriteClient()
       self.missionClient = nil
     } else {
-      let liveWrite = Self.defaultLiveWriteClient(runControlEnabled: runControlEnabled)
+      let liveWrite = Self.defaultLiveWriteClient(
+        runControlEnabled: runControlEnabled,
+        deviceKeypairBackend: selectedDeviceKeypairBackend)
       self.writeClient = liveWrite ?? Self.honestUnavailableWriteClient(runControlEnabled: runControlEnabled)
       self.missionClient = liveWrite
     }
@@ -104,7 +150,9 @@ final class FridaySession: ObservableObject {
   /// master key is unavailable (e.g. a real phone — the J2 pairing problem), surface the TRUTH
   /// (honest unavailable) — NEVER fall back to the preview sample, which would fabricate a ready
   /// view the live seam did not produce.
-  static func defaultReadClient() -> FridayRustReadClient {
+  static func defaultReadClient(
+    deviceKeypairBackend: DeviceKeypairBackend = KeychainDeviceKeypairBackend()
+  ) -> FridayRustReadClient {
     let args = ProcessInfo.processInfo.arguments
     let env = ProcessInfo.processInfo.environment
     let useLive = liveReadRequested(args: args, env: env)
@@ -114,7 +162,7 @@ final class FridaySession: ObservableObject {
     }
     do {
       if useDeviceKeypair(args: args, env: env) {
-        let device = try DeviceKeypairStore.loadOrGenerate()
+        let device = try DeviceKeypairStore.loadOrGenerate(backend: deviceKeypairBackend)
         return RealReadClientFactory.makeLive(deviceKeypair: device)
       }
       return try RealReadClientFactory.makeLive()
@@ -140,7 +188,8 @@ final class FridaySession: ObservableObject {
   }
 
   static func defaultLiveWriteClient(
-    runControlEnabled: Bool
+    runControlEnabled: Bool,
+    deviceKeypairBackend: DeviceKeypairBackend = KeychainDeviceKeypairBackend()
   ) -> FridayMobileMissionDispatchingWriteClient? {
     let args = ProcessInfo.processInfo.arguments
     let env = ProcessInfo.processInfo.environment
@@ -150,7 +199,7 @@ final class FridaySession: ObservableObject {
     }
     do {
       if useDeviceKeypair(args: args, env: env) {
-        let device = try DeviceKeypairStore.loadOrGenerate()
+        let device = try DeviceKeypairStore.loadOrGenerate(backend: deviceKeypairBackend)
         return RealWriteClientFactory.makeLive(
           deviceKeypair: device,
           agentRunControlViaRust: runControlEnabled)
@@ -165,6 +214,15 @@ final class FridaySession: ObservableObject {
 
   static func useDeviceKeypair(args: [String], env: [String: String]) -> Bool {
     MobileRuntimeGates.useDeviceKeypair(args: args, env: env)
+  }
+
+  static func defaultDeviceKeypairBackend(args: [String], env: [String: String]) -> DeviceKeypairBackend {
+    #if targetEnvironment(simulator)
+    if MobileRuntimeGates.simulatorFileDeviceKeypairRequested(args: args, env: env) {
+      return SimulatorFileDeviceKeypairBackend()
+    }
+    #endif
+    return KeychainDeviceKeypairBackend()
   }
 
   static func liveReadRequested(args: [String], env: [String: String]) -> Bool {
@@ -194,13 +252,16 @@ final class FridaySession: ObservableObject {
     return RealPairingClientFactory.makeLive(deviceKeypair: deviceKeypair)
   }
 
-  static func defaultDevicePairingReadiness() -> DevicePairingReadiness {
+  static func defaultDevicePairingReadiness(
+    deviceKeypairBackend: DeviceKeypairBackend = KeychainDeviceKeypairBackend()
+  ) -> DevicePairingReadiness {
     let args = ProcessInfo.processInfo.arguments
     let env = ProcessInfo.processInfo.environment
     return DevicePairingReadiness.evaluate(
       deviceKeypairRequested: useDeviceKeypair(args: args, env: env),
       readLiveRequested: liveReadRequested(args: args, env: env),
-      writeLiveRequested: liveWriteRequested(args: args, env: env))
+      writeLiveRequested: liveWriteRequested(args: args, env: env),
+      backend: deviceKeypairBackend)
   }
 
   /// The honest-unavailable WRITE client: the shared `FridayClientFactory.makeWriteClient` with its
@@ -238,6 +299,7 @@ struct RootView: View {
       client: session.readClient,
       writeClient: session.missionClient,
       devicePairing: session.devicePairing,
+      deviceKeypairBackend: session.deviceKeypairBackend,
       makePairingClient: session.makePairingClient))
     _sessionContinuationVM = StateObject(wrappedValue: SessionContinuationViewModel(
       client: session.readClient,
