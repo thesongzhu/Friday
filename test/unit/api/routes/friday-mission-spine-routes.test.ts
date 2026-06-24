@@ -338,6 +338,40 @@ describe("createFridayMissionSpineRoutes", () => {
     expect(JSON.stringify(response)).not.toContain("prep fallback");
   });
 
+  it("accepts stale WorkItems only when the retry recovery affordance is exposed", async () => {
+    const staleSnapshot = cloneSnapshot({
+      workItems: snapshot.workItems.map((item, index) => (
+        index === 0
+          ? {
+            ...item,
+            state: "stale",
+            done: false,
+            blockingReason: "failed retryable; operator may retry by returning the WorkItem to ready_to_dispatch",
+            recoveryKind: "retryable",
+            canRetry: true,
+            canCancel: true,
+          }
+          : item
+      )),
+    });
+    const routes = createFridayMissionSpineRoutes({
+      workbench: { getSnapshot: vi.fn(async () => staleSnapshot) },
+      disabledReason: null,
+    });
+    const route = findRoute(routes);
+
+    const response = await route.handler(makeCtx() as never);
+
+    expect(response).toEqual({ snapshot: staleSnapshot });
+    expect(response.snapshot.workItems[0]).toMatchObject({
+      state: "stale",
+      recoveryKind: "retryable",
+      canRetry: true,
+      canCancel: true,
+      done: false,
+    });
+  });
+
   it("accepts real Rust producer hyphen mission ids without weakening exact-match checks", async () => {
     const missionId = "mission-autodisp-1781492033";
     const hyphenSnapshot = cloneSnapshot({

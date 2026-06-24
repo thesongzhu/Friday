@@ -1282,6 +1282,47 @@ mod tests {
     }
 
     #[test]
+    fn real_failed_retryable_work_item_projects_stale_retry_affordance() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        let mut item = db.get_work_item("autodisp-1781492033").unwrap().unwrap();
+        item.status = WorkItemStatus::FailedRetryable;
+        item.blocking_reason = Some(
+            "failed retryable; operator may retry by returning the WorkItem to ready_to_dispatch"
+                .into(),
+        );
+        db.upsert_work_item(&item).unwrap();
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        let items = snapshot
+            .get("workItems")
+            .and_then(Value::as_array)
+            .expect("workItems array");
+        let projected = items
+            .iter()
+            .find(|row| row.get("id").and_then(Value::as_str) == Some("autodisp-1781492033"))
+            .expect("real producer work item projection");
+
+        assert_eq!(
+            projected.get("state").and_then(Value::as_str),
+            Some("stale")
+        );
+        assert_eq!(
+            projected.get("recoveryKind").and_then(Value::as_str),
+            Some("retryable")
+        );
+        assert_eq!(
+            projected.get("canRetry").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            projected.get("canCancel").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(projected.get("done").and_then(Value::as_bool), Some(false));
+    }
+
+    #[test]
     fn memory_candidates_project_durable_memory_id_once() {
         let db = Db::open_hub(&tmp()).unwrap();
         let mission_id = seed_real_producer_mission(&db);
