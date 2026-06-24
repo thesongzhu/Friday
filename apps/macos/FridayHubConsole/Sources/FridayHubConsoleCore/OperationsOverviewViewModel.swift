@@ -238,6 +238,27 @@ public struct ChatTurnRefs: Sendable, Equatable {
     var seen = Set<String>()
     self.runIds = runIds.filter { !$0.isEmpty && seen.insert($0).inserted }
   }
+
+  public var receiptRefs: [ChatReceiptRef] {
+    var refs = [ChatReceiptRef(label: "mission_id", ref: missionId)]
+    if let workItemId, !workItemId.isEmpty {
+      refs.append(ChatReceiptRef(label: "work_item_id", ref: workItemId))
+    }
+    refs.append(contentsOf: runIds.map { ChatReceiptRef(label: "run_id", ref: $0) })
+    return refs
+  }
+}
+
+public struct ChatReceiptRef: Sendable, Codable, Equatable, Identifiable {
+  public let label: String
+  public let ref: String
+
+  public var id: String { "\(label):\(ref)" }
+
+  public init(label: String, ref: String) {
+    self.label = label
+    self.ref = ref
+  }
 }
 
 public struct ChatNeedsMeItem: Sendable, Equatable, Identifiable {
@@ -251,6 +272,31 @@ public struct ChatNeedsMeItem: Sendable, Equatable, Identifiable {
   public let signingSummary: String?
 
   public var id: String { "\(runId):\(kind):\(refId)" }
+
+  public var receiptRefs: [ChatReceiptRef] {
+    var refs = [
+      ChatReceiptRef(label: "run_id", ref: runId),
+      ChatReceiptRef(label: receiptLabel, ref: refId),
+    ]
+    if let actionDigest, !actionDigest.isEmpty {
+      refs.append(ChatReceiptRef(label: "action_digest", ref: actionDigest))
+    }
+    if let deepLink, !deepLink.isEmpty {
+      refs.append(ChatReceiptRef(label: "deep_link", ref: deepLink))
+    }
+    return refs
+  }
+
+  private var receiptLabel: String {
+    switch kind {
+    case "approval", "approval_required":
+      return "approval_ref"
+    case "memory_review":
+      return "memory_ref"
+    default:
+      return "activity_ref"
+    }
+  }
 
   public init(
     runId: String,

@@ -557,7 +557,10 @@ struct DesktopChatScreen: View {
     append(.user(text))
     Task {
       await viewModel.submitIntake(intent: text, routePreference: routePreference)
-      append(DesktopChatMessage.from(viewModel.intakeState))
+      append(DesktopChatMessage.from(
+        viewModel.intakeState,
+        turn: viewModel.latestChatTurn,
+        reviewState: viewModel.chatReviewState))
     }
   }
 
@@ -621,8 +624,8 @@ private struct DesktopChatBubble: View {
         .foregroundStyle(HubTheme.textPrimary)
         .fixedSize(horizontal: false, vertical: true)
         .textSelection(.enabled)
-      ForEach(message.refs, id: \.self) { ref in
-        RefPill(label: nil, ref: ref)
+      ForEach(message.refs) { ref in
+        RefPill(label: ref.label, ref: ref.ref)
       }
     }
     .padding(.horizontal, 12)
@@ -652,14 +655,24 @@ private struct DesktopChatMessage: Identifiable, Codable, Equatable, Sendable {
   let id: String
   let role: DesktopChatRole
   let text: String
-  let refs: [String]
+  let refs: [ChatReceiptRef]
   let createdAtMs: Int64
 
   static func user(_ text: String) -> Self {
     DesktopChatMessage(role: .user, text: text, refs: [])
   }
 
-  static func from(_ state: WriteActionState) -> Self {
+  static func from(
+    _ state: WriteActionState,
+    turn: ChatTurnRefs? = nil,
+    reviewState: ChatReviewState = .idle
+  ) -> Self {
+    var refs = turn?.receiptRefs ?? []
+    if case let .loaded(items) = reviewState {
+      refs.append(contentsOf: items.flatMap(\.receiptRefs))
+    }
+    refs = uniqueRefs(refs)
+
     switch state {
     case .ready:
       return DesktopChatMessage(role: .friday, text: "Ready.", refs: [])
@@ -667,18 +680,24 @@ private struct DesktopChatMessage: Identifiable, Codable, Equatable, Sendable {
       return DesktopChatMessage(role: .friday, text: "Working.", refs: [])
     case let .confirmed(summary, questions, answerBody):
       let body = answerBodyText(answerBody) ?? summary
-      return DesktopChatMessage(role: .friday, text: body, refs: questions)
+      let questionRefs = questions.map { ChatReceiptRef(label: "clarification", ref: $0) }
+      return DesktopChatMessage(role: .friday, text: body, refs: uniqueRefs(refs + questionRefs))
     case let .error(reason):
-      return DesktopChatMessage(role: .friday, text: reason, refs: [])
+      return DesktopChatMessage(role: .friday, text: reason, refs: refs)
     }
   }
 
-  init(role: DesktopChatRole, text: String, refs: [String]) {
+  init(role: DesktopChatRole, text: String, refs: [ChatReceiptRef]) {
     self.id = UUID().uuidString
     self.role = role
     self.text = text
     self.refs = refs
     self.createdAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+  }
+
+  private static func uniqueRefs(_ refs: [ChatReceiptRef]) -> [ChatReceiptRef] {
+    var seen = Set<String>()
+    return refs.filter { seen.insert($0.id).inserted }
   }
 }
 
