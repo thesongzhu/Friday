@@ -524,9 +524,9 @@ struct FridayHomeScreen: View {
           Text("Device pairing").font(.headline).foregroundStyle(MobileTheme.textPrimary)
           Spacer()
           StatusChip(
-            text: readiness.mode.rawValue,
-            bg: readiness.mode == .ready ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
-            fg: readiness.mode == .ready ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
+            text: pairingReadinessLabel(readiness),
+            bg: pairingReadinessBackground(readiness),
+            fg: pairingReadinessForeground(readiness))
         }
         Text(readiness.reason)
           .font(.caption)
@@ -557,8 +557,41 @@ struct FridayHomeScreen: View {
     }
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
-      "Device pairing \(readiness.mode.rawValue). \(readiness.reason). \(t3Status?.homeSummary ?? "Hub T3 projection is not loaded.")")
+      "Device pairing \(pairingReadinessLabel(readiness)). \(readiness.reason). \(t3Status?.homeSummary ?? "Hub T3 projection is not loaded.")")
     .accessibilityIdentifier("friday.home.device-pairing-card")
+  }
+
+  private func pairingReadinessLabel(_ readiness: DevicePairingReadiness) -> String {
+    switch readiness.mode {
+    case .disabled:
+      return "QR available"
+    case .ready:
+      return "device key ready"
+    case .unavailable:
+      return "blocked"
+    }
+  }
+
+  private func pairingReadinessBackground(_ readiness: DevicePairingReadiness) -> Color {
+    switch readiness.mode {
+    case .disabled:
+      return MobileTheme.chipNeutralBG
+    case .ready:
+      return MobileTheme.chipPendingBG
+    case .unavailable:
+      return MobileTheme.chipWarnBG
+    }
+  }
+
+  private func pairingReadinessForeground(_ readiness: DevicePairingReadiness) -> Color {
+    switch readiness.mode {
+    case .disabled:
+      return MobileTheme.chipNeutralFG
+    case .ready:
+      return MobileTheme.chipPendingFG
+    case .unavailable:
+      return MobileTheme.chipWarnFG
+    }
   }
 
   private var pairingEntry: some View {
