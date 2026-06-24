@@ -269,8 +269,25 @@ final class SessionContinuationViewModelTests: XCTestCase {
       SessionContinuationFact(id: "audit", label: "audit", value: "verified"),
     ])
     XCTAssertEqual(snapshot.sections.first?.generatedAtMs, 1_780_640_000_123)
-    XCTAssertEqual(snapshot.controls.map(\.title), ["Send", "Stop", "Resume", "Reject", "Fork"])
-    XCTAssertTrue(snapshot.controls.allSatisfy { !$0.isEnabled && $0.truthLabel == "NO-GO" })
+    XCTAssertEqual(snapshot.controls.map(\.title), [
+      "Send",
+      "Stop",
+      "Resume",
+      "Reject",
+      "Fork",
+      "Steer",
+      "Archive",
+      "Slash / Actions",
+      "Tools",
+      "Files",
+      "Diffs",
+      "Attachments",
+      "History",
+    ])
+    XCTAssertTrue(snapshot.controls.allSatisfy { !$0.isEnabled })
+    XCTAssertEqual(snapshot.controls.first { $0.id == "files" }?.truthLabel, "read arm")
+    XCTAssertEqual(snapshot.controls.first { $0.id == "history" }?.truthLabel, "read arm")
+    XCTAssertEqual(snapshot.controls.first { $0.id == "steer" }?.truthLabel, "NO-GO")
     XCTAssertNil(snapshot.pendingApproval)
   }
 
@@ -768,6 +785,9 @@ final class SessionContinuationViewModelTests: XCTestCase {
       }
       return false
     })
-    XCTAssertTrue(snapshot.controls.allSatisfy { !$0.isEnabled && $0.truthLabel == "NO-GO" })
+    XCTAssertTrue(snapshot.controls.allSatisfy { !$0.isEnabled })
+    XCTAssertEqual(snapshot.controls.first { $0.id == "files" }?.truthLabel, "read arm")
+    XCTAssertEqual(snapshot.controls.first { $0.id == "history" }?.truthLabel, "read arm")
+    XCTAssertEqual(snapshot.controls.first { $0.id == "attachments" }?.truthLabel, "NO-GO")
   }
 }

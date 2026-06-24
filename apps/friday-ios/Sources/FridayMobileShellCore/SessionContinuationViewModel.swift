@@ -513,6 +513,62 @@ public final class SessionContinuationViewModel: ObservableObject {
         truthLabel: "NO-GO",
         reason: "Fork is not a built mobile mutation.",
         isEnabled: false),
+      SessionContinuationControl(
+        id: "steer",
+        title: "Steer",
+        systemImage: "slider.horizontal.3",
+        truthLabel: "NO-GO",
+        reason: "Steering controls are visible for the selected design, but no governed mobile steer mutation is built.",
+        isEnabled: false),
+      SessionContinuationControl(
+        id: "archive",
+        title: "Archive",
+        systemImage: "archivebox",
+        truthLabel: "NO-GO",
+        reason: "Archive is not a built mobile mutation.",
+        isEnabled: false),
+      SessionContinuationControl(
+        id: "slash-actions",
+        title: "Slash / Actions",
+        systemImage: "command",
+        truthLabel: "NO-GO",
+        reason: "Slash/action palette is not a built mobile mutation surface.",
+        isEnabled: false),
+      SessionContinuationControl(
+        id: "tools",
+        title: "Tools",
+        systemImage: "wrench.and.screwdriver",
+        truthLabel: "NO-GO",
+        reason: "Tool execution is not exposed from mobile session controls.",
+        isEnabled: false),
+      SessionContinuationControl(
+        id: "files",
+        title: "Files",
+        systemImage: "folder",
+        truthLabel: "read arm",
+        reason: "Run files are shown through the read-only Run Files section when a run ref exists.",
+        isEnabled: false),
+      SessionContinuationControl(
+        id: "diffs",
+        title: "Diffs",
+        systemImage: "doc.text.magnifyingglass",
+        truthLabel: "NO-GO",
+        reason: "Diff rendering is not a built mobile session surface.",
+        isEnabled: false),
+      SessionContinuationControl(
+        id: "attachments",
+        title: "Attachments",
+        systemImage: "paperclip",
+        truthLabel: "NO-GO",
+        reason: "Attachments are not a built mobile session mutation surface.",
+        isEnabled: false),
+      SessionContinuationControl(
+        id: "history",
+        title: "History",
+        systemImage: "clock.arrow.circlepath",
+        truthLabel: "read arm",
+        reason: "Session history is represented by read-only session sections and local chat history, not a separate native history mutation.",
+        isEnabled: false),
     ]
   }
 
