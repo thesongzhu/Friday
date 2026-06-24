@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -131,7 +131,7 @@ function writeManifest(path: string, evidenceDir: string) {
   writeFileSync(path, JSON.stringify(manifest, null, 2));
 }
 
-function writeEvents(path: string, refs: ReturnType<typeof writeEvidence>) {
+function completeEventRows(refs: ReturnType<typeof writeEvidence>) {
   const rows = [
     observation("mobile", "mission_intake_submitted", refs.mobile),
     observation("mobile", "mission_intake_ready", refs.mobile),
@@ -165,6 +165,11 @@ function writeEvents(path: string, refs: ReturnType<typeof writeEvidence>) {
   for (let index = 0; index < 20; index += 1) {
     rows.push(observation("desktop", "pressure_20_50_consecutive_asks_visible", refs.desktop));
   }
+  return rows;
+}
+
+function writeEvents(path: string, refs: ReturnType<typeof writeEvidence>) {
+  const rows = completeEventRows(refs);
   writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
 }
 
@@ -255,6 +260,61 @@ describe("friday-ui-device-capture-dir", () => {
       expect(result.preflight?.status).toBe(0);
       expect(result.observationsManifest).toBe(join(outDir, "observations-manifest.json"));
       expect(result.normalizedEvents).toBe(join(outDir, "same-run-events.normalized.jsonl"));
+
+      const manifest = JSON.parse(readFileSync(join(outDir, "observations-manifest.json"), "utf8")) as {
+        observations?: Array<{ evidence_ref?: string }>;
+      };
+      expect(manifest.observations?.some((row) => row.evidence_ref === captures.mobile)).toBe(false);
+      expect(manifest.observations?.some((row) => row.evidence_ref === join(outDir, "mobile.png"))).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("merges multiple same-run event inputs before deriving the manifest", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-multi-events-"));
+    try {
+      const captures = writeEvidence(tempDir);
+      const first = join(tempDir, "mobile-desktop-events.jsonl");
+      const eventsDir = join(tempDir, "more-events");
+      const second = join(eventsDir, "timeline-channel-events.jsonl");
+      const outDir = join(tempDir, "evidence");
+      mkdirSync(eventsDir);
+
+      const allRows = completeEventRows(captures);
+      writeFileSync(first, `${allRows.slice(0, 10).map((row) => JSON.stringify(row)).join("\n")}\n`);
+      writeFileSync(second, `${allRows.slice(10).map((row) => JSON.stringify(row)).join("\n")}\n`);
+
+      const stdout = execFileSync("node", [
+        "scripts/ops/friday-ui-device-capture-dir.mjs",
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        `--mobile=${captures.mobile}`,
+        `--desktop=${captures.desktop}`,
+        `--channel=${captures.channel}`,
+        `--timeline=${captures.timeline}`,
+        `--events=${first}`,
+        `--events-dir=${eventsDir}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      const result = JSON.parse(stdout) as {
+        status?: string;
+        mergedEvents?: string;
+        normalizedEvents?: string;
+        preflight?: { status?: number };
+      };
+      expect(result.status).toBe("ready");
+      expect(result.preflight?.status).toBe(0);
+      expect(result.mergedEvents).toBe(join(outDir, "same-run-events.merged-source.jsonl"));
+      expect(result.normalizedEvents).toBe(join(outDir, "same-run-events.normalized.jsonl"));
+
+      const mergedRows = readFileSync(join(outDir, "same-run-events.merged-source.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(mergedRows).toContainEqual(observation("mobile", "mission_intake_submitted", captures.mobile));
+      expect(mergedRows).toContainEqual(observation("channel", "channel_replay_blocked_visible", captures.channel));
 
       const manifest = JSON.parse(readFileSync(join(outDir, "observations-manifest.json"), "utf8")) as {
         observations?: Array<{ evidence_ref?: string }>;

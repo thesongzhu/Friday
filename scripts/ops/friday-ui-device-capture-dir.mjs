@@ -17,17 +17,32 @@ function usage() {
     --channel=/abs/channel-capture \\
     --timeline=/abs/timeline-capture \\
     [--observations-manifest=/abs/observations-manifest.json] \\
-    [--events=/abs/same-run-events.jsonl] [--require-ready]
+    [--events=/abs/same-run-events.jsonl ...] [--events-dir=/abs/events-dir ...] [--require-ready]
 
 Truth: this indexes already-captured files into an evidence-dir shape. It is not a
 UI/device proof and never invents observations. A supplied observations manifest,
-or a manifest derived from same-run events, is validated by
+or a manifest derived from same-run events merged from real captures, is validated by
 scripts/qa/check-mission-spine-ui-proof-inputs.mjs.`);
 }
 
 function arg(name) {
   const prefix = `--${name}=`;
   return args.find((value) => value.startsWith(prefix))?.slice(prefix.length) || "";
+}
+
+function argsAll(name) {
+  const prefix = `--${name}=`;
+  const values = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value.startsWith(prefix)) {
+      values.push(value.slice(prefix.length));
+    } else if (value === `--${name}` && args[index + 1]) {
+      values.push(args[index + 1]);
+      index += 1;
+    }
+  }
+  return values;
 }
 
 if (args.includes("--help") || args.includes("-h")) {
@@ -39,7 +54,8 @@ const requireReady = args.includes("--require-ready");
 const missionId = arg("mission-id");
 const outDir = arg("out-dir");
 const manifest = arg("observations-manifest");
-const events = arg("events");
+const eventInputs = argsAll("events");
+const eventDirs = argsAll("events-dir");
 const inputByRole = {
   mobile: arg("mobile"),
   desktop: arg("desktop"),
@@ -123,6 +139,7 @@ const readyToWrite = blockers.length === 0 && outDir;
 let written = [];
 let copiedManifest = "";
 let derivedEvents = "";
+let mergedEvents = "";
 let reuseSummary = null;
 if (readyToWrite) {
   const dir = abs(outDir);
@@ -150,12 +167,29 @@ if (readyToWrite) {
     } catch {
       block("observations_manifest_unreadable", manifestSource);
     }
-  } else if (events) {
+  } else if (eventInputs.length > 0 || eventDirs.length > 0) {
     const byRole = Object.fromEntries(written.map((capture) => [capture.role, capture.target]));
     const sourceToTarget = new Map(written.map((capture) => [capture.source, capture.target]));
+    mergedEvents = join(dir, "same-run-events.merged-source.jsonl");
     derivedEvents = join(dir, "same-run-events.normalized.jsonl");
     copiedManifest = join(dir, "observations-manifest.json");
-    if (normalizeEvents(events, sourceToTarget, derivedEvents)) {
+    const mergeArgs = [
+      "scripts/ops/friday-ui-device-events-merge.mjs",
+      `--mission-id=${missionId}`,
+      `--mobile=${inputByRole.mobile}`,
+      `--desktop=${inputByRole.desktop}`,
+      `--channel=${inputByRole.channel}`,
+      `--timeline=${inputByRole.timeline}`,
+      `--out=${mergedEvents}`,
+      "--require-ready",
+      ...eventInputs.map((path) => `--events=${path}`),
+      ...eventDirs.map((path) => `--events-dir=${path}`),
+    ];
+    const mergeResult = spawnSync(process.execPath, mergeArgs, { encoding: "utf8" });
+    if (mergeResult.status !== 0) {
+      copiedManifest = "";
+      block("events_merge_failed", `exit_${mergeResult.status}`);
+    } else if (normalizeEvents(mergedEvents, sourceToTarget, derivedEvents)) {
       const result = spawnSync(process.execPath, [
         "scripts/ops/friday-ui-device-observations-manifest.mjs",
         `--mission-id=${missionId}`,
@@ -200,6 +234,7 @@ if (readyToWrite) {
           reusableForPreflight: false,
           countsAsProofByItself: false,
         },
+    mergedEvents: mergedEvents || null,
     normalizedEvents: derivedEvents || null,
     nextCommand: "scripts/ops/friday-ui-device-proof-readiness.sh --evidence-dir <dir> --require-proof",
     caveat: "Reuse summary only. The strict readiness/assembler/final gate must still bind hashes and observations before proof.",
@@ -212,6 +247,7 @@ if (readyToWrite) {
     evidenceDir: dir,
     captures: written,
     observationsManifest: copiedManifest || null,
+    mergedEvents: mergedEvents || null,
     normalizedEvents: derivedEvents || null,
     reuseSummary,
     blockers,
@@ -248,6 +284,7 @@ const output = {
   evidenceDir: outDir ? abs(outDir) : null,
   captures: written,
   observationsManifest: copiedManifest || null,
+  mergedEvents: mergedEvents || null,
   normalizedEvents: derivedEvents || null,
   reuseSummary,
   preflight,
