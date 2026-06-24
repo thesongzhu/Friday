@@ -104,17 +104,20 @@ public final class SessionContinuationViewModel: ObservableObject {
 
   private let client: FridayRustReadClient
   private let writeClient: FridayRustWriteClient?
+  private let makeSessionWriteClient: ((String) -> FridayRustWriteClient)?
   private let signer: OperatorSigner?
   private let runControlEnabled: Bool
 
   public init(
     client: FridayRustReadClient,
     writeClient: FridayRustWriteClient? = nil,
+    makeSessionWriteClient: ((String) -> FridayRustWriteClient)? = nil,
     signer: OperatorSigner? = nil,
     runControlEnabled: Bool = false
   ) {
     self.client = client
     self.writeClient = writeClient
+    self.makeSessionWriteClient = makeSessionWriteClient
     self.signer = signer
     self.runControlEnabled = runControlEnabled
   }
@@ -175,9 +178,39 @@ public final class SessionContinuationViewModel: ObservableObject {
         runId: resolvedRunId,
         hasPendingApproval: pendingApproval != nil,
         hasWriteClient: writeClient != nil,
+        hasSessionWriteClient: makeSessionWriteClient != nil,
         hasSigner: signer != nil,
         runControlEnabled: runControlEnabled),
       pendingApproval: pendingApproval))
+  }
+
+  public func send(_ task: String) async {
+    guard case .loaded(let snapshot) = state else { return }
+    let trimmed = task.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    guard let makeSessionWriteClient else {
+      controlStates["send"] = .error(reason: "Send requires the session-bound write seam.")
+      return
+    }
+
+    controlStates["send"] = .sending
+    let sessionClient = makeSessionWriteClient(snapshot.agentSessionId)
+    do {
+      let outcome = try await sessionClient.dispatchAgentRun(
+        task: trimmed,
+        constraints: AgentRunConstraintsWire(readOnly: true))
+      switch outcome {
+      case .result(let result):
+        controlStates["send"] = .succeeded(summary: Self.dispatchSummary(for: result))
+        await refresh(agentSessionId: snapshot.agentSessionId, runId: result.runId)
+        controlStates["send"] = .succeeded(summary: Self.dispatchSummary(for: result))
+      case .paused(let pause):
+        controlStates["send"] = .error(
+          reason: "Send paused for approval — run_id=\(pause.runId) approval_id=\(pause.approvalId)")
+      }
+    } catch {
+      controlStates["send"] = .error(reason: Self.writeReason(for: error, verb: "send"))
+    }
   }
 
   public func stop() async {
@@ -398,12 +431,20 @@ public final class SessionContinuationViewModel: ObservableObject {
     runId: String?,
     hasPendingApproval: Bool,
     hasWriteClient: Bool,
+    hasSessionWriteClient: Bool,
     hasSigner: Bool,
     runControlEnabled: Bool
   ) -> [SessionContinuationControl] {
+    let sendReady = hasSessionWriteClient
     let stopReady = runId != nil && hasWriteClient && runControlEnabled
     let resumeReady = hasPendingApproval && hasWriteClient && hasSigner && runControlEnabled
     let rejectReady = hasPendingApproval && hasWriteClient && runControlEnabled
+    let sendReason: String
+    if sendReady {
+      sendReason = "Session-bound read-only send is wired through the governed write seam."
+    } else {
+      sendReason = "Send requires the session-bound write seam."
+    }
     let stopReason: String
     if stopReady {
       stopReason = "Owner-authenticated cancel is wired through the governed write seam."
@@ -441,9 +482,9 @@ public final class SessionContinuationViewModel: ObservableObject {
         id: "send",
         title: "Send",
         systemImage: "paperplane",
-        truthLabel: "NO-GO",
-        reason: "Session send mutation is not built on mobile.",
-        isEnabled: false),
+        truthLabel: sendReady ? "guarded" : "NO-GO",
+        reason: sendReason,
+        isEnabled: sendReady),
       SessionContinuationControl(
         id: "stop",
         title: "Stop",
@@ -480,6 +521,17 @@ public final class SessionContinuationViewModel: ObservableObject {
     parts.append(result.accepted ? "accepted" : "refused")
     if let auditRef = result.auditRef, !auditRef.isEmpty {
       parts.append(auditRef)
+    }
+    return parts.joined(separator: " · ")
+  }
+
+  private nonisolated static func dispatchSummary(for result: AgentRunResultWire) -> String {
+    var parts = ["run: \(result.status)", "run_id=\(result.runId)"]
+    if let answerSha256 = result.answerSha256, !answerSha256.isEmpty {
+      parts.append("answer_sha=\(answerSha256)")
+    }
+    if let prompt = result.promptTokens, let completion = result.completionTokens {
+      parts.append("tokens=\(prompt + completion)")
     }
     return parts.joined(separator: " · ")
   }
