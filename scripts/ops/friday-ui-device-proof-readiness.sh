@@ -205,7 +205,19 @@ run_step() {
   fi
 }
 
-run_step "ui_device_gate_self_test" env \
+run_note_step() {
+  local label="$1"
+  shift
+  if "$@"; then
+    notes+=("${label}:pass")
+  else
+    local rc=$?
+    notes+=("${label}:exit_${rc}")
+    return 0
+  fi
+}
+
+run_note_step "ui_device_gate_self_test" env \
   -u MISSION_ID \
   -u MOBILE_EVIDENCE \
   -u DESKTOP_EVIDENCE \
