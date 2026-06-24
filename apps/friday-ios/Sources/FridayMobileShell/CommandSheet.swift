@@ -14,6 +14,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
   case tokenLedger
   case shareIntake
   case voice
+  case pairing
   case needsMe
   case memory
   case platform
@@ -33,6 +34,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .tokenLedger: return "Token Ledger"
     case .shareIntake: return "Share Intake"
     case .voice: return "Voice"
+    case .pairing: return "Device Pairing"
     case .needsMe: return "Needs Me"
     case .memory: return "Memory"
     case .platform: return "Platform"
@@ -52,6 +54,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .tokenLedger: return "chart.bar.doc.horizontal"
     case .shareIntake: return "square.and.arrow.down"
     case .voice: return "waveform"
+    case .pairing: return "qrcode.viewfinder"
     case .needsMe: return "person.crop.circle.badge.exclamationmark"
     case .memory: return "brain.head.profile"
     case .platform: return "square.grid.2x2"

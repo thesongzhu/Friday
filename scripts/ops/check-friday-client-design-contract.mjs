@@ -59,6 +59,7 @@ const checks = checkSourceSet(repoRoot, [
       "tokenLedger",
       "shareIntake",
       "voice",
+      "pairing",
       "needsMe",
       "memory",
       "platform",
@@ -69,6 +70,7 @@ const checks = checkSourceSet(repoRoot, [
     requiredStrings: [
       "Command Sheet",
       "Live truth",
+      "Device Pairing",
     ],
   },
   {
