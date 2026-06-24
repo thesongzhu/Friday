@@ -11,6 +11,13 @@ enum HubDestination: String, CaseIterable, Identifiable {
   case pairingProvisioning
   case workflow
   case channels
+  case diagnostics
+  case recovery
+  case memory
+  case tokenLedger
+  case skills
+  case media
+  case settings
   case evidence
 
   var id: String { rawValue }
@@ -24,6 +31,13 @@ enum HubDestination: String, CaseIterable, Identifiable {
     case .pairingProvisioning: return "Pairing"
     case .workflow: return "Workflow Builder"
     case .channels: return "Channels"
+    case .diagnostics: return "Diagnostics"
+    case .recovery: return "Recovery"
+    case .memory: return "Memory"
+    case .tokenLedger: return "Token Ledger"
+    case .skills: return "Skills / Tools"
+    case .media: return "Media / Link"
+    case .settings: return "Settings"
     case .evidence: return "Evidence Search"
     }
   }
@@ -37,6 +51,13 @@ enum HubDestination: String, CaseIterable, Identifiable {
     case .pairingProvisioning: return "qrcode.viewfinder"
     case .workflow: return "point.3.connected.trianglepath.dotted"
     case .channels: return "antenna.radiowaves.left.and.right"
+    case .diagnostics: return "stethoscope"
+    case .recovery: return "arrow.counterclockwise.circle"
+    case .memory: return "brain.head.profile"
+    case .tokenLedger: return "chart.bar.doc.horizontal"
+    case .skills: return "wrench.and.screwdriver"
+    case .media: return "link.badge.plus"
+    case .settings: return "gearshape"
     case .evidence: return "doc.text.magnifyingglass"
     }
   }
