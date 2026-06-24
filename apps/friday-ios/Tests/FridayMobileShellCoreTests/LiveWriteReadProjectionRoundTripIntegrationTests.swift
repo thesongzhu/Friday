@@ -14,13 +14,18 @@ import Testing
 //   FRIDAY_MOBILE_LIVE_WRITE_READ_ROUNDTRIP_TEST=1 swift test \
 //     --package-path apps/friday-ios \
 //     --filter LiveWriteReadProjectionRoundTrip
+//
+// Optional isolated read/write endpoint overrides:
+//   FRIDAY_MOBILE_LIVE_WRITE_PORT=48750 \
+//   FRIDAY_MOBILE_LIVE_READ_PORT=59151 \
+//   FRIDAY_MOBILE_LIVE_WRITE_READ_ROUNDTRIP_TEST=1 swift test ...
 
 private let liveWriteReadRoundTripEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_WRITE_READ_ROUNDTRIP_TEST"] == "1"
 
 @Test(.enabled(if: liveWriteReadRoundTripEnabled))
 func liveMobileMissionWriteAppearsInReadProjection() async throws {
-  let writeClient = try RealWriteClientFactory.makeLive()
+  let writeClient = try RealWriteClientFactory.makeLive(config: liveRoundTripWriteConfig())
   let request = makeMobileRoundTripIntake()
 
   let result = try await writeClient.submitMissionIntake(request)
@@ -29,7 +34,9 @@ func liveMobileMissionWriteAppearsInReadProjection() async throws {
   #expect(result.missionId == request.missionId)
   #expect(result.workItemId == request.workItemId)
 
-  let readClient = try RealReadClientFactory.makeLive(missionId: result.missionId)
+  let readClient = try RealReadClientFactory.makeLive(
+    config: liveRoundTripReadConfig(),
+    missionId: result.missionId)
   let snapshot = try await pollReadProjection(
     client: readClient,
     missionId: result.missionId,
@@ -40,6 +47,49 @@ func liveMobileMissionWriteAppearsInReadProjection() async throws {
       + "workItemIds=\(snapshot.workItemIds) generatedAtMs=\(snapshot.generatedAtMs)")
   #expect(snapshot.missionId == result.missionId)
   #expect(snapshot.workItemIds.contains(request.workItemId))
+}
+
+private func liveRoundTripWriteConfig() throws -> AgentRunServerConfig {
+  let host = endpointHost(
+    envKey: "FRIDAY_MOBILE_LIVE_WRITE_HOST",
+    fallback: AgentRunServerConfig.liveLoopback.host)
+  let port = try endpointPort(
+    envKey: "FRIDAY_MOBILE_LIVE_WRITE_PORT",
+    fallback: AgentRunServerConfig.liveLoopback.port,
+    label: "write")
+  return AgentRunServerConfig(host: host, port: port)
+}
+
+private func liveRoundTripReadConfig() throws -> ReadProjectionServerConfig {
+  let host = endpointHost(
+    envKey: "FRIDAY_MOBILE_LIVE_READ_HOST",
+    fallback: ReadProjectionServerConfig.liveLoopback.host)
+  let port = try endpointPort(
+    envKey: "FRIDAY_MOBILE_LIVE_READ_PORT",
+    fallback: ReadProjectionServerConfig.liveLoopback.port,
+    label: "read")
+  return ReadProjectionServerConfig(host: host, port: port)
+}
+
+private func endpointHost(envKey: String, fallback: String) -> String {
+  if let value = ProcessInfo.processInfo.environment[envKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+    !value.isEmpty
+  {
+    return value
+  }
+  return fallback
+}
+
+private func endpointPort(envKey: String, fallback: UInt16, label: String) throws -> UInt16 {
+  guard let raw = ProcessInfo.processInfo.environment[envKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+    !raw.isEmpty
+  else {
+    return fallback
+  }
+  guard let port = UInt16(raw), port > 0 else {
+    throw FridayReadClientError.transport("invalid live \(label) port override \(raw)")
+  }
+  return port
 }
 
 private func makeMobileRoundTripIntake() -> MissionIntakeRequestWire {

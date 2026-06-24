@@ -60,6 +60,26 @@ func mobileRuntimeGatesReadEndpointOverridesAreExplicit() {
 }
 
 @Test
+func mobileRuntimeGatesWriteEndpointOverridesAreExplicit() {
+  #expect(MobileRuntimeGates.liveWriteHostOverride(args: [], env: [:]) == nil)
+  #expect(MobileRuntimeGates.liveWritePortOverride(args: [], env: [:]) == .absent)
+
+  #expect(MobileRuntimeGates.liveWriteHostOverride(
+    args: ["--live-write-host", "127.0.0.1"],
+    env: [:]) == "127.0.0.1")
+  #expect(MobileRuntimeGates.liveWriteHostOverride(
+    args: [],
+    env: ["FRIDAY_MOBILE_LIVE_WRITE_HOST": "localhost"]) == "localhost")
+
+  #expect(MobileRuntimeGates.liveWritePortOverride(
+    args: ["--live-write-port", "59150"],
+    env: [:]) == .value(59150))
+  #expect(MobileRuntimeGates.liveWritePortOverride(
+    args: [],
+    env: ["FRIDAY_MOBILE_LIVE_WRITE_PORT": "59153"]) == .value(59153))
+}
+
+@Test
 func mobileRuntimeGatesReadPortOverrideRejectsBadValues() {
   #expect(MobileRuntimeGates.liveReadPortOverride(
     args: ["--live-read-port", "0"],
@@ -67,6 +87,16 @@ func mobileRuntimeGatesReadPortOverrideRejectsBadValues() {
   #expect(MobileRuntimeGates.liveReadPortOverride(
     args: [],
     env: ["FRIDAY_MOBILE_LIVE_READ_PORT": "nope"]) == .invalid("nope"))
+}
+
+@Test
+func mobileRuntimeGatesWritePortOverrideRejectsBadValues() {
+  #expect(MobileRuntimeGates.liveWritePortOverride(
+    args: ["--live-write-port", "0"],
+    env: [:]) == .invalid("0"))
+  #expect(MobileRuntimeGates.liveWritePortOverride(
+    args: [],
+    env: ["FRIDAY_MOBILE_LIVE_WRITE_PORT": "nope"]) == .invalid("nope"))
 }
 
 @Test
