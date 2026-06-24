@@ -28,6 +28,15 @@ function event(surface: string, name: string, evidenceRef: string, activeMission
   };
 }
 
+function diagnosticEvent(surface: string, name: string, evidenceRef: string) {
+  return {
+    ...event(surface, name, evidenceRef),
+    truth_label: "derived_from_preflighted_workbench_snapshot_not_final_proof",
+    source: "transcript_surface:desktop",
+    captured_at: "2026-06-24T20:10:00Z",
+  };
+}
+
 describe("friday-ui-device-events-merge", () => {
   it("merges repeated event inputs, validates evidence refs, and deduplicates exact rows", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-events-merge-"));
@@ -104,6 +113,42 @@ describe("friday-ui-device-events-merge", () => {
       expect(output.status).toBe("blocked");
       expect(output.blockers?.map((blocker) => blocker.code)).toContain("event_mission_mismatch");
       expect(() => readFileSync(out, "utf8")).toThrow();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves diagnostic provenance fields from derived workbench rows", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-events-merge-provenance-"));
+    try {
+      const evidence = writeEvidence(tempDir);
+      const input = join(tempDir, "events.jsonl");
+      const out = join(tempDir, "merged.jsonl");
+      writeFileSync(input, `${JSON.stringify(diagnosticEvent(
+        "desktop",
+        "transcript_browser_visible",
+        evidence.desktop,
+      ))}\n`);
+
+      const stdout = execFileSync("node", [
+        "scripts/ops/friday-ui-device-events-merge.mjs",
+        `--mission-id=${missionId}`,
+        `--events=${input}`,
+        `--desktop=${evidence.desktop}`,
+        `--out=${out}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const result = JSON.parse(stdout) as {
+        status?: string;
+        caveat?: string;
+      };
+      const rows = readFileSync(out, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+
+      expect(result.status).toBe("ready");
+      expect(result.caveat).toContain("Missing observations must still be captured");
+      expect(rows).toEqual([
+        diagnosticEvent("desktop", "transcript_browser_visible", evidence.desktop),
+      ]);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

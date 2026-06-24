@@ -128,6 +128,9 @@ function normalizedEntry(entry, knownEvidenceRefs) {
   const event = typeof raw.event === "string" ? raw.event.trim() : "";
   const eventMissionId = typeof raw.mission_id === "string" ? raw.mission_id.trim() : "";
   const evidenceRef = typeof raw.evidence_ref === "string" ? raw.evidence_ref.trim() : "";
+  const truthLabel = typeof raw.truth_label === "string" ? raw.truth_label.trim() : "";
+  const source = typeof raw.source === "string" ? raw.source.trim() : "";
+  const capturedAt = typeof raw.captured_at === "string" ? raw.captured_at.trim() : "";
   if (!surface) block("event_missing_surface", label);
   if (!event) block("event_missing_event", label);
   if (!eventMissionId) block("event_missing_mission_id", label);
@@ -136,12 +139,16 @@ function normalizedEntry(entry, knownEvidenceRefs) {
   if (knownEvidenceRefs.size > 0 && evidenceRef && !knownEvidenceRefs.has(evidenceRef)) {
     block("event_evidence_ref_unknown", `${label}:${evidenceRef}`);
   }
-  return {
+  const normalized = {
     surface,
     event,
     mission_id: eventMissionId,
     evidence_ref: evidenceRef,
   };
+  if (truthLabel) normalized.truth_label = truthLabel;
+  if (source) normalized.source = source;
+  if (capturedAt) normalized.captured_at = capturedAt;
+  return normalized;
 }
 
 if (!missionId || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId) || !missionId.toLowerCase().includes("mission")) {
