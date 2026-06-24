@@ -35,6 +35,7 @@ async function createFixtureRepo(): Promise<string> {
       "check:client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
       "check:cross-platform-client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
       "check:client-design-contract": "node scripts/ops/check-friday-client-design-contract.mjs",
+      "check:native-action-closure": "node scripts/ops/check-friday-native-action-closure.mjs",
       "check:ios-t2-surface-contract": "node scripts/ops/check-friday-ios-t2-surface-contract.mjs",
       "check:product-auto-followup-contract": "node scripts/ops/check-friday-product-auto-followup-contract.mjs",
       "proof:product:auto-followup": "bash scripts/ops/friday-product-auto-followup-proof.sh",
@@ -63,6 +64,7 @@ async function createFixtureRepo(): Promise<string> {
     "scripts/ops/build-friday-hub-console-app.sh",
     "scripts/ops/verify-friday-hub-console-app.sh",
     "scripts/ops/check-friday-client-design-contract.mjs",
+    "scripts/ops/check-friday-native-action-closure.mjs",
     "scripts/ops/check-friday-ios-t2-surface-contract.mjs",
     "scripts/ops/check-friday-product-auto-followup-contract.mjs",
     "scripts/ops/friday-product-auto-followup-proof.sh",
@@ -95,6 +97,11 @@ async function createFixtureRepo(): Promise<string> {
     root,
     "scripts/ops/check-friday-client-design-contract.mjs",
     "#!/usr/bin/env node\nconsole.log(JSON.stringify({status:\"passed\", truthLabel:\"fixture_design_contract\"}));\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/check-friday-native-action-closure.mjs",
+    "#!/usr/bin/env node\nconsole.log(JSON.stringify({status:\"passed\", truthLabel:\"fixture_native_action_closure\"}));\n",
   );
   await writeFileWithParents(
     root,
@@ -164,6 +171,14 @@ describe("client ship gate pipeline check", () => {
         }),
         expect.objectContaining({
           target: "check:client-design-contract",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "scripts/ops/check-friday-native-action-closure.mjs",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "check:native-action-closure",
           status: "passed",
         }),
         expect.objectContaining({
