@@ -342,6 +342,81 @@ fn mission_lifecycle_transition_updates_status_and_active_mission_list() {
 }
 
 #[test]
+fn mission_lifecycle_transition_is_recorded_in_hash_chained_audit() {
+    // M2 (audit-coverage hardening): a Mission status hop must leave a tamper-evident,
+    // hash-chained audit receipt — the WorkItem sibling already does, but a Mission transition
+    // used to live ONLY in the mutable free-text decision_path_summary. Assert the chained row is
+    // appended per transition AND the chain still verifies, WITHOUT losing the summary (no-degrade).
+    let db = Db::open_hub(&temp_db_path("mission-spine-lifecycle-audit")).unwrap();
+    db.upsert_friday_conversation(&conversation()).unwrap();
+    db.upsert_mission(&mission(
+        "mission-spine",
+        MissionStatus::Active,
+        "mission-spine-audit",
+    ))
+    .unwrap();
+
+    db.transition_mission_status(
+        "fconv_20260604_global",
+        "mission-spine",
+        MissionStatus::Paused,
+        "operator:jarvis",
+        "pause for review",
+        Some("audit://mission-lifecycle/pause"),
+        None,
+        40,
+    )
+    .unwrap();
+    db.transition_mission_status(
+        "fconv_20260604_global",
+        "mission-spine",
+        MissionStatus::Active,
+        "operator:jarvis",
+        "resume",
+        None,
+        None,
+        50,
+    )
+    .unwrap();
+
+    // One chained row per transition, carrying the from->to:reason action.
+    let rows: i64 = db
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM audit_ledger WHERE audit_id LIKE 'mission_lifecycle:mission-spine:%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        rows, 2,
+        "each mission transition appends exactly one chained audit row"
+    );
+
+    let paused_action: String = db
+        .conn()
+        .query_row(
+            "SELECT action FROM audit_ledger WHERE audit_id = 'mission_lifecycle:mission-spine:40'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        paused_action,
+        "mission.lifecycle:active->paused:pause for review"
+    );
+
+    // The new rows participate in the hash chain — it verifies end-to-end.
+    assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+
+    // No-degrade: the free-text decision_path_summary entry is still written alongside the chain.
+    let stored = db.get_mission("mission-spine").unwrap().unwrap();
+    assert!(stored
+        .decision_path_summary
+        .contains("lifecycle:mission-spine:active->paused"));
+}
+
+#[test]
 fn mission_lifecycle_blocks_fake_done_and_bad_merge_targets() {
     let db = Db::open_hub(&temp_db_path("mission-spine-lifecycle-blocks")).unwrap();
     let mut convo = conversation();

@@ -1825,8 +1825,8 @@ mod tests {
         assert_eq!(lifecycle_audit_rows(&db), 5);
         assert_eq!(
             verify_audit_chain(db.conn()).unwrap(),
-            5,
-            "the WI-1 lifecycle rows are the only audit rows and the chain must verify"
+            6,
+            "5 WorkItem lifecycle rows + 1 mission auto-close row (M2: the active->done auto-close now also chains its own receipt); the whole chain verifies"
         );
     }
 
