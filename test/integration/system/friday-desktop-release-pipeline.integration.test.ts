@@ -34,6 +34,7 @@ async function createFixtureRepo(): Promise<string> {
       "check:companion:release-env": "bash scripts/ops/check-friday-companion-release-env.sh",
       "check:client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
       "check:cross-platform-client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
+      "check:client-design-contract": "node scripts/ops/check-friday-client-design-contract.mjs",
       "build:companion:native": "bash scripts/ops/build-friday-companion-app.sh",
       "build:hub-console:native": "bash scripts/ops/build-friday-hub-console-app.sh",
       "build:ios:sim": "bash apps/friday-ios/build-sim.sh",
@@ -56,6 +57,7 @@ async function createFixtureRepo(): Promise<string> {
     "scripts/ops/release-friday-companion-app.sh",
     "scripts/ops/build-friday-hub-console-app.sh",
     "scripts/ops/verify-friday-hub-console-app.sh",
+    "scripts/ops/check-friday-client-design-contract.mjs",
     "apps/friday-ios/Package.swift",
     "apps/friday-ios/Info.plist",
     "apps/friday-ios/build-sim.sh",
@@ -78,6 +80,11 @@ async function createFixtureRepo(): Promise<string> {
     root,
     "scripts/ops/check-friday-companion-release-env.sh",
     "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture env ok\"\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/check-friday-client-design-contract.mjs",
+    "#!/usr/bin/env node\nconsole.log(JSON.stringify({status:\"passed\", truthLabel:\"fixture_design_contract\"}));\n",
   );
   return root;
 }
@@ -114,6 +121,14 @@ describe("client ship gate pipeline check", () => {
         }),
         expect.objectContaining({
           target: "check:cross-platform-client-ship-gate",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "scripts/ops/check-friday-client-design-contract.mjs",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "check:client-design-contract",
           status: "passed",
         }),
       ]),
