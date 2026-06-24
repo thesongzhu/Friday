@@ -516,7 +516,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
 
     pageHandle = await env.newPage();
     await seedBrowserProfile(pageHandle);
-    await pageHandle.page.goto("/reflex", { waitUntil: "networkidle" });
+    await pageHandle.page.goto("/reflex", { waitUntil: "domcontentloaded" });
     await pageHandle.page.getByText("Friday Reflex").first().waitFor({ state: "visible", timeout: 60_000 });
 
     await pageHandle.page.locator(`[data-testid="reflex-candidate-card-${approveCandidate.id}"]`).waitFor({
@@ -604,7 +604,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
 
       pageHandle = await env.newPage();
       await seedBrowserProfile(pageHandle);
-      await pageHandle.page.goto("/reflex", { waitUntil: "networkidle" });
+      await pageHandle.page.goto("/reflex", { waitUntil: "domcontentloaded" });
       await pageHandle.page.getByText("Friday Reflex").first().waitFor({ state: "visible", timeout: 60_000 });
 
       await pageHandle.page.locator(`[data-testid="reflex-candidate-card-${approveCandidate.id}"]`).waitFor({
@@ -730,7 +730,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
 
     pageHandle = await env.newPage();
     await seedBrowserProfile(pageHandle);
-    await pageHandle.page.goto("/reflex", { waitUntil: "networkidle" });
+    await pageHandle.page.goto("/reflex", { waitUntil: "domcontentloaded" });
     await pageHandle.page.getByText("Friday Reflex").first().waitFor({ state: "visible", timeout: 60_000 });
 
     await pageHandle.page.locator(`[data-testid="reflex-candidate-card-${approveCandidate.id}"]`).waitFor({
@@ -859,7 +859,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
 
       pageHandle = await env.newPage();
       await seedBrowserProfile(pageHandle);
-      await pageHandle.page.goto("/reflex", { waitUntil: "networkidle" });
+      await pageHandle.page.goto("/reflex", { waitUntil: "domcontentloaded" });
       await pageHandle.page.getByText("Friday Reflex").first().waitFor({ state: "visible", timeout: 60_000 });
       await pageHandle.page.locator(`[data-testid="reflex-candidate-card-${approveCandidate.id}"]`).waitFor({
         state: "visible",
@@ -891,7 +891,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
 
     pageHandle = await env.newPage();
     await seedBrowserProfile(pageHandle);
-    await pageHandle.page.goto("/reflex", { waitUntil: "networkidle" });
+    await pageHandle.page.goto("/reflex", { waitUntil: "domcontentloaded" });
     await pageHandle.page.getByText("Friday Reflex").first().waitFor({ state: "visible", timeout: 60_000 });
 
     const approvedCandidatesAfterRestart = await env.apiFetch<{ items: ReflexCandidate[] }>(
@@ -1422,7 +1422,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
         { accessToken: token },
       );
       const page = await customContext.newPage();
-      await page.goto(`${baseUrl}/reflex`, { waitUntil: "networkidle" });
+      await page.goto(`${baseUrl}/reflex`, { waitUntil: "domcontentloaded" });
       await page.getByText("Friday Reflex").first().waitFor({ state: "visible", timeout: 60_000 });
       await page.locator(`[data-testid="reflex-candidate-card-${approveCandidate!.id}"]`).waitFor({
         state: "visible",

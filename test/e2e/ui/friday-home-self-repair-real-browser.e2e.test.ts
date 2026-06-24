@@ -356,7 +356,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Home supervised self-repair real-br
 
     pageHandle = await env.newPage();
     await seedBrowserProfile(pageHandle);
-    await pageHandle.page.goto("/home", { waitUntil: "networkidle" });
+    await pageHandle.page.goto("/home", { waitUntil: "domcontentloaded" });
     await pageHandle.page.locator('[data-testid="home-self-repair"]').waitFor({
       state: "visible",
       timeout: 60_000,

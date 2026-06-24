@@ -44,7 +44,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday real browser onboarding path", () =
     expect(setupStatus.json.data.setupCompletedAt).toBeNull();
 
     pageHandle = await env.newPage();
-    await pageHandle.page.goto("/", { waitUntil: "networkidle" });
+    await pageHandle.page.goto("/", { waitUntil: "domcontentloaded" });
     await pageHandle.page.waitForURL("**/setup", { timeout: 30_000 });
     await pageHandle.page.waitForFunction(() => {
       const bodyText = document.body.textContent?.trim() ?? "";
