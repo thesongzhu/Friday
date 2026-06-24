@@ -97,6 +97,22 @@ function completeManifest() {
   };
 }
 
+function writeSupportingProofs(tempDir: string) {
+  const backend = join(tempDir, "backend-live-proof.json");
+  const channel = join(tempDir, "channel-live-proof.json");
+  writeFileSync(backend, JSON.stringify({
+    proof: "mission_spine_backend_api_live_pressure",
+    status: "passed",
+    remaining_requirement: "real mobile/desktop/channel UI/device consumption evidence must still pass scripts/mission-spine-ui-device-proof-gate.sh",
+  }, null, 2));
+  writeFileSync(channel, JSON.stringify({
+    proof: "mission_spine_channel_live_proof",
+    status: "passed",
+    remaining_requirement: "real mobile/desktop/channel UI/device consumption evidence must still pass scripts/mission-spine-ui-device-proof-gate.sh",
+  }, null, 2));
+  return { backend, channel };
+}
+
 function run(tempDir: string, files: ReturnType<typeof evidenceFiles>, rows: unknown[], extraArgs: string[] = []) {
   const events = join(tempDir, "events.jsonl");
   writeJsonl(events, rows);
@@ -123,6 +139,12 @@ describe("friday-ui-device-proof-gap-report", () => {
         truth?: string;
         status?: string;
         gaps?: { missingObservations?: Array<{ surface?: string; event?: string; preferredCapture?: string }> };
+        capturePlan?: Array<{
+          surface?: string;
+          missingEvents?: string[];
+          stressRequirements?: string[];
+          truth?: string;
+        }>;
       };
       expect(output.truth).toBe("ui_device_proof_gap_report_not_proof");
       expect(output.status).toBe("gaps_present");
@@ -136,6 +158,66 @@ describe("friday-ui-device-proof-gap-report", () => {
         event: "bounded_page_1_visible",
         preferredCapture: "timeline",
       });
+      expect(output.capturePlan).toContainEqual(expect.objectContaining({
+        surface: "channel",
+        missingEvents: expect.arrayContaining([
+          "same_mission_mobile_desktop_channel_visible",
+          "same_mission_projection_visible",
+        ]),
+        truth: "capture_real_same_run_events_only_no_synthetic_rows",
+      }));
+      expect(output.capturePlan).toContainEqual(expect.objectContaining({
+        surface: "desktop",
+        stressRequirements: expect.arrayContaining([
+          "duplicate_preflight_visible_on_at_least_two_surfaces",
+          "pressure_20_50_consecutive_asks_visible",
+        ]),
+      }));
+      expect(output.capturePlan).toContainEqual(expect.objectContaining({
+        surface: "timeline",
+        stressRequirements: expect.arrayContaining([
+          "bounded_page_1_visible_and_bounded_page_2_visible",
+        ]),
+      }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps backend and channel supporting proofs separate from UI device evidence", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-gap-report-supporting-"));
+    try {
+      const files = evidenceFiles(tempDir);
+      const proofs = writeSupportingProofs(tempDir);
+      const result = run(tempDir, files, partialRows(files), [
+        `--backend-live-proof=${proofs.backend}`,
+        `--channel-live-proof=${proofs.channel}`,
+      ]);
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as {
+        status?: string;
+        supportingProofs?: Array<{
+          role?: string;
+          status?: string;
+          countsTowardUiDeviceProof?: boolean;
+          failures?: string[];
+        }>;
+        gaps?: { missingObservations?: unknown[] };
+      };
+      expect(output.status).toBe("gaps_present");
+      expect(output.gaps?.missingObservations?.length).toBeGreaterThan(0);
+      expect(output.supportingProofs).toContainEqual(expect.objectContaining({
+        role: "backendLiveProof",
+        status: "usable_precondition_not_ui_device_evidence",
+        countsTowardUiDeviceProof: false,
+        failures: [],
+      }));
+      expect(output.supportingProofs).toContainEqual(expect.objectContaining({
+        role: "channelLiveProof",
+        status: "usable_precondition_not_ui_device_evidence",
+        countsTowardUiDeviceProof: false,
+        failures: [],
+      }));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -167,9 +249,14 @@ describe("friday-ui-device-proof-gap-report", () => {
         "--require-complete",
       ]);
       expect(result.status).toBe(0);
-      const output = JSON.parse(result.stdout) as { status?: string; gaps?: { missingObservations?: unknown[] } };
+      const output = JSON.parse(result.stdout) as {
+        status?: string;
+        gaps?: { missingObservations?: unknown[] };
+        capturePlan?: unknown[];
+      };
       expect(output.status).toBe("complete_inputs_observed");
       expect(output.gaps?.missingObservations).toEqual([]);
+      expect(output.capturePlan).toEqual([]);
       const written = JSON.parse(readFileSync(out, "utf8")) as { status?: string };
       expect(written.status).toBe("complete_inputs_observed");
     } finally {
