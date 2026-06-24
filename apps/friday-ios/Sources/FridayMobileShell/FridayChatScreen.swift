@@ -83,8 +83,10 @@ struct FridayChatScreen: View {
                 .font(.caption)
                 .foregroundStyle(MobileTheme.textPrimary)
                 .lineLimit(4)
-              if let runId = item.runId {
+              if item.receiptRefs.isEmpty, let runId = item.runId {
                 RefPill(label: "run_id", ref: short(runId))
+              } else if !item.receiptRefs.isEmpty {
+                receiptRefs(item.receiptRefs, limit: 4)
               }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -270,22 +272,7 @@ struct FridayChatScreen: View {
           Text("Answer body is not available from the owner-gated readback yet.")
             .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
         }
-        if let sha = r.answerSha256 { RefPill(label: "answer_sha256", ref: short(sha)) }
-        if let missionId = r.missionId { RefPill(label: "mission_id", ref: missionId) }
-        if let workItemId = r.workItemId { RefPill(label: "work_item_id", ref: workItemId) }
-        if let followUpWorkItemId = r.followUpWorkItemId {
-          RefPill(label: "follow_up_work_item_id", ref: followUpWorkItemId)
-        }
-        if let followUpRunId = r.followUpRunId { RefPill(label: "follow_up_run_id", ref: followUpRunId) }
-        if let len = r.answerLen { RefPill(label: "answer_len", ref: "\(len)") }
-        if let outcome = r.answerBodyOutcome { RefPill(label: "answer_body", ref: outcome) }
-        if let turns = r.turns { RefPill(label: "turns", ref: "\(turns)") }
-        if let tools = r.executedTools { RefPill(label: "executed_tools", ref: "\(tools)") }
-        if let prompt = r.promptTokens { RefPill(label: "prompt_tokens", ref: "\(prompt)") }
-        if let completion = r.completionTokens { RefPill(label: "completion_tokens", ref: "\(completion)") }
-        if let total = tokenTotal(prompt: r.promptTokens, completion: r.completionTokens) {
-          RefPill(label: "total_tokens", ref: "\(total)")
-        }
+        receiptRefs(r.receiptRefs)
       }
     }
     .accessibilityElement(children: .contain)
@@ -352,9 +339,7 @@ struct FridayChatScreen: View {
         }
         Text(r.title)
           .font(.headline).foregroundStyle(MobileTheme.textPrimary)
-        RefPill(label: "op", ref: r.op)
-        RefPill(label: "status", ref: r.status)
-        if let audit = r.auditRef { RefPill(label: "audit_ref", ref: audit) }
+        receiptRefs(r.receiptRefs)
         Text(r.detail)
           .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
       }
@@ -384,10 +369,17 @@ struct FridayChatScreen: View {
     return trimmed
   }
 
-  private func tokenTotal(prompt: UInt64?, completion: UInt64?) -> UInt64? {
-    guard let prompt, let completion else { return nil }
-    let sum = prompt.addingReportingOverflow(completion)
-    return sum.overflow ? nil : sum.partialValue
+  private func receiptRefs(_ refs: [ChatReceiptRef], limit: Int? = nil) -> some View {
+    let visibleRefs = limit.map { Array(refs.prefix($0)) } ?? refs
+    return VStack(alignment: .leading, spacing: 4) {
+      ForEach(visibleRefs) { ref in
+        RefPill(label: ref.label, ref: short(ref.ref))
+      }
+      if let limit, refs.count > limit {
+        RefPill(label: "more_refs", ref: "+\(refs.count - limit)")
+      }
+    }
+    .accessibilityIdentifier("friday.chat.receipt-refs")
   }
 }
 

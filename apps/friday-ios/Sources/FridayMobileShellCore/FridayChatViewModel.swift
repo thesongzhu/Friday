@@ -36,6 +36,17 @@ import FridayRustClient
 
 // MARK: - Surfaced models
 
+public struct ChatReceiptRef: Codable, Sendable, Equatable, Identifiable {
+  public var id: String { "\(label):\(ref)" }
+  public let label: String
+  public let ref: String
+
+  public init(label: String, ref: String) {
+    self.label = label
+    self.ref = ref
+  }
+}
+
 /// The ANSWER receipt the chat shows on a non-paused settle. The write receipt remains refs-only
 /// (status/fingerprint/counts). `answerBody` is populated only by the separate owner-gated readback.
 public struct ChatAnswerReceipt: Sendable, Equatable {
@@ -80,6 +91,26 @@ public struct ChatAnswerReceipt: Sendable, Equatable {
     self.answerBody = answerBody
     self.answerBodyRunId = answerBodyRunId
     self.answerBodyOutcome = answerBodyOutcome
+  }
+
+  public var receiptRefs: [ChatReceiptRef] {
+    var refs = [ChatReceiptRef(label: "run_id", ref: runId)]
+    appendReceiptRef("mission_id", missionId, to: &refs)
+    appendReceiptRef("work_item_id", workItemId, to: &refs)
+    appendReceiptRef("follow_up_work_item_id", followUpWorkItemId, to: &refs)
+    appendReceiptRef("follow_up_run_id", followUpRunId, to: &refs)
+    appendReceiptRef("answer_body_run_id", answerBodyRunId, to: &refs)
+    appendReceiptRef("answer_sha256", answerSha256, to: &refs)
+    appendReceiptRef("answer_len", answerLen.map(String.init), to: &refs)
+    appendReceiptRef("answer_body", answerBodyOutcome, to: &refs)
+    appendReceiptRef("turns", turns.map(String.init), to: &refs)
+    appendReceiptRef("executed_tools", executedTools.map(String.init), to: &refs)
+    appendReceiptRef("prompt_tokens", promptTokens.map(String.init), to: &refs)
+    appendReceiptRef("completion_tokens", completionTokens.map(String.init), to: &refs)
+    if let total = tokenTotal(prompt: promptTokens, completion: completionTokens) {
+      refs.append(ChatReceiptRef(label: "total_tokens", ref: String(total)))
+    }
+    return refs
   }
 }
 
@@ -174,6 +205,17 @@ public struct ChatResumeReceipt: Sendable, Equatable {
     default: return "control receipt is refs-only — no body"
     }
   }
+
+  public var receiptRefs: [ChatReceiptRef] {
+    var refs = [
+      ChatReceiptRef(label: "run_id", ref: runId),
+      ChatReceiptRef(label: "op", ref: op),
+      ChatReceiptRef(label: "status", ref: status),
+    ]
+    appendReceiptRef("audit_ref", auditRef, to: &refs)
+    appendReceiptRef("truth", truthLabel, to: &refs)
+    return refs
+  }
 }
 
 public struct ChatHistoryItem: Identifiable, Codable, Sendable, Equatable {
@@ -181,6 +223,7 @@ public struct ChatHistoryItem: Identifiable, Codable, Sendable, Equatable {
   public let role: String
   public let text: String
   public let runId: String?
+  public let receiptRefs: [ChatReceiptRef]
   public let createdAtMs: Int64
 
   public init(
@@ -188,13 +231,34 @@ public struct ChatHistoryItem: Identifiable, Codable, Sendable, Equatable {
     role: String,
     text: String,
     runId: String? = nil,
+    receiptRefs: [ChatReceiptRef] = [],
     createdAtMs: Int64
   ) {
     self.id = id
     self.role = role
     self.text = text
     self.runId = runId
+    self.receiptRefs = receiptRefs
     self.createdAtMs = createdAtMs
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case role
+    case text
+    case runId
+    case receiptRefs
+    case createdAtMs
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.id = try container.decode(String.self, forKey: .id)
+    self.role = try container.decode(String.self, forKey: .role)
+    self.text = try container.decode(String.self, forKey: .text)
+    self.runId = try container.decodeIfPresent(String.self, forKey: .runId)
+    self.receiptRefs = try container.decodeIfPresent([ChatReceiptRef].self, forKey: .receiptRefs) ?? []
+    self.createdAtMs = try container.decode(Int64.self, forKey: .createdAtMs)
   }
 }
 
@@ -336,12 +400,13 @@ public final class FridayChatViewModel: ObservableObject {
       switch outcome {
       case .result(let r):
         let answer = await fetchDeliveredAnswerBody(for: r.runId)
-        appendAnswerHistory(runId: r.runId, status: r.status, answerBody: answer?.body)
-        phase = .answered(ChatAnswerReceipt(
+        let receipt = ChatAnswerReceipt(
           r,
           answerBody: answer?.body,
           answerBodyRunId: answer?.runId,
-          answerBodyOutcome: answer?.outcome))
+          answerBodyOutcome: answer?.outcome)
+        appendAnswerHistory(receipt)
+        phase = .answered(receipt)
       case .paused(let p):
         // INV-2: a mutating run PAUSED — surface the S6 approval card. No mutation has executed.
         appendHistory(
@@ -394,8 +459,7 @@ public final class FridayChatViewModel: ObservableObject {
         missionClient: missionClient)
       let bodyRunId = followUp?.runId ?? firstReceipt.runId
       let answer = await fetchDeliveredAnswerBody(for: bodyRunId)
-      appendAnswerHistory(runId: bodyRunId, status: firstReceipt.status, answerBody: answer?.body)
-      phase = .answered(ChatAnswerReceipt(
+      let receipt = ChatAnswerReceipt(
         firstReceipt,
         missionId: result.missionId,
         workItemId: workItemId,
@@ -403,7 +467,9 @@ public final class FridayChatViewModel: ObservableObject {
         followUpRunId: followUp?.runId,
         answerBody: answer?.body,
         answerBodyRunId: answer?.runId,
-        answerBodyOutcome: answer?.outcome))
+        answerBodyOutcome: answer?.outcome)
+      appendAnswerHistory(receipt)
+      phase = .answered(receipt)
     } catch {
       phase = .unavailable(reason: Self.dispatchReason(for: error))
     }
@@ -489,11 +555,13 @@ public final class FridayChatViewModel: ObservableObject {
     do {
       // INV-1: relay the OPAQUE blob VERBATIM. The view model inspects/derives nothing in it.
       let receipt = try await writeClient.resumeWithApproval(runId: card.runId, opaqueSignedBlob: blob)
+      let surfacedReceipt = ChatResumeReceipt(receipt)
       appendHistory(
         role: "friday",
         text: receipt.accepted ? "Approved action executed." : "Action refused.",
-        runId: receipt.runId)
-      phase = .resumed(ChatResumeReceipt(receipt))
+        runId: receipt.runId,
+        receiptRefs: surfacedReceipt.receiptRefs)
+      phase = .resumed(surfacedReceipt)
     } catch {
       phase = .unavailable(reason: Self.resumeReason(for: error))
     }
@@ -508,11 +576,13 @@ public final class FridayChatViewModel: ObservableObject {
     phase = .rejecting(card)
     do {
       let receipt = try await writeClient.rejectApproval(runId: card.runId, approvalId: card.approvalId)
+      let surfacedReceipt = ChatResumeReceipt(receipt)
       appendHistory(
         role: "friday",
         text: receipt.accepted ? "Approval rejected." : "Approval rejection refused.",
-        runId: receipt.runId)
-      phase = .resumed(ChatResumeReceipt(receipt))
+        runId: receipt.runId,
+        receiptRefs: surfacedReceipt.receiptRefs)
+      phase = .resumed(surfacedReceipt)
     } catch {
       phase = .unavailable(reason: Self.rejectReason(for: error))
     }
@@ -575,22 +645,23 @@ public final class FridayChatViewModel: ObservableObject {
     }
   }
 
-  private func appendAnswerHistory(runId: String, status: String, answerBody: String?) {
+  private func appendAnswerHistory(_ receipt: ChatAnswerReceipt) {
     let text: String
-    if let body = answerBody?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty {
+    if let body = receipt.answerBody?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty {
       text = body
     } else {
-      text = "Friday answered (\(status)). Run \(runId)."
+      text = "Friday answered (\(receipt.status)). Run \(receipt.runId)."
     }
-    appendHistory(role: "friday", text: text, runId: runId)
+    appendHistory(role: "friday", text: text, runId: receipt.answerBodyRunId ?? receipt.runId, receiptRefs: receipt.receiptRefs)
   }
 
-  private func appendHistory(role: String, text: String, runId: String? = nil) {
+  private func appendHistory(role: String, text: String, runId: String? = nil, receiptRefs: [ChatReceiptRef] = []) {
     let item = ChatHistoryItem(
       id: newId(),
       role: role,
       text: text,
       runId: runId,
+      receiptRefs: receiptRefs,
       createdAtMs: nowMs())
     history.append(item)
     if history.count > 100 {
@@ -674,4 +745,17 @@ public final class FridayChatViewModel: ObservableObject {
     }
     return String(excerpt.suffix(800))
   }
+}
+
+private func appendReceiptRef(_ label: String, _ value: String?, to refs: inout [ChatReceiptRef]) {
+  guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+    return
+  }
+  refs.append(ChatReceiptRef(label: label, ref: value))
+}
+
+private func tokenTotal(prompt: UInt64?, completion: UInt64?) -> UInt64? {
+  guard let prompt, let completion else { return nil }
+  let sum = prompt.addingReportingOverflow(completion)
+  return sum.overflow ? nil : sum.partialValue
 }
