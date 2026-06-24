@@ -10,6 +10,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
   case home
   case missions
   case session
+  case contextPassport
   case shareIntake
   case voice
   case needsMe
@@ -27,6 +28,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .home: return "Friday Home"
     case .missions: return "Missions"
     case .session: return "Session"
+    case .contextPassport: return "Context Passport"
     case .shareIntake: return "Share Intake"
     case .voice: return "Voice"
     case .needsMe: return "Needs Me"
@@ -44,6 +46,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .home: return "house"
     case .missions: return "list.bullet.rectangle"
     case .session: return "rectangle.connected.to.line.below"
+    case .contextPassport: return "checklist.checked"
     case .shareIntake: return "square.and.arrow.down"
     case .voice: return "waveform"
     case .needsMe: return "person.crop.circle.badge.exclamationmark"
@@ -83,7 +86,7 @@ struct CommandSheet: View {
         }
         .padding(16)
 
-        Text("Read-only projection")
+        Text("Live truth")
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)
           .padding(.top, 8)

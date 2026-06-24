@@ -386,6 +386,13 @@ final class HomeViewModelTests: XCTestCase {
       p.t3ProvisioningStatus?.homeSummary,
       "Hub projection shows 1 device identity, 1 active trusted device, 1 active trust grant, 1 context passport, and 2 passport items.")
     XCTAssertEqual(p.t3ProvisioningStatus?.missingOperatorSteps, [])
+    XCTAssertEqual(p.t3ProvisioningStatus?.checklistRows.map(\.id), [
+      "pairack", "trust-grant", "context-passport", "passport-items",
+    ])
+    XCTAssertEqual(p.t3ProvisioningStatus?.checklistRows.map(\.satisfied), [
+      true, true, true, true,
+    ])
+    XCTAssertEqual(p.t3ProvisioningStatus?.checklistRows.last?.statusText, "shared")
     XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile surface read the mission projection.")
     XCTAssertEqual(p.needsMeCount, 4)
   }
@@ -425,6 +432,12 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(
       projection.t3ProvisioningStatus?.homeSummary,
       "Paired device is visible in the Hub (1 active trusted device); missing trust grant, context passport.")
+    XCTAssertEqual(projection.t3ProvisioningStatus?.checklistRows.map(\.satisfied), [
+      true, false, false, false,
+    ])
+    XCTAssertEqual(projection.t3ProvisioningStatus?.checklistRows.map(\.statusText), [
+      "paired", "needed", "needed", "needed",
+    ])
   }
 
   func testRefresh_loadedEmptyIsConnectedEmptyNotUnavailable() async throws {

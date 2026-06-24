@@ -354,6 +354,8 @@ struct RootView: View {
           FridayHomeScreen(viewModel: homeVM)
         case .session:
           FridaySessionDetailScreen(homeViewModel: homeVM, viewModel: sessionContinuationVM)
+        case .contextPassport:
+          FridayContextPassportScreen(viewModel: homeVM)
         case .shareIntake:
           FridayShareIntakeScreen(viewModel: shareIntakeVM)
         case .voice:
