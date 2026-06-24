@@ -18,6 +18,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
   case needsMe
   case memory
   case platform
+  case providerAuth
   case activity
   case workflows
   case onboarding
@@ -38,6 +39,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .needsMe: return "Needs Me"
     case .memory: return "Memory"
     case .platform: return "Platform"
+    case .providerAuth: return "Provider/Auth"
     case .activity: return "Activity"
     case .workflows: return "Workflows"
     case .onboarding: return "Onboarding"
@@ -58,6 +60,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .needsMe: return "person.crop.circle.badge.exclamationmark"
     case .memory: return "brain.head.profile"
     case .platform: return "square.grid.2x2"
+    case .providerAuth: return "person.badge.key"
     case .activity: return "bell.badge"
     case .workflows: return "arrow.triangle.branch"
     case .onboarding: return "sparkles.rectangle.stack"

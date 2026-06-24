@@ -364,6 +364,8 @@ struct RootView: View {
           FridayVoiceScreen(viewModel: voiceVM)
         case .pairing:
           FridayHomeScreen(viewModel: homeVM, showPairingProvisioning: true)
+        case .providerAuth:
+          FridayProviderAuthScreen(viewModel: homeVM)
         case .missions, .needsMe, .memory, .platform, .activity, .workflows, .onboarding,
              .settings:
           FridayProjectionScreen(destination: destination, viewModel: homeVM)
