@@ -78,7 +78,11 @@ function usage() {
     --desktop=/abs/desktop-evidence \\
     --channel=/abs/channel-evidence \\
     --timeline=/abs/timeline-evidence \\
-    [--manifest=/abs/observations-manifest.json] [--out=/abs/gap-report.json] [--require-complete]
+    [--manifest=/abs/observations-manifest.json] \\
+    [--backend-live-proof=/abs/backend-proof.json] \\
+    [--channel-live-proof=/abs/channel-proof.json] \\
+    [--objective-coverage=/abs/objective-coverage.json] \\
+    [--out=/abs/gap-report.json] [--require-complete]
 
 Truth: reports missing real same-run UI/device observations. It does not derive
 or write proof, does not synthesize observations, and does not mark END-BAR.`);
@@ -99,6 +103,11 @@ const missionId = arg("mission-id");
 const eventsPath = arg("events");
 const manifestPath = arg("manifest");
 const outPath = arg("out");
+const supportingProofArgs = {
+  backendLiveProof: arg("backend-live-proof"),
+  channelLiveProof: arg("channel-live-proof"),
+  objectiveCoverage: arg("objective-coverage"),
+};
 const evidenceArgs = {
   mobile: arg("mobile"),
   desktop: arg("desktop"),
@@ -163,6 +172,60 @@ function parseManifest(path) {
   }
 }
 
+function parseOptionalJson(label, path) {
+  if (!path) return null;
+  const resolved = requireFile(label, path);
+  if (!resolved) return null;
+  try {
+    return { path: resolved, value: JSON.parse(readFileSync(resolved, "utf8")) };
+  } catch {
+    block("supporting_proof_unreadable_or_invalid_json", `${label}:${resolved}`);
+    return { path: resolved, value: null };
+  }
+}
+
+function supportingProof(label, path, validate) {
+  const parsed = parseOptionalJson(label, path);
+  if (!parsed) return null;
+  const failures = parsed.value ? validate(parsed.value) : ["invalid_json"];
+  return {
+    role: label,
+    path: parsed.path,
+    status: failures.length === 0 ? "usable_precondition_not_ui_device_evidence" : "invalid_or_incomplete",
+    countsTowardUiDeviceProof: false,
+    remainingRequirement: parsed.value?.remaining_requirement || "real UI/device observations must still pass the UI/device proof gate",
+    failures,
+  };
+}
+
+function supportingProofs() {
+  return [
+    supportingProof("backendLiveProof", supportingProofArgs.backendLiveProof, (value) => {
+      const failures = [];
+      if (value.proof !== "mission_spine_backend_api_live_pressure") failures.push("proof_mismatch");
+      if (value.status !== "passed") failures.push("status_not_passed");
+      if (!String(value.remaining_requirement || "").includes("UI/device consumption")) failures.push("remaining_requirement_missing");
+      return failures;
+    }),
+    supportingProof("channelLiveProof", supportingProofArgs.channelLiveProof, (value) => {
+      const failures = [];
+      if (value.proof !== "mission_spine_channel_live_proof") failures.push("proof_mismatch");
+      if (value.status !== "passed") failures.push("status_not_passed");
+      if (!String(value.remaining_requirement || "").includes("UI/device consumption")) failures.push("remaining_requirement_missing");
+      return failures;
+    }),
+    supportingProof("objectiveCoverage", supportingProofArgs.objectiveCoverage, (value) => {
+      const failures = [];
+      if (!String(value.remaining_requirement || "").includes("UI or device consumption")) failures.push("remaining_requirement_missing");
+      if (Array.isArray(value.requirements)) {
+        const uiRequirement = value.requirements.find((requirement) => requirement?.required_gate === "scripts/mission-spine-ui-device-proof-gate.sh");
+        if (!uiRequirement) failures.push("ui_device_required_gate_missing");
+      }
+      return failures;
+    }),
+  ].filter(Boolean);
+}
+
 function normalizeEvent(raw, index, knownEvidenceRefs) {
   const label = `event_${index + 1}`;
   const surface = typeof raw.surface === "string" ? raw.surface.trim() : "";
@@ -222,6 +285,7 @@ const knownEvidenceRefs = new Set(Object.values(evidence).filter(Boolean));
 const eventFile = requireFile("events", eventsPath);
 const observations = parseJsonl(eventFile).map((raw, index) => normalizeEvent(raw, index, knownEvidenceRefs));
 const manifest = parseManifest(manifestPath);
+const supportingProofRows = supportingProofs();
 
 const missingObservations = requiredObservations
   .filter(([surface, event]) => !hasObservation(observations, surface, event))
@@ -240,6 +304,50 @@ const timelinePageCount = observations.filter((observation) => observation.event
 const missingChecks = manifest?.checks && typeof manifest.checks === "object"
   ? requiredChecks.filter((check) => manifest.checks[check] !== true)
   : requiredChecks;
+
+function capturePlan(missingObservationRows, stressState) {
+  const bySurface = new Map();
+  const ensure = (surface) => {
+    if (!bySurface.has(surface)) {
+      bySurface.set(surface, {
+        surface,
+        events: [],
+        stress: [],
+      });
+    }
+    return bySurface.get(surface);
+  };
+
+  for (const row of missingObservationRows) {
+    ensure(row.preferredCapture).events.push(row.event);
+  }
+
+  if (!stressState.pressureAskCountOk) {
+    ensure("desktop").stress.push("pressure_20_50_consecutive_asks_visible");
+  }
+  if (!stressState.duplicateSurfaceCountOk) {
+    ensure("desktop").stress.push("duplicate_preflight_visible_on_at_least_two_surfaces");
+  }
+  if (!stressState.timelinePageCountOk) {
+    ensure("timeline").stress.push("bounded_page_1_visible_and_bounded_page_2_visible");
+  }
+
+  return [...bySurface.values()]
+    .map((entry) => ({
+      surface: entry.surface,
+      missingEvents: [...new Set(entry.events)].sort(),
+      stressRequirements: [...new Set(entry.stress)].sort(),
+      evidenceRole: entry.surface,
+      truth: "capture_real_same_run_events_only_no_synthetic_rows",
+    }))
+    .sort((a, b) => a.surface.localeCompare(b.surface));
+}
+
+const stressGaps = {
+  pressureAskCountOk: pressureAskCount >= 20 && pressureAskCount <= 50,
+  duplicateSurfaceCountOk: duplicateSurfaceCount >= 2,
+  timelinePageCountOk: timelinePageCount >= 2,
+};
 
 const gapReport = {
   truth: "ui_device_proof_gap_report_not_proof",
@@ -264,12 +372,10 @@ const gapReport = {
     missingObservations,
     missingOrderEvents,
     missingChecks,
-    stress: {
-      pressureAskCountOk: pressureAskCount >= 20 && pressureAskCount <= 50,
-      duplicateSurfaceCountOk: duplicateSurfaceCount >= 2,
-      timelinePageCountOk: timelinePageCount >= 2,
-    },
+    stress: stressGaps,
   },
+  capturePlan: capturePlan(missingObservations, stressGaps),
+  supportingProofs: supportingProofRows,
   blockers,
   caveat: "Gap report only. Capture missing observations from a real same-run mobile/desktop/channel/timeline run before assembling proof.",
 };
