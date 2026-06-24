@@ -247,6 +247,36 @@ function runDesignContractCheck(repoRoot) {
   };
 }
 
+function runNativeActionClosureCheck(repoRoot) {
+  const scriptPath = path.join(repoRoot, "scripts", "ops", "check-friday-native-action-closure.mjs");
+  if (!fs.existsSync(scriptPath)) {
+    return {
+      kind: "command",
+      label: "Native action closure check",
+      target: "scripts/ops/check-friday-native-action-closure.mjs",
+      status: "failed",
+      exitCode: 1,
+      stderr: "native action closure script is missing",
+    };
+  }
+
+  const result = spawnSync(process.execPath, [scriptPath, repoRoot], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: process.env,
+  });
+
+  return {
+    kind: "command",
+    label: "Native action closure check",
+    target: "scripts/ops/check-friday-native-action-closure.mjs",
+    status: result.status === 0 ? "passed" : "failed",
+    exitCode: result.status ?? 1,
+    stdout: (result.stdout ?? "").trim(),
+    stderr: (result.stderr ?? "").trim(),
+  };
+}
+
 const repoRoot = resolveRepoRoot();
 const pkg = readPackageJson(repoRoot);
 
@@ -260,6 +290,7 @@ const checks = [
     ["scripts/ops/build-friday-hub-console-app.sh", "Hub Console app bundle build script"],
     ["scripts/ops/verify-friday-hub-console-app.sh", "Hub Console app bundle verify script"],
     ["scripts/ops/check-friday-client-design-contract.mjs", "Client design contract check"],
+    ["scripts/ops/check-friday-native-action-closure.mjs", "Native action closure check"],
     ["scripts/ops/check-friday-ios-t2-surface-contract.mjs", "iOS T2 surface contract check"],
     ["scripts/ops/check-friday-product-auto-followup-contract.mjs", "Product auto-followup contract check"],
     ["scripts/ops/friday-product-auto-followup-proof.sh", "Product auto-followup live proof script"],
@@ -286,6 +317,7 @@ const checks = [
     "check:client-ship-gate",
     "check:cross-platform-client-ship-gate",
     "check:client-design-contract",
+    "check:native-action-closure",
     "check:ios-t2-surface-contract",
     "check:product-auto-followup-contract",
     "proof:product:auto-followup",
@@ -305,6 +337,7 @@ const checks = [
   ].map((name) => scriptCheck(pkg, name)),
   runEnvCheck(repoRoot),
   runDesignContractCheck(repoRoot),
+  runNativeActionClosureCheck(repoRoot),
   ...artifactFreshnessChecks(repoRoot),
 ];
 
