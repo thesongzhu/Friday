@@ -6,6 +6,13 @@ private enum DesktopProjectionSurface {
   case parity
   case workflow
   case channels
+  case diagnostics
+  case recovery
+  case memory
+  case tokenLedger
+  case skills
+  case media
+  case settings
   case evidence
 
   init?(_ destination: HubDestination) {
@@ -20,6 +27,20 @@ private enum DesktopProjectionSurface {
       self = .workflow
     case .channels:
       self = .channels
+    case .diagnostics:
+      self = .diagnostics
+    case .recovery:
+      self = .recovery
+    case .memory:
+      self = .memory
+    case .tokenLedger:
+      self = .tokenLedger
+    case .skills:
+      self = .skills
+    case .media:
+      self = .media
+    case .settings:
+      self = .settings
     case .evidence:
       self = .evidence
     }
@@ -31,6 +52,13 @@ private enum DesktopProjectionSurface {
     case .parity: return "Provider Parity"
     case .workflow: return "Workflow Builder"
     case .channels: return "Channels"
+    case .diagnostics: return "Diagnostics"
+    case .recovery: return "Recovery"
+    case .memory: return "Memory"
+    case .tokenLedger: return "Token Ledger"
+    case .skills: return "Skills / Tools"
+    case .media: return "Media / Link"
+    case .settings: return "Settings"
     case .evidence: return "Evidence Search"
     }
   }
@@ -41,6 +69,13 @@ private enum DesktopProjectionSurface {
     case .parity: return "square.grid.3x3"
     case .workflow: return "point.3.connected.trianglepath.dotted"
     case .channels: return "antenna.radiowaves.left.and.right"
+    case .diagnostics: return "stethoscope"
+    case .recovery: return "arrow.counterclockwise.circle"
+    case .memory: return "brain.head.profile"
+    case .tokenLedger: return "chart.bar.doc.horizontal"
+    case .skills: return "wrench.and.screwdriver"
+    case .media: return "link.badge.plus"
+    case .settings: return "gearshape"
     case .evidence: return "doc.text.magnifyingglass"
     }
   }
@@ -51,6 +86,13 @@ private enum DesktopProjectionSurface {
     case .parity: return "route and receipt parity"
     case .workflow: return "mission work-item projection"
     case .channels: return "surface and channel receipts"
+    case .diagnostics: return "hub health and proof checks"
+    case .recovery: return "retry and cancel affordance facts"
+    case .memory: return "candidate review and A1 learning refs"
+    case .tokenLedger: return "owner-gated spend readback"
+    case .skills: return "tool and capability truth matrix"
+    case .media: return "NO-GO media/link capability truth"
+    case .settings: return "local Hub and trust posture"
     case .evidence: return "refs-only evidence index"
     }
   }
@@ -142,6 +184,20 @@ struct DesktopProjectionScreen: View {
         workflowStatus(snapshot)
       case .channels:
         channelStatus(snapshot)
+      case .diagnostics:
+        diagnosticsStatus(snapshot)
+      case .recovery:
+        recoveryStatus(snapshot)
+      case .memory:
+        memoryStatus(snapshot)
+      case .tokenLedger:
+        tokenLedgerStatus(snapshot)
+      case .skills:
+        skillsStatus(snapshot)
+      case .media:
+        mediaStatus(snapshot)
+      case .settings:
+        settingsStatus(snapshot)
       case .evidence:
         evidenceStatus(snapshot)
       case nil:
@@ -448,6 +504,110 @@ struct DesktopProjectionScreen: View {
 
   private func evidenceStatus(_ snapshot: WorkbenchSnapshot) -> some View {
     VStack(alignment: .leading, spacing: 16) {
+      refsCard(title: "Evidence Refs", refs: evidenceRefs(snapshot))
+    }
+  }
+
+  private func diagnosticsStatus(_ snapshot: WorkbenchSnapshot) -> some View {
+    VStack(alignment: .leading, spacing: 16) {
+      GlassPanel {
+        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+          cardTitle("Runtime Diagnostics")
+          HStack(spacing: 8) {
+            snapshot.runtimeFeedStatus.chip
+            StatusChip(
+              text: snapshot.isLoadedEmpty ? "loaded empty" : "projection loaded",
+              bg: snapshot.isLoadedEmpty ? HubTheme.chipNeutralBG : HubTheme.chipPendingBG,
+              fg: snapshot.isLoadedEmpty ? HubTheme.chipNeutralFG : HubTheme.chipPendingFG)
+          }
+          Text("Diagnostics render typed Hub projection state only. Unknown values stay honest-unavailable and never become ready.")
+            .font(.system(size: 11))
+            .foregroundStyle(HubTheme.textSecondary)
+          ForEach(snapshot.statusLabels, id: \.rawValue) { label in
+            label.chip
+          }
+        }
+      }
+      refsCard(title: "Diagnostic Proof Refs", refs: evidenceRefs(snapshot))
+    }
+  }
+
+  private func recoveryStatus(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        cardTitle("Recovery Queue")
+        if snapshot.attentionWorkItems.isEmpty {
+          Text("No WorkItems currently need retry, cancel, or operator attention.")
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textSecondary)
+        } else {
+          ForEach(snapshot.attentionWorkItems) { item in
+            VStack(alignment: .leading, spacing: 6) {
+              HStack {
+                Text(item.title)
+                  .font(.system(size: 13, weight: .medium))
+                  .foregroundStyle(HubTheme.textPrimary)
+                Spacer()
+                item.state.chip
+              }
+              Text(item.attentionReason)
+                .font(.system(size: 11))
+                .foregroundStyle(HubTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+              HStack(spacing: 6) {
+                StatusChip(text: item.recoveryKind, bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+                if item.canRetry {
+                  StatusChip(text: "retry available", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+                }
+                if item.canCancel {
+                  StatusChip(text: "cancel available", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+                }
+              }
+              if let proofRef = item.proofRef {
+                RefPill(label: "proofRef", ref: proofRef)
+              }
+            }
+            .padding(.vertical, 4)
+          }
+        }
+      }
+    }
+  }
+
+  private func memoryStatus(_ snapshot: WorkbenchSnapshot) -> some View {
+    VStack(alignment: .leading, spacing: 16) {
+      GlassPanel {
+        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+          cardTitle("Memory Candidates")
+          if snapshot.memoryCandidates.isEmpty {
+            Text("No memory candidates are currently projected for operator review.")
+              .font(.system(size: 12))
+              .foregroundStyle(HubTheme.textSecondary)
+          } else {
+            ForEach(snapshot.memoryCandidates) { candidate in
+              VStack(alignment: .leading, spacing: 6) {
+                Text(candidate.preview)
+                  .font(.system(size: 12))
+                  .foregroundStyle(HubTheme.textPrimary)
+                StatusChip(
+                  text: candidate.grantsMemoryAuthority ? "authority requested" : "review only",
+                  bg: candidate.grantsMemoryAuthority ? HubTheme.chipWarnBG : HubTheme.chipNeutralBG,
+                  fg: candidate.grantsMemoryAuthority ? HubTheme.chipWarnFG : HubTheme.chipNeutralFG)
+                RefPill(label: "evidenceRef", ref: candidate.evidenceRef)
+              }
+              .padding(.vertical, 4)
+            }
+          }
+        }
+      }
+      refsCard(
+        title: "A1 Learning Refs",
+        refs: snapshot.runOutcomeLearningCandidates.map(\.evidenceRef))
+    }
+  }
+
+  private func tokenLedgerStatus(_ snapshot: WorkbenchSnapshot) -> some View {
+    VStack(alignment: .leading, spacing: 16) {
       if let runId = snapshot.runOutcomeLearningCandidates.first?.runId, !runId.isEmpty {
         GlassPanel {
           VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
@@ -462,14 +622,99 @@ struct DesktopProjectionScreen: View {
               .buttonStyle(.bordered)
               .disabled(viewModel.detailState.isLoading)
             }
-            Text("Reads the owner-gated run readback. Token totals come from the existing token_ledger projection; this screen does not estimate or mutate spend.")
+            Text("Reads owner-gated run readback. Token totals come from token_ledger projection; this surface never estimates spend.")
               .font(.system(size: 11))
               .foregroundStyle(HubTheme.textSecondary)
             RefPill(label: "run_id", ref: runId)
           }
         }
+      } else {
+        unavailableFactCard(
+          title: "Token Ledger",
+          reason: "No run ref is present in the current projection, so spend details stay unavailable.")
       }
-      refsCard(title: "Evidence Refs", refs: evidenceRefs(snapshot))
+      refsCard(title: "Provider Receipt Refs", refs: snapshot.providerReceiptRefs)
+    }
+  }
+
+  private func skillsStatus(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        cardTitle("Skills / Tools Truth Matrix")
+        Text("Capabilities remain projected facts. Dispatch gates and approval state are shown; this screen does not execute tools.")
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+        ForEach(snapshot.capabilityStates) { capability in
+          HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+              Text(capability.label)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(HubTheme.textPrimary)
+              Text(capability.summary)
+                .font(.system(size: 11))
+                .foregroundStyle(HubTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+              capability.truthLabel.chip
+              StatusChip(
+                text: capability.dispatchAllowed ? "dispatch allowed" : "dispatch gated",
+                bg: capability.dispatchAllowed ? HubTheme.chipPendingBG : HubTheme.chipNeutralBG,
+                fg: capability.dispatchAllowed ? HubTheme.chipPendingFG : HubTheme.chipNeutralFG)
+            }
+          }
+          .padding(.vertical, 4)
+        }
+      }
+    }
+  }
+
+  private func mediaStatus(_ snapshot: WorkbenchSnapshot) -> some View {
+    VStack(alignment: .leading, spacing: 16) {
+      unavailableFactCard(
+        title: "Media / Link",
+        reason: "OCR, PDF, TTS, browser fetch, and link-to-skill rows remain NO-GO until their adapters are built and live-proven.")
+      refsCard(title: "Related Evidence Refs", refs: evidenceRefs(snapshot))
+    }
+  }
+
+  private func settingsStatus(_ snapshot: WorkbenchSnapshot) -> some View {
+    VStack(alignment: .leading, spacing: 16) {
+      GlassPanel {
+        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+          cardTitle("Hub Settings")
+          Text("Settings are local posture facts from the Hub projection. Signing-key custody is never held by the app.")
+            .font(.system(size: 11))
+            .foregroundStyle(HubTheme.textSecondary)
+          snapshot.runtimeFeedStatus.chip
+          if let t3 = snapshot.t3ProvisioningStatus {
+            StatusChip(
+              text: t3.desktopStatusLabel,
+              bg: t3.isFullyProvisioned ? HubTheme.chipPendingBG : HubTheme.chipWarnBG,
+              fg: t3.isFullyProvisioned ? HubTheme.chipPendingFG : HubTheme.chipWarnFG)
+            if let device = t3.latestDevice {
+              RefPill(label: "device", ref: device.deviceId)
+              RefPill(label: "pubkey", ref: device.pubkeyFingerprint)
+            }
+          } else {
+            StatusChip(text: "T3 not projected", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+          }
+        }
+      }
+    }
+  }
+
+  private func unavailableFactCard(title: String, reason: String) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        cardTitle(title)
+        StatusChip(text: "NO-GO visible", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+        Text(reason)
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
     }
   }
 

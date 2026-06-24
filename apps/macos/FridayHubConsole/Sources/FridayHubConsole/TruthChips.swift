@@ -100,6 +100,15 @@ extension MissionWorkbenchStatusLabel {
     case .unknown: return "UNAVAILABLE"
     }
   }
+
+  @ViewBuilder var chip: some View {
+    switch self {
+    case .stale, .offline, .error:
+      StatusChip(text: displayText, bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+    case .unknown:
+      StatusChip(text: displayText, bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+    }
+  }
 }
 
 extension MissionWorkbenchRuntimeFeedStatus {
@@ -113,6 +122,17 @@ extension MissionWorkbenchRuntimeFeedStatus {
 
   /// Pending / unknown feeds render as a calm warning — never as "live/ready".
   var isHealthy: Bool { self == .liveRustHubProjection }
+
+  @ViewBuilder var chip: some View {
+    switch self {
+    case .liveRustHubProjection:
+      StatusChip(text: displayText, bg: HubTheme.chipDoneBG, fg: HubTheme.chipDoneFG)
+    case .pendingRustHubProjection:
+      StatusChip(text: displayText, bg: HubTheme.chipPendingBG, fg: HubTheme.chipPendingFG)
+    case .unknown:
+      StatusChip(text: displayText, bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+    }
+  }
 }
 
 /// A monospaced redacted-ref pill. Refs only — there is no expand/load affordance.

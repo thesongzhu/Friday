@@ -217,6 +217,36 @@ function runEnvCheck(repoRoot) {
   };
 }
 
+function runDesignContractCheck(repoRoot) {
+  const scriptPath = path.join(repoRoot, "scripts", "ops", "check-friday-client-design-contract.mjs");
+  if (!fs.existsSync(scriptPath)) {
+    return {
+      kind: "command",
+      label: "Client design contract check",
+      target: "scripts/ops/check-friday-client-design-contract.mjs",
+      status: "failed",
+      exitCode: 1,
+      stderr: "client design contract script is missing",
+    };
+  }
+
+  const result = spawnSync(process.execPath, [scriptPath, repoRoot], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: process.env,
+  });
+
+  return {
+    kind: "command",
+    label: "Client design contract check",
+    target: "scripts/ops/check-friday-client-design-contract.mjs",
+    status: result.status === 0 ? "passed" : "failed",
+    exitCode: result.status ?? 1,
+    stdout: (result.stdout ?? "").trim(),
+    stderr: (result.stderr ?? "").trim(),
+  };
+}
+
 const repoRoot = resolveRepoRoot();
 const pkg = readPackageJson(repoRoot);
 
@@ -229,6 +259,7 @@ const checks = [
     ["scripts/ops/release-friday-companion-app.sh", "Companion release script"],
     ["scripts/ops/build-friday-hub-console-app.sh", "Hub Console app bundle build script"],
     ["scripts/ops/verify-friday-hub-console-app.sh", "Hub Console app bundle verify script"],
+    ["scripts/ops/check-friday-client-design-contract.mjs", "Client design contract check"],
     ["apps/friday-ios/Package.swift", "iOS Swift package"],
     ["apps/friday-ios/Info.plist", "iOS app Info.plist"],
     ["apps/friday-ios/build-sim.sh", "iOS simulator build script"],
@@ -249,6 +280,7 @@ const checks = [
     "check:companion:release-env",
     "check:client-ship-gate",
     "check:cross-platform-client-ship-gate",
+    "check:client-design-contract",
     "build:companion:native",
     "build:hub-console:native",
     "build:ios:sim",
@@ -262,6 +294,7 @@ const checks = [
     "verify:hub-console:native",
   ].map((name) => scriptCheck(pkg, name)),
   runEnvCheck(repoRoot),
+  runDesignContractCheck(repoRoot),
   ...artifactFreshnessChecks(repoRoot),
 ];
 
