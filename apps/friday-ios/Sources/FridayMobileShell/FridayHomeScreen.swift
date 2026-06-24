@@ -21,19 +21,16 @@ struct FridayHomeScreen: View {
   var body: some View {
     ScrollView {
       VStack(spacing: 16) {
-        // The 155px pure-dog Hero Pet card ALWAYS anchors Home (locked: petProminence = heroPet
-        // on Friday Home, mobile-gallery.html `heroBlock()`). It is a LOCAL, zero-token mood
-        // companion — independent of the read seam — so it renders regardless of read state
-        // (loading / loaded / honest-unavailable). It carries NO status text/badges; the honest
-        // read-seam status truth lives in the state-driven content below.
-        HeroPet().padding(.top, 6)
-
         switch viewModel.state {
         case .idle, .loading:
+          loadingHeader
+          HeroPet().padding(.top, 4)
           loadingView
         case .loaded(let projection):
           loadedContent(projection)
         case let .unavailable(reason):
+          unavailableHeader
+          HeroPet().padding(.top, 4)
           UnavailableView(reason: reason)
         }
 
@@ -56,6 +53,22 @@ struct FridayHomeScreen: View {
     }
   }
 
+  private var loadingHeader: some View {
+    homeHeader(
+      hubLabel: "Hub loading",
+      hubOnline: false,
+      title: greetingTitle,
+      subtitle: "Reading Friday's live projection.")
+  }
+
+  private var unavailableHeader: some View {
+    homeHeader(
+      hubLabel: "Hub offline",
+      hubOnline: false,
+      title: greetingTitle,
+      subtitle: "Friday will not show cached or fabricated status.")
+  }
+
   private var loadingView: some View {
     VStack(spacing: 12) {
       ProgressView()
@@ -70,16 +83,271 @@ struct FridayHomeScreen: View {
   /// truth labels ride AS-IS; never a fabricated ready view.
   @ViewBuilder
   private func loadedContent(_ projection: HomeProjection) -> some View {
+    homeHeader(
+      hubLabel: projection.statusLabels.isEmpty ? "Hub live" : "Hub flagged",
+      hubOnline: projection.statusLabels.isEmpty,
+      title: greetingTitle,
+      subtitle: "Here is what Friday is watching for you.")
+
     // Honest status banner — any stale/offline/error label rides AS truth.
     if !projection.statusLabels.isEmpty {
       StatusBanner(labels: projection.statusLabels)
     }
 
-    statusCard(projection)
+    attentionHero(projection)
+    commandQueueSection(title: "Needs Me", rows: needsRows(projection), emptyText: "No approval, memory, or recovery items need action.")
+    commandQueueSection(title: "Running", rows: runningRows(projection), emptyText: "No active Friday work is visible in this projection.")
     if projection.isLoadedEmpty {
       loadedEmptyCard(projection)
     }
-    workItemsCard(projection)
+    statusCard(projection)
+    refsCard(projection)
+  }
+
+  private var greetingTitle: String {
+    let hour = Calendar.current.component(.hour, from: Date())
+    switch hour {
+    case 5..<12: return "Good morning"
+    case 12..<18: return "Good afternoon"
+    default: return "Good evening"
+    }
+  }
+
+  private func homeHeader(
+    hubLabel: String,
+    hubOnline: Bool,
+    title: String,
+    subtitle: String
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Friday")
+            .font(.title3.weight(.bold))
+            .foregroundStyle(MobileTheme.textPrimary)
+          Text("Private command center")
+            .font(.subheadline)
+            .foregroundStyle(MobileTheme.textSecondary)
+        }
+        Spacer()
+        StatusChip(
+          text: hubLabel,
+          bg: hubOnline ? MobileTheme.chipDoneBG : MobileTheme.chipWarnBG,
+          fg: hubOnline ? MobileTheme.chipDoneFG : MobileTheme.chipWarnFG)
+      }
+      VStack(alignment: .leading, spacing: 6) {
+        Text(title)
+          .font(.system(size: 30, weight: .bold))
+          .foregroundStyle(MobileTheme.textPrimary)
+        Text(subtitle)
+          .font(.callout)
+          .foregroundStyle(MobileTheme.textSecondary)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("\(hubLabel). \(title). \(subtitle)")
+    .accessibilityIdentifier("friday.home.command-center-header")
+  }
+
+  private func attentionHero(_ projection: HomeProjection) -> some View {
+    GlassPanel {
+      HStack(spacing: 14) {
+        HeroPet()
+          .frame(width: 155, height: 155)
+          .scaleEffect(0.67)
+          .frame(width: 112, height: 104)
+          .clipped()
+        VStack(alignment: .leading, spacing: 10) {
+          Text(primaryAttentionTitle(projection))
+            .font(.title3.weight(.bold))
+            .foregroundStyle(MobileTheme.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
+          HStack(spacing: 8) {
+            StatusChip(
+              text: projection.statusLabels.isEmpty ? "verified projection" : "truth flagged",
+              bg: projection.statusLabels.isEmpty ? MobileTheme.chipDoneBG : MobileTheme.chipWarnBG,
+              fg: projection.statusLabels.isEmpty ? MobileTheme.chipDoneFG : MobileTheme.chipWarnFG)
+            StatusChip(
+              text: "no hidden calls",
+              bg: MobileTheme.chipPendingBG,
+              fg: MobileTheme.chipPendingFG)
+          }
+          if let summary = projection.routeDecisionSummary {
+            Text(summary)
+              .font(.caption)
+              .foregroundStyle(MobileTheme.textSecondary)
+              .lineLimit(2)
+          }
+        }
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(primaryAttentionTitle(projection))
+    .accessibilityIdentifier("friday.home.attention-hero")
+  }
+
+  private func primaryAttentionTitle(_ projection: HomeProjection) -> String {
+    if projection.needsMeCount > 0 {
+      return "Friday needs your attention."
+    }
+    if projection.workItems.contains(where: { !$0.done }) {
+      return "Friday is working."
+    }
+    if projection.isLoadedEmpty {
+      return "Friday is connected."
+    }
+    return "Friday is caught up."
+  }
+
+  private struct QueueRow: Identifiable, Equatable {
+    let id: String
+    let icon: String
+    let iconBg: Color
+    let title: String
+    let subtitle: String
+    let chip: String
+    let urgent: Bool
+  }
+
+  private func needsRows(_ projection: HomeProjection) -> [QueueRow] {
+    var rows: [QueueRow] = projection.workItems
+      .filter(\.needsAttention)
+      .prefix(4)
+      .map { item in
+        QueueRow(
+          id: "work-\(item.id)",
+          icon: item.canRetry ? "arrow.clockwise" : "checkmark.shield",
+          iconBg: item.canRetry ? MobileTheme.coralSoft : MobileTheme.cyanSoft,
+          title: item.title,
+          subtitle: item.blockingReason.isEmpty ? "state: \(item.state)" : item.blockingReason,
+          chip: item.canRetry ? "needs" : item.state,
+          urgent: item.canRetry || item.state == "stale" || item.state == "blocked")
+      }
+    rows.append(contentsOf: projection.memoryCandidates.prefix(2).map { candidate in
+      QueueRow(
+        id: "memory-\(candidate.id)",
+        icon: "cylinder.split.1x2",
+        iconBg: Color(red: 0.72, green: 0.45, blue: 0.16).opacity(0.14),
+        title: "Review memory candidate",
+        subtitle: candidate.preview,
+        chip: candidate.grantsMemoryAuthority ? "authority" : "review",
+        urgent: false)
+    })
+    rows.append(contentsOf: projection.runOutcomeLearningCandidates.prefix(2).map { candidate in
+      QueueRow(
+        id: "learning-\(candidate.id)",
+        icon: "brain.head.profile",
+        iconBg: MobileTheme.cyanSoft,
+        title: candidate.summary,
+        subtitle: "candidate: \(candidate.kind) · \(candidate.state)",
+        chip: "confirm",
+        urgent: false)
+    })
+    return Array(rows.prefix(6))
+  }
+
+  private func runningRows(_ projection: HomeProjection) -> [QueueRow] {
+    var rows: [QueueRow] = projection.workItems
+      .filter { !$0.done && !$0.needsAttention }
+      .prefix(4)
+      .map { item in
+        QueueRow(
+          id: "running-\(item.id)",
+          icon: "sparkles",
+          iconBg: MobileTheme.cyanSoft,
+          title: item.title,
+          subtitle: "owner: \(item.owner)",
+          chip: item.state,
+          urgent: false)
+      }
+    if let route = projection.routeSelected {
+      rows.append(QueueRow(
+        id: "route-\(route)",
+        icon: "arrow.triangle.branch",
+        iconBg: MobileTheme.cyanSoft,
+        title: "\(route.capitalized) route",
+        subtitle: projection.routeAlternatives.isEmpty
+          ? "selected by route advisor"
+          : "alternatives: \(projection.routeAlternatives.joined(separator: ", "))",
+        chip: "ok",
+        urgent: false))
+    }
+    rows.append(contentsOf: projection.transcriptEvents.prefix(3).map { event in
+      QueueRow(
+        id: "event-\(event.id)",
+        icon: "waveform.path.ecg",
+        iconBg: MobileTheme.chipNeutralBG,
+        title: event.summary,
+        subtitle: "\(event.sectionTitle) · \(event.truthLabel)",
+        chip: event.status,
+        urgent: false)
+    })
+    return Array(rows.prefix(6))
+  }
+
+  private func commandQueueSection(title: String, rows: [QueueRow], emptyText: String) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .firstTextBaseline) {
+        Text(title.uppercased())
+          .font(.caption.weight(.bold))
+          .tracking(2)
+          .foregroundStyle(MobileTheme.textSecondary.opacity(0.72))
+        Spacer()
+        if !rows.isEmpty {
+          Text("\(rows.count) now")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(MobileTheme.cyan)
+        }
+      }
+      if rows.isEmpty {
+        Text(emptyText)
+          .font(.footnote)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .padding(.vertical, 4)
+      } else {
+        ForEach(rows) { row in
+          commandQueueRow(row)
+        }
+      }
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("friday.home.\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
+  }
+
+  private func commandQueueRow(_ row: QueueRow) -> some View {
+    GlassPanel {
+      HStack(spacing: 13) {
+        ZStack {
+          RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(row.iconBg)
+          Image(systemName: row.icon)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(row.urgent ? MobileTheme.coral : MobileTheme.cyan)
+        }
+        .frame(width: 44, height: 44)
+        VStack(alignment: .leading, spacing: 4) {
+          Text(row.title)
+            .font(.headline)
+            .foregroundStyle(MobileTheme.textPrimary)
+            .lineLimit(2)
+          Text(row.subtitle)
+            .font(.subheadline)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .lineLimit(2)
+        }
+        Spacer(minLength: 8)
+        StatusChip(
+          text: row.chip,
+          bg: row.urgent ? MobileTheme.chipWarnBG : MobileTheme.chipNeutralBG,
+          fg: row.urgent ? MobileTheme.chipWarnFG : MobileTheme.chipNeutralFG)
+        Image(systemName: "chevron.right")
+          .font(.footnote.weight(.semibold))
+          .foregroundStyle(MobileTheme.textSecondary.opacity(0.55))
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("\(row.title). \(row.subtitle). \(row.chip)")
   }
 
   private func statusCard(_ projection: HomeProjection) -> some View {
@@ -342,7 +610,7 @@ struct FridayHomeScreen: View {
   /// The refs-only work-item view: COUNTS + id refs only (INV-5) — never a body. The read-seam
   /// projection is refs-only, so this surface presents the work-item id refs honestly without
   /// fabricating per-item lifecycle/owner detail the read seam does not surface to this view.
-  private func workItemsCard(_ projection: HomeProjection) -> some View {
+  private func refsCard(_ projection: HomeProjection) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         HStack {
