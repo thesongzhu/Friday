@@ -58,8 +58,167 @@ function writePartialEvidenceDir(tempDir: string) {
   return files;
 }
 
+function writeWorkbenchSnapshotEvidenceDir(tempDir: string) {
+  const files = {
+    mobile: join(tempDir, "mobile.json"),
+    desktop: join(tempDir, "desktop.json"),
+    channel: join(tempDir, "channel.json"),
+    timeline: join(tempDir, "timeline.json"),
+    snapshot: join(tempDir, "workbench-snapshot.json"),
+  };
+
+  writeFileSync(join(tempDir, "mission-id.txt"), `${missionId}\n`);
+  for (const [role, filePath] of Object.entries({
+    mobile: files.mobile,
+    desktop: files.desktop,
+    channel: files.channel,
+    timeline: files.timeline,
+  })) {
+    writeFileSync(filePath, JSON.stringify({ role, mission_id: missionId, capture: "redacted snapshot-derived qa input" }));
+  }
+  writeFileSync(files.snapshot, JSON.stringify({ snapshot: makeWorkbenchSnapshot() }, null, 2));
+  return files;
+}
+
 function observation(surface: string, event: string, evidenceRef: string) {
   return { surface, event, mission_id: missionId, evidence_ref: evidenceRef };
+}
+
+function transcriptEvent(
+  id: string,
+  surface: string,
+  status: string,
+  evidenceRefs: Record<string, string>,
+  workItemId?: string,
+) {
+  return {
+    id,
+    missionId,
+    workItemId,
+    surface,
+    status,
+    truthLabel: surface === "telegram" ? "observed_only" : "friday_owned",
+    summary: `${surface} ${status}`,
+    proofRef: "proof://redacted",
+    evidenceRefs,
+    capturedAt: "2026-06-05T06:10:00Z",
+  };
+}
+
+function makeWorkbenchSnapshot() {
+  return {
+    missionId,
+    fridayConversationId: "conversation_cli_ui_device_readiness",
+    runtimeFeedStatus: "live_rust_hub_projection",
+    statusLabels: ["stale", "offline", "error"],
+    duplicatePreflight: {
+      status: "opens_existing_mission",
+      duplicateMissionId: missionId,
+      duplicateWorkItemId: "work_provider",
+    },
+    routeDecision: {
+      advisorSummary: "Rust Hub route decision projection.",
+      selectedRoute: "route_decision_ref",
+      controlRef: `friday://route-decision-projection/${missionId}/work_provider/1700000000000`,
+      workItemId: "work_provider",
+      alternatives: ["alternate_ref"],
+      actionItems: [
+        {
+          description: "Implement Mission Spine domain types",
+          targetKind: "file",
+          targetRef: "rust-core/crates/friday-core/src/lib.rs",
+          reversibility: "operator_gate_required",
+          assignedLane: "codex",
+          assignedProviderOrAgent: "codex",
+          routeReason: "Rust Hub must own product truth before UI wiring",
+        },
+      ],
+      truthLabel: "friday_owned",
+    },
+    providerReceiptRefs: ["proof://provider/receipt/redacted"],
+    channelReceiptRefs: ["proof://channel/receipt/redacted"],
+    workItems: [
+      {
+        id: "work_provider",
+        title: "Mission-bound provider action",
+        state: "provider_ack",
+        owner: "friday_owned",
+        proofRef: "proof://provider/ack/not-completion",
+        done: false,
+        blockingReason: "provider or hub execution is still in flight; cancel is the only exposed recovery action",
+        recoveryKind: "in_flight",
+        canRetry: false,
+        canCancel: true,
+      },
+      {
+        id: "work_timeline",
+        title: "Bounded timeline read",
+        state: "timeline_read",
+        owner: "friday_owned",
+        proofRef: "proof://timeline/page-2/cursor",
+        done: false,
+        blockingReason: "bounded timeline read only; no WorkItem recovery action applies",
+        recoveryKind: "none",
+        canRetry: false,
+        canCancel: false,
+      },
+      {
+        id: "work_completed",
+        title: "Completed only after proof receipt",
+        state: "completed_with_proof",
+        owner: "friday_owned",
+        proofRef: "proof://provider/receipt/redacted",
+        done: true,
+        blockingReason: "terminal or archived WorkItem; no recovery action applies",
+        recoveryKind: "none",
+        canRetry: false,
+        canCancel: false,
+      },
+    ],
+    timelinePages: [
+      { page: 1, cursor: "cursor_1", nextCursor: "cursor_2", eventRefs: ["event_mobile_intake", "event_provider_ack"] },
+      { page: 2, cursor: "cursor_2", eventRefs: ["event_channel_receipt", "event_timeline_read", "event_memory_candidate", "event_completed_with_proof"] },
+    ],
+    memoryCandidates: [
+      {
+        id: "memory_candidate_review_only",
+        preview: "Review-only candidate.",
+        state: "candidate_review_only",
+        grantsMemoryAuthority: false,
+        evidenceRef: "proof://memory/review-only",
+      },
+    ],
+    capabilityStates: [
+      {
+        id: "capability_mission_advisor",
+        label: "Mission advisor",
+        kind: "advisor",
+        truthLabel: "friday_owned",
+        approvalState: "not_required",
+        dispatchAllowed: false,
+        summary: "Advisor state is a Rust Hub projection.",
+        proofRef: "proof://advisor/route-decision/redacted",
+      },
+    ],
+    transcriptSections: [
+      {
+        id: "section_cli_ui_device_readiness",
+        title: "Mission projection",
+        groupKind: "mission",
+        missionId,
+        truthLabel: "friday_owned",
+        status: "waiting",
+        events: [
+          transcriptEvent("event_mobile_intake", "mobile", "ready", { surfaceThreadRef: "surface://mobile/thread", workflowRef: "workflow://mission/intake", timelineRef: "timeline://mission/page-1/event-mobile-intake" }),
+          transcriptEvent("event_provider_ack", "desktop", "provider_ack", { providerRef: "provider://session", proofReceiptRef: "proof://provider/ack", surfaceThreadRef: "surface://desktop/thread", timelineRef: "timeline://mission/page-1/event-provider-ack" }, "work_provider"),
+          transcriptEvent("event_channel_receipt", "telegram", "queued", { channelRef: "channel://telegram/redacted", proofReceiptRef: "proof://channel/receipt", timelineRef: "timeline://mission/page-2/event-channel-receipt" }),
+          transcriptEvent("event_timeline_read", "timeline", "timeline_read", { workflowRef: "workflow://mission/timeline", timelineRef: "timeline://mission/page-2/cursor" }, "work_timeline"),
+          transcriptEvent("event_memory_candidate", "timeline", "waiting", { skillRunRef: "skill://candidate/review-only", workflowRef: "workflow://memory/review", timelineRef: "timeline://mission/page-2/event-memory-candidate" }),
+          transcriptEvent("event_completed_with_proof", "desktop", "completed_with_proof", { providerRef: "provider://session/receipt", proofReceiptRef: "proof://provider/receipt", surfaceThreadRef: "surface://desktop/thread", timelineRef: "timeline://mission/page-2/event-completed-with-proof" }, "work_completed"),
+        ],
+      },
+    ],
+  };
 }
 
 function makeManifest(files: ReturnType<typeof writeEvidenceDir>) {
@@ -272,6 +431,48 @@ describe("friday-ui-device-proof-readiness", () => {
         event: "same_mission_projection_visible",
         preferredCapture: "channel",
       });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("derives diagnostic events from a preflighted workbench snapshot without assembling proof", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-workbench-"));
+    try {
+      writeWorkbenchSnapshotEvidenceDir(tempDir);
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        truth?: string;
+        status?: string;
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.truth).toBe("report_only_not_ui_device_proof");
+      expect(result.status).toBe("blocked");
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_bridge:ready"))).toBe(true);
+      expect(result.notes?.some((note) => note.includes("ui_device_gap_report:gaps_present"))).toBe(true);
+
+      const rows = readFileSync(join(tempDir, "workbench-derived-events.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { surface?: string; event?: string });
+      expect(rows).toContainEqual(expect.objectContaining({
+        surface: "desktop",
+        event: "mission_workbench_visible",
+      }));
+      expect(rows).not.toContainEqual(expect.objectContaining({
+        event: "pressure_20_50_consecutive_asks_visible",
+      }));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
