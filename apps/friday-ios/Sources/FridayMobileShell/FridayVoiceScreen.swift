@@ -57,6 +57,7 @@ struct FridayVoiceScreen: View {
       UnavailableView(reason: reason)
     case let .loaded(readiness):
       readinessCard(readiness)
+      actionsCard(readiness)
       gatesCard(readiness)
     }
   }
@@ -99,6 +100,48 @@ struct FridayVoiceScreen: View {
       }
     }
     .accessibilityIdentifier("friday.voice.readiness-card")
+  }
+
+  private func actionsCard(_ readiness: MobileVoiceReadiness) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader("Voice I/O Actions", count: VoiceReadinessViewModel.actionRows(for: readiness).count)
+        ForEach(VoiceReadinessViewModel.actionRows(for: readiness)) { row in
+          HStack(alignment: .top, spacing: 10) {
+            Image(systemName: row.enabled ? "checkmark.circle" : "lock.circle")
+              .foregroundStyle(row.enabled ? MobileTheme.cyan : MobileTheme.textSecondary)
+              .frame(width: 20)
+            VStack(alignment: .leading, spacing: 4) {
+              HStack(spacing: 6) {
+                Text(row.title)
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(MobileTheme.textPrimary)
+                StatusChip(
+                  text: row.truthLabel,
+                  bg: row.enabled ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
+                  fg: row.enabled ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
+              }
+              Text(row.detail)
+                .font(.caption2)
+                .foregroundStyle(MobileTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            if row.id == "permission" {
+              Button {
+                Task { await viewModel.requestPermission() }
+              } label: {
+                Text("Allow")
+              }
+              .buttonStyle(.bordered)
+              .disabled(!row.enabled || viewModel.state == .loading)
+            }
+          }
+          .padding(.vertical, 3)
+        }
+      }
+    }
+    .accessibilityIdentifier("friday.voice.actions-card")
   }
 
   private func gatesCard(_ readiness: MobileVoiceReadiness) -> some View {
