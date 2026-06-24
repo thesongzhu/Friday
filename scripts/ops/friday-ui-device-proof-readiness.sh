@@ -240,6 +240,24 @@ discover_evidence_dir() {
       "$dir/mission-workbench-snapshot.json" \
       "$dir/workbench-response.json" || true)"
   fi
+  if [ -z "${BACKEND_LIVE_PROOF:-}" ]; then
+    BACKEND_LIVE_PROOF="$(first_existing \
+      "$dir/backend-live-proof.json" \
+      "$dir/backend-proof.json" \
+      "$dir/mission-spine-backend-live-proof.json" || true)"
+  fi
+  if [ -z "${CHANNEL_LIVE_PROOF:-}" ]; then
+    CHANNEL_LIVE_PROOF="$(first_existing \
+      "$dir/channel-live-proof.json" \
+      "$dir/channel-proof.json" \
+      "$dir/mission-spine-channel-live-proof.json" || true)"
+  fi
+  if [ -z "${OBJECTIVE_COVERAGE:-}" ]; then
+    OBJECTIVE_COVERAGE="$(first_existing \
+      "$dir/objective-coverage.json" \
+      "$dir/mission-spine-objective-coverage.json" \
+      "$dir/mission-spine-objective-coverage-gate.json" || true)"
+  fi
 }
 
 json_escape() {
