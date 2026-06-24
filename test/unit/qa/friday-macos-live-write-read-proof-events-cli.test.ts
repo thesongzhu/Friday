@@ -83,6 +83,51 @@ describe("friday-macos-live-write-read-proof-events", () => {
     }
   });
 
+  it("accepts shared-mission duplicate-existing preflight when the same WorkItem is visible", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-macos-roundtrip-events-duplicate-"));
+    try {
+      const proofPath = writeProof(tempDir, proof({
+        write: {
+          status: "blocked",
+          created_or_ready: false,
+          mission_id: missionId,
+          work_item_id: workItemId,
+          blockers: ["duplicate_active_work_item_before_dispatch"],
+          duplicate_work_item_id: workItemId,
+          accepted_existing_work_item: true,
+          endpoint: { host: "127.0.0.1", port: 48750 },
+        },
+      }));
+      const outPath = join(tempDir, "events.jsonl");
+      const stdout = execFileSync("node", [
+        script,
+        `--proof=${proofPath}`,
+        `--out=${outPath}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      const result = JSON.parse(stdout) as { status?: string; eventCount?: number; blockers?: unknown[] };
+      expect(result.status).toBe("ready");
+      expect(result.eventCount).toBe(5);
+      expect(result.blockers).toEqual([]);
+
+      const rows = readFileSync(outPath, "utf8").trim().split("\n").map((line) => JSON.parse(line)) as Array<{
+        event?: string;
+        work_item_id?: string;
+      }>;
+      expect(rows.map((row) => row.event)).toEqual([
+        "mission_intake_submitted",
+        "duplicate_preflight_visible",
+        "mission_bound_provider_action_visible",
+        "proof_receipt_visible_before_done",
+        "same_mission_projection_visible",
+      ]);
+      expect(new Set(rows.map((row) => row.work_item_id))).toEqual(new Set([workItemId]));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("blocks artifacts whose read projection does not contain the written WorkItem", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-macos-roundtrip-events-blocked-"));
     try {

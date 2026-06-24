@@ -66,6 +66,10 @@ function arrayField(value, field, label) {
   return [];
 }
 
+function optionalArrayField(value, field) {
+  return value && Array.isArray(value[field]) ? value[field] : [];
+}
+
 if (!proofPath) block("missing_arg", "proof");
 const proof = proofPath ? readJson(abs(proofPath)) : null;
 const evidenceRef = proofPath ? abs(proofPath) : "";
@@ -95,8 +99,16 @@ if (surfaceKind && surfaceKind !== "mobile") block("surface_kind_not_mobile", su
 
 const write = proof?.write ?? null;
 const writeStatus = stringField(write, "status", "proof.write");
-if (writeStatus && writeStatus !== "ready") block("write_status_not_ready", writeStatus);
-if (!booleanField(write, "created_or_ready", "proof.write")) {
+const writeBlockers = optionalArrayField(write, "blockers").filter((value) => typeof value === "string");
+const duplicateWorkItemId = typeof write?.duplicate_work_item_id === "string" ? write.duplicate_work_item_id : "";
+const acceptedExistingWorkItem = write?.accepted_existing_work_item === true;
+const duplicateExisting = writeStatus === "blocked"
+  && !write?.created_or_ready
+  && acceptedExistingWorkItem
+  && duplicateWorkItemId === workItemId
+  && writeBlockers.includes("duplicate_active_work_item_before_dispatch");
+if (writeStatus && writeStatus !== "ready" && !duplicateExisting) block("write_status_not_ready", writeStatus);
+if (!booleanField(write, "created_or_ready", "proof.write") && !duplicateExisting) {
   block("write_created_or_ready_false", "proof.write.created_or_ready");
 }
 if (write && write.mission_id !== missionId) block("write_mission_mismatch", String(write.mission_id ?? ""));
@@ -120,7 +132,9 @@ const eventNames = [
   "same_mission_projection_visible",
 ];
 const events = blockers.length === 0
-  ? eventNames.map((event) => ({
+  ? eventNames.map((event) => event === "mission_intake_ready" && duplicateExisting
+    ? "duplicate_preflight_visible"
+    : event).map((event) => ({
     surface: "mobile",
     event,
     mission_id: missionId,
