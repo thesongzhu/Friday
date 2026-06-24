@@ -9,6 +9,7 @@ import SwiftUI
 enum MobileDestinationClosureTier {
   case liveWriteRead
   case liveReadProjection
+  case providerWorkspace
   case governedActionGated
   case readinessOnly
   case statusProjection
@@ -18,6 +19,7 @@ enum MobileDestinationClosureTier {
     switch self {
     case .liveWriteRead: return "live write"
     case .liveReadProjection: return "live read"
+    case .providerWorkspace: return "workspace"
     case .governedActionGated: return "action gated"
     case .readinessOnly: return "readiness"
     case .statusProjection: return "projection"
@@ -31,6 +33,8 @@ enum MobileDestinationClosureTier {
       return "Real read/write loop exists when the governed live seams are configured."
     case .liveReadProjection:
       return "Reads real Hub projection state; it does not create or mutate work."
+    case .providerWorkspace:
+      return "Opens provider readiness, route/session refs, and native-control truth; read-only pieces are labeled."
     case .governedActionGated:
       return "Shows governed action controls; mutations require the live write seam and approval gates."
     case .readinessOnly:
@@ -45,7 +49,7 @@ enum MobileDestinationClosureTier {
   var isClosedLoopProductReady: Bool {
     switch self {
     case .liveWriteRead: return true
-    case .liveReadProjection, .governedActionGated, .readinessOnly, .statusProjection, .navigationShell:
+    case .liveReadProjection, .providerWorkspace, .governedActionGated, .readinessOnly, .statusProjection, .navigationShell:
       return false
     }
   }
@@ -84,7 +88,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .needsMe: return "Needs Me"
     case .memory: return "Memory"
     case .platform: return "Platform"
-    case .providerAuth: return "Provider/Auth"
+    case .providerAuth: return "Provider Workspace"
     case .activity: return "Activity"
     case .workflows: return "Workflows"
     case .onboarding: return "Onboarding"
@@ -115,17 +119,21 @@ enum MobileDestination: String, CaseIterable, Identifiable {
 
   var closureTier: MobileDestinationClosureTier {
     switch self {
-    case .home, .session:
+    case .home:
       return .liveWriteRead
+    case .session:
+      return .governedActionGated
     case .missions, .contextPassport, .tokenLedger, .memory, .activity:
       return .liveReadProjection
-    case .shareIntake, .needsMe, .workflows:
+    case .providerAuth:
+      return .providerWorkspace
+    case .shareIntake, .needsMe:
       return .governedActionGated
-    case .voice, .pairing, .providerAuth:
+    case .voice, .pairing:
       return .readinessOnly
     case .platform, .settings:
       return .statusProjection
-    case .onboarding:
+    case .workflows, .onboarding:
       return .navigationShell
     }
   }
@@ -160,7 +168,7 @@ struct CommandSheet: View {
         }
         .padding(16)
 
-        Text("Live truth")
+        Text("Route coverage is not END-BAR. Each tile shows the current runtime contract.")
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)
           .padding(.top, 8)
