@@ -59,6 +59,22 @@ public struct MobileVoiceReadiness: Sendable, Equatable {
   }
 }
 
+public struct MobileVoiceActionRow: Sendable, Equatable, Identifiable {
+  public let id: String
+  public let title: String
+  public let detail: String
+  public let truthLabel: String
+  public let enabled: Bool
+
+  public init(id: String, title: String, detail: String, truthLabel: String, enabled: Bool) {
+    self.id = id
+    self.title = title
+    self.detail = detail
+    self.truthLabel = truthLabel
+    self.enabled = enabled
+  }
+}
+
 public protocol MobileVoiceReadinessAuthorizing: Sendable {
   func currentReadiness() async throws -> MobileVoiceReadiness
   func requestVoiceAuthorization() async throws -> MobileVoiceReadiness
@@ -102,5 +118,42 @@ public final class VoiceReadinessViewModel: ObservableObject {
     } catch {
       state = .unavailable("\(error)")
     }
+  }
+
+  public static func actionRows(for readiness: MobileVoiceReadiness) -> [MobileVoiceActionRow] {
+    [
+      MobileVoiceActionRow(
+        id: "permission",
+        title: "Request OS permission",
+        detail: readiness.canRequestPermission
+          ? "Asks iOS for microphone and speech recognition permission."
+          : "Permission state is already decided by iOS.",
+        truthLabel: "native_permission_request",
+        enabled: readiness.canRequestPermission),
+      MobileVoiceActionRow(
+        id: "speech-capture",
+        title: "Speech capture",
+        detail: readiness.speechCaptureReady
+          ? "Microphone and speech recognition are both authorized."
+          : "Blocked until microphone and speech recognition are authorized.",
+        truthLabel: "local_capture_readiness",
+        enabled: readiness.speechCaptureReady),
+      MobileVoiceActionRow(
+        id: "tts-output",
+        title: "TTS output",
+        detail: readiness.ttsProviderConfigured
+          ? "TTS provider is configured for speech output."
+          : "No TTS provider is configured in this build.",
+        truthLabel: readiness.ttsProviderConfigured ? "provider_configured" : "NO-GO",
+        enabled: readiness.ttsProviderConfigured),
+      MobileVoiceActionRow(
+        id: "realtime-loop",
+        title: "Realtime voice loop",
+        detail: readiness.voiceLoopReady
+          ? "Capture and TTS are both ready."
+          : "Disabled until capture and TTS are both ready.",
+        truthLabel: readiness.voiceLoopReady ? "ready" : "blocked",
+        enabled: readiness.voiceLoopReady),
+    ]
   }
 }

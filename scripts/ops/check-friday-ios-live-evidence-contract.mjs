@@ -82,7 +82,7 @@ const checks = [
       ]),
       ...requireStrings(files.commandSheet, [
         "Command Sheet",
-        "Live truth",
+        "Route coverage is not END-BAR",
         "Device Pairing",
       ]),
     ],

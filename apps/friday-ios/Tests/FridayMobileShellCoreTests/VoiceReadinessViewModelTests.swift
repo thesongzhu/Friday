@@ -82,4 +82,38 @@ final class VoiceReadinessViewModelTests: XCTestCase {
       requested.voiceLoopReady,
       "requesting OS capture permissions must not fabricate TTS provider readiness")
   }
+
+  func testActionRowsSeparatePermissionCaptureTtsAndRealtimeLoopTruth() {
+    let initial = MobileVoiceReadiness(
+      microphone: .notDetermined,
+      speechRecognition: .notDetermined,
+      ttsProviderConfigured: false)
+    let initialRows = VoiceReadinessViewModel.actionRows(for: initial)
+    XCTAssertEqual(initialRows.map(\.id), ["permission", "speech-capture", "tts-output", "realtime-loop"])
+    XCTAssertEqual(initialRows.first { $0.id == "permission" }?.truthLabel, "native_permission_request")
+    XCTAssertEqual(initialRows.first { $0.id == "permission" }?.enabled, true)
+    XCTAssertEqual(initialRows.first { $0.id == "tts-output" }?.truthLabel, "NO-GO")
+    XCTAssertEqual(initialRows.first { $0.id == "tts-output" }?.enabled, false)
+    XCTAssertEqual(initialRows.first { $0.id == "realtime-loop" }?.truthLabel, "blocked")
+    XCTAssertEqual(initialRows.first { $0.id == "realtime-loop" }?.enabled, false)
+
+    let captureOnly = MobileVoiceReadiness(
+      microphone: .authorized,
+      speechRecognition: .authorized,
+      ttsProviderConfigured: false)
+    let captureRows = VoiceReadinessViewModel.actionRows(for: captureOnly)
+    XCTAssertEqual(captureRows.first { $0.id == "permission" }?.enabled, false)
+    XCTAssertEqual(captureRows.first { $0.id == "speech-capture" }?.enabled, true)
+    XCTAssertEqual(captureRows.first { $0.id == "tts-output" }?.truthLabel, "NO-GO")
+    XCTAssertEqual(captureRows.first { $0.id == "realtime-loop" }?.enabled, false)
+
+    let complete = MobileVoiceReadiness(
+      microphone: .authorized,
+      speechRecognition: .authorized,
+      ttsProviderConfigured: true)
+    let completeRows = VoiceReadinessViewModel.actionRows(for: complete)
+    XCTAssertEqual(completeRows.first { $0.id == "tts-output" }?.truthLabel, "provider_configured")
+    XCTAssertEqual(completeRows.first { $0.id == "realtime-loop" }?.truthLabel, "ready")
+    XCTAssertEqual(completeRows.first { $0.id == "realtime-loop" }?.enabled, true)
+  }
 }
