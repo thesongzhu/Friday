@@ -1225,6 +1225,11 @@ func submitIntakeDisplaysOwnerGatedRunAnswerBodyWhenDelivered() async {
     missionId: "mission-desktop-fixed",
     workItemId: "work-desktop-fixed",
     runIds: ["run-bound-1"]))
+  #expect(vm.latestChatTurn?.receiptRefs == [
+    ChatReceiptRef(label: "mission_id", ref: "mission-desktop-fixed"),
+    ChatReceiptRef(label: "work_item_id", ref: "work-desktop-fixed"),
+    ChatReceiptRef(label: "run_id", ref: "run-bound-1"),
+  ])
   guard case let .loaded(items) = vm.chatReviewState else {
     Issue.record("expected loaded review state, got \(vm.chatReviewState)")
     return
@@ -1234,6 +1239,12 @@ func submitIntakeDisplaysOwnerGatedRunAnswerBodyWhenDelivered() async {
   let approval = items.first { $0.kind == "approval_required" }
   #expect(approval?.actionDigest == "digest-approval-nonce-1")
   #expect(approval?.signingSummary == "approval_required ready")
+  #expect(approval?.receiptRefs == [
+    ChatReceiptRef(label: "run_id", ref: "run-bound-1"),
+    ChatReceiptRef(label: "approval_ref", ref: "approval-nonce-1"),
+    ChatReceiptRef(label: "action_digest", ref: "digest-approval-nonce-1"),
+    ChatReceiptRef(label: "deep_link", ref: "run/run-bound-1/approval/approval-nonce-1"),
+  ])
 }
 
 @Test
