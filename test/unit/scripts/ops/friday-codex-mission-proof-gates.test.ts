@@ -428,7 +428,11 @@ function createD8FixtureDb(
   db.close();
 }
 
-async function runD8Audit(dbPath: string, requiredSessions = "1") {
+async function runD8Audit(
+  dbPath: string,
+  requiredSessions = "1",
+  extraEnv: Record<string, string> = {},
+) {
   const healthUrl = await startHealthServer();
   const rustWsPort = new URL(healthUrl).port;
   return spawnSync("bash", [d8AuditScript], {
@@ -447,6 +451,7 @@ async function runD8Audit(dbPath: string, requiredSessions = "1") {
       FRIDAY_TS_STDERR_LOG: join(makeTempRoot(), "missing-ts-stderr.log"),
       FRIDAY_RUST_STDOUT_LOG: join(makeTempRoot(), "missing-rust-stdout.log"),
       FRIDAY_RUST_STDERR_LOG: join(makeTempRoot(), "missing-rust-stderr.log"),
+      ...extraEnv,
     },
   });
 }
@@ -586,6 +591,25 @@ describe("Codex mission proof gates", () => {
     expect(result.stdout).toContain(
       "ledger-linked Codex/Claude session runs have proof without a bound Mission SurfaceThread",
     );
+  });
+
+  it("D8 audit can print recent scoped session details without changing fail-closed behavior", async () => {
+    const tempRoot = makeTempRoot();
+    const dbPath = join(tempRoot, "d8-detail-without-surface-thread.sqlite");
+    createD8FixtureDb(dbPath, "friday://agent-run/run-1", {
+      omitSurfaceThread: true,
+    });
+
+    const result = await runD8Audit(dbPath, "1", {
+      FRIDAY_D8_AUDIT_DETAIL_LIMIT: "1",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("Recent scoped session details (diagnostic only; PASS criteria unchanged):");
+    expect(result.stdout).toContain("provider=codex");
+    expect(result.stdout).toContain("completed_proof_runs=1");
+    expect(result.stdout).toContain("surface_bound_runs=0");
+    expect(result.stdout).toContain("claim_bound_process=1");
   });
 
   it("D8 audit rejects completed WorkItem proof bound to a non-mobile SurfaceThread", async () => {
