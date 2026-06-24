@@ -329,7 +329,9 @@ private func firstAnswerOutcomeExcerpt(_ body: String?) -> String? {
 @MainActor
 func liveOperationsOverviewSubmitIntakeAutoDispatchesHybridClaudeFollowUp() async throws {
   let identity = liveUiProofMissionIdentity(defaultSurface: "desktop")
-  let readClient = try RealReadClientFactory.makeLive(missionId: identity.missionId)
+  let readClient = try RealReadClientFactory.makeLive(
+    config: productAutoFollowUpReadConfig(),
+    missionId: identity.missionId)
   let writeClient = try RealWriteClientFactory.makeLiveWrite(config: hybridFollowUpWriteConfig())
   let vm = OperationsOverviewViewModel(
     client: readClient,
@@ -440,6 +442,16 @@ private func hybridFollowUpWriteConfig() -> AgentRunWriteServerConfig {
     return .liveLoopback
   }
   return AgentRunWriteServerConfig(host: "127.0.0.1", port: port)
+}
+
+private func productAutoFollowUpReadConfig() throws -> ReadProjectionServerConfig {
+  guard let rawPort = ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_PRODUCT_AUTO_FOLLOWUP_READ_PORT"] else {
+    return .liveLoopback
+  }
+  guard let port = UInt16(rawPort), port > 0 else {
+    throw FridayReadClientError.transport("invalid product auto-followup read port override \(rawPort)")
+  }
+  return ReadProjectionServerConfig(host: "127.0.0.1", port: port)
 }
 
 private func makeLiveIntake(
