@@ -140,6 +140,16 @@ function makeManifest(files: ReturnType<typeof writeEvidenceDir>) {
 }
 
 describe("friday-ui-device-proof-readiness", () => {
+  it("does not require final proof mode to be not-ready", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-readiness.sh", "utf8");
+    expect(source).toContain("EXPECT_NOT_READY_ARGS=(--expect-not-ready)");
+    expect(source).toContain('if [ "${MODE}" = "require-proof" ]; then');
+    expect(source).toContain("EXPECT_NOT_READY_ARGS=()");
+    expect(source).toContain('check-mission-workbench-live-readiness.mjs" "${EXPECT_NOT_READY_ARGS[@]}"');
+    expect(source).toContain('check-mission-workbench-snapshot-contract.mjs"');
+    expect(source).not.toContain("check-mission-workbench-live-readiness.mjs\" --expect-not-ready");
+  });
+
   it("discovers a complete evidence dir and delegates to the strict assembler", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-"));
     try {
