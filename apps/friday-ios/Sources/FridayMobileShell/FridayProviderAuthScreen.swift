@@ -96,7 +96,9 @@ struct FridayProviderAuthScreen: View {
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
           workspaceHeader("Provider Workspace", chip: "live read", healthy: true)
+          routeDecisionCard(projection)
           providerQueueSummary(projection)
+          ledgerAndReceiptSummary(projection)
           nativeControlTruth(projection)
           providerRefs(projection)
         }
@@ -125,6 +127,10 @@ struct FridayProviderAuthScreen: View {
         metricPill("Running", "\(projection.workItems.filter { !$0.done }.count)")
         metricPill("Capabilities", "\(projection.capabilityStates.count)")
       }
+      Text("Provider Workspace Home: route, queue, session controls, and cost refs are surfaced from the Hub projection; unavailable actions stay explicit instead of becoming fake ready.")
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
       if projection.workItems.isEmpty {
         Text("No provider work-item refs in the current projection.")
           .font(.caption2)
@@ -152,6 +158,63 @@ struct FridayProviderAuthScreen: View {
     }
   }
 
+  private func routeDecisionCard(_ projection: HomeProjection) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Route")
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(MobileTheme.textPrimary)
+      if let route = projection.routeSelected {
+        controlRow("Selected provider", state: route, healthy: true)
+      } else {
+        controlRow("Selected provider", state: "not projected", healthy: false)
+      }
+      if let summary = projection.routeDecisionSummary, !summary.isEmpty {
+        Text(summary)
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      if !projection.routeAlternatives.isEmpty {
+        Text("alternates: \(projection.routeAlternatives.joined(separator: ", "))")
+          .font(.caption2)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .accessibilityIdentifier("friday.provider-workspace.route")
+  }
+
+  private func ledgerAndReceiptSummary(_ projection: HomeProjection) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Cost & Evidence")
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(MobileTheme.textPrimary)
+      controlRow(
+        "Token ledger",
+        state: projection.tokenLedgerRunId == nil ? "needs run ref" : "run readback ready",
+        healthy: projection.tokenLedgerRunId != nil)
+      controlRow(
+        "Provider receipts",
+        state: projection.providerReceiptRefs.isEmpty ? "none projected" : "\(projection.providerReceiptRefs.count) refs",
+        healthy: !projection.providerReceiptRefs.isEmpty)
+      controlRow(
+        "Channel receipts",
+        state: projection.channelReceiptRefs.isEmpty ? "none projected" : "\(projection.channelReceiptRefs.count) refs",
+        healthy: !projection.channelReceiptRefs.isEmpty)
+      if let runId = projection.tokenLedgerRunId {
+        Button {
+          Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
+        } label: {
+          Label("Open Ledger", systemImage: "chart.bar.doc.horizontal")
+        }
+        .buttonStyle(.bordered)
+        .disabled(viewModel.detailState.isLoading)
+        .accessibilityIdentifier("friday.provider-workspace.open-ledger")
+      }
+    }
+    .accessibilityIdentifier("friday.provider-workspace.cost-evidence")
+  }
+
   private func nativeControlTruth(_ projection: HomeProjection) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Text("Native Controls")
@@ -163,8 +226,12 @@ struct FridayProviderAuthScreen: View {
         "Session open/link",
         state: projection.agentSessionId == nil ? "needs session ref" : "live read",
         healthy: projection.agentSessionId != nil)
-      controlRow("Send / stop / steer / resume", state: "governed session surface", healthy: false)
+      controlRow("Send / stop / steer / resume", state: "governed action gated", healthy: false)
       controlRow("Secrets / login custody", state: "never stored here", healthy: false)
+      Text("Native session controls are visible here only when Friday has a session ref and the governed write/approval seams are configured. The app does not hold provider login custody or signing-key material.")
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
       HStack(spacing: 8) {
         Button {
           Task { await viewModel.loadDetail(.sessionList) }

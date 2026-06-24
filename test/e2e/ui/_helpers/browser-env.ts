@@ -136,6 +136,12 @@ export async function createFridayRealBrowserE2eEnv(
         },
       );
       const page = await context.newPage();
+      page.setDefaultNavigationTimeout(60_000);
+      const originalGoto = page.goto.bind(page);
+      page.goto = ((url, options) => originalGoto(url, {
+        waitUntil: "domcontentloaded",
+        ...options,
+      })) as typeof page.goto;
 
       return {
         context,

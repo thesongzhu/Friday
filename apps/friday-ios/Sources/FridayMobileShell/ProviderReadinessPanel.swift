@@ -39,8 +39,15 @@ struct ProviderReadinessPanel: View {
       if let keyValidationProbed = detail.keyValidationProbed {
         statusChip(keyValidationProbed ? "keys probed" : "keys not probed")
       }
+      if !detail.confirmedValidKeys.isEmpty {
+        Text("confirmed keys: \(detail.confirmedValidKeys.joined(separator: ", "))")
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
       providerRows
       routeRows
+      keyRows
       failoverRows
     }
   }
@@ -118,6 +125,22 @@ struct ProviderReadinessPanel: View {
             statusChip("blockers \(failover.blockers.count)")
           }
         }
+      }
+      .padding(.vertical, 3)
+    }
+  }
+
+  private var keyRows: some View {
+    ForEach(detail.keyValidations) { key in
+      HStack(spacing: 8) {
+        Text(key.provider)
+          .font(.system(size: 13, weight: .medium))
+          .foregroundStyle(MobileTheme.textPrimary)
+        Spacer()
+        StatusChip(
+          text: key.label,
+          bg: key.isConfirmedValid ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
+          fg: key.isConfirmedValid ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
       }
       .padding(.vertical, 3)
     }
