@@ -7,6 +7,7 @@ usage:
   scripts/ops/friday-ios-live-write-read-capture.sh --out-dir /abs/capture-dir
     [--read-host 127.0.0.1] [--read-port 48751]
     [--write-host 127.0.0.1] [--write-port 48750]
+    [--shared-id mission_ui_device_...]
 
 Runs the env-gated iOS live write->read projection proof, converts the redacted
 artifact into mobile same-run proof events, and writes a capture index.
@@ -28,6 +29,7 @@ read_host="${FRIDAY_MOBILE_LIVE_READ_HOST:-127.0.0.1}"
 read_port="${FRIDAY_MOBILE_LIVE_READ_PORT:-48751}"
 write_host="${FRIDAY_MOBILE_LIVE_WRITE_HOST:-127.0.0.1}"
 write_port="${FRIDAY_MOBILE_LIVE_WRITE_PORT:-48750}"
+shared_id="${FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID:-}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -76,6 +78,15 @@ while [ "$#" -gt 0 ]; do
       write_port="${1#--write-port=}"
       shift
       ;;
+    --shared-id)
+      [ "$#" -ge 2 ] || die "--shared-id requires a value"
+      shared_id="$2"
+      shift 2
+      ;;
+    --shared-id=*)
+      shared_id="${1#--shared-id=}"
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -93,6 +104,7 @@ case "${out_dir}" in
 esac
 case "${read_port}" in (*[!0-9]*|"") die "--read-port must be numeric" ;; esac
 case "${write_port}" in (*[!0-9]*|"") die "--write-port must be numeric" ;; esac
+case "${shared_id}" in (*[[:space:]]*) die "--shared-id must not contain whitespace" ;; esac
 
 mkdir -p "${out_dir}"
 proof_path="${out_dir}/ios-live-write-read-proof.json"
@@ -113,6 +125,7 @@ echo "truth=ios_live_write_read_capture_runner_not_ui_device_proof"
   FRIDAY_MOBILE_LIVE_READ_PORT="${read_port}" \
   FRIDAY_MOBILE_LIVE_WRITE_HOST="${write_host}" \
   FRIDAY_MOBILE_LIVE_WRITE_PORT="${write_port}" \
+  FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID="${shared_id}" \
     swift test --package-path apps/friday-ios --filter LiveWriteReadProjectionRoundTrip
 )
 

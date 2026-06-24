@@ -100,21 +100,40 @@ private func endpointPort(envKey: String, fallback: UInt16, label: String) throw
 }
 
 private func makeMobileRoundTripIntake() -> MissionIntakeRequestWire {
-  let id = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
+  let identity = liveWriteReadMissionIdentity(defaultSurface: "mobile")
   return MissionIntakeRequestWire(
-    fridayConversationId: "fconv_mobile_live_roundtrip_\(id)",
+    fridayConversationId: "fconv_mobile_live_roundtrip_\(identity.id)",
     ownerPrincipal: liveAgentRunOwnerPrincipal,
-    surfaceThreadId: "surface-mobile-live-roundtrip-\(id)",
+    surfaceThreadId: "surface-mobile-live-roundtrip-\(identity.id)",
     surfaceKind: "mobile",
-    deliveryRoute: "ios://friday-mobile/live-write-read-roundtrip/\(id)",
+    deliveryRoute: "ios://friday-mobile/live-write-read-roundtrip/\(identity.id)",
     visibilityPolicy: "compact",
-    missionId: "mission-mobile-live-roundtrip-\(id)",
-    workItemId: "work-mobile-live-roundtrip-\(id)",
+    missionId: identity.missionId,
+    workItemId: "work-mobile-live-roundtrip-\(identity.id)",
     title: "Verify live mobile write appears in read projection",
     intent: "Create a refs-only live mobile round-trip proof item and expose it through the "
       + "Mission Workbench read projection.",
     lane: "deepseek",
     targetProviderOrAgent: "deepseek")
+}
+
+private struct LiveWriteReadMissionIdentity {
+  let id: String
+  let missionId: String
+}
+
+private func liveWriteReadMissionIdentity(defaultSurface: String) -> LiveWriteReadMissionIdentity {
+  let rawSharedId = ProcessInfo.processInfo.environment["FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID"]?
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+  if let rawSharedId, !rawSharedId.isEmpty {
+    let id = rawSharedId.hasPrefix("mission_")
+      ? String(rawSharedId.dropFirst("mission_".count))
+      : rawSharedId
+    return LiveWriteReadMissionIdentity(id: id, missionId: "mission_\(id)")
+  }
+
+  let id = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
+  return LiveWriteReadMissionIdentity(id: id, missionId: "mission-\(defaultSurface)-live-roundtrip-\(id)")
 }
 
 private func pollReadProjection(
