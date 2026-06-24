@@ -25,7 +25,8 @@ private let liveWriteReadRoundTripEnabled =
 
 @Test(.enabled(if: liveWriteReadRoundTripEnabled))
 func liveMobileMissionWriteAppearsInReadProjection() async throws {
-  let writeClient = try RealWriteClientFactory.makeLive(config: liveRoundTripWriteConfig())
+  let writeConfig = try liveRoundTripWriteConfig()
+  let writeClient = try RealWriteClientFactory.makeLive(config: writeConfig)
   let request = makeMobileRoundTripIntake()
 
   let result = try await writeClient.submitMissionIntake(request)
@@ -34,9 +35,8 @@ func liveMobileMissionWriteAppearsInReadProjection() async throws {
   #expect(result.missionId == request.missionId)
   #expect(result.workItemId == request.workItemId)
 
-  let readClient = try RealReadClientFactory.makeLive(
-    config: liveRoundTripReadConfig(),
-    missionId: result.missionId)
+  let readConfig = try liveRoundTripReadConfig()
+  let readClient = try RealReadClientFactory.makeLive(config: readConfig, missionId: result.missionId)
   let snapshot = try await pollReadProjection(
     client: readClient,
     missionId: result.missionId,
@@ -47,6 +47,13 @@ func liveMobileMissionWriteAppearsInReadProjection() async throws {
       + "workItemIds=\(snapshot.workItemIds) generatedAtMs=\(snapshot.generatedAtMs)")
   #expect(snapshot.missionId == result.missionId)
   #expect(snapshot.workItemIds.contains(request.workItemId))
+
+  try writeRoundTripProofIfRequested(
+    request: request,
+    result: result,
+    snapshot: snapshot,
+    writeConfig: writeConfig,
+    readConfig: readConfig)
 }
 
 private func liveRoundTripWriteConfig() throws -> AgentRunServerConfig {
@@ -134,4 +141,60 @@ private func pollReadProjection(
   } while Date() < deadline
 
   throw try #require(lastError)
+}
+
+private func writeRoundTripProofIfRequested(
+  request: MissionIntakeRequestWire,
+  result: MissionIntakeResultWire,
+  snapshot: FridayRustClient.WorkbenchSnapshot,
+  writeConfig: AgentRunServerConfig,
+  readConfig: ReadProjectionServerConfig
+) throws {
+  guard let rawPath = ProcessInfo.processInfo.environment[
+    "FRIDAY_MOBILE_LIVE_WRITE_READ_ROUNDTRIP_PROOF_OUT"
+  ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawPath.isEmpty else {
+    return
+  }
+  guard let workItemId = result.workItemId else {
+    throw FridayReadClientError.malformedProjection("roundtrip proof missing WorkItem id")
+  }
+
+  let proof: [String: Any] = [
+    "truth_label": "ios_mobile_live_write_read_roundtrip_proof_not_ui_device_proof",
+    "status": "pass",
+    "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+    "mission_id": result.missionId,
+    "work_item_id": workItemId,
+    "surface_kind": request.surfaceKind,
+    "delivery_route": request.deliveryRoute,
+    "write": [
+      "status": result.status,
+      "created_or_ready": result.createdOrReady,
+      "mission_id": result.missionId,
+      "work_item_id": workItemId,
+      "endpoint": [
+        "host": writeConfig.host,
+        "port": Int(writeConfig.port),
+      ],
+    ],
+    "read_projection": [
+      "mission_id": snapshot.missionId,
+      "work_item_ids": snapshot.workItemIds,
+      "contains_written_work_item": snapshot.workItemIds.contains(workItemId),
+      "generated_at_ms": snapshot.generatedAtMs,
+      "endpoint": [
+        "host": readConfig.host,
+        "port": Int(readConfig.port),
+      ],
+    ],
+    "caveat": "Mobile live write-read artifact only; not END-BAR, not GO-LIVE, not UI/device proof.",
+  ]
+
+  let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
+  let url = URL(fileURLWithPath: rawPath)
+  try FileManager.default.createDirectory(
+    at: url.deletingLastPathComponent(),
+    withIntermediateDirectories: true)
+  try data.write(to: url, options: .atomic)
+  print("[live-write-read][mobile] proofOut=\(url.path)")
 }
