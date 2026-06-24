@@ -27,6 +27,7 @@ readonly REQUIRED_SESSIONS="${FRIDAY_D8_AUDIT_REQUIRED_SESSIONS:-20}"
 readonly SINCE_MS="${FRIDAY_D8_AUDIT_SINCE_MS:-0}"
 readonly ALLOW_UNSCOPED="${FRIDAY_D8_AUDIT_ALLOW_UNSCOPED:-0}"
 readonly LOG_LINES="${FRIDAY_D8_AUDIT_LOG_LINES:-2000}"
+readonly DETAIL_LIMIT="${FRIDAY_D8_AUDIT_DETAIL_LIMIT:-0}"
 readonly TS_STDOUT_LOG="${FRIDAY_TS_STDOUT_LOG:-/Users/jarvis/.friday/launchd/friday.stdout.log}"
 readonly TS_STDERR_LOG="${FRIDAY_TS_STDERR_LOG:-/Users/jarvis/.friday/launchd/friday.stderr.log}"
 readonly RUST_STDOUT_LOG="${FRIDAY_RUST_STDOUT_LOG:-/Users/jarvis/.friday/launchd/friday-rust-agent-run-ws-server.stdout.log}"
@@ -59,6 +60,7 @@ require_positive_int "FRIDAY_D8_AUDIT_REQUIRED_SESSIONS" "${REQUIRED_SESSIONS}"
 require_positive_int "FRIDAY_D8_AUDIT_RUST_WS_PORT" "${RUST_WS_PORT}"
 require_nonnegative_int "FRIDAY_D8_AUDIT_SINCE_MS" "${SINCE_MS}"
 require_positive_int "FRIDAY_D8_AUDIT_LOG_LINES" "${LOG_LINES}"
+require_nonnegative_int "FRIDAY_D8_AUDIT_DETAIL_LIMIT" "${DETAIL_LIMIT}"
 if [ "${ALLOW_UNSCOPED}" != "0" ] && [ "${ALLOW_UNSCOPED}" != "1" ]; then
   echo "FATAL: FRIDAY_D8_AUDIT_ALLOW_UNSCOPED must be 0 or 1; got '${ALLOW_UNSCOPED}'." >&2
   exit 3
@@ -1318,5 +1320,134 @@ echo "Missing/weak evidence:"
 for reason in "${fail_reasons[@]}"; do
   echo "  - ${reason}"
 done
+if [ "${DETAIL_LIMIT}" -gt 0 ]; then
+  echo
+  echo "Recent scoped session details (diagnostic only; PASS criteria unchanged):"
+  sql_scalar "
+    WITH sessions AS (
+      SELECT
+        l.friday_session_id AS friday_session_id,
+        l.provider AS provider,
+        COALESCE(MAX(e.observed_at), l.last_provider_seen_at, 0) AS seen_at,
+        COUNT(e.provider_event_id) AS event_count,
+        SUM(
+          CASE
+            WHEN COALESCE(e.token_ledger_ref,'') <> ''
+             AND ledger.ledger_id IS NOT NULL
+             AND ledger.fallback = 0
+             AND ledger.total_tokens > 0
+             AND (
+               (l.provider = 'codex' AND ledger.provider_kind = 'codex')
+               OR (l.provider = 'claude' AND ledger.provider_kind IN ('claude','anthropic'))
+             )
+            THEN 1 ELSE 0
+          END
+        ) AS linked_event_count
+      FROM provider_session_link l
+      LEFT JOIN provider_session_event e
+        ON e.friday_session_id = l.friday_session_id
+       AND e.provider = l.provider
+       AND e.observed_at >= ${SINCE_MS}
+      LEFT JOIN token_ledger ledger
+        ON ledger.ledger_id = e.token_ledger_ref
+      WHERE (
+          (l.provider = 'codex' AND l.sync_mode = 'provider_app_server_local')
+          OR (l.provider = 'claude' AND l.sync_mode = 'friday_local_mirror')
+        )
+        AND COALESCE(l.last_provider_seen_at,0) >= ${SINCE_MS}
+      GROUP BY l.friday_session_id, l.provider
+    ),
+    recent AS (
+      SELECT *
+      FROM sessions
+      ORDER BY seen_at DESC, friday_session_id DESC
+      LIMIT ${DETAIL_LIMIT}
+    )
+    SELECT
+      '  - provider=' || r.provider
+      || ' session=' || r.friday_session_id
+      || ' seen_at=' || r.seen_at
+      || ' events=' || r.event_count
+      || ' linked_events=' || COALESCE(r.linked_event_count,0)
+      || ' runs=' || COALESCE((
+        SELECT group_concat(DISTINCT ledger.run_id)
+        FROM provider_session_event e
+        JOIN token_ledger ledger
+          ON ledger.ledger_id = e.token_ledger_ref
+        WHERE e.friday_session_id = r.friday_session_id
+          AND e.provider = r.provider
+          AND e.observed_at >= ${SINCE_MS}
+          AND COALESCE(ledger.run_id,'') <> ''
+          AND ledger.fallback = 0
+          AND ledger.total_tokens > 0
+      ), '')
+      || ' completed_proof_runs=' || (
+        SELECT COUNT(DISTINCT ledger.run_id)
+        FROM provider_session_event e
+        JOIN token_ledger ledger
+          ON ledger.ledger_id = e.token_ledger_ref
+        JOIN work_item w
+          ON (w.lane = r.provider OR w.target_provider_or_agent = r.provider)
+         AND w.status = 'completed_with_proof'
+         AND w.updated_at_ms >= ${SINCE_MS}
+         AND w.updated_at_ms >= ledger.created_at
+        JOIN json_each(w.proof_receipts) proof
+          ON proof.value = 'friday://agent-run/' || ledger.run_id
+        WHERE e.friday_session_id = r.friday_session_id
+          AND e.provider = r.provider
+          AND e.observed_at >= ${SINCE_MS}
+          AND COALESCE(ledger.run_id,'') <> ''
+          AND ledger.fallback = 0
+          AND ledger.total_tokens > 0
+      )
+      || ' surface_bound_runs=' || (
+        SELECT COUNT(DISTINCT ledger.run_id)
+        FROM provider_session_event e
+        JOIN token_ledger ledger
+          ON ledger.ledger_id = e.token_ledger_ref
+        JOIN work_item w
+          ON (w.lane = r.provider OR w.target_provider_or_agent = r.provider)
+         AND w.status = 'completed_with_proof'
+         AND w.updated_at_ms >= ${SINCE_MS}
+         AND w.updated_at_ms >= ledger.created_at
+        JOIN json_each(w.proof_receipts) proof
+          ON proof.value = 'friday://agent-run/' || ledger.run_id
+        JOIN mission m
+          ON m.mission_id = w.mission_id
+         AND m.created_at_ms >= ${SINCE_MS}
+         AND m.created_at_ms <= w.updated_at_ms
+        JOIN surface_thread surface
+          ON surface.mission_id = w.mission_id
+         AND surface.friday_conversation_id = m.friday_conversation_id
+         AND surface.created_at_ms >= ${SINCE_MS}
+         AND surface.created_at_ms <= w.updated_at_ms
+         AND surface.surface_kind = 'mobile'
+         AND COALESCE(surface.delivery_route,'') <> ''
+        WHERE e.friday_session_id = r.friday_session_id
+          AND e.provider = r.provider
+          AND e.observed_at >= ${SINCE_MS}
+          AND COALESCE(ledger.run_id,'') <> ''
+          AND ledger.fallback = 0
+          AND ledger.total_tokens > 0
+      )
+      || ' claim_bound_process=' || (
+        SELECT COUNT(*)
+        FROM process_observation observation
+        WHERE observation.ownership_status = 'friday_owned_claimed'
+          AND observation.observed_at_ms >= ${SINCE_MS}
+          AND observation.observed_at_ms <= r.seen_at
+          AND (
+            (
+              r.provider = 'codex'
+              AND observation.process_kind = 'codex_app_server'
+              AND observation.port_bindings LIKE '%\"friday://provider-session/' || r.friday_session_id || '\"%'
+            )
+            OR (r.provider = 'claude' AND observation.process_kind = 'claude')
+          )
+      )
+    FROM recent r;
+  "
+  echo
+fi
 echo "Truth: built/ready/proof scripts are not the same as D8. Run scoped real traffic, then re-run this audit with FRIDAY_D8_AUDIT_SINCE_MS set."
 exit 1
