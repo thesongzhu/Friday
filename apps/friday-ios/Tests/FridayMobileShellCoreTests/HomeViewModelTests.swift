@@ -130,7 +130,22 @@ final class HomeViewModelTests: XCTestCase {
 
     func fetchRunReadback(runId: String) async throws -> ReadProjectionSnapshot {
       requestedDetails.append("run:\(runId)")
-      return try detailSnapshot(kind: "run", status: "complete", runId: runId, proofRef: "proof://run/\(runId)")
+      return try detailSnapshot(
+        kind: "run",
+        status: "complete",
+        runId: runId,
+        proofRef: "proof://run/\(runId)",
+        extra: [
+          "run_state": "complete",
+          "loop_status_derived": "complete",
+          "event_count": 7,
+          "db_wide_token_total": 321,
+          "prompt_tokens": 120,
+          "completion_tokens": 201,
+          "total_tokens": 321,
+          "cost_usd": "0.0456",
+          "audit_chain_verified": true,
+        ])
     }
 
     func fetchRunFileView(runId: String) async throws -> ReadProjectionSnapshot {
@@ -527,6 +542,22 @@ final class HomeViewModelTests: XCTestCase {
     let client = FakeReadClient(.snapshot(try sampleSnapshot()))
     let vm = HomeViewModel(client: client)
     await vm.loadDetail(.runReadback(runId: "run-1"))
+    guard case let .loaded(runDetail) = vm.detailState else {
+      return XCTFail("expected run detail .loaded, got \(vm.detailState)")
+    }
+    XCTAssertEqual(runDetail.title, "Run readback")
+    XCTAssertEqual(runDetail.facts, [
+      HomeReadDetailFact(id: "run-id", label: "run", value: "run-1"),
+      HomeReadDetailFact(id: "state", label: "state", value: "complete"),
+      HomeReadDetailFact(id: "loop", label: "loop", value: "complete"),
+      HomeReadDetailFact(id: "events", label: "events", value: "7"),
+      HomeReadDetailFact(id: "db-wide-tokens", label: "db tokens", value: "321"),
+      HomeReadDetailFact(id: "prompt-tokens", label: "prompt", value: "120"),
+      HomeReadDetailFact(id: "completion-tokens", label: "completion", value: "201"),
+      HomeReadDetailFact(id: "total-tokens", label: "total", value: "321"),
+      HomeReadDetailFact(id: "cost", label: "cost", value: "0.0456"),
+      HomeReadDetailFact(id: "audit", label: "audit", value: "verified"),
+    ])
     await vm.loadDetail(.activityNeedsMe(runId: "run-1"))
     XCTAssertEqual(client.requestedDetails, ["run:run-1", "needs-me:run-1"])
     guard case let .loaded(detail) = vm.detailState else {

@@ -128,12 +128,20 @@ struct FridayTokenLedgerScreen: View {
     case .loaded(let detail):
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-          cardHeader(detail.title, count: detail.refs.count)
+          cardHeader(detail.title, count: detail.facts.isEmpty ? detail.refs.count : detail.facts.count)
           Text(detail.summary)
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
             .fixedSize(horizontal: false, vertical: true)
           RefPill(label: "generated", ref: generatedText(detail.generatedAtMs))
+          if !detail.facts.isEmpty {
+            VStack(spacing: 8) {
+              ForEach(detail.facts) { fact in
+                factRow(fact)
+              }
+            }
+            .accessibilityIdentifier("friday.token-ledger.facts")
+          }
           ForEach(detail.refs, id: \.self) { ref in
             RefPill(label: nil, ref: ref)
           }
@@ -151,6 +159,24 @@ struct FridayTokenLedgerScreen: View {
         }
       }
     }
+  }
+
+  private func factRow(_ fact: HomeReadDetailFact) -> some View {
+    HStack(spacing: 10) {
+      Text(fact.label)
+        .font(.caption)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .frame(width: 92, alignment: .leading)
+      Text(fact.value)
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(MobileTheme.textPrimary)
+        .lineLimit(2)
+        .minimumScaleFactor(0.8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 8)
+    .background(MobileTheme.chipNeutralBG, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
   }
 
   private func cardHeader(_ title: String, count: Int?) -> some View {

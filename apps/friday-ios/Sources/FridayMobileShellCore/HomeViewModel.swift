@@ -436,6 +436,7 @@ public struct HomeReadDetail: Sendable, Equatable {
   public let generatedAtMs: Int64
   public let summary: String
   public let refs: [String]
+  public let facts: [HomeReadDetailFact]
   public let providerReadiness: HomeProviderReadinessDetail?
 
   public init(title: String, snapshot: ReadProjectionSnapshot) {
@@ -444,6 +445,7 @@ public struct HomeReadDetail: Sendable, Equatable {
     self.generatedAtMs = snapshot.generatedAtMs
     self.summary = Self.summary(from: raw)
     self.refs = Self.refs(from: raw)
+    self.facts = Self.facts(from: raw)
     self.providerReadiness = HomeProviderReadinessDetail(raw: raw)
   }
 
@@ -471,8 +473,63 @@ public struct HomeReadDetail: Sendable, Equatable {
   }
 
   private static func firstString(_ raw: [String: Any], _ keys: [String]) -> String? {
-    keys.lazy.compactMap { raw[$0] as? String }.first
+    keys.lazy.compactMap {
+      guard let value = raw[$0] as? String else { return nil }
+      let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+      return trimmed.isEmpty ? nil : trimmed
+    }.first
   }
+
+  private static func facts(from raw: [String: Any]) -> [HomeReadDetailFact] {
+    var facts: [HomeReadDetailFact] = []
+    func append(_ id: String, _ label: String, _ value: String?) {
+      guard let value, !value.isEmpty else { return }
+      facts.append(HomeReadDetailFact(id: id, label: label, value: value))
+    }
+    append("run-id", "run", firstString(raw, ["runId", "run_id"]))
+    append("state", "state", firstString(raw, ["run_state", "runState", "status"]))
+    append("loop", "loop", firstString(raw, ["loop_status_derived", "loopStatusDerived"]))
+    append("events", "events", valueText(raw, ["event_count", "eventCount"]))
+    append("db-wide-tokens", "db tokens", valueText(raw, ["db_wide_token_total", "dbWideTokenTotal"]))
+    append("prompt-tokens", "prompt", valueText(raw, ["prompt_tokens", "promptTokens"]))
+    append("completion-tokens", "completion", valueText(raw, ["completion_tokens", "completionTokens"]))
+    append("total-tokens", "total", valueText(raw, ["total_tokens", "totalTokens"]))
+    let costKeys = ["cost_usd", "costUsd", "estimated_cost_usd", "estimatedCostUsd"]
+    append("cost", "cost", firstString(raw, costKeys) ?? valueText(raw, costKeys))
+    append("audit", "audit", boolText(raw, ["audit_chain_verified", "auditChainVerified"]))
+    return facts
+  }
+
+  private static func valueText(_ raw: [String: Any], _ keys: [String]) -> String? {
+    for key in keys {
+      if let value = raw[key] as? String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+      }
+      if let value = raw[key] as? Int { return "\(value)" }
+      if let value = raw[key] as? Int64 { return "\(value)" }
+      if let value = raw[key] as? UInt64 { return "\(value)" }
+      if let value = raw[key] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() {
+        return value.stringValue
+      }
+    }
+    return nil
+  }
+
+  private static func boolText(_ raw: [String: Any], _ keys: [String]) -> String? {
+    for key in keys {
+      if let value = raw[key] as? Bool {
+        return value ? "verified" : "unverified"
+      }
+    }
+    return nil
+  }
+}
+
+public struct HomeReadDetailFact: Sendable, Equatable, Identifiable {
+  public let id: String
+  public let label: String
+  public let value: String
 }
 
 public struct HomeProviderReadinessDetail: Sendable, Equatable {
