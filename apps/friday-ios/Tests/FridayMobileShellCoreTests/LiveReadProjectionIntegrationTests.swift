@@ -19,6 +19,12 @@ import Testing
 //   FRIDAY_MOBILE_LIVE_READ_TEST=1 swift test --package-path apps/friday-ios \
 //     --filter LiveReadProjection
 //
+// To target an isolated scratch read server (leaving production :48751 untouched), pass:
+//   FRIDAY_MOBILE_LIVE_READ_PORT=59151
+//
+// To assert that the live projection includes an operator-provisioned T3 grant/passport:
+//   FRIDAY_MOBILE_EXPECT_T3_READY=1
+//
 // PROOF CEILING (honest): the live read-projection DB may have NO active mission, in which case
 // the server returns a TYPED `Error(HUB_OFFLINE, "no active mission found")` rather than a
 // snapshot. That typed response is itself the end-to-end proof: it is owner-sealed under the
@@ -46,12 +52,15 @@ func liveReadProjectionSealedRoundTripWithMasterDerivedPeer() async throws {
   print("[live] master-derived peer pubkey (PUBLIC) = \(Hex.encode(keypair.publicKey))")
 
   // Use the EXACT path the app launches under FRIDAY_MOBILE_LIVE_READ=1: `makeLive()` derives the
-  // master-derived peer, targets 48751, and authenticates as `admin-001` (the LaunchAgent owner).
-  let client = try RealReadClientFactory.makeLive()
+  // master-derived peer, targets the live read server, and authenticates as `admin-001` (the
+  // LaunchAgent owner). The optional env override mirrors the app's live-loopback proof path so
+  // tests can target a scratch read server without touching production :48751.
+  let client = try RealReadClientFactory.makeLive(config: liveReadTestConfig())
 
   // Drive the full handshake → owner-authed request → open the owner-sealed reply.
   do {
     let snapshot = try await client.fetchWorkbench()
+    let projection = HomeProjection(snapshot)
     // A real snapshot DID decode — print its refs-only fields as the live-render proof.
     print(
       "[live] DECODED SNAPSHOT missionId=\(snapshot.missionId) "
@@ -59,6 +68,15 @@ func liveReadProjectionSealedRoundTripWithMasterDerivedPeer() async throws {
         + "statusLabels=\(snapshot.statusLabels) workItemIds=\(snapshot.workItemIds) "
         + "generatedAtMs=\(snapshot.generatedAtMs)")
     #expect(!snapshot.missionId.isEmpty)
+    if ProcessInfo.processInfo.environment["FRIDAY_MOBILE_EXPECT_T3_READY"] == "1" {
+      let t3 = try #require(projection.t3ProvisioningStatus)
+      #expect(t3.isFullyProvisioned)
+      #expect(t3.activeTrustedDeviceCount > 0)
+      #expect(t3.activeTrustGrantCount > 0)
+      #expect(t3.contextPassportCount > 0)
+      #expect(t3.contextPassportItemCount > 0)
+      print("[live] T3 READY projection decoded: \(t3.homeSummary)")
+    }
   } catch let FridayReadClientError.serverError(code, message) {
     // The EXPECTED ceiling against an empty live DB: a typed, owner-sealed Error we could only
     // open because the full handshake + peer-auth + owner-auth round-trip SUCCEEDED.
@@ -84,7 +102,7 @@ func liveDeviceKeypairPathDrivesServerAndIsRefusedUntilEnrolled() async throws {
     + "(on a real device, enroll the STABLE Keychain pubkey via "
     + "hub_read_seam_enroll --pubkey <hex> --add)")
 
-  let client = RealReadClientFactory.makeLive(deviceKeypair: device)
+  let client = RealReadClientFactory.makeLive(deviceKeypair: device, config: liveReadTestConfig())
   do {
     _ = try await client.fetchWorkbench()
     Issue.record("a non-enrolled device peer must NOT get a successful read")
@@ -118,7 +136,7 @@ func liveReadProjectionRefusesFreshEphemeralPeer() async throws {
   let client = SealedWSReadClient(
     keypair: ephemeral,
     forwardedPrincipal: liveReadProjectionOwnerPrincipal,
-    makeTransport: { try LoopbackSealedWSTransport(config: .liveLoopback) })
+    makeTransport: { try LoopbackSealedWSTransport(config: liveReadTestConfig()) })
 
   do {
     _ = try await client.fetchWorkbench()
@@ -129,4 +147,11 @@ func liveReadProjectionRefusesFreshEphemeralPeer() async throws {
     // The expected outcome: refused / session-ended / transport failure. Print it as evidence.
     print("[live] ephemeral peer REFUSED (fail-closed) as expected: \(error)")
   }
+}
+
+private func liveReadTestConfig() -> ReadProjectionServerConfig {
+  let env = ProcessInfo.processInfo.environment
+  let host = env["FRIDAY_MOBILE_LIVE_READ_HOST"].flatMap { $0.isEmpty ? nil : $0 } ?? "127.0.0.1"
+  let port = env["FRIDAY_MOBILE_LIVE_READ_PORT"].flatMap(UInt16.init) ?? 48751
+  return ReadProjectionServerConfig(host: host, port: port)
 }
