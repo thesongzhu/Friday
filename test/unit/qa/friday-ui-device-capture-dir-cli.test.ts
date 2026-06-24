@@ -189,13 +189,37 @@ describe("friday-ui-device-capture-dir", () => {
         "--require-ready",
       ], { cwd: process.cwd(), encoding: "utf8" });
 
-      const result = JSON.parse(stdout) as { status?: string; truth?: string; preflight?: { status?: number } };
+      const result = JSON.parse(stdout) as {
+        status?: string;
+        truth?: string;
+        preflight?: { status?: number };
+        reuseSummary?: {
+          truth?: string;
+          captures?: Array<{ role?: string; reusableAsUiDeviceEvidenceInput?: boolean; countsAsProofByItself?: boolean }>;
+          observationsManifest?: { present?: boolean; reusableForPreflight?: boolean; countsAsProofByItself?: boolean };
+        };
+      };
       expect(result.truth).toBe("ui_device_capture_dir_driver_not_proof");
       expect(result.status).toBe("ready");
       expect(result.preflight?.status).toBe(0);
+      expect(result.reuseSummary?.truth).toBe("ui_device_capture_dir_reuse_summary_not_proof");
+      expect(result.reuseSummary?.captures).toContainEqual(expect.objectContaining({
+        role: "mobile",
+        reusableAsUiDeviceEvidenceInput: true,
+        countsAsProofByItself: false,
+      }));
+      expect(result.reuseSummary?.observationsManifest).toEqual(expect.objectContaining({
+        present: true,
+        reusableForPreflight: true,
+        countsAsProofByItself: false,
+      }));
 
-      const index = JSON.parse(readFileSync(join(outDir, "capture-index.json"), "utf8")) as { truth?: string };
+      const index = JSON.parse(readFileSync(join(outDir, "capture-index.json"), "utf8")) as {
+        truth?: string;
+        reuseSummary?: { nextCommand?: string };
+      };
       expect(index.truth).toBe("ui_device_capture_dir_index_not_proof");
+      expect(index.reuseSummary?.nextCommand).toBe("scripts/ops/friday-ui-device-proof-readiness.sh --evidence-dir <dir> --require-proof");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

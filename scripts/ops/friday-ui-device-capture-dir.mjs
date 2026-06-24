@@ -123,6 +123,7 @@ const readyToWrite = blockers.length === 0 && outDir;
 let written = [];
 let copiedManifest = "";
 let derivedEvents = "";
+let reuseSummary = null;
 if (readyToWrite) {
   const dir = abs(outDir);
   mkdirSync(dir, { recursive: true });
@@ -175,6 +176,35 @@ if (readyToWrite) {
     block("observations_manifest_missing", "supply --observations-manifest or --events from the same real capture run");
   }
 
+  reuseSummary = {
+    truth: "ui_device_capture_dir_reuse_summary_not_proof",
+    evidenceDir: dir,
+    captures: written.map((capture) => ({
+      role: capture.role,
+      path: capture.target,
+      sha256: capture.targetSha256,
+      bytes: statSync(capture.target).size,
+      reusableAsUiDeviceEvidenceInput: true,
+      countsAsProofByItself: false,
+    })),
+    observationsManifest: copiedManifest
+      ? {
+          path: copiedManifest,
+          present: true,
+          reusableForPreflight: true,
+          countsAsProofByItself: false,
+        }
+      : {
+          path: null,
+          present: false,
+          reusableForPreflight: false,
+          countsAsProofByItself: false,
+        },
+    normalizedEvents: derivedEvents || null,
+    nextCommand: "scripts/ops/friday-ui-device-proof-readiness.sh --evidence-dir <dir> --require-proof",
+    caveat: "Reuse summary only. The strict readiness/assembler/final gate must still bind hashes and observations before proof.",
+  };
+
   const index = {
     truth: "ui_device_capture_dir_index_not_proof",
     status: blockers.length === 0 ? "ready_for_preflight" : "blocked",
@@ -183,6 +213,7 @@ if (readyToWrite) {
     captures: written,
     observationsManifest: copiedManifest || null,
     normalizedEvents: derivedEvents || null,
+    reuseSummary,
     blockers,
   };
   writeFileSync(join(dir, "capture-index.json"), `${JSON.stringify(index, null, 2)}\n`);
@@ -218,6 +249,7 @@ const output = {
   captures: written,
   observationsManifest: copiedManifest || null,
   normalizedEvents: derivedEvents || null,
+  reuseSummary,
   preflight,
   blockers,
   next: blockers.length === 0
