@@ -3,9 +3,54 @@ import SwiftUI
 /// The full-screen grid launcher (locked: menuModel = commandSheet) opened from the
 /// top-left of Home.
 ///
-/// The launcher surfaces all mobile read-projection destinations. Each non-Home destination
-/// consumes the same refs-only HomeProjection; none fabricates detail the read seam does not
-/// carry.
+/// The launcher surfaces all selected mobile destinations. `isBuilt` only means the route is
+/// present and openable; `closureTier` is the product truth used to avoid counting a projection
+/// or readiness shell as an END-BAR closed loop.
+enum MobileDestinationClosureTier {
+  case liveWriteRead
+  case liveReadProjection
+  case governedActionGated
+  case readinessOnly
+  case statusProjection
+  case navigationShell
+
+  var label: String {
+    switch self {
+    case .liveWriteRead: return "live write"
+    case .liveReadProjection: return "live read"
+    case .governedActionGated: return "action gated"
+    case .readinessOnly: return "readiness"
+    case .statusProjection: return "projection"
+    case .navigationShell: return "shell"
+    }
+  }
+
+  var summary: String {
+    switch self {
+    case .liveWriteRead:
+      return "Real read/write loop exists when the governed live seams are configured."
+    case .liveReadProjection:
+      return "Reads real Hub projection state; it does not create or mutate work."
+    case .governedActionGated:
+      return "Shows governed action controls; mutations require the live write seam and approval gates."
+    case .readinessOnly:
+      return "Reports device/provider readiness only; it is not a completed product loop."
+    case .statusProjection:
+      return "Shows current status from projection refs; no product action is completed here."
+    case .navigationShell:
+      return "Route exists for selected UI coverage, but closed-loop product behavior is still pending."
+    }
+  }
+
+  var isClosedLoopProductReady: Bool {
+    switch self {
+    case .liveWriteRead: return true
+    case .liveReadProjection, .governedActionGated, .readinessOnly, .statusProjection, .navigationShell:
+      return false
+    }
+  }
+}
+
 enum MobileDestination: String, CaseIterable, Identifiable {
   case home
   case missions
@@ -68,6 +113,26 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     }
   }
 
+  var closureTier: MobileDestinationClosureTier {
+    switch self {
+    case .home, .session:
+      return .liveWriteRead
+    case .missions, .contextPassport, .tokenLedger, .memory, .activity:
+      return .liveReadProjection
+    case .shareIntake, .needsMe, .workflows:
+      return .governedActionGated
+    case .voice, .pairing, .providerAuth:
+      return .readinessOnly
+    case .platform, .settings:
+      return .statusProjection
+    case .onboarding:
+      return .navigationShell
+    }
+  }
+
+  var productReadinessSummary: String { closureTier.summary }
+
+  /// Route coverage only. This must not be used as a closed-loop product-completion signal.
   var isBuilt: Bool { true }
 }
 
@@ -120,15 +185,22 @@ struct CommandSheet: View {
         Spacer()
         if dest == destination {
           StatusChip(text: "open", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
-        } else if !dest.isBuilt {
-          StatusChip(text: "soon", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
         }
       }
       Text(dest.title)
         .font(.headline)
         .foregroundStyle(dest.isBuilt ? MobileTheme.textPrimary : MobileTheme.textSecondary)
+      StatusChip(
+        text: dest.closureTier.label,
+        bg: dest.closureTier.isClosedLoopProductReady ? MobileTheme.chipDoneBG : MobileTheme.chipNeutralBG,
+        fg: dest.closureTier.isClosedLoopProductReady ? MobileTheme.chipDoneFG : MobileTheme.chipNeutralFG)
+      Text(dest.productReadinessSummary)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .lineLimit(3)
+        .fixedSize(horizontal: false, vertical: true)
     }
-    .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
+    .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
     .padding(16)
     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: MobileTheme.cornerRadius, style: .continuous))
     .overlay(
