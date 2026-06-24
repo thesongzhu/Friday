@@ -297,9 +297,16 @@ struct FridayHomeScreen: View {
         RefPill(label: "missing", ref: status.missingOperatorSteps.joined(separator: ", "))
       }
       if let device = status.latestDevice {
-        RefPill(label: "trusted_device", ref: device.deviceId)
+        RefPill(label: "latest_device", ref: device.deviceId)
         RefPill(label: "device_fingerprint", ref: device.pubkeyFingerprint)
       }
+      RefPill(label: "device_identity_count", ref: String(status.deviceIdentityCount))
+      RefPill(label: "trusted_device_count", ref: String(status.trustedDeviceCount))
+      RefPill(label: "active_trusted_device_count", ref: String(status.activeTrustedDeviceCount))
+      RefPill(label: "trust_grant_count", ref: String(status.trustGrantCount))
+      RefPill(label: "active_trust_grant_count", ref: String(status.activeTrustGrantCount))
+      RefPill(label: "context_passport_count", ref: String(status.contextPassportCount))
+      RefPill(label: "context_passport_item_count", ref: String(status.contextPassportItemCount))
       RefPill(label: "truth", ref: status.truthLabel)
     } else {
       Text("Open a loaded Hub projection to see PairAck, trust grant, and context passport status.")

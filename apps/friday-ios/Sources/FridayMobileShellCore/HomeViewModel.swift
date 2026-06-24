@@ -294,11 +294,11 @@ public struct HomeT3ProvisioningStatus: Sendable, Equatable {
 
   public var homeSummary: String {
     if isFullyProvisioned {
-      return "Hub projection shows paired device, active trust grant, and context passport rows."
+      return "Hub projection shows \(deviceIdentityCount) device identity, \(activeTrustedDeviceCount) active trusted device, \(activeTrustGrantCount) active trust grant, \(contextPassportCount) context passport, and \(contextPassportItemCount) passport items."
     }
     let missing = missingOperatorSteps.joined(separator: ", ")
     if paired {
-      return "Paired device is visible in the Hub; missing \(missing)."
+      return "Paired device is visible in the Hub (\(activeTrustedDeviceCount) active trusted device); missing \(missing)."
     }
     return "No complete T3 device pairing in the Hub projection; missing \(missing)."
   }

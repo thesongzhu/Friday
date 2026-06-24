@@ -382,6 +382,9 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.t3ProvisioningStatus?.latestDevice?.pubkeyFingerprint, "abcd1234:dcba4321")
     XCTAssertEqual(p.t3ProvisioningStatus?.isFullyProvisioned, true)
     XCTAssertEqual(p.t3ProvisioningStatus?.homeStatusLabel, "fully provisioned")
+    XCTAssertEqual(
+      p.t3ProvisioningStatus?.homeSummary,
+      "Hub projection shows 1 device identity, 1 active trusted device, 1 active trust grant, 1 context passport, and 2 passport items.")
     XCTAssertEqual(p.t3ProvisioningStatus?.missingOperatorSteps, [])
     XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile surface read the mission projection.")
     XCTAssertEqual(p.needsMeCount, 4)
@@ -421,7 +424,7 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(projection.t3ProvisioningStatus?.missingOperatorSteps, ["trust grant", "context passport"])
     XCTAssertEqual(
       projection.t3ProvisioningStatus?.homeSummary,
-      "Paired device is visible in the Hub; missing trust grant, context passport.")
+      "Paired device is visible in the Hub (1 active trusted device); missing trust grant, context passport.")
   }
 
   func testRefresh_loadedEmptyIsConnectedEmptyNotUnavailable() async throws {
