@@ -311,6 +311,9 @@ final class FridayChatViewModelTests: XCTestCase {
     ])
     XCTAssertEqual(vm.history.last?.runId, "run-readable")
     XCTAssertEqual(vm.history.last?.createdAtMs, 42)
+    XCTAssertTrue(vm.history.last?.receiptRefs.contains(ChatReceiptRef(label: "run_id", ref: "run-readable")) == true)
+    XCTAssertTrue(vm.history.last?.receiptRefs.contains(ChatReceiptRef(label: "answer_body_run_id", ref: "run-readable")) == true)
+    XCTAssertTrue(vm.history.last?.receiptRefs.contains(ChatReceiptRef(label: "answer_body", ref: "delivered")) == true)
     XCTAssertEqual(store.items, vm.history)
   }
 
@@ -328,6 +331,19 @@ final class FridayChatViewModelTests: XCTestCase {
     vm.clearHistory()
     XCTAssertTrue(vm.history.isEmpty)
     XCTAssertEqual(store.items, [])
+  }
+
+  func testHistory_decodesLegacyRowsWithoutReceiptRefs() throws {
+    let data = Data("""
+    [{"id":"h1","role":"friday","text":"legacy answer","runId":"run-old","createdAtMs":7}]
+    """.utf8)
+
+    let rows = try JSONDecoder().decode([ChatHistoryItem].self, from: data)
+
+    XCTAssertEqual(rows, [
+      ChatHistoryItem(id: "h1", role: "friday", text: "legacy answer", runId: "run-old", createdAtMs: 7)
+    ])
+    XCTAssertEqual(rows.first?.receiptRefs, [])
   }
 
   func testBuildMissionIntakeRequest_usesMobileAutoRoute() {
@@ -424,6 +440,11 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertEqual(receipt.followUpRunId, "run-followup")
     XCTAssertEqual(receipt.answerBodyRunId, "run-followup")
     XCTAssertEqual(receipt.answerBody, "Claude follow-up body visible to the owner.")
+    XCTAssertTrue(receipt.receiptRefs.contains(ChatReceiptRef(label: "mission_id", ref: "mission-mobile-fixed")))
+    XCTAssertTrue(receipt.receiptRefs.contains(ChatReceiptRef(label: "work_item_id", ref: "work-mobile-fixed")))
+    XCTAssertTrue(receipt.receiptRefs.contains(ChatReceiptRef(label: "follow_up_work_item_id", ref: "work-mobile-fixed-claude-followup")))
+    XCTAssertTrue(receipt.receiptRefs.contains(ChatReceiptRef(label: "follow_up_run_id", ref: "run-followup")))
+    XCTAssertEqual(vm.history.last?.receiptRefs, receipt.receiptRefs)
   }
 
   func testSend_blankTask_isNoOp() async {
@@ -475,6 +496,8 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertEqual(client.resumedRunIds, ["run-1"])
     XCTAssertEqual(client.relayedBlobs.count, 1)
     XCTAssertEqual(client.relayedBlobs.first, expected, "INV-1: the signer blob must ride VERBATIM")
+    XCTAssertTrue(vm.history.last?.receiptRefs.contains(ChatReceiptRef(label: "audit_ref", ref: "audit://chain/run-1")) == true)
+    XCTAssertTrue(vm.history.last?.receiptRefs.contains(ChatReceiptRef(label: "truth", ref: "rust_wired")) == true)
   }
 
   /// A server REFUSAL (`accepted=false`) is a SUCCESSFUL relay of a refusal — the action did NOT
