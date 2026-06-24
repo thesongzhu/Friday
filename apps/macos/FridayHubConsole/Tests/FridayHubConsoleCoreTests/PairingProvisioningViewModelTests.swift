@@ -18,6 +18,30 @@ import Testing
 }
 
 @MainActor
+@Test func provisioningStepsExplainQrPairackAndOperatorCeremonyWithoutClaimingReady() async throws {
+  let secret = "friday-pairing-step-secret" // pragma: allowlist secret
+  let payload = pairingManifestJSON(secret: secret, expiresAt: 1_900_000_000_000)
+  let vm = PairingProvisioningViewModel()
+
+  #expect(vm.provisioningSteps.map(\.id) == [
+    "qr-session", "pairack", "operator-ceremony", "verify-projection",
+  ])
+  #expect(vm.provisioningSteps.first?.satisfied == false)
+
+  vm.load(qrJSON: payload, nowMs: 1_780_000_000_000)
+
+  #expect(vm.provisioningSteps.first?.status == "ready")
+  #expect(vm.provisioningSteps.first?.satisfied == true)
+  #expect(vm.provisioningSteps[1].status == "waiting for phone")
+  #expect(vm.provisioningSteps[1].detail.contains("does not insert device rows"))
+  #expect(vm.provisioningSteps[2].status == "operator CLI only")
+  #expect(vm.provisioningSteps[2].detail.contains("no-heredoc operator command"))
+  #expect(vm.provisioningSteps[2].satisfied == false)
+  #expect(vm.provisioningSteps[3].detail.contains("active trust_grant"))
+  #expect(!vm.provisioningSteps.map(\.detail).joined(separator: "\n").contains(secret))
+}
+
+@MainActor
 @Test func pairingProvisioningAcceptsValidManifestWithoutDisplayingSecret() async throws {
   let secret = "friday-pairing-secret-for-test" // pragma: allowlist secret
   let payload = pairingManifestJSON(secret: secret, expiresAt: 1_900_000_000_000)

@@ -62,6 +62,14 @@ public struct PairingProvisioningState: Sendable, Equatable, CustomStringConvert
     manifestPath: nil)
 }
 
+public struct PairingProvisioningStep: Sendable, Equatable, Identifiable {
+  public let id: String
+  public let title: String
+  public let status: String
+  public let detail: String
+  public let satisfied: Bool
+}
+
 @MainActor
 public final class PairingProvisioningViewModel: ObservableObject {
   @Published public private(set) var state: PairingProvisioningState = .empty
@@ -85,11 +93,47 @@ public final class PairingProvisioningViewModel: ObservableObject {
     state.description
   }
 
+  public var provisioningSteps: [PairingProvisioningStep] {
+    Self.provisioningSteps(for: state)
+  }
+
   public static func operatorProvisioningCommand(repoRoot: String = "$FRIDAY_REPO_ROOT") -> String {
     """
     cd \(repoRoot)
     node scripts/ops/friday-t3-provisioning-status.mjs --operator-action
     """
+  }
+
+  public static func provisioningSteps(for state: PairingProvisioningState) -> [PairingProvisioningStep] {
+    let qrReady = state.mode == .ready && state.projection != nil
+    return [
+      PairingProvisioningStep(
+        id: "qr-session",
+        title: "Start QR session",
+        status: qrReady ? "ready" : state.mode.rawValue,
+        detail: qrReady
+          ? "Short-lived local scan material is ready; rows are redacted and no secret is printed."
+          : "Start Local, Start LAN QR, or import a trusted Hub QR manifest.",
+        satisfied: qrReady),
+      PairingProvisioningStep(
+        id: "pairack",
+        title: "Scan from mobile",
+        status: qrReady ? "waiting for phone" : "needs QR",
+        detail: "The phone sends the real PairAck; this screen does not insert device rows.",
+        satisfied: false),
+      PairingProvisioningStep(
+        id: "operator-ceremony",
+        title: "Grant + passport",
+        status: "operator CLI only",
+        detail: "Use the read-only helper below to print the exact no-heredoc operator command; the app never mints trust grants or context passports.",
+        satisfied: false),
+      PairingProvisioningStep(
+        id: "verify-projection",
+        title: "Verify Hub projection",
+        status: "read-only check",
+        detail: "Workbench readiness is true only after device_identity, trusted_device, active trust_grant, context_passport, and items are all present.",
+        satisfied: false),
+    ]
   }
 
   public func startPairingSession(
