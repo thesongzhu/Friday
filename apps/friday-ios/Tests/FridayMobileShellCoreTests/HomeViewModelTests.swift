@@ -375,6 +375,7 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.workItems.last?.blockingReason, "failed retryable; operator may retry by returning the WorkItem to ready_to_dispatch")
     XCTAssertEqual(p.memoryCandidates.first?.grantsMemoryAuthority, false)
     XCTAssertEqual(p.runOutcomeLearningCandidates.first?.runId, "run-1")
+    XCTAssertEqual(p.tokenLedgerRunId, "run-1")
     XCTAssertEqual(p.capabilityStates.first?.dispatchAllowed, true)
     XCTAssertEqual(p.t3ProvisioningStatus?.truthLabel, "rust_hub_t3_provisioning_read_only_no_mint")
     XCTAssertEqual(p.t3ProvisioningStatus?.paired, true)
@@ -446,6 +447,7 @@ final class HomeViewModelTests: XCTestCase {
     guard case .loaded(let p) = vm.state else { return XCTFail("expected loaded empty projection, got \(vm.state)") }
     XCTAssertEqual(p.missionId, "mission-empty")
     XCTAssertTrue(p.isLoadedEmpty)
+    XCTAssertNil(p.tokenLedgerRunId)
     XCTAssertTrue(vm.state.isOnline)
     XCTAssertNil(vm.state.projection?.statusLabels.first)
   }
