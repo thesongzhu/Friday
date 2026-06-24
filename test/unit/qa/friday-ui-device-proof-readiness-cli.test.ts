@@ -29,6 +29,35 @@ function writeEvidenceDir(tempDir: string) {
   return files;
 }
 
+function writePartialEvidenceDir(tempDir: string) {
+  const files = {
+    mobile: join(tempDir, "mobile.json"),
+    desktop: join(tempDir, "desktop.json"),
+    channel: join(tempDir, "channel.json"),
+    timeline: join(tempDir, "timeline.json"),
+    events: join(tempDir, "same-run-events.jsonl"),
+  };
+
+  writeFileSync(join(tempDir, "mission-id.txt"), `${missionId}\n`);
+  for (const [role, filePath] of Object.entries({
+    mobile: files.mobile,
+    desktop: files.desktop,
+    channel: files.channel,
+    timeline: files.timeline,
+  })) {
+    writeFileSync(filePath, JSON.stringify({ role, mission_id: missionId, capture: "redacted partial qa input" }));
+  }
+  const rows = [
+    observation("mobile", "mission_intake_submitted", files.mobile),
+    observation("mobile", "mission_intake_ready", files.mobile),
+    observation("mobile", "mission_bound_provider_action_visible", files.mobile),
+    observation("mobile", "proof_receipt_visible_before_done", files.mobile),
+    observation("desktop", "same_mission_projection_visible", files.desktop),
+  ];
+  writeFileSync(files.events, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+  return files;
+}
+
 function observation(surface: string, event: string, evidenceRef: string) {
   return { surface, event, mission_id: missionId, evidence_ref: evidenceRef };
 }
@@ -201,6 +230,48 @@ describe("friday-ui-device-proof-readiness", () => {
       expect(result.truth).toBe("report_only_not_ui_device_proof");
       expect(result.status).toBe("blocked");
       expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes a gap report from discovered same-run events without treating it as proof", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-gap-"));
+    try {
+      writePartialEvidenceDir(tempDir);
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        truth?: string;
+        status?: string;
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.truth).toBe("report_only_not_ui_device_proof");
+      expect(result.status).toBe("blocked");
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+      expect(result.notes?.some((note) => note.includes("ui_device_gap_report:gaps_present"))).toBe(true);
+
+      const gapReport = JSON.parse(readFileSync(join(tempDir, "gap-report.json"), "utf8")) as {
+        truth?: string;
+        status?: string;
+        gaps?: { missingObservations?: Array<{ surface?: string; event?: string }> };
+      };
+      expect(gapReport.truth).toBe("ui_device_proof_gap_report_not_proof");
+      expect(gapReport.status).toBe("gaps_present");
+      expect(gapReport.gaps?.missingObservations).toContainEqual({
+        surface: "channel",
+        event: "same_mission_projection_visible",
+        preferredCapture: "channel",
+      });
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

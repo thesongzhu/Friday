@@ -45,6 +45,7 @@ evidence-dir auto-discovery:
     channel.{json,trace,log,png}
     timeline.{json,trace,log,png}
     observations-manifest.json or ui-observations-manifest.json
+    same-run-events.normalized.jsonl or same-run-events.jsonl for gap reporting
 
 truth:
   Default report-only mode never writes MISSION_SPINE_UI_DEVICE_PROOF and is not END-BAR proof.
@@ -158,6 +159,12 @@ discover_evidence_dir() {
   if [ -z "${TIMELINE_EVIDENCE:-}" ]; then
     TIMELINE_EVIDENCE="$(first_existing "$dir/timeline.json" "$dir/timeline.trace" "$dir/timeline.log" "$dir/timeline.png" || true)"
   fi
+  if [ -z "${SAME_RUN_EVENTS:-}" ]; then
+    SAME_RUN_EVENTS="$(first_existing \
+      "$dir/same-run-events.normalized.jsonl" \
+      "$dir/same-run-events.jsonl" \
+      "$dir/events.jsonl" || true)"
+  fi
 }
 
 json_escape() {
@@ -173,6 +180,7 @@ export DESKTOP_EVIDENCE="${DESKTOP_EVIDENCE:-}"
 export CHANNEL_EVIDENCE="${CHANNEL_EVIDENCE:-}"
 export TIMELINE_EVIDENCE="${TIMELINE_EVIDENCE:-}"
 export OBSERVATIONS_MANIFEST="${OBSERVATIONS_MANIFEST:-}"
+export SAME_RUN_EVENTS="${SAME_RUN_EVENTS:-}"
 
 have_all_evidence=1
 for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELINE_EVIDENCE OBSERVATIONS_MANIFEST; do
@@ -192,6 +200,9 @@ for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELIN
     notes+=("resolved_${name}:${!name}")
   fi
 done
+if [ -n "${SAME_RUN_EVENTS:-}" ]; then
+  notes+=("resolved_SAME_RUN_EVENTS:${SAME_RUN_EVENTS}")
+fi
 
 run_step() {
   local label="$1"
@@ -214,6 +225,48 @@ run_note_step() {
     local rc=$?
     notes+=("${label}:exit_${rc}")
     return 0
+  fi
+}
+
+run_gap_report_if_possible() {
+  if [ -z "${MISSION_ID:-}" ] || [ -z "${MOBILE_EVIDENCE:-}" ] || [ -z "${DESKTOP_EVIDENCE:-}" ] || [ -z "${CHANNEL_EVIDENCE:-}" ] || [ -z "${TIMELINE_EVIDENCE:-}" ] || [ -z "${SAME_RUN_EVENTS:-}" ]; then
+    return 0
+  fi
+
+  local gap_out
+  local stdout_out
+  local status
+  if [ -n "$EVIDENCE_DIR" ]; then
+    gap_out="$(abs_path "$EVIDENCE_DIR")/gap-report.json"
+  else
+    gap_out="/tmp/friday-ui-device-proof-gap-report-${MISSION_ID}.json"
+  fi
+  stdout_out="${gap_out}.stdout"
+
+  local args=(
+    "${REPO_ROOT}/scripts/ops/friday-ui-device-proof-gap-report.mjs"
+    "--mission-id=${MISSION_ID}"
+    "--events=${SAME_RUN_EVENTS}"
+    "--mobile=${MOBILE_EVIDENCE}"
+    "--desktop=${DESKTOP_EVIDENCE}"
+    "--channel=${CHANNEL_EVIDENCE}"
+    "--timeline=${TIMELINE_EVIDENCE}"
+    "--out=${gap_out}"
+  )
+  if [ -n "${OBSERVATIONS_MANIFEST:-}" ]; then
+    args+=("--manifest=${OBSERVATIONS_MANIFEST}")
+  fi
+
+  mkdir -p "$(dirname "$gap_out")"
+  if node "${args[@]}" >"$stdout_out"; then
+    status="$(jq -r '.status // "unknown"' "$gap_out" 2>/dev/null || printf 'unknown')"
+    notes+=("ui_device_gap_report:${status}:${gap_out}")
+    if [ "$status" != "complete_inputs_observed" ] && [ "${MODE}" = "require-proof" ]; then
+      blockers+=("ui_device_gap_report:${status}")
+    fi
+  else
+    local rc=$?
+    blockers+=("ui_device_gap_report:exit_${rc}")
   fi
 }
 
@@ -268,6 +321,8 @@ if [ "${have_all_evidence}" = "1" ]; then
 else
   blockers+=("ui_device_proof_evidence:missing_required_real_evidence_env")
 fi
+
+run_gap_report_if_possible
 
 if [ "${MODE}" = "require-proof" ]; then
   printf 'FATAL: UI/device proof not assembled. blockers=%s\n' "${blockers[*]}" >&2
