@@ -220,7 +220,7 @@ struct FridaySessionDetailScreen: View {
                   Text(control.title)
                     .font(.system(size: 13, weight: .semibold))
                   Spacer()
-                  StatusChip(text: control.truthLabel, bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+                  controlTruthChip(control)
                 }
                 Text(control.reason)
                   .font(.caption2)
@@ -485,6 +485,16 @@ struct FridaySessionDetailScreen: View {
 
   private func statusChip(_ text: String) -> some View {
     StatusChip(text: text, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+  }
+
+  private func controlTruthChip(_ control: SessionContinuationControl) -> some View {
+    if control.isEnabled {
+      return StatusChip(text: control.truthLabel, bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
+    }
+    if control.truthLabel == "read arm" {
+      return StatusChip(text: control.truthLabel, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+    }
+    return StatusChip(text: control.truthLabel, bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
   }
 
   private func short(_ s: String) -> String {
