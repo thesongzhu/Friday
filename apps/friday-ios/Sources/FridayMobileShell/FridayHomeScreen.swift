@@ -15,8 +15,14 @@ import SwiftUI
 /// is Refresh (re-read) — there is NO mutating action on this surface.
 struct FridayHomeScreen: View {
   @ObservedObject var viewModel: HomeViewModel
+  let showPairingProvisioning: Bool
   @State private var pairingQRPayload = ""
   @State private var showingPairingScanner = false
+
+  init(viewModel: HomeViewModel, showPairingProvisioning: Bool = false) {
+    self.viewModel = viewModel
+    self.showPairingProvisioning = showPairingProvisioning
+  }
 
   var body: some View {
     ScrollView {
@@ -32,9 +38,17 @@ struct FridayHomeScreen: View {
           unavailableHeader
           HeroPet().padding(.top, 4)
           UnavailableView(reason: reason)
+          unavailableQueueSection(
+            title: "Needs Me",
+            emptyText: "Connect Friday to see approvals, memory candidates, and recovery items.")
+          unavailableQueueSection(
+            title: "Running",
+            emptyText: "Connect Friday to see active work and provider progress.")
         }
 
-        devicePairingCard(viewModel.devicePairing, viewModel.state.projection?.t3ProvisioningStatus)
+        if showPairingProvisioning {
+          devicePairingCard(viewModel.devicePairing, viewModel.state.projection?.t3ProvisioningStatus)
+        }
       }
       .padding(16)
     }
@@ -312,6 +326,27 @@ struct FridayHomeScreen: View {
       }
     }
     .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("friday.home.\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
+  }
+
+  private func unavailableQueueSection(title: String, emptyText: String) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .firstTextBaseline) {
+        Text(title.uppercased())
+          .font(.caption.weight(.bold))
+          .tracking(2)
+          .foregroundStyle(MobileTheme.textSecondary.opacity(0.72))
+        Spacer()
+        StatusChip(text: "offline", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+      }
+      GlassPanel {
+        Text(emptyText)
+          .font(.footnote)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .accessibilityElement(children: .combine)
     .accessibilityIdentifier("friday.home.\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
   }
 

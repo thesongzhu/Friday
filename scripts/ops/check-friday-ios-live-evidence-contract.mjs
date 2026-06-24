@@ -25,6 +25,7 @@ const root = repoRoot();
 const files = {
   readme: read(root, "apps/friday-ios/README.md"),
   app: read(root, "apps/friday-ios/Sources/FridayMobileShell/FridayApp.swift"),
+  home: read(root, "apps/friday-ios/Sources/FridayMobileShell/FridayHomeScreen.swift"),
   commandSheet: read(root, "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift"),
   buildSim: read(root, "apps/friday-ios/build-sim.sh"),
   liveT3Proof: read(root, "scripts/ops/friday-ios-sim-live-t3-proof.sh"),
@@ -70,6 +71,7 @@ const checks = [
         "tokenLedger",
         "shareIntake",
         "voice",
+        "pairing",
         "needsMe",
         "memory",
         "platform",
@@ -81,6 +83,23 @@ const checks = [
       ...requireStrings(files.commandSheet, [
         "Command Sheet",
         "Live truth",
+        "Device Pairing",
+      ]),
+    ],
+  },
+  {
+    id: "mobile-selected-home-keeps-pairing-explicit",
+    target: "apps/friday-ios/Sources/FridayMobileShell/FridayApp.swift + FridayHomeScreen.swift",
+    missing: [
+      ...requireStrings(files.app, [
+        "case .pairing:",
+        "FridayHomeScreen(viewModel: homeVM, showPairingProvisioning: true)",
+      ]),
+      ...requireStrings(files.home, [
+        "showPairingProvisioning: Bool = false",
+        "if showPairingProvisioning",
+        "Connect Friday to see approvals, memory candidates, and recovery items.",
+        "Connect Friday to see active work and provider progress.",
       ]),
     ],
   },
