@@ -7,8 +7,9 @@ import { describe, expect, it } from "vitest";
 const script = "scripts/ops/friday-macos-live-write-read-capture.sh";
 const missionId = "mission-desktop-live-roundtrip-wrapper";
 const workItemId = "work-desktop-live-roundtrip-wrapper";
+const sharedId = "mission-shared-live-write-read";
 
-function fakeSwiftScript(dir: string, proofStatus = "pass") {
+function fakeSwiftScript(dir: string, proofStatus = "pass", requiredSharedId = "") {
   const bin = join(dir, "bin");
   mkdirSync(bin, { recursive: true });
   const path = join(bin, "swift");
@@ -16,6 +17,7 @@ function fakeSwiftScript(dir: string, proofStatus = "pass") {
 set -euo pipefail
 [ "$1" = "test" ] || exit 42
 [ -n "\${FRIDAY_DESKTOP_LIVE_WRITE_READ_ROUNDTRIP_PROOF_OUT:-}" ] || exit 43
+if [ -n "${requiredSharedId}" ] && [ "\${FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID:-}" != "${requiredSharedId}" ]; then exit 44; fi
 cat >"\${FRIDAY_DESKTOP_LIVE_WRITE_READ_ROUNDTRIP_PROOF_OUT}" <<'JSON'
 {
   "truth_label": "macos_desktop_live_write_read_roundtrip_proof_not_ui_device_proof",
@@ -51,8 +53,8 @@ describe("friday-macos-live-write-read-capture", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-macos-live-capture-"));
     try {
       const outDir = join(tempDir, "capture");
-      const fakeBin = fakeSwiftScript(tempDir);
-      const stdout = execFileSync("bash", [script, `--out-dir=${outDir}`], {
+      const fakeBin = fakeSwiftScript(tempDir, "pass", sharedId);
+      const stdout = execFileSync("bash", [script, `--out-dir=${outDir}`, `--shared-id=${sharedId}`], {
         cwd: process.cwd(),
         encoding: "utf8",
         env: {
