@@ -13,7 +13,12 @@ struct FridayTokenLedgerScreen: View {
           loadingView
         case .unavailable(let reason):
           header(status: "unavailable", ready: false)
-          UnavailableView(reason: reason)
+          UnavailableView(
+            reason: reason,
+            title: "Token ledger unavailable",
+            detail: "Cost and provider usage stay hidden until a run reference is projected by the Hub.",
+            systemImage: "chart.bar.doc.horizontal",
+            identifier: "friday.token-ledger.unavailable")
         case .loaded(let projection):
           loadedContent(projection)
         }

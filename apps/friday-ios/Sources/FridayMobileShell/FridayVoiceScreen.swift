@@ -54,7 +54,12 @@ struct FridayVoiceScreen: View {
         .frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
       }
     case let .unavailable(reason):
-      UnavailableView(reason: reason)
+      UnavailableView(
+        reason: reason,
+        title: "Voice readiness unavailable",
+        detail: "Microphone, speech, and playback gates stay local until the live voice readiness arm is available.",
+        systemImage: "waveform",
+        identifier: "friday.voice.unavailable")
     case let .loaded(readiness):
       readinessCard(readiness)
       actionsCard(readiness)

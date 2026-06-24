@@ -833,24 +833,43 @@ struct StatusBanner: View {
 /// The honest "unavailable" state — never a fake-ready Home.
 struct UnavailableView: View {
   let reason: String
+  var title = "Friday is offline"
+  var detail = "Live Hub projection is required before this surface can show current state."
+  var systemImage = "exclamationmark.triangle"
+  var identifier = "friday.home.unavailable"
 
   var body: some View {
-    VStack(spacing: 10) {
-      Image(systemName: "exclamationmark.triangle")
-        .font(.system(size: 28)).foregroundStyle(MobileTheme.coral)
-      Text("Friday is offline")
-        .font(.headline).foregroundStyle(MobileTheme.textPrimary)
-      Text(reason)
-        .font(.footnote).foregroundStyle(MobileTheme.textSecondary)
-        .multilineTextAlignment(.center)
-      Text("No cached or fabricated status is shown.")
-        .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
-        .multilineTextAlignment(.center)
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        HStack(spacing: 12) {
+          Image(systemName: systemImage)
+            .font(.system(size: 24, weight: .semibold))
+            .foregroundStyle(MobileTheme.coral)
+            .frame(width: 34, height: 34)
+          VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+              .font(.headline)
+              .foregroundStyle(MobileTheme.textPrimary)
+            Text(detail)
+              .font(.caption)
+              .foregroundStyle(MobileTheme.textSecondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          Spacer()
+          StatusChip(text: "offline", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+        }
+        Text(reason)
+          .font(.footnote)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        HStack(spacing: 8) {
+          StatusChip(text: "no cache", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+          StatusChip(text: "no fabricated status", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+        }
+      }
     }
-    .padding(28)
-    .frame(maxWidth: .infinity, minHeight: 200)
     .accessibilityElement(children: .combine)
-    .accessibilityLabel("Friday is offline. \(reason). No cached or fabricated status is shown.")
-    .accessibilityIdentifier("friday.home.unavailable")
+    .accessibilityLabel("\(title). \(detail). \(reason). No cached or fabricated status is shown.")
+    .accessibilityIdentifier(identifier)
   }
 }
