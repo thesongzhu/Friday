@@ -46,6 +46,7 @@ evidence-dir auto-discovery:
     timeline.{json,trace,log,png}
     observations-manifest.json or ui-observations-manifest.json
     same-run-events.normalized.jsonl or same-run-events.jsonl for gap reporting
+    workbench-snapshot.json or mission-workbench-snapshot.json for diagnostic event bridging
 
 truth:
   Default report-only mode never writes MISSION_SPINE_UI_DEVICE_PROOF and is not END-BAR proof.
@@ -165,6 +166,12 @@ discover_evidence_dir() {
       "$dir/same-run-events.jsonl" \
       "$dir/events.jsonl" || true)"
   fi
+  if [ -z "${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}" ]; then
+    FRIDAY_WORKBENCH_SNAPSHOT_FILE="$(first_existing \
+      "$dir/workbench-snapshot.json" \
+      "$dir/mission-workbench-snapshot.json" \
+      "$dir/workbench-response.json" || true)"
+  fi
 }
 
 json_escape() {
@@ -181,6 +188,42 @@ export CHANNEL_EVIDENCE="${CHANNEL_EVIDENCE:-}"
 export TIMELINE_EVIDENCE="${TIMELINE_EVIDENCE:-}"
 export OBSERVATIONS_MANIFEST="${OBSERVATIONS_MANIFEST:-}"
 export SAME_RUN_EVENTS="${SAME_RUN_EVENTS:-}"
+export FRIDAY_WORKBENCH_SNAPSHOT_FILE="${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}"
+
+derive_workbench_events_if_possible() {
+  if [ -n "${SAME_RUN_EVENTS:-}" ] || [ -z "${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}" ]; then
+    return 0
+  fi
+  if [ -z "${MISSION_ID:-}" ] || [ -z "${MOBILE_EVIDENCE:-}" ] || [ -z "${DESKTOP_EVIDENCE:-}" ] || [ -z "${CHANNEL_EVIDENCE:-}" ] || [ -z "${TIMELINE_EVIDENCE:-}" ]; then
+    return 0
+  fi
+
+  local derived_out
+  local stdout_out
+  if [ -n "$EVIDENCE_DIR" ]; then
+    derived_out="$(abs_path "$EVIDENCE_DIR")/workbench-derived-events.jsonl"
+  else
+    derived_out="/tmp/friday-workbench-derived-events-${MISSION_ID}.jsonl"
+  fi
+  stdout_out="${derived_out}.stdout"
+  mkdir -p "$(dirname "$derived_out")"
+
+  if node "${REPO_ROOT}/scripts/ops/friday-workbench-snapshot-events.mjs" \
+    "--mission-id=${MISSION_ID}" \
+    "--file=${FRIDAY_WORKBENCH_SNAPSHOT_FILE}" \
+    "--mobile=${MOBILE_EVIDENCE}" \
+    "--desktop=${DESKTOP_EVIDENCE}" \
+    "--channel=${CHANNEL_EVIDENCE}" \
+    "--timeline=${TIMELINE_EVIDENCE}" \
+    "--out=${derived_out}" >"$stdout_out"; then
+    SAME_RUN_EVENTS="$derived_out"
+    export SAME_RUN_EVENTS
+    notes+=("workbench_snapshot_events_bridge:ready:${derived_out}")
+  else
+    local rc=$?
+    blockers+=("workbench_snapshot_events_bridge:exit_${rc}")
+  fi
+}
 
 have_all_evidence=1
 for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELINE_EVIDENCE OBSERVATIONS_MANIFEST; do
@@ -192,10 +235,12 @@ done
 blockers=()
 notes=()
 
+derive_workbench_events_if_possible
+
 if [ -n "$EVIDENCE_DIR" ]; then
   notes+=("evidence_dir:$(abs_path "$EVIDENCE_DIR")")
 fi
-for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELINE_EVIDENCE OBSERVATIONS_MANIFEST; do
+for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELINE_EVIDENCE OBSERVATIONS_MANIFEST FRIDAY_WORKBENCH_SNAPSHOT_FILE; do
   if [ -n "${!name:-}" ]; then
     notes+=("resolved_${name}:${!name}")
   fi
