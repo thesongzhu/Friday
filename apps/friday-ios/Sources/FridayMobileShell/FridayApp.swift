@@ -161,11 +161,12 @@ final class FridaySession: ObservableObject {
       return HonestlyUnavailableReadClient()
     }
     do {
+      let config = try liveReadConfig(args: args, env: env)
       if useDeviceKeypair(args: args, env: env) {
         let device = try DeviceKeypairStore.loadOrGenerate(backend: deviceKeypairBackend)
-        return RealReadClientFactory.makeLive(deviceKeypair: device)
+        return RealReadClientFactory.makeLive(deviceKeypair: device, config: config)
       }
-      return try RealReadClientFactory.makeLive()
+      return try RealReadClientFactory.makeLive(config: config)
     } catch {
       return RealReadClientFactory.makeHonestlyUnavailable(reason: "\(error)")
     }
@@ -227,6 +228,21 @@ final class FridaySession: ObservableObject {
 
   static func liveReadRequested(args: [String], env: [String: String]) -> Bool {
     MobileRuntimeGates.liveReadRequested(args: args, env: env)
+  }
+
+  static func liveReadConfig(args: [String], env: [String: String]) throws -> ReadProjectionServerConfig {
+    let host = MobileRuntimeGates.liveReadHostOverride(args: args, env: env)
+      ?? ReadProjectionServerConfig.liveLoopback.host
+    switch MobileRuntimeGates.liveReadPortOverride(args: args, env: env) {
+    case .absent:
+      return ReadProjectionServerConfig(
+        host: host,
+        port: ReadProjectionServerConfig.liveLoopback.port)
+    case let .value(port):
+      return ReadProjectionServerConfig(host: host, port: port)
+    case let .invalid(raw):
+      throw FridayReadClientError.transport("invalid live read port override \(raw)")
+    }
   }
 
   static func liveWriteRequested(args: [String], env: [String: String]) -> Bool {

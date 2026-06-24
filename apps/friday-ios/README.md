@@ -113,6 +113,17 @@ passports, hold signing keys, or claim END-BAR/GO-LIVE. The adjacent `.metadata.
 records which proof mode produced the screenshot and, in live-loopback mode, the public
 simulator device key needed for read-seam enrollment.
 
+For isolated read-server proofs that must not touch the production `:48751` process,
+set an explicit simulator child read endpoint before launching:
+
+```sh
+FRIDAY_MOBILE_LIVE_READ_PORT=59151 \
+  apps/friday-ios/build-sim.sh --mode live-loopback --shot apps/friday-ios/.build-sim/friday-ios-live-scratch-read.png
+```
+
+The shipped default remains `127.0.0.1:48751`; invalid explicit ports fail closed as
+honest unavailable instead of silently falling back.
+
 To turn that simulator public key into an auditable read-seam proof, use:
 
 ```sh
