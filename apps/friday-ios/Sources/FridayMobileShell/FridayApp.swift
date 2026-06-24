@@ -183,14 +183,15 @@ final class FridaySession: ObservableObject {
   /// over the real `SealedWSWriteClient` (`RealWriteClientFactory.makeLive`). If the host master key
   /// is unavailable (e.g. a real phone — the J2 pairing problem), fall back to the throwing default
   /// (honest unavailable) — NEVER fabricate a ready chat surface the live seam did not produce.
-  static func defaultWriteClient(runControlEnabled: Bool) -> FridayRustWriteClient {
-    defaultLiveWriteClient(runControlEnabled: runControlEnabled)
-      ?? honestUnavailableWriteClient(runControlEnabled: runControlEnabled)
+  static func defaultWriteClient(runControlEnabled: Bool, sessionId: String? = nil) -> FridayRustWriteClient {
+    defaultLiveWriteClient(runControlEnabled: runControlEnabled, sessionId: sessionId)
+      ?? honestUnavailableWriteClient(runControlEnabled: runControlEnabled, sessionId: sessionId)
   }
 
   static func defaultLiveWriteClient(
     runControlEnabled: Bool,
-    deviceKeypairBackend: DeviceKeypairBackend = KeychainDeviceKeypairBackend()
+    deviceKeypairBackend: DeviceKeypairBackend = KeychainDeviceKeypairBackend(),
+    sessionId: String? = nil
   ) -> FridayMobileMissionDispatchingWriteClient? {
     let args = ProcessInfo.processInfo.arguments
     let env = ProcessInfo.processInfo.environment
@@ -205,10 +206,12 @@ final class FridaySession: ObservableObject {
         return RealWriteClientFactory.makeLive(
           deviceKeypair: device,
           config: config,
+          sessionId: sessionId,
           agentRunControlViaRust: runControlEnabled)
       }
       return try RealWriteClientFactory.makeLive(
         config: config,
+        sessionId: sessionId,
         agentRunControlViaRust: runControlEnabled)
     } catch {
       // Master/device key unavailable or corrupt: no mission-capable client. The caller falls back
@@ -302,10 +305,14 @@ final class FridaySession: ObservableObject {
   /// The honest-unavailable WRITE client: the shared `FridayClientFactory.makeWriteClient` with its
   /// DEFAULT throwing `liveTransportNotWired` transport + an ephemeral session keypair that opens no
   /// socket. This is the SHIPPED default and the preview/no-master-key fallback.
-  static func honestUnavailableWriteClient(runControlEnabled: Bool = false) -> FridayRustWriteClient {
+  static func honestUnavailableWriteClient(
+    runControlEnabled: Bool = false,
+    sessionId: String? = nil
+  ) -> FridayRustWriteClient {
     let writeKeypair = FridayCrypto.DeviceKeypair()
     let endpoint = FridayClientFactory.Endpoint(
       forwardedPrincipal: "principal:owner-device",
+      sessionId: sessionId,
       agentRunControlViaRust: runControlEnabled)
     return FridayClientFactory.makeWriteClient(keypair: writeKeypair, endpoint: endpoint)
   }
@@ -339,6 +346,15 @@ struct RootView: View {
     _sessionContinuationVM = StateObject(wrappedValue: SessionContinuationViewModel(
       client: session.readClient,
       writeClient: session.writeClient,
+      makeSessionWriteClient: { sessionId in
+        FridaySession.defaultLiveWriteClient(
+          runControlEnabled: session.runControlEnabled,
+          deviceKeypairBackend: session.deviceKeypairBackend,
+          sessionId: sessionId)
+          ?? FridaySession.honestUnavailableWriteClient(
+            runControlEnabled: session.runControlEnabled,
+            sessionId: sessionId)
+      },
       signer: session.signer,
       runControlEnabled: session.runControlEnabled))
     _shareIntakeVM = StateObject(wrappedValue: ShareIntakeViewModel(client: session.missionClient))

@@ -132,8 +132,15 @@ final class SessionContinuationViewModelTests: XCTestCase {
       case refused(ResumeRelayResult)
       case fail(FridayWriteClientError)
     }
+    enum DispatchScript {
+      case result(AgentRunDispatchOutcome)
+      case fail(FridayWriteClientError)
+    }
 
     let script: Script
+    let dispatchScript: DispatchScript?
+    private(set) var dispatchedTasks: [String] = []
+    private(set) var dispatchedConstraints: [AgentRunConstraintsWire?] = []
     private(set) var cancelledRunIds: [String] = []
     private(set) var cancelReasons: [String?] = []
     private(set) var resumedRunIds: [String] = []
@@ -141,20 +148,30 @@ final class SessionContinuationViewModelTests: XCTestCase {
     private(set) var rejectedRunIds: [String] = []
     private(set) var rejectedApprovalIds: [String] = []
 
-    init(_ script: Script = .accepted(ResumeRelayResult(
-      runId: "run-1",
-      op: "cancel",
-      accepted: true,
-      status: "cancelled",
-      auditRef: "audit://cancel/run-1"))) {
+    init(
+      _ script: Script = .accepted(ResumeRelayResult(
+        runId: "run-1",
+        op: "cancel",
+        accepted: true,
+        status: "cancelled",
+        auditRef: "audit://cancel/run-1")),
+      dispatchScript: DispatchScript? = nil
+    ) {
       self.script = script
+      self.dispatchScript = dispatchScript
     }
 
     func dispatchAgentRun(
       task: String,
       constraints: AgentRunConstraintsWire?
     ) async throws -> AgentRunDispatchOutcome {
-      throw FridayWriteClientError.transport("unused")
+      dispatchedTasks.append(task)
+      dispatchedConstraints.append(constraints)
+      guard let dispatchScript else { throw FridayWriteClientError.transport("unused") }
+      switch dispatchScript {
+      case .result(let outcome): return outcome
+      case .fail(let error): throw error
+      }
     }
 
     func resumeWithApproval(runId: String, opaqueSignedBlob: [UInt8]) async throws -> ResumeRelayResult {
@@ -188,6 +205,23 @@ final class SessionContinuationViewModelTests: XCTestCase {
       case .fail(let error):
         throw error
       }
+    }
+  }
+
+  final class SessionIdRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String] = []
+
+    func append(_ value: String) {
+      lock.lock()
+      values.append(value)
+      lock.unlock()
+    }
+
+    var recorded: [String] {
+      lock.lock()
+      defer { lock.unlock() }
+      return values
     }
   }
 
@@ -257,6 +291,90 @@ final class SessionContinuationViewModelTests: XCTestCase {
     XCTAssertEqual(stop?.truthLabel, "guarded")
     XCTAssertEqual(stop?.isEnabled, true)
     XCTAssertTrue(stop?.reason.contains("cancel") == true)
+  }
+
+  func testRefreshWithSessionWriteFactoryEnablesGuardedSend() async {
+    let client = FakeSessionReadClient()
+    let vm = SessionContinuationViewModel(
+      client: client,
+      makeSessionWriteClient: { _ in FakeSessionWriteClient() })
+
+    await vm.refresh(agentSessionId: "session-1", runId: "run-1")
+
+    guard case .loaded(let snapshot) = vm.state else {
+      return XCTFail("expected loaded session continuation, got \(vm.state)")
+    }
+    let send = snapshot.controls.first { $0.id == "send" }
+    XCTAssertEqual(send?.truthLabel, "guarded")
+    XCTAssertEqual(send?.isEnabled, true)
+    XCTAssertTrue(send?.reason.contains("Session-bound") == true)
+  }
+
+  func testSendDispatchesReadOnlySessionTurnAndRefreshesToReturnedRun() async {
+    let client = FakeSessionReadClient()
+    let write = FakeSessionWriteClient(dispatchScript: .result(.result(AgentRunResultWire(
+      runId: "run-2",
+      status: "completed",
+      answerSha256: "abc123",
+      promptTokens: 3,
+      completionTokens: 4))))
+    let requestedSessionIds = SessionIdRecorder()
+    let vm = SessionContinuationViewModel(
+      client: client,
+      makeSessionWriteClient: { sessionId in
+        requestedSessionIds.append(sessionId)
+        return write
+      })
+
+    await vm.refresh(agentSessionId: "session-1", runId: "run-1")
+    await vm.send(" continue the analysis ")
+
+    XCTAssertEqual(requestedSessionIds.recorded, ["session-1"])
+    XCTAssertEqual(write.dispatchedTasks, ["continue the analysis"])
+    XCTAssertEqual(write.dispatchedConstraints.map { $0?.readOnly }, [true])
+    XCTAssertTrue(client.requests.contains("run-readback:run-2"))
+    XCTAssertTrue(client.requests.contains("run-files:run-2"))
+    XCTAssertTrue(client.requests.contains("needs-me:run-2"))
+    XCTAssertEqual(
+      vm.controlStates["send"],
+      .succeeded(summary: "run: completed · run_id=run-2 · answer_sha=abc123 · tokens=7"))
+  }
+
+  func testSendBlankOrMissingSessionWriteSeamDoesNotDispatch() async {
+    let client = FakeSessionReadClient()
+    let write = FakeSessionWriteClient(dispatchScript: .result(.result(AgentRunResultWire(
+      runId: "run-blank",
+      status: "completed"))))
+    let blankVM = SessionContinuationViewModel(
+      client: client,
+      makeSessionWriteClient: { _ in write })
+    await blankVM.refresh(agentSessionId: "session-1", runId: "run-1")
+    await blankVM.send("   \n")
+    XCTAssertTrue(write.dispatchedTasks.isEmpty)
+    XCTAssertNil(blankVM.controlStates["send"])
+
+    let missingVM = SessionContinuationViewModel(client: client)
+    await missingVM.refresh(agentSessionId: "session-1", runId: "run-1")
+    await missingVM.send("continue")
+    XCTAssertEqual(
+      missingVM.controlStates["send"],
+      .error(reason: "Send requires the session-bound write seam."))
+  }
+
+  func testSendTransportFailureIsHonestUnavailable() async {
+    let write = FakeSessionWriteClient(dispatchScript: .fail(.transport("server dark")))
+    let vm = SessionContinuationViewModel(
+      client: FakeSessionReadClient(),
+      makeSessionWriteClient: { _ in write })
+
+    await vm.refresh(agentSessionId: "session-1", runId: "run-1")
+    await vm.send("continue")
+
+    XCTAssertEqual(write.dispatchedTasks, ["continue"])
+    guard case .error(let reason) = vm.controlStates["send"] else {
+      return XCTFail("expected send transport error, got \(String(describing: vm.controlStates["send"]))")
+    }
+    XCTAssertTrue(reason.contains("offline"), "reason: \(reason)")
   }
 
   func testRefreshParsesNeedsMeApprovalAndEnablesOperatorGatedResume() async {

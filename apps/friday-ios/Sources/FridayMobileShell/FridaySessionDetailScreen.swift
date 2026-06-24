@@ -4,6 +4,7 @@ import SwiftUI
 struct FridaySessionDetailScreen: View {
   @ObservedObject var homeViewModel: HomeViewModel
   @ObservedObject var viewModel: SessionContinuationViewModel
+  @State private var sessionSendText = ""
 
   var body: some View {
     ScrollView {
@@ -198,8 +199,11 @@ struct FridaySessionDetailScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Controls", count: nil)
+        if let send = controls.first(where: { $0.id == "send" }) {
+          sessionSendComposer(send)
+        }
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-          ForEach(controls) { control in
+          ForEach(controls.filter { $0.id != "send" }) { control in
             let controlState = viewModel.controlStates[control.id]
             Button {
               if control.id == "stop" {
@@ -233,6 +237,42 @@ struct FridaySessionDetailScreen: View {
           }
         }
       }
+    }
+  }
+
+  private func sessionSendComposer(_ control: SessionContinuationControl) -> some View {
+    let state = viewModel.controlStates[control.id]
+    return VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 8) {
+        TextField("Continue this session", text: $sessionSendText, axis: .vertical)
+          .lineLimit(1...4)
+          .textInputAutocapitalization(.sentences)
+          .autocorrectionDisabled(false)
+          .font(.subheadline)
+          .padding(10)
+          .background(Color.white.opacity(0.54), in: RoundedRectangle(cornerRadius: 8))
+          .accessibilityIdentifier("friday.session.send-input")
+        Button {
+          let text = sessionSendText
+          sessionSendText = ""
+          Task { await viewModel.send(text) }
+        } label: {
+          Image(systemName: control.systemImage)
+            .frame(width: 28, height: 28)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(MobileTheme.cyan)
+        .disabled(!control.isEnabled
+          || sessionSendText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          || controlStateDisablesButton(state))
+        .accessibilityLabel("Send session continuation")
+        .accessibilityIdentifier("friday.session.send-button")
+      }
+      Text(control.reason)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+      controlStateView(state)
     }
   }
 
