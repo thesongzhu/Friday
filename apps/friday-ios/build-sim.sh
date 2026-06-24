@@ -189,7 +189,15 @@ case "$MODE" in
     fi
     ;;
 esac
-env "${LAUNCH_ENV[@]}" xcrun simctl launch --terminate-running-process "$UDID" com.friday.shell "${LAUNCH_ARGS[@]}"
+LAUNCH_CMD=(xcrun simctl launch --terminate-running-process "$UDID" com.friday.shell)
+if ((${#LAUNCH_ARGS[@]} > 0)); then
+  LAUNCH_CMD+=("${LAUNCH_ARGS[@]}")
+fi
+if ((${#LAUNCH_ENV[@]} > 0)); then
+  env "${LAUNCH_ENV[@]}" "${LAUNCH_CMD[@]}"
+else
+  "${LAUNCH_CMD[@]}"
+fi
 # Give the WKWebView time to load the host page over `friday-pet://`, fetch the bundled engine +
 # v9 assets, and start the canvas animation before the screenshot. Per the design CLAUDE.md hard
 # rule 5, the pet is verified by the RENDERED image (open $SHOT), not by code/bbox numbers — a

@@ -303,11 +303,48 @@ public struct HomeT3ProvisioningStatus: Sendable, Equatable {
     return "No complete T3 device pairing in the Hub projection; missing \(missing)."
   }
 
+  public var checklistRows: [HomeT3ProvisioningStep] {
+    [
+      HomeT3ProvisioningStep(
+        id: "pairack",
+        title: "PairAck",
+        satisfied: paired,
+        statusText: paired ? "paired" : "needed",
+        detail: "\(deviceIdentityCount) device identity · \(activeTrustedDeviceCount) active trusted device"),
+      HomeT3ProvisioningStep(
+        id: "trust-grant",
+        title: "Trust grant",
+        satisfied: activeTrustGrantCount > 0,
+        statusText: activeTrustGrantCount > 0 ? "active" : "needed",
+        detail: "\(trustGrantCount) grant · \(activeTrustGrantCount) active"),
+      HomeT3ProvisioningStep(
+        id: "context-passport",
+        title: "Context passport",
+        satisfied: contextPassportCount > 0,
+        statusText: contextPassportCount > 0 ? "minted" : "needed",
+        detail: "\(contextPassportCount) passport"),
+      HomeT3ProvisioningStep(
+        id: "passport-items",
+        title: "Shared context",
+        satisfied: contextPassportItemCount > 0,
+        statusText: contextPassportItemCount > 0 ? "shared" : "needed",
+        detail: "\(contextPassportItemCount) passport items"),
+    ]
+  }
+
   private static func int(_ value: Any?) -> Int {
     if let int = value as? Int { return int }
     if let number = value as? NSNumber { return number.intValue }
     return 0
   }
+}
+
+public struct HomeT3ProvisioningStep: Sendable, Identifiable, Equatable {
+  public let id: String
+  public let title: String
+  public let satisfied: Bool
+  public let statusText: String
+  public let detail: String
 }
 
 public struct HomeTrustedDeviceSummary: Sendable, Equatable {
