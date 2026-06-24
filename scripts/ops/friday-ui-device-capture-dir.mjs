@@ -16,11 +16,13 @@ function usage() {
     --desktop=/abs/desktop-capture \\
     --channel=/abs/channel-capture \\
     --timeline=/abs/timeline-capture \\
-    [--observations-manifest=/abs/observations-manifest.json] [--require-ready]
+    [--observations-manifest=/abs/observations-manifest.json] \\
+    [--events=/abs/same-run-events.jsonl] [--require-ready]
 
 Truth: this indexes already-captured files into an evidence-dir shape. It is not a
-UI/device proof and never invents observations. A supplied observations manifest is
-validated by scripts/qa/check-mission-spine-ui-proof-inputs.mjs.`);
+UI/device proof and never invents observations. A supplied observations manifest,
+or a manifest derived from same-run events, is validated by
+scripts/qa/check-mission-spine-ui-proof-inputs.mjs.`);
 }
 
 function arg(name) {
@@ -37,6 +39,7 @@ const requireReady = args.includes("--require-ready");
 const missionId = arg("mission-id");
 const outDir = arg("out-dir");
 const manifest = arg("observations-manifest");
+const events = arg("events");
 const inputByRole = {
   mobile: arg("mobile"),
   desktop: arg("desktop"),
@@ -85,6 +88,28 @@ function checkInput(role, path) {
   }
 }
 
+function normalizeEvents(sourcePath, replacements, targetPath) {
+  const source = abs(sourcePath);
+  try {
+    const lines = readFileSync(source, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const normalized = lines.map((line) => {
+      const row = JSON.parse(line);
+      if (typeof row.evidence_ref === "string" && replacements.has(row.evidence_ref)) {
+        row.evidence_ref = replacements.get(row.evidence_ref);
+      }
+      return JSON.stringify(row);
+    });
+    writeFileSync(targetPath, `${normalized.join("\n")}\n`);
+    return true;
+  } catch {
+    block("events_unreadable_or_invalid_jsonl", source);
+    return false;
+  }
+}
+
 if (!missionId || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId) || !missionId.toLowerCase().includes("mission")) {
   block("mission_id_unexpected_shape", missionId || "<missing>");
 }
@@ -97,6 +122,7 @@ const readyToWrite = blockers.length === 0 && outDir;
 
 let written = [];
 let copiedManifest = "";
+let derivedEvents = "";
 if (readyToWrite) {
   const dir = abs(outDir);
   mkdirSync(dir, { recursive: true });
@@ -123,8 +149,30 @@ if (readyToWrite) {
     } catch {
       block("observations_manifest_unreadable", manifestSource);
     }
+  } else if (events) {
+    const byRole = Object.fromEntries(written.map((capture) => [capture.role, capture.target]));
+    const sourceToTarget = new Map(written.map((capture) => [capture.source, capture.target]));
+    derivedEvents = join(dir, "same-run-events.normalized.jsonl");
+    copiedManifest = join(dir, "observations-manifest.json");
+    if (normalizeEvents(events, sourceToTarget, derivedEvents)) {
+      const result = spawnSync(process.execPath, [
+        "scripts/ops/friday-ui-device-observations-manifest.mjs",
+        `--mission-id=${missionId}`,
+        `--mobile=${byRole.mobile}`,
+        `--desktop=${byRole.desktop}`,
+        `--channel=${byRole.channel}`,
+        `--timeline=${byRole.timeline}`,
+        `--events=${derivedEvents}`,
+        `--out=${copiedManifest}`,
+        "--require-ready",
+      ], { encoding: "utf8" });
+      if (result.status !== 0) {
+        copiedManifest = "";
+        block("observations_manifest_derivation_failed", `exit_${result.status}`);
+      }
+    }
   } else {
-    block("observations_manifest_missing", "supply --observations-manifest from the same real capture run");
+    block("observations_manifest_missing", "supply --observations-manifest or --events from the same real capture run");
   }
 
   const index = {
@@ -134,6 +182,7 @@ if (readyToWrite) {
     evidenceDir: dir,
     captures: written,
     observationsManifest: copiedManifest || null,
+    normalizedEvents: derivedEvents || null,
     blockers,
   };
   writeFileSync(join(dir, "capture-index.json"), `${JSON.stringify(index, null, 2)}\n`);
@@ -168,6 +217,7 @@ const output = {
   evidenceDir: outDir ? abs(outDir) : null,
   captures: written,
   observationsManifest: copiedManifest || null,
+  normalizedEvents: derivedEvents || null,
   preflight,
   blockers,
   next: blockers.length === 0

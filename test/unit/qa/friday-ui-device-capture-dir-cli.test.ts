@@ -131,6 +131,43 @@ function writeManifest(path: string, evidenceDir: string) {
   writeFileSync(path, JSON.stringify(manifest, null, 2));
 }
 
+function writeEvents(path: string, refs: ReturnType<typeof writeEvidence>) {
+  const rows = [
+    observation("mobile", "mission_intake_submitted", refs.mobile),
+    observation("mobile", "mission_intake_ready", refs.mobile),
+    observation("desktop", "mission_resolve_or_create_visible", refs.desktop),
+    observation("desktop", "duplicate_preflight_visible", refs.desktop),
+    observation("mobile", "duplicate_preflight_visible", refs.mobile),
+    observation("mobile", "mission_bound_provider_action_visible", refs.mobile),
+    observation("desktop", "real_provider_execution_visible", refs.desktop),
+    observation("mobile", "proof_receipt_visible_before_done", refs.mobile),
+    observation("desktop", "same_mission_projection_visible", refs.desktop),
+    observation("desktop", "mission_workbench_visible", refs.desktop),
+    observation("desktop", "transcript_browser_visible", refs.desktop),
+    observation("desktop", "duplicate_blocked_opens_existing", refs.desktop),
+    observation("channel", "same_mission_projection_visible", refs.channel),
+    observation("channel", "same_mission_mobile_desktop_channel_visible", refs.channel),
+    observation("timeline", "bounded_page_1_visible", refs.timeline),
+    observation("timeline", "bounded_page_2_visible", refs.timeline),
+    observation("timeline", "memory_candidate_review_only", refs.timeline),
+    observation("desktop", "provider_ack_not_done_visible", refs.desktop),
+    observation("desktop", "invalid_key_error_visible", refs.desktop),
+    observation("desktop", "quota_error_visible", refs.desktop),
+    observation("desktop", "network_error_visible", refs.desktop),
+    observation("channel", "channel_replay_blocked_visible", refs.channel),
+    observation("desktop", "reconnect_stale_verified", refs.desktop),
+    observation("desktop", "real_provider_execution_receipt_visible", refs.desktop),
+    observation("desktop", "stale_label_visible", refs.desktop),
+    observation("desktop", "offline_label_visible", refs.desktop),
+    observation("desktop", "error_label_visible", refs.desktop),
+    observation("desktop", "no_hidden_fallback_verified", refs.desktop),
+  ];
+  for (let index = 0; index < 20; index += 1) {
+    rows.push(observation("desktop", "pressure_20_50_consecutive_asks_visible", refs.desktop));
+  }
+  writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+}
+
 describe("friday-ui-device-capture-dir", () => {
   it("indexes captures and runs the existing preflight when a real manifest is supplied", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-"));
@@ -159,6 +196,47 @@ describe("friday-ui-device-capture-dir", () => {
 
       const index = JSON.parse(readFileSync(join(outDir, "capture-index.json"), "utf8")) as { truth?: string };
       expect(index.truth).toBe("ui_device_capture_dir_index_not_proof");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("derives a manifest from same-run events and remaps capture refs into the evidence dir", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-events-"));
+    try {
+      const captures = writeEvidence(tempDir);
+      const events = join(tempDir, "same-run-events.jsonl");
+      const outDir = join(tempDir, "evidence");
+      writeEvents(events, captures);
+
+      const stdout = execFileSync("node", [
+        "scripts/ops/friday-ui-device-capture-dir.mjs",
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        `--mobile=${captures.mobile}`,
+        `--desktop=${captures.desktop}`,
+        `--channel=${captures.channel}`,
+        `--timeline=${captures.timeline}`,
+        `--events=${events}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      const result = JSON.parse(stdout) as {
+        status?: string;
+        observationsManifest?: string;
+        normalizedEvents?: string;
+        preflight?: { status?: number };
+      };
+      expect(result.status).toBe("ready");
+      expect(result.preflight?.status).toBe(0);
+      expect(result.observationsManifest).toBe(join(outDir, "observations-manifest.json"));
+      expect(result.normalizedEvents).toBe(join(outDir, "same-run-events.normalized.jsonl"));
+
+      const manifest = JSON.parse(readFileSync(join(outDir, "observations-manifest.json"), "utf8")) as {
+        observations?: Array<{ evidence_ref?: string }>;
+      };
+      expect(manifest.observations?.some((row) => row.evidence_ref === captures.mobile)).toBe(false);
+      expect(manifest.observations?.some((row) => row.evidence_ref === join(outDir, "mobile.png"))).toBe(true);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
