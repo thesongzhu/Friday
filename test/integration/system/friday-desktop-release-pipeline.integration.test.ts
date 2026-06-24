@@ -37,6 +37,8 @@ async function createFixtureRepo(): Promise<string> {
       "check:client-design-contract": "node scripts/ops/check-friday-client-design-contract.mjs",
       "check:product-auto-followup-contract": "node scripts/ops/check-friday-product-auto-followup-contract.mjs",
       "proof:product:auto-followup": "bash scripts/ops/friday-product-auto-followup-proof.sh",
+      "check:desktop-approval-relay-contract": "node scripts/ops/check-friday-desktop-approval-relay-contract.mjs",
+      "proof:desktop:approval-relay": "bash scripts/ops/friday-desktop-approval-relay-proof.sh",
       "build:companion:native": "bash scripts/ops/build-friday-companion-app.sh",
       "build:hub-console:native": "bash scripts/ops/build-friday-hub-console-app.sh",
       "build:ios:sim": "bash apps/friday-ios/build-sim.sh",
@@ -62,6 +64,8 @@ async function createFixtureRepo(): Promise<string> {
     "scripts/ops/check-friday-client-design-contract.mjs",
     "scripts/ops/check-friday-product-auto-followup-contract.mjs",
     "scripts/ops/friday-product-auto-followup-proof.sh",
+    "scripts/ops/check-friday-desktop-approval-relay-contract.mjs",
+    "scripts/ops/friday-desktop-approval-relay-proof.sh",
     "apps/friday-ios/Package.swift",
     "apps/friday-ios/Info.plist",
     "apps/friday-ios/build-sim.sh",
@@ -99,6 +103,16 @@ async function createFixtureRepo(): Promise<string> {
     root,
     "scripts/ops/friday-product-auto-followup-proof.sh",
     "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture product auto-followup proof\"\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/check-friday-desktop-approval-relay-contract.mjs",
+    "#!/usr/bin/env node\nconsole.log(JSON.stringify({status:\"passed\", truthLabel:\"fixture_desktop_approval_relay_contract\"}));\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/friday-desktop-approval-relay-proof.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture desktop approval relay proof\"\n",
   );
   return root;
 }
@@ -151,6 +165,14 @@ describe("client ship gate pipeline check", () => {
         }),
         expect.objectContaining({
           target: "proof:product:auto-followup",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "scripts/ops/check-friday-desktop-approval-relay-contract.mjs",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "proof:desktop:approval-relay",
           status: "passed",
         }),
       ]),
