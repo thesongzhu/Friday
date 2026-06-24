@@ -6,20 +6,22 @@ cd "$root"
 
 gate="scripts/mission-spine-ui-device-proof-gate.sh"
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/friday-ui-proof-gate-self-test.XXXXXX")"
+selftest_out="$tmpdir/expect.out"
+selftest_err="$tmpdir/expect.err"
 
 expect_exit() {
   local expected="$1"
   shift
   set +e
-  "$@" >/tmp/friday-ui-proof-gate-self-test.out 2>/tmp/friday-ui-proof-gate-self-test.err
+  "$@" >"$selftest_out" 2>"$selftest_err"
   local code=$?
   set -e
   if [[ "$code" != "$expected" ]]; then
     echo "expected exit ${expected}, got ${code}: $*" >&2
     echo "--- stdout ---" >&2
-    sed -n '1,80p' /tmp/friday-ui-proof-gate-self-test.out >&2 || true
+    sed -n '1,80p' "$selftest_out" >&2 || true
     echo "--- stderr ---" >&2
-    sed -n '1,80p' /tmp/friday-ui-proof-gate-self-test.err >&2 || true
+    sed -n '1,80p' "$selftest_err" >&2 || true
     exit 1
   fi
 }
@@ -510,7 +512,7 @@ expect_exit 4 env \
 
 echo "[mission-spine-ui-self-test] valid real-consumption-shaped proof passes"
 write_proof "$valid" "$mobile" "$desktop" "$channel" "$timeline"
-env MISSION_SPINE_UI_DEVICE_PROOF="$valid" "$gate" >/tmp/friday-ui-proof-gate-self-test.out
+env MISSION_SPINE_UI_DEVICE_PROOF="$valid" "$gate" >"$selftest_out"
 
 echo "[mission-spine-ui-self-test] assembler output passes current gate"
 jq '{checks, stress, timeline, mission_workbench, transcript_browser, status_labels, memory_candidates, event_order, observations}' "$valid" >"$observations_manifest"
@@ -521,7 +523,7 @@ MISSION_ID="mission_ui_gate_self_test" \
   TIMELINE_EVIDENCE="$timeline" \
   OBSERVATIONS_MANIFEST="$observations_manifest" \
   OUT="$assembled" \
-  scripts/mission-spine-ui-device-proof-assemble.sh >/tmp/friday-ui-proof-assembler-self-test.out
+  scripts/mission-spine-ui-device-proof-assemble.sh >"$tmpdir/assembler.out"
 
 echo "[mission-spine-ui-self-test] template manifest cannot assemble into accepted proof"
 MISSION_ID="mission_ui_gate_self_test" \
@@ -530,7 +532,7 @@ MISSION_ID="mission_ui_gate_self_test" \
   CHANNEL_EVIDENCE_REF="$channel" \
   TIMELINE_EVIDENCE_REF="$timeline" \
   OUT="$template_manifest" \
-  scripts/mission-spine-ui-observations-manifest-template.sh >/tmp/friday-ui-proof-template-self-test.out
+  scripts/mission-spine-ui-observations-manifest-template.sh >"$tmpdir/template.out"
 expect_exit 6 env \
   MISSION_ID="mission_ui_gate_self_test" \
   MOBILE_EVIDENCE="$mobile" \
@@ -551,7 +553,7 @@ expect_exit 64 env \
   OUT="$assembled" \
   scripts/mission-spine-ui-device-proof-assemble.sh
 
-rm -f "$valid" "$assembled" "$observations_manifest" "$template_manifest" "$fixture" "$organic" "$placeholder" "$pending_marker" "$missing_evidence" "$missing_metadata" "$missing_observations" "$missing_stress" "$missing_workbench" "$hash_mismatch" "$bytes_mismatch" "$secret_evidence" "$template_assembled" "$mobile" "$desktop" "$channel" "$timeline" "$secret_mobile"
+rm -f "$valid" "$assembled" "$observations_manifest" "$template_manifest" "$fixture" "$organic" "$placeholder" "$pending_marker" "$missing_evidence" "$missing_metadata" "$missing_observations" "$missing_stress" "$missing_workbench" "$hash_mismatch" "$bytes_mismatch" "$secret_evidence" "$template_assembled" "$mobile" "$desktop" "$channel" "$timeline" "$secret_mobile" "$selftest_out" "$selftest_err" "$tmpdir/assembler.out" "$tmpdir/template.out"
 rmdir "$tmpdir"
 
 echo "[mission-spine-ui-self-test] PASS"
