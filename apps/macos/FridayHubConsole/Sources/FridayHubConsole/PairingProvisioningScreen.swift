@@ -12,12 +12,7 @@ struct PairingProvisioningScreen: View {
 
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
-        header
-        inputPanel
-        qrPanel
-        operatorPanel
-      }
+      renderProofContent
       .padding(20)
       .frame(maxWidth: .infinity, alignment: .topLeading)
     }
@@ -27,6 +22,15 @@ struct PairingProvisioningScreen: View {
       allowedContentTypes: [.json, .plainText],
       allowsMultipleSelection: false,
       onCompletion: importManifest)
+  }
+
+  var renderProofContent: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      header
+      inputPanel
+      qrPanel
+      operatorPanel
+    }
   }
 
   private var header: some View {
