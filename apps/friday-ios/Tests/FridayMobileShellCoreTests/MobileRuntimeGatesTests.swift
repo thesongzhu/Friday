@@ -40,6 +40,36 @@ func mobileRuntimeGatesAcceptExplicitEnv() {
 }
 
 @Test
+func mobileRuntimeGatesReadEndpointOverridesAreExplicit() {
+  #expect(MobileRuntimeGates.liveReadHostOverride(args: [], env: [:]) == nil)
+  #expect(MobileRuntimeGates.liveReadPortOverride(args: [], env: [:]) == .absent)
+
+  #expect(MobileRuntimeGates.liveReadHostOverride(
+    args: ["--live-read-host", "127.0.0.1"],
+    env: [:]) == "127.0.0.1")
+  #expect(MobileRuntimeGates.liveReadHostOverride(
+    args: [],
+    env: ["FRIDAY_MOBILE_LIVE_READ_HOST": "localhost"]) == "localhost")
+
+  #expect(MobileRuntimeGates.liveReadPortOverride(
+    args: ["--live-read-port", "59151"],
+    env: [:]) == .value(59151))
+  #expect(MobileRuntimeGates.liveReadPortOverride(
+    args: [],
+    env: ["FRIDAY_MOBILE_LIVE_READ_PORT": "59152"]) == .value(59152))
+}
+
+@Test
+func mobileRuntimeGatesReadPortOverrideRejectsBadValues() {
+  #expect(MobileRuntimeGates.liveReadPortOverride(
+    args: ["--live-read-port", "0"],
+    env: [:]) == .invalid("0"))
+  #expect(MobileRuntimeGates.liveReadPortOverride(
+    args: [],
+    env: ["FRIDAY_MOBILE_LIVE_READ_PORT": "nope"]) == .invalid("nope"))
+}
+
+@Test
 func mobileRuntimeGatesDoNotAcceptTruthyLookalikes() {
   #expect(!MobileRuntimeGates.liveReadRequested(args: [], env: ["FRIDAY_MOBILE_LIVE_READ": "true"]))
   #expect(!MobileRuntimeGates.liveWriteRequested(args: [], env: ["FRIDAY_MOBILE_LIVE_WRITE": "yes"]))
