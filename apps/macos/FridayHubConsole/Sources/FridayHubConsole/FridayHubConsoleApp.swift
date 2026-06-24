@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Friday Hub Console — the v1 desktop UI shell (D-PR1).
 ///
-/// A read-only operator workbench over Rust Hub Mission truth.
+/// A governed operator workbench over Rust Hub Mission truth.
 ///
 /// LAUNCH MODES (LIVE is the DEFAULT — the slice-6 J2/I3/I4 flip):
 ///   - DEFAULT (LIVE) — the REAL `SealedWSReadClient` (the `FridayRustClient` package) over the

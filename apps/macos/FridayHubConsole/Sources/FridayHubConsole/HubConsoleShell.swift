@@ -97,10 +97,17 @@ struct NavRail: View {
 
       Spacer()
 
-      Text("Read-only workbench")
-        .font(.system(size: 10))
-        .foregroundStyle(HubTheme.textSecondary)
-        .padding(14)
+      VStack(alignment: .leading, spacing: 3) {
+        Text("Governed workbench")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundStyle(HubTheme.textPrimary)
+        Text("Live read + gated writes")
+          .font(.system(size: 10))
+          .foregroundStyle(HubTheme.textSecondary)
+      }
+      .padding(14)
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel("Governed workbench. Live read plus gated writes.")
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .background(HubTheme.navRailBackground)
