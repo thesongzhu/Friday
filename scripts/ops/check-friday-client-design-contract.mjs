@@ -138,6 +138,7 @@ const checks = checkSourceSet(repoRoot, [
       "recovery-loaded-mock",
       "memory-loaded-mock",
       "token-ledger-loaded-mock",
+      "pairing-provisioning-honest-empty",
       "skills-loaded-mock",
       "media-loaded-mock",
       "settings-loaded-mock",

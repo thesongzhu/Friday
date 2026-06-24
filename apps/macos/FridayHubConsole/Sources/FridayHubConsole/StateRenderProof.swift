@@ -39,6 +39,7 @@ enum StateRenderProof {
       ("chat-loaded-mock", .chat, .loaded),
       ("provider-admin-loaded-mock", .providerAdmin, .loaded),
       ("provider-parity-loaded-mock", .parity, .loaded),
+      ("pairing-provisioning-honest-empty", .pairingProvisioning, .loaded),
       ("workflow-loaded-mock", .workflow, .loaded),
       ("channels-loaded-mock", .channels, .loaded),
       ("diagnostics-loaded-mock", .diagnostics, .loaded),
@@ -66,6 +67,20 @@ enum StateRenderProof {
         let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: behavior))
         await vm.refresh()  // mock is instant → materialize the target state.
         let outPath = "\(outputDir)/\(name).png"
+        if destination == .pairingProvisioning {
+          let content = AnyView(
+            PairingProvisioningScreen()
+              .frame(width: 760, height: 720, alignment: .topLeading)
+              .background(HubTheme.backgroundWarmOffWhite))
+          if writeHostedPNG(content, width: 760, height: 720, to: outPath) {
+            FileHandle.standardOutput.write(Data("[state-proof] OK — \(outPath)\n".utf8))
+          } else {
+            FileHandle.standardError.write(
+              Data("[state-proof] FAILED — could not render \(name)\n".utf8))
+            failures += 1
+          }
+          continue
+        }
         // For the LOADED state, rasterize the card stack directly (not inside the screen's
         // `ScrollView`, which `ImageRenderer` leaves blank). The unavailable states have no
         // scroll content, so the whole screen rasterizes faithfully.
@@ -114,6 +129,17 @@ enum StateRenderProof {
       let png = rep.representation(using: .png, properties: [:])
     else { return false }
     return (try? png.write(to: URL(fileURLWithPath: path))) != nil
+  }
+
+  private static func writeHostedPNG(_ content: AnyView, width: CGFloat, height: CGFloat, to path: String) -> Bool {
+    let view = NSHostingView(rootView: content)
+    view.frame = CGRect(x: 0, y: 0, width: width, height: height)
+    view.layoutSubtreeIfNeeded()
+    guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return false }
+    view.cacheDisplay(in: view.bounds, to: rep)
+    let image = NSImage(size: view.bounds.size)
+    image.addRepresentation(rep)
+    return writePNG(image, to: path)
   }
 }
 #endif
