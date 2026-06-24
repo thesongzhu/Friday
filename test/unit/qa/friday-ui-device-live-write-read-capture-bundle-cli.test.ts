@@ -58,6 +58,47 @@ JSON
   return bin;
 }
 
+function event(surface: string, name: string, evidenceRef: string) {
+  return { surface, event: name, mission_id: sharedId, evidence_ref: evidenceRef };
+}
+
+function writeCompleteSameRunEvents(path: string, refs: { mobile: string; desktop: string; channel: string; timeline: string }) {
+  const rows = [
+    event("mobile", "mission_intake_submitted", refs.mobile),
+    event("mobile", "mission_intake_ready", refs.mobile),
+    event("desktop", "mission_resolve_or_create_visible", refs.desktop),
+    event("desktop", "duplicate_preflight_visible", refs.desktop),
+    event("mobile", "duplicate_preflight_visible", refs.mobile),
+    event("mobile", "mission_bound_provider_action_visible", refs.mobile),
+    event("desktop", "real_provider_execution_visible", refs.desktop),
+    event("mobile", "proof_receipt_visible_before_done", refs.mobile),
+    event("desktop", "same_mission_projection_visible", refs.desktop),
+    event("desktop", "mission_workbench_visible", refs.desktop),
+    event("desktop", "transcript_browser_visible", refs.desktop),
+    event("desktop", "duplicate_blocked_opens_existing", refs.desktop),
+    event("channel", "same_mission_projection_visible", refs.channel),
+    event("channel", "same_mission_mobile_desktop_channel_visible", refs.channel),
+    event("timeline", "bounded_page_1_visible", refs.timeline),
+    event("timeline", "bounded_page_2_visible", refs.timeline),
+    event("timeline", "memory_candidate_review_only", refs.timeline),
+    event("desktop", "provider_ack_not_done_visible", refs.desktop),
+    event("desktop", "invalid_key_error_visible", refs.desktop),
+    event("desktop", "quota_error_visible", refs.desktop),
+    event("desktop", "network_error_visible", refs.desktop),
+    event("channel", "channel_replay_blocked_visible", refs.channel),
+    event("desktop", "reconnect_stale_verified", refs.desktop),
+    event("desktop", "real_provider_execution_receipt_visible", refs.desktop),
+    event("desktop", "stale_label_visible", refs.desktop),
+    event("desktop", "offline_label_visible", refs.desktop),
+    event("desktop", "error_label_visible", refs.desktop),
+    event("desktop", "no_hidden_fallback_verified", refs.desktop),
+  ];
+  for (let index = 0; index < 20; index += 1) {
+    rows.push(event("desktop", "pressure_20_50_consecutive_asks_visible", refs.desktop));
+  }
+  writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+}
+
 describe("friday-ui-device-live-write-read-capture-bundle", () => {
   it("runs mobile and desktop captures with the same mission id, then writes a partial bundle", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-orchestrator-"));
@@ -91,6 +132,51 @@ describe("friday-ui-device-live-write-read-capture-bundle", () => {
       expect(index.captures?.mobile?.event_count).toBe(5);
       expect(index.captures?.desktop?.event_count).toBe(5);
       expect(index.fullProofGaps).toContain("bounded_timeline_capture");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("delegates to the capture-dir preflight when real channel and timeline inputs are supplied", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-orchestrator-full-"));
+    try {
+      const outDir = join(tempDir, "capture");
+      const channel = join(tempDir, "channel.log");
+      const timeline = join(tempDir, "timeline.trace");
+      const events = join(tempDir, "same-run-events.jsonl");
+      const fakeBin = fakeSwiftScript(tempDir);
+      writeFileSync(channel, "real channel capture\n");
+      writeFileSync(timeline, "real timeline capture\n");
+      writeCompleteSameRunEvents(events, {
+        mobile: join(outDir, "mobile", "ios-live-write-read-proof.json"),
+        desktop: join(outDir, "desktop", "macos-live-write-read-proof.json"),
+        channel,
+        timeline,
+      });
+
+      const stdout = execFile("bash", [
+        script,
+        `--out-dir=${outDir}`,
+        `--shared-id=${sharedId}`,
+        `--channel-capture=${channel}`,
+        `--timeline-capture=${timeline}`,
+        `--same-run-events=${events}`,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        },
+      });
+
+      expect(stdout).toContain("evidence=");
+      const captureIndex = JSON.parse(readFileSync(join(outDir, "evidence", "capture-index.json"), "utf8")) as {
+        status?: string;
+        observationsManifest?: string;
+      };
+      expect(captureIndex.status).toBe("ready_for_preflight");
+      expect(captureIndex.observationsManifest).toContain("observations-manifest.json");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
