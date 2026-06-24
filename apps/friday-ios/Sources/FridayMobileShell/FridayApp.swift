@@ -199,13 +199,17 @@ final class FridaySession: ObservableObject {
       return nil
     }
     do {
+      let config = try liveWriteConfig(args: args, env: env)
       if useDeviceKeypair(args: args, env: env) {
         let device = try DeviceKeypairStore.loadOrGenerate(backend: deviceKeypairBackend)
         return RealWriteClientFactory.makeLive(
           deviceKeypair: device,
+          config: config,
           agentRunControlViaRust: runControlEnabled)
       }
-      return try RealWriteClientFactory.makeLive(agentRunControlViaRust: runControlEnabled)
+      return try RealWriteClientFactory.makeLive(
+        config: config,
+        agentRunControlViaRust: runControlEnabled)
     } catch {
       // Master/device key unavailable or corrupt: no mission-capable client. The caller falls back
       // to the throwing honest-unavailable write client; never fabricate a ready chat surface.
@@ -247,6 +251,21 @@ final class FridaySession: ObservableObject {
 
   static func liveWriteRequested(args: [String], env: [String: String]) -> Bool {
     MobileRuntimeGates.liveWriteRequested(args: args, env: env)
+  }
+
+  static func liveWriteConfig(args: [String], env: [String: String]) throws -> AgentRunServerConfig {
+    let host = MobileRuntimeGates.liveWriteHostOverride(args: args, env: env)
+      ?? AgentRunServerConfig.liveLoopback.host
+    switch MobileRuntimeGates.liveWritePortOverride(args: args, env: env) {
+    case .absent:
+      return AgentRunServerConfig(
+        host: host,
+        port: AgentRunServerConfig.liveLoopback.port)
+    case let .value(port):
+      return AgentRunServerConfig(host: host, port: port)
+    case let .invalid(raw):
+      throw FridayReadClientError.transport("invalid live write port override \(raw)")
+    }
   }
 
   static func livePairingRequested(args: [String], env: [String: String]) -> Bool {

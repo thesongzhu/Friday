@@ -181,6 +181,12 @@ case "$MODE" in
     if [[ -n "${FRIDAY_MOBILE_LIVE_READ_PORT:-}" ]]; then
       LAUNCH_ENV+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ_PORT="$FRIDAY_MOBILE_LIVE_READ_PORT")
     fi
+    if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_HOST:-}" ]]; then
+      LAUNCH_ENV+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_HOST="$FRIDAY_MOBILE_LIVE_WRITE_HOST")
+    fi
+    if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_PORT:-}" ]]; then
+      LAUNCH_ENV+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_PORT="$FRIDAY_MOBILE_LIVE_WRITE_PORT")
+    fi
     ;;
 esac
 env "${LAUNCH_ENV[@]}" xcrun simctl launch --terminate-running-process "$UDID" com.friday.shell "${LAUNCH_ARGS[@]}"
@@ -193,12 +199,20 @@ xcrun simctl io "$UDID" screenshot "$SHOT"
 SIMULATOR_DEVICE_PUBKEY_JSON=null
 LIVE_READ_HOST_OVERRIDE_JSON=null
 LIVE_READ_PORT_OVERRIDE_JSON=null
+LIVE_WRITE_HOST_OVERRIDE_JSON=null
+LIVE_WRITE_PORT_OVERRIDE_JSON=null
 if [[ "$MODE" == "live-loopback" ]]; then
   if [[ -n "${FRIDAY_MOBILE_LIVE_READ_HOST:-}" && "$FRIDAY_MOBILE_LIVE_READ_HOST" =~ ^[A-Za-z0-9._:-]+$ ]]; then
     LIVE_READ_HOST_OVERRIDE_JSON="\"$FRIDAY_MOBILE_LIVE_READ_HOST\""
   fi
   if [[ -n "${FRIDAY_MOBILE_LIVE_READ_PORT:-}" && "$FRIDAY_MOBILE_LIVE_READ_PORT" =~ ^[0-9]+$ ]]; then
     LIVE_READ_PORT_OVERRIDE_JSON="\"$FRIDAY_MOBILE_LIVE_READ_PORT\""
+  fi
+  if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_HOST:-}" && "$FRIDAY_MOBILE_LIVE_WRITE_HOST" =~ ^[A-Za-z0-9._:-]+$ ]]; then
+    LIVE_WRITE_HOST_OVERRIDE_JSON="\"$FRIDAY_MOBILE_LIVE_WRITE_HOST\""
+  fi
+  if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_PORT:-}" && "$FRIDAY_MOBILE_LIVE_WRITE_PORT" =~ ^[0-9]+$ ]]; then
+    LIVE_WRITE_PORT_OVERRIDE_JSON="\"$FRIDAY_MOBILE_LIVE_WRITE_PORT\""
   fi
   DATA_CONTAINER="$(xcrun simctl get_app_container "$UDID" com.friday.shell data 2>/dev/null || true)"
   PUBKEY_FILE="$DATA_CONTAINER/Library/Application Support/FridayShellSimulatorProof/device-pubkey-v1.txt"
@@ -223,6 +237,8 @@ cat > "$SHOT.metadata.json" <<JSON
   "simulator_file_device_keypair_requested": $([[ "$MODE" == "live-loopback" ]] && echo true || echo false),
   "live_read_host_override": $LIVE_READ_HOST_OVERRIDE_JSON,
   "live_read_port_override": $LIVE_READ_PORT_OVERRIDE_JSON,
+  "live_write_host_override": $LIVE_WRITE_HOST_OVERRIDE_JSON,
+  "live_write_port_override": $LIVE_WRITE_PORT_OVERRIDE_JSON,
   "simulator_device_pubkey": $SIMULATOR_DEVICE_PUBKEY_JSON,
   "caveat": "offline-truth proves honest-unavailable; live-loopback attempts real local read/write/pairing seams but does not claim END-BAR, GO-LIVE, adoption, trust minting, or operator signing."
 }

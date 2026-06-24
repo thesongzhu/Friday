@@ -75,8 +75,10 @@ func liveMobileMissionSpineWriteDispatchCanStartMissionBoundRun() async throws {
 @MainActor
 func liveMobileChatSendAutoDispatchesHybridClaudeFollowUp() async throws {
   let identity = liveUiProofMissionIdentity(defaultSurface: "mobile")
-  let writeClient = try RealWriteClientFactory.makeLive(config: mobileProductAutoFollowUpWriteConfig())
-  let readClient = try RealReadClientFactory.makeLive(missionId: identity.missionId)
+  let writeClient = try RealWriteClientFactory.makeLive(config: try mobileProductAutoFollowUpWriteConfig())
+  let readClient = try RealReadClientFactory.makeLive(
+    config: try mobileProductAutoFollowUpReadConfig(),
+    missionId: identity.missionId)
   let vm = FridayChatViewModel(
     writeClient: writeClient,
     signer: MockOperatorSigner(),
@@ -173,14 +175,27 @@ private func pollLiveRunOutcomeLearningCandidates(
   return []
 }
 
-private func mobileProductAutoFollowUpWriteConfig() -> AgentRunServerConfig {
-  guard
-    let rawPort = ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_PRODUCT_AUTO_FOLLOWUP_WRITE_PORT"],
-    let port = UInt16(rawPort)
-  else {
+private func mobileProductAutoFollowUpWriteConfig() throws -> AgentRunServerConfig {
+  guard let rawPort = ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_PRODUCT_AUTO_FOLLOWUP_WRITE_PORT"] else {
     return .liveLoopback
   }
+  guard let port = UInt16(rawPort), port > 0 else {
+    throw FridayReadClientError.transport("invalid live product auto-followup write port override \(rawPort)")
+  }
   return AgentRunServerConfig(host: "127.0.0.1", port: port)
+}
+
+private func mobileProductAutoFollowUpReadConfig() throws -> ReadProjectionServerConfig {
+  let env = ProcessInfo.processInfo.environment
+  let rawPort = env["FRIDAY_MOBILE_LIVE_PRODUCT_AUTO_FOLLOWUP_READ_PORT"]
+    ?? env["FRIDAY_MOBILE_LIVE_READ_PORT"]
+  guard let rawPort else {
+    return .liveLoopback
+  }
+  guard let port = UInt16(rawPort), port > 0 else {
+    throw FridayReadClientError.transport("invalid live product auto-followup read port override \(rawPort)")
+  }
+  return ReadProjectionServerConfig(host: "127.0.0.1", port: port)
 }
 
 private func makeLiveMobileIntake(

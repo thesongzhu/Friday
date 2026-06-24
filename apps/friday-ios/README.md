@@ -114,15 +114,28 @@ records which proof mode produced the screenshot and, in live-loopback mode, the
 simulator device key needed for read-seam enrollment.
 
 For isolated read-server proofs that must not touch the production `:48751` process,
-set an explicit simulator child read endpoint before launching:
+set an explicit simulator child read endpoint before launching. The write endpoint still
+defaults to the live agent-run server on `127.0.0.1:48750`; set
+`FRIDAY_MOBILE_LIVE_WRITE_HOST` / `FRIDAY_MOBILE_LIVE_WRITE_PORT` only when intentionally
+targeting an isolated write server.
 
 ```sh
 FRIDAY_MOBILE_LIVE_READ_PORT=59151 \
   apps/friday-ios/build-sim.sh --mode live-loopback --shot apps/friday-ios/.build-sim/friday-ios-live-scratch-read.png
 ```
 
-The shipped default remains `127.0.0.1:48751`; invalid explicit ports fail closed as
-honest unavailable instead of silently falling back.
+The shipped defaults remain `127.0.0.1:48751` for read and `127.0.0.1:48750` for write;
+invalid explicit ports fail closed as honest unavailable instead of silently falling back.
+
+The env-gated live write→read projection proof accepts the same endpoint overrides, so a
+safe local proof can write through live `:48750` and read back through an isolated read server
+that loaded the current simulator allowlist:
+
+```sh
+FRIDAY_MOBILE_LIVE_WRITE_READ_ROUNDTRIP_TEST=1 \
+FRIDAY_MOBILE_LIVE_READ_PORT=59151 \
+  swift test --package-path apps/friday-ios --filter LiveWriteReadProjectionRoundTrip
+```
 
 To turn that simulator public key into an auditable read-seam proof, use:
 
