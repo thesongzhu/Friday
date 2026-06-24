@@ -78,13 +78,15 @@ fn codex_mutating_gate_from(raw: Option<String>) -> bool {
 /// never-completing notification stream terminates the loop instead of spinning forever.
 pub const MODEL_TURN_MAX_MESSAGES: usize = 100_000;
 
-/// Env override for the local `codex app-server --stdio` watchdog. The watchdog is a
-/// process-level no-wedge guard: if the app-server stops emitting stdout, killing the child
-/// breaks any blocking `read_line` in the stdio transport. DEFAULT is deliberately generous
-/// for live provider calls and matches the mission-bound Codex dispatch budget; tests can
+/// Env override for the local `codex app-server --stdio` watchdog's IDLE window. The
+/// watchdog is a process-level no-wedge guard: if the app-server stops emitting stdout,
+/// killing the child breaks any blocking `read_line` in the stdio transport. Friday keeps
+/// this idle-progress window shorter than the finite wall budget so an alive-but-silent
+/// child is bounded without mistaking a long but still-emitting turn for a wedge. Tests can
 /// exercise the parser without mutating process env.
 pub const FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS: &str = "FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS";
-pub const DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS: u64 = 300_000;
+pub const DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS: u64 = 60_000;
+pub const DEFAULT_CODEX_APP_SERVER_WALL_TIMEOUT_MS: u64 = 300_000;
 pub const CODEX_APP_SERVER_WATCHDOG_WALL_MULTIPLIER: u32 = 4;
 
 pub const REQUIRED_CLIENT_METHODS: &[&str] = &[
@@ -1329,12 +1331,16 @@ impl LocalCodexAppServer {
         let stdout = child.stdout.take().ok_or(CodexAppServerError::Transport {
             code: "app-server-stdout",
         })?;
-        let timeout = codex_app_server_watchdog_timeout_from(
+        let timeouts = codex_app_server_watchdog_timeouts_from(
             std::env::var(FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS)
                 .ok()
                 .as_deref(),
         );
-        let watchdog_control = Some(spawn_app_server_watchdog(child.id(), timeout));
+        let watchdog_control = Some(spawn_app_server_watchdog(
+            child.id(),
+            timeouts.idle_timeout,
+            timeouts.wall_timeout,
+        ));
         let client = CodexAppServerClient::new(JsonLineTransport::with_watchdog_progress(
             stdout,
             stdin,
@@ -1376,6 +1382,24 @@ impl Drop for LocalCodexAppServer {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AppServerWatchdogTimeouts {
+    idle_timeout: Duration,
+    wall_timeout: Duration,
+}
+
+fn codex_app_server_watchdog_timeouts_from(raw: Option<&str>) -> AppServerWatchdogTimeouts {
+    let idle_timeout = codex_app_server_watchdog_timeout_from(raw);
+    let wall_timeout = match raw.and_then(|value| value.trim().parse::<u64>().ok()) {
+        Some(value) if value > 0 => codex_app_server_watchdog_wall_timeout_from(idle_timeout),
+        _ => Duration::from_millis(DEFAULT_CODEX_APP_SERVER_WALL_TIMEOUT_MS),
+    };
+    AppServerWatchdogTimeouts {
+        idle_timeout,
+        wall_timeout,
+    }
+}
+
 fn codex_app_server_watchdog_timeout_from(raw: Option<&str>) -> Duration {
     let millis = raw
         .and_then(|value| value.trim().parse::<u64>().ok())
@@ -1396,10 +1420,13 @@ enum AppServerWatchdogSignal {
     Release,
 }
 
-fn spawn_app_server_watchdog(pid: u32, idle_timeout: Duration) -> Sender<AppServerWatchdogSignal> {
+fn spawn_app_server_watchdog(
+    pid: u32,
+    idle_timeout: Duration,
+    wall_timeout: Duration,
+) -> Sender<AppServerWatchdogSignal> {
     let (control, events) = mpsc::channel();
     let _ = thread::spawn(move || {
-        let wall_timeout = codex_app_server_watchdog_wall_timeout_from(idle_timeout);
         let started = Instant::now();
         loop {
             let elapsed = started.elapsed();
@@ -2732,7 +2759,8 @@ mod tests {
 
     #[test]
     fn codex_app_server_watchdog_timeout_defaults_and_requires_positive_millis() {
-        assert_eq!(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS, 300_000);
+        assert_eq!(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS, 60_000);
+        assert_eq!(DEFAULT_CODEX_APP_SERVER_WALL_TIMEOUT_MS, 300_000);
         assert_eq!(CODEX_APP_SERVER_WATCHDOG_WALL_MULTIPLIER, 4);
         assert_eq!(
             codex_app_server_watchdog_timeout_from(None),
@@ -2751,8 +2779,22 @@ mod tests {
             Duration::from_millis(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS)
         );
         assert_eq!(
+            codex_app_server_watchdog_timeouts_from(None),
+            AppServerWatchdogTimeouts {
+                idle_timeout: Duration::from_millis(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS),
+                wall_timeout: Duration::from_millis(DEFAULT_CODEX_APP_SERVER_WALL_TIMEOUT_MS),
+            }
+        );
+        assert_eq!(
             codex_app_server_watchdog_timeout_from(Some(" 250 ")),
             Duration::from_millis(250)
+        );
+        assert_eq!(
+            codex_app_server_watchdog_timeouts_from(Some(" 250 ")),
+            AppServerWatchdogTimeouts {
+                idle_timeout: Duration::from_millis(250),
+                wall_timeout: Duration::from_millis(1_000),
+            }
         );
         assert_eq!(
             codex_app_server_watchdog_wall_timeout_from(Duration::from_millis(250)),
@@ -2786,7 +2828,11 @@ mod tests {
             .args(["-c", "sleep 5"])
             .spawn()
             .unwrap();
-        let control = spawn_app_server_watchdog(child.id(), Duration::from_millis(120));
+        let control = spawn_app_server_watchdog(
+            child.id(),
+            Duration::from_millis(120),
+            Duration::from_secs(5),
+        );
         thread::sleep(Duration::from_millis(70));
         control.send(AppServerWatchdogSignal::Progress).unwrap();
         thread::sleep(Duration::from_millis(70));
@@ -2805,7 +2851,11 @@ mod tests {
             .args(["-c", "sleep 5"])
             .spawn()
             .unwrap();
-        let _control = spawn_app_server_watchdog(child.id(), Duration::from_millis(80));
+        let _control = spawn_app_server_watchdog(
+            child.id(),
+            Duration::from_millis(80),
+            Duration::from_secs(5),
+        );
         for _ in 0..20 {
             if let Some(status) = child.try_wait().unwrap() {
                 assert!(
