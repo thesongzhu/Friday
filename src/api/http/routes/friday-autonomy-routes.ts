@@ -655,11 +655,7 @@ function requireNonEmptyString(value: unknown, field: string): string {
   return value;
 }
 
-function requireUserId(principal: { userId?: string } | null, bodyOrQuery?: Record<string, unknown>): string {
-  const explicit = bodyOrQuery?.userId;
-  if (typeof explicit === "string" && explicit.trim().length > 0) {
-    return explicit.trim();
-  }
+function requireUserId(principal: { userId?: string } | null): string {
   if (!principal?.userId) {
     throw new FridayDomainError("UNAUTHORIZED", "A user-scoped autonomy principal is required", {
       httpStatus: 401,
@@ -763,7 +759,7 @@ export function createFridayAutonomyRoutes(
         }
         const query = (ctx.query ?? {}) as Record<string, unknown>;
         const goal = requireNonEmptyString(query.goal, "goal");
-        const userId = requireUserId(ctx.principal, query);
+        const userId = requireUserId(ctx.principal);
         const run = await deps.acquisitionService.plan({
           userId,
           goal,
@@ -785,7 +781,7 @@ export function createFridayAutonomyRoutes(
         }
         const body = (ctx.body ?? {}) as Record<string, unknown>;
         const goal = requireNonEmptyString(body.goal, "goal");
-        const userId = requireUserId(ctx.principal, body);
+        const userId = requireUserId(ctx.principal);
         assertCapabilityAcquisitionTestOracleAllowed(deps);
         const run = await deps.acquisitionService.startRun({
           userId,
@@ -865,7 +861,7 @@ export function createFridayAutonomyRoutes(
           throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
         }
         const query = (ctx.query ?? {}) as Record<string, unknown>;
-        const userId = requireUserId(ctx.principal, query);
+        const userId = requireUserId(ctx.principal);
         return {
           items: deps.standingAgendaService.listStandingGoals({
             userId,
@@ -885,7 +881,7 @@ export function createFridayAutonomyRoutes(
           throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
         }
         const body = (ctx.body ?? {}) as FridayCreateStandingGoalRequest;
-        const userId = requireUserId(ctx.principal, body as unknown as Record<string, unknown>);
+        const userId = requireUserId(ctx.principal);
         const objective = requireNonEmptyString(body.objective, "objective");
         assertStandingAgendaTestOracleAllowed(deps);
         const result = await deps.standingAgendaService.createStandingGoal({
@@ -922,7 +918,7 @@ export function createFridayAutonomyRoutes(
           throw new FridayDomainError("NOT_IMPLEMENTED", "Standing goals service is not configured", { httpStatus: 501 });
         }
         const query = (ctx.query ?? {}) as Record<string, unknown>;
-        const userId = requireUserId(ctx.principal, query);
+        const userId = requireUserId(ctx.principal);
         return {
           items: deps.standingAgendaService.listAgenda({
             userId,
