@@ -87,7 +87,7 @@ export async function execute(input = {}, ctx = {}) {
       inspection = await browser.inspectPage({
         url,
         screenshotName: "browser-qa-report",
-        waitUntil: "load",
+        waitUntil: "domcontentloaded",
       });
     } catch (error) {
       const blocked = browserRuntimeBlockedResult({

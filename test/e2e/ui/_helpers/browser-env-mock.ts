@@ -143,7 +143,7 @@ export async function createFridayMockBrowserE2eEnv(input?: {
         page.setDefaultNavigationTimeout(60_000);
         const originalGoto = page.goto.bind(page);
         page.goto = ((url, options) => originalGoto(url, {
-          waitUntil: "domcontentloaded",
+          waitUntil: "commit",
           ...options,
         })) as typeof page.goto;
 

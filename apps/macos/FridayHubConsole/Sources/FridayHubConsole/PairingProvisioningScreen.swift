@@ -28,6 +28,7 @@ struct PairingProvisioningScreen: View {
     VStack(alignment: .leading, spacing: 16) {
       header
       inputPanel
+      pathwayPanel
       qrPanel
       operatorPanel
     }
@@ -169,6 +170,50 @@ struct PairingProvisioningScreen: View {
     }
   }
 
+  private var pathwayPanel: some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Text("Provisioning Path")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(HubTheme.textPrimary)
+          Spacer()
+          statusChip("no app mint")
+        }
+        Text("PairAck, trust grant, and context passport remain separate governed steps. This panel shows the path; readiness still comes from the Hub DB projection.")
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        ForEach(viewModel.provisioningSteps) { step in
+          provisioningStepRow(step)
+        }
+      }
+    }
+    .accessibilityIdentifier("friday.desktop.pairing-provisioning-path")
+  }
+
+  private func provisioningStepRow(_ step: PairingProvisioningStep) -> some View {
+    HStack(alignment: .top, spacing: 10) {
+      Image(systemName: step.satisfied ? "checkmark.circle.fill" : "circle")
+        .foregroundStyle(step.satisfied ? HubTheme.cyan : HubTheme.textSecondary)
+        .frame(width: 18)
+      VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 8) {
+          Text(step.title)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(HubTheme.textPrimary)
+          statusChip(step.status)
+        }
+        Text(step.detail)
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      Spacer()
+    }
+    .padding(.vertical, 4)
+  }
+
   private var operatorPanel: some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: 12) {
@@ -184,7 +229,7 @@ struct PairingProvisioningScreen: View {
           }
           .buttonStyle(.bordered)
         }
-        Text("Trust grants and context passports stay operator CLI ceremonies; this app opens the read-only action helper so the current DB state chooses the exact command.")
+        Text("Trust grants and context passports stay operator CLI ceremonies; this app opens the read-only action helper so the current DB state chooses the exact no-heredoc command.")
           .font(.system(size: 11))
           .foregroundStyle(HubTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)

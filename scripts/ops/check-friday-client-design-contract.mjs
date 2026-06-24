@@ -131,6 +131,19 @@ const checks = checkSourceSet(repoRoot, [
     ],
   },
   {
+    label: "macOS pairing provisioning keeps zero-config path and operator ceremony truth visible",
+    path: "apps/macos/FridayHubConsole/Sources/FridayHubConsole/PairingProvisioningScreen.swift",
+    requiredStrings: [
+      "Provisioning Path",
+      "no app mint",
+      "PairAck",
+      "operator CLI ceremonies",
+      "no-heredoc command",
+      "Hub DB projection",
+      "friday.desktop.pairing-provisioning-path",
+    ],
+  },
+  {
     label: "macOS render proof covers selected desktop destinations",
     path: "apps/macos/FridayHubConsole/Sources/FridayHubConsole/StateRenderProof.swift",
     requiredStrings: [
