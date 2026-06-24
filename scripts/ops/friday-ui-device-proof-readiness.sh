@@ -217,6 +217,11 @@ run_note_step() {
   fi
 }
 
+EXPECT_NOT_READY_ARGS=(--expect-not-ready)
+if [ "${MODE}" = "require-proof" ]; then
+  EXPECT_NOT_READY_ARGS=()
+fi
+
 run_note_step "ui_device_gate_self_test" env \
   -u MISSION_ID \
   -u MOBILE_EVIDENCE \
@@ -229,18 +234,18 @@ run_note_step "ui_device_gate_self_test" env \
 
 if [ "${RUN_LIVE_READINESS}" = "1" ]; then
   run_step "mission_workbench_live_readiness" \
-    node "${REPO_ROOT}/scripts/qa/check-mission-workbench-live-readiness.mjs" --expect-not-ready
+    node "${REPO_ROOT}/scripts/qa/check-mission-workbench-live-readiness.mjs" "${EXPECT_NOT_READY_ARGS[@]}"
 fi
 
 if [ "${RUN_SNAPSHOT_CONTRACT}" = "1" ]; then
   if [ -n "${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}" ]; then
     run_step "mission_workbench_snapshot_contract_file" \
       node "${REPO_ROOT}/scripts/qa/check-mission-workbench-snapshot-contract.mjs" \
-        "--file=${FRIDAY_WORKBENCH_SNAPSHOT_FILE}" --expect-not-ready
+        "--file=${FRIDAY_WORKBENCH_SNAPSHOT_FILE}" "${EXPECT_NOT_READY_ARGS[@]}"
   elif [ -n "${FRIDAY_WORKBENCH_SNAPSHOT_URL:-}" ]; then
     run_step "mission_workbench_snapshot_contract_url" \
       node "${REPO_ROOT}/scripts/qa/check-mission-workbench-snapshot-contract.mjs" \
-        "--url=${FRIDAY_WORKBENCH_SNAPSHOT_URL}" --expect-not-ready
+        "--url=${FRIDAY_WORKBENCH_SNAPSHOT_URL}" "${EXPECT_NOT_READY_ARGS[@]}"
   else
     blockers+=("mission_workbench_snapshot_contract:missing_FRIDAY_WORKBENCH_SNAPSHOT_FILE_or_URL")
   fi
