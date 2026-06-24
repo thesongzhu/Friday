@@ -58,6 +58,24 @@ function writePartialEvidenceDir(tempDir: string) {
   return files;
 }
 
+function writeSupportingProofs(tempDir: string) {
+  const files = {
+    backend: join(tempDir, "backend-live-proof.json"),
+    channel: join(tempDir, "channel-live-proof.json"),
+  };
+  writeFileSync(files.backend, JSON.stringify({
+    proof: "mission_spine_backend_api_live_pressure",
+    status: "passed",
+    remaining_requirement: "real mobile/desktop/channel UI/device consumption evidence must still pass scripts/mission-spine-ui-device-proof-gate.sh",
+  }, null, 2));
+  writeFileSync(files.channel, JSON.stringify({
+    proof: "mission_spine_channel_live_proof",
+    status: "passed",
+    remaining_requirement: "real mobile/desktop/channel UI/device consumption evidence must still pass scripts/mission-spine-ui-device-proof-gate.sh",
+  }, null, 2));
+  return files;
+}
+
 function writeWorkbenchSnapshotEvidenceDir(tempDir: string) {
   const files = {
     mobile: join(tempDir, "mobile.json"),
@@ -563,6 +581,57 @@ describe("friday-ui-device-proof-readiness", () => {
         event: "same_mission_projection_visible",
         preferredCapture: "channel",
       });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("passes supporting proofs into the gap report without satisfying UI device proof", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-supporting-"));
+    try {
+      writePartialEvidenceDir(tempDir);
+      const proofs = writeSupportingProofs(tempDir);
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+        "--backend-live-proof",
+        proofs.backend,
+        "--channel-live-proof",
+        proofs.channel,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        truth?: string;
+        status?: string;
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.truth).toBe("report_only_not_ui_device_proof");
+      expect(result.status).toBe("blocked");
+      expect(result.notes).toContain(`resolved_BACKEND_LIVE_PROOF:${proofs.backend}`);
+      expect(result.notes).toContain(`resolved_CHANNEL_LIVE_PROOF:${proofs.channel}`);
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+
+      const gapReport = JSON.parse(readFileSync(join(tempDir, "gap-report.json"), "utf8")) as {
+        status?: string;
+        supportingProofs?: Array<{ role?: string; status?: string; countsTowardUiDeviceProof?: boolean }>;
+      };
+      expect(gapReport.status).toBe("gaps_present");
+      expect(gapReport.supportingProofs).toContainEqual(expect.objectContaining({
+        role: "backendLiveProof",
+        status: "usable_precondition_not_ui_device_evidence",
+        countsTowardUiDeviceProof: false,
+      }));
+      expect(gapReport.supportingProofs).toContainEqual(expect.objectContaining({
+        role: "channelLiveProof",
+        status: "usable_precondition_not_ui_device_evidence",
+        countsTowardUiDeviceProof: false,
+      }));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

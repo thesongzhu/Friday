@@ -15,11 +15,17 @@ MODE="report-only"
 RUN_LIVE_READINESS=0
 RUN_SNAPSHOT_CONTRACT=0
 EVIDENCE_DIR="${FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR:-}"
+BACKEND_LIVE_PROOF="${FRIDAY_UI_DEVICE_BACKEND_LIVE_PROOF:-}"
+CHANNEL_LIVE_PROOF="${FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF:-}"
+OBJECTIVE_COVERAGE="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
 
 usage() {
   cat <<'EOF'
 usage:
   scripts/ops/friday-ui-device-proof-readiness.sh [--live-readiness] [--snapshot-contract] [--require-proof] [--evidence-dir /abs/capture-dir]
+    [--backend-live-proof /abs/backend-proof.json]
+    [--channel-live-proof /abs/channel-proof.json]
+    [--objective-coverage /abs/objective-coverage.json]
 
 optional env for live/snapshot checks:
   FRIDAY_MISSION_WORKBENCH_URL=http://127.0.0.1:5173/mission-workbench
@@ -38,6 +44,9 @@ real proof env, all required to assemble:
 evidence-dir auto-discovery:
   FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR=/abs/capture-dir
   or --evidence-dir /abs/capture-dir
+  FRIDAY_UI_DEVICE_BACKEND_LIVE_PROOF=/abs/backend-proof.json
+  FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF=/abs/channel-proof.json
+  FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE=/abs/objective-coverage.json
 
   Looks for mission-id.txt or manifest mission_id plus:
     mobile.{json,trace,log,png}
@@ -72,6 +81,33 @@ while [ "$#" -gt 0 ]; do
         exit 64
       fi
       EVIDENCE_DIR="$2"
+      shift
+      ;;
+    --backend-live-proof)
+      if [ "$#" -lt 2 ]; then
+        echo "FATAL: --backend-live-proof requires a value" >&2
+        usage >&2
+        exit 64
+      fi
+      BACKEND_LIVE_PROOF="$2"
+      shift
+      ;;
+    --channel-live-proof)
+      if [ "$#" -lt 2 ]; then
+        echo "FATAL: --channel-live-proof requires a value" >&2
+        usage >&2
+        exit 64
+      fi
+      CHANNEL_LIVE_PROOF="$2"
+      shift
+      ;;
+    --objective-coverage)
+      if [ "$#" -lt 2 ]; then
+        echo "FATAL: --objective-coverage requires a value" >&2
+        usage >&2
+        exit 64
+      fi
+      OBJECTIVE_COVERAGE="$2"
       shift
       ;;
     -h|--help)
@@ -283,7 +319,7 @@ derive_workbench_events_if_possible
 if [ -n "$EVIDENCE_DIR" ]; then
   notes+=("evidence_dir:$(abs_path "$EVIDENCE_DIR")")
 fi
-for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELINE_EVIDENCE OBSERVATIONS_MANIFEST FRIDAY_WORKBENCH_SNAPSHOT_FILE; do
+for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELINE_EVIDENCE OBSERVATIONS_MANIFEST FRIDAY_WORKBENCH_SNAPSHOT_FILE BACKEND_LIVE_PROOF CHANNEL_LIVE_PROOF OBJECTIVE_COVERAGE; do
   if [ -n "${!name:-}" ]; then
     notes+=("resolved_${name}:${!name}")
   fi
@@ -343,6 +379,15 @@ run_gap_report_if_possible() {
   )
   if [ -n "${OBSERVATIONS_MANIFEST:-}" ]; then
     args+=("--manifest=${OBSERVATIONS_MANIFEST}")
+  fi
+  if [ -n "${BACKEND_LIVE_PROOF:-}" ]; then
+    args+=("--backend-live-proof=$(abs_path "$BACKEND_LIVE_PROOF")")
+  fi
+  if [ -n "${CHANNEL_LIVE_PROOF:-}" ]; then
+    args+=("--channel-live-proof=$(abs_path "$CHANNEL_LIVE_PROOF")")
+  fi
+  if [ -n "${OBJECTIVE_COVERAGE:-}" ]; then
+    args+=("--objective-coverage=$(abs_path "$OBJECTIVE_COVERAGE")")
   fi
 
   mkdir -p "$(dirname "$gap_out")"
