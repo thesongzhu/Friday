@@ -1460,6 +1460,27 @@ impl Db {
         Ok(())
     }
 
+    /// Atomic billing write for ONE background memory-extraction model call: the extraction
+    /// `token_ledger` row + its `audit_ledger` event in one transaction (M1 audit-coverage
+    /// fix). `&self` (the whole extraction path holds a shared `&Db`, NS8-WIRE-1) — it
+    /// delegates to the free [`record_extraction_model_call`] on `self.conn()`, which opens an
+    /// `unchecked_transaction`. Hub-only: fails closed on a phone (the audit insert), which the
+    /// extraction path never hits (it runs only on a Hub DB). See the free fn for the full
+    /// rationale (ledger + audit only, run_id stays NULL, busy-retry, own-tx).
+    pub fn record_extraction_model_call(
+        &self,
+        entry: &LedgerEntry,
+        audit: &AuditEvent,
+    ) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "record_extraction_model_call requires the Hub profile (audit_ledger is Hub-only)"
+                    .into(),
+            ));
+        }
+        record_extraction_model_call(&self.conn, entry, audit)
+    }
+
     pub fn insert_tool_usage(
         &self,
         usage: &ToolUsageMeasurement,
@@ -1672,6 +1693,62 @@ pub fn record_run_model_call_with_provider_session_mirror(
         )?;
         provider_session::upsert_link(&tx, link)?;
         provider_session::append_event(&tx, event)?;
+        tx.commit()?;
+        Ok(())
+    })
+}
+
+/// Atomic billing write for ONE background memory-EXTRACTION model call — the
+/// extraction-path sibling of [`record_run_model_call`] (M1 audit-coverage fix). Writes the
+/// extraction `token_ledger` row AND a hash-chained `audit_ledger` event in ONE transaction;
+/// if either insert fails, neither persists, so an extraction can never leave a ledgered
+/// charge with no matching audit row (the gap M1 found: the bare `db.insert_token_ledger`
+/// emitted NO audit event, unlike every other billable call).
+///
+/// ## Why ledger + audit, NOT the full 3-write of `record_run_model_call`
+/// The extraction billing path has only EVER written a token_ledger row at bill time — it does
+/// not mint an `AskReceipt` activity (its only activity rows are the separate, flag-gated NS-8
+/// Memory-Review surfacing rows written AFTER the candidate commit). So this mirrors
+/// `record_run_model_call`'s txn shape (`unchecked_transaction` → ledger insert → audit append
+/// → commit, all under [`with_busy_retry`]) MINUS the activity insert — adding ONLY the missing
+/// audit row, not new activity behavior.
+///
+/// ## `run_id` stays NULL on the ledger row (intentional, no re-attribution)
+/// Extraction billing is its OWN cost dimension: the post-run extraction's tokens are NOT the
+/// run's metered turns. The token_ledger row keeps `run_id = NULL` (identical to the
+/// `insert_token_ledger` it replaces), so this fix does NOT fold extraction cost into
+/// `run_token_totals`. Run linkage for the audit row is carried by `audit.payload_ref` (the
+/// caller sets it to the `led:{run_id}:{now_ms}` ledger id), so the run is attributable through
+/// the audit chain WITHOUT changing what the run's metered total reports.
+///
+/// ## Concurrency / no-degrade
+/// Same long-lived Hub connection + same `with_busy_retry` rationale as `record_run_model_call`:
+/// the retry re-runs the WHOLE body (`append_audit` reads the prev chain hash THEN inserts, so a
+/// re-run after a rolled-back BUSY re-reads the live prev-hash and re-appends cleanly). With no
+/// contention the closure runs exactly once. Hub-only: `audit_ledger` does not exist on a phone
+/// (the extraction path runs only on a Hub DB by construction).
+///
+/// This is its OWN transaction — separate from the candidate-persist tx in `extract_inline` — so
+/// "the call's cost is real even if the candidate persist rolls back" is preserved.
+pub fn record_extraction_model_call(
+    conn: &Connection,
+    entry: &LedgerEntry,
+    audit: &AuditEvent,
+) -> Result<()> {
+    with_busy_retry(|| {
+        let tx = conn.unchecked_transaction()?;
+        // Extraction billing keeps the ledger row run-unattributed (run_id = NULL), matching
+        // the `insert_token_ledger` it replaces: extraction cost is its own dimension, not a
+        // run-metered turn.
+        insert_token_ledger_conn(&tx, entry, None)?;
+        audit::append_audit(
+            &tx,
+            &audit.audit_id,
+            &audit.actor,
+            &audit.action,
+            audit.payload_ref.as_deref(),
+            audit.created_at,
+        )?;
         tx.commit()?;
         Ok(())
     })

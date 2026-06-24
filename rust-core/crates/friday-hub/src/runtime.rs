@@ -1822,8 +1822,9 @@ impl<T: Transport> HubRuntime<T> {
     /// - **Result DISCARDED via `let _`.** The [`crate::memory_extraction::ExtractionOutcome`] (and
     ///   any [`crate::memory_extraction::ExtractionError`]) is dropped. It is never inspected, never
     ///   propagated, and never folded into the answer — so it CANNOT flip Delivered→NoAnswer.
-    /// - **Failure-isolated.** Extraction writes ONLY `token_ledger` / `memory_item` (candidate) /
-    ///   (NS-8-flag-gated) `activity` rows — NEVER the `run_result` row the answer projection reads.
+    /// - **Failure-isolated.** Extraction writes ONLY `token_ledger` / `audit_ledger` (the M1
+    ///   billing-audit pair) / `memory_item` (candidate) / (NS-8-flag-gated) `activity` rows —
+    ///   NEVER the `run_result` row the answer projection reads.
     ///   An extraction ERROR (provider failure, unresolvable namespace, parse, storage) is swallowed
     ///   by the `let _`: the run already succeeded and stays `Finished`; the answer/status/ledger of
     ///   the RUN are unchanged. The candidates it records are NON-DURABLE `Candidate` rows, gated on

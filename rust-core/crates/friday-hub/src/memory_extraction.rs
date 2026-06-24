@@ -8,7 +8,8 @@
 //!   2. builds the EXTRACT prompt ported faithfully from the TS oracle
 //!      (`friday-session-memory-extraction-llm-client.ts`),
 //!   3. calls the provider (one structured-inference [`DeepSeekClient`] call) and
-//!      ledgers the token usage ([`friday_storage::Db::insert_token_ledger`]),
+//!      ledgers the token usage + its audit event in one transaction
+//!      ([`friday_storage::Db::record_extraction_model_call`], the M1 billing-audit pair),
 //!   4. parses the candidate items (the same JSON shape + validation as the TS
 //!      `validateLlmResponse`),
 //!   5. runs the SENSITIVITY filter ported from `friday-sensitive-learning-guard.ts`
@@ -476,8 +477,8 @@ pub(crate) fn memory_review_activity_row(
 /// ## `db: &Db` (NS8-WIRE-1 — relaxed from `&mut Db`, behavior unchanged)
 /// The `db` handle is a SHARED `&Db`. This entire extraction path uses ONLY `&self` storage
 /// operations — `db.conn()` (a `&Connection`), the `&Connection`-based
-/// `unchecked_transaction`, and `db.insert_token_ledger` / `db.insert_activity` (both `&self`)
-/// — so the previous `&mut Db` receiver was gratuitous. It is relaxed to `&Db` so the live
+/// `unchecked_transaction`, and `db.record_extraction_model_call` / `db.insert_activity` (both
+/// `&self`) — so the previous `&mut Db` receiver was gratuitous. It is relaxed to `&Db` so the live
 /// sessioned run loop's `&self` runtime caller can fire this post-run (NS8-WIRE-1) WITHOUT a
 /// `&mut self` rewrite. Pre-existing `&mut db` call sites (the `hub_extract_memory` bin + the
 /// in-crate tests) reborrow `&mut Db → &Db` at the call automatically, so they are untouched
@@ -508,14 +509,15 @@ pub fn extract_inline<T: Transport>(
 }
 
 /// The flag-parameterized extraction body: derive namespace → read messages → prompt →
-/// provider call (ledgered) → parse → sensitivity-filter → persist candidates → (NS-8,
+/// provider call (ledgered + audited) → parse → sensitivity-filter → persist candidates → (NS-8,
 /// flag-gated) surface each freshly-recorded candidate on the Needs-Me surface.
 ///
 /// `client` is generic over [`Transport`] so tests inject a mock provider and the
 /// bin passes a live `DeepSeekClient::from_env()`. The call+ledger reuses
 /// [`DeepSeekClient::run_friday_ask`]; the resulting [`friday_core::LedgerEntry`]
-/// is persisted via [`friday_storage::Db::insert_token_ledger`] — the same ledger
-/// the ask path writes (`fallback = false`).
+/// is persisted via [`friday_storage::Db::record_extraction_model_call`] — the same ledger
+/// the ask path writes (`fallback = false`), now PAIRED with a hash-chained `audit_ledger`
+/// event in one transaction (M1 audit-coverage fix), mirroring the agent-loop billing.
 ///
 /// `candidate_id_prefix` namespaces the minted `memory_id`s (e.g.
 /// `"<session>:extract:<now_ms>"`). Slice-2 makes re-runs IDEMPOTENT at the source:
@@ -631,8 +633,23 @@ pub fn extract_inline_flagged<T: Transport>(
         now_ms,
     )?;
 
-    // Ledger the token usage (reuse the existing single-row insert).
-    db.insert_token_ledger(&ledger_entry)?;
+    // Ledger the token usage AND its audit event in ONE transaction (M1 audit-coverage fix).
+    // The bare `insert_token_ledger` emitted NO audit row — unlike every other billable call
+    // (ask path / agent loop), which pairs the ledger write with a hash-chained `audit_ledger`
+    // event. `record_extraction_model_call` mirrors the agent-loop billing chokepoint (ledger +
+    // audit in one busy-retried tx) so an extraction can never leave a charge with no audit
+    // trail. actor "hub-agent" matches the agent-loop sibling (`agent_loop.model_call`); the
+    // audit_id mirrors the ask path (`{ledger_id}:modelcall`) for collision-safety; payload_ref
+    // is the ledger id, which encodes the originating run (`led:{run_id}:{now_ms}`) so the audit
+    // row is run-attributable WITHOUT changing the run-unattributed (run_id = NULL) ledger row.
+    let audit = friday_storage::AuditEvent {
+        audit_id: format!("{ledger_id}:modelcall"),
+        actor: "hub-agent".to_string(),
+        action: "memory.extract.model_call".to_string(),
+        payload_ref: Some(ledger_id.to_string()),
+        created_at: now_ms,
+    };
+    db.record_extraction_model_call(&ledger_entry, &audit)?;
 
     let valid_ids: HashSet<String> = messages.iter().map(|m| m.message_id.clone()).collect();
     let items = parse_items(&outcome.content, &valid_ids)?;
@@ -653,8 +670,9 @@ pub fn extract_inline_flagged<T: Transport>(
     // `record_candidate` is a single `INSERT` (no inner transaction), and
     // `mark_messages_extracted` is a single `UPDATE`, so both compose safely inside the
     // `unchecked_transaction` (the same mechanism `record_run_model_call` already uses).
-    // The token-ledger row was written ABOVE, outside this tx (the call's cost is real
-    // regardless of whether the persist commits).
+    // The token-ledger + audit rows were written ABOVE in their OWN transaction
+    // (`record_extraction_model_call`), outside this one — the call's cost (and its audit
+    // trail) is real regardless of whether the candidate persist below commits.
     let message_ids: Vec<String> = messages.iter().map(|m| m.message_id.clone()).collect();
     let tx = db
         .conn()
@@ -876,6 +894,23 @@ mod tests {
         // The token ledger row was written (the extraction call is ledgered).
         let ledger_rows = db.count("token_ledger").unwrap();
         assert_eq!(ledger_rows, 1);
+        // M1 audit-coverage: the ledgered extraction call now ALSO appends EXACTLY one
+        // hash-chained audit row (action "memory.extract.model_call"), and the chain stays
+        // valid — billing is no longer silent. (Pre-M1 this count was 0.)
+        assert_eq!(
+            db.count("audit_ledger").unwrap(),
+            1,
+            "extraction billing must append exactly one audit row"
+        );
+        let action: String = db
+            .conn()
+            .query_row("SELECT action FROM audit_ledger LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(action, "memory.extract.model_call");
+        assert_eq!(
+            friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
+            1
+        );
 
         // Existing spine: the candidate shows up as pending_review (NOT durable yet), stored
         // under the DERIVED namespace as its `principal_id` (slice-3 ownership-binding).
