@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -77,6 +77,75 @@ function writeWorkbenchSnapshotEvidenceDir(tempDir: string) {
     writeFileSync(filePath, JSON.stringify({ role, mission_id: missionId, capture: "redacted snapshot-derived qa input" }));
   }
   writeFileSync(files.snapshot, JSON.stringify({ snapshot: makeWorkbenchSnapshot() }, null, 2));
+  return files;
+}
+
+function writeDesktopLiveCaptureDir(tempDir: string) {
+  const files = {
+    proof: join(tempDir, "macos-live-write-read-proof.json"),
+    events: join(tempDir, "macos-live-write-read-events.jsonl"),
+    index: join(tempDir, "capture-index.json"),
+  };
+
+  writeFileSync(files.proof, JSON.stringify({
+    truth_label: "macos_desktop_live_write_read_roundtrip_proof_not_ui_device_proof",
+    status: "pass",
+    mission_id: missionId,
+    work_item_id: "work_desktop_live_capture",
+    surface_kind: "desktop",
+    write: { status: "ready", created_or_ready: true },
+    read_projection: { contains_written_work_item: true },
+  }, null, 2));
+  writeFileSync(files.events, `${[
+    observation("desktop", "mission_intake_submitted", files.proof),
+    observation("desktop", "mission_intake_ready", files.proof),
+    observation("desktop", "same_mission_projection_visible", files.proof),
+  ].map((row) => JSON.stringify(row)).join("\n")}\n`);
+  writeFileSync(files.index, JSON.stringify({
+    truth_label: "macos_live_write_read_capture_index_not_ui_device_proof",
+    status: "ready",
+    mission_id: missionId,
+    desktop: {
+      proof: files.proof,
+      events: files.events,
+      event_count: 3,
+    },
+    caveat: "Desktop same-run capture only; still requires mobile/channel/timeline evidence before strict UI/device proof.",
+  }, null, 2));
+  return files;
+}
+
+function writeLiveWriteReadBundleDir(tempDir: string) {
+  const files = {
+    mobile: join(tempDir, "mobile", "ios-live-write-read-proof.json"),
+    desktop: join(tempDir, "desktop", "macos-live-write-read-proof.json"),
+    mobileEvents: join(tempDir, "mobile", "ios-live-write-read-events.jsonl"),
+    desktopEvents: join(tempDir, "desktop", "macos-live-write-read-events.jsonl"),
+    combinedEvents: join(tempDir, "bundle", "mobile-desktop-live-write-read-events.jsonl"),
+    index: join(tempDir, "bundle", "live-write-read-bundle-index.json"),
+  };
+
+  mkdirSync(join(tempDir, "mobile"), { recursive: true });
+  mkdirSync(join(tempDir, "desktop"), { recursive: true });
+  mkdirSync(join(tempDir, "bundle"), { recursive: true });
+  writeFileSync(files.mobile, JSON.stringify({ role: "mobile", mission_id: missionId, status: "pass" }));
+  writeFileSync(files.desktop, JSON.stringify({ role: "desktop", mission_id: missionId, status: "pass" }));
+  writeFileSync(files.mobileEvents, `${JSON.stringify(observation("mobile", "mission_intake_ready", files.mobile))}\n`);
+  writeFileSync(files.desktopEvents, `${JSON.stringify(observation("desktop", "same_mission_projection_visible", files.desktop))}\n`);
+  writeFileSync(files.combinedEvents, `${[
+    observation("mobile", "mission_intake_ready", files.mobile),
+    observation("desktop", "same_mission_projection_visible", files.desktop),
+  ].map((row) => JSON.stringify(row)).join("\n")}\n`);
+  writeFileSync(files.index, JSON.stringify({
+    truth: "ui_device_live_write_read_bundle_not_full_proof",
+    status: "partial_bundle_ready",
+    missionId,
+    captures: {
+      mobile: { proof: files.mobile, events: files.mobileEvents },
+      desktop: { proof: files.desktop, events: files.desktopEvents },
+    },
+    combinedEvents: files.combinedEvents,
+  }, null, 2));
   return files;
 }
 
@@ -388,6 +457,69 @@ describe("friday-ui-device-proof-readiness", () => {
 
       expect(result.truth).toBe("report_only_not_ui_device_proof");
       expect(result.status).toBe("blocked");
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers desktop live write-read capture artifacts without hand-written evidence aliases", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-desktop-live-"));
+    try {
+      const files = writeDesktopLiveCaptureDir(tempDir);
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        truth?: string;
+        status?: string;
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.truth).toBe("report_only_not_ui_device_proof");
+      expect(result.status).toBe("blocked");
+      expect(result.notes).toContain(`resolved_MISSION_ID:${missionId}`);
+      expect(result.notes).toContain(`resolved_DESKTOP_EVIDENCE:${files.proof}`);
+      expect(result.notes).toContain(`resolved_SAME_RUN_EVENTS:${files.events}`);
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers live write-read bundle missionId and prefers combined same-run events", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-bundle-"));
+    try {
+      const files = writeLiveWriteReadBundleDir(tempDir);
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        truth?: string;
+        status?: string;
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.truth).toBe("report_only_not_ui_device_proof");
+      expect(result.status).toBe("blocked");
+      expect(result.notes).toContain(`resolved_MISSION_ID:${missionId}`);
+      expect(result.notes).toContain(`resolved_MOBILE_EVIDENCE:${files.mobile}`);
+      expect(result.notes).toContain(`resolved_DESKTOP_EVIDENCE:${files.desktop}`);
+      expect(result.notes).toContain(`resolved_SAME_RUN_EVENTS:${files.combinedEvents}`);
       expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
