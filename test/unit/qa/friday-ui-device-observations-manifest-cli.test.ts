@@ -1,0 +1,170 @@
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const missionId = "mission_cli_ui_device_observations";
+
+function writeEvidence(tempDir: string) {
+  const files = {
+    mobile: join(tempDir, "mobile.png"),
+    desktop: join(tempDir, "desktop.json"),
+    channel: join(tempDir, "channel.log"),
+    timeline: join(tempDir, "timeline.trace"),
+  };
+  for (const [role, path] of Object.entries(files)) {
+    writeFileSync(path, `real same-run ${role} evidence for ${missionId}\n`);
+  }
+  return files;
+}
+
+function event(surface: string, name: string, evidenceRef: string, mission = missionId) {
+  return { surface, event: name, mission_id: mission, evidence_ref: evidenceRef };
+}
+
+function writeJsonl(path: string, rows: unknown[]) {
+  writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+}
+
+function completeEvents(refs: ReturnType<typeof writeEvidence>) {
+  const rows = [
+    event("mobile", "mission_intake_submitted", refs.mobile),
+    event("mobile", "mission_intake_ready", refs.mobile),
+    event("desktop", "mission_resolve_or_create_visible", refs.desktop),
+    event("desktop", "duplicate_preflight_visible", refs.desktop),
+    event("mobile", "duplicate_preflight_visible", refs.mobile),
+    event("mobile", "mission_bound_provider_action_visible", refs.mobile),
+    event("desktop", "real_provider_execution_visible", refs.desktop),
+    event("mobile", "proof_receipt_visible_before_done", refs.mobile),
+    event("desktop", "same_mission_projection_visible", refs.desktop),
+    event("desktop", "mission_workbench_visible", refs.desktop),
+    event("desktop", "transcript_browser_visible", refs.desktop),
+    event("desktop", "duplicate_blocked_opens_existing", refs.desktop),
+    event("channel", "same_mission_projection_visible", refs.channel),
+    event("channel", "same_mission_mobile_desktop_channel_visible", refs.channel),
+    event("timeline", "bounded_page_1_visible", refs.timeline),
+    event("timeline", "bounded_page_2_visible", refs.timeline),
+    event("timeline", "memory_candidate_review_only", refs.timeline),
+    event("desktop", "provider_ack_not_done_visible", refs.desktop),
+    event("desktop", "invalid_key_error_visible", refs.desktop),
+    event("desktop", "quota_error_visible", refs.desktop),
+    event("desktop", "network_error_visible", refs.desktop),
+    event("channel", "channel_replay_blocked_visible", refs.channel),
+    event("desktop", "reconnect_stale_verified", refs.desktop),
+    event("desktop", "real_provider_execution_receipt_visible", refs.desktop),
+    event("desktop", "stale_label_visible", refs.desktop),
+    event("desktop", "offline_label_visible", refs.desktop),
+    event("desktop", "error_label_visible", refs.desktop),
+    event("desktop", "no_hidden_fallback_verified", refs.desktop),
+  ];
+  for (let index = 0; index < 20; index += 1) {
+    rows.push(event("desktop", "pressure_20_50_consecutive_asks_visible", refs.desktop));
+  }
+  return rows;
+}
+
+function runManifest(tempDir: string, refs: ReturnType<typeof writeEvidence>, rows: unknown[], extraArgs: string[] = []) {
+  const events = join(tempDir, "same-run-events.jsonl");
+  const out = join(tempDir, "observations-manifest.json");
+  writeJsonl(events, rows);
+  const result = spawnSync("node", [
+    "scripts/ops/friday-ui-device-observations-manifest.mjs",
+    `--mission-id=${missionId}`,
+    `--mobile=${refs.mobile}`,
+    `--desktop=${refs.desktop}`,
+    `--channel=${refs.channel}`,
+    `--timeline=${refs.timeline}`,
+    `--events=${events}`,
+    `--out=${out}`,
+    ...extraArgs,
+  ], { cwd: process.cwd(), encoding: "utf8" });
+  return { result, out };
+}
+
+describe("friday-ui-device-observations-manifest", () => {
+  it("derives a same-run manifest that passes the strict UI proof input checker", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-observations-"));
+    try {
+      const refs = writeEvidence(tempDir);
+      const { result, out } = runManifest(tempDir, refs, completeEvents(refs), ["--require-ready"]);
+
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as { truth?: string; status?: string; blockers?: unknown[] };
+      expect(output.truth).toBe("ui_device_observations_manifest_driver_not_proof");
+      expect(output.status).toBe("ready");
+      expect(output.blockers).toEqual([]);
+
+      const manifest = JSON.parse(readFileSync(out, "utf8")) as { truth_label?: string; stress?: { mission_bound_ask_count?: number; duplicate_surface_count?: number } };
+      expect(manifest.truth_label).toBe("ui_device_observations_manifest_derived_from_same_run_events_not_proof");
+      expect(manifest.stress?.mission_bound_ask_count).toBe(20);
+      expect(manifest.stress?.duplicate_surface_count).toBe(2);
+
+      const preflight = JSON.parse(execFileSync("node", [
+        "scripts/qa/check-mission-spine-ui-proof-inputs.mjs",
+        `--mission-id=${missionId}`,
+        `--mobile=${refs.mobile}`,
+        `--desktop=${refs.desktop}`,
+        `--channel=${refs.channel}`,
+        `--timeline=${refs.timeline}`,
+        `--manifest=${out}`,
+      ], { cwd: process.cwd(), encoding: "utf8" })) as { readyForAssemble?: boolean; failures?: unknown[] };
+      expect(preflight.readyForAssemble).toBe(true);
+      expect(preflight.failures).toEqual([]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks and does not write a manifest when required observations are missing", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-observations-missing-"));
+    try {
+      const refs = writeEvidence(tempDir);
+      const rows = completeEvents(refs).filter((row) => (row as { event?: string }).event !== "proof_receipt_visible_before_done");
+      const { result, out } = runManifest(tempDir, refs, rows, ["--require-ready"]);
+
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { status?: string; blockers?: Array<{ code?: string; detail?: string }> };
+      expect(output.status).toBe("blocked");
+      expect(output.blockers).toContainEqual({ code: "missing_observation", detail: "mobile:proof_receipt_visible_before_done" });
+      expect(() => readFileSync(out, "utf8")).toThrow();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks unknown evidence references and mission mismatches", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-observations-badref-"));
+    try {
+      const refs = writeEvidence(tempDir);
+      const rows = completeEvents(refs);
+      rows.push(event("desktop", "real_provider_execution_visible", join(tempDir, "outside.log")));
+      rows.push(event("desktop", "reconnect_stale_verified", refs.desktop, "mission_other_run"));
+      const { result } = runManifest(tempDir, refs, rows, ["--require-ready"]);
+
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string }> };
+      const codes = output.blockers?.map((blocker) => blocker.code);
+      expect(codes).toContain("event_evidence_ref_unknown");
+      expect(codes).toContain("event_mission_mismatch");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("requires the same stress floor as the strict proof preflight", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-observations-stress-"));
+    try {
+      const refs = writeEvidence(tempDir);
+      const rows = completeEvents(refs).filter((row) => (row as { event?: string }).event !== "pressure_20_50_consecutive_asks_visible");
+      rows.push(event("desktop", "pressure_20_50_consecutive_asks_visible", refs.desktop));
+      const { result } = runManifest(tempDir, refs, rows, ["--require-ready"]);
+
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string; detail?: string }> };
+      expect(output.blockers).toContainEqual({ code: "stress_ask_count_out_of_range", detail: "1" });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
