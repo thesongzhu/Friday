@@ -11,6 +11,12 @@ import SwiftUI
 /// `pet-stage-engine.js` against the bundled v9 assets via `MobilePetView` (WKWebView). Pure local
 /// CSS-JS-canvas — no token, no model call, no image leaves the device.
 struct HeroPet: View {
+  let height: CGFloat
+
+  init(height: CGFloat = 155) {
+    self.height = height
+  }
+
   var body: some View {
     ZStack {
       // The 155px pure-dog hero card (locked: #eef3e8 stage bg, 16pt corner).
@@ -27,7 +33,7 @@ struct HeroPet: View {
         .padding(.horizontal, 16)
       #endif
     }
-    .frame(height: 155)
+    .frame(height: height)
     .clipShape(RoundedRectangle(cornerRadius: MobileTheme.cornerRadius, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: MobileTheme.cornerRadius, style: .continuous)
