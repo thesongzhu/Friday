@@ -115,6 +115,35 @@ describe("friday-native-action-closure", () => {
     }
   });
 
+  it("fails closed when mobile route coverage is no longer separated from product closure", () => {
+    const root = copyFixture();
+    try {
+      replaceInFixture(
+        root,
+        "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift",
+        "var closureTier: MobileDestinationClosureTier",
+        "var routeTier: MobileDestinationClosureTier",
+      );
+      const result = run(root);
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        status?: string;
+        checks?: Array<{ id?: string; missing?: string[] }>;
+      };
+      expect(report.status).toBe("failed");
+      expect(report.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "mobile-command-sheet-separates-route-coverage-from-product-closure",
+            missing: expect.arrayContaining(["var closureTier: MobileDestinationClosureTier"]),
+          }),
+        ]),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when the package script is not exposed", () => {
     const root = copyFixture();
     try {

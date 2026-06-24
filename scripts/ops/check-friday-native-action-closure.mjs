@@ -119,6 +119,28 @@ const checks = [
     ],
   ),
   check(
+    "mobile-command-sheet-separates-route-coverage-from-product-closure",
+    "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift",
+    includesAll(files.mobileCommand, [
+      "enum MobileDestinationClosureTier",
+      "var closureTier: MobileDestinationClosureTier",
+      "Route coverage only. This must not be used as a closed-loop product-completion signal.",
+      "isClosedLoopProductReady",
+      "case .liveWriteRead: return true",
+      "case .home, .session:",
+      "case .shareIntake, .needsMe, .workflows:",
+      "case .voice, .pairing, .providerAuth:",
+      "case .onboarding:",
+      "dest.closureTier.label",
+      "dest.productReadinessSummary",
+      "closed-loop product behavior is still pending",
+      "not a completed product loop",
+    ]),
+    [
+      "This keeps selected-design route coverage visible while preventing projection/readiness shells from being counted as product-complete.",
+    ],
+  ),
+  check(
     "mobile-enabled-actions-have-viewmodel-drivers",
     "apps/friday-ios/Sources/FridayMobileShellCore",
     [
