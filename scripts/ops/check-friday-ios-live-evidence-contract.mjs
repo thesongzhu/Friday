@@ -27,6 +27,7 @@ const files = {
   app: read(root, "apps/friday-ios/Sources/FridayMobileShell/FridayApp.swift"),
   commandSheet: read(root, "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift"),
   buildSim: read(root, "apps/friday-ios/build-sim.sh"),
+  liveT3Proof: read(root, "scripts/ops/friday-ios-sim-live-t3-proof.sh"),
   gatesTests: read(root, "apps/friday-ios/Tests/FridayMobileShellCoreTests/MobileRuntimeGatesTests.swift"),
 };
 
@@ -108,6 +109,22 @@ const checks = [
       "!MobileRuntimeGates.useDeviceKeypair",
       "!MobileRuntimeGates.runControlRequested",
       "mobileRuntimeGatesDoNotAcceptTruthyLookalikes",
+    ]),
+  },
+  {
+    id: "mobile-live-t3-scratch-proof-entrypoint",
+    target: "scripts/ops/friday-ios-sim-live-t3-proof.sh",
+    missing: requireStrings(files.liveT3Proof, [
+      "friday_ios_simulator_live_t3_projection_proof_scratch_read_server",
+      "refusing to bind prod Friday port",
+      "FRIDAY_IOS_SIM_READ_SEAM_ENROLL_ACK=operator-approves-ios-sim-read-seam-enroll", // pragma: allowlist secret
+      "hub_read_projection_server",
+      "friday-t3-provisioning-status.mjs",
+      "t3.t3_provisioned === true",
+      "Does not restart/kill prod hub",
+      "never grants write access",
+      "never signs",
+      "never claims END-BAR / GO-LIVE / adoption / organic",
     ]),
   },
 ];

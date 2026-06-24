@@ -68,6 +68,7 @@
     "build:companion:appcast": "bash scripts/ops/build-friday-sparkle-appcast.sh",
     "build:hub-console:native": "bash scripts/ops/build-friday-hub-console-app.sh",
     "build:ios:sim": "bash apps/friday-ios/build-sim.sh",
+    "proof:ios:live-t3": "bash scripts/ops/friday-ios-sim-live-t3-proof.sh",
     "build:android:emu": "bash apps/friday-android/build-emu.sh",
     "build:release:source": "bash scripts/ops/build-friday-source-distribution.sh",
     "build:friday-static:prod": "node scripts/qa/build-friday-static-prod.mjs",
