@@ -166,6 +166,10 @@ if [ -z "${shared_id}" ]; then
 fi
 case "${shared_id}" in (*[[:space:]]*) die "--shared-id must not contain whitespace" ;; esac
 case "${shared_id}" in (*mission*) ;; *) die "--shared-id must contain mission" ;; esac
+case "${shared_id}" in
+  mission_*) canonical_shared_mission_id="${shared_id}" ;;
+  *) canonical_shared_mission_id="mission_${shared_id}" ;;
+esac
 
 mobile_dir="${out_dir}/mobile"
 desktop_dir="${out_dir}/desktop"
@@ -197,7 +201,7 @@ node "${repo_root}/scripts/ops/friday-ui-device-live-write-read-bundle.mjs" \
   --out-dir="${bundle_dir}" \
   --mobile-capture-dir="${mobile_dir}" \
   --desktop-capture-dir="${desktop_dir}" \
-  --mission-id="${shared_id}" \
+  --mission-id="${canonical_shared_mission_id}" \
   --require-ready
 
 if [ -n "${channel_capture}${timeline_capture}${same_run_events}" ]; then
@@ -206,7 +210,7 @@ if [ -n "${channel_capture}${timeline_capture}${same_run_events}" ]; then
   [ -n "${same_run_events}" ] || die "--same-run-events is required when building an evidence dir"
 
   node "${repo_root}/scripts/ops/friday-ui-device-capture-dir.mjs" \
-    --mission-id="${shared_id}" \
+    --mission-id="${canonical_shared_mission_id}" \
     --out-dir="${evidence_dir}" \
     --mobile="${mobile_dir}/ios-live-write-read-proof.json" \
     --desktop="${desktop_dir}/macos-live-write-read-proof.json" \

@@ -32,7 +32,7 @@ if (args.includes("--help") || args.includes("-h")) {
 
 const requireReady = args.includes("--require-ready");
 const outDirArg = arg("out-dir");
-const expectedMissionId = arg("mission-id");
+const rawExpectedMissionId = arg("mission-id");
 const captureDirs = {
   mobile: arg("mobile-capture-dir"),
   desktop: arg("desktop-capture-dir"),
@@ -49,6 +49,11 @@ function abs(path) {
 
 function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function canonicalMissionId(value) {
+  if (!value) return "";
+  return value.startsWith("mission_") ? value : `mission_${value}`;
 }
 
 function readJson(path, label) {
@@ -124,9 +129,10 @@ function capturePaths(index, role, dir) {
 
 if (!outDirArg) block("missing_arg", "out-dir");
 if (outDirArg && !isAbsolute(outDirArg)) block("out_dir_not_absolute", outDirArg);
-if (expectedMissionId && !expectedMissionId.toLowerCase().includes("mission")) {
-  block("mission_id_unexpected_shape", expectedMissionId);
+if (rawExpectedMissionId && !rawExpectedMissionId.toLowerCase().includes("mission")) {
+  block("mission_id_unexpected_shape", rawExpectedMissionId);
 }
+const expectedMissionId = canonicalMissionId(rawExpectedMissionId);
 
 const outDir = outDirArg ? abs(outDirArg) : "";
 const dirs = Object.fromEntries(Object.entries(captureDirs).map(([role, value]) => [role, requireDir(value, `${role}-capture-dir`)]));

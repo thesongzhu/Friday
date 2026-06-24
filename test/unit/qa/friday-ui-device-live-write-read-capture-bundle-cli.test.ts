@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 const script = "scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh";
 const sharedId = "mission-ui-device-live-write-read-test";
+const canonicalMissionId = `mission_${sharedId}`;
 const workItemId = "work-ui-device-live-write-read-test";
 
 function fakeSwiftScript(dir: string, expectedSharedId = sharedId) {
@@ -33,19 +34,19 @@ cat >"\${proof_out}" <<JSON
   "truth_label": "\${truth_label}",
   "status": "pass",
   "generated_at_utc": "2026-06-24T12:00:00Z",
-  "mission_id": "${expectedSharedId}",
+  "mission_id": "${canonicalMissionId}",
   "work_item_id": "${workItemId}",
   "surface_kind": "\${surface_kind}",
   "delivery_route": "\${route}",
   "write": {
     "status": "ready",
     "created_or_ready": true,
-    "mission_id": "${expectedSharedId}",
+    "mission_id": "${canonicalMissionId}",
     "work_item_id": "${workItemId}",
     "endpoint": { "host": "127.0.0.1", "port": 48750 }
   },
   "read_projection": {
-    "mission_id": "${expectedSharedId}",
+    "mission_id": "${canonicalMissionId}",
     "work_item_ids": ["${workItemId}"],
     "contains_written_work_item": true,
     "generated_at_ms": 1782290000000,
@@ -59,7 +60,7 @@ JSON
 }
 
 function event(surface: string, name: string, evidenceRef: string) {
-  return { surface, event: name, mission_id: sharedId, evidence_ref: evidenceRef };
+  return { surface, event: name, mission_id: canonicalMissionId, evidence_ref: evidenceRef };
 }
 
 function writeCompleteSameRunEvents(path: string, refs: { mobile: string; desktop: string; channel: string; timeline: string }) {
@@ -128,7 +129,7 @@ describe("friday-ui-device-live-write-read-capture-bundle", () => {
         fullProofGaps?: string[];
       };
       expect(index.status).toBe("partial_bundle_ready");
-      expect(index.missionId).toBe(sharedId);
+      expect(index.missionId).toBe(canonicalMissionId);
       expect(index.captures?.mobile?.event_count).toBe(5);
       expect(index.captures?.desktop?.event_count).toBe(5);
       expect(index.fullProofGaps).toContain("bounded_timeline_capture");

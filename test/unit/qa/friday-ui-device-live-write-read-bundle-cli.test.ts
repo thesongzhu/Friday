@@ -91,6 +91,33 @@ describe("friday-ui-device-live-write-read-bundle", () => {
     }
   });
 
+  it("canonicalizes raw shared mission ids the same way as the live capture clients", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-live-bundle-canonical-"));
+    try {
+      const rawSharedId = "mission-live-write-read-canonical";
+      const canonicalMissionId = `mission_${rawSharedId}`;
+      const mobileDir = writeCapture(tempDir, "mobile", canonicalMissionId);
+      const desktopDir = writeCapture(tempDir, "desktop", canonicalMissionId);
+      const outDir = join(tempDir, "bundle");
+
+      const stdout = execFileSync("node", [
+        script,
+        `--out-dir=${outDir}`,
+        `--mobile-capture-dir=${mobileDir}`,
+        `--desktop-capture-dir=${desktopDir}`,
+        `--mission-id=${rawSharedId}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      const result = JSON.parse(stdout) as { status?: string; missionId?: string; blockers?: unknown[] };
+      expect(result.status).toBe("partial_bundle_ready");
+      expect(result.missionId).toBe(canonicalMissionId);
+      expect(result.blockers).toEqual([]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when mobile and desktop captures are not the same mission", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-live-bundle-mismatch-"));
     try {
