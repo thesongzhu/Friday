@@ -36,8 +36,7 @@ struct FridayHomeScreen: View {
           loadedContent(projection)
         case let .unavailable(reason):
           unavailableHeader
-          HeroPet().padding(.top, 4)
-          UnavailableView(reason: reason)
+          offlineCommandCenter(reason: reason)
           unavailableQueueSection(
             title: "Needs Me",
             emptyText: "Connect Friday to see approvals, memory candidates, and recovery items.")
@@ -199,6 +198,36 @@ struct FridayHomeScreen: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel(primaryAttentionTitle(projection))
     .accessibilityIdentifier("friday.home.attention-hero")
+  }
+
+  private func offlineCommandCenter(reason: String) -> some View {
+    GlassPanel {
+      HStack(spacing: 14) {
+        HeroPet()
+          .frame(width: 155, height: 155)
+          .scaleEffect(0.67)
+          .frame(width: 112, height: 104)
+          .clipped()
+        VStack(alignment: .leading, spacing: 10) {
+          Text("Friday is offline.")
+            .font(.title3.weight(.bold))
+            .foregroundStyle(MobileTheme.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
+          HStack(spacing: 8) {
+            StatusChip(text: "offline", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+            StatusChip(text: "no cached status", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+          }
+          Text(reason)
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Friday is offline. \(reason). No cached or fabricated status is shown.")
+    .accessibilityIdentifier("friday.home.offline-command-center")
   }
 
   private func primaryAttentionTitle(_ projection: HomeProjection) -> String {
