@@ -670,6 +670,7 @@ public final class HomeViewModel: ObservableObject {
   private let client: FridayRustReadClient
   private let writeClient: FridayMissionSpineWriteClient?
   private let writeOwnerPrincipal: String
+  private let deviceKeypairBackend: DeviceKeypairBackend
   private let makePairingClient: (DeviceKeypair) -> FridayPairingClient?
 
   /// - Parameter client: the read client. In production this is the real `SealedWSReadClient`
@@ -682,12 +683,14 @@ public final class HomeViewModel: ObservableObject {
       deviceKeypairRequested: false,
       readLiveRequested: false,
       writeLiveRequested: false),
+    deviceKeypairBackend: DeviceKeypairBackend = KeychainDeviceKeypairBackend(),
     makePairingClient: @escaping (DeviceKeypair) -> FridayPairingClient? = { _ in nil }
   ) {
     self.client = client
     self.writeClient = writeClient
     self.writeOwnerPrincipal = writeOwnerPrincipal
     self.devicePairing = devicePairing
+    self.deviceKeypairBackend = deviceKeypairBackend
     self.makePairingClient = makePairingClient
   }
 
@@ -836,12 +839,13 @@ public final class HomeViewModel: ObservableObject {
   public func preflightPairingQR(
     _ qrPayload: String,
     nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
-    backend: DeviceKeypairBackend = KeychainDeviceKeypairBackend()
+    backend: DeviceKeypairBackend? = nil
   ) {
+    let selectedBackend = backend ?? deviceKeypairBackend
     pairingPreflight = MobilePairingPreflight.evaluate(
       qrPayload: qrPayload,
       nowMs: nowMs,
-      backend: backend)
+      backend: selectedBackend)
   }
 
   public func clearPairingPreflight() {
@@ -853,8 +857,9 @@ public final class HomeViewModel: ObservableObject {
     _ qrPayload: String,
     deviceId: String = "",
     nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
-    backend: DeviceKeypairBackend = KeychainDeviceKeypairBackend()
+    backend: DeviceKeypairBackend? = nil
   ) async {
+    let selectedBackend = backend ?? deviceKeypairBackend
     let payload = qrPayload.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !payload.isEmpty else {
       pairingPreflight = .empty
@@ -870,20 +875,20 @@ public final class HomeViewModel: ObservableObject {
       pairingPreflight = MobilePairingPreflight.evaluate(
         qrPayload: payload,
         nowMs: nowMs,
-        backend: backend)
+        backend: selectedBackend)
       pairingAttempt = .unavailable(pairingPreflight.projection, reason: Self.pairingReason(for: error))
       return
     }
 
     let device: DeviceKeypair
     do {
-      device = try DeviceKeypairStore.loadOrGenerate(backend: backend)
+      device = try DeviceKeypairStore.loadOrGenerate(backend: selectedBackend)
       _ = try manifest.pairingProof(forDevicePublicKey: device.keypair.publicKey)
     } catch {
       pairingPreflight = MobilePairingPreflight.evaluate(
         qrPayload: payload,
         nowMs: nowMs,
-        backend: backend)
+        backend: selectedBackend)
       pairingAttempt = .unavailable(
         manifest.redactedProjection,
         reason: "Device keypair store is unavailable.")

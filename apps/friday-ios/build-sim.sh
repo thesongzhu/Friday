@@ -21,14 +21,82 @@
 # physical device); this script is a LOCAL proof, not a CI step.
 set -euo pipefail
 
+usage() {
+  cat <<'USAGE'
+Usage:
+  apps/friday-ios/build-sim.sh [screenshot-path]
+  apps/friday-ios/build-sim.sh --mode offline-truth [--shot screenshot-path]
+  apps/friday-ios/build-sim.sh --mode live-loopback [--shot screenshot-path]
+
+Modes:
+  offline-truth  Default. Launches with all FRIDAY_MOBILE_LIVE_* gates OFF and proves the
+                 shipped app renders honest-unavailable instead of fabricated ready state.
+  live-loopback  Explicit local proof mode. Launches with the existing simulator live gates ON
+                 (read/write/pairing/device-keypair) so the app attempts real loopback seams.
+                 It still does not flip shipped defaults, mint trust, or hold signing keys.
+USAGE
+}
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$HERE/.build-sim"
 APP="$BUILD/FridayShell.app"
-SHOT="${1:-$BUILD/friday-ios-sim.png}"
+MODE="offline-truth"
+SHOT="$BUILD/friday-ios-sim.png"
 IOS_VERSION="17.0"
 TRIPLE="arm64-apple-ios${IOS_VERSION}-simulator"   # Apple-Silicon host (arm64 sim slice)
 
 APPSRC="$HERE/Sources/FridayMobileShell"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --mode requires a value" >&2
+        usage >&2
+        exit 2
+      fi
+      MODE="$2"
+      shift 2
+      ;;
+    --shot)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --shot requires a path" >&2
+        usage >&2
+        exit 2
+      fi
+      SHOT="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --*)
+      echo "ERROR: unknown option $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      # Backward-compatible positional screenshot path.
+      SHOT="$1"
+      shift
+      ;;
+  esac
+done
+
+case "$MODE" in
+  offline|offline-truth)
+    MODE="offline-truth"
+    ;;
+  live|live-loopback)
+    MODE="live-loopback"
+    ;;
+  *)
+    echo "ERROR: unsupported --mode '$MODE'" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
 
 rm -rf "$BUILD"; mkdir -p "$BUILD" "$APP"
 
@@ -90,12 +158,64 @@ open -a Simulator || true
 
 echo "== 4. install + launch + screenshot =="
 xcrun simctl install "$UDID" "$APP"
-xcrun simctl launch "$UDID" com.friday.shell
+LAUNCH_ARGS=()
+LAUNCH_ENV=()
+case "$MODE" in
+  offline-truth)
+    echo "launch mode: offline-truth (all mobile live gates OFF)"
+    ;;
+  live-loopback)
+    echo "launch mode: live-loopback (explicit FRIDAY_MOBILE_LIVE_* gates ON)"
+    LAUNCH_ARGS=(--live-read --live-write --live-pairing --live-device-keypair)
+    LAUNCH_ARGS+=(--simulator-file-device-keypair)
+    LAUNCH_ENV=(
+      SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ=1
+      SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE=1
+      SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_PAIRING=1
+      SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR=1
+      SIMCTL_CHILD_FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR=1
+    )
+    ;;
+esac
+env "${LAUNCH_ENV[@]}" xcrun simctl launch --terminate-running-process "$UDID" com.friday.shell "${LAUNCH_ARGS[@]}"
 # Give the WKWebView time to load the host page over `friday-pet://`, fetch the bundled engine +
 # v9 assets, and start the canvas animation before the screenshot. Per the design CLAUDE.md hard
 # rule 5, the pet is verified by the RENDERED image (open $SHOT), not by code/bbox numbers — a
 # scheme/fetch bug yields a BLANK card (the host page sets window.__petError), so inspect the shot.
 sleep 6
 xcrun simctl io "$UDID" screenshot "$SHOT"
+SIMULATOR_DEVICE_PUBKEY_JSON=null
+if [[ "$MODE" == "live-loopback" ]]; then
+  DATA_CONTAINER="$(xcrun simctl get_app_container "$UDID" com.friday.shell data 2>/dev/null || true)"
+  PUBKEY_FILE="$DATA_CONTAINER/Library/Application Support/FridayShellSimulatorProof/device-pubkey-v1.txt"
+  if [[ -n "$DATA_CONTAINER" && -f "$PUBKEY_FILE" ]]; then
+    PUBKEY_HEX="$(tr -d '\r\n' < "$PUBKEY_FILE")"
+    if [[ "$PUBKEY_HEX" =~ ^[0-9a-fA-F]{64}$ ]]; then
+      PUBKEY_HEX_LOWER="$(printf '%s' "$PUBKEY_HEX" | tr '[:upper:]' '[:lower:]')"
+      SIMULATOR_DEVICE_PUBKEY_JSON="\"$PUBKEY_HEX_LOWER\""
+    fi
+  fi
+fi
+cat > "$SHOT.metadata.json" <<JSON
+{
+  "truth_label": "friday_ios_simulator_${MODE}_proof",
+  "mode": "$MODE",
+  "bundle_id": "com.friday.shell",
+  "screenshot": "$SHOT",
+  "live_read_requested": $([[ "$MODE" == "live-loopback" ]] && echo true || echo false),
+  "live_write_requested": $([[ "$MODE" == "live-loopback" ]] && echo true || echo false),
+  "live_pairing_requested": $([[ "$MODE" == "live-loopback" ]] && echo true || echo false),
+  "device_keypair_requested": $([[ "$MODE" == "live-loopback" ]] && echo true || echo false),
+  "simulator_file_device_keypair_requested": $([[ "$MODE" == "live-loopback" ]] && echo true || echo false),
+  "simulator_device_pubkey": $SIMULATOR_DEVICE_PUBKEY_JSON,
+  "caveat": "offline-truth proves honest-unavailable; live-loopback attempts real local read/write/pairing seams but does not claim END-BAR, GO-LIVE, adoption, trust minting, or operator signing."
+}
+JSON
 echo "screenshot: $SHOT"
+echo "metadata: $SHOT.metadata.json"
 echo "VERIFY: open the screenshot and confirm the 155px Hero Pet card shows the v9 DOG (not blank)."
+if [[ "$MODE" == "offline-truth" ]]; then
+  echo "VERIFY: offline-truth mode should honestly show unavailable/disabled state, not a fabricated ready product."
+else
+  echo "VERIFY: live-loopback mode should show live read/write/pairing requests and any real seam failure AS truth."
+fi

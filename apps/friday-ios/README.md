@@ -80,7 +80,9 @@ side with `nonisolated(unsafe) let` clients (the package is never edited).
 ## Build + screenshot (simulator)
 
 ```sh
-apps/friday-ios/build-sim.sh   # -> .build-sim/friday-ios-sim.png
+apps/friday-ios/build-sim.sh
+# -> .build-sim/friday-ios-sim.png
+# -> .build-sim/friday-ios-sim.png.metadata.json
 ```
 
 Because the core now depends on `FridayRustClient` â†’ swift-sodium (libsodium via the
@@ -89,6 +91,27 @@ dependency graph for `arm64-apple-ios17.0-simulator` via `swift build --triple â
 (resolving swift-sodium + linking the xcframework's ios-simulator libsodium slice),
 then compiles the SwiftUI app against those sim-built modules with `swiftc`, assembles
 `FridayShell.app`, and installs/launches/screenshots it on a booted simulator.
+
+The default simulator launch is an **offline truth proof**. It deliberately keeps all
+`FRIDAY_MOBILE_LIVE_*` gates off, so the expected result is an honest-unavailable UI
+if the live seams are not explicitly enabled. That screenshot proves "no fabricated
+ready state"; it is not a product-ready live-use proof.
+
+For local live-loopback dogfood, use the explicit mode:
+
+```sh
+apps/friday-ios/build-sim.sh --mode live-loopback --shot apps/friday-ios/.build-sim/friday-ios-live-loopback.png
+```
+
+`live-loopback` passes the existing `--live-read`, `--live-write`, `--live-pairing`,
+and `--live-device-keypair` launch gates via simulator args/env so the app attempts
+the real local read/write/pairing seams. Because the hand-built simulator shell is not
+signed with an iOS development Keychain entitlement, this mode also uses an explicit
+simulator-only file-backed device keypair gate. Real devices still use the Keychain
+backend. It still does **not** flip shipped defaults, mint trust grants/context
+passports, hold signing keys, or claim END-BAR/GO-LIVE. The adjacent `.metadata.json`
+records which proof mode produced the screenshot and, in live-loopback mode, the public
+simulator device key needed for read-seam enrollment.
 
 **Device/simulator screenshot proof is operator-gated** (it needs Xcode + a booted
 simulator or a physical device); it is a deferred acceptance criterion. The

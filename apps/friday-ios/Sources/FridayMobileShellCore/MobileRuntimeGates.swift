@@ -5,6 +5,11 @@ public enum MobileRuntimeGates {
     args.contains("--live-device-keypair") || env["FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR"] == "1"
   }
 
+  public static func simulatorFileDeviceKeypairRequested(args: [String], env: [String: String]) -> Bool {
+    args.contains("--simulator-file-device-keypair")
+      || env["FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR"] == "1"
+  }
+
   public static func liveReadRequested(args: [String], env: [String: String]) -> Bool {
     args.contains("--live-read") || env["FRIDAY_MOBILE_LIVE_READ"] == "1"
   }
