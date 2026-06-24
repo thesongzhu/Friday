@@ -1,0 +1,190 @@
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const missionId = "mission_cli_ui_device_capture_dir";
+
+function writeEvidence(tempDir: string) {
+  const files = {
+    mobile: join(tempDir, "mobile.png"),
+    desktop: join(tempDir, "desktop.json"),
+    channel: join(tempDir, "channel.log"),
+    timeline: join(tempDir, "timeline.trace"),
+  };
+  for (const [role, path] of Object.entries(files)) {
+    writeFileSync(path, `real capture shaped evidence ${role} ${missionId}\n`);
+  }
+  return files;
+}
+
+function observation(surface: string, event: string, evidenceRef: string) {
+  return { surface, event, mission_id: missionId, evidence_ref: evidenceRef };
+}
+
+function writeManifest(path: string, evidenceDir: string) {
+  const refs = {
+    mobile: join(evidenceDir, "mobile.png"),
+    desktop: join(evidenceDir, "desktop.json"),
+    channel: join(evidenceDir, "channel.log"),
+    timeline: join(evidenceDir, "timeline.trace"),
+  };
+  const checks = [
+    "same_mission_id_mobile_desktop",
+    "same_mission_id_channel",
+    "duplicate_blocked_opens_existing",
+    "mission_bound_provider_action_visible",
+    "proof_receipt_visible_before_done",
+    "provider_ack_not_done",
+    "pressure_20_50_consecutive_asks",
+    "invalid_key_error_visible",
+    "quota_error_visible",
+    "network_error_visible",
+    "channel_replay_blocked",
+    "reconnect_stale_verified",
+    "memory_candidate_not_confirmed",
+    "no_secret_leak",
+    "no_hidden_fallback",
+  ];
+  const manifest = {
+    checks: Object.fromEntries(checks.map((check) => [check, true])),
+    stress: {
+      mission_bound_ask_count: 20,
+      consecutive: true,
+      duplicate_surface_count: 2,
+      provider_ack_not_done: true,
+      invalid_key_error_visible: true,
+      quota_error_visible: true,
+      network_error_visible: true,
+      long_timeline_pagination_visible: true,
+      long_timeline_page_count: 2,
+      reconnect_stale_verified: true,
+      channel_replay_blocked: true,
+      no_secret_leak: true,
+      no_hidden_fallback: true,
+      evidence_ref: refs.timeline,
+    },
+    timeline: { bounded: true, page_count: 2, cursor_verified: true },
+    mission_workbench: {
+      visible: true,
+      same_mission_projection_visible: true,
+      provider_ack_not_done_visible: true,
+      memory_candidate_review_only_visible: true,
+      evidence_ref: refs.desktop,
+    },
+    transcript_browser: {
+      visible: true,
+      collapsed_by_default: true,
+      redacted: true,
+      bounded_timeline_linked: true,
+      evidence_ref: refs.desktop,
+      search_facets: ["mission", "work_item", "surface", "provider", "skill", "channel", "status", "proof_receipt", "time"],
+      evidence_facets: ["providerRef", "skillRunRef", "channelRef", "workflowRef", "surfaceThreadRef", "timelineRef", "proofReceiptRef"],
+    },
+    status_labels: ["stale", "offline", "error"],
+    memory_candidates: [{ id: "memory_candidate_review_only", confirmed: false, grants_memory_authority: false }],
+    event_order: [
+      "mission_intake_submitted",
+      "mission_resolve_or_create",
+      "duplicate_preflight",
+      "mission_bound_provider_action",
+      "real_provider_execution",
+      "proof_receipt",
+      "timeline_page_1",
+      "timeline_page_2",
+      "same_mission_mobile_desktop_channel",
+      "memory_candidate_review_only",
+      "stale_offline_error_labels_verified",
+    ],
+    observations: [
+      observation("mobile", "mission_intake_submitted", refs.mobile),
+      observation("mobile", "mission_intake_ready", refs.mobile),
+      observation("desktop", "mission_resolve_or_create_visible", refs.desktop),
+      observation("desktop", "duplicate_preflight_visible", refs.desktop),
+      observation("mobile", "mission_bound_provider_action_visible", refs.mobile),
+      observation("desktop", "real_provider_execution_visible", refs.desktop),
+      observation("mobile", "proof_receipt_visible_before_done", refs.mobile),
+      observation("desktop", "same_mission_projection_visible", refs.desktop),
+      observation("desktop", "mission_workbench_visible", refs.desktop),
+      observation("desktop", "transcript_browser_visible", refs.desktop),
+      observation("desktop", "duplicate_blocked_opens_existing", refs.desktop),
+      observation("channel", "same_mission_projection_visible", refs.channel),
+      observation("channel", "same_mission_mobile_desktop_channel_visible", refs.channel),
+      observation("timeline", "bounded_page_1_visible", refs.timeline),
+      observation("timeline", "bounded_page_2_visible", refs.timeline),
+      observation("timeline", "memory_candidate_review_only", refs.timeline),
+      observation("desktop", "provider_ack_not_done_visible", refs.desktop),
+      observation("desktop", "pressure_20_50_consecutive_asks_visible", refs.desktop),
+      observation("desktop", "invalid_key_error_visible", refs.desktop),
+      observation("desktop", "quota_error_visible", refs.desktop),
+      observation("desktop", "network_error_visible", refs.desktop),
+      observation("channel", "channel_replay_blocked_visible", refs.channel),
+      observation("desktop", "reconnect_stale_verified", refs.desktop),
+      observation("desktop", "real_provider_execution_receipt_visible", refs.desktop),
+      observation("desktop", "stale_label_visible", refs.desktop),
+      observation("desktop", "offline_label_visible", refs.desktop),
+      observation("desktop", "error_label_visible", refs.desktop),
+      observation("desktop", "no_hidden_fallback_verified", refs.desktop),
+    ],
+  };
+  writeFileSync(path, JSON.stringify(manifest, null, 2));
+}
+
+describe("friday-ui-device-capture-dir", () => {
+  it("indexes captures and runs the existing preflight when a real manifest is supplied", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-"));
+    try {
+      const captures = writeEvidence(tempDir);
+      const outDir = join(tempDir, "evidence");
+      const manifest = join(tempDir, "observations-source.json");
+      writeManifest(manifest, outDir);
+
+      const stdout = execFileSync("node", [
+        "scripts/ops/friday-ui-device-capture-dir.mjs",
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        `--mobile=${captures.mobile}`,
+        `--desktop=${captures.desktop}`,
+        `--channel=${captures.channel}`,
+        `--timeline=${captures.timeline}`,
+        `--observations-manifest=${manifest}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      const result = JSON.parse(stdout) as { status?: string; truth?: string; preflight?: { status?: number } };
+      expect(result.truth).toBe("ui_device_capture_dir_driver_not_proof");
+      expect(result.status).toBe("ready");
+      expect(result.preflight?.status).toBe(0);
+
+      const index = JSON.parse(readFileSync(join(outDir, "capture-index.json"), "utf8")) as { truth?: string };
+      expect(index.truth).toBe("ui_device_capture_dir_index_not_proof");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stays blocked without an observations manifest and does not invent one", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-missing-"));
+    try {
+      const captures = writeEvidence(tempDir);
+      const result = spawnSync("node", [
+        "scripts/ops/friday-ui-device-capture-dir.mjs",
+        `--mission-id=${missionId}`,
+        `--out-dir=${join(tempDir, "evidence")}`,
+        `--mobile=${captures.mobile}`,
+        `--desktop=${captures.desktop}`,
+        `--channel=${captures.channel}`,
+        `--timeline=${captures.timeline}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { status?: string; blockers?: Array<{ code?: string }> };
+      expect(output.status).toBe("blocked");
+      expect(output.blockers?.map((blocker) => blocker.code)).toContain("observations_manifest_missing");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
