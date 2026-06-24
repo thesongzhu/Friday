@@ -11,6 +11,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
   case missions
   case session
   case contextPassport
+  case tokenLedger
   case shareIntake
   case voice
   case needsMe
@@ -29,6 +30,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .missions: return "Missions"
     case .session: return "Session"
     case .contextPassport: return "Context Passport"
+    case .tokenLedger: return "Token Ledger"
     case .shareIntake: return "Share Intake"
     case .voice: return "Voice"
     case .needsMe: return "Needs Me"
@@ -47,6 +49,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .missions: return "list.bullet.rectangle"
     case .session: return "rectangle.connected.to.line.below"
     case .contextPassport: return "checklist.checked"
+    case .tokenLedger: return "chart.bar.doc.horizontal"
     case .shareIntake: return "square.and.arrow.down"
     case .voice: return "waveform"
     case .needsMe: return "person.crop.circle.badge.exclamationmark"
