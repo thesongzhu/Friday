@@ -113,6 +113,28 @@ passports, hold signing keys, or claim END-BAR/GO-LIVE. The adjacent `.metadata.
 records which proof mode produced the screenshot and, in live-loopback mode, the public
 simulator device key needed for read-seam enrollment.
 
+To turn that simulator public key into an auditable read-seam proof, use:
+
+```sh
+scripts/ops/friday-ios-sim-live-loopback-read-seam.sh
+```
+
+By default this rebuilds/runs the simulator in `live-loopback` mode, validates the
+metadata, and dry-runs `hub_read_seam_enroll --pubkey <simulator-public-key> --add`.
+It writes no SecureStore state. To actually enroll the simulator read peer for local
+loopback dogfood, use the explicit write mode:
+
+```sh
+FRIDAY_IOS_SIM_READ_SEAM_ENROLL_ACK=operator-approves-ios-sim-read-seam-enroll \
+  scripts/ops/friday-ios-sim-live-loopback-read-seam.sh --enroll-read-seam
+```
+
+That enrollment is read-only seam access for the simulator public peer. It does not
+restart services, grant write access, mint trust grants/context passports, hold signing
+keys, or claim END-BAR/GO-LIVE/adoption. The read-projection server loads its
+allowlist at boot, so an already-running `:48751` process may need a separate safe
+reload before the newly-enrolled peer is admitted.
+
 **Device/simulator screenshot proof is operator-gated** (it needs Xcode + a booted
 simulator or a physical device); it is a deferred acceptance criterion. The
 load-bearing local checks are host `swift build` + `swift test` (the truth rules + the
