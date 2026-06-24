@@ -539,6 +539,8 @@ public struct HomeProviderReadinessDetail: Sendable, Equatable {
   public let detected: [HomeProviderAuthReadiness]
   public let routes: [HomeProviderRouteReadiness]
   public let failovers: [HomeProviderFailoverReadiness]
+  public let keyValidations: [HomeProviderKeyValidationReadiness]
+  public let confirmedValidKeys: [String]
   public let readyProviders: [String]
   public let anyAuthenticated: Bool
   public let allAuthenticated: Bool
@@ -560,6 +562,9 @@ public struct HomeProviderReadinessDetail: Sendable, Equatable {
       .map(HomeProviderRouteReadiness.init(raw:))
     self.failovers = Self.firstRows(raw, ["failover_readiness", "failoverReadiness"])
       .map(HomeProviderFailoverReadiness.init(raw:))
+    self.keyValidations = Self.firstRows(raw, ["key_validation", "keyValidation"])
+      .map(HomeProviderKeyValidationReadiness.init(raw:))
+    self.confirmedValidKeys = Self.firstStringArray(raw, ["confirmed_valid_keys", "confirmedValidKeys"])
     self.readyProviders = Self.firstStringArray(
       raw, ["ready_providers", "readyProviders", "cli_logged_in", "cliLoggedIn"])
     self.anyAuthenticated = Self.firstBool(raw, ["any_authenticated", "anyAuthenticated"])
@@ -603,6 +608,19 @@ public struct HomeProviderAuthReadiness: Sendable, Equatable, Identifiable {
     self.authenticated = raw["authenticated"] as? Bool ?? false
     self.detail = raw["detail"] as? String ?? "unknown"
     self.truthLabel = raw["truthLabel"] as? String ?? "linked_only"
+  }
+}
+
+public struct HomeProviderKeyValidationReadiness: Sendable, Equatable, Identifiable {
+  public let provider: String
+  public let label: String
+
+  public var id: String { provider }
+  public var isConfirmedValid: Bool { label == "valid" || label == "confirmed_valid" }
+
+  init(raw: [String: Any]) {
+    self.provider = raw["provider"] as? String ?? "unknown"
+    self.label = raw["label"] as? String ?? raw["status"] as? String ?? "unknown"
   }
 }
 
