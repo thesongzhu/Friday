@@ -11,8 +11,8 @@ import SwiftUI
 ///
 /// Truth rules: the projection is refs-only (counts/labels/ids — never a body); the
 /// `runtimeFeedStatus` + `statusLabels` ride AS-IS (never upgraded); a 503 / offline / dark
-/// server renders AS truth (honest-unavailable), never a fabricated ready Home. The only action
-/// is Refresh (re-read) — there is NO mutating action on this surface.
+/// server renders AS truth (honest-unavailable), never a fabricated ready Home. Governed recovery
+/// actions only appear when the live projection exposes WorkItem retry/cancel affordances.
 struct FridayHomeScreen: View {
   @ObservedObject var viewModel: HomeViewModel
   let showPairingProvisioning: Bool
@@ -222,6 +222,7 @@ struct FridayHomeScreen: View {
     let subtitle: String
     let chip: String
     let urgent: Bool
+    let workItem: HomeWorkItem?
   }
 
   private func needsRows(_ projection: HomeProjection) -> [QueueRow] {
@@ -236,7 +237,8 @@ struct FridayHomeScreen: View {
           title: item.title,
           subtitle: item.blockingReason.isEmpty ? "state: \(item.state)" : item.blockingReason,
           chip: item.canRetry ? "needs" : item.state,
-          urgent: item.canRetry || item.state == "stale" || item.state == "blocked")
+          urgent: item.canRetry || item.state == "stale" || item.state == "blocked",
+          workItem: item)
       }
     rows.append(contentsOf: projection.memoryCandidates.prefix(2).map { candidate in
       QueueRow(
@@ -246,7 +248,8 @@ struct FridayHomeScreen: View {
         title: "Review memory candidate",
         subtitle: candidate.preview,
         chip: candidate.grantsMemoryAuthority ? "authority" : "review",
-        urgent: false)
+        urgent: false,
+        workItem: nil)
     })
     rows.append(contentsOf: projection.runOutcomeLearningCandidates.prefix(2).map { candidate in
       QueueRow(
@@ -256,7 +259,8 @@ struct FridayHomeScreen: View {
         title: candidate.summary,
         subtitle: "candidate: \(candidate.kind) · \(candidate.state)",
         chip: "confirm",
-        urgent: false)
+        urgent: false,
+        workItem: nil)
     })
     return Array(rows.prefix(6))
   }
@@ -273,7 +277,8 @@ struct FridayHomeScreen: View {
           title: item.title,
           subtitle: "owner: \(item.owner)",
           chip: item.state,
-          urgent: false)
+          urgent: false,
+          workItem: nil)
       }
     if let route = projection.routeSelected {
       rows.append(QueueRow(
@@ -285,7 +290,8 @@ struct FridayHomeScreen: View {
           ? "selected by route advisor"
           : "alternatives: \(projection.routeAlternatives.joined(separator: ", "))",
         chip: "ok",
-        urgent: false))
+        urgent: false,
+        workItem: nil))
     }
     rows.append(contentsOf: projection.transcriptEvents.prefix(3).map { event in
       QueueRow(
@@ -295,7 +301,8 @@ struct FridayHomeScreen: View {
         title: event.summary,
         subtitle: "\(event.sectionTitle) · \(event.truthLabel)",
         chip: event.status,
-        urgent: false)
+        urgent: false,
+        workItem: nil)
     })
     return Array(rows.prefix(6))
   }
@@ -351,38 +358,100 @@ struct FridayHomeScreen: View {
   }
 
   private func commandQueueRow(_ row: QueueRow) -> some View {
-    GlassPanel {
-      HStack(spacing: 13) {
-        ZStack {
-          RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(row.iconBg)
-          Image(systemName: row.icon)
-            .font(.system(size: 18, weight: .semibold))
-            .foregroundStyle(row.urgent ? MobileTheme.coral : MobileTheme.cyan)
+    let recoveryState = row.workItem.flatMap { viewModel.workItemStatusStates[$0.id] }
+    return GlassPanel {
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 13) {
+          ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+              .fill(row.iconBg)
+            Image(systemName: row.icon)
+              .font(.system(size: 18, weight: .semibold))
+              .foregroundStyle(row.urgent ? MobileTheme.coral : MobileTheme.cyan)
+          }
+          .frame(width: 44, height: 44)
+          VStack(alignment: .leading, spacing: 4) {
+            Text(row.title)
+              .font(.headline)
+              .foregroundStyle(MobileTheme.textPrimary)
+              .lineLimit(2)
+            Text(row.subtitle)
+              .font(.subheadline)
+              .foregroundStyle(MobileTheme.textSecondary)
+              .lineLimit(2)
+          }
+          Spacer(minLength: 8)
+          StatusChip(
+            text: row.chip,
+            bg: row.urgent ? MobileTheme.chipWarnBG : MobileTheme.chipNeutralBG,
+            fg: row.urgent ? MobileTheme.chipWarnFG : MobileTheme.chipNeutralFG)
+          Image(systemName: "chevron.right")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(MobileTheme.textSecondary.opacity(0.55))
         }
-        .frame(width: 44, height: 44)
-        VStack(alignment: .leading, spacing: 4) {
-          Text(row.title)
-            .font(.headline)
-            .foregroundStyle(MobileTheme.textPrimary)
-            .lineLimit(2)
-          Text(row.subtitle)
-            .font(.subheadline)
-            .foregroundStyle(MobileTheme.textSecondary)
-            .lineLimit(2)
+        if let item = row.workItem, item.canRetry || item.canCancel {
+          workItemRecoveryControls(item, state: recoveryState)
         }
-        Spacer(minLength: 8)
-        StatusChip(
-          text: row.chip,
-          bg: row.urgent ? MobileTheme.chipWarnBG : MobileTheme.chipNeutralBG,
-          fg: row.urgent ? MobileTheme.chipWarnFG : MobileTheme.chipNeutralFG)
-        Image(systemName: "chevron.right")
-          .font(.footnote.weight(.semibold))
-          .foregroundStyle(MobileTheme.textSecondary.opacity(0.55))
       }
     }
     .accessibilityElement(children: .combine)
     .accessibilityLabel("\(row.title). \(row.subtitle). \(row.chip)")
+  }
+
+  @ViewBuilder
+  private func workItemRecoveryControls(_ item: HomeWorkItem, state: HomeLearningDecisionState?) -> some View {
+    HStack(spacing: 8) {
+      if item.canRetry {
+        Button {
+          Task { await viewModel.retryWorkItem(item) }
+        } label: {
+          Image(systemName: "arrow.clockwise")
+            .frame(width: 26, height: 26)
+        }
+        .buttonStyle(.bordered)
+        .disabled(candidateDecisionControlsDisabled(state))
+        .accessibilityLabel("Retry WorkItem")
+        .accessibilityIdentifier("friday.home.retry-work-item")
+      }
+      if item.canCancel {
+        Button {
+          Task { await viewModel.cancelWorkItem(item) }
+        } label: {
+          Image(systemName: "stop.circle")
+            .frame(width: 26, height: 26)
+        }
+        .buttonStyle(.bordered)
+        .disabled(candidateDecisionControlsDisabled(state))
+        .accessibilityLabel("Cancel WorkItem")
+        .accessibilityIdentifier("friday.home.cancel-work-item")
+      }
+    }
+    candidateDecisionStateView(state, pendingText: "Updating WorkItem...")
+  }
+
+  private func candidateDecisionControlsDisabled(_ state: HomeLearningDecisionState?) -> Bool {
+    guard let state else { return false }
+    return state.isSent || state.isTerminal
+  }
+
+  @ViewBuilder
+  private func candidateDecisionStateView(_ state: HomeLearningDecisionState?, pendingText: String) -> some View {
+    switch state {
+    case .sent:
+      Text(pendingText)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+    case .confirmed(let summary):
+      Text(summary)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+    case .error(let reason):
+      Text(reason)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.coral)
+    case nil:
+      EmptyView()
+    }
   }
 
   private func statusCard(_ projection: HomeProjection) -> some View {

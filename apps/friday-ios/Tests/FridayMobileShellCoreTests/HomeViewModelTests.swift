@@ -696,6 +696,43 @@ final class HomeViewModelTests: XCTestCase {
       .confirmed(summary: "cancelled · work_item_id=wi-2 · previous=unknown"))
   }
 
+  func testRetryWorkItemGuardDoesNotWriteWhenProjectionSaysNotRetryable() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeMissionWriteClient()
+    let vm = HomeViewModel(client: read, writeClient: write, writeOwnerPrincipal: "owner-ios")
+    let item = try XCTUnwrap(HomeProjection(try sampleSnapshot()).workItems.first)
+
+    await vm.retryWorkItem(item)
+
+    XCTAssertTrue(write.workItemStatusRequests.isEmpty)
+    XCTAssertEqual(read.fetchWorkbenchCount, 0)
+    XCTAssertEqual(vm.workItemStatusStates["wi-1"], .error(reason: "This WorkItem is not retryable."))
+  }
+
+  func testCancelWorkItemGuardDoesNotWriteWhenProjectionSaysNotCancellable() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeMissionWriteClient()
+    let vm = HomeViewModel(client: read, writeClient: write, writeOwnerPrincipal: "owner-ios")
+    var item = try XCTUnwrap(HomeProjection(try sampleSnapshot()).workItems.last)
+    item = HomeWorkItem(
+      id: item.id,
+      title: item.title,
+      state: item.state,
+      owner: item.owner,
+      proofRef: item.proofRef,
+      done: item.done,
+      blockingReason: item.blockingReason,
+      recoveryKind: item.recoveryKind,
+      canRetry: item.canRetry,
+      canCancel: false)
+
+    await vm.cancelWorkItem(item)
+
+    XCTAssertTrue(write.workItemStatusRequests.isEmpty)
+    XCTAssertEqual(read.fetchWorkbenchCount, 0)
+    XCTAssertEqual(vm.workItemStatusStates["wi-2"], .error(reason: "This WorkItem is not cancellable."))
+  }
+
   func testDecideMemoryConfirmRendersConfirmedAndRefreshes() async throws {
     let read = FakeReadClient(.snapshot(try sampleSnapshot()))
     let write = FakeMissionWriteClient(memoryScript: .result(
