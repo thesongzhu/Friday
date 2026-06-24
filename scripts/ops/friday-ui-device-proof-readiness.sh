@@ -120,9 +120,15 @@ infer_mission_id_from_manifest() {
   ' "$manifest" 2>/dev/null || true
 }
 
+infer_mission_id_from_capture_index() {
+  local index="$1"
+  jq -r '.mission_id // .missionId // empty' "$index" 2>/dev/null || true
+}
+
 discover_evidence_dir() {
   local dir="$1"
   local manifest
+  local capture_index
   if [ -z "$dir" ]; then
     return 0
   fi
@@ -145,14 +151,35 @@ discover_evidence_dir() {
       MISSION_ID="$(tr -d '[:space:]' <"$dir/mission-id.txt")"
     elif [ -n "$manifest" ] && [ -s "$manifest" ]; then
       MISSION_ID="$(infer_mission_id_from_manifest "$manifest")"
+    else
+      capture_index="$(first_existing \
+        "$dir/capture-index.json" \
+        "$dir/bundle/live-write-read-bundle-index.json" \
+        "$dir/desktop/capture-index.json" \
+        "$dir/mobile/capture-index.json" || true)"
+      if [ -n "$capture_index" ]; then
+        MISSION_ID="$(infer_mission_id_from_capture_index "$capture_index")"
+      fi
     fi
   fi
 
   if [ -z "${MOBILE_EVIDENCE:-}" ]; then
-    MOBILE_EVIDENCE="$(first_existing "$dir/mobile.json" "$dir/mobile.trace" "$dir/mobile.log" "$dir/mobile.png" || true)"
+    MOBILE_EVIDENCE="$(first_existing \
+      "$dir/mobile.json" \
+      "$dir/mobile.trace" \
+      "$dir/mobile.log" \
+      "$dir/mobile.png" \
+      "$dir/ios-live-write-read-proof.json" \
+      "$dir/mobile/ios-live-write-read-proof.json" || true)"
   fi
   if [ -z "${DESKTOP_EVIDENCE:-}" ]; then
-    DESKTOP_EVIDENCE="$(first_existing "$dir/desktop.json" "$dir/desktop.trace" "$dir/desktop.log" "$dir/desktop.png" || true)"
+    DESKTOP_EVIDENCE="$(first_existing \
+      "$dir/desktop.json" \
+      "$dir/desktop.trace" \
+      "$dir/desktop.log" \
+      "$dir/desktop.png" \
+      "$dir/macos-live-write-read-proof.json" \
+      "$dir/desktop/macos-live-write-read-proof.json" || true)"
   fi
   if [ -z "${CHANNEL_EVIDENCE:-}" ]; then
     CHANNEL_EVIDENCE="$(first_existing "$dir/channel.json" "$dir/channel.trace" "$dir/channel.log" "$dir/channel.png" || true)"
@@ -164,7 +191,12 @@ discover_evidence_dir() {
     SAME_RUN_EVENTS="$(first_existing \
       "$dir/same-run-events.normalized.jsonl" \
       "$dir/same-run-events.jsonl" \
-      "$dir/events.jsonl" || true)"
+      "$dir/events.jsonl" \
+      "$dir/bundle/mobile-desktop-live-write-read-events.jsonl" \
+      "$dir/ios-live-write-read-events.jsonl" \
+      "$dir/macos-live-write-read-events.jsonl" \
+      "$dir/mobile/ios-live-write-read-events.jsonl" \
+      "$dir/desktop/macos-live-write-read-events.jsonl" || true)"
   fi
   if [ -z "${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}" ]; then
     FRIDAY_WORKBENCH_SNAPSHOT_FILE="$(first_existing \
