@@ -244,7 +244,7 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
         systemImage: "bell.badge",
         tier: .liveReadProjection,
         runtimeActionIds: ["mobile/activity/mark-done"],
-        blockers: [.init(.needsLiveWrite, label: "owner-bound mark-done")])
+        blockers: [.init(.needsRuntimeEvidence, label: "owner-bound mark-done app proof")])
     case .workflows:
       return contract(
         title: "Workflows",
