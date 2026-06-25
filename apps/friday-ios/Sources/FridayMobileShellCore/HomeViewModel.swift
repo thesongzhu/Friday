@@ -717,6 +717,7 @@ public enum MobilePairingAttemptMode: String, Sendable, Equatable {
   case accepted
   case denied
   case unavailable
+  case cancelled
 }
 
 public struct MobilePairingAttempt: Sendable, Equatable {
@@ -781,6 +782,19 @@ public struct MobilePairingAttempt: Sendable, Equatable {
       deviceId: deviceId,
       errorCode: nil,
       reason: reason)
+  }
+
+  public static func cancelled(
+    _ projection: FridayPairingManifestProjection?,
+    deviceId: String? = nil
+  ) -> MobilePairingAttempt {
+    MobilePairingAttempt(
+      mode: .cancelled,
+      pairingId: projection?.pairingId,
+      hubId: projection?.hubId,
+      deviceId: deviceId,
+      errorCode: nil,
+      reason: "Pair request cancelled before PairAck.")
   }
 }
 
@@ -985,6 +999,13 @@ public final class HomeViewModel: ObservableObject {
     pairingAttempt = .idle
   }
 
+  public func cancelPairingAttempt() {
+    guard pairingAttempt.mode == .sending else {
+      return
+    }
+    pairingAttempt = .cancelled(pairingPreflight.projection, deviceId: pairingAttempt.deviceId)
+  }
+
   public func pairScannedQR(
     _ qrPayload: String,
     deviceId: String = "",
@@ -1051,6 +1072,10 @@ public final class HomeViewModel: ObservableObject {
     pairingAttempt = .sending(manifest.redactedProjection, deviceId: finalDeviceId)
     do {
       let ack = try await pairingClient.pairDevice(manifest: manifest, deviceId: finalDeviceId)
+      guard !Task.isCancelled else {
+        pairingAttempt = .cancelled(manifest.redactedProjection, deviceId: finalDeviceId)
+        return
+      }
       if ack.accepted {
         pairingAttempt = .accepted(manifest.redactedProjection, deviceId: finalDeviceId)
         await refresh()
@@ -1058,6 +1083,10 @@ public final class HomeViewModel: ObservableObject {
         pairingAttempt = .denied(manifest.redactedProjection, code: ack.errorCode, deviceId: finalDeviceId)
       }
     } catch {
+      if Task.isCancelled || error is CancellationError {
+        pairingAttempt = .cancelled(manifest.redactedProjection, deviceId: finalDeviceId)
+        return
+      }
       pairingAttempt = .unavailable(
         manifest.redactedProjection,
         reason: Self.pairingReason(for: error),
