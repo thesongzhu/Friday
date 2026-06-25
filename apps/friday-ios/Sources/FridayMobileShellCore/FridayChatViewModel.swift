@@ -345,6 +345,7 @@ public final class FridayChatViewModel: ObservableObject {
   @Published public private(set) var contextCards: [ChatContextCard] = []
   @Published public private(set) var selectedContextCardId: String?
   @Published public private(set) var contextMemoryDecisionState: HomeLearningDecisionState?
+  @Published public private(set) var contextPassportTransferState: HomeLearningDecisionState?
 
   /// The package write client is `Sendable`; each dispatch/control call builds a fresh transport.
   private let writeClient: FridayRustWriteClient
@@ -624,6 +625,7 @@ public final class FridayChatViewModel: ObservableObject {
     contextCards = []
     selectedContextCardId = nil
     contextMemoryDecisionState = nil
+    contextPassportTransferState = nil
     historyStore.save(history)
   }
 
@@ -672,6 +674,70 @@ public final class FridayChatViewModel: ObservableObject {
     }
   }
 
+  public func submitContextPassportHandoff() async {
+    guard case .answered(let receipt) = phase else {
+      contextPassportTransferState = .error(reason: "No answered Chat turn is available for handoff.")
+      return
+    }
+    guard let missionId = receipt.missionId, !missionId.isEmpty else {
+      contextPassportTransferState = .error(reason: "This Chat turn is not bound to a Mission.")
+      return
+    }
+    guard let memoryDecisionClient else {
+      contextPassportTransferState = .error(reason: "Write seam not configured.")
+      return
+    }
+
+    selectedContextCardId = "handoff"
+    contextPassportTransferState = .sent
+    let workItemId = receipt.followUpWorkItemId ?? receipt.workItemId
+    let runRef = receipt.answerBodyRunId ?? receipt.followUpRunId ?? receipt.runId
+    let request = ContextPassportTransferRequestWire(
+      passportId: "mobile-chat-passport-\(missionId)",
+      missionId: missionId,
+      workItemId: workItemId,
+      destinationLane: "codex",
+      destinationTarget: "codex",
+      items: [
+        ContextPassportItemWire(
+          kind: "summary",
+          label: "Mobile Chat handoff for mission \(missionId).",
+          included: true,
+          sensitive: false),
+        ContextPassportItemWire(
+          kind: "summary",
+          label: "Answer run ref \(runRef).",
+          included: true,
+          sensitive: false),
+        ContextPassportItemWire(
+          kind: "summary",
+          label: "Work item ref \(workItemId ?? "not-attached").",
+          included: true,
+          sensitive: false),
+      ],
+      approvedSensitive: false)
+    do {
+      let result = try await memoryDecisionClient.submitContextPassportTransfer(request)
+      switch result.status {
+      case "confirmed":
+        contextPassportTransferState = .confirmed(
+          summary: "passport \(result.passportId) · items=\(result.sharedItemCount)")
+        appendHistory(
+          role: "friday",
+          text: "Context handoff created.",
+          receiptRefs: [
+            ChatReceiptRef(label: "passport_id", ref: result.passportId),
+            ChatReceiptRef(label: "mission_id", ref: result.missionId),
+            ChatReceiptRef(label: "link_id", ref: result.linkId ?? "none"),
+          ])
+      default:
+        contextPassportTransferState = .error(reason: "Context passport blocked — \(result.blocker ?? "blocked")")
+      }
+    } catch {
+      contextPassportTransferState = .error(reason: Self.memoryReason(for: error))
+    }
+  }
+
   /// Reset to a fresh composer after an answer / receipt / unavailable (start a new turn).
   public func newTurn() {
     switch phase {
@@ -680,6 +746,7 @@ public final class FridayChatViewModel: ObservableObject {
       contextCards = []
       selectedContextCardId = nil
       contextMemoryDecisionState = nil
+      contextPassportTransferState = nil
     default:
       // Do NOT abandon an in-flight dispatch or a pending approval (would drop the S6 gate).
       break

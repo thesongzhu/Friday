@@ -93,6 +93,12 @@ struct FridayChatScreen: View {
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         RefPill(label: "evidence", ref: short(card.evidenceRef))
+        if card.id == "handoff" {
+          handoffControls
+        }
+        if card.id == "handoff", let state = viewModel.contextPassportTransferState {
+          candidateDecisionStateView(state)
+        }
         if card.id == "memory", card.memoryCandidateId != nil {
           memoryDecisionControls
         }
@@ -107,6 +113,18 @@ struct FridayChatScreen: View {
     .accessibilityElement(children: .contain)
     .accessibilityLabel("\(card.title) card")
     .accessibilityIdentifier("friday.chat.\(card.id)-card")
+  }
+
+  private var handoffControls: some View {
+    Button {
+      Task { await viewModel.submitContextPassportHandoff() }
+    } label: {
+      Label("Create handoff", systemImage: "arrowshape.turn.up.right")
+        .font(.caption.weight(.semibold))
+    }
+    .buttonStyle(.bordered)
+    .disabled(viewModel.contextPassportTransferState?.isSent == true)
+    .accessibilityIdentifier("friday.chat.handoff-card.share")
   }
 
   private var memoryDecisionControls: some View {

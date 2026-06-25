@@ -567,6 +567,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   private let lock = NSLock()
   private var _lastIntake: MissionIntakeRequestWire?
   private var _lastDecision: MemoryDecisionRequestWire?
+  private var _lastContextPassportTransfer: ContextPassportTransferRequestWire?
   private var _lastLearningDecision: RunOutcomeLearningDecisionRequestWire?
   private var _lastActivityMarkDone: ActivityMarkDoneRequestWire?
   private var _lastWorkItemStatus: WorkItemStatusRequestWire?
@@ -582,6 +583,9 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   private var _dispatchedTasks: [String] = []
   var lastIntake: MissionIntakeRequestWire? { lock.withLock { _lastIntake } }
   var lastDecision: MemoryDecisionRequestWire? { lock.withLock { _lastDecision } }
+  var lastContextPassportTransfer: ContextPassportTransferRequestWire? {
+    lock.withLock { _lastContextPassportTransfer }
+  }
   var lastLearningDecision: RunOutcomeLearningDecisionRequestWire? {
     lock.withLock { _lastLearningDecision }
   }
@@ -639,6 +643,25 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
         status: request.decision == "confirm" ? "confirmed" : "rejected",
         recallable: request.decision == "confirm")
     }
+  }
+
+  func submitContextPassportTransfer(
+    _ request: ContextPassportTransferRequestWire
+  ) async throws -> ContextPassportTransferResultWire {
+    lock.withLock { _lastContextPassportTransfer = request }
+    if case .throwsTransport = behavior {
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    }
+    return ContextPassportTransferResultWire(
+      passportId: request.passportId,
+      missionId: request.missionId,
+      workItemId: request.workItemId,
+      destinationLane: request.destinationLane,
+      destinationTarget: request.destinationTarget,
+      sharedItemCount: UInt64(request.items.count),
+      missionRefCount: 1,
+      linkId: "context-passport-\(request.passportId)-1",
+      status: "confirmed")
   }
 
   func submitRunOutcomeLearningDecision(

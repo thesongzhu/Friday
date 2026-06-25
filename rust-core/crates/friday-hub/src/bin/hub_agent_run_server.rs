@@ -534,6 +534,21 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    let context_passport_transfer_enabled = context_passport_transfer_enabled_from(
+        env::var(CONTEXT_PASSPORT_TRANSFER_ENABLED_ENV)
+            .ok()
+            .as_deref(),
+    );
+    if context_passport_transfer_enabled {
+        eprintln!(
+            "hub_agent_run_server: CONTEXT-PASSPORT transfer ENABLED (FRIDAY_CONTEXT_PASSPORT_TRANSFER) — an inbound ContextPassportTransferRequest mints a governed ContextPassport for an existing Mission (no model call)"
+        );
+    } else {
+        eprintln!(
+            "hub_agent_run_server: CONTEXT-PASSPORT transfer DISABLED (set FRIDAY_CONTEXT_PASSPORT_TRANSFER=1 to enable) — a ContextPassportTransferRequest is a benign keepalive echo"
+        );
+    }
+
     let run_outcome_learning_confirm_enabled = run_outcome_learning_confirm_enabled_from(
         env::var(RUN_OUTCOME_LEARNING_CONFIRM_ENABLED_ENV)
             .ok()
@@ -803,6 +818,12 @@ const MEMORY_CONFIRM_ENABLED_ENV: &str = "FRIDAY_MEMORY_CONFIRM";
 /// ON only for the exact opt-in value `"1"` (trimmed), matching the program's standard flag idiom;
 /// everything else (including `"true"`) ⇒ false.
 fn memory_confirm_enabled_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+const CONTEXT_PASSPORT_TRANSFER_ENABLED_ENV: &str = "FRIDAY_CONTEXT_PASSPORT_TRANSFER";
+
+fn context_passport_transfer_enabled_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
@@ -1497,6 +1518,11 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
     let mut processed = 0usize;
     let activity_mark_done_enabled =
         activity_mark_done_enabled_from(env::var(ACTIVITY_MARK_DONE_ENABLED_ENV).ok().as_deref());
+    let context_passport_transfer_enabled = context_passport_transfer_enabled_from(
+        env::var(CONTEXT_PASSPORT_TRANSFER_ENABLED_ENV)
+            .ok()
+            .as_deref(),
+    );
     // S-E: per-session msg_id dedup. A reconnect mints a FRESH tracker (so it is not a
     // cross-connection store) — combined with the per-handshake nonce, a captured envelope is
     // useless both within a session (dedup) and across handshakes (nonce).
@@ -2185,6 +2211,23 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                     env.msg_id
                 );
                 // The handler already correlates the reply to `msg_id`; send it sealed.
+                ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
+                processed += 1;
+            }
+            Message::ContextPassportTransferRequest { request }
+                if context_passport_transfer_enabled =>
+            {
+                let now_ms = now_ms();
+                let result = friday_hub::hub_server::context_passport_transfer_result_for_db(
+                    runtime.db(),
+                    &env.msg_id,
+                    request,
+                    now_ms,
+                );
+                eprintln!(
+                    "hub_agent_run_server_dispatch: msg_id={} leg=context_passport_transfer (context-passport transfer enabled)",
+                    env.msg_id
+                );
                 ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
                 processed += 1;
             }
@@ -4620,6 +4663,17 @@ mod tests {
             !memory_confirm_enabled_from(Some("  TRUE  ")),
             "padded TRUE ⇒ disabled (only exact 1)"
         );
+    }
+
+    #[test]
+    fn context_passport_transfer_flag_is_default_off_and_fail_closed() {
+        assert!(!context_passport_transfer_enabled_from(None));
+        assert!(!context_passport_transfer_enabled_from(Some("")));
+        assert!(!context_passport_transfer_enabled_from(Some("0")));
+        assert!(!context_passport_transfer_enabled_from(Some("true")));
+        assert!(!context_passport_transfer_enabled_from(Some("on")));
+        assert!(context_passport_transfer_enabled_from(Some("1")));
+        assert!(context_passport_transfer_enabled_from(Some(" 1 ")));
     }
 
     #[test]
