@@ -447,6 +447,7 @@ pub(crate) fn memory_review_activity_row(
     state: MemoryState,
     scope: MemoryScope,
     summary: &str,
+    owner: Option<&str>,
     now_ms: i64,
 ) -> Option<ActivityRow> {
     let NeedsMeItem {
@@ -465,6 +466,10 @@ pub(crate) fn memory_review_activity_row(
         created_at: now_ms,
         updated_at: now_ms,
         deep_link: Some(destination),
+        // M6: stamp the RAW effective user_id (the session owner) so mark-done scopes to the
+        // owner. This is the raw id, NOT the composite recall `principal_id` namespace — it
+        // must share the WS `principal_id()` identifier space.
+        owner: owner.map(str::to_string),
     })
 }
 
@@ -729,6 +734,10 @@ pub fn extract_inline_flagged<T: Transport>(
             MemoryState::Candidate,
             MemoryScope::Session,
             label,
+            // M6: the RAW effective user_id (the session owner derived above) — NOT the
+            // composite `derived_namespace`/`principal_id` recall key — so the stamped owner
+            // shares the WS `principal_id()` identifier space.
+            effective_user_id.as_deref(),
             now_ms,
         ) {
             let _ = db.insert_activity(&row);
@@ -1618,12 +1627,15 @@ mod tests {
             MemoryState::Candidate,
             MemoryScope::Session,
             "preference",
+            Some("user-zed"),
             100,
         )
         .expect("a pending candidate surfaces");
         assert_eq!(row.activity_id, "memory-review-needs-me-s1:ex:100:c0");
         assert_eq!(row.kind.as_str(), "memory_review");
         assert_eq!(row.state.as_str(), "pending");
+        // M6: the stamped owner is the threaded raw user_id (not the composite namespace).
+        assert_eq!(row.owner.as_deref(), Some("user-zed"));
         assert_eq!(
             row.deep_link.as_deref(),
             Some("memory/session/s1:ex:100:c0")
@@ -1640,6 +1652,7 @@ mod tests {
                 MemoryState::Confirmed,
                 MemoryScope::Session,
                 "preference",
+                Some("user-zed"),
                 100,
             )
             .is_none(),
@@ -1650,6 +1663,7 @@ mod tests {
             MemoryState::Rejected,
             MemoryScope::Session,
             "preference",
+            Some("user-zed"),
             100,
         )
         .is_none());
@@ -1702,6 +1716,87 @@ mod tests {
         );
     }
 
+    /// M6 (real-derivation, NOT a hand-set owner): a memory_review row produced by the REAL
+    /// extraction path carries `owner = effective_user_id` (the RAW session user_id, NOT the
+    /// composite recall namespace). Marking it done with that real principal ALLOWS; marking
+    /// it done with a DIFFERENT principal is BLOCKED and leaves the row Pending — proving the
+    /// owner-binding (not a coincidence) is the discriminator.
+    #[test]
+    fn m6_memory_review_owner_is_raw_user_id_allows_owner_denies_other() {
+        let db = friday_storage::Db::open_hub(&tmp("m6-memrev")).unwrap();
+        // The session owner's RAW user_id is "alice"; the composite recall namespace is
+        // `ns_for("alice")` (a DIFFERENT string). The stamp must be the raw "alice".
+        let ids = seed_session(&db, "s1", "alice");
+        let content = json!({
+            "items": [{
+                "kind": "preference",
+                "content": "User's project codename is Falcon.",
+                "sourceMessageIds": [ids[0]]
+            }]
+        })
+        .to_string();
+        let c = client(content);
+        extract_inline_flagged(
+            &db,
+            "s1",
+            &c,
+            DEFAULT_MAX_ITEMS,
+            "s1:ex:100",
+            "led-1",
+            100,
+            true,
+        )
+        .unwrap();
+
+        let activity_id = "memory-review-needs-me-s1:ex:100:c0";
+        // The stamped owner is the RAW user_id "alice" — NOT the composite namespace.
+        let stored_owner: Option<String> = db
+            .conn()
+            .query_row(
+                "SELECT owner FROM activity_item WHERE activity_id = ?1",
+                [activity_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_owner.as_deref(), Some("alice"));
+        assert_ne!(
+            stored_owner.as_deref(),
+            Some(ns_for("alice").as_str()),
+            "owner must be the RAW user_id, never the composite recall namespace"
+        );
+
+        // Wrong principal ("bob") => BLOCKED, row stays Pending (the cross-owner DENY).
+        assert!(!db
+            .mark_activity_done(activity_id, Some("bob"), 200)
+            .unwrap());
+        let state_after_deny: String = db
+            .conn()
+            .query_row(
+                "SELECT state FROM activity_item WHERE activity_id = ?1",
+                [activity_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            state_after_deny, "pending",
+            "a cross-owner mark-done changes nothing"
+        );
+
+        // The real owner ("alice", = the WS principal_id() identifier space) => ALLOWED.
+        assert!(db
+            .mark_activity_done(activity_id, Some("alice"), 300)
+            .unwrap());
+        let state_after_allow: String = db
+            .conn()
+            .query_row(
+                "SELECT state FROM activity_item WHERE activity_id = ?1",
+                [activity_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(state_after_allow, "done");
+    }
+
     #[test]
     fn ns8_flag_on_terminal_candidate_is_not_surfaced() {
         // Drive the surfacing projection with a TERMINAL state directly (the proven producer
@@ -1710,9 +1805,14 @@ mod tests {
         // skip lives in `memory_review_activity_row` and is verified here end-to-end on the DB.
         let db = friday_storage::Db::open_hub(&tmp("ns8-terminal")).unwrap();
         for state in [MemoryState::Confirmed, MemoryState::Rejected] {
-            if let Some(row) =
-                memory_review_activity_row("m-terminal", state, MemoryScope::Session, "fact", 10)
-            {
+            if let Some(row) = memory_review_activity_row(
+                "m-terminal",
+                state,
+                MemoryScope::Session,
+                "fact",
+                Some("user-zed"),
+                10,
+            ) {
                 db.insert_activity(&row).unwrap();
             }
         }
@@ -1776,6 +1876,7 @@ mod tests {
             MemoryState::Candidate,
             MemoryScope::Session,
             "preference",
+            Some("user-zed"),
             100,
         )
         .unwrap();

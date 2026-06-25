@@ -2056,6 +2056,7 @@ pub fn activity_mark_done_result_for_db(
     db: &Db,
     msg_id: &str,
     request: ActivityMarkDoneRequestWire,
+    authenticated_owner: Option<&str>,
     now_ms: i64,
 ) -> Envelope {
     let activity_id = request.activity_id.trim();
@@ -2063,7 +2064,27 @@ pub fn activity_mark_done_result_for_db(
         return activity_mark_done_blocked(msg_id, now_ms, "", "unknown", "activity_id_required");
     }
 
-    match db.mark_activity_done(activity_id, now_ms) {
+    // M6: the SCOPE source is the AUTHENTICATED owner (the Rust-derived principal threaded
+    // from the WS dispatch arm), NEVER a raw body field. An empty/absent owner fails closed
+    // with `owner_principal_required` (mirrors `memory_decision_result_for_db`). The WS path
+    // always passes `Some(principal)`; the local FFI path passes `None` and goes through
+    // `Db::mark_activity_done` directly (the legacy NULL-allow arm), never here.
+    let owner = authenticated_owner.unwrap_or("").trim();
+    if owner.is_empty() {
+        return activity_mark_done_blocked(
+            msg_id,
+            now_ms,
+            activity_id,
+            "unknown",
+            "owner_principal_required",
+        );
+    }
+
+    // Owner-scoped clear: a cross-owner row (a different principal's item) and an unknown id
+    // BOTH yield `Ok(false)` => both map to `unknown_activity` (no existence oracle — a
+    // cross-owner probe is indistinguishable from a missing id, which is MORE leak-resistant
+    // than the sibling get-row/check-owner idiom).
+    match db.mark_activity_done(activity_id, Some(owner), now_ms) {
         Ok(true) => Envelope::new(
             format!("{msg_id}-activity-mark-done"),
             now_ms,
@@ -7888,6 +7909,11 @@ mod tests {
     }
 
     fn seed_activity(db: &Db, activity_id: &str) {
+        seed_activity_owned(db, activity_id, Some("owner-1"));
+    }
+
+    /// Seed a Pending ApprovalRequired row owned by `owner` (None = pre-migration NULL owner).
+    fn seed_activity_owned(db: &Db, activity_id: &str, owner: Option<&str>) {
         db.insert_activity(&friday_storage::ActivityRow {
             activity_id: activity_id.to_string(),
             session_id: Some("session-activity".to_string()),
@@ -7897,6 +7923,7 @@ mod tests {
             created_at: 1_000,
             updated_at: 1_000,
             deep_link: Some("friday://activity/session-activity".to_string()),
+            owner: owner.map(str::to_string),
         })
         .unwrap();
     }
@@ -7913,6 +7940,8 @@ mod tests {
                 activity_id: "activity-mark-done-1".into(),
                 reason: Some("owner cleared it".into()),
             },
+            // The seeded row's owner — an owner-match ALLOW.
+            Some("owner-1"),
             1_200,
         );
         let result = decode_activity_mark_done(&env);
@@ -7947,6 +7976,9 @@ mod tests {
                 activity_id: "missing-activity".into(),
                 reason: None,
             },
+            // A non-empty authenticated owner so this exercises the unknown-id path, NOT the
+            // owner-empty fail-closed path.
+            Some("owner-1"),
             1_200,
         );
         let result = decode_activity_mark_done(&env);
@@ -7954,6 +7986,92 @@ mod tests {
         assert_eq!(result.state, "unknown");
         assert_eq!(result.blocker.as_deref(), Some("unknown_activity"));
         assert_eq!(db.count("activity_item").unwrap(), 0);
+    }
+
+    /// M6: the producer fails closed when no authenticated owner is threaded (None / empty /
+    /// whitespace), mirroring `memory_decision_result_for_db`. The WS arm always passes
+    /// `Some(principal)`; this is the defense-in-depth guard.
+    #[test]
+    fn activity_mark_done_empty_owner_is_blocked_owner_principal_required() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_activity(&db, "activity-mark-done-1");
+        for owner in [None, Some(""), Some("   ")] {
+            let env = activity_mark_done_result_for_db(
+                &db,
+                "msg-no-owner",
+                ActivityMarkDoneRequestWire {
+                    activity_id: "activity-mark-done-1".into(),
+                    reason: None,
+                },
+                owner,
+                1_200,
+            );
+            let result = decode_activity_mark_done(&env);
+            assert_eq!(
+                result.status, "blocked",
+                "empty owner ⇒ blocked ({owner:?})"
+            );
+            assert_eq!(result.blocker.as_deref(), Some("owner_principal_required"));
+        }
+        // The row was never touched.
+        let rows = db.list_activity().unwrap();
+        assert_eq!(rows[0].state, "pending");
+    }
+
+    /// M6: a cross-owner mark-done (the row is owned by a DIFFERENT principal) is BLOCKED and
+    /// the row is unchanged. By design the cross-owner case is indistinguishable from an
+    /// unknown id (no existence oracle), so only `status=="blocked"` is asserted — NOT a
+    /// distinct mismatch reason.
+    #[test]
+    fn activity_mark_done_cross_owner_is_blocked_and_row_unchanged() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_activity_owned(&db, "activity-mark-done-1", Some("owner-1"));
+        let env = activity_mark_done_result_for_db(
+            &db,
+            "msg-cross-owner",
+            ActivityMarkDoneRequestWire {
+                activity_id: "activity-mark-done-1".into(),
+                reason: None,
+            },
+            // A DIFFERENT authenticated principal.
+            Some("owner-2"),
+            1_200,
+        );
+        let result = decode_activity_mark_done(&env);
+        assert_eq!(result.status, "blocked", "a cross-owner clear is blocked");
+        // Row unchanged — still Pending, never cleared by a non-owner.
+        let rows = db.list_activity().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].state, "pending",
+            "the non-owner clear changed nothing"
+        );
+    }
+
+    /// M6: a pre-migration (NULL-owner) row is legacy-allow — any authenticated principal can
+    /// clear it (a deny-NULL would strand pre-deploy rows = a degrade).
+    #[test]
+    fn activity_mark_done_null_owner_legacy_row_is_allowed_for_any_principal() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        // A pre-migration row carries owner = NULL.
+        seed_activity_owned(&db, "activity-mark-done-1", None);
+        let env = activity_mark_done_result_for_db(
+            &db,
+            "msg-null-owner",
+            ActivityMarkDoneRequestWire {
+                activity_id: "activity-mark-done-1".into(),
+                reason: None,
+            },
+            Some("any-principal"),
+            1_200,
+        );
+        let result = decode_activity_mark_done(&env);
+        assert_eq!(
+            result.status, "done",
+            "a NULL-owner legacy row clears (legacy-allow)"
+        );
+        let rows = db.list_activity().unwrap();
+        assert_eq!(rows[0].state, "done");
     }
 
     #[test]

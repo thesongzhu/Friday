@@ -150,6 +150,7 @@ pub fn insert_pending_approval_activity(
     run_id: &str,
     nonce: &str,
     action: &str,
+    owner: Option<&str>,
     now_ms: i64,
 ) -> rusqlite::Result<()> {
     let row = ActivityRow {
@@ -161,6 +162,9 @@ pub fn insert_pending_approval_activity(
         created_at: now_ms,
         updated_at: now_ms,
         deep_link: None,
+        // M6: stamp the run's bound principal so mark-done scopes to the owner. None when the
+        // paused run has no bound principal (single-owner legacy-allow).
+        owner: owner.map(str::to_string),
     };
     insert_activity_conn(conn, &row)
 }

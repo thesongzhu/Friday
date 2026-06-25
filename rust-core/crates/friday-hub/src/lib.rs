@@ -2322,6 +2322,8 @@ pub fn record_friday_ask<T: friday_deepseek::Transport>(
         created_at: now_ms,
         updated_at: now_ms,
         deep_link: None,
+        // Non-markable Done receipt — never owner-scoped.
+        owner: None,
     };
     let audit = AuditEvent {
         audit_id: format!("{ledger_id}:modelcall"),
@@ -4526,6 +4528,8 @@ pub(crate) fn bill_model_call_keyed(
         created_at: now_ms,
         updated_at: now_ms,
         deep_link: None,
+        // Non-markable Done receipt — never owner-scoped.
+        owner: None,
     };
     let audit = AuditEvent {
         audit_id,
@@ -6192,6 +6196,9 @@ fn run_loop_with_policy_inner(
                         run_id,
                         &nonce,
                         &raw.action,
+                        // M6: stamp the run's bound principal so mark-done scopes to the owner
+                        // (the SAME source the WS mark-done arm threads = policy.principal_id()).
+                        policy.principal_id(),
                         now_ms,
                     );
                 }
@@ -7672,6 +7679,90 @@ mod tests {
             activity.is_empty(),
             "flag OFF ⇒ ZERO activity rows from the pause (byte-identical baseline)"
         );
+    }
+
+    /// M6 (real-derivation, NOT a hand-set owner): an ApprovalRequired row produced by a REAL
+    /// paused run carries `owner = policy.principal_id()` ("alice") — the SAME source the WS
+    /// mark-done arm threads. Marking it done with that real principal ALLOWS; a different
+    /// principal is BLOCKED and leaves the row Pending.
+    #[test]
+    fn m6_approval_required_owner_is_run_principal_allows_owner_denies_other() {
+        let root = TempDir::new("m6-approval");
+        let db = Db::open_hub(&temp_path("m6-approval")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+        let write = raw("write_file", &[("path", "out.txt"), ("content", "X")]);
+        let client = ScriptedAgentLlmClient::new(vec![AgentStep::Tool(write)]);
+        let executor = FsToolExecutor::new(&root.0);
+        // The run's bound principal is "alice" (= policy.principal_id()).
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        let out = run_loop_with_policy_flagged(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do it",
+            "",
+            None, // unprovisioned ⇒ fail-closed Pause for the mutating write
+            &no_approval(),
+            &policy,
+            5,
+            None,
+            None,
+            1000,
+            true,  // activity_needs_me ON ⇒ the ApprovalRequired row is produced
+            false, // clarification gate OFF
+            false, // subagent OFF
+            false, // rich_prompt OFF
+            false, // self_critique OFF
+            &[],   // done_criteria
+            None,  // work_item_id
+            None,  // escalation_client
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Paused, "the mutating write Pauses");
+
+        let activity = db.list_activity().unwrap();
+        assert_eq!(activity.len(), 1, "exactly one ApprovalRequired row");
+        let activity_id = activity[0].activity_id.clone();
+        assert_eq!(
+            activity[0].kind,
+            friday_core::ActivityType::ApprovalRequired.as_str()
+        );
+
+        // The stamped owner is the run's principal "alice".
+        let stored_owner: Option<String> = db
+            .conn()
+            .query_row(
+                "SELECT owner FROM activity_item WHERE activity_id = ?1",
+                [activity_id.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_owner.as_deref(), Some("alice"));
+
+        let state = |db: &Db| -> String {
+            db.conn()
+                .query_row(
+                    "SELECT state FROM activity_item WHERE activity_id = ?1",
+                    [activity_id.as_str()],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+
+        // A different principal ⇒ BLOCKED, row stays Pending.
+        assert!(!db
+            .mark_activity_done(&activity_id, Some("bob"), 2000)
+            .unwrap());
+        assert_eq!(state(&db), "pending");
+        // The run's REAL principal_id() (NOT a hardcoded literal) ⇒ ALLOWED. This proves the
+        // stamped owner and the WS mark-done principal share ONE identifier space (the cleared
+        // value IS what policy.principal_id() returns, not a coincidence).
+        assert_eq!(policy.principal_id(), Some("alice"));
+        assert!(db
+            .mark_activity_done(&activity_id, policy.principal_id(), 3000)
+            .unwrap());
+        assert_eq!(state(&db), "done");
     }
 
     // ── FRIDAY_CLARIFICATION_GATE: the clarification gate (loop-level, bool-injected) ──────

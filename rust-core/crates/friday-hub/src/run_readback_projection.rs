@@ -870,7 +870,8 @@ mod tests {
         seed_paused_run(db.conn(), run_id, owner, nonce, now);
 
         // (2) approval_required activity row — via the REAL NS-7 producer for this run + nonce.
-        insert_pending_approval_activity(db.conn(), run_id, nonce, "write_file", now).unwrap();
+        insert_pending_approval_activity(db.conn(), run_id, nonce, "write_file", Some(owner), now)
+            .unwrap();
 
         // (3) memory_review: a REAL pending candidate OWNED by `owner` (sets memory_item.principal_id),
         //     plus the NS-8 producer's exact activity row (id = "memory-review-needs-me-{memory_id}").
@@ -902,6 +903,7 @@ mod tests {
             MemoryState::Candidate,
             MemoryScope::Session,
             "a candidate fact",
+            Some(owner),
             now,
         )
         .expect("a pending candidate yields a memory_review activity row");
@@ -1001,6 +1003,7 @@ mod tests {
             created_at: now,
             updated_at: now,
             deep_link: None,
+            owner: None,
         })
         .unwrap();
         drop(db);
@@ -1044,7 +1047,8 @@ mod tests {
 
         // O's paused run + O's actionable rows.
         seed_paused_run(db.conn(), o_run, o, o_nonce, now);
-        insert_pending_approval_activity(db.conn(), o_run, o_nonce, "write_file", now).unwrap();
+        insert_pending_approval_activity(db.conn(), o_run, o_nonce, "write_file", Some(o), now)
+            .unwrap();
         record_candidate(
             db.conn(),
             &NewMemoryCandidate {
@@ -1064,6 +1068,7 @@ mod tests {
                 MemoryState::Candidate,
                 MemoryScope::Session,
                 "O's candidate",
+                Some(o),
                 now,
             )
             .expect("a pending candidate yields a memory_review activity row"),
@@ -1143,6 +1148,7 @@ mod tests {
                 MemoryState::Candidate,
                 MemoryScope::Session,
                 "unowned",
+                Some(owner),
                 now,
             )
             .expect("a pending candidate yields a memory_review activity row"),

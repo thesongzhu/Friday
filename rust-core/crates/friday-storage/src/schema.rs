@@ -695,6 +695,22 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0041_retention_log,
         },
+        // M6 (activity mark-done owner-binding): `activity_item` gains a nullable `owner`
+        // column so a markable Needs-Me row (MemoryReview / ChannelInbound / ApprovalRequired)
+        // records the authenticated principal who owns it, and `mark_activity_done` can scope
+        // the clear to that owner. Purely additive (ALTER only); touches no other table and
+        // performs NO data migration — pre-existing rows backfill to NULL `owner`, which the
+        // owner-scoped UPDATE treats as legacy-allow (a deny-NULL would strand pre-deploy rows
+        // = a degrade). `activity_item` is a SHARED table, so the SAME `up` fn also registers
+        // as phone v3 (mirrors m0013_token_ledger_run_id). The mark-done owner gate it backs
+        // is behind the DEFAULT-OFF `FRIDAY_ACTIVITY_MARK_DONE` flag, so this migration is dark
+        // on deploy.
+        Migration {
+            version: 42,
+            name: "activity_item_owner",
+            destructive: false,
+            up: m0042_activity_item_owner,
+        },
     ]
 }
 
@@ -731,6 +747,17 @@ pub fn phone_migrations() -> Vec<Migration> {
             name: "token_ledger_run_id",
             destructive: false,
             up: m0013_token_ledger_run_id,
+        },
+        // M6: `activity_item` is a SHARED table (both profiles) and the single insert
+        // chokepoint now writes an `owner` column. The phone never runs the markable Needs-Me
+        // producers (extraction / channel ingest / agent-loop pause are Hub-only), so its
+        // rows always carry `owner = NULL` — the column exists ONLY so the shared insert has
+        // the same shape on both profiles. Same additive ALTER as hub v42.
+        Migration {
+            version: 3,
+            name: "activity_item_owner",
+            destructive: false,
+            up: m0042_activity_item_owner,
         },
     ]
 }
@@ -2242,6 +2269,15 @@ fn m0013_token_ledger_run_id(tx: &Transaction) -> rusqlite::Result<()> {
         "ALTER TABLE token_ledger ADD COLUMN run_id TEXT;
          CREATE INDEX idx_ledger_run ON token_ledger(run_id);",
     )
+}
+
+// M6 (activity mark-done owner-binding): additive nullable `owner` on the SHARED
+// `activity_item` table (no default — pre-existing rows backfill to NULL, which the
+// owner-scoped mark-done treats as legacy-allow). Mirrors m0013's additive ALTER; the
+// same fn registers as hub v42 AND phone v3. No index (mark-done is PK-keyed on
+// `activity_id`), keeping the migration minimal.
+fn m0042_activity_item_owner(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch("ALTER TABLE activity_item ADD COLUMN owner TEXT;")
 }
 
 // S6b: additive Hub-only `pending_approval_request` table. `approval_id` (the single-use

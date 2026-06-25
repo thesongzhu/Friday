@@ -110,6 +110,7 @@ fn forward_migration_adds_run_id_preserving_pre_v13_ledger_rows() {
         created_at: 200,
         updated_at: 200,
         deep_link: None,
+        owner: None,
     };
     let audit = AuditEvent {
         audit_id: "au-new".into(),
@@ -121,6 +122,155 @@ fn forward_migration_adds_run_id_preserving_pre_v13_ledger_rows() {
     friday_storage::record_run_model_call(db.conn(), "run-1", &entry, &activity, &audit).unwrap();
     let mine = friday_storage::agent_run_read::run_token_totals(db.conn(), "run-1").unwrap();
     assert_eq!(mine.total, 10);
+}
+
+#[test]
+fn forward_migration_v41_to_v42_adds_activity_owner_to_null_preserving_pre_v42_rows() {
+    // M6 additive migration v42: activity_item gains a nullable `owner`. A PRE-EXISTING v41
+    // row (seeded before the column existed) must survive forward migration reading back
+    // owner = NULL (legacy-allow), and a fresh owner-stamped row must then write + read back.
+    let p = temp_db_path("activity-owner-mig");
+    {
+        let mut migs = hub_migrations();
+        migs.retain(|m| m.version <= 41);
+        let db = Db::open(&p, Profile::Hub, &migs, "v41").unwrap();
+        assert_eq!(db.version().unwrap(), 41);
+        assert!(
+            db.conn()
+                .prepare("SELECT owner FROM activity_item")
+                .is_err(),
+            "owner column must not exist before v42"
+        );
+        // Seed a pre-v42 Pending row (the markable shape) with NO owner column.
+        db.conn()
+            .execute(
+                "INSERT INTO activity_item
+                    (activity_id, session_id, type, state, summary, created_at, updated_at, deep_link)
+                 VALUES ('legacy-1', NULL, 'approval_required', 'pending', 'pre-v42', 1, 1, NULL)",
+                [],
+            )
+            .unwrap();
+    }
+    // Reopen with the full set -> forward-migrate to v42 (adds the additive owner ALTER).
+    let db = Db::open_hub(&p).unwrap();
+    assert_eq!(db.version().unwrap(), hub_max_version());
+    assert_eq!(hub_max_version(), 42, "M6 lands the hub at code_max 42");
+    assert_eq!(
+        db.count("activity_item").unwrap(),
+        1,
+        "pre-v42 row survived"
+    );
+    let owner: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT owner FROM activity_item WHERE activity_id = 'legacy-1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        owner, None,
+        "pre-v42 row backfills to NULL owner (legacy-allow)"
+    );
+    // The NULL-owner legacy row clears under ANY principal (legacy-allow, no strand).
+    assert!(db
+        .mark_activity_done("legacy-1", Some("any-principal"), 2)
+        .unwrap());
+
+    // A fresh owner-stamped row on the migrated DB writes + reads back its owner, and is
+    // owner-scoped on mark-done.
+    db.insert_activity(&ActivityRow {
+        activity_id: "owned-1".into(),
+        session_id: None,
+        kind: ActivityType::ApprovalRequired,
+        state: ActivityState::Pending,
+        summary: "owned".into(),
+        created_at: 3,
+        updated_at: 3,
+        deep_link: None,
+        owner: Some("alice".into()),
+    })
+    .unwrap();
+    let owned: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT owner FROM activity_item WHERE activity_id = 'owned-1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(owned.as_deref(), Some("alice"));
+    assert!(
+        !db.mark_activity_done("owned-1", Some("bob"), 4).unwrap(),
+        "cross-owner denied"
+    );
+    assert!(
+        db.mark_activity_done("owned-1", Some("alice"), 5).unwrap(),
+        "owner allowed"
+    );
+}
+
+#[test]
+fn forward_migration_phone_v2_to_v3_adds_activity_owner_to_null_preserving_rows() {
+    // M6: activity_item is a SHARED table, so the phone profile ALSO gains the owner column
+    // at phone v3 (the same additive ALTER as hub v42). A pre-v3 phone row survives reading
+    // back owner = NULL, and the shared insert chokepoint works post-migration.
+    use friday_storage::phone_migrations;
+    let phone_max = phone_migrations().iter().map(|m| m.version).max().unwrap();
+    assert_eq!(phone_max, 3, "M6 lands the phone at version 3");
+
+    let p = temp_db_path("activity-owner-phone-mig");
+    {
+        let mut migs = phone_migrations();
+        migs.retain(|m| m.version <= 2);
+        let db = Db::open(&p, Profile::Phone, &migs, "phone-v2").unwrap();
+        assert_eq!(db.version().unwrap(), 2);
+        assert!(
+            db.conn()
+                .prepare("SELECT owner FROM activity_item")
+                .is_err(),
+            "owner column must not exist on the phone before v3"
+        );
+        db.conn()
+            .execute(
+                "INSERT INTO activity_item
+                    (activity_id, session_id, type, state, summary, created_at, updated_at, deep_link)
+                 VALUES ('phone-legacy', NULL, 'ask_status', 'done', 'pre-v3', 1, 1, NULL)",
+                [],
+            )
+            .unwrap();
+    }
+    // Reopen the phone profile -> forward-migrate to v3.
+    let db = Db::open_phone(&p).unwrap();
+    assert_eq!(db.version().unwrap(), phone_max);
+    assert_eq!(
+        db.count("activity_item").unwrap(),
+        1,
+        "pre-v3 phone row survived"
+    );
+    let owner: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT owner FROM activity_item WHERE activity_id = 'phone-legacy'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(owner, None, "pre-v3 phone row backfills to NULL owner");
+    // The shared insert chokepoint works post-migration on the phone profile.
+    db.insert_activity(&ActivityRow {
+        activity_id: "phone-fresh".into(),
+        session_id: None,
+        kind: ActivityType::AskStatus,
+        state: ActivityState::Pending,
+        summary: "fresh".into(),
+        created_at: 2,
+        updated_at: 2,
+        deep_link: None,
+        owner: None,
+    })
+    .unwrap();
+    assert_eq!(db.count("activity_item").unwrap(), 2);
 }
 
 #[test]
@@ -734,6 +884,7 @@ fn destructive_migration_creates_verified_backup() {
             created_at: 1,
             updated_at: 1,
             deep_link: None,
+            owner: None,
         })
         .unwrap();
     }

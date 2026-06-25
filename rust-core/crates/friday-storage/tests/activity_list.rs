@@ -21,6 +21,7 @@ fn list_activity_returns_summaries_oldest_first() {
         created_at: t,
         updated_at: t,
         deep_link: None,
+        owner: None,
     };
     // Insert out of order; list must come back oldest-first.
     db.insert_activity(&row("b", 2)).unwrap();
@@ -47,12 +48,15 @@ fn mark_activity_done_persists_and_reports_unknown() {
         created_at: 1,
         updated_at: 1,
         deep_link: None,
+        // NULL owner (the FFI/local-seed shape): the local single-owner mark-done passes
+        // None and the NULL-owner row clears (legacy-allow).
+        owner: None,
     };
     {
         let db = Db::open_phone(&p).unwrap();
         db.insert_activity(&row("a")).unwrap();
-        assert!(db.mark_activity_done("a", 5).unwrap()); // updated
-        assert!(!db.mark_activity_done("ghost", 5).unwrap()); // unknown id -> false
+        assert!(db.mark_activity_done("a", None, 5).unwrap()); // NULL-owner row clears (legacy-allow)
+        assert!(!db.mark_activity_done("ghost", None, 5).unwrap()); // unknown id -> false
     }
     // Reopen a fresh handle: the state change survived on disk.
     let db = Db::open_phone(&p).unwrap();

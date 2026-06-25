@@ -28,6 +28,7 @@ fn activity(id: &str) -> ActivityRow {
         created_at: 100,
         updated_at: 100,
         deep_link: None,
+        owner: None,
     }
 }
 
@@ -362,6 +363,7 @@ fn bill_turn(conn: &Connection, run_id: &str, turn: u64, now_ms: i64) -> Result<
         created_at: now_ms,
         updated_at: now_ms,
         deep_link: None,
+        owner: None,
     };
     let audit = AuditEvent {
         audit_id,

@@ -429,6 +429,8 @@ fn load_phone_activity(db_path: &str) -> friday_storage::Result<Vec<ActivityItem
             created_at: t,
             updated_at: t,
             deep_link: None,
+            // Local phone seed — owner=NULL (legacy-allow under the local FFI mark-done path).
+            owner: None,
         };
         db.insert_activity(&seed(
             "a1",
@@ -498,7 +500,10 @@ fn mark_and_list(
     let db = friday_storage::Db::open_phone(db_path)?;
     // Surface an unknown id instead of silently succeeding: `mark_activity_done`
     // returns false when no row matched (file-37 NIT #4).
-    if !db.mark_activity_done(activity_id, now)? {
+    // M6: the local single-owner phone/desktop path passes `None` — this is not the network
+    // WS attack surface, and the NULL-owner=legacy-allow arm preserves it as a no-op (phone
+    // activity rows are only ever the FFI seeds below, all owner=NULL).
+    if !db.mark_activity_done(activity_id, None, now)? {
         return Err(friday_storage::StorageError::NotFound(format!(
             "activity_id {activity_id}"
         )));
@@ -2251,6 +2256,7 @@ mod tests {
                 created_at: 99,
                 updated_at: 99,
                 deep_link: None,
+                owner: None,
             })
             .unwrap();
         }
