@@ -268,6 +268,8 @@ public struct ChatContextCard: Identifiable, Sendable, Equatable {
   public let detail: String
   public let truthLabel: String
   public let evidenceRef: String
+  public let memoryCandidateId: String?
+  public let memoryPreview: String?
 }
 
 public protocol ChatHistoryStoring {
@@ -342,10 +344,12 @@ public final class FridayChatViewModel: ObservableObject {
   @Published public private(set) var history: [ChatHistoryItem]
   @Published public private(set) var contextCards: [ChatContextCard] = []
   @Published public private(set) var selectedContextCardId: String?
+  @Published public private(set) var contextMemoryDecisionState: HomeLearningDecisionState?
 
   /// The package write client is `Sendable`; each dispatch/control call builds a fresh transport.
   private let writeClient: FridayRustWriteClient
   private let missionClient: (any FridayMobileMissionDispatchingWriteClient)?
+  private let memoryDecisionClient: (any FridayMissionSpineWriteClient)?
   private let readClient: FridayRustReadClient?
   private let signer: OperatorSigner
   private let newId: () -> String
@@ -362,6 +366,7 @@ public final class FridayChatViewModel: ObservableObject {
     writeClient: FridayRustWriteClient,
     signer: OperatorSigner,
     missionClient: (any FridayMobileMissionDispatchingWriteClient)? = nil,
+    memoryDecisionClient: (any FridayMissionSpineWriteClient)? = nil,
     readClient: FridayRustReadClient? = nil,
     historyStore: any ChatHistoryStoring = UserDefaultsChatHistoryStore(),
     newId: @escaping () -> String = { UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "") },
@@ -371,6 +376,7 @@ public final class FridayChatViewModel: ObservableObject {
     self.writeClient = writeClient
     self.signer = signer
     self.missionClient = missionClient
+    self.memoryDecisionClient = memoryDecisionClient ?? (writeClient as? any FridayMissionSpineWriteClient)
     self.readClient = readClient
     self.historyStore = historyStore
     self.newId = newId
@@ -416,7 +422,7 @@ public final class FridayChatViewModel: ObservableObject {
           answerBodyRunId: answer?.runId,
           answerBodyOutcome: answer?.outcome)
         appendAnswerHistory(receipt)
-        contextCards = Self.contextCards(for: receipt)
+        contextCards = Self.contextCards(for: receipt, memoryCandidate: await firstMemoryCandidate())
         phase = .answered(receipt)
       case .paused(let p):
         // INV-2: a mutating run PAUSED — surface the S6 approval card. No mutation has executed.
@@ -481,7 +487,7 @@ public final class FridayChatViewModel: ObservableObject {
         answerBodyRunId: answer?.runId,
         answerBodyOutcome: answer?.outcome)
       appendAnswerHistory(receipt)
-      contextCards = Self.contextCards(for: receipt)
+      contextCards = Self.contextCards(for: receipt, memoryCandidate: await firstMemoryCandidate())
       phase = .answered(receipt)
     } catch {
       phase = .unavailable(reason: Self.dispatchReason(for: error))
@@ -529,6 +535,16 @@ public final class FridayChatViewModel: ObservableObject {
         return nil
       }
       return (body.runId, answer, body.outcome)
+    } catch {
+      return nil
+    }
+  }
+
+  private func firstMemoryCandidate() async -> HomeMemoryCandidate? {
+    guard let readClient else { return nil }
+    do {
+      let snapshot = try await readClient.fetchWorkbench()
+      return HomeProjection(snapshot).memoryCandidates.first
     } catch {
       return nil
     }
@@ -607,12 +623,53 @@ public final class FridayChatViewModel: ObservableObject {
     history = []
     contextCards = []
     selectedContextCardId = nil
+    contextMemoryDecisionState = nil
     historyStore.save(history)
   }
 
   public func selectContextCard(_ id: String) {
     guard contextCards.contains(where: { $0.id == id }) else { return }
     selectedContextCardId = id
+  }
+
+  public func decideContextMemory(confirm: Bool) async {
+    let card = contextCards.first { $0.id == "memory" }
+    guard let memoryId = card?.memoryCandidateId, !memoryId.isEmpty else {
+      contextMemoryDecisionState = .error(reason: "No memory candidate is available for this Chat turn.")
+      return
+    }
+    guard let memoryDecisionClient else {
+      contextMemoryDecisionState = .error(reason: "Write seam not configured.")
+      return
+    }
+
+    selectedContextCardId = "memory"
+    contextMemoryDecisionState = .sent
+    let request = MemoryDecisionRequestWire(
+      memoryId: memoryId,
+      ownerPrincipal: liveAgentRunOwnerPrincipal,
+      decision: confirm ? "confirm" : "reject")
+    do {
+      let result = try await memoryDecisionClient.submitMemoryDecision(request)
+      switch result.status {
+      case "confirmed", "rejected":
+        contextMemoryDecisionState = .confirmed(
+          summary: "\(result.status) · state=\(result.state) · recallable=\(result.recallable)")
+        appendHistory(
+          role: "friday",
+          text: "Memory decision \(result.status).",
+          receiptRefs: [
+            ChatReceiptRef(label: "memory_id", ref: result.memoryId),
+            ChatReceiptRef(label: "status", ref: result.status),
+            ChatReceiptRef(label: "state", ref: result.state),
+          ])
+      default:
+        let why = result.blocker ?? "blocked"
+        contextMemoryDecisionState = .error(reason: "Memory decision blocked — \(why)")
+      }
+    } catch {
+      contextMemoryDecisionState = .error(reason: Self.memoryReason(for: error))
+    }
   }
 
   /// Reset to a fresh composer after an answer / receipt / unavailable (start a new turn).
@@ -622,6 +679,7 @@ public final class FridayChatViewModel: ObservableObject {
       phase = .composing
       contextCards = []
       selectedContextCardId = nil
+      contextMemoryDecisionState = nil
     default:
       // Do NOT abandon an in-flight dispatch or a pending approval (would drop the S6 gate).
       break
@@ -648,6 +706,11 @@ public final class FridayChatViewModel: ObservableObject {
   static func signerReason(for error: Error) -> String {
     if let e = error as? OperatorSignerError { return e.description }
     return "Approval unavailable — \(error)"
+  }
+
+  static func memoryReason(for error: Error) -> String {
+    if let e = error as? FridayWriteClientError { return writeReason(e, verb: "memory decision") }
+    return "Memory decision unavailable — \(error)"
   }
 
   private static func writeReason(_ e: FridayWriteClientError, verb: String) -> String {
@@ -679,7 +742,10 @@ public final class FridayChatViewModel: ObservableObject {
     appendHistory(role: "friday", text: text, runId: receipt.answerBodyRunId ?? receipt.runId, receiptRefs: receipt.receiptRefs)
   }
 
-  private static func contextCards(for receipt: ChatAnswerReceipt) -> [ChatContextCard] {
+  private static func contextCards(
+    for receipt: ChatAnswerReceipt,
+    memoryCandidate: HomeMemoryCandidate?
+  ) -> [ChatContextCard] {
     let runRef = receipt.answerBodyRunId ?? receipt.followUpRunId ?? receipt.runId
     return [
       ChatContextCard(
@@ -687,13 +753,17 @@ public final class FridayChatViewModel: ObservableObject {
         title: "Handoff",
         detail: "Prepare a context passport from this answer when the passport send gate is available.",
         truthLabel: "local",
-        evidenceRef: "swift://mobile/fridayChat/handoff-card/\(runRef)"),
+        evidenceRef: "swift://mobile/fridayChat/handoff-card/\(runRef)",
+        memoryCandidateId: nil,
+        memoryPreview: nil),
       ChatContextCard(
         id: "memory",
         title: "Memory",
-        detail: "Review memory candidates for this turn through the governed memory surface.",
-        truthLabel: "local",
-        evidenceRef: "swift://mobile/fridayChat/memory-card/\(runRef)"),
+        detail: memoryCandidate?.preview ?? "Review memory candidates for this turn through the governed memory surface.",
+        truthLabel: memoryCandidate == nil ? "local" : "wired",
+        evidenceRef: memoryCandidate?.evidenceRef ?? "swift://mobile/fridayChat/memory-card/\(runRef)",
+        memoryCandidateId: memoryCandidate?.id,
+        memoryPreview: memoryCandidate?.preview),
     ]
   }
 
