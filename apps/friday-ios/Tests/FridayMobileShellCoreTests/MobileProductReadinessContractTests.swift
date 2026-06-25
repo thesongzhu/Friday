@@ -35,8 +35,21 @@ func mobileProductContractDoesNotTreatRouteCoverageAsEndBar() {
   #expect(snapshot.routeCoverageCount == snapshot.totalCount)
   #expect(snapshot.endBarReadyCount == 0)
   #expect(!snapshot.hasAnyEndBarClaim)
+  #expect(snapshot.contracts.allSatisfy { $0.tier != .liveWriteRead })
   #expect(snapshot.uniqueBlockers.contains { $0.kind == .needsOperatorSignature })
   #expect(snapshot.uniqueBlockers.contains { $0.kind == .needsRuntimeEvidence })
+}
+
+@Test
+func mobileProductContractKeepsHomeReadProjectionSeparateFromChatWriteLoop() {
+  let home = MobileProductDestinationID.home.contract
+
+  #expect(home.tier == .liveReadProjection)
+  #expect(home.runtimeActionIds == ["mobile/home/refresh"])
+  #expect(home.blockers.contains { $0.id == "chat-write-action-proof" })
+  #expect(home.productReadinessSummary.contains("same-run mobile+desktop user proof"))
+  #expect(!home.productReadinessSummary.contains("Real read/write loop exists"))
+  #expect(!home.isEndBarReady)
 }
 
 @Test

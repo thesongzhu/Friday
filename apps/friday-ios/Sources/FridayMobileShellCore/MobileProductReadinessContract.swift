@@ -140,10 +140,11 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
       return contract(
         title: "Friday Home",
         systemImage: "house",
-        tier: .liveWriteRead,
+        tier: .liveReadProjection,
         runtimeActionIds: ["mobile/home/refresh"],
         blockers: [
           .init(.needsRuntimeEvidence, label: "same-run mobile+desktop user proof"),
+          .init(.needsRuntimeEvidence, id: "chat-write-action-proof", label: "Friday Chat write closes separately"),
         ])
     case .missions:
       return contract(
