@@ -322,6 +322,61 @@ mod tests {
     }
 
     #[test]
+    fn provider_not_in_allowlist_denies_but_allowed_provider_passes() {
+        // allowed_providers is ["deepseek"]. A non-allowed provider DENIES with the
+        // exact reason; the allowed provider exercises the allow path (allowed() ==
+        // true), which within_boundaries_allows does not cover (it carries no provider).
+        let mut deny_c = check();
+        deny_c.provider = Some("openai".into());
+        let (d, r) = check_grant(&grant(), &deny_c);
+        assert_eq!(d, GateDecision::Deny);
+        assert_eq!(r, "trust_grant_provider_not_allowed");
+
+        let mut allow_c = check();
+        allow_c.provider = Some("deepseek".into());
+        let (d2, r2) = check_grant(&grant(), &allow_c);
+        assert_eq!(d2, GateDecision::Allow);
+        assert_eq!(r2, "trust_grant_within_boundaries");
+    }
+
+    #[test]
+    fn channel_not_in_allowlist_denies_but_allowed_channel_passes() {
+        // allowed_channels is ["telegram"]. A non-allowed channel DENIES with the exact
+        // reason; the allowed channel exercises the allow path (allowed() == true).
+        let mut deny_c = check();
+        deny_c.channel = Some("slack".into());
+        let (d, r) = check_grant(&grant(), &deny_c);
+        assert_eq!(d, GateDecision::Deny);
+        assert_eq!(r, "trust_grant_channel_not_allowed");
+
+        let mut allow_c = check();
+        allow_c.channel = Some("telegram".into());
+        let (d2, r2) = check_grant(&grant(), &allow_c);
+        assert_eq!(d2, GateDecision::Allow);
+        assert_eq!(r2, "trust_grant_within_boundaries");
+    }
+
+    #[test]
+    fn skill_family_not_in_allowlist_denies_but_allowed_family_passes() {
+        // The fixture's allowed_skill_families is EMPTY (deny-all): any skill-family
+        // action denies with the exact reason. Populating the allowlist exercises the
+        // allow path (allowed() == true) for a matching family.
+        let mut deny_c = check();
+        deny_c.skill_family = Some("research".into());
+        let (d, r) = check_grant(&grant(), &deny_c);
+        assert_eq!(d, GateDecision::Deny);
+        assert_eq!(r, "trust_grant_skill_family_not_allowed");
+
+        let mut g = grant();
+        g.boundaries.allowed_skill_families = vec!["research".into()];
+        let mut allow_c = check();
+        allow_c.skill_family = Some("research".into());
+        let (d2, r2) = check_grant(&g, &allow_c);
+        assert_eq!(d2, GateDecision::Allow);
+        assert_eq!(r2, "trust_grant_within_boundaries");
+    }
+
+    #[test]
     fn empty_allowlist_is_deny_all_for_a_checked_dimension() {
         // allowed_workflow_families is empty -> ANY workflow-family action denies.
         let mut c = check();
