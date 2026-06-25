@@ -116,6 +116,31 @@ fi
 udid="$(xcrun simctl list devices available | grep -Eo '\(([0-9A-F-]{36})\) \(Booted\)' | grep -Eo '[0-9A-F-]{36}' | head -1 || true)"
 [ -n "${udid}" ] || die "no booted simulator after build/reuse"
 
+live_loopback_launch_args=()
+live_loopback_launch_env=()
+if [ "${mode}" = "live-loopback" ]; then
+  live_loopback_launch_args=(--live-read --live-write --live-pairing --live-device-keypair --simulator-file-device-keypair)
+  live_loopback_launch_env=(
+    SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ=1
+    SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE=1
+    SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_PAIRING=1
+    SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR=1
+    SIMCTL_CHILD_FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR=1
+  )
+  if [[ -n "${FRIDAY_MOBILE_LIVE_READ_HOST:-}" ]]; then
+    live_loopback_launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ_HOST="${FRIDAY_MOBILE_LIVE_READ_HOST}")
+  fi
+  if [[ -n "${FRIDAY_MOBILE_LIVE_READ_PORT:-}" ]]; then
+    live_loopback_launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ_PORT="${FRIDAY_MOBILE_LIVE_READ_PORT}")
+  fi
+  if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_HOST:-}" ]]; then
+    live_loopback_launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_HOST="${FRIDAY_MOBILE_LIVE_WRITE_HOST}")
+  fi
+  if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_PORT:-}" ]]; then
+    live_loopback_launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_PORT="${FRIDAY_MOBILE_LIVE_WRITE_PORT}")
+  fi
+fi
+
 capture_rows=()
 for destination in "${destinations[@]}"; do
   shot="${out_dir}/screenshots/${destination}.png"
@@ -126,9 +151,15 @@ for destination in "${destinations[@]}"; do
     printf 'reused initial build screenshot\n' > "${launch_log}"
     printf 'reused initial build screenshot\n' > "${screenshot_log}"
   else
-    xcrun simctl launch --terminate-running-process "${udid}" com.friday.shell \
-      "--initial-destination=${destination}" >"${launch_log}" 2>&1
-    sleep 2
+    launch_cmd=(xcrun simctl launch --terminate-running-process "${udid}" com.friday.shell)
+    launch_args=("${live_loopback_launch_args[@]}" "--initial-destination=${destination}")
+    launch_env=("${live_loopback_launch_env[@]}" "SIMCTL_CHILD_FRIDAY_MOBILE_INITIAL_DESTINATION=${destination}")
+    if [ "${#launch_env[@]}" -gt 0 ]; then
+      env "${launch_env[@]}" "${launch_cmd[@]}" "${launch_args[@]}" >"${launch_log}" 2>&1
+    else
+      "${launch_cmd[@]}" "${launch_args[@]}" >"${launch_log}" 2>&1
+    fi
+    sleep 6
     xcrun simctl io "${udid}" screenshot "${shot}" >"${screenshot_log}" 2>&1
   fi
 
@@ -181,6 +212,9 @@ const manifest = {
     session_control_set: "fullNativeControl",
   },
   required_destinations: destinationsCsv.split(",").filter(Boolean),
+  relaunch_contract: mode === "live-loopback"
+    ? "each non-initial destination relaunch propagates the same live-loopback read/write/pairing/device-keypair gates as the initial build launch"
+    : "each destination relaunch keeps mobile live gates off and captures honest-unavailable truth",
   captures,
   initial_build_metadata: initialMetadata,
   caveat: "Device screenshots prove selected destinations launch and render truth-labeled UI states only; enabled actions still require separate Hub/DB/ledger/proof closure before END-BAR.",
