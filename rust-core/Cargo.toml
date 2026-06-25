@@ -49,7 +49,7 @@ rust-version = "1.80"
 thiserror = "1.0.69"
 chacha20poly1305 = { version = "0.10.1", features = ["getrandom"] }
 sha2 = "0.10.8"
-rusqlite = { version = "0.31.0", features = ["bundled"] }
+rusqlite = { version = "0.31.0", features = ["bundled", "backup"] }
 toml = "0.8.19"
 zeroize = { version = "1.8.2", features = ["derive"] }
 serde = { version = "1.0.215", features = ["derive"] }
