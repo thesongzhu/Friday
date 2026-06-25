@@ -23,7 +23,8 @@ function hasString(source, value) {
 
 function checkSourceSet(repoRoot, checks) {
   return checks.map((check) => {
-    const source = readText(repoRoot, check.path);
+    const paths = check.paths ?? [check.path];
+    const source = paths.map((target) => readText(repoRoot, target)).join("\n");
     const missing = [];
     for (const item of check.requiredCases ?? []) {
       if (!hasCase(source, item)) missing.push(`case ${item}`);
@@ -33,7 +34,7 @@ function checkSourceSet(repoRoot, checks) {
     }
     return {
       label: check.label,
-      target: check.path,
+      target: paths.join(" + "),
       status: missing.length === 0 ? "passed" : "failed",
       missing,
     };
@@ -51,7 +52,10 @@ const repoRoot = resolveRepoRoot();
 const checks = checkSourceSet(repoRoot, [
   {
     label: "iOS command sheet covers selected mobile destinations",
-    path: "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift",
+    paths: [
+      "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift",
+      "apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift",
+    ],
     requiredCases: [
       "home",
       "session",
@@ -69,7 +73,7 @@ const checks = checkSourceSet(repoRoot, [
     ],
     requiredStrings: [
       "Command Sheet",
-      "Route coverage is not END-BAR",
+      "Route coverage only",
       "Provider Workspace",
       "Device Pairing",
     ],

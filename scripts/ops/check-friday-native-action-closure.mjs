@@ -51,6 +51,7 @@ const files = {
   mobileChatVM: read(root, "apps/friday-ios/Sources/FridayMobileShellCore/FridayChatViewModel.swift"),
   mobileShareVM: read(root, "apps/friday-ios/Sources/FridayMobileShellCore/ShareIntakeViewModel.swift"),
   mobileVoiceVM: read(root, "apps/friday-ios/Sources/FridayMobileShellCore/VoiceReadinessViewModel.swift"),
+  mobileProductContract: read(root, "apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift"),
   mobileHomeTests: read(root, "apps/friday-ios/Tests/FridayMobileShellCoreTests/HomeViewModelTests.swift"),
   mobileSessionTests: read(root, "apps/friday-ios/Tests/FridayMobileShellCoreTests/SessionContinuationViewModelTests.swift"),
   mobileChatTests: read(root, "apps/friday-ios/Tests/FridayMobileShellCoreTests/FridayChatViewModelTests.swift"),
@@ -74,6 +75,10 @@ const mobileUi = [
   files.mobileShare,
   files.mobileVoice,
   files.mobileToken,
+].join("\n");
+const mobileCommandContract = [
+  files.mobileCommand,
+  files.mobileProductContract,
 ].join("\n");
 const mobileVM = [
   files.mobileHomeVM,
@@ -99,8 +104,8 @@ const desktopTests = files.desktopTests;
 const checks = [
   check(
     "mobile-command-sheet-does-not-hide-product-destinations",
-    "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift",
-    includesAll(files.mobileCommand, [
+    "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift + apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift",
+    includesAll(mobileCommandContract, [
       "case session",
       "case contextPassport",
       "case tokenLedger",
@@ -112,7 +117,7 @@ const checks = [
       "case activity",
       "case workflows",
       "case settings",
-      "var isBuilt: Bool { true }",
+      "var isBuilt: Bool { contract.routeBuilt }",
     ]),
     [
       "This is destination coverage, not END-BAR. Action closure is checked by the rows below.",
@@ -120,22 +125,25 @@ const checks = [
   ),
   check(
     "mobile-command-sheet-separates-route-coverage-from-product-closure",
-    "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift",
-    includesAll(files.mobileCommand, [
-      "enum MobileDestinationClosureTier",
-      "var closureTier: MobileDestinationClosureTier",
+    "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift + apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift",
+    includesAll(mobileCommandContract, [
+      "enum MobileProductLoopTier",
+      "var closureTier: MobileProductLoopTier",
       "Route coverage only. This must not be used as a closed-loop product-completion signal.",
-      "isClosedLoopProductReady",
-      "case .liveWriteRead: return true",
+      "isEndBarReady",
+      "tier == .liveWriteRead",
       "case .home:",
       "case .session:",
       "case .providerAuth:",
-      "case .shareIntake, .needsMe:",
-      "case .voice, .pairing:",
-      "case .workflows, .onboarding:",
+      "case .shareIntake:",
+      "case .needsMe:",
+      "case .voice:",
+      "case .pairing:",
+      "case .workflows:",
+      "case .onboarding:",
       "case .providerWorkspace:",
-      "dest.closureTier.label",
-      "dest.productReadinessSummary",
+      "contract.tier.label",
+      "contract.productReadinessSummary",
       "closed-loop product behavior is still pending",
       "not a completed product loop",
       "Provider Workspace",
