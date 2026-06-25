@@ -82,3 +82,14 @@ func mobileProductContractTracksActivityMarkDoneAsBuiltButRuntimeBlocked() {
   #expect(activity.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(!activity.isEndBarReady)
 }
+
+@Test
+func mobileProductContractTracksShareIntakeWriteAsBuiltButRuntimeBlocked() {
+  let share = MobileProductDestinationID.shareIntake.contract
+
+  #expect(share.tier == .governedActionGated)
+  #expect(share.runtimeActionIds == ["mobile/share/send"])
+  #expect(!share.blockers.contains { $0.kind == .needsLiveWrite })
+  #expect(share.blockers.contains { $0.kind == .needsRuntimeEvidence })
+  #expect(!share.isEndBarReady)
+}
