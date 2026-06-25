@@ -220,6 +220,49 @@ private func temporaryHome() throws -> URL {
   return url
 }
 
+private func writeDesktopActionEvidenceIfRequested(
+  fileSuffix: String,
+  screen: String,
+  actionId: String,
+  capabilityId: String,
+  evidenceRef: String,
+  source: String,
+  proof: [String: Any]
+) throws {
+  guard let rawDir = ProcessInfo.processInfo.environment[
+    "FRIDAY_DESKTOP_CHAT_MEMORY_ACTION_EVIDENCE_DIR"
+  ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+    return
+  }
+
+  let payload: [String: Any] = [
+    "truth": "desktop_chat_memory_action_swift_viewmodel_runtime_not_live_hub_not_endbar",
+    "status": "ready",
+    "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+    "proof": proof,
+    "actions": [
+      [
+        "surface": "desktop",
+        "screen": screen,
+        "action_id": actionId,
+        "capability_id": capabilityId,
+        "status": "pass",
+        "evidence_ref": evidenceRef,
+        "source": source,
+        "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_operator_key_not_endbar",
+      ],
+    ],
+    "caveat": "Partial runtime evidence only: macOS product ViewModel action delegates to the read/write seam and renders refs-only results. This is not a live Hub audit receipt, not a user tap, not operator true-key approval, not END-BAR, and not adoption.",
+  ]
+
+  let dir = URL(fileURLWithPath: rawDir)
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  let out = dir.appendingPathComponent("desktop-\(fileSuffix)-action-evidence.json")
+  let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+  try data.write(to: out, options: .atomic)
+  print("[desktop-chat-memory-action-evidence] proofOut=\(out.path)")
+}
+
 @Test
 @MainActor
 func inspectorReturnsRefsOnlyForSelection() async {
@@ -1285,7 +1328,7 @@ func chatNeedsMeItemsParsesApprovalSigningRefsFromActionableRows() throws {
 
 @Test
 @MainActor
-func approveNeedsMeItemSignsRefsAndRelaysOpaqueBlob() async {
+func approveNeedsMeItemSignsRefsAndRelaysOpaqueBlob() async throws {
   let signer = MockOperatorApprovalSigner()
   signer.blob = Array("{\"decision\":\"approved\"}".utf8)
   let write = MockMissionSpineWriteClient(behavior: .intakeReady)
@@ -1321,6 +1364,20 @@ func approveNeedsMeItemSignsRefsAndRelaysOpaqueBlob() async {
   }
   #expect(summary.contains("mutation_completed"))
   #expect(summary.contains("audit://resume/1"))
+  try writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "approval-approve",
+    screen: "fridayChat",
+    actionId: "check",
+    capabilityId: "security_approval_bound_principal_gate_cat10_netnew",
+    evidenceRef: "swift://desktop/approval/approve/run-paused/approval-nonce-9",
+    source: "macos_operations_viewmodel_approval_approve_runtime",
+    proof: [
+      "run_id": item.runId,
+      "approval_id": item.refId,
+      "action_digest": item.actionDigest ?? "",
+      "signed_blob_bytes": write.lastResumeBlob?.count ?? 0,
+      "audit_ref": "audit://resume/1",
+    ])
 }
 
 @Test
@@ -1352,7 +1409,7 @@ func approveNeedsMeItemWithoutSignerFailsClosedWithoutResume() async {
 
 @Test
 @MainActor
-func rejectNeedsMeApprovalUsesRunControlWithoutSigner() async {
+func rejectNeedsMeApprovalUsesRunControlWithoutSigner() async throws {
   let write = MockMissionSpineWriteClient(behavior: .intakeReady)
   let item = ChatNeedsMeItem(
     runId: "run-paused",
@@ -1378,6 +1435,20 @@ func rejectNeedsMeApprovalUsesRunControlWithoutSigner() async {
   }
   #expect(summary.contains("reject"))
   #expect(summary.contains("audit://reject/1"))
+  try writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "approval-reject",
+    screen: "fridayChat",
+    actionId: "act",
+    capabilityId: "security_approval_bound_principal_gate_cat10_netnew",
+    evidenceRef: "swift://desktop/approval/reject/run-paused/approval-nonce-10",
+    source: "macos_operations_viewmodel_approval_reject_runtime",
+    proof: [
+      "run_id": item.runId,
+      "approval_id": item.refId,
+      "rejected_run_id": write.lastRejectRunId ?? "",
+      "rejected_approval_id": write.lastRejectApprovalId ?? "",
+      "audit_ref": "audit://reject/1",
+    ])
 }
 
 @Test
@@ -1683,7 +1754,7 @@ func submitIntakeTransportFailureRendersHonestUnavailable() async {
 
 @Test
 @MainActor
-func decideMemoryConfirmRendersConfirmedRecallable() async {
+func decideMemoryConfirmRendersConfirmedRecallable() async throws {
   let write = MockMissionSpineWriteClient(behavior: .memoryConfirmed)
   let vm = OperationsOverviewViewModel(
     client: MockReadClient(behavior: .loaded), writeClient: write, writeOwnerPrincipal: "admin-001")
@@ -1696,6 +1767,53 @@ func decideMemoryConfirmRendersConfirmedRecallable() async {
   #expect(summary.contains("recallable=true"))
   #expect(write.lastDecision?.decision == "confirm")
   #expect(write.lastDecision?.ownerPrincipal == "admin-001")
+  try writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "memory-confirm",
+    screen: "memory",
+    actionId: "check",
+    capabilityId: "memory_review_no_silent_write_decide_candidate",
+    evidenceRef: "swift://desktop/memory/confirm/cand-1/mem-1",
+    source: "macos_operations_viewmodel_memory_confirm_runtime",
+    proof: [
+      "candidate_id": "cand-1",
+      "memory_id": write.lastDecision?.memoryId ?? "",
+      "owner_principal": write.lastDecision?.ownerPrincipal ?? "",
+      "decision": write.lastDecision?.decision ?? "",
+      "status": "confirmed",
+      "recallable": true,
+    ])
+}
+
+@Test
+@MainActor
+func decideMemoryRejectRendersRejectedNotRecallable() async throws {
+  let write = MockMissionSpineWriteClient(behavior: .memoryConfirmed)
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded), writeClient: write, writeOwnerPrincipal: "admin-001")
+  await vm.decideMemory(candidateId: "cand-2", memoryId: "mem-2", confirm: false)
+  guard case let .confirmed(summary, _, _) = vm.memoryDecisionStates["cand-2"] else {
+    Issue.record("expected .confirmed, got \(String(describing: vm.memoryDecisionStates["cand-2"]))")
+    return
+  }
+  #expect(summary.contains("rejected"))
+  #expect(summary.contains("recallable=false"))
+  #expect(write.lastDecision?.decision == "reject")
+  #expect(write.lastDecision?.ownerPrincipal == "admin-001")
+  try writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "memory-reject",
+    screen: "memory",
+    actionId: "act",
+    capabilityId: "memory_review_no_silent_write_decide_candidate",
+    evidenceRef: "swift://desktop/memory/reject/cand-2/mem-2",
+    source: "macos_operations_viewmodel_memory_reject_runtime",
+    proof: [
+      "candidate_id": "cand-2",
+      "memory_id": write.lastDecision?.memoryId ?? "",
+      "owner_principal": write.lastDecision?.ownerPrincipal ?? "",
+      "decision": write.lastDecision?.decision ?? "",
+      "status": "rejected",
+      "recallable": false,
+    ])
 }
 
 @Test
