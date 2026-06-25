@@ -187,6 +187,33 @@ const captures = rows.map((row) => {
     status: "captured",
   };
 });
+const requiredDestinations = destinationsCsv.split(",").filter(Boolean);
+const seenDestinations = new Set();
+const duplicateDestinations = [];
+for (const destination of requiredDestinations) {
+  if (seenDestinations.has(destination)) {
+    duplicateDestinations.push(destination);
+  }
+  seenDestinations.add(destination);
+}
+const capturedDestinations = new Set(captures.map((capture) => capture.destination));
+const missingCaptures = requiredDestinations.filter((destination) => !capturedDestinations.has(destination));
+const extraCaptures = captures
+  .map((capture) => capture.destination)
+  .filter((destination) => !requiredDestinations.includes(destination));
+const emptyScreenshots = captures
+  .filter((capture) => !existsSync(capture.screenshot) || readFileSync(capture.screenshot).length === 0)
+  .map((capture) => capture.destination);
+const nonReadyCaptures = captures
+  .filter((capture) => capture.status !== "captured")
+  .map((capture) => capture.destination);
+const validationErrors = [
+  ...duplicateDestinations.map((destination) => `duplicate destination: ${destination}`),
+  ...missingCaptures.map((destination) => `missing capture: ${destination}`),
+  ...extraCaptures.map((destination) => `unexpected capture: ${destination}`),
+  ...emptyScreenshots.map((destination) => `empty screenshot: ${destination}`),
+  ...nonReadyCaptures.map((destination) => `non-ready capture: ${destination}`),
+];
 
 const initialMetadata = existsSync(initialMetadataPath)
   ? JSON.parse(readFileSync(initialMetadataPath, "utf8"))
@@ -194,7 +221,7 @@ const initialMetadata = existsSync(initialMetadataPath)
 
 const manifest = {
   truth_label: "ios_selected_design_destination_capture_not_live_closure",
-  status: captures.length > 0 && captures.every((capture) => capture.status === "captured") ? "ready" : "failed",
+  status: validationErrors.length === 0 ? "ready" : "failed",
   generated_at_utc: new Date().toISOString(),
   mode,
   bundle_id: "com.friday.shell",
@@ -214,16 +241,27 @@ const manifest = {
     capability_truth: "matrixTruth",
     session_control_set: "fullNativeControl",
   },
-  required_destinations: destinationsCsv.split(",").filter(Boolean),
+  required_destinations: requiredDestinations,
   relaunch_contract: mode === "live-loopback"
     ? "each non-initial destination relaunch propagates the same live-loopback read/write/pairing/device-keypair gates as the initial build launch"
     : "each destination relaunch keeps mobile live gates off and captures honest-unavailable truth",
   captures,
+  validation: {
+    missing_captures: missingCaptures,
+    extra_captures: extraCaptures,
+    duplicate_destinations: duplicateDestinations,
+    empty_screenshots: emptyScreenshots,
+    non_ready_captures: nonReadyCaptures,
+  },
   initial_build_metadata: initialMetadata,
   caveat: "Device screenshots prove selected destinations launch and render truth-labeled UI states only; enabled actions still require separate Hub/DB/ledger/proof closure before END-BAR.",
 };
 
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+if (validationErrors.length > 0) {
+  console.error(`iOS destination capture manifest validation failed: ${validationErrors.join("; ")}`);
+  process.exit(2);
+}
 NODE
 
 echo "PASS - selected iOS design destinations captured."
