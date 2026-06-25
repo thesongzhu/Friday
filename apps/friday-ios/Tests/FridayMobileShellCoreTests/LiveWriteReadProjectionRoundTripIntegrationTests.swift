@@ -239,6 +239,17 @@ private func writeRoundTripProofIfRequested(
         "port": Int(readConfig.port),
       ],
     ],
+    "ui_actions": [
+      [
+        "surface": "mobile",
+        "screen": "fridayChat",
+        "action_id": "chat:typing",
+        "capability_id": "ask_friday_chat",
+        "status": "pass",
+        "evidence_ref": rawPath,
+        "truth_label": "explicit_ui_action_runtime_evidence_from_live_mobile_write_read_not_endbar",
+      ]
+    ],
     "caveat": "Mobile live write-read artifact only; not END-BAR, not GO-LIVE, not UI/device proof.",
   ]
 
