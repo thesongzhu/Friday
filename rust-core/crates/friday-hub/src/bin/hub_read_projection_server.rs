@@ -110,6 +110,14 @@ const AUTH_CHALLENGE: &[u8] = b"friday:ui-read-seam:ws:s-r1:read-projection:chal
 /// auth/dispatch. Set on the `TcpStream` BEFORE the cleartext preamble read.
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// M5 (within-session bound — defense-in-depth). The per-session [`IdempotencyTracker`] is
+/// insert-only (never evicts — eviction would reopen anti-replay). It is minted on the stack of
+/// `serve_read_session` and dropped on session END, so it cannot grow across sessions; this caps
+/// the DISTINCT `msg_id`s a single authenticated read session may stream before it is fail-closed
+/// (an allowlisted peer streaming unbounded distinct ids = self-DoS). At the cap a NEW id ENDS the
+/// session WITHOUT being inserted; a REPLAY of an already-seen id still hits the normal Replay path.
+const MAX_SESSION_MSG_IDS: usize = 100_000;
+
 /// A boot-time failure category. Coarse + safe — the raw detail is NOT surfaced so a storage/init
 /// error cannot leak a path or a key. Mirrors the write bin's fail-closed boot vocabulary.
 #[derive(Debug)]
@@ -336,6 +344,12 @@ fn serve_read_session<S: Read + Write>(
             // EOF / disconnect / un-openable seal → END the session. Fail closed.
             Err(_) => return Ok(processed),
         };
+        // M5: within-session bound (defense-in-depth). At the cap, a NEW msg_id fail-closes the
+        // session WITHOUT being recorded (no evict — eviction would reopen anti-replay). A REPLAY of
+        // an already-seen id falls through to the existing Replay check below. Same fail-close form.
+        if seen_ids.len() >= MAX_SESSION_MSG_IDS && !seen_ids.has_seen(&env.msg_id) {
+            return Ok(processed);
+        }
         // Reject a REPLAYED msg_id within this session (fail-closed: END the session).
         if let Seen::Replay = seen_ids.observe(&env.msg_id) {
             return Ok(processed);

@@ -160,6 +160,14 @@ const AUTH_CHALLENGE: &[u8] = b"friday:execrun:ws:s-c:authed-run:challenge:v1";
 /// through the WS layer (the underlying stream is the same socket).
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// M5 (within-session bound — defense-in-depth). The per-session [`IdempotencyTracker`] is
+/// insert-only (never evicts — eviction would reopen anti-replay). It is minted on the stack of
+/// `serve_sealed_session` and dropped on session END, so it cannot grow across sessions; this caps
+/// the DISTINCT `msg_id`s a single authenticated session may stream before it is fail-closed (an
+/// allowlisted peer streaming unbounded distinct ids = self-DoS). At the cap a NEW id ENDS the
+/// session WITHOUT being inserted; a REPLAY of an already-seen id still hits the normal Replay path.
+const MAX_SESSION_MSG_IDS: usize = 100_000;
+
 // S-F: the SecureStore allowlist id (`PEER_PUBKEY_ALLOWLIST_ID`) and the X25519 pubkey width
 // (`X25519_PUBKEY_LEN`) are NOT redefined here — they are imported from `friday_hub::key_source`
 // (the single source of truth shared with the enroll CLI). MED-1: a local copy would let a future
@@ -1500,6 +1508,12 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
             // No dispatch, no processing — fail closed.
             Err(_) => return Ok(processed),
         };
+        // M5: within-session bound (defense-in-depth). At the cap, a NEW msg_id fail-closes the
+        // session WITHOUT being recorded (no evict — eviction would reopen anti-replay). A REPLAY of
+        // an already-seen id falls through to the existing Replay check below. Same fail-close form.
+        if seen_ids.len() >= MAX_SESSION_MSG_IDS && !seen_ids.has_seen(&env.msg_id) {
+            return Ok(processed);
+        }
         // S-E: reject a REPLAYED msg_id within this session (fail-closed: END the session, no
         // echo, no dispatch). Checked BEFORE any branch so it covers dispatch AND keepalive.
         if let Seen::Replay = seen_ids.observe(&env.msg_id) {

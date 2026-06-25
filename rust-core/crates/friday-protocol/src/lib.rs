@@ -1926,6 +1926,18 @@ impl IdempotencyTracker {
     pub fn has_seen(&self, msg_id: &str) -> bool {
         self.seen.contains(msg_id)
     }
+
+    /// The number of DISTINCT `msg_id`s seen this session. A holder uses this to bound the
+    /// within-session set (an authenticated peer streaming unbounded distinct ids = self-DoS).
+    /// This is a pure observation — it adds NO evict/cap/LRU behavior to the dedup set (evicting
+    /// would reopen anti-replay: flushing a live id then resending it would re-`First`-execute it).
+    pub fn len(&self) -> usize {
+        self.seen.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.seen.is_empty()
+    }
 }
 
 /// A durable, resumable stream of `AskFridayStream` frames (gate §4.3). On
@@ -2872,6 +2884,79 @@ mod tests {
         assert_eq!(t.observe("cmd-1"), Seen::Replay); // reconnect resend -> skip
         assert_eq!(t.observe("cmd-2"), Seen::First);
         assert!(t.has_seen("cmd-1"));
+    }
+
+    // M5 (within-session bound — defense-in-depth). The live holders cap the per-session distinct
+    // `msg_id` set with the guard `if seen_ids.len() >= MAX && !seen_ids.has_seen(id) { fail-close }`
+    // placed IMMEDIATELY BEFORE the existing `observe()` Replay check. These tests model that guard
+    // predicate against the tracker invariants it relies on, using a SMALL local CAP (the prod const
+    // is 100_000 in each holder — untouched). The cap must NEVER evict/LRU: eviction would reopen
+    // anti-replay (flush a live id, resend it, re-`First`-execute it).
+
+    /// Models the holder guard: at the cap, observe a NEW id => the guard would fail-close WITHOUT
+    /// inserting. Asserts the predicate fires AND the tracker is NOT mutated (no flush, no execute).
+    #[test]
+    fn idempotency_cap_fails_closed_on_new_id_without_flushing() {
+        const CAP: usize = 3;
+        let mut t = IdempotencyTracker::new();
+        for i in 0..CAP {
+            assert_eq!(t.observe(&format!("id-{i}")), Seen::First);
+        }
+        assert_eq!(t.len(), CAP);
+        // A NEW id at the cap: the holder guard `len() >= CAP && !has_seen(new)` is TRUE => the
+        // session would fail-close BEFORE `observe()`, so the new id is never inserted.
+        let new_id = "id-new";
+        assert!(
+            t.len() >= CAP && !t.has_seen(new_id),
+            "guard predicate must fire"
+        );
+        // Crucially, the guard does NOT call observe(): the set is unchanged (no flush of older ids,
+        // and the new id is NOT recorded). A real holder simply ends the session here.
+        assert_eq!(t.len(), CAP, "cap branch must not grow/flush the set");
+        for i in 0..CAP {
+            assert!(t.has_seen(&format!("id-{i}")), "older ids must remain seen");
+        }
+        assert!(
+            !t.has_seen(new_id),
+            "the rejected new id must NOT be recorded"
+        );
+    }
+
+    /// The anti-replay regression tripwire: an id seen BEFORE the cap is STILL reported `Replay`
+    /// at/after the cap — it is NEVER flushed and re-`First`-ed. If anyone adds eviction/LRU, the
+    /// early id gets dropped and re-observe returns `First`, failing this test.
+    #[test]
+    fn idempotency_cap_never_re_firsts_an_id_seen_before_the_cap() {
+        const CAP: usize = 3;
+        let mut t = IdempotencyTracker::new();
+        // An id seen early, BEFORE we reach the cap.
+        let early = "early-id";
+        assert_eq!(t.observe(early), Seen::First);
+        // Fill up to (and past) the cap with DISTINCT junk ids.
+        for i in 0..CAP {
+            t.observe(&format!("junk-{i}"));
+        }
+        assert!(t.len() >= CAP);
+        // The holder guard only fires for a NEW id (`!has_seen`). A REPLAY of `early` has
+        // `has_seen == true`, so the guard FALLS THROUGH to `observe()`, which MUST return Replay.
+        assert!(t.has_seen(early));
+        assert_eq!(
+            t.observe(early),
+            Seen::Replay,
+            "an id seen before the cap must stay Replay forever — no eviction"
+        );
+    }
+
+    /// Normal under-cap behavior is unchanged: distinct ids First, resend Replay.
+    #[test]
+    fn idempotency_under_cap_behavior_unchanged() {
+        const CAP: usize = 3;
+        let mut t = IdempotencyTracker::new();
+        assert_eq!(t.observe("a"), Seen::First);
+        assert_eq!(t.observe("b"), Seen::First);
+        assert_eq!(t.observe("a"), Seen::Replay);
+        assert!(t.len() < CAP, "still under the cap — no guard involvement");
+        assert!(t.has_seen("a") && t.has_seen("b"));
     }
 
     #[test]
