@@ -597,8 +597,185 @@ struct DesktopProjectionScreen: View {
 
   private func evidenceStatus(_ snapshot: WorkbenchSnapshot) -> some View {
     VStack(alignment: .leading, spacing: 16) {
+      timelinePagesCard(snapshot)
+      transcriptBrowserCard(snapshot)
+      memoryEvidenceCard(snapshot)
       refsCard(title: "Evidence Refs", refs: evidenceRefs(snapshot))
     }
+  }
+
+  private func timelinePagesCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("Bounded Timeline Pages")
+          Spacer()
+          StatusChip(
+            text: "\(snapshot.timelinePages.count)",
+            bg: HubTheme.chipNeutralBG,
+            fg: HubTheme.chipNeutralFG)
+        }
+        Text("Pages are read-only timeline windows. Seeing page refs here is not completion proof.")
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if snapshot.timelinePages.isEmpty {
+          Text("No bounded timeline pages are projected yet.")
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textSecondary)
+        } else {
+          ForEach(snapshot.timelinePages) { page in
+            VStack(alignment: .leading, spacing: 6) {
+              HStack {
+                Text("Page \(page.page)")
+                  .font(.system(size: 12, weight: .semibold))
+                  .foregroundStyle(HubTheme.textPrimary)
+                Spacer()
+                StatusChip(
+                  text: "\(page.eventRefs.count) events",
+                  bg: HubTheme.chipNeutralBG,
+                  fg: HubTheme.chipNeutralFG)
+              }
+              RefPill(label: "cursor", ref: page.cursor)
+              if let nextCursor = page.nextCursor {
+                RefPill(label: "next", ref: nextCursor)
+              }
+              ForEach(page.eventRefs, id: \.self) { ref in
+                RefPill(label: "event", ref: ref)
+              }
+            }
+            .padding(.vertical, 4)
+          }
+        }
+      }
+    }
+    .accessibilityIdentifier("friday.desktop.evidence.timeline-pages")
+  }
+
+  private func transcriptBrowserCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("Transcript Browser")
+          Spacer()
+          StatusChip(
+            text: "\(snapshot.transcriptSections.count)",
+            bg: HubTheme.chipNeutralBG,
+            fg: HubTheme.chipNeutralFG)
+        }
+        Text("Transcript events render summaries and refs only. The Evidence surface does not expose raw provider bodies.")
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if snapshot.transcriptSections.isEmpty {
+          Text("No transcript sections are projected yet.")
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textSecondary)
+        } else {
+          ForEach(snapshot.transcriptSections) { section in
+            VStack(alignment: .leading, spacing: 6) {
+              HStack {
+                Text(section.title)
+                  .font(.system(size: 12, weight: .semibold))
+                  .foregroundStyle(HubTheme.textPrimary)
+                Spacer()
+                section.status.chip
+                section.truthLabel.chip
+              }
+              HStack(spacing: 6) {
+                StatusChip(
+                  text: section.groupKind.rawValue,
+                  bg: HubTheme.chipNeutralBG,
+                  fg: HubTheme.chipNeutralFG)
+                RefPill(label: "mission", ref: section.missionId)
+              }
+              ForEach(section.events) { event in
+                transcriptEvidenceRow(event)
+              }
+            }
+            .padding(.vertical, 5)
+          }
+        }
+      }
+    }
+    .accessibilityIdentifier("friday.desktop.evidence.transcript-browser")
+  }
+
+  private func transcriptEvidenceRow(_ event: MissionTranscriptEvent) -> some View {
+    VStack(alignment: .leading, spacing: 5) {
+      HStack(spacing: 6) {
+        Text(event.summary)
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textPrimary)
+          .lineLimit(2)
+        Spacer()
+        event.status.chip
+        event.truthLabel.chip
+      }
+      HStack(spacing: 6) {
+        StatusChip(
+          text: event.surface.rawValue,
+          bg: HubTheme.chipNeutralBG,
+          fg: HubTheme.chipNeutralFG)
+        RefPill(label: "event", ref: event.id)
+        if let workItemId = event.workItemId {
+          RefPill(label: "work", ref: workItemId)
+        }
+      }
+      if let proofRef = event.proofRef {
+        RefPill(label: "proofRef", ref: proofRef)
+      }
+      ForEach(event.evidenceRefs.orderedPairs, id: \.ref) { pair in
+        RefPill(label: pair.label, ref: pair.ref)
+      }
+    }
+    .padding(.vertical, 4)
+  }
+
+  private func memoryEvidenceCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("Memory Review Evidence")
+          Spacer()
+          StatusChip(
+            text: "\(snapshot.memoryCandidates.count)",
+            bg: HubTheme.chipNeutralBG,
+            fg: HubTheme.chipNeutralFG)
+        }
+        Text("Memory rows stay review-only here; this surface cannot confirm, reject, or grant memory authority.")
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if snapshot.memoryCandidates.isEmpty {
+          Text("No memory review candidates are projected yet.")
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textSecondary)
+        } else {
+          ForEach(snapshot.memoryCandidates) { candidate in
+            VStack(alignment: .leading, spacing: 6) {
+              Text(candidate.preview)
+                .font(.system(size: 12))
+                .foregroundStyle(HubTheme.textPrimary)
+                .lineLimit(2)
+              HStack(spacing: 6) {
+                StatusChip(
+                  text: candidate.state,
+                  bg: HubTheme.chipNeutralBG,
+                  fg: HubTheme.chipNeutralFG)
+                StatusChip(
+                  text: candidate.grantsMemoryAuthority ? "authority requested" : "review only",
+                  bg: candidate.grantsMemoryAuthority ? HubTheme.chipWarnBG : HubTheme.chipNeutralBG,
+                  fg: candidate.grantsMemoryAuthority ? HubTheme.chipWarnFG : HubTheme.chipNeutralFG)
+              }
+              RefPill(label: "evidenceRef", ref: candidate.evidenceRef)
+            }
+            .padding(.vertical, 4)
+          }
+        }
+      }
+    }
+    .accessibilityIdentifier("friday.desktop.evidence.memory-review")
   }
 
   private func diagnosticsStatus(_ snapshot: WorkbenchSnapshot) -> some View {
