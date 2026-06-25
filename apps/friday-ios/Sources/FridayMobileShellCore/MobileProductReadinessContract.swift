@@ -3,6 +3,7 @@ import Foundation
 public enum MobileProductLoopTier: String, CaseIterable, Sendable, Equatable {
   case liveWriteRead
   case liveReadProjection
+  case nativeDeviceLoop
   case providerWorkspace
   case governedActionGated
   case readinessOnly
@@ -13,6 +14,7 @@ public enum MobileProductLoopTier: String, CaseIterable, Sendable, Equatable {
     switch self {
     case .liveWriteRead: return "live write"
     case .liveReadProjection: return "live read"
+    case .nativeDeviceLoop: return "device loop"
     case .providerWorkspace: return "workspace"
     case .governedActionGated: return "action gated"
     case .readinessOnly: return "readiness"
@@ -27,6 +29,8 @@ public enum MobileProductLoopTier: String, CaseIterable, Sendable, Equatable {
       return "Real read/write loop exists when the governed live seams are configured."
     case .liveReadProjection:
       return "Reads real Hub projection state; it does not create or mutate work."
+    case .nativeDeviceLoop:
+      return "Runs local device I/O from the native app; product completion still needs runtime proof."
     case .providerWorkspace:
       return "Opens provider readiness, route/session refs, and native-control truth; read-only pieces are labeled."
     case .governedActionGated:
@@ -183,11 +187,14 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
       return contract(
         title: "Voice",
         systemImage: "waveform",
-        tier: .readinessOnly,
-        runtimeActionIds: [],
+        tier: .nativeDeviceLoop,
+        runtimeActionIds: [
+          "mobile/voice/permission",
+          "mobile/fridayChat/voice-input",
+          "mobile/fridayChat/voice-output",
+        ],
         blockers: [
-          .init(.needsNativeSurface, label: "speech loop UI"),
-          .init(.needsProviderCredential, label: "TTS/provider readiness"),
+          .init(.needsRuntimeEvidence, label: "real microphone and speech-output tap proof"),
         ])
     case .pairing:
       return contract(
