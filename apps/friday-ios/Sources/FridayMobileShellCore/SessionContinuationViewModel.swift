@@ -97,10 +97,27 @@ public enum SessionContinuationLoadState: Sendable, Equatable {
   }
 }
 
+public enum SessionSidecarActionState: Sendable, Equatable {
+  case idle
+  case ready(summary: String)
+  case blocked(reason: String)
+}
+
+public struct SessionSidecarState: Sendable, Equatable {
+  public let isOpen: Bool
+  public let actionState: SessionSidecarActionState
+
+  public init(isOpen: Bool = false, actionState: SessionSidecarActionState = .idle) {
+    self.isOpen = isOpen
+    self.actionState = actionState
+  }
+}
+
 @MainActor
 public final class SessionContinuationViewModel: ObservableObject {
   @Published public private(set) var state: SessionContinuationLoadState = .idle
   @Published public private(set) var controlStates: [String: SessionContinuationControlState] = [:]
+  @Published public private(set) var sidecarState = SessionSidecarState()
 
   private let client: FridayRustReadClient
   private let writeClient: FridayRustWriteClient?
@@ -120,6 +137,26 @@ public final class SessionContinuationViewModel: ObservableObject {
     self.makeSessionWriteClient = makeSessionWriteClient
     self.signer = signer
     self.runControlEnabled = runControlEnabled
+  }
+
+  public func openSidecar() {
+    sidecarState = SessionSidecarState(isOpen: true, actionState: sidecarState.actionState)
+  }
+
+  public func closeSidecar() {
+    sidecarState = SessionSidecarState(isOpen: false, actionState: sidecarState.actionState)
+  }
+
+  public func analyzeSidecarPrivately() {
+    sidecarState = SessionSidecarState(
+      isOpen: true,
+      actionState: .ready(summary: "Private Friday analysis ready. Nothing has been sent to the provider."))
+  }
+
+  public func blockSidecarExternalAction(_ action: String) {
+    sidecarState = SessionSidecarState(
+      isOpen: true,
+      actionState: .blocked(reason: "\(action) requires a governed confirmation path before any provider or handoff write."))
   }
 
   public func refresh(agentSessionId: String?, runId: String?) async {

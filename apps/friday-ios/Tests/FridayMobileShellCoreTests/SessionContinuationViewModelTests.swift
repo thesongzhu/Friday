@@ -790,4 +790,71 @@ final class SessionContinuationViewModelTests: XCTestCase {
     XCTAssertEqual(snapshot.controls.first { $0.id == "history" }?.truthLabel, "read arm")
     XCTAssertEqual(snapshot.controls.first { $0.id == "attachments" }?.truthLabel, "NO-GO")
   }
+
+  func testSessionSidecarOpenCloseKeepsProviderPrivate() throws {
+    let vm = SessionContinuationViewModel(client: FakeSessionReadClient())
+
+    XCTAssertFalse(vm.sidecarState.isOpen)
+    vm.openSidecar()
+    XCTAssertTrue(vm.sidecarState.isOpen)
+    XCTAssertEqual(vm.sidecarState.actionState, .idle)
+
+    vm.analyzeSidecarPrivately()
+    XCTAssertEqual(
+      vm.sidecarState.actionState,
+      .ready(summary: "Private Friday analysis ready. Nothing has been sent to the provider."))
+
+    vm.blockSidecarExternalAction("Send to provider")
+    guard case .blocked(let reason) = vm.sidecarState.actionState else {
+      return XCTFail("expected blocked external sidecar action")
+    }
+    XCTAssertTrue(reason.contains("governed confirmation path"))
+
+    vm.closeSidecar()
+    XCTAssertFalse(vm.sidecarState.isOpen)
+    try writeSessionSidecarActionEvidenceIfRequested()
+  }
+
+  private func writeSessionSidecarActionEvidenceIfRequested() throws {
+    guard let rawDir = ProcessInfo.processInfo.environment["FRIDAY_MOBILE_SESSION_SIDECAR_ACTION_EVIDENCE_DIR"],
+          !rawDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return
+    }
+    let dir = URL(fileURLWithPath: rawDir, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let payload: [String: Any] = [
+      "truth": "mobile_session_sidecar_action_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": "session",
+          "action_id": "sidecar_open",
+          "capability_id": "friday_sidecar_private",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/session/sidecar/open",
+          "proof": [
+            "sidecar_open": true,
+            "provider_sent": false,
+            "external_actions_blocked_without_confirm": true,
+          ],
+        ],
+        [
+          "surface": "mobile",
+          "screen": "session",
+          "action_id": "sidecar_close",
+          "capability_id": "friday_sidecar_private",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/session/sidecar/close",
+          "proof": [
+            "sidecar_open_after_close": false,
+            "provider_sent": false,
+            "external_actions_blocked_without_confirm": true,
+          ],
+        ],
+      ],
+    ]
+    let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: dir.appendingPathComponent("mobile-session-sidecar-action-evidence.json"), options: .atomic)
+  }
 }
