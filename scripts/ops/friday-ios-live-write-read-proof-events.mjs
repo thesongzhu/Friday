@@ -9,11 +9,14 @@ function usage() {
   console.error(`usage:
   node scripts/ops/friday-ios-live-write-read-proof-events.mjs \\
     --proof=/abs/friday-ios-mobile-roundtrip-proof.json \\
-    [--out=/abs/mobile-roundtrip-events.jsonl] [--require-ready]
+    [--out=/abs/mobile-roundtrip-events.jsonl] \\
+    [--action-runtime-out=/abs/action-runtime-evidence.json] [--require-ready]
 
 Truth: converts one real iOS live write-read roundtrip artifact into mobile
 same-run events for the UI/device capture pipeline. It is not END-BAR proof,
-does not invent desktop/channel/timeline observations, and never reads secrets.`);
+does not invent desktop/channel/timeline observations, and never reads secrets.
+Optional action runtime evidence is exported only when the proof artifact already
+contains explicit ui_actions rows from a real UI driver.`);
 }
 
 function arg(name) {
@@ -28,6 +31,7 @@ if (args.includes("--help") || args.includes("-h")) {
 
 const proofPath = arg("proof");
 const outPath = arg("out");
+const actionRuntimeOutPath = arg("action-runtime-out");
 const requireReady = args.includes("--require-ready");
 const blockers = [];
 
@@ -68,6 +72,44 @@ function arrayField(value, field, label) {
 
 function optionalArrayField(value, field) {
   return value && Array.isArray(value[field]) ? value[field] : [];
+}
+
+function explicitActionRows(value) {
+  if (!value || value.ui_actions === undefined) return [];
+  if (!Array.isArray(value.ui_actions)) {
+    block("ui_actions_not_array", "proof.ui_actions");
+    return [];
+  }
+
+  return value.ui_actions.map((row, index) => {
+    const label = `proof.ui_actions[${index}]`;
+    if (!row || typeof row !== "object") {
+      block("ui_action_not_object", label);
+      return null;
+    }
+    const surface = typeof row.surface === "string" && row.surface.trim() ? row.surface.trim() : "mobile";
+    const screen = typeof row.screen === "string" && row.screen.trim() ? row.screen.trim() : "";
+    const actionId = typeof row.action_id === "string" && row.action_id.trim() ? row.action_id.trim() : "";
+    const capabilityId = typeof row.capability_id === "string" && row.capability_id.trim() ? row.capability_id.trim() : "";
+    const status = typeof row.status === "string" && row.status.trim() ? row.status.trim() : "";
+    const evidence = typeof row.evidence_ref === "string" && row.evidence_ref.trim() ? row.evidence_ref.trim() : evidenceRef;
+    if (surface !== "mobile") block("ui_action_surface_mismatch", `${label}:${surface}`);
+    if (!screen) block("ui_action_missing_screen", label);
+    if (!actionId && !capabilityId) block("ui_action_missing_action_or_capability", label);
+    if (status !== "pass") block("ui_action_status_not_pass", `${label}:${status || "<missing>"}`);
+    return {
+      surface,
+      screen,
+      action_id: actionId,
+      capability_id: capabilityId,
+      status,
+      evidence_ref: evidence,
+      mission_id: missionId,
+      work_item_id: workItemId,
+      source: "ios_mobile_live_write_read_roundtrip_explicit_ui_actions",
+      truth_label: "explicit_ui_action_runtime_evidence_not_endbar_not_adoption",
+    };
+  }).filter(Boolean);
 }
 
 if (!proofPath) block("missing_arg", "proof");
@@ -144,11 +186,22 @@ const events = blockers.length === 0
     truth_label: "mobile_same_run_event_from_live_write_read_artifact_not_ui_device_proof",
   }))
   : [];
+const actionRows = blockers.length === 0 ? explicitActionRows(proof) : [];
 
 if (outPath && blockers.length === 0) {
   const out = abs(outPath);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
+}
+if (actionRuntimeOutPath && blockers.length === 0) {
+  const out = abs(actionRuntimeOutPath);
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, `${JSON.stringify({
+    truth: "action_runtime_evidence_from_explicit_ios_ui_actions_not_endbar",
+    status: actionRows.length > 0 ? "ready" : "no_explicit_ui_actions",
+    missionId: missionId || null,
+    actions: actionRows,
+  }, null, 2)}\n`);
 }
 
 const output = {
@@ -159,6 +212,11 @@ const output = {
   evidenceRef: evidenceRef || null,
   out: outPath ? abs(outPath) : null,
   eventCount: events.length,
+  actionRuntimeEvidence: {
+    out: actionRuntimeOutPath ? abs(actionRuntimeOutPath) : null,
+    count: actionRows.length,
+    status: actionRows.length > 0 ? "ready" : "no_explicit_ui_actions",
+  },
   blockers,
   caveat: "Mobile same-run events only; combine with real desktop/channel/timeline evidence before strict UI/device proof.",
 };

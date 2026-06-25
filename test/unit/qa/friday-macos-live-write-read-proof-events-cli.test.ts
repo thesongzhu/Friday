@@ -58,6 +58,7 @@ describe("friday-macos-live-write-read-proof-events", () => {
       const result = JSON.parse(stdout) as { status?: string; eventCount?: number; blockers?: unknown[] };
       expect(result.status).toBe("ready");
       expect(result.eventCount).toBe(5);
+      expect(JSON.stringify(result)).toContain("no_explicit_ui_actions");
       expect(result.blockers).toEqual([]);
 
       const rows = readFileSync(outPath, "utf8").trim().split("\n").map((line) => JSON.parse(line)) as Array<{
@@ -78,6 +79,83 @@ describe("friday-macos-live-write-read-proof-events", () => {
       expect(new Set(rows.map((row) => row.mission_id))).toEqual(new Set([missionId]));
       expect(new Set(rows.map((row) => row.work_item_id))).toEqual(new Set([workItemId]));
       expect(new Set(rows.map((row) => row.evidence_ref))).toEqual(new Set([proofPath]));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("exports action runtime evidence only from explicit UI action rows", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-macos-roundtrip-action-events-"));
+    try {
+      const proofPath = writeProof(tempDir, proof({
+        ui_actions: [
+          {
+            surface: "desktop",
+            screen: "fridayChat",
+            action_id: "check",
+            capability_id: "security_approval_bound_principal_gate_cat10_netnew",
+            status: "pass",
+            evidence_ref: "proof://desktop-chat-approve",
+          },
+        ],
+      }));
+      const actionOut = join(tempDir, "action-runtime-evidence.json");
+      const eventOut = join(tempDir, "events.jsonl");
+      const stdout = execFileSync("node", [
+        script,
+        `--proof=${proofPath}`,
+        `--out=${eventOut}`,
+        `--action-runtime-out=${actionOut}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      const result = JSON.parse(stdout) as { actionRuntimeEvidence?: { status?: string; count?: number } };
+      expect(result.actionRuntimeEvidence).toEqual(expect.objectContaining({ status: "ready", count: 1 }));
+      const actionEvidence = JSON.parse(readFileSync(actionOut, "utf8")) as {
+        truth?: string;
+        status?: string;
+        actions?: Array<{ surface?: string; screen?: string; action_id?: string; capability_id?: string; status?: string; evidence_ref?: string }>;
+      };
+      expect(actionEvidence.truth).toBe("action_runtime_evidence_from_explicit_macos_ui_actions_not_endbar");
+      expect(actionEvidence.status).toBe("ready");
+      expect(actionEvidence.actions).toEqual([
+        expect.objectContaining({
+          surface: "desktop",
+          screen: "fridayChat",
+          action_id: "check",
+          capability_id: "security_approval_bound_principal_gate_cat10_netnew",
+          status: "pass",
+          evidence_ref: "proof://desktop-chat-approve",
+        }),
+      ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when explicit UI action rows are malformed", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-macos-roundtrip-action-events-bad-"));
+    try {
+      const proofPath = writeProof(tempDir, proof({
+        ui_actions: [
+          { surface: "mobile", screen: "fridayChat", action_id: "check", status: "pass" },
+          { surface: "desktop", screen: "", action_id: "", status: "pending" },
+        ],
+      }));
+      const result = spawnSync("node", [
+        script,
+        `--proof=${proofPath}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string }> };
+      expect(output.blockers?.map((blocker) => blocker.code)).toEqual(expect.arrayContaining([
+        "ui_action_surface_mismatch",
+        "ui_action_missing_screen",
+        "ui_action_missing_action_or_capability",
+        "ui_action_status_not_pass",
+      ]));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
