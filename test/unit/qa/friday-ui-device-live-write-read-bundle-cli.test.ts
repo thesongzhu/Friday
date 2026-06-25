@@ -11,6 +11,7 @@ function writeCapture(root: string, role: "mobile" | "desktop", missionId: strin
   mkdirSync(dir, { recursive: true });
   const proof = join(dir, `${role}-proof.json`);
   const events = join(dir, `${role}-events.jsonl`);
+  const actionRuntimeEvidence = join(dir, "action-runtime-evidence.json");
   const workItemId = `work-${role}-${missionId}`;
   writeFileSync(proof, JSON.stringify({
     truth_label: `${role}_live_write_read_roundtrip_proof_not_ui_device_proof`,
@@ -33,6 +34,21 @@ function writeCapture(root: string, role: "mobile" | "desktop", missionId: strin
     work_item_id: workItemId,
   }));
   writeFileSync(events, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+  writeFileSync(actionRuntimeEvidence, JSON.stringify({
+    truth: `action_runtime_evidence_from_explicit_${role}_ui_actions_not_endbar`,
+    status: "ready",
+    missionId,
+    actions: [{
+      surface: role,
+      screen: role === "mobile" ? "fridayChat" : "desktopChat",
+      action_id: "chat:typing",
+      capability_id: "ask_friday_chat",
+      status: "pass",
+      evidence_ref: `proof://${role}/chat-send`,
+      mission_id: missionId,
+      work_item_id: workItemId,
+    }],
+  }, null, 2));
   writeFileSync(join(dir, "capture-index.json"), JSON.stringify({
     truth_label: `${role}_live_write_read_capture_index_not_ui_device_proof`,
     status: "ready",
@@ -41,6 +57,7 @@ function writeCapture(root: string, role: "mobile" | "desktop", missionId: strin
     [role]: {
       proof,
       events,
+      action_runtime_evidence: actionRuntimeEvidence,
       event_count: rows.length,
     },
     blockers: [],
@@ -70,6 +87,8 @@ describe("friday-ui-device-live-write-read-bundle", () => {
         status?: string;
         missionId?: string;
         combinedEvents?: string;
+        actionRuntimeEvidence?: string;
+        actionRuntimeEvidenceCount?: number;
         fullProofGaps?: string[];
       };
       expect(result.truth).toBe("ui_device_live_write_read_bundle_not_full_proof");
@@ -79,12 +98,21 @@ describe("friday-ui-device-live-write-read-bundle", () => {
 
       const combinedEvents = readFileSync(result.combinedEvents ?? "", "utf8").trim().split("\n");
       expect(combinedEvents).toHaveLength(10);
+      expect(result.actionRuntimeEvidenceCount).toBe(2);
+      const actionEvidence = JSON.parse(readFileSync(result.actionRuntimeEvidence ?? "", "utf8")) as {
+        status?: string;
+        actions?: unknown[];
+      };
+      expect(actionEvidence.status).toBe("ready");
+      expect(actionEvidence.actions).toHaveLength(2);
 
       const index = JSON.parse(readFileSync(join(outDir, "live-write-read-bundle-index.json"), "utf8")) as {
         status?: string;
+        actionRuntimeEvidenceCount?: number;
         fullProofGaps?: string[];
       };
       expect(index.status).toBe("partial_bundle_ready");
+      expect(index.actionRuntimeEvidenceCount).toBe(2);
       expect(index.fullProofGaps).toContain("strict_observations_manifest_from_same_run_events");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
