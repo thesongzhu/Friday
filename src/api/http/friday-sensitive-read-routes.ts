@@ -32,6 +32,22 @@
  *   - /v1/grants     active grants and authorization posture
  *   - /v1/audit      runtime audit logs / forensic evidence
  *   - /v1/observability/audit  observability audit entries and detail readback
+ *   - /v1/providers/usage  provider spend/usage summary (global cost data) — gated
+ *                    2026-06-24 (operator-authorized per-handler review). Sub-path only:
+ *                    the trailing-slash boundary keeps the bare /v1/providers list/get/health/
+ *                    capability-health/doctor (accepted operator_external_adapter reads)
+ *                    anonymous.
+ *   - /v1/providers/budget  monthly budget status (GET) — gated 2026-06-24 (operator-
+ *                    authorized). Same sub-path-only boundary as /v1/providers/usage; the bare
+ *                    /v1/providers prefix stays anonymous. (PUT here is already fail-closed by
+ *                    the public-mutation floor.)
+ *   - /v1/system/remote/devices  remote device inventory / posture (GET list + GET detail) —
+ *                    gated 2026-06-24 (operator-authorized). The POST register / DELETE /
+ *                    WebAuthn auth-option routes under this prefix are mutations (unaffected by
+ *                    this GET/HEAD-only read floor).
+ *   - /v1/system/remote/sessions  remote session inventory / posture (GET list) — gated
+ *                    2026-06-24 (operator-authorized). POST create / POST heartbeat / DELETE
+ *                    under this prefix are mutations (unaffected by this read floor).
  *
  * Intentionally NOT gated here (kept anonymous): health, setup, onboarding, auth
  * bootstrap/login/refresh, version/status/capabilities, and the core no-login UX surfaces
@@ -40,9 +56,10 @@
  *
  * Known-ungated personal/posture surfaces deliberately left OUT of this targeted scope
  * (recorded so they are not silently dropped — candidates for a follow-up classification, NOT
- * closed here): /v1/uix/learned-facts, /v1/uix/user-profile, /v1/system/remote/devices,
- * /v1/providers/usage, /v1/providers/budget. Each needs
- * its own per-handler review before gating.
+ * closed here): /v1/uix/learned-facts, /v1/uix/user-profile. Each needs its own per-handler
+ * review before gating. (The provider-spend and remote-device/session posture surfaces that
+ * previously sat on this deferred list were reviewed and gated 2026-06-24 — see the prefixes
+ * above.)
  */
 export const FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES: readonly string[] = [
   "/v1/memory",
@@ -55,6 +72,13 @@ export const FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES: readonly string[] = [
   "/v1/grants",
   "/v1/audit",
   "/v1/observability/audit",
+  // Gated 2026-06-24 (operator-authorized per-handler review). Each is a SUB-PATH of an
+  // otherwise-anonymous prefix; the trailing-slash boundary in isFridaySensitiveReadRoute keeps
+  // the bare /v1/providers and /v1/system/... prefixes anonymous (no over-flooring).
+  "/v1/providers/usage",
+  "/v1/providers/budget",
+  "/v1/system/remote/devices",
+  "/v1/system/remote/sessions",
 ];
 
 /**

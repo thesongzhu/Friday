@@ -78,6 +78,12 @@ describe("isFridaySensitiveReadRoute", () => {
     expect(isFridaySensitiveReadRoute("/v1/grants/active")).toBe(true);
     expect(isFridaySensitiveReadRoute("/v1/audit/logs")).toBe(true);
     expect(isFridaySensitiveReadRoute("/v1/observability/audit/:entryId")).toBe(true);
+    // Gated 2026-06-24 (operator-authorized): provider-spend + remote device/session posture.
+    expect(isFridaySensitiveReadRoute("/v1/providers/usage")).toBe(true);
+    expect(isFridaySensitiveReadRoute("/v1/providers/budget")).toBe(true);
+    expect(isFridaySensitiveReadRoute("/v1/system/remote/devices")).toBe(true);
+    expect(isFridaySensitiveReadRoute("/v1/system/remote/devices/:deviceId")).toBe(true);
+    expect(isFridaySensitiveReadRoute("/v1/system/remote/sessions")).toBe(true);
   });
 
   it("does NOT match the core no-login UX or minimal-public surfaces", () => {
@@ -95,12 +101,33 @@ describe("isFridaySensitiveReadRoute", () => {
     }
   });
 
+  it("no-degrade: the bare /v1/providers reads (accepted operator_external_adapter) stay un-gated", () => {
+    // Gating /v1/providers/usage + /v1/providers/budget must NOT over-floor the bare prefix.
+    for (const path of [
+      "/v1/providers",
+      "/v1/providers/health",
+      "/v1/providers/capability-health",
+      "/v1/providers/detect",
+      "/v1/providers/templates",
+      "/v1/providers/:providerId",
+      "/v1/providers/:providerId/doctor",
+      "/v1/providers/routing/explain",
+    ]) {
+      expect(isFridaySensitiveReadRoute(path)).toBe(false);
+    }
+  });
+
   it("respects the trailing-slash boundary (no sibling-prefix false positives)", () => {
     expect(isFridaySensitiveReadRoute("/v1/secretspolicy")).toBe(false);
     expect(isFridaySensitiveReadRoute("/v1/securityx")).toBe(false);
     expect(isFridaySensitiveReadRoute("/v1/grantsx")).toBe(false);
     expect(isFridaySensitiveReadRoute("/v1/auditx")).toBe(false);
     expect(isFridaySensitiveReadRoute("/v1/observability/auditor")).toBe(false);
+    // 2026-06-24 sub-path prefixes: a sibling that only shares the textual prefix must NOT match.
+    expect(isFridaySensitiveReadRoute("/v1/providers/usagex")).toBe(false);
+    expect(isFridaySensitiveReadRoute("/v1/providers/budgetx")).toBe(false);
+    expect(isFridaySensitiveReadRoute("/v1/system/remote/devicesx")).toBe(false);
+    expect(isFridaySensitiveReadRoute("/v1/system/remote/sessionsx")).toBe(false);
   });
 });
 
@@ -358,6 +385,103 @@ describe("FridayHttpServer sensitive-read floor", () => {
     const body = await response.json() as { ok: false; error: { code: string } };
     expect(body.error.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
     expect(handlerCalls).toBe(0);
+  });
+
+  it("negative: anonymous GET on the 2026-06-24 gated spend/posture reads → 401 before handlers run", async () => {
+    const handlerCalls: Record<string, number> = {
+      usage: 0,
+      budget: 0,
+      devices: 0,
+      sessions: 0,
+    };
+    await startWith((routes) => {
+      routes.register({
+        operationId: "providers.usage.get",
+        method: "GET",
+        path: "/v1/providers/usage",
+        auth: { public: true },
+        async handler() {
+          handlerCalls.usage += 1;
+          return { summary: {} };
+        },
+      });
+      routes.register({
+        operationId: "providers.budget.get",
+        method: "GET",
+        path: "/v1/providers/budget",
+        auth: { public: true },
+        async handler() {
+          handlerCalls.budget += 1;
+          return { budget: {} };
+        },
+      });
+      routes.register({
+        operationId: "system.remote.devices.list",
+        method: "GET",
+        path: "/v1/system/remote/devices",
+        auth: { public: true },
+        async handler() {
+          handlerCalls.devices += 1;
+          return { devices: [] };
+        },
+      });
+      routes.register({
+        operationId: "system.remote.sessions.list",
+        method: "GET",
+        path: "/v1/system/remote/sessions",
+        auth: { public: true },
+        async handler() {
+          handlerCalls.sessions += 1;
+          return { sessions: [] };
+        },
+      });
+    });
+
+    for (const path of [
+      "/v1/providers/usage",
+      "/v1/providers/budget",
+      "/v1/system/remote/devices",
+      "/v1/system/remote/sessions",
+    ]) {
+      const response = await fetch(`${baseUrl}${path}`);
+      expect(response.status).toBe(401);
+      const body = (await response.json()) as { ok: false; error: { code: string } };
+      expect(body.error.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
+    }
+    expect(handlerCalls).toEqual({ usage: 0, budget: 0, devices: 0, sessions: 0 });
+  });
+
+  it("no-degrade: anonymous GET on the bare /v1/providers reads stays 200 (NOT over-floored)", async () => {
+    const handlerCalls: Record<string, number> = { list: 0, health: 0 };
+    await startWith((routes) => {
+      routes.register({
+        operationId: "providers.list",
+        method: "GET",
+        path: "/v1/providers",
+        auth: { public: true },
+        async handler() {
+          handlerCalls.list += 1;
+          return { providers: [] };
+        },
+      });
+      routes.register({
+        operationId: "providers.health.list",
+        method: "GET",
+        path: "/v1/providers/health",
+        auth: { public: true },
+        async handler() {
+          handlerCalls.health += 1;
+          return { health: [] };
+        },
+      });
+    });
+
+    for (const path of ["/v1/providers", "/v1/providers/health"]) {
+      const response = await fetch(`${baseUrl}${path}`);
+      expect(response.status).toBe(200);
+    }
+    // Both accepted operator_external_adapter reads still reach their handlers anonymously.
+    expect(handlerCalls).toEqual({ list: 1, health: 1 });
   });
 
   it("regression: anonymous GET on a core no-login UX route (non-sensitive) → 200 (unaffected)", async () => {
