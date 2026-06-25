@@ -5,7 +5,9 @@ import Speech
 struct SystemVoiceReadinessAuthorizer: MobileVoiceReadinessAuthorizing {
   private let ttsProviderConfigured: Bool
 
-  init(ttsProviderConfigured: Bool = false) {
+  /// The app already speaks answers through AVSpeechSynthesizer in FridayChatScreen. That is a
+  /// local, on-device speech-output provider; it does not imply remote realtime voice or STT.
+  init(ttsProviderConfigured: Bool = true) {
     self.ttsProviderConfigured = ttsProviderConfigured
   }
 

@@ -25,7 +25,7 @@ final class VoiceReadinessViewModelTests: XCTestCase {
     XCTAssertFalse(captureOnly.voiceLoopReady)
     XCTAssertEqual(
       captureOnly.summary,
-      "Voice capture is allowed; TTS provider output is not configured in this build.")
+      "Voice capture is allowed; speech output provider is not configured in this build.")
 
     let complete = MobileVoiceReadiness(
       microphone: .authorized,
