@@ -20,6 +20,14 @@ const BROWSER_E2E_TIMEOUT_MS = 120_000;
 const WORKFLOW_BUILDER_SHELL_BUDGET_MS = 2_000;
 const WORKFLOW_BUILDER_CANVAS_BUDGET_MS = 8_000;
 
+async function readBuilderTiming(pageHandle: FridayBrowserPageHandle, markName: string): Promise<number | null> {
+  return pageHandle.page.evaluate((expectedMarkName) => {
+    const entries = window.performance.getEntriesByName(expectedMarkName);
+    const latest = entries.at(-1);
+    return typeof latest?.startTime === "number" ? latest.startTime : null;
+  }, markName);
+}
+
 async function createWorkflowParent(env: FridayMockBrowserE2eEnv, name: string): Promise<string> {
   const unique = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const response = await env.apiFetch<{
@@ -117,11 +125,13 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday workflow builder interaction baseli
         ].join("\n"),
       );
     }
-    const shellReadyMs = performance.now() - startedAt;
+    const shellReadyMs = await readBuilderTiming(pageHandle, "friday-workflow-builder-shell-ready")
+      ?? performance.now() - startedAt;
 
     try {
       await pageHandle.page.waitForFunction(() =>
-        Boolean(document.querySelector('[data-testid="workflow-builder-canvas"]'))
+        window.performance.getEntriesByName("friday-workflow-builder-canvas-ready").length > 0
+        && Boolean(document.querySelector('[data-testid="workflow-builder-canvas"]'))
       );
     } catch (error) {
       const debugState = await pageHandle.page.evaluate(() => ({
@@ -154,7 +164,8 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday workflow builder interaction baseli
         ].join("\n"),
       );
     }
-    const canvasReadyMs = performance.now() - startedAt;
+    const canvasReadyMs = await readBuilderTiming(pageHandle, "friday-workflow-builder-canvas-ready")
+      ?? performance.now() - startedAt;
 
     const benchmark = await pageHandle.page.evaluate(() => ({
       hasNodeLibrary: Boolean(document.querySelector('[data-testid="workflow-builder-node-library"]')),
