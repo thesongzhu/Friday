@@ -44,7 +44,7 @@ public struct MobileVoiceReadiness: Sendable, Equatable {
       return "Voice capture and TTS provider readiness are both present."
     }
     if speechCaptureReady {
-      return "Voice capture is allowed; TTS provider output is not configured in this build."
+      return "Voice capture is allowed; speech output provider is not configured in this build."
     }
     if microphone == .notDetermined || speechRecognition == .notDetermined {
       return "Voice permissions have not both been requested."
@@ -140,10 +140,10 @@ public final class VoiceReadinessViewModel: ObservableObject {
         enabled: readiness.speechCaptureReady),
       MobileVoiceActionRow(
         id: "tts-output",
-        title: "TTS output",
+        title: "Speech output",
         detail: readiness.ttsProviderConfigured
-          ? "TTS provider is configured for speech output."
-          : "No TTS provider is configured in this build.",
+          ? "Speech output provider is configured."
+          : "No speech output provider is configured in this build.",
         truthLabel: readiness.ttsProviderConfigured ? "provider_configured" : "NO-GO",
         enabled: readiness.ttsProviderConfigured),
       MobileVoiceActionRow(
