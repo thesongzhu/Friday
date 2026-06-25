@@ -90,9 +90,23 @@ final class FridayChatViewModelTests: XCTestCase {
   }
 
   final class FakeMissionClient: FridayMobileMissionDispatchingWriteClient, @unchecked Sendable {
+    enum MemoryScript { case result(MemoryDecisionResultWire); case fail(FridayWriteClientError) }
+
     private(set) var submittedIntakes: [MissionIntakeRequestWire] = []
     private(set) var missionContexts: [MissionWorkItemContextWire] = []
     private(set) var dispatchedTasks: [String] = []
+    private(set) var memoryRequests: [MemoryDecisionRequestWire] = []
+    let memoryScript: MemoryScript
+
+    init(memoryScript: MemoryScript = .result(MemoryDecisionResultWire(
+      memoryId: "unused",
+      state: "unknown",
+      status: "blocked",
+      blocker: "unused",
+      recallable: false))
+    ) {
+      self.memoryScript = memoryScript
+    }
 
     func dispatchAgentRun(
       task: String,
@@ -127,12 +141,11 @@ final class FridayChatViewModelTests: XCTestCase {
     }
 
     func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire {
-      MemoryDecisionResultWire(
-        memoryId: request.memoryId,
-        state: "unknown",
-        status: "blocked",
-        blocker: "unused",
-        recallable: false)
+      memoryRequests.append(request)
+      switch memoryScript {
+      case .result(let result): return result
+      case .fail(let error): throw error
+      }
     }
 
     func submitRunOutcomeLearningDecision(
@@ -239,6 +252,16 @@ final class FridayChatViewModelTests: XCTestCase {
   private func makePause(_ runId: String = "run-1") -> PausedOutcome {
     PausedOutcome(runId: runId, approvalId: "ap-nonce-\(runId)",
                   actionDigest: String(repeating: "c", count: 64), ownerSealedSummary: "write_file(notes.md)")
+  }
+
+  private func makeMemoryCandidateSnapshot(id: String = "cand-chat-1") throws -> WorkbenchSnapshot {
+    try WorkbenchSnapshot(
+      projectionJSON: Data("""
+      {"missionId":"mission-chat","fridayConversationId":"fconv-chat",\
+      "runtimeFeedStatus":"live_rust_hub_projection","statusLabels":[],"workItems":[],\
+      "memoryCandidates":[{"id":"\(id)","preview":"Remember Friday prefers batched PRs","state":"candidate_review_only","grantsMemoryAuthority":false,"evidenceRef":"proof://mobile/fridayChat/memory/\(id)"}]}
+      """.utf8),
+      generatedAtMs: 0)
   }
 
   private func writeMobileChatActionEvidenceIfRequested(
@@ -573,6 +596,50 @@ final class FridayChatViewModelTests: XCTestCase {
       return XCTFail("expected reject receipt, got \(rejectVM.phase)")
     }
 
+    let memoryRead = FakeReadClient(snapshot: try makeMemoryCandidateSnapshot())
+    let keepMemoryClient = FakeMissionClient(memoryScript: .result(MemoryDecisionResultWire(
+      memoryId: "cand-chat-1",
+      state: "confirmed",
+      status: "confirmed",
+      recallable: true)))
+    let keepMemoryVM = FridayChatViewModel(
+      writeClient: keepMemoryClient,
+      signer: MockOperatorSigner(),
+      readClient: memoryRead)
+    await keepMemoryVM.send("summarize the memory candidate")
+    XCTAssertEqual(keepMemoryVM.contextCards.first(where: { $0.id == "memory" })?.memoryCandidateId, "cand-chat-1")
+    await keepMemoryVM.decideContextMemory(confirm: true)
+    XCTAssertEqual(keepMemoryClient.memoryRequests, [
+      MemoryDecisionRequestWire(
+        memoryId: "cand-chat-1",
+        ownerPrincipal: liveAgentRunOwnerPrincipal,
+        decision: "confirm"),
+    ])
+    XCTAssertEqual(
+      keepMemoryVM.contextMemoryDecisionState,
+      .confirmed(summary: "confirmed · state=confirmed · recallable=true"))
+
+    let rejectMemoryClient = FakeMissionClient(memoryScript: .result(MemoryDecisionResultWire(
+      memoryId: "cand-chat-1",
+      state: "rejected",
+      status: "rejected",
+      recallable: false)))
+    let rejectMemoryVM = FridayChatViewModel(
+      writeClient: rejectMemoryClient,
+      signer: MockOperatorSigner(),
+      readClient: memoryRead)
+    await rejectMemoryVM.send("summarize the memory candidate")
+    await rejectMemoryVM.decideContextMemory(confirm: false)
+    XCTAssertEqual(rejectMemoryClient.memoryRequests, [
+      MemoryDecisionRequestWire(
+        memoryId: "cand-chat-1",
+        ownerPrincipal: liveAgentRunOwnerPrincipal,
+        decision: "reject"),
+    ])
+    XCTAssertEqual(
+      rejectMemoryVM.contextMemoryDecisionState,
+      .confirmed(summary: "rejected · state=rejected · recallable=false"))
+
     try writeMobileChatActionEvidenceIfRequested(
       actions: [
         [
@@ -635,11 +702,34 @@ final class FridayChatViewModelTests: XCTestCase {
           "source": "ios_chat_viewmodel_context_card_runtime",
           "truth_label": "swift_viewmodel_local_affordance_runtime_not_memory_decision_not_endbar",
         ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "check",
+          "capability_id": "memory_review_no_silent_write_decide_candidate",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/memory/confirm/cand-chat-1",
+          "source": "ios_chat_viewmodel_memory_decision_runtime",
+          "truth_label": "swift_viewmodel_memory_decision_write_seam_runtime_not_live_hub_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "act",
+          "capability_id": "memory_review_no_silent_write_decide_candidate",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/memory/reject/cand-chat-1",
+          "source": "ios_chat_viewmodel_memory_decision_runtime",
+          "truth_label": "swift_viewmodel_memory_decision_write_seam_runtime_not_live_hub_not_endbar",
+        ],
       ],
       proof: [
         "send_run_id": answerReceipt.runId,
         "context_card_ids": sendVM.contextCards.map(\.id),
         "selected_context_card_id": sendVM.selectedContextCardId ?? "",
+        "memory_candidate_id": "cand-chat-1",
+        "memory_keep_request_count": keepMemoryClient.memoryRequests.count,
+        "memory_reject_request_count": rejectMemoryClient.memoryRequests.count,
         "approval_card_run_id": approvalCard.runId,
         "approval_card_digest_len": approvalCard.actionDigest.count,
         "approve_run_id": approveReceipt.runId,

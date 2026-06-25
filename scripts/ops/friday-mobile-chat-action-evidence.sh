@@ -68,6 +68,8 @@ for (const expected of [
   ["mobile", "fridayChat", "act", "security_approval_bound_principal_gate_cat10_netnew"],
   ["mobile", "fridayChat", "chat:handoffCard", "ask_friday_chat"],
   ["mobile", "fridayChat", "chat:memoryCard", "ask_friday_chat"],
+  ["mobile", "fridayChat", "check", "memory_review_no_silent_write_decide_candidate"],
+  ["mobile", "fridayChat", "act", "memory_review_no_silent_write_decide_candidate"],
 ]) {
   const found = actions.some((row) =>
     row.surface === expected[0]
