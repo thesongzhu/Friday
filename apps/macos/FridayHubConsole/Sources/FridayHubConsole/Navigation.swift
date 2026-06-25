@@ -7,6 +7,7 @@ import SwiftUI
 enum HubDestination: String, CaseIterable, Identifiable {
   case operations
   case chat
+  case session
   case providerAdmin
   case parity
   case pairingProvisioning
