@@ -118,8 +118,18 @@ describe("friday-ui-device-live-write-read-capture-bundle", () => {
     try {
       const outDir = join(tempDir, "capture");
       const contract = join(tempDir, "ACTION-CONTRACT.md");
+      const extraActionRuntime = join(tempDir, "extra-action-runtime-evidence.json");
       const fakeBin = fakeSwiftScript(tempDir);
       writeDesignActionContract(contract);
+      writeFileSync(extraActionRuntime, JSON.stringify({
+        actions: [{
+          surface: "mobile",
+          screen: "fridayChat",
+          action_id: "chat:typing",
+          status: "pass",
+          evidence_ref: "proof://mobile/chat-typing",
+        }],
+      }, null, 2));
 
       const stdout = execFile("bash", [
         script,
@@ -127,6 +137,7 @@ describe("friday-ui-device-live-write-read-capture-bundle", () => {
         `--shared-id=${sharedId}`,
         "--read-port=59151",
         `--design-action-contract=${contract}`,
+        `--extra-action-runtime-evidence=${extraActionRuntime}`,
       ], {
         cwd: process.cwd(),
         encoding: "utf8",
@@ -149,11 +160,25 @@ describe("friday-ui-device-live-write-read-capture-bundle", () => {
       expect(index.captures?.mobile?.event_count).toBe(5);
       expect(index.captures?.desktop?.event_count).toBe(5);
       expect(index.fullProofGaps).toContain("bounded_timeline_capture");
+      const combinedEvents = readFileSync(join(outDir, "bundle", "mobile-desktop-live-write-read-events.jsonl"), "utf8")
+        .trim()
+        .split(/\n/)
+        .map((line) => JSON.parse(line) as { surface?: string; evidence_ref?: string });
+      expect(combinedEvents).toContainEqual(expect.objectContaining({
+        surface: "mobile",
+        evidence_ref: join(outDir, "bundle", "mobile", "ios-live-write-read-proof.json"),
+      }));
+      expect(combinedEvents).toContainEqual(expect.objectContaining({
+        surface: "desktop",
+        evidence_ref: join(outDir, "bundle", "desktop", "macos-live-write-read-proof.json"),
+      }));
       const designReport = JSON.parse(readFileSync(join(outDir, "bundle", "design-action-runtime-gap.json"), "utf8")) as {
+        runtimeEvidenceInputs?: string[];
         counts?: { uniqueActionableRows?: number; missingUniqueRuntimeEvidence?: number };
       };
       expect(designReport.counts?.uniqueActionableRows).toBe(1);
-      expect(designReport.counts?.missingUniqueRuntimeEvidence).toBe(1);
+      expect(designReport.counts?.missingUniqueRuntimeEvidence).toBe(0);
+      expect(designReport.runtimeEvidenceInputs).toContain(extraActionRuntime);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

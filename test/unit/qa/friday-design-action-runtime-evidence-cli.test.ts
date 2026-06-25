@@ -109,6 +109,53 @@ describe("check-friday-design-action-runtime-evidence", () => {
     }
   });
 
+  it("merges multiple runtime action evidence files", () => {
+    const { root, contract } = fixtureRepo();
+    try {
+      const mobileRuntime = writeFile(root, "mobile-action-runtime-evidence.json", JSON.stringify({
+        actions: [
+          {
+            surface: "mobile",
+            screen: "fridayChat",
+            action_id: "act",
+            status: "pass",
+            evidence_ref: "proof://mobile/send",
+          },
+        ],
+      }, null, 2));
+      const desktopRuntime = writeFile(root, "desktop-action-runtime-evidence.json", JSON.stringify({
+        actions: [
+          {
+            surface: "desktop",
+            screen: "fridayChat",
+            action_id: "check",
+            status: "pass",
+            evidence_ref: "proof://desktop/approve",
+          },
+        ],
+      }, null, 2));
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--contract=${contract}`,
+        `--runtime-evidence=${mobileRuntime}`,
+        `--runtime-evidence=${desktopRuntime}`,
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        runtimeEvidenceInputs?: string[];
+        counts?: { runtimeEvidenceRows?: number; missingRuntimeEvidence?: number; missingUniqueRuntimeEvidence?: number };
+      };
+      expect(report.status).toBe("runtime_actions_covered");
+      expect(report.runtimeEvidenceInputs).toEqual([mobileRuntime, desktopRuntime]);
+      expect(report.counts?.runtimeEvidenceRows).toBe(2);
+      expect(report.counts?.missingRuntimeEvidence).toBe(0);
+      expect(report.counts?.missingUniqueRuntimeEvidence).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed in require-complete mode while runtime evidence is incomplete", () => {
     const { root, contract } = fixtureRepo();
     try {

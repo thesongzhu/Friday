@@ -556,6 +556,39 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
+  it("discovers live write-read bundle files when the bundle directory is passed directly", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-direct-bundle-"));
+    try {
+      const files = writeLiveWriteReadBundleDir(tempDir);
+      const bundleDir = join(tempDir, "bundle");
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        bundleDir,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        truth?: string;
+        status?: string;
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.truth).toBe("report_only_not_ui_device_proof");
+      expect(result.status).toBe("blocked");
+      expect(result.notes).toContain(`resolved_MISSION_ID:${missionId}`);
+      expect(result.notes).toContain(`resolved_MOBILE_EVIDENCE:${files.mobile}`);
+      expect(result.notes).toContain(`resolved_DESKTOP_EVIDENCE:${files.desktop}`);
+      expect(result.notes).toContain(`resolved_SAME_RUN_EVENTS:${files.combinedEvents}`);
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("writes a gap report from discovered same-run events without treating it as proof", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-gap-"));
     try {
