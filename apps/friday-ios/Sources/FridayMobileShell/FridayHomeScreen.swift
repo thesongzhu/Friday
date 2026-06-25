@@ -18,6 +18,7 @@ struct FridayHomeScreen: View {
   let showPairingProvisioning: Bool
   @State private var pairingQRPayload = ""
   @State private var showingPairingScanner = false
+  @State private var pairingTask: Task<Void, Never>?
 
   init(viewModel: HomeViewModel, showPairingProvisioning: Bool = false) {
     self.viewModel = viewModel
@@ -615,7 +616,7 @@ struct FridayHomeScreen: View {
         .accessibilityIdentifier("friday.home.pairing-preflight-button")
 
         Button {
-          Task { await viewModel.pairScannedQR(pairingQRPayload) }
+          startPairing()
         } label: {
           Label("Pair", systemImage: "link.badge.plus")
         }
@@ -623,6 +624,27 @@ struct FridayHomeScreen: View {
         .disabled(pairingQRPayload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
           || viewModel.pairingAttempt.mode == .sending)
         .accessibilityIdentifier("friday.home.pair-button")
+
+        if viewModel.pairingAttempt.mode == .unavailable || viewModel.pairingAttempt.mode == .denied {
+          Button {
+            startPairing()
+          } label: {
+            Label("Retry", systemImage: "arrow.clockwise")
+          }
+          .buttonStyle(.bordered)
+          .disabled(pairingQRPayload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          .accessibilityIdentifier("friday.home.pairing-retry-button")
+        }
+
+        if viewModel.pairingAttempt.mode == .sending {
+          Button {
+            cancelPairing()
+          } label: {
+            Label("Cancel", systemImage: "xmark")
+          }
+          .buttonStyle(.bordered)
+          .accessibilityIdentifier("friday.home.pairing-cancel-button")
+        }
 
         Button {
           showingPairingScanner = true
@@ -644,6 +666,22 @@ struct FridayHomeScreen: View {
       }
       .font(.caption)
     }
+  }
+
+  private func startPairing() {
+    pairingTask?.cancel()
+    pairingTask = Task {
+      await viewModel.pairScannedQR(pairingQRPayload)
+      await MainActor.run {
+        pairingTask = nil
+      }
+    }
+  }
+
+  private func cancelPairing() {
+    pairingTask?.cancel()
+    pairingTask = nil
+    viewModel.cancelPairingAttempt()
   }
 
   @ViewBuilder
