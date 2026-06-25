@@ -394,8 +394,101 @@ struct DesktopProjectionScreen: View {
           }
         }
       }
+      providerRouteDecisionCard(snapshot)
+      providerWorkItemsCard(snapshot)
       refsCard(title: "Provider Receipt Refs", refs: snapshot.providerReceiptRefs)
     }
+  }
+
+  private func providerRouteDecisionCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("Route Decision")
+          Spacer()
+          snapshot.routeDecision.truthLabel.chip
+        }
+        Text(snapshot.routeDecision.advisorSummary)
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        RefPill(label: "selected", ref: snapshot.routeDecision.selectedRoute)
+        ForEach(snapshot.routeDecision.alternatives, id: \.self) { alternative in
+          RefPill(label: "alternative", ref: alternative)
+        }
+        Text("Read-only advisor projection — Provider Admin does not select routes or enable failover.")
+          .font(.system(size: 10))
+          .foregroundStyle(HubTheme.textSecondary)
+      }
+    }
+    .accessibilityIdentifier("friday.desktop.provider-route-decision-card")
+  }
+
+  @ViewBuilder
+  private func providerWorkItemsCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    let providerItems = snapshot.workItems.filter { item in
+      item.state == .providerAck
+        || item.proofRef?.localizedCaseInsensitiveContains("provider") == true
+        || item.title.localizedCaseInsensitiveContains("provider")
+    }
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("Provider Work Items")
+          Spacer()
+          StatusChip(text: "\(providerItems.count)", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+        }
+        Text("Provider acknowledgements are visible here as receipts and lifecycle truth. A provider ack is not completion.")
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if providerItems.isEmpty {
+          Text("No provider-linked work items are projected for this mission.")
+            .font(.system(size: 11))
+            .foregroundStyle(HubTheme.textSecondary)
+        } else {
+          ForEach(providerItems) { item in
+            providerWorkItemRow(item)
+          }
+        }
+      }
+    }
+    .accessibilityIdentifier("friday.desktop.provider-work-items-card")
+  }
+
+  private func providerWorkItemRow(_ item: MissionWorkbenchWorkItem) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 8) {
+        Text(item.title)
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(HubTheme.textPrimary)
+        Spacer()
+        StatusChip(
+          text: item.done ? "done" : "not done",
+          bg: item.done ? HubTheme.chipDoneBG : HubTheme.chipNeutralBG,
+          fg: item.done ? HubTheme.chipDoneFG : HubTheme.chipNeutralFG)
+      }
+      HStack(spacing: 6) {
+        item.state.chip
+        item.owner.chip
+        if item.canRetry {
+          StatusChip(text: "retry available", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+        }
+        if item.canCancel {
+          StatusChip(text: "cancel available", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+        }
+      }
+      if !item.blockingReason.isEmpty {
+        Text(item.blockingReason)
+          .font(.system(size: 10))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      if let proofRef = item.proofRef {
+        RefPill(label: "proofRef", ref: proofRef)
+      }
+    }
+    .padding(.vertical, 4)
   }
 
   private func parityStatus(_ snapshot: WorkbenchSnapshot) -> some View {
