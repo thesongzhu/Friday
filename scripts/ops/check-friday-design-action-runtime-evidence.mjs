@@ -216,6 +216,24 @@ function summarizeBy(rows, key) {
   return Object.fromEntries([...counts.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
 }
 
+function actionKey(row) {
+  return [
+    row.surface,
+    row.screen,
+    row.actionId,
+    row.capabilityId,
+  ].join("|");
+}
+
+function uniqueRows(rows) {
+  const byKey = new Map();
+  for (const row of rows) {
+    const key = actionKey(row);
+    if (!byKey.has(key)) byKey.set(key, row);
+  }
+  return [...byKey.values()];
+}
+
 const contractRows = parseActionContract(contractPath);
 const runtimeRows = readRuntimeEvidence(runtimeEvidencePath);
 const actionableRows = contractRows.filter((row) => row.actionable);
@@ -237,6 +255,9 @@ const evidenceRows = actionableRows.map((row) => {
 
 const missingRuntime = evidenceRows.filter((row) => row.runtimeStatus !== "runtime_action_evidence_pass");
 const missingNative = evidenceRows.filter((row) => row.nativeStatus === "native_hint_missing" || row.nativeStatus === "source_missing");
+const uniqueActionableRows = uniqueRows(actionableRows);
+const uniqueEvidenceRows = uniqueRows(evidenceRows);
+const missingUniqueRuntime = uniqueRows(uniqueEvidenceRows.filter((row) => row.runtimeStatus !== "runtime_action_evidence_pass"));
 const topMissing = missingRuntime.slice(0, 40).map((row) => ({
   surface: row.surface,
   screen: row.screen,
@@ -255,14 +276,24 @@ const report = {
   counts: {
     contractRows: contractRows.length,
     actionableRows: actionableRows.length,
+    uniqueActionableRows: uniqueActionableRows.length,
     runtimeEvidenceRows: runtimeRows.length,
     missingRuntimeEvidence: missingRuntime.length,
+    missingUniqueRuntimeEvidence: missingUniqueRuntime.length,
     missingNativeHints: missingNative.length,
   },
   bySurface: summarizeBy(actionableRows, "surface"),
   byTruthStatus: summarizeBy(actionableRows, "truthStatus"),
   gaps: {
     missingRuntimeEvidence: topMissing,
+    missingUniqueRuntimeEvidence: missingUniqueRuntime.slice(0, 40).map((row) => ({
+      surface: row.surface,
+      screen: row.screen,
+      actionId: row.actionId,
+      label: row.label,
+      capabilityId: row.capabilityId,
+      preferredEvidence: `${row.surface}/${row.screen}/${row.actionId}`,
+    })),
     missingNativeHints: missingNative.slice(0, 40),
   },
   capturePlan: [

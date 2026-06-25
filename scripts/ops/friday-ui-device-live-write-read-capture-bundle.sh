@@ -12,6 +12,7 @@ usage:
     [--timeline-capture /abs/timeline-capture]
     [--same-run-events /abs/same-run-events.jsonl]
     [--evidence-dir /abs/evidence-dir]
+    [--design-action-contract /abs/ACTION-CONTRACT.md]
 
 Runs the mobile and desktop live write-read capture runners with one shared
 mission id, then indexes the resulting artifacts into a partial bundle.
@@ -42,6 +43,7 @@ channel_capture=""
 timeline_capture=""
 same_run_events=""
 evidence_dir=""
+design_action_contract="${FRIDAY_DESIGN_ACTION_CONTRACT:-}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -135,6 +137,15 @@ while [ "$#" -gt 0 ]; do
       evidence_dir="${1#--evidence-dir=}"
       shift
       ;;
+    --design-action-contract)
+      [ "$#" -ge 2 ] || die "--design-action-contract requires a value"
+      design_action_contract="$2"
+      shift 2
+      ;;
+    --design-action-contract=*)
+      design_action_contract="${1#--design-action-contract=}"
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -160,6 +171,12 @@ for optional_path in "${channel_capture}" "${timeline_capture}" "${same_run_even
     esac
   fi
 done
+if [ -n "${design_action_contract}" ]; then
+  case "${design_action_contract}" in
+    /*) ;;
+    *) die "--design-action-contract must be absolute: ${design_action_contract}" ;;
+  esac
+fi
 
 if [ -z "${shared_id}" ]; then
   shared_id="mission-ui-device-live-write-read-$(date -u +%Y%m%dT%H%M%SZ)-$(uuidgen | tr '[:upper:]' '[:lower:]')"
@@ -203,6 +220,21 @@ node "${repo_root}/scripts/ops/friday-ui-device-live-write-read-bundle.mjs" \
   --desktop-capture-dir="${desktop_dir}" \
   --mission-id="${canonical_shared_mission_id}" \
   --require-ready
+
+action_runtime_evidence="${bundle_dir}/action-runtime-evidence.json"
+design_action_report="${bundle_dir}/design-action-runtime-gap.json"
+if [ -z "${design_action_contract}" ] && [ -s "${HOME}/Desktop/friday-design-handoff-20260602/ACTION-CONTRACT.md" ]; then
+  design_action_contract="${HOME}/Desktop/friday-design-handoff-20260602/ACTION-CONTRACT.md"
+fi
+if [ -n "${design_action_contract}" ] && [ -s "${design_action_contract}" ] && [ -s "${action_runtime_evidence}" ]; then
+  node "${repo_root}/scripts/ops/check-friday-design-action-runtime-evidence.mjs" \
+    --contract="${design_action_contract}" \
+    --runtime-evidence="${action_runtime_evidence}" \
+    --out="${design_action_report}" >/tmp/friday-ui-device-live-write-read-design-action.$$.json
+  echo "design_action_runtime=${design_action_report}"
+else
+  echo "design_action_runtime=skipped(no contract or action runtime evidence)"
+fi
 
 if [ -n "${channel_capture}${timeline_capture}${same_run_events}" ]; then
   [ -n "${channel_capture}" ] || die "--channel-capture is required when building an evidence dir"

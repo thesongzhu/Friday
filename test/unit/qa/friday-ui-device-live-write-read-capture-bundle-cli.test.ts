@@ -100,18 +100,33 @@ function writeCompleteSameRunEvents(path: string, refs: { mobile: string; deskto
   writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
 }
 
+function writeDesignActionContract(path: string) {
+  writeFileSync(path, `# Friday Action Contract — test
+
+Every row is design-proof; wired_registry ≠ runtime PASS.
+
+| Surface | Screen [state] | action_id | Label | capability_id | reg | reg_status | truth_status | result/target | Rust/Hub owner · gate · test expectation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mobile | fridayChat [typing] | chat:typing | Ask | ask_friday_chat | ✓ | wired | design_proof | — | Runtime test must prove action. |
+| desktop | fridayChat | caprow | Ask row | ask_friday_chat_compose_send | ✓ | wired | design_proof | — | Capability row only. |
+`);
+}
+
 describe("friday-ui-device-live-write-read-capture-bundle", () => {
   it("runs mobile and desktop captures with the same mission id, then writes a partial bundle", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-orchestrator-"));
     try {
       const outDir = join(tempDir, "capture");
+      const contract = join(tempDir, "ACTION-CONTRACT.md");
       const fakeBin = fakeSwiftScript(tempDir);
+      writeDesignActionContract(contract);
 
       const stdout = execFile("bash", [
         script,
         `--out-dir=${outDir}`,
         `--shared-id=${sharedId}`,
         "--read-port=59151",
+        `--design-action-contract=${contract}`,
       ], {
         cwd: process.cwd(),
         encoding: "utf8",
@@ -122,6 +137,7 @@ describe("friday-ui-device-live-write-read-capture-bundle", () => {
       });
 
       expect(stdout).toContain("PASS - same-mission mobile+desktop live write-read capture bundle written");
+      expect(stdout).toContain(`design_action_runtime=${join(outDir, "bundle", "design-action-runtime-gap.json")}`);
       const index = JSON.parse(readFileSync(join(outDir, "bundle", "live-write-read-bundle-index.json"), "utf8")) as {
         status?: string;
         missionId?: string;
@@ -133,6 +149,11 @@ describe("friday-ui-device-live-write-read-capture-bundle", () => {
       expect(index.captures?.mobile?.event_count).toBe(5);
       expect(index.captures?.desktop?.event_count).toBe(5);
       expect(index.fullProofGaps).toContain("bounded_timeline_capture");
+      const designReport = JSON.parse(readFileSync(join(outDir, "bundle", "design-action-runtime-gap.json"), "utf8")) as {
+        counts?: { uniqueActionableRows?: number; missingUniqueRuntimeEvidence?: number };
+      };
+      expect(designReport.counts?.uniqueActionableRows).toBe(1);
+      expect(designReport.counts?.missingUniqueRuntimeEvidence).toBe(1);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
