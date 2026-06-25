@@ -30,6 +30,7 @@ const requiredFixtureFiles = [
   "apps/friday-ios/Sources/FridayMobileShellCore/FridayChatViewModel.swift",
   "apps/friday-ios/Sources/FridayMobileShellCore/ShareIntakeViewModel.swift",
   "apps/friday-ios/Sources/FridayMobileShellCore/VoiceReadinessViewModel.swift",
+  "apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift",
   "apps/friday-ios/Tests/FridayMobileShellCoreTests/HomeViewModelTests.swift",
   "apps/friday-ios/Tests/FridayMobileShellCoreTests/SessionContinuationViewModelTests.swift",
   "apps/friday-ios/Tests/FridayMobileShellCoreTests/FridayChatViewModelTests.swift",
@@ -121,8 +122,8 @@ describe("friday-native-action-closure", () => {
       replaceInFixture(
         root,
         "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift",
-        "var closureTier: MobileDestinationClosureTier",
-        "var routeTier: MobileDestinationClosureTier",
+        "var closureTier: MobileProductLoopTier",
+        "var routeTier: MobileProductLoopTier",
       );
       const result = run(root);
       expect(result.status).toBe(1);
@@ -135,7 +136,7 @@ describe("friday-native-action-closure", () => {
         expect.arrayContaining([
           expect.objectContaining({
             id: "mobile-command-sheet-separates-route-coverage-from-product-closure",
-            missing: expect.arrayContaining(["var closureTier: MobileDestinationClosureTier"]),
+            missing: expect.arrayContaining(["var closureTier: MobileProductLoopTier"]),
           }),
         ]),
       );
