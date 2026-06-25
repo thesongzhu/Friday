@@ -40,6 +40,8 @@ async function createFixtureRepo(): Promise<string> {
       "check:ios-design-destination-capture-contract": "node scripts/ops/check-friday-ios-design-destination-capture-contract.mjs",
       "proof:ios:design-destinations": "bash scripts/ops/friday-ios-design-destination-capture.sh --out-dir \"${FRIDAY_IOS_DESIGN_CAPTURE_OUT:-/tmp/friday-ios-design-destination-capture}\"",
       "proof:action-runtime:evidence-bundle": "bash scripts/ops/friday-action-runtime-evidence-bundle.sh --out-dir \"${FRIDAY_ACTION_RUNTIME_EVIDENCE_BUNDLE_OUT:-/tmp/friday-action-runtime-evidence-bundle}\"",
+      "check:desktop-gui-smoke-contract": "node scripts/ops/check-friday-desktop-gui-smoke-contract.mjs",
+      "proof:desktop:gui-smoke": "bash scripts/ops/friday-desktop-gui-smoke-proof.sh --out-dir \"${FRIDAY_DESKTOP_GUI_SMOKE_OUT_DIR:-/tmp/friday-desktop-gui-smoke-proof}\"",
       "proof:desktop:live-write-read": "bash scripts/ops/friday-macos-live-write-read-capture.sh --out-dir \"${FRIDAY_DESKTOP_LIVE_WRITE_READ_CAPTURE_OUT:-/tmp/friday-desktop-live-write-read-capture}\"",
       "proof:ui-device:live-write-read-bundle": "bash scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh --out-dir \"${FRIDAY_UI_DEVICE_LIVE_WRITE_READ_BUNDLE_OUT:-/tmp/friday-ui-device-live-write-read-bundle}\"",
       "check:product-auto-followup-contract": "node scripts/ops/check-friday-product-auto-followup-contract.mjs",
@@ -75,6 +77,8 @@ async function createFixtureRepo(): Promise<string> {
     "scripts/ops/check-friday-ios-design-destination-capture-contract.mjs",
     "scripts/ops/friday-ios-design-destination-capture.sh",
     "scripts/ops/friday-action-runtime-evidence-bundle.sh",
+    "scripts/ops/check-friday-desktop-gui-smoke-contract.mjs",
+    "scripts/ops/friday-desktop-gui-smoke-proof.sh",
     "scripts/ops/friday-macos-live-write-read-capture.sh",
     "scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh",
     "scripts/ops/check-friday-product-auto-followup-contract.mjs",
@@ -134,6 +138,16 @@ async function createFixtureRepo(): Promise<string> {
     root,
     "scripts/ops/friday-action-runtime-evidence-bundle.sh",
     "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture action-runtime evidence bundle\"\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/check-friday-desktop-gui-smoke-contract.mjs",
+    "#!/usr/bin/env node\nconsole.log(JSON.stringify({status:\"passed\", truthLabel:\"fixture_desktop_gui_smoke_contract\"}));\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/friday-desktop-gui-smoke-proof.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture desktop GUI smoke proof\"\n",
   );
   await writeFileWithParents(
     root,
@@ -245,6 +259,22 @@ describe("client ship gate pipeline check", () => {
         }),
         expect.objectContaining({
           target: "proof:action-runtime:evidence-bundle",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "scripts/ops/check-friday-desktop-gui-smoke-contract.mjs",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "check:desktop-gui-smoke-contract",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "scripts/ops/friday-desktop-gui-smoke-proof.sh",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "proof:desktop:gui-smoke",
           status: "passed",
         }),
         expect.objectContaining({
