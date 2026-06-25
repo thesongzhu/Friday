@@ -45,6 +45,7 @@ async function createFixtureRepo(): Promise<string> {
       "proof:product:auto-followup": "bash scripts/ops/friday-product-auto-followup-proof.sh",
       "check:desktop-approval-relay-contract": "node scripts/ops/check-friday-desktop-approval-relay-contract.mjs",
       "proof:desktop:approval-relay": "bash scripts/ops/friday-desktop-approval-relay-proof.sh",
+      "proof:mobile:approval-approve": "bash scripts/ops/friday-mobile-approval-approve-proof.sh",
       "build:companion:native": "bash scripts/ops/build-friday-companion-app.sh",
       "build:hub-console:native": "bash scripts/ops/build-friday-hub-console-app.sh",
       "build:ios:sim": "bash apps/friday-ios/build-sim.sh",
@@ -78,6 +79,7 @@ async function createFixtureRepo(): Promise<string> {
     "scripts/ops/friday-product-auto-followup-proof.sh",
     "scripts/ops/check-friday-desktop-approval-relay-contract.mjs",
     "scripts/ops/friday-desktop-approval-relay-proof.sh",
+    "scripts/ops/friday-mobile-approval-approve-proof.sh",
     "apps/friday-ios/Package.swift",
     "apps/friday-ios/Info.plist",
     "apps/friday-ios/build-sim.sh",
@@ -155,6 +157,11 @@ async function createFixtureRepo(): Promise<string> {
     root,
     "scripts/ops/friday-desktop-approval-relay-proof.sh",
     "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture desktop approval relay proof\"\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/friday-mobile-approval-approve-proof.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture mobile approval approve proof\"\n",
   );
   return root;
 }
@@ -247,6 +254,14 @@ describe("client ship gate pipeline check", () => {
         }),
         expect.objectContaining({
           target: "proof:desktop:approval-relay",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "scripts/ops/friday-mobile-approval-approve-proof.sh",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "proof:mobile:approval-approve",
           status: "passed",
         }),
       ]),
