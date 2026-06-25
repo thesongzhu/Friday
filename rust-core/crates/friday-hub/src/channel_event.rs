@@ -220,6 +220,10 @@ pub fn ingest_channel_inbound(
         created_at: now_ms,
         updated_at: now_ms,
         deep_link: None,
+        // M6: stamp the channel's BOUND OWNER principal (NOT the sender_id) so mark-done
+        // scopes the clear to the owner who owns the binding. Shares the WS principal_id()
+        // identifier space.
+        owner: Some(redacted.bound_principal_id.clone()),
     };
     let audit = AuditEvent {
         audit_id: activity_id.clone(),
@@ -415,6 +419,66 @@ mod tests {
             0,
             "not executed in-channel"
         );
+    }
+
+    /// M6 (real-derivation, NOT a hand-set owner): a Pending ChannelInbound row produced by
+    /// the REAL ingest carries `owner = bound_principal_id` ("owner-1"), NOT the `sender_id`
+    /// ("u-1"). Marking it done with the bound OWNER ALLOWS; marking it done with the SENDER
+    /// or any other principal is BLOCKED and leaves the row Pending — so the channel binding
+    /// (not a coincidence) is the proven discriminator.
+    #[test]
+    fn m6_channel_inbound_owner_is_bound_principal_allows_owner_denies_sender_and_other() {
+        let mut db = Db::open_hub(&tmp()).unwrap();
+        let r = redacted("run the migration");
+        // RequiresApprovalElsewhere ⇒ a Pending (markable) row.
+        let receipt =
+            ingest_channel_inbound(&mut db, &r, "m-1", "run_command", true, Risk::High, &[], 1)
+                .unwrap();
+        assert_eq!(receipt.disposition, "requires_approval_elsewhere");
+        let activity_id = channel_event_id("tg:room-1", "m-1");
+
+        // The stamped owner is the BOUND principal "owner-1", NOT the sender "u-1".
+        let stored_owner: Option<String> = db
+            .conn()
+            .query_row(
+                "SELECT owner FROM activity_item WHERE activity_id = ?1",
+                [activity_id.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_owner.as_deref(), Some("owner-1"));
+        assert_ne!(
+            stored_owner.as_deref(),
+            Some("u-1"),
+            "owner must be the bound principal, never the sender_id"
+        );
+
+        let state = |db: &Db| -> String {
+            db.conn()
+                .query_row(
+                    "SELECT state FROM activity_item WHERE activity_id = ?1",
+                    [activity_id.as_str()],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+
+        // The SENDER ("u-1") is NOT the owner ⇒ BLOCKED, row stays Pending.
+        assert!(!db
+            .mark_activity_done(&activity_id, Some("u-1"), 200)
+            .unwrap());
+        assert_eq!(state(&db), "pending");
+        // A different principal ("bob") ⇒ BLOCKED, row stays Pending.
+        assert!(!db
+            .mark_activity_done(&activity_id, Some("bob"), 201)
+            .unwrap());
+        assert_eq!(state(&db), "pending");
+
+        // The BOUND OWNER ("owner-1") ⇒ ALLOWED.
+        assert!(db
+            .mark_activity_done(&activity_id, Some("owner-1"), 300)
+            .unwrap());
+        assert_eq!(state(&db), "done");
     }
 
     #[test]

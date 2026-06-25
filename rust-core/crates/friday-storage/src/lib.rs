@@ -115,6 +115,11 @@ pub struct ActivityRow {
     pub created_at: i64,
     pub updated_at: i64,
     pub deep_link: Option<String>,
+    /// M6: the authenticated principal who OWNS this Needs-Me item, stamped by the
+    /// markable producers (MemoryReview / ChannelInbound / ApprovalRequired) so
+    /// [`Db::mark_activity_done`] can scope the clear to that owner. `None` for
+    /// non-markable (`Done`) receipts and for pre-migration rows (legacy-allow).
+    pub owner: Option<String>,
 }
 
 /// A UI-facing token/cost summary (a read projection of `token_ledger`). The
@@ -1398,12 +1403,33 @@ impl Db {
         )
     }
 
-    /// Mark an activity item `Done` (a real persisted state write). Returns
-    /// `true` if a row was updated, `false` if the id is unknown.
-    pub fn mark_activity_done(&self, activity_id: &str, now: i64) -> Result<bool> {
+    /// Mark an activity item `Done` (a real persisted state write), SCOPED to the
+    /// authenticated owner. Returns `true` if a row was updated, `false` if the id is
+    /// unknown OR the row is owned by a DIFFERENT principal (a cross-owner clear is
+    /// indistinguishable from an unknown id — no existence oracle).
+    ///
+    /// M6 owner-binding: the UPDATE matches the row's `owner` against `authenticated_owner`
+    /// OR allows a NULL-owner row. NULL-owner = legacy (pre-migration) = ALLOW: a deny-NULL
+    /// would strand pre-deploy Pending rows whose owner could no longer clear them (a
+    /// degrade). New inserts always stamp `owner`, so the NULL set is bounded to pre-migration
+    /// rows. When `authenticated_owner` is `None` (the local single-owner FFI path) the
+    /// `owner = ?4` arm matches no non-NULL row, so ONLY NULL-owner rows clear — exactly the
+    /// legacy/local semantics. The WS path always passes `Some(principal)`.
+    pub fn mark_activity_done(
+        &self,
+        activity_id: &str,
+        authenticated_owner: Option<&str>,
+        now: i64,
+    ) -> Result<bool> {
         let n = self.conn.execute(
-            "UPDATE activity_item SET state = ?1, updated_at = ?2 WHERE activity_id = ?3",
-            rusqlite::params![ActivityState::Done.as_str(), now, activity_id],
+            "UPDATE activity_item SET state = ?1, updated_at = ?2
+             WHERE activity_id = ?3 AND (owner IS NULL OR owner = ?4)",
+            rusqlite::params![
+                ActivityState::Done.as_str(),
+                now,
+                activity_id,
+                authenticated_owner
+            ],
         )?;
         Ok(n > 0)
     }
@@ -1907,8 +1933,8 @@ fn insert_tool_usage_conn(
 pub(crate) fn insert_activity_conn(conn: &Connection, a: &ActivityRow) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO activity_item
-            (activity_id, session_id, type, state, summary, created_at, updated_at, deep_link)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            (activity_id, session_id, type, state, summary, created_at, updated_at, deep_link, owner)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![
             a.activity_id,
             a.session_id,
@@ -1917,7 +1943,8 @@ pub(crate) fn insert_activity_conn(conn: &Connection, a: &ActivityRow) -> rusqli
             a.summary,
             a.created_at,
             a.updated_at,
-            a.deep_link
+            a.deep_link,
+            a.owner
         ],
     )?;
     Ok(())

@@ -110,6 +110,7 @@ fn pairing_credential_lives_in_secure_store_not_sqlite() {
         created_at: 1,
         updated_at: 1,
         deep_link: None,
+        owner: None,
     })
     .unwrap();
     let key = DataKey::generate();

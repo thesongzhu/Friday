@@ -2255,6 +2255,10 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                     runtime.db(),
                     &env.msg_id,
                     request,
+                    // M6: thread the run's bound principal as the authenticated owner (mirror
+                    // the memory_decision / run_outcome_learning sibling arms above) so the
+                    // mark-done is owner-scoped.
+                    runtime.policy().principal_id(),
                     now_ms,
                 );
                 eprintln!(
