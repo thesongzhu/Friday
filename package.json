@@ -74,6 +74,7 @@
     "proof:ui-device:live-write-read-bundle": "bash scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh --out-dir \"${FRIDAY_UI_DEVICE_LIVE_WRITE_READ_BUNDLE_OUT:-/tmp/friday-ui-device-live-write-read-bundle}\"",
     "proof:product:auto-followup": "bash scripts/ops/friday-product-auto-followup-proof.sh",
     "proof:desktop:approval-relay": "bash scripts/ops/friday-desktop-approval-relay-proof.sh",
+    "proof:mobile:approval-reject": "bash scripts/ops/friday-mobile-approval-reject-proof.sh",
     "build:android:emu": "bash apps/friday-android/build-emu.sh",
     "build:release:source": "bash scripts/ops/build-friday-source-distribution.sh",
     "build:friday-static:prod": "node scripts/qa/build-friday-static-prod.mjs",
