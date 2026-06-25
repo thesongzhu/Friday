@@ -16,12 +16,14 @@ import Foundation
 /// verify time (`canonical_approval_signature_bytes`). That blob is what rides
 /// `AgentRunResume.signed_blob`.
 ///
-/// On the phone, `OperatorSigner` is therefore an INJECTED protocol whose ONLY concrete
-/// implementation shipped today is a clearly-labeled TEST/DEV mock (`MockOperatorSigner`).
-/// The REAL on-device integration — relaying to the desktop signer (or a future Secure
-/// Enclave-backed operator path) over the local trust channel — is a DEFERRED acceptance
-/// criterion gated on slice-6 + the operator key. The protocol shape is fixed NOW so the
-/// chat loop is real and the only thing that swaps at slice-6 is the signer impl.
+/// On the phone, `OperatorSigner` is therefore an INJECTED protocol. The shipped app default is
+/// `UnavailableOperatorSigner`, which fail-closes approval until a real signer relay is wired.
+/// Tests and previews may explicitly inject the clearly-labeled TEST/DEV mock
+/// (`MockOperatorSigner`) to exercise the relay shape. The REAL on-device integration — relaying
+/// to the desktop signer (or a future Secure Enclave-backed operator path) over the local trust
+/// channel — is a DEFERRED acceptance criterion gated on slice-6 + the operator key. The protocol
+/// shape is fixed NOW so the chat loop is real and the only thing that swaps at slice-6 is the
+/// signer impl.
 ///
 /// INV-1 is structural: the protocol can ONLY return an opaque `[UInt8]` blob. It exposes NO
 /// key material, NO "sign these bytes with this key" primitive — the app has nothing to mint
@@ -39,6 +41,26 @@ public protocol OperatorSigner: Sendable {
   ///   means NO resume is relayed — the mutation stays paused (INV-2 holds: no approval ⇒ no
   ///   mutation).
   func signApproval(_ request: ApprovalSigningRequest) async throws -> [UInt8]
+}
+
+/// The production/default signer before a real operator-signing relay is configured.
+///
+/// This is deliberately a real `OperatorSigner` implementation rather than `nil`: approval UI can
+/// keep the same code path, but the result is an honest unavailable state and no resume blob is
+/// ever relayed. Reject still goes through the write client because rejection does not execute the
+/// paused mutation.
+public struct UnavailableOperatorSigner: OperatorSigner {
+  public static let truthLabel = "operator_signer_unavailable_no_signature_relay"
+
+  private let error: OperatorSignerError
+
+  public init(error: OperatorSignerError = .signerUnavailable) {
+    self.error = error
+  }
+
+  public func signApproval(_ request: ApprovalSigningRequest) async throws -> [UInt8] {
+    throw error
+  }
 }
 
 /// The REFS-ONLY request handed to the operator signer. It carries ONLY what the pause frame
