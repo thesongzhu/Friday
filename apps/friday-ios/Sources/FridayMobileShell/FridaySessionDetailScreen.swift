@@ -115,6 +115,10 @@ struct FridaySessionDetailScreen: View {
       VStack(spacing: 16) {
         approvalPanel(snapshot)
         controlsCard(snapshot.controls)
+        sidecarLauncher
+        if viewModel.sidecarState.isOpen {
+          sidecarSheet
+        }
         ForEach(snapshot.sections) { section in
           sectionCard(section)
         }
@@ -242,6 +246,129 @@ struct FridaySessionDetailScreen: View {
           }
         }
       }
+    }
+  }
+
+  private var sidecarLauncher: some View {
+    Button {
+      viewModel.openSidecar()
+    } label: {
+      HStack(spacing: 8) {
+        Image(systemName: "shield.lefthalf.filled")
+        Text("Friday Sidecar - private analysis")
+          .font(.system(size: 13, weight: .semibold))
+        Spacer()
+        StatusChip(text: "private", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
+      }
+      .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+      .padding(.horizontal, 12)
+    }
+    .buttonStyle(.bordered)
+    .accessibilityLabel("Open Friday Sidecar private analysis")
+    .accessibilityIdentifier("friday.session.sidecar-open")
+  }
+
+  private var sidecarSheet: some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        HStack(alignment: .top, spacing: 10) {
+          Image(systemName: "lock.shield")
+            .font(.system(size: 22, weight: .semibold))
+            .foregroundStyle(MobileTheme.cyan)
+            .frame(width: 30, height: 30)
+          VStack(alignment: .leading, spacing: 3) {
+            Text("Friday Sidecar")
+              .font(.headline)
+              .foregroundStyle(MobileTheme.textPrimary)
+            Text("Private analysis - nothing reaches the provider unless you confirm.")
+              .font(.caption)
+              .foregroundStyle(MobileTheme.textSecondary)
+          }
+          Spacer()
+          Button {
+            viewModel.closeSidecar()
+          } label: {
+            Image(systemName: "xmark")
+              .frame(width: 26, height: 26)
+          }
+          .buttonStyle(.bordered)
+          .accessibilityLabel("Close Friday Sidecar")
+          .accessibilityIdentifier("friday.session.sidecar-close")
+        }
+
+        VStack(alignment: .leading, spacing: 8) {
+          sidecarActionButton(
+            title: "Analyze diff privately",
+            systemImage: "shield.checkered",
+            truth: "wired_registry") {
+              viewModel.analyzeSidecarPrivately()
+            }
+          sidecarActionButton(
+            title: "Insert into composer",
+            systemImage: "plus",
+            truth: "NO-GO") {
+              viewModel.blockSidecarExternalAction("Insert into composer")
+            }
+          sidecarActionButton(
+            title: "Send to provider (confirm)",
+            systemImage: "paperplane",
+            truth: "NO-GO") {
+              viewModel.blockSidecarExternalAction("Send to provider")
+            }
+          sidecarActionButton(
+            title: "Create Handoff",
+            systemImage: "square.and.arrow.up",
+            truth: "NO-GO") {
+              viewModel.blockSidecarExternalAction("Create Handoff")
+            }
+        }
+
+        sidecarStateView(viewModel.sidecarState.actionState)
+      }
+    }
+    .accessibilityIdentifier("friday.session.sidecar-sheet")
+  }
+
+  private func sidecarActionButton(
+    title: String,
+    systemImage: String,
+    truth: String,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      HStack(spacing: 8) {
+        Image(systemName: systemImage)
+          .frame(width: 20)
+        Text(title)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(MobileTheme.textPrimary)
+        Spacer()
+        StatusChip(
+          text: truth,
+          bg: truth == "NO-GO" ? MobileTheme.chipWarnBG : MobileTheme.chipPendingBG,
+          fg: truth == "NO-GO" ? MobileTheme.chipWarnFG : MobileTheme.chipPendingFG)
+      }
+      .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+    }
+    .buttonStyle(.bordered)
+    .accessibilityLabel("\(title) \(truth)")
+  }
+
+  @ViewBuilder
+  private func sidecarStateView(_ state: SessionSidecarActionState) -> some View {
+    switch state {
+    case .idle:
+      EmptyView()
+    case .ready(let summary):
+      Text(summary)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+    case .blocked(let reason):
+      Text(reason)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.coral)
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 
