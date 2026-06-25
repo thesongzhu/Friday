@@ -8,6 +8,7 @@ func desktopProductContractCoversSelectedHubConsoleDestinations() {
   #expect(ids == [
     "operations",
     "chat",
+    "session",
     "providerAdmin",
     "parity",
     "pairingProvisioning",
@@ -40,13 +41,18 @@ func desktopProductContractDoesNotTreatNavCoverageAsEndBar() {
 @Test
 func desktopProductContractKeepsChatAndMemoryEvidenceVisible() {
   let chat = DesktopProductDestinationID.chat.contract
+  let session = DesktopProductDestinationID.session.contract
   let memory = DesktopProductDestinationID.memory.contract
 
   #expect(chat.runtimeActionIds.contains("desktop/fridayChat/check"))
   #expect(chat.runtimeActionIds.contains("desktop/fridayChat/act"))
+  #expect(session.runtimeActionIds.contains("desktop/session/list"))
+  #expect(session.runtimeActionIds.contains("desktop/session/open"))
+  #expect(session.runtimeActionIds.contains("desktop/session/link"))
   #expect(memory.runtimeActionIds.contains("desktop/memory/check"))
   #expect(memory.runtimeActionIds.contains("desktop/memory/act"))
   #expect(!chat.isEndBarReady)
+  #expect(!session.isEndBarReady)
   #expect(!memory.isEndBarReady)
 }
 

@@ -111,6 +111,7 @@ public struct DesktopProductDestinationContract: Sendable, Equatable, Identifiab
 public enum DesktopProductDestinationID: String, CaseIterable, Sendable, Equatable, Identifiable {
   case operations
   case chat
+  case session
   case providerAdmin
   case parity
   case pairingProvisioning
@@ -146,6 +147,17 @@ public enum DesktopProductDestinationID: String, CaseIterable, Sendable, Equatab
           "desktop/fridayChat/check",
         ],
         blockers: [.init(.needsRuntimeEvidence, label: "full desktop tap proof")])
+    case .session:
+      return contract(
+        title: "Session Detail",
+        systemImage: "rectangle.connected.to.line.below",
+        tier: .liveReadProjection,
+        runtimeActionIds: [
+          "desktop/session/list",
+          "desktop/session/open",
+          "desktop/session/link",
+        ],
+        blockers: [.init(.needsRuntimeEvidence, label: "session detail read proof")])
     case .providerAdmin:
       return contract(
         title: "Provider Admin",
