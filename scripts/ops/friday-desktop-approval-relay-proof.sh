@@ -6,7 +6,8 @@
 #   This wraps the existing S6 sealed-WS driver into a desktop-product proof entrypoint. It does not read signing keys,
 #   mint signatures, kill/restart prod Hub, flip flags, or fabricate organic traffic. `dispatch`
 #   creates a real paused mutating run and a signable pending-request artifact;
-#   `resume` relays an operator-signed JSON artifact verbatim through the shipped write seam.
+#   `resume` relays an operator-signed JSON artifact verbatim through the shipped write seam;
+#   `reject` owner-auth rejects the pending approval without signing or executing the mutation.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +19,8 @@ ARTIFACT_DIR="${FRIDAY_DESKTOP_APPROVAL_RELAY_ARTIFACT_DIR:-${TMPDIR:-/tmp}/frid
 PROOF_FILE="${FRIDAY_DESKTOP_APPROVAL_RELAY_PROOF_FILE:-desktop-approval-relay-proof.txt}"
 SIGNED_APPROVAL="${FRIDAY_DESKTOP_APPROVAL_SIGNED_APPROVAL:-}"
 RUN_ID="${FRIDAY_DESKTOP_APPROVAL_RUN_ID:-}"
+APPROVAL_ID="${FRIDAY_DESKTOP_APPROVAL_APPROVAL_ID:-}"
+ACTION_RUNTIME_OUT="${FRIDAY_DESKTOP_APPROVAL_ACTION_RUNTIME_OUT:-}"
 
 fail() {
   echo "FATAL: $*" >&2
@@ -49,9 +52,9 @@ metadata_path() {
 save_metadata() {
   local log_file="$1"
   local run_id approval_id action_digest pending_request signed_default
-  run_id="$(awk -F'= ' '/runId[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "${log_file}")"
-  approval_id="$(awk -F'= ' '/approvalId[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "${log_file}")"
-  action_digest="$(awk -F'= ' '/actionDigest[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "${log_file}")"
+  run_id="$(awk -F'= ' '/^[[:space:]]+runId[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "${log_file}")"
+  approval_id="$(awk -F'= ' '/^[[:space:]]+approvalId[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "${log_file}")"
+  action_digest="$(awk -F'= ' '/^[[:space:]]+actionDigest[[:space:]]*=/{gsub(/[[:space:]]/, "", $2); print $2; exit}' "${log_file}")"
   pending_request="${ARTIFACT_DIR}/pending-request.json"
   signed_default="${ARTIFACT_DIR}/signed-approval.json"
   if [[ -z "${run_id}" || -z "${approval_id}" || -z "${action_digest}" ]]; then
@@ -82,6 +85,55 @@ load_run_id() {
     fail "${meta} does not contain FRIDAY_DESKTOP_APPROVAL_RUN_ID."
   fi
   echo "${FRIDAY_DESKTOP_APPROVAL_RUN_ID}"
+}
+
+load_approval_id() {
+  if [[ -n "${APPROVAL_ID}" ]]; then
+    echo "${APPROVAL_ID}"
+    return
+  fi
+  local meta
+  meta="$(metadata_path)"
+  if [[ ! -f "${meta}" ]]; then
+    fail "FRIDAY_DESKTOP_APPROVAL_APPROVAL_ID is required when ${meta} is absent."
+  fi
+  # shellcheck disable=SC1090
+  source "${meta}"
+  if [[ -z "${FRIDAY_DESKTOP_APPROVAL_APPROVAL_ID:-}" ]]; then
+    fail "${meta} does not contain FRIDAY_DESKTOP_APPROVAL_APPROVAL_ID."
+  fi
+  echo "${FRIDAY_DESKTOP_APPROVAL_APPROVAL_ID}"
+}
+
+write_action_runtime_evidence() {
+  local out="$1"
+  local run_id="$2"
+  local approval_id="$3"
+  if [[ -z "${out}" ]]; then
+    return
+  fi
+  mkdir -p "$(dirname "${out}")"
+  node - "${out}" "${run_id}" "${approval_id}" <<'NODE'
+const fs = require("node:fs");
+const [out, runId, approvalId] = process.argv.slice(2);
+const evidence = {
+  truth: "desktop_approval_reject_action_runtime_evidence_not_endbar_not_signature",
+  status: "ready",
+  actions: [
+    {
+      surface: "desktop",
+      screen: "fridayChat",
+      action_id: "act",
+      status: "pass",
+      evidence_ref: `proof://desktop/approval-reject/${runId}`,
+      run_id: runId,
+      approval_id: approvalId,
+    },
+  ],
+  caveat: "Reject action evidence only: owner-auth refusal of a paused mutation. It does not prove operator-signed approve, END-BAR, release, or adoption.",
+};
+fs.writeFileSync(out, `${JSON.stringify(evidence, null, 2)}\n`);
+NODE
 }
 
 run_dispatch() {
@@ -117,10 +169,32 @@ run_resume() {
   echo "Truth: resume relayed the supplied signed artifact; inspect the driver output for accepted/status."
 }
 
+run_reject() {
+  need_live
+  local run_id approval_id log_file
+  run_id="$(load_run_id)"
+  approval_id="$(load_approval_id)"
+  log_file="${ARTIFACT_DIR}/reject.log"
+  echo "Friday desktop approval relay proof: reject"
+  echo "truth_label=desktop_approval_relay_reject_owner_authed_no_signature_no_mutation"
+  echo "run_id=${run_id}"
+  echo "approval_id=${approval_id}"
+  driver --mode reject --run-id "${run_id}" --approval-id "${approval_id}" | tee "${log_file}"
+  if ! grep -q "\\[reject\\] PASS" "${log_file}"; then
+    fail "reject proof did not report PASS."
+  fi
+  write_action_runtime_evidence "${ACTION_RUNTIME_OUT}" "${run_id}" "${approval_id}"
+  if [[ -n "${ACTION_RUNTIME_OUT}" ]]; then
+    echo "Action runtime evidence: ${ACTION_RUNTIME_OUT}"
+  fi
+  echo "Truth: reject refused the pending approval through run-control; it did not sign, resume, release, GO, or prove adoption."
+}
+
 case "${STEP}" in
   dispatch) run_dispatch ;;
   resume) run_resume ;;
+  reject) run_reject ;;
   *)
-    fail "FRIDAY_DESKTOP_APPROVAL_RELAY_STEP must be dispatch or resume."
+    fail "FRIDAY_DESKTOP_APPROVAL_RELAY_STEP must be dispatch, resume, or reject."
     ;;
 esac

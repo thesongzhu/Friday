@@ -52,6 +52,11 @@
 //       accepted===true ⇒ "MUTATION RESUMED — verify the proof-file + a fresh token_ledger row".
 //       accepted===false ⇒ "REFUSED (fail-closed)".
 //
+//   --mode reject --run-id <id> --approval-id <id>
+//       Owner-authed reject of ONE pending approval. This does NOT sign, does NOT resume, and does
+//       NOT execute the mutation. It calls rejectApproval({ runId, approvalId, forwardedPrincipal })
+//       over the shipped sealed client and expects accepted===true/status==="rejected".
+//
 //   --mode resume-negative --run-id <id> --kind <empty|wrongkey> [--approval <wrongkey-signed.json>]
 //       Adversarial: prove an ABSENT or FORGED signature does NOT execute.
 //         empty    : pass an EMPTY Uint8Array. The shipped client guards length===0 and REJECTS
@@ -536,6 +541,52 @@ async function modeResume(args, createFactory, resolverMod) {
   }
 }
 
+// ─── MODE 2b: reject (owner-auth refusal — no signature, no mutation execution) ───
+async function modeReject(args, createFactory, resolverMod) {
+  const runId = typeof args["run-id"] === "string" ? args["run-id"] : undefined;
+  const approvalId = typeof args["approval-id"] === "string" ? args["approval-id"] : undefined;
+  if (!runId) die("usage", "--run-id <id> is required for reject");
+  if (!approvalId) die("usage", "--approval-id <id> is required for reject");
+
+  const secret = resolveClientSecretOrDie(resolverMod);
+  const client = makeClient(createFactory, secret);
+
+  console.log(
+    `[reject] sealed-WS → ${DEFAULT_HOST}:${DEFAULT_PORT} runId=${runId} approvalId=${approvalId} ` +
+      `principal=${FORWARDED_PRINCIPAL} (owner-auth, no operator signature, no resume)`,
+  );
+
+  let result;
+  try {
+    result = await client.rejectApproval({
+      runId,
+      approvalId,
+      forwardedPrincipal: FORWARDED_PRINCIPAL,
+    });
+  } catch (err) {
+    die(
+      "network",
+      `rejectApproval failed to settle: ${err?.message ?? String(err)}. A close-before-result is ` +
+        "the fail-closed path (unprovisioned peer, owner mismatch, or a non-paused/cancelled run).",
+    );
+  }
+
+  console.log(
+    `[reject] op=${result.op} accepted=${result.accepted} status=${result.status}` +
+      (result.auditRef !== undefined ? ` auditRef=${result.auditRef}` : ""),
+  );
+  if (
+    result.accepted === true &&
+    (result.status === "rejected" || result.status === "already_rejected")
+  ) {
+    console.log("[reject] PASS — pending approval rejected; the paused mutation did NOT execute.");
+    return;
+  }
+  console.log(
+    "[reject] REFUSED (fail-closed): the server did not accept this reject request. No mutation executed.",
+  );
+}
+
 // ─── MODE 3: resume-negative (adversarial — absent / forged signature MUST NOT execute) ───
 async function modeResumeNegative(args, createFactory, resolverMod) {
   const runId = typeof args["run-id"] === "string" ? args["run-id"] : undefined;
@@ -625,6 +676,7 @@ async function main() {
         "  --mode dispatch-mutating [--artifact-dir <dir>] [--proof-file <path>]\n" +
         "                            [--pending-request-file <path>] [--signed-approval-file <path>]\n" +
         "  --mode resume            --run-id <id> --approval <signed-approval.json>\n" +
+        "  --mode reject            --run-id <id> --approval-id <id>\n" +
         "  --mode resume-negative   --run-id <id> --kind <empty|wrongkey> [--approval <wrongkey-signed.json>]\n" +
         "env: FRIDAY_MASTER_KEY (exported by the caller, sourced from the hub plist — the secret\n" +
         "       resolver's getMasterKey reads it; this script NEVER handles it directly),\n" +
@@ -642,6 +694,8 @@ async function main() {
     await modeDispatchMutating(args, createFactory, resolverMod);
   } else if (mode === "resume") {
     await modeResume(args, createFactory, resolverMod);
+  } else if (mode === "reject") {
+    await modeReject(args, createFactory, resolverMod);
   } else if (mode === "resume-negative") {
     await modeResumeNegative(args, createFactory, resolverMod);
   } else {
