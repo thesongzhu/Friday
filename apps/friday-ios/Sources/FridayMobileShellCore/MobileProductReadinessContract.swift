@@ -182,7 +182,7 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
         systemImage: "square.and.arrow.down",
         tier: .governedActionGated,
         runtimeActionIds: ["mobile/share/send"],
-        blockers: [.init(.needsLiveWrite, label: "mission-spine write seam")])
+        blockers: [.init(.needsRuntimeEvidence, label: "share mission-intake app proof")])
     case .voice:
       return contract(
         title: "Voice",
