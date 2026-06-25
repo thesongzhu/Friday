@@ -58,7 +58,13 @@ func mobileProductContractSeparatesReadinessShellsFromProductLoops() {
   let workflows = MobileProductDestinationID.workflows.contract
   let provider = MobileProductDestinationID.providerAuth.contract
 
-  #expect(voice.tier == .readinessOnly)
+  #expect(voice.tier == .nativeDeviceLoop)
+  #expect(voice.runtimeActionIds == [
+    "mobile/voice/permission",
+    "mobile/fridayChat/voice-input",
+    "mobile/fridayChat/voice-output",
+  ])
+  #expect(voice.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(workflows.tier == .navigationShell)
   #expect(provider.tier == .providerWorkspace)
   #expect(!voice.isEndBarReady)
