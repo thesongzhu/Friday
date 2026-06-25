@@ -26,11 +26,13 @@ private final class InMemoryPairingKeypairBackend: DeviceKeypairBackend, @unchec
 
 private final class FakePairingClient: FridayPairingClient, @unchecked Sendable {
   var ack: PairingPairAckWire
+  var delayNanoseconds: UInt64
   private(set) var pairedDeviceIds: [String] = []
   private(set) var sawRawSecret = false
 
-  init(ack: PairingPairAckWire) {
+  init(ack: PairingPairAckWire, delayNanoseconds: UInt64 = 0) {
     self.ack = ack
+    self.delayNanoseconds = delayNanoseconds
   }
 
   func fetchHubStatus(manifest: FridayPairingManifest) async throws -> PairingHubStatusWire {
@@ -42,6 +44,9 @@ private final class FakePairingClient: FridayPairingClient, @unchecked Sendable 
   }
 
   func pairDevice(manifest: FridayPairingManifest, deviceId: String) async throws -> PairingPairAckWire {
+    if delayNanoseconds > 0 {
+      try await Task.sleep(nanoseconds: delayNanoseconds)
+    }
     pairedDeviceIds.append(deviceId)
     sawRawSecret = String(describing: self).contains(manifest.pairingSecret)
     return ack
@@ -131,6 +136,16 @@ func homeViewModelCarriesPairingPreflightStateAndCanClearIt() async throws {
 
   #expect(vm.pairingPreflight.mode == .ready)
   #expect(vm.pairingPreflight.projection?.displayName == "Friday Local Hub")
+  try writeFirstLaunchActionEvidenceIfRequested(
+    fileSuffix: "scan",
+    actionId: "firstlaunch_scan",
+    evidenceRef: "swift://mobile/firstlaunch/scan/pair-123",
+    proof: [
+      "preflight_mode": String(describing: vm.pairingPreflight.mode),
+      "proof_ready": vm.pairingPreflight.proofReady,
+      "pairing_id": vm.pairingPreflight.projection?.pairingId ?? "",
+      "hub_id": vm.pairingPreflight.projection?.hubId ?? "",
+    ])
 
   vm.clearPairingPreflight()
 
@@ -162,6 +177,17 @@ func homeViewModelPairScannedQrDrivesPairAckAcceptedWithoutLeakingSecret() async
   #expect(!String(describing: vm.pairingPreflight).contains(secret))
   #expect(!String(describing: vm.pairingAttempt).contains(secret))
   #expect(!fake.sawRawSecret)
+  try writeFirstLaunchActionEvidenceIfRequested(
+    fileSuffix: "pairnow",
+    actionId: "firstlaunch_pairnow",
+    evidenceRef: "swift://mobile/firstlaunch/pairnow/\(vm.pairingAttempt.deviceId ?? "unknown")",
+    proof: [
+      "attempt": "accepted",
+      "device_id": vm.pairingAttempt.deviceId ?? "",
+      "pairing_id": vm.pairingAttempt.pairingId ?? "",
+      "hub_id": vm.pairingAttempt.hubId ?? "",
+      "raw_secret_leaked": fake.sawRawSecret,
+    ])
 }
 
 @MainActor
@@ -203,6 +229,90 @@ func homeViewModelPairScannedQrFailsClosedWhenPairingChannelNotConfigured() asyn
   #expect(vm.pairingAttempt.deviceId?.hasPrefix("ios-") == true)
 }
 
+@MainActor
+@Test
+func homeViewModelRetryAfterUnavailableRunsPairingFlowAgain() async throws {
+  let backend = InMemoryPairingKeypairBackend()
+  var fake: FakePairingClient?
+  let vm = HomeViewModel(
+    client: HonestlyUnavailableReadClient(),
+    makePairingClient: { _ in fake })
+  let payload = try pairingManifest(expiresAt: 1_900_000_000_000)
+
+  await vm.pairScannedQR(
+    payload,
+    deviceId: "phone-retry",
+    nowMs: 1_780_640_000_000,
+    backend: backend)
+
+  #expect(vm.pairingAttempt.mode == .unavailable)
+  #expect(vm.pairingAttempt.deviceId == "phone-retry")
+
+  let retryClient = FakePairingClient(ack: PairingPairAckWire(accepted: true))
+  fake = retryClient
+  await vm.pairScannedQR(
+    payload,
+    deviceId: "phone-retry",
+    nowMs: 1_780_640_000_000,
+    backend: backend)
+
+  #expect(vm.pairingAttempt.mode == .accepted)
+  #expect(vm.pairingAttempt.deviceId == "phone-retry")
+  #expect(retryClient.pairedDeviceIds == ["phone-retry"])
+  try writeFirstLaunchActionEvidenceIfRequested(
+    fileSuffix: "retry",
+    actionId: "firstlaunch_retry",
+    evidenceRef: "swift://mobile/firstlaunch/retry/phone-retry",
+    proof: [
+      "first_attempt": "unavailable",
+      "retry_attempt": "accepted",
+      "device_id": "phone-retry",
+      "pairing_id": vm.pairingAttempt.pairingId ?? "",
+    ])
+}
+
+@MainActor
+@Test
+func homeViewModelCancelPairingAttemptPreventsLatePairAckFromWinning() async throws {
+  let backend = InMemoryPairingKeypairBackend()
+  let fake = FakePairingClient(
+    ack: PairingPairAckWire(accepted: true),
+    delayNanoseconds: 200_000_000)
+  let vm = HomeViewModel(
+    client: HonestlyUnavailableReadClient(),
+    makePairingClient: { _ in fake })
+  let payload = try pairingManifest(expiresAt: 1_900_000_000_000)
+
+  let task = Task {
+    await vm.pairScannedQR(
+      payload,
+      deviceId: "phone-cancel",
+      nowMs: 1_780_640_000_000,
+      backend: backend)
+  }
+  while vm.pairingAttempt.mode != .sending {
+    try await Task.sleep(nanoseconds: 1_000_000)
+  }
+
+  vm.cancelPairingAttempt()
+  task.cancel()
+  await task.value
+
+  #expect(vm.pairingAttempt.mode == .cancelled)
+  #expect(vm.pairingAttempt.deviceId == "phone-cancel")
+  #expect(fake.pairedDeviceIds.isEmpty)
+  try writeFirstLaunchActionEvidenceIfRequested(
+    fileSuffix: "cancel",
+    actionId: "firstlaunch_cancel",
+    evidenceRef: "swift://mobile/firstlaunch/cancel/phone-cancel",
+    proof: [
+      "attempt": "cancelled",
+      "late_pairack_won": false,
+      "device_id": "phone-cancel",
+      "pairing_id": vm.pairingAttempt.pairingId ?? "",
+    ])
+}
+
 @Test
 func pairingServerConfigAllowsLoopbackAndPrivateLanOnly() throws {
   #expect(try PairingServerConfig(manifest: manifest(endpoint: "ws://127.0.0.1:49152")).host == "127.0.0.1")
@@ -228,6 +338,46 @@ func pairingServerConfigAllowsLoopbackAndPrivateLanOnly() throws {
   #expect(throws: PairingServerConfigError.missingPort("ws://127.0.0.1:0")) {
     try PairingServerConfig(manifest: manifest(endpoint: "ws://127.0.0.1:0"))
   }
+}
+
+private func writeFirstLaunchActionEvidenceIfRequested(
+  fileSuffix: String,
+  actionId: String,
+  evidenceRef: String,
+  proof: [String: Any]
+) throws {
+  guard let rawDir = ProcessInfo.processInfo.environment[
+    "FRIDAY_MOBILE_FIRSTLAUNCH_ACTION_EVIDENCE_DIR"
+  ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+    return
+  }
+
+  let payload: [String: Any] = [
+    "truth": "mobile_firstlaunch_pairing_action_swift_viewmodel_runtime_not_live_hub_not_endbar",
+    "status": "ready",
+    "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+    "proof": proof,
+    "actions": [
+      [
+        "surface": "mobile",
+        "screen": "firstLaunch",
+        "action_id": actionId,
+        "capability_id": "trust_center_pairing_connected_devices",
+        "status": "pass",
+        "evidence_ref": evidenceRef,
+        "source": "ios_home_viewmodel_firstlaunch_pairing_action_runtime",
+        "truth_label": "swift_viewmodel_pairing_action_runtime_not_live_hub_not_sim_tap",
+      ],
+    ],
+    "caveat": "Partial runtime evidence only: Swift product ViewModel and Home wiring cover firstLaunch Retry/Cancel semantics. This is not a real simulator tap, not a live Hub PairAck proof, not END-BAR, and not adoption.",
+  ]
+
+  let dir = URL(fileURLWithPath: rawDir)
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  let out = dir.appendingPathComponent("mobile-firstlaunch-\(fileSuffix)-action-evidence.json")
+  let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+  try data.write(to: out, options: .atomic)
+  print("[mobile-firstlaunch-action-evidence] proofOut=\(out.path)")
 }
 
 private func pairingManifest(
