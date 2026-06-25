@@ -35,7 +35,6 @@ func desktopProductContractDoesNotTreatNavCoverageAsEndBar() {
   #expect(snapshot.endBarReadyCount == 0)
   #expect(!snapshot.hasAnyEndBarClaim)
   #expect(snapshot.uniqueBlockers.contains { $0.kind == .needsRuntimeEvidence })
-  #expect(snapshot.uniqueBlockers.contains { $0.kind == .needsLiveWrite })
 }
 
 @Test
@@ -71,4 +70,18 @@ func desktopProductContractSeparatesShellsFromWorkbenchLoops() {
   #expect(!workflow.isEndBarReady)
   #expect(!channels.isEndBarReady)
   #expect(!provider.isEndBarReady)
+}
+
+@Test
+func desktopProductContractTracksRecoveryWritesAsBuiltButRuntimeBlocked() {
+  let recovery = DesktopProductDestinationID.recovery.contract
+
+  #expect(recovery.tier == .governedActionGated)
+  #expect(recovery.runtimeActionIds == [
+    "desktop/recovery/retry",
+    "desktop/recovery/cancel",
+  ])
+  #expect(!recovery.blockers.contains { $0.kind == .needsLiveWrite })
+  #expect(recovery.blockers.contains { $0.kind == .needsRuntimeEvidence })
+  #expect(!recovery.isEndBarReady)
 }

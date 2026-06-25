@@ -206,7 +206,7 @@ public enum DesktopProductDestinationID: String, CaseIterable, Sendable, Equatab
         systemImage: "arrow.counterclockwise.circle",
         tier: .governedActionGated,
         runtimeActionIds: ["desktop/recovery/retry", "desktop/recovery/cancel"],
-        blockers: [.init(.needsLiveWrite, label: "owner-bound recovery writes")])
+        blockers: [.init(.needsRuntimeEvidence, label: "owner-bound recovery desktop proof")])
     case .memory:
       return contract(
         title: "Memory",
