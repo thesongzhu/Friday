@@ -801,6 +801,18 @@ const EN_SAVE_OBJECTS: &[&str] = &[
     "api_key",
     "api-key",
     "apikey",
+    // Audit L3 — Rust-side EN-parity addition (labeled divergence from the TS oracle,
+    // same spirit as the C2 block below). `api_token`/`api-token`/`apitoken` are in
+    // SENSITIVE_WORDS / SENSITIVE_ASSIGN_KEYS but were absent here, so "save my
+    // api_token" slipped the save-object co-occurrence: word-bound bare `token`
+    // cannot match inside the underscore-joined compound (`_` is a word char). Added
+    // for parity with the `api_key` / `access_token` / `refresh_token` families. NFKC
+    // is deliberately NOT introduced one-sided (TS `normalizeText` is trim/whitespace
+    // only); only affects the planning checkpoint + risk label, never the mutating
+    // backstop (a mutating action is RequiresApproval regardless).
+    "api_token",
+    "api-token",
+    "apitoken",
     "access token",
     "access_token",
     "access-token",
@@ -1323,6 +1335,13 @@ mod tests {
         assert!(is_destructive_request("save my api key for later"));
         assert!(is_destructive_request("store the refresh token please"));
         assert!(is_destructive_request("persist the apikey to disk")); // zero-sep compound key
+
+        // Audit L3: the `api_token` compound family. The underscore and zero-sep forms
+        // previously slipped the save-object co-occurrence (word-bound bare `token`
+        // can't match inside `api_token`); the hyphen form was already caught.
+        assert!(is_destructive_request("save my api_token to disk"));
+        assert!(is_destructive_request("store the api-token now"));
+        assert!(is_destructive_request("persist the apitoken"));
         assert!(is_destructive_request(
             "disable branch protection on github"
         ));
