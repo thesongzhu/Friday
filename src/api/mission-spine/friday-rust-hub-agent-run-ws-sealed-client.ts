@@ -373,6 +373,16 @@ export interface FridayRustHubAgentRunSealedClient {
     request: FridayRustHubAgentRunResumeRequest,
   ): Promise<FridayRustHubAgentRunResumeResult>;
   /**
+   * (A1 run-controls) OWNER-auth reject of ONE pending tool approval on a paused run —
+   * `Message::AgentRunReject`. Unlike `resumeWithApproval`, this does not carry an operator
+   * signature blob; it carries the same sealed-session possession proof as dispatch/cancel and the
+   * server checks the forwarded principal against the pending approval owner before writing
+   * `pending_approval_request.status='rejected'`.
+   */
+  rejectApproval(
+    request: FridayRustHubAgentRunRejectRequest,
+  ): Promise<FridayRustHubAgentRunResumeResult>;
+  /**
    * (Lane B) Resolve/create a Mission from one surface input over a sealed session —
    * `Message::MissionIntakeRequest`. PURE Hub mutation (no model/provider call). Opens a fresh
    * sealed session (the channel auth), sends the intake envelope, and awaits the FIRST
@@ -441,6 +451,16 @@ export interface FridayRustHubAgentRunResumeRequest {
    * courier — relayed VERBATIM as the wire `signed_blob`; TS inspects/derives/authors NOTHING.
    */
   readonly opaqueSignedBlob: Uint8Array;
+}
+
+/** (A1 run-controls) Reject ONE pending approval by owner-auth, without signing or resuming it. */
+export interface FridayRustHubAgentRunRejectRequest {
+  /** The paused run carrying the pending approval. */
+  readonly runId: string;
+  /** The pending approval nonce to reject (`AgentRunPaused.nonce` / `approval_id`). */
+  readonly approvalId: string;
+  /** The TS-token-resolved principal the trusted peer forwards; server verifies ownership. */
+  readonly forwardedPrincipal: string;
 }
 
 // ─── (Lane B) Mission-spine organic mutation requests/results ───────────────
@@ -952,6 +972,33 @@ export function buildResumeEnvelope(
       run_id: runId,
       // serde `Vec<u8>` ⇒ a JSON ARRAY of byte numbers (NOT base64/hex). VERBATIM relay (INV-1).
       signed_blob: Array.from(opaqueSignedBlob),
+    },
+  };
+}
+
+/**
+ * (A1 run-controls) Build the `AgentRunReject` envelope. This is owner-authed, not
+ * operator-signed: the auth proof is the sealed-session possession proof bound to
+ * `(forwardedPrincipal, runId)`, and the server verifies that owner against the pending approval row.
+ * The wire is refs-only: no body, no signature material, no tool args.
+ */
+export function buildRejectEnvelope(
+  runId: string,
+  approvalId: string,
+  forwardedPrincipal: string,
+  authProof: Uint8Array,
+): Record<string, unknown> {
+  return {
+    schema_version: SCHEMA_VERSION,
+    msg_id: `agent-run-reject-${runId}-${approvalId}`,
+    correlation_id: `agent-run-reject-${runId}-${approvalId}`,
+    sent_at: Date.now(),
+    message: {
+      kind: "AgentRunReject",
+      run_id: runId,
+      approval_id: approvalId,
+      forwarded_principal: forwardedPrincipal,
+      auth_proof: Array.from(authProof),
     },
   };
 }
@@ -1701,6 +1748,163 @@ interface MissionRoundTripParams<TResult> {
   readonly leg: string;
 }
 
+interface AgentRunOwnerControlRoundTripParams {
+  readonly host: string;
+  readonly port: number;
+  readonly timeoutMs: number;
+  readonly keypair: { readonly publicKey: Uint8Array; readonly secret: Uint8Array };
+  readonly runId: string;
+  readonly forwardedPrincipal: string;
+  readonly leg: string;
+  readonly buildEnvelope: (authProof: Uint8Array) => Record<string, unknown>;
+}
+
+/**
+ * (A1 run-controls) Run one owner-authed agent-run control round-trip
+ * (`AgentRunReject`, later reusable for cancel if TS needs it). This mirrors dispatch's sealed
+ * possession proof and resume's strict `AgentRunControlResult` settle, without reading or minting
+ * operator signatures.
+ */
+function runAgentRunOwnerControlRoundTrip(
+  params: AgentRunOwnerControlRoundTripParams,
+): Promise<FridayRustHubAgentRunResumeResult> {
+  const { host, port, timeoutMs, keypair, runId, forwardedPrincipal, leg, buildEnvelope } = params;
+  return new Promise<FridayRustHubAgentRunResumeResult>((resolve, reject) => {
+    let settled = false;
+    let socket: Socket | null = null;
+    let receiver: WsReceiver | null = null;
+    let sessionKey: Uint8Array = new Uint8Array(0);
+
+    const timer = setTimeout(() => {
+      fail(unavailable(`Sealed agent-run client ${leg} timed out awaiting a control result.`));
+    }, timeoutMs);
+    if (typeof timer.unref === "function") timer.unref();
+
+    function teardown(): void {
+      clearTimeout(timer);
+      if (receiver) {
+        receiver.removeAllListeners();
+      }
+      if (socket) {
+        socket.removeAllListeners();
+        socket.on("error", () => {});
+        try {
+          socket.destroy();
+        } catch {
+          // best-effort; the result is already decided.
+        }
+      }
+    }
+    function succeed(result: FridayRustHubAgentRunResumeResult): void {
+      if (settled) return;
+      settled = true;
+      teardown();
+      resolve(result);
+    }
+    function fail(error: FridayDomainError): void {
+      if (settled) return;
+      settled = true;
+      teardown();
+      reject(error);
+    }
+    function onClose(): void {
+      fail(unavailable(`Sealed agent-run client ${leg} connection closed before a control result.`));
+    }
+    function onInbound(payload: Buffer): void {
+      let inbound: InboundEnvelope;
+      try {
+        inbound = openInbound(sessionKey, payload);
+      } catch {
+        fail(unavailable(`Sealed agent-run client ${leg} could not open an inbound envelope.`));
+        return;
+      }
+      if (inbound.kind !== "AgentRunControlResult") {
+        fail(unavailable(`Sealed agent-run client ${leg} received an unknown message shape.`));
+        return;
+      }
+      const parsed = parseControlResult(inbound.fields);
+      if (!parsed) {
+        fail(unavailable(`Sealed agent-run client ${leg} result is missing a required ref.`));
+        return;
+      }
+      succeed(parsed);
+    }
+
+    void (async () => {
+      let connected: Socket;
+      try {
+        connected = await new Promise<Socket>((res, rej) => {
+          const s = connect({ host, port }, () => res(s));
+          socket = s;
+          s.once("error", rej);
+        });
+      } catch {
+        fail(unavailable(`Sealed agent-run client ${leg} could not open a connection.`));
+        return;
+      }
+      socket = connected;
+      socket.setNoDelay(true);
+
+      const reader = createPreambleReader(socket);
+      try {
+        socket.write(frameBytes(keypair.publicKey));
+        const serverPub = await reader.readFrame();
+        if (serverPub.length !== X25519_PUBKEY_LEN) {
+          throw new Error("server pubkey wrong width");
+        }
+        const sessionNonce = await reader.readFrame();
+        if (sessionNonce.length !== SESSION_NONCE_LEN) {
+          throw new Error("session nonce wrong width");
+        }
+
+        sessionKey = agree(keypair.secret, serverPub);
+        const { socket: sock, leftover: preambleLeftover } = reader.takeover();
+        if (preambleLeftover.length > 0) {
+          throw new Error("unexpected buffered bytes before ws upgrade");
+        }
+        const leftover = await wsClientUpgrade(sock, host, port);
+
+        const sender = new wsRuntime.Sender(sock, undefined, () => randomBytes(4));
+        const recv = new wsRuntime.Receiver({ isServer: false, binaryType: "nodebuffer", skipUTF8Validation: true });
+        receiver = recv;
+
+        recv.on("message", (data: Buffer, isBinary: boolean) => {
+          if (!isBinary) {
+            fail(unavailable(`Sealed agent-run client ${leg} received a non-binary frame.`));
+            return;
+          }
+          onInbound(data);
+        });
+        recv.on("conclude", onClose);
+        recv.on("error", () => {
+          fail(unavailable(`Sealed agent-run client ${leg} received a malformed WS frame.`));
+        });
+
+        sock.on("data", (chunk: Buffer) => recv.write(chunk));
+        sock.on("error", () => {
+          fail(unavailable(`Sealed agent-run client ${leg} connection error.`));
+        });
+        sock.on("close", onClose);
+        if (leftover.length > 0) {
+          recv.write(leftover);
+        }
+
+        const authProof = buildAuthProof({
+          sessionKey,
+          sessionNonce,
+          sessionAad: SESSION_AAD,
+          authChallenge: AUTH_CHALLENGE,
+          forwardedPrincipal,
+          runId,
+        });
+        sealAndSend(sender, sessionKey, buildEnvelope(authProof));
+      } catch {
+        fail(unavailable(`Sealed agent-run client ${leg} handshake failed.`));
+      }
+    })();
+  });
+}
+
 /**
  * (Lane B) Run ONE sealed request→response round-trip for a mission-spine mutation. Mirrors the
  * `resumeWithApproval` handshake EXACTLY (connect → length-prefixed preamble → X25519+HKDF session
@@ -2245,6 +2449,43 @@ export function createFridayRustHubAgentRunSealedClient(
             fail(unavailable("Sealed agent-run client resume handshake failed."));
           }
         })();
+      });
+    },
+
+    rejectApproval(
+      request: FridayRustHubAgentRunRejectRequest,
+    ): Promise<FridayRustHubAgentRunResumeResult> {
+      if (!controlEnabled) {
+        return Promise.reject(
+          unavailable("Sealed agent-run client run-control is disabled (reject refused)."),
+        );
+      }
+      if (!request.runId) {
+        return Promise.reject(unavailable("Sealed agent-run client reject requires a run id."));
+      }
+      if (!request.approvalId) {
+        return Promise.reject(unavailable("Sealed agent-run client reject requires an approval id."));
+      }
+      if (!request.forwardedPrincipal) {
+        return Promise.reject(
+          unavailable("Sealed agent-run client reject requires a forwarded principal."),
+        );
+      }
+      return runAgentRunOwnerControlRoundTrip({
+        host,
+        port,
+        timeoutMs,
+        keypair,
+        runId: request.runId,
+        forwardedPrincipal: request.forwardedPrincipal,
+        leg: "reject",
+        buildEnvelope: (authProof) =>
+          buildRejectEnvelope(
+            request.runId,
+            request.approvalId,
+            request.forwardedPrincipal,
+            authProof,
+          ),
       });
     },
 

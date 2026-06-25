@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { FridayDomainError } from "../../../../src/errors/friday-domain-error.js";
 import {
+  buildRejectEnvelope,
   buildResumeEnvelope,
   createFridayRustHubAgentRunSealedClient,
   handlePaused,
@@ -389,6 +390,34 @@ describe("friday-rust-hub-agent-run-ws-sealed-client A3 courier (pause/resume, d
     expect(envelope.correlation_id).toBe("agent-run-resume-run-9");
   });
 
+  it("(b0) buildRejectEnvelope produces the EXACT owner-authed AgentRunReject refs-only wire", () => {
+    const authProof = new Uint8Array([9, 8, 7]);
+    const envelope = buildRejectEnvelope("run-9", "approval-abc", "admin-001", authProof) as {
+      schema_version: number;
+      msg_id: string;
+      correlation_id: string;
+      message: Record<string, unknown>;
+    };
+
+    expect(envelope.schema_version).toBe(12);
+    expect(envelope.msg_id).toBe("agent-run-reject-run-9-approval-abc");
+    expect(envelope.correlation_id).toBe("agent-run-reject-run-9-approval-abc");
+    expect(envelope.message).toEqual({
+      kind: "AgentRunReject",
+      run_id: "run-9",
+      approval_id: "approval-abc",
+      forwarded_principal: "admin-001",
+      auth_proof: [9, 8, 7],
+    });
+    expect(Object.keys(envelope.message).sort()).toEqual([
+      "approval_id",
+      "auth_proof",
+      "forwarded_principal",
+      "kind",
+      "run_id",
+    ]);
+  });
+
   // ── parseControlResult: the resume reply parse (the OTHER half of test b) ─────────────────────
   it("(b) parseControlResult maps an ACCEPTED AgentRunControlResult to a refs-only resume result", () => {
     const parsed = parseControlResult({
@@ -460,6 +489,49 @@ describe("friday-rust-hub-agent-run-ws-sealed-client A3 courier (pause/resume, d
     });
     await expect(
       client.resumeWithApproval({ runId: "", opaqueSignedBlob: new Uint8Array([1, 2, 3]) }),
+    ).rejects.toMatchObject({ httpStatus: 503 });
+  });
+
+  it("(b'''''') rejectApproval is FAIL-CLOSED when the run-control flag is OFF (relays nothing)", async () => {
+    const client = createFridayRustHubAgentRunSealedClient({
+      port: 1,
+      clientSecret: new Uint8Array(32).fill(7),
+    });
+    await expect(
+      client.rejectApproval({
+        runId: "run-9",
+        approvalId: "approval-abc",
+        forwardedPrincipal: "admin-001",
+      }),
+    ).rejects.toMatchObject({ httpStatus: 503 });
+  });
+
+  it("(b''''''') rejectApproval (flag ON) rejects missing refs before opening a socket", async () => {
+    const client = createFridayRustHubAgentRunSealedClient({
+      port: 1,
+      clientSecret: new Uint8Array(32).fill(7),
+      agentRunControlViaRust: true,
+    });
+    await expect(
+      client.rejectApproval({
+        runId: "",
+        approvalId: "approval-abc",
+        forwardedPrincipal: "admin-001",
+      }),
+    ).rejects.toMatchObject({ httpStatus: 503 });
+    await expect(
+      client.rejectApproval({
+        runId: "run-9",
+        approvalId: "",
+        forwardedPrincipal: "admin-001",
+      }),
+    ).rejects.toMatchObject({ httpStatus: 503 });
+    await expect(
+      client.rejectApproval({
+        runId: "run-9",
+        approvalId: "approval-abc",
+        forwardedPrincipal: "",
+      }),
     ).rejects.toMatchObject({ httpStatus: 503 });
   });
 });
