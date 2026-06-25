@@ -70,6 +70,7 @@
     "build:ios:sim": "bash apps/friday-ios/build-sim.sh",
     "proof:ios:live-t3": "bash scripts/ops/friday-ios-sim-live-t3-proof.sh",
     "proof:ios:design-destinations": "bash scripts/ops/friday-ios-design-destination-capture.sh --out-dir \"${FRIDAY_IOS_DESIGN_CAPTURE_OUT:-/tmp/friday-ios-design-destination-capture}\"",
+    "proof:action-runtime:evidence-bundle": "bash scripts/ops/friday-action-runtime-evidence-bundle.sh --out-dir \"${FRIDAY_ACTION_RUNTIME_EVIDENCE_BUNDLE_OUT:-/tmp/friday-action-runtime-evidence-bundle}\"",
     "proof:desktop:live-write-read": "bash scripts/ops/friday-macos-live-write-read-capture.sh --out-dir \"${FRIDAY_DESKTOP_LIVE_WRITE_READ_CAPTURE_OUT:-/tmp/friday-desktop-live-write-read-capture}\"",
     "proof:ui-device:live-write-read-bundle": "bash scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh --out-dir \"${FRIDAY_UI_DEVICE_LIVE_WRITE_READ_BUNDLE_OUT:-/tmp/friday-ui-device-live-write-read-bundle}\"",
     "proof:product:auto-followup": "bash scripts/ops/friday-product-auto-followup-proof.sh",
