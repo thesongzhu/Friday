@@ -241,6 +241,33 @@ final class FridayChatViewModelTests: XCTestCase {
                   actionDigest: String(repeating: "c", count: 64), ownerSealedSummary: "write_file(notes.md)")
   }
 
+  private func writeMobileChatActionEvidenceIfRequested(
+    actions: [[String: Any]],
+    proof: [String: Any]
+  ) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment[
+      "FRIDAY_MOBILE_CHAT_ACTION_EVIDENCE_DIR"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+      return
+    }
+
+    let payload: [String: Any] = [
+      "truth": "mobile_chat_action_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+      "proof": proof,
+      "actions": actions,
+      "caveat": "Partial runtime evidence only: iOS Chat ViewModel actions delegate to the governed write/sign/reject seams and render refs-only results. This is not a simulator tap, not a live Hub audit receipt, not true operator-key approval, not END-BAR, and not adoption.",
+    ]
+
+    let dir = URL(fileURLWithPath: rawDir)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let out = dir.appendingPathComponent("action-runtime-evidence.json")
+    let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: out, options: .atomic)
+    print("[mobile-chat-action-evidence] proofOut=\(out.path)")
+  }
+
   // MARK: 1. Compose → Send → Answer (mock)
 
   func testSend_settlesRefsOnlyAnswer() async {
@@ -498,6 +525,103 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertEqual(client.relayedBlobs.first, expected, "INV-1: the signer blob must ride VERBATIM")
     XCTAssertTrue(vm.history.last?.receiptRefs.contains(ChatReceiptRef(label: "audit_ref", ref: "audit://chain/run-1")) == true)
     XCTAssertTrue(vm.history.last?.receiptRefs.contains(ChatReceiptRef(label: "truth", ref: "rust_wired")) == true)
+  }
+
+  func testMobileChatActionEvidenceCoversSendApprovalCardAndControls() async throws {
+    let sendClient = FakeWriteClient(dispatch: .answer(makeAnswer("run-chat-send")))
+    let sendVM = FridayChatViewModel(writeClient: sendClient, signer: MockOperatorSigner())
+    await sendVM.send("summarize the current Friday closure status")
+    guard case let .answered(answerReceipt) = sendVM.phase else {
+      return XCTFail("expected answered, got \(sendVM.phase)")
+    }
+
+    let approveClient = FakeWriteClient(
+      dispatch: .pause(makePause("run-chat-approve")),
+      resume: .accepted(ResumeRelayResult(
+        runId: "run-chat-approve",
+        op: "resume",
+        accepted: true,
+        status: "mutation_completed",
+        auditRef: "audit://mobile-chat/approve")))
+    let approveVM = FridayChatViewModel(writeClient: approveClient, signer: MockOperatorSigner())
+    await approveVM.send("edit notes.md")
+    guard case let .pendingApproval(approvalCard) = approveVM.phase else {
+      return XCTFail("expected pending approval, got \(approveVM.phase)")
+    }
+    await approveVM.approve()
+    guard case let .resumed(approveReceipt) = approveVM.phase else {
+      return XCTFail("expected approve resume receipt, got \(approveVM.phase)")
+    }
+
+    let rejectClient = FakeWriteClient(
+      dispatch: .pause(makePause("run-chat-reject")),
+      reject: .accepted(ResumeRelayResult(
+        runId: "run-chat-reject",
+        op: "reject",
+        accepted: true,
+        status: "rejected",
+        auditRef: "audit://mobile-chat/reject")))
+    let rejectVM = FridayChatViewModel(writeClient: rejectClient, signer: MockOperatorSigner())
+    await rejectVM.send("edit notes.md")
+    await rejectVM.reject()
+    guard case let .resumed(rejectReceipt) = rejectVM.phase else {
+      return XCTFail("expected reject receipt, got \(rejectVM.phase)")
+    }
+
+    try writeMobileChatActionEvidenceIfRequested(
+      actions: [
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "chat:typing",
+          "capability_id": "ask_friday_chat",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/send/\(answerReceipt.runId)",
+          "source": "ios_chat_viewmodel_send_runtime",
+          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_operator_key_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "chat:approveCard",
+          "capability_id": "ask_friday_chat",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/approval-card/\(approvalCard.runId)",
+          "source": "ios_chat_viewmodel_paused_approval_card_runtime",
+          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_operator_key_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "check",
+          "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/approve/\(approveReceipt.runId)",
+          "source": "ios_chat_viewmodel_approve_relay_runtime",
+          "truth_label": "swift_viewmodel_mock_operator_signer_not_true_key_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "act",
+          "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/reject/\(rejectReceipt.runId)",
+          "source": "ios_chat_viewmodel_reject_runtime",
+          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_operator_key_not_endbar",
+        ],
+      ],
+      proof: [
+        "send_run_id": answerReceipt.runId,
+        "approval_card_run_id": approvalCard.runId,
+        "approval_card_digest_len": approvalCard.actionDigest.count,
+        "approve_run_id": approveReceipt.runId,
+        "approve_status": approveReceipt.status,
+        "reject_run_id": rejectReceipt.runId,
+        "reject_status": rejectReceipt.status,
+        "approve_relay_count": approveClient.resumedRunIds.count,
+        "reject_relay_count": rejectClient.rejectedRunIds.count,
+      ])
   }
 
   /// A server REFUSAL (`accepted=false`) is a SUCCESSFUL relay of a refusal — the action did NOT
