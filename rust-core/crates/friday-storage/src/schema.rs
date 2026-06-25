@@ -165,6 +165,14 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // assert listed tables are PRESENT on the hub and ABSENT on the phone, and the shadow
     // names contain no forbidden secret-store word.
     "memory_fts",
+    // M3/M4 (gap #25): a CONTENT-FREE receipt for each non-empty retention/reaper sweep —
+    // tick kind + a counts-only summary (e.g. `retention.sweep:token_ledger=N ...` /
+    // `session.reaper:idled=N ... hard_deleted=N messages_deleted=N`) + timestamp. Hub-only
+    // because the sweeps it records are Hub-coordinated. DELIBERATELY SEPARATE from
+    // `audit_ledger` (whose hash-chain immutability is gap #25's own concern); this table is
+    // NOT chained and never references the audit ledger. It holds NO row id/body that was
+    // deleted — only integer counts — so it carries no secret/PII content class.
+    "retention_log",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -676,6 +684,16 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "mission_body_snapshot",
             destructive: false,
             up: m0040_mission_body_snapshot,
+        },
+        // M3/M4 (gap #25): a content-free receipt table for the retention sweep + session
+        // reaper. Purely additive — CREATE TABLE + INDEX only; touches NO existing table and
+        // performs NO data migration. NOT the `audit_ledger`/hash-chain (that immutability is
+        // intentionally never referenced by the sweeps; this is a separate, un-chained log).
+        Migration {
+            version: 41,
+            name: "retention_log",
+            destructive: false,
+            up: m0041_retention_log,
         },
     ]
 }
@@ -1835,6 +1853,18 @@ CREATE TABLE mission_body_snapshot (
 CREATE INDEX idx_mission_body_snapshot_work_item
     ON mission_body_snapshot(owner_principal, work_item_id, body_ref);";
 
+// M3/M4 (gap #25): content-free receipt for each non-empty retention/reaper sweep. `summary`
+// is a counts-only string (integer counts per table, NEVER a deleted row's id/body). This is
+// NOT the hash-chained `audit_ledger` — it is a separate, un-chained log the sweeps own.
+const DDL_RETENTION_LOG: &str = "
+CREATE TABLE retention_log (
+    retention_log_id TEXT PRIMARY KEY,
+    tick_kind        TEXT NOT NULL,
+    summary          TEXT NOT NULL,
+    created_at       INTEGER NOT NULL
+);
+CREATE INDEX idx_retention_log_created ON retention_log(created_at);";
+
 const DDL_REBUILD_MISSION_LINK_WITH_ROUTE_DECISION: &str = "
 CREATE TABLE mission_link_new (
     link_id        TEXT PRIMARY KEY,
@@ -2616,4 +2646,8 @@ fn m0039_tool_usage_ledger(tx: &Transaction) -> rusqlite::Result<()> {
 
 fn m0040_mission_body_snapshot(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_MISSION_BODY_SNAPSHOT)
+}
+
+fn m0041_retention_log(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_RETENTION_LOG)
 }

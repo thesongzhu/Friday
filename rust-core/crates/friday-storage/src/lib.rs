@@ -68,7 +68,10 @@ pub use provider_timeline_store::{
     persist_timeline, timeline_exists, upsert_pending, PendingActionRow, PersistEventOutcome,
     StoredPendingAction, StoredTimeline, StoredTimelineEvent, TimelineEventRow, TimelineState,
 };
-pub use retention::{sweep_retention, RetentionOutcome, RetentionWindows};
+pub use retention::{
+    insert_retention_log, insert_retention_log_in, sweep_retention, RetentionOutcome,
+    RetentionWindows,
+};
 pub use run_result::{
     get_run_answer_for_principal, get_run_result, get_run_result_ref, persist_run_result,
     persist_run_result_in, AnswerDenyReason, PersistRunResultOutcome, RunAnswerAccess, RunResult,
