@@ -234,7 +234,13 @@ if (outDir && blockers.filter((entry) => entry.code === "missing_arg" || entry.c
   if (missionId) {
     combinedEventsPath = join(outDir, "mobile-desktop-live-write-read-events.jsonl");
     const combined = ["mobile", "desktop"]
-      .flatMap((role) => eventsByRole[role] ?? [])
+      .flatMap((role) => (eventsByRole[role] ?? []).map((event) => {
+        const copiedProof = written[role]?.proof;
+        if (copiedProof && event?.evidence_ref === captures[role]?.proof) {
+          return { ...event, evidence_ref: copiedProof };
+        }
+        return event;
+      }))
       .map((event) => JSON.stringify(event));
     writeFileSync(combinedEventsPath, combined.length ? `${combined.join("\n")}\n` : "");
 

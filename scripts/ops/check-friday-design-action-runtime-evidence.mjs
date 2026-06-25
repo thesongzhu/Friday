@@ -10,7 +10,7 @@ function usage() {
   node scripts/ops/check-friday-design-action-runtime-evidence.mjs \\
     [--repo-root=/abs/repo] \\
     [--contract=/abs/ACTION-CONTRACT.md] \\
-    [--runtime-evidence=/abs/action-runtime-evidence.json] \\
+    [--runtime-evidence=/abs/action-runtime-evidence.json ...] \\
     [--evidence-dir=/abs/ui-device-evidence] \\
     [--out=/abs/design-action-runtime-gap.json] \\
     [--require-complete]
@@ -25,6 +25,21 @@ function arg(name) {
   return args.find((value) => value.startsWith(prefix))?.slice(prefix.length) || "";
 }
 
+function argsAll(name) {
+  const prefix = `--${name}=`;
+  const values = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value.startsWith(prefix)) {
+      values.push(value.slice(prefix.length));
+    } else if (value === `--${name}` && args[index + 1]) {
+      values.push(args[index + 1]);
+      index += 1;
+    }
+  }
+  return values;
+}
+
 if (args.includes("--help") || args.includes("-h")) {
   usage();
   process.exit(0);
@@ -35,10 +50,19 @@ const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new
 const defaultContract = `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602/ACTION-CONTRACT.md`;
 const contractPath = resolve(arg("contract") || process.env.FRIDAY_DESIGN_ACTION_CONTRACT || defaultContract);
 const evidenceDir = arg("evidence-dir") || process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR || "";
-const runtimeEvidenceArg = arg("runtime-evidence")
-  || process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE
-  || (evidenceDir ? `${evidenceDir}/action-runtime-evidence.json` : "");
-const runtimeEvidencePath = runtimeEvidenceArg ? resolve(runtimeEvidenceArg) : "";
+const runtimeEvidenceArgs = argsAll("runtime-evidence");
+const runtimeEvidenceEnv = process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE
+  ? process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE.split(/[:\n]/).map((value) => value.trim()).filter(Boolean)
+  : [];
+const runtimeEvidenceCandidates = runtimeEvidenceArgs.length > 0
+  ? runtimeEvidenceArgs
+  : runtimeEvidenceEnv.length > 0
+    ? runtimeEvidenceEnv
+    : evidenceDir
+      ? [`${evidenceDir}/action-runtime-evidence.json`]
+      : [];
+const runtimeEvidencePaths = runtimeEvidenceCandidates.map((value) => resolve(value));
+const runtimeEvidencePath = runtimeEvidencePaths[0] || "";
 const outPath = arg("out") || process.env.FRIDAY_DESIGN_ACTION_RUNTIME_REPORT || "";
 const blockers = [];
 
@@ -235,7 +259,7 @@ function uniqueRows(rows) {
 }
 
 const contractRows = parseActionContract(contractPath);
-const runtimeRows = readRuntimeEvidence(runtimeEvidencePath);
+const runtimeRows = runtimeEvidencePaths.flatMap((path) => readRuntimeEvidence(path));
 const actionableRows = contractRows.filter((row) => row.actionable);
 const evidenceRows = actionableRows.map((row) => {
   const runtime = runtimeEvidenceFor(row, runtimeRows);
@@ -273,6 +297,7 @@ const report = {
   repoRoot,
   contract: contractPath,
   runtimeEvidence: existsSync(runtimeEvidencePath) ? runtimeEvidencePath : null,
+  runtimeEvidenceInputs: runtimeEvidencePaths.filter((path) => existsSync(path)),
   counts: {
     contractRows: contractRows.length,
     actionableRows: actionableRows.length,

@@ -198,6 +198,12 @@ infer_mission_id_from_capture_index() {
   jq -r '.mission_id // .missionId // empty' "$index" 2>/dev/null || true
 }
 
+infer_capture_index_path() {
+  local index="$1"
+  local query="$2"
+  jq -r "$query // empty" "$index" 2>/dev/null || true
+}
+
 discover_evidence_dir() {
   local dir="$1"
   local manifest
@@ -210,6 +216,12 @@ discover_evidence_dir() {
     exit 64
   fi
   dir="$(abs_path "$dir")"
+  capture_index="$(first_existing \
+    "$dir/capture-index.json" \
+    "$dir/live-write-read-bundle-index.json" \
+    "$dir/bundle/live-write-read-bundle-index.json" \
+    "$dir/desktop/capture-index.json" \
+    "$dir/mobile/capture-index.json" || true)"
 
   if [ -z "${OBSERVATIONS_MANIFEST:-}" ]; then
     OBSERVATIONS_MANIFEST="$(first_existing \
@@ -225,11 +237,6 @@ discover_evidence_dir() {
     elif [ -n "$manifest" ] && [ -s "$manifest" ]; then
       MISSION_ID="$(infer_mission_id_from_manifest "$manifest")"
     else
-      capture_index="$(first_existing \
-        "$dir/capture-index.json" \
-        "$dir/bundle/live-write-read-bundle-index.json" \
-        "$dir/desktop/capture-index.json" \
-        "$dir/mobile/capture-index.json" || true)"
       if [ -n "$capture_index" ]; then
         MISSION_ID="$(infer_mission_id_from_capture_index "$capture_index")"
       fi
@@ -243,7 +250,8 @@ discover_evidence_dir() {
       "$dir/mobile.log" \
       "$dir/mobile.png" \
       "$dir/ios-live-write-read-proof.json" \
-      "$dir/mobile/ios-live-write-read-proof.json" || true)"
+      "$dir/mobile/ios-live-write-read-proof.json" \
+      "$(infer_capture_index_path "$capture_index" '.captures.mobile.proof')" || true)"
   fi
   if [ -z "${DESKTOP_EVIDENCE:-}" ]; then
     DESKTOP_EVIDENCE="$(first_existing \
@@ -252,7 +260,8 @@ discover_evidence_dir() {
       "$dir/desktop.log" \
       "$dir/desktop.png" \
       "$dir/macos-live-write-read-proof.json" \
-      "$dir/desktop/macos-live-write-read-proof.json" || true)"
+      "$dir/desktop/macos-live-write-read-proof.json" \
+      "$(infer_capture_index_path "$capture_index" '.captures.desktop.proof')" || true)"
   fi
   if [ -z "${CHANNEL_EVIDENCE:-}" ]; then
     CHANNEL_EVIDENCE="$(first_existing "$dir/channel.json" "$dir/channel.trace" "$dir/channel.log" "$dir/channel.png" || true)"
@@ -265,7 +274,9 @@ discover_evidence_dir() {
       "$dir/same-run-events.normalized.jsonl" \
       "$dir/same-run-events.jsonl" \
       "$dir/events.jsonl" \
+      "$dir/mobile-desktop-live-write-read-events.jsonl" \
       "$dir/bundle/mobile-desktop-live-write-read-events.jsonl" \
+      "$(infer_capture_index_path "$capture_index" '.combinedEvents')" \
       "$dir/ios-live-write-read-events.jsonl" \
       "$dir/macos-live-write-read-events.jsonl" \
       "$dir/mobile/ios-live-write-read-events.jsonl" \

@@ -13,6 +13,7 @@ usage:
     [--same-run-events /abs/same-run-events.jsonl]
     [--evidence-dir /abs/evidence-dir]
     [--design-action-contract /abs/ACTION-CONTRACT.md]
+    [--extra-action-runtime-evidence /abs/action-runtime-evidence.json ...]
 
 Runs the mobile and desktop live write-read capture runners with one shared
 mission id, then indexes the resulting artifacts into a partial bundle.
@@ -44,6 +45,10 @@ timeline_capture=""
 same_run_events=""
 evidence_dir=""
 design_action_contract="${FRIDAY_DESIGN_ACTION_CONTRACT:-}"
+extra_action_runtime_evidence=()
+if [ -n "${FRIDAY_EXTRA_ACTION_RUNTIME_EVIDENCE:-}" ]; then
+  IFS=':' read -r -a extra_action_runtime_evidence <<<"${FRIDAY_EXTRA_ACTION_RUNTIME_EVIDENCE}"
+fi
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -146,6 +151,15 @@ while [ "$#" -gt 0 ]; do
       design_action_contract="${1#--design-action-contract=}"
       shift
       ;;
+    --extra-action-runtime-evidence)
+      [ "$#" -ge 2 ] || die "--extra-action-runtime-evidence requires a value"
+      extra_action_runtime_evidence+=("$2")
+      shift 2
+      ;;
+    --extra-action-runtime-evidence=*)
+      extra_action_runtime_evidence+=("${1#--extra-action-runtime-evidence=}")
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -177,6 +191,15 @@ if [ -n "${design_action_contract}" ]; then
     *) die "--design-action-contract must be absolute: ${design_action_contract}" ;;
   esac
 fi
+set +u
+for extra_action in "${extra_action_runtime_evidence[@]}"; do
+  [ -n "${extra_action}" ] || continue
+  case "${extra_action}" in
+    /*) ;;
+    *) die "--extra-action-runtime-evidence must be absolute: ${extra_action}" ;;
+  esac
+done
+set -u
 
 if [ -z "${shared_id}" ]; then
   shared_id="mission-ui-device-live-write-read-$(date -u +%Y%m%dT%H%M%SZ)-$(uuidgen | tr '[:upper:]' '[:lower:]')"
@@ -227,10 +250,19 @@ if [ -z "${design_action_contract}" ] && [ -s "${HOME}/Desktop/friday-design-han
   design_action_contract="${HOME}/Desktop/friday-design-handoff-20260602/ACTION-CONTRACT.md"
 fi
 if [ -n "${design_action_contract}" ] && [ -s "${design_action_contract}" ] && [ -s "${action_runtime_evidence}" ]; then
-  node "${repo_root}/scripts/ops/check-friday-design-action-runtime-evidence.mjs" \
-    --contract="${design_action_contract}" \
-    --runtime-evidence="${action_runtime_evidence}" \
-    --out="${design_action_report}" >/tmp/friday-ui-device-live-write-read-design-action.$$.json
+  design_action_args=(
+    "${repo_root}/scripts/ops/check-friday-design-action-runtime-evidence.mjs"
+    "--contract=${design_action_contract}"
+    "--runtime-evidence=${action_runtime_evidence}"
+    "--out=${design_action_report}"
+  )
+  set +u
+  for extra_action in "${extra_action_runtime_evidence[@]}"; do
+    [ -n "${extra_action}" ] || continue
+    design_action_args+=("--runtime-evidence=${extra_action}")
+  done
+  set -u
+  node "${design_action_args[@]}" >/tmp/friday-ui-device-live-write-read-design-action.$$.json
   echo "design_action_runtime=${design_action_report}"
 else
   echo "design_action_runtime=skipped(no contract or action runtime evidence)"
