@@ -13,6 +13,14 @@ pub enum StorageError {
     #[error("on-disk schema (v{disk}) is newer than this build (v{code}); refusing to open")]
     SchemaTooNew { disk: i64, code: i64 },
 
+    /// On-disk schema is older than this read-only build requires. Read-only
+    /// paths refuse to migrate implicitly, so deploy order must run the writable
+    /// migration leg first.
+    #[error(
+        "on-disk schema (v{disk}) is older than this build (v{code}); refusing to open read-only"
+    )]
+    SchemaTooOld { disk: i64, code: i64 },
+
     #[error("destructive-migration backup failed: {0}")]
     BackupVerify(String),
 

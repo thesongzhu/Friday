@@ -137,6 +137,12 @@ enum ServerError {
         disk: i64,
         code: i64,
     },
+    /// The on-disk hub schema is STRICTLY OLDER than this binary requires ⇒ FAIL CLOSED.
+    /// Read-only bins never migrate; the writable deployment leg must open/migrate the DB first.
+    SchemaTooOld {
+        disk: i64,
+        code: i64,
+    },
     /// The SecureStore peer-pubkey allowlist is MISSING, INVALID, or EMPTY ⇒ FAIL CLOSED. (J2: the
     /// read seam admits a NON-EMPTY MULTI-peer list, so there is no longer a multi-peer refusal —
     /// only the missing/empty/corrupt fail-closed remains.)
@@ -159,6 +165,13 @@ fn main() {
                  newer than this build understands — rebuild from the deploying commit)"
             );
         }
+        if let ServerError::SchemaTooOld { disk, code } = &err {
+            eprintln!(
+                "hub_read_projection_server: leg=open error_kind=schema_too_old \
+                 disk_version={disk} code_version={code} (stale database: run the writable \
+                 migration/deploy leg before starting this read-only projection server)"
+            );
+        }
         eprintln!(
             "hub_read_projection_server_unavailable: {}",
             boot_error_kind(&err)
@@ -176,6 +189,7 @@ fn boot_error_kind(err: &ServerError) -> &'static str {
         ServerError::Bind => "bind_failed",
         ServerError::DbUnavailable => "db_unavailable",
         ServerError::SchemaTooNew { .. } => "schema_too_new",
+        ServerError::SchemaTooOld { .. } => "schema_too_old",
         ServerError::PeerAllowlist => "peer_allowlist_unavailable",
         ServerError::MasterKeyUnavailable => "master_key_unavailable",
         ServerError::StoreUnavailable => "secure_store_unavailable",
@@ -991,6 +1005,7 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
 fn open_hub_readonly_guarded(db_path: &str) -> Result<Db, ServerError> {
     Db::open_hub_readonly(db_path).map_err(|e| match e {
         StorageError::SchemaTooNew { disk, code } => ServerError::SchemaTooNew { disk, code },
+        StorageError::SchemaTooOld { disk, code } => ServerError::SchemaTooOld { disk, code },
         _ => ServerError::DbUnavailable,
     })
 }
@@ -2751,6 +2766,38 @@ mod tests {
         assert_eq!(
             boot_error_kind(&ServerError::DbUnavailable),
             "db_unavailable"
+        );
+    }
+
+    /// NEW read server vs an older, not-yet-migrated DB: still fail-closed, but name the
+    /// deploy-order skew instead of hiding it behind the generic `db_unavailable`.
+    #[test]
+    fn older_on_disk_schema_fails_closed_with_named_skew() {
+        let path = temp_db_path("ro-too-old");
+        {
+            let db = Db::open_hub(&path).unwrap();
+            db.conn()
+                .execute(
+                    "UPDATE schema_version SET version = ?1 WHERE id = 1",
+                    [friday_storage::hub_code_max() - 1],
+                )
+                .unwrap();
+            drop(db);
+        }
+        let err = match open_hub_readonly_guarded(&path) {
+            Ok(_) => panic!("a read-only server must NOT open a pre-migration DB"),
+            Err(e) => e,
+        };
+        match err {
+            ServerError::SchemaTooOld { disk, code } => {
+                assert_eq!(disk, friday_storage::hub_code_max() - 1);
+                assert_eq!(code, friday_storage::hub_code_max());
+            }
+            other => panic!("expected SchemaTooOld naming the skew, got {other:?}"),
+        }
+        assert_eq!(
+            boot_error_kind(&ServerError::SchemaTooOld { disk: 1, code: 99 }),
+            "schema_too_old"
         );
     }
 

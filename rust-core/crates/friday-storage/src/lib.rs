@@ -473,9 +473,10 @@ impl Db {
             });
         }
         if disk_version < code_version {
-            return Err(StorageError::Unsupported(format!(
-                "database schema is older than this Friday build: disk version {disk_version}, code version {code_version}"
-            )));
+            return Err(StorageError::SchemaTooOld {
+                disk: disk_version,
+                code: code_version,
+            });
         }
         Ok(Db {
             conn,
@@ -2167,6 +2168,40 @@ mod read_only_schema_guard_tests {
                 assert_eq!(code, hub_code_max(), "the skew names the binary's code_max");
             }
             other => panic!("expected SchemaTooNew naming the skew, got {other:?}"),
+        }
+    }
+
+    /// A read-only bin built from a NEWER deploy must also fail closed when pointed at
+    /// an older Hub DB. It cannot run migrations by construction; naming this skew keeps
+    /// deploy-order mistakes diagnosable without weakening the guard.
+    #[test]
+    fn older_on_disk_version_fails_closed_with_named_skew() {
+        let path = tmp("too-old");
+        {
+            let writer = Db::open_hub(&path).unwrap();
+            writer
+                .conn()
+                .execute(
+                    "UPDATE schema_version SET version = ?1 WHERE id = 1",
+                    [hub_code_max() - 1],
+                )
+                .unwrap();
+            drop(writer);
+        }
+        let err = match Db::open_hub_readonly(&path) {
+            Ok(_) => panic!("a strictly-older on-disk schema must fail closed"),
+            Err(e) => e,
+        };
+        match err {
+            StorageError::SchemaTooOld { disk, code } => {
+                assert_eq!(
+                    disk,
+                    hub_code_max() - 1,
+                    "the skew names the on-disk version"
+                );
+                assert_eq!(code, hub_code_max(), "the skew names the binary's code_max");
+            }
+            other => panic!("expected SchemaTooOld naming the skew, got {other:?}"),
         }
     }
 }
