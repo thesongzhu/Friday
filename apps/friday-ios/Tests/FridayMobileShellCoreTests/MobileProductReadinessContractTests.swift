@@ -71,3 +71,14 @@ func mobileProductContractSeparatesReadinessShellsFromProductLoops() {
   #expect(!workflows.isEndBarReady)
   #expect(!provider.isEndBarReady)
 }
+
+@Test
+func mobileProductContractTracksActivityMarkDoneAsBuiltButRuntimeBlocked() {
+  let activity = MobileProductDestinationID.activity.contract
+
+  #expect(activity.tier == .liveReadProjection)
+  #expect(activity.runtimeActionIds == ["mobile/activity/mark-done"])
+  #expect(!activity.blockers.contains { $0.kind == .needsLiveWrite })
+  #expect(activity.blockers.contains { $0.kind == .needsRuntimeEvidence })
+  #expect(!activity.isEndBarReady)
+}
