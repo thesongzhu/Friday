@@ -11,7 +11,7 @@ function usage() {
     [--repo-root=/abs/repo] \\
     [--contract=/abs/ACTION-CONTRACT.md] \\
     [--runtime-evidence=/abs/action-runtime-evidence.json ...] \\
-    [--evidence-dir=/abs/ui-device-evidence] \\
+    [--evidence-dir=/abs/ui-device-evidence-or-runtime-bundle] \\
     [--out=/abs/design-action-runtime-gap.json] \\
     [--require-complete]
 
@@ -76,12 +76,71 @@ const runtimeEvidenceArgs = [...argsAll("runtime-evidence"), ...positionalRuntim
 const runtimeEvidenceEnv = process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE
   ? process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE.split(/[:\n]/).map((value) => value.trim()).filter(Boolean)
   : [];
+
+function existingFile(path) {
+  try {
+    const stats = statSync(path);
+    return stats.isFile() && stats.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+function uniquePaths(paths) {
+  return [...new Set(paths.filter(Boolean).map((value) => resolve(value)))];
+}
+
+function pathsFromIndex(indexPath) {
+  if (!existingFile(indexPath)) return [];
+  try {
+    const value = JSON.parse(readFileSync(indexPath, "utf8"));
+    const indexDir = dirname(indexPath);
+    const candidates = [
+      ...(Array.isArray(value.runtime_evidence_paths) ? value.runtime_evidence_paths : []),
+      ...(Array.isArray(value.runtimeEvidencePaths) ? value.runtimeEvidencePaths : []),
+      ...(Array.isArray(value.evidence_paths) ? value.evidence_paths : []),
+    ];
+    return candidates
+      .filter((candidate) => typeof candidate === "string" && candidate.trim())
+      .map((candidate) => isAbsolute(candidate) ? candidate : resolve(indexDir, candidate));
+  } catch {
+    return [];
+  }
+}
+
+function pathsFromTextList(listPath) {
+  if (!existingFile(listPath)) return [];
+  const listDir = dirname(listPath);
+  return readFileSync(listPath, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => isAbsolute(line) ? line : resolve(listDir, line));
+}
+
+function runtimeEvidenceCandidatesFromDir(dir) {
+  if (!dir) return [];
+  const root = resolve(dir);
+  const direct = [
+    resolve(root, "action-runtime-evidence.json"),
+    resolve(root, "design-action-runtime-evidence.json"),
+  ];
+  const fromIndexes = [
+    "action-runtime-evidence-bundle-index.json",
+    "live-write-read-bundle-index.json",
+    "capture-index.json",
+  ].flatMap((name) => pathsFromIndex(resolve(root, name)));
+  const fromList = pathsFromTextList(resolve(root, "runtime-evidence-paths.txt"));
+  const discovered = uniquePaths([...direct.filter(existingFile), ...fromIndexes, ...fromList]).filter(existingFile);
+  return discovered.length > 0 ? discovered : direct;
+}
+
 const runtimeEvidenceCandidates = runtimeEvidenceArgs.length > 0
   ? runtimeEvidenceArgs
   : runtimeEvidenceEnv.length > 0
     ? runtimeEvidenceEnv
     : evidenceDir
-      ? [`${evidenceDir}/action-runtime-evidence.json`]
+      ? runtimeEvidenceCandidatesFromDir(evidenceDir)
       : [];
 const runtimeEvidencePaths = runtimeEvidenceCandidates.map((value) => resolve(value));
 const runtimeEvidencePath = runtimeEvidencePaths[0] || "";
