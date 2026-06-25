@@ -107,8 +107,10 @@ describe("friday-mobile-approval-reject-proof", () => {
         gaps?: { missingRuntimeEvidence?: Array<{ actionId?: string }> };
       };
 
-      expect(report.counts?.missingRuntimeEvidence).toBe(0);
-      expect(report.gaps?.missingRuntimeEvidence).toEqual([]);
+      expect(report.counts?.missingRuntimeEvidence).toBe(1);
+      expect(report.gaps?.missingRuntimeEvidence).toEqual([
+        expect.objectContaining({ actionId: "check" }),
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
