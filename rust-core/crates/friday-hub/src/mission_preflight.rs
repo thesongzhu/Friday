@@ -12,7 +12,8 @@ use friday_core::{
     outcome_checked_proof_enabled, requires_context_passport, ApprovalState, FridayConversation,
     Mission, MissionLink, MissionLinkKind, SurfaceThread, WorkItem, WorkItemStatus, WorkspaceClaim,
 };
-use friday_storage::{memory, workflow, Db, MissionBodySnapshot, StorageError};
+use friday_storage::{memory, mission, workflow, Db, MissionBodySnapshot, StorageError};
+use rusqlite::Connection;
 
 use crate::channel_event::ChannelInboundReceipt;
 use crate::provider_timeline::PendingState;
@@ -696,6 +697,117 @@ pub(crate) fn attach_provider_timeline_state_guarded_with_completion_receipt(
         proof_ref: attachment.proof_ref,
         created_at_ms: attachment.now_ms,
     })?;
+    Ok(MissionAttachmentOutcome::Attached {
+        link_id,
+        work_item_status: next_status,
+    })
+}
+
+/// (H3 crash-window atomicity) The OFF-path (`guarded = false`) provider-timeline attachment,
+/// run against a CALLER-SUPPLIED [`Connection`] — which is a live [`rusqlite::Transaction`] at
+/// the resume-completion fold site, so this WorkItem advance commits in the SAME transaction as
+/// the run's `run_result`. A crash therefore lands BOTH rows or NEITHER (no `run_result=completed`
+/// + WorkItem-still-`ProviderRouted` UNDER-claim from a partial commit).
+///
+/// This is BEHAVIORALLY IDENTICAL to the `else` (OFF) branch of
+/// [`attach_provider_timeline_state_guarded_with_completion_receipt`] — same blocker strings, same
+/// legal-hop pre-check, same write set (`upsert_work_item[_clearing_executing]` + `upsert_mission` +
+/// `upsert_mission_link`), same outcome-checked-proof guard, same `MissionAttachmentOutcome`. The
+/// ONLY difference is that the writes use the [`mission`] free functions on the supplied connection
+/// (no inner `BEGIN`, since SQLite forbids a nested transaction) instead of the `&Db` wrappers. It
+/// is intentionally OFF-path-only: the resume-completion binding always passes `guarded = false`
+/// ([`crate::mission_runtime::resume_agent_loop_for_mission`]), so the guarded primitive's own-tx
+/// path is never reached here. The `&Db` wrappers' `Profile::Hub` assertion is unreachable as a
+/// real guard on this path (provider-timeline links + WorkItems are Hub-only data, so any caller
+/// already holds a Hub `Db`); the free functions are equivalent for a Hub connection.
+///
+/// Keep this in lock-step with the `else` branch above: any change to one must change the other.
+pub(crate) fn attach_provider_timeline_state_off_path_in(
+    conn: &Connection,
+    attachment: ProviderTimelineAttachment,
+    clear_executing: bool,
+    completion_proof_receipt: Option<&str>,
+) -> Result<MissionAttachmentOutcome, StorageError> {
+    let Some(mut mission) = mission::get_mission(conn, &attachment.mission_id)? else {
+        return Ok(MissionAttachmentOutcome::blocked("unknown_mission"));
+    };
+    let Some(mut work_item) = mission::get_work_item(conn, &attachment.work_item_id)? else {
+        return Ok(MissionAttachmentOutcome::blocked("unknown_work_item"));
+    };
+    if work_item.mission_id != attachment.mission_id {
+        return Ok(MissionAttachmentOutcome::blocked(
+            "work_item_mission_mismatch",
+        ));
+    }
+    let Some(next_status) =
+        work_item_status_for_provider_state(attachment.state, attachment.proof_ref.as_deref())
+    else {
+        return Ok(MissionAttachmentOutcome::blocked(provider_state_blocker(
+            attachment.state,
+            attachment.proof_ref.as_deref(),
+        )));
+    };
+    // SHARED legal-hop pre-check (identical to the guarded function). An illegal hop is a
+    // non-advancing Ok(Blocked), never an Err — so a same-status/idempotent replay is a no-op.
+    if work_item.status != next_status && !work_item.status.can_transition_to(next_status) {
+        return Ok(MissionAttachmentOutcome::blocked(format!(
+            "illegal_work_item_transition:{}->{}",
+            work_item.status.as_str(),
+            next_status.as_str()
+        )));
+    }
+
+    // OFF path (and same-status no-op): the pre-WI-1 inline write, verbatim.
+    work_item.status = next_status;
+    work_item.updated_at_ms = attachment.now_ms;
+    if next_status == WorkItemStatus::CompletedWithProof {
+        if let Some(proof_receipt) = completion_proof_receipt.or(attachment.proof_ref.as_deref()) {
+            push_unique(&mut work_item.proof_receipts, proof_receipt.to_string());
+        }
+        if let Some(proof_ref) = attachment.proof_ref.as_ref() {
+            push_unique(&mut mission.proof_refs, proof_ref.clone());
+            mission.updated_at_ms = attachment.now_ms;
+        }
+        if outcome_checked_proof_enabled()
+            && work_item.has_outcome_proof_requirements()
+            && !work_item.completion_outcome_is_proven()
+        {
+            return Err(StorageError::Unsupported(
+                "provider_timeline outcome-checked completion requires a typed outcome proof receipt matching an outcome proof requirement".into(),
+            ));
+        }
+    }
+    // (#24b degrade-3) On the binding's final resting-state hop, clear `executing = 0` in the
+    // SAME tx as this status upsert; otherwise the plain upsert. Both run on the caller's tx.
+    if clear_executing {
+        mission::upsert_work_item_clearing_executing_in(conn, &work_item)?;
+    } else {
+        mission::upsert_work_item(conn, &work_item)?;
+    }
+    mission::upsert_mission(conn, &mission)?;
+
+    let target_ref = format!(
+        "friday://provider-timeline/{}#{}",
+        attachment.friday_session_id, attachment.request_id
+    );
+    let link_id = stable_link_id(
+        "mlink_provider",
+        &attachment.mission_id,
+        &attachment.work_item_id,
+        &format!("{}_{}", attachment.friday_session_id, attachment.request_id),
+    );
+    mission::upsert_mission_link(
+        conn,
+        &MissionLink {
+            link_id: link_id.clone(),
+            mission_id: attachment.mission_id,
+            work_item_id: Some(attachment.work_item_id),
+            link_kind: MissionLinkKind::ProviderTimeline,
+            target_ref,
+            proof_ref: attachment.proof_ref,
+            created_at_ms: attachment.now_ms,
+        },
+    )?;
     Ok(MissionAttachmentOutcome::Attached {
         link_id,
         work_item_status: next_status,

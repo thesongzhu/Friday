@@ -75,7 +75,7 @@ use rusqlite::Connection;
 
 use friday_protocol::AgentRunConstraintsWire;
 
-use crate::resume::{resume_with_approval, ResumeError};
+use crate::resume::{resume_with_approval_hooked, ResumeCompletionHook, ResumeError};
 use crate::{RunPolicy, ToolExecutor};
 
 /// Map a run's bound owner + the wire-asserted per-run [`AgentRunConstraintsWire`] onto an
@@ -410,6 +410,35 @@ pub fn resume(
     signed_blob: &[u8],
     now_ms: i64,
 ) -> Result<ControlOutcome, StorageError> {
+    resume_hooked(
+        conn,
+        executor,
+        operator_vk,
+        run_id,
+        signed_blob,
+        now_ms,
+        None,
+    )
+}
+
+/// [`resume`] with an OPTIONAL post-execute completion hook threaded through to the S6 spine.
+///
+/// Identical pre-checks (malformed-blob, cancel/reject coupling, wire-run binding) and identical
+/// outcome mapping as [`resume`]; the ONLY addition is `on_executed`, which the mission
+/// resume-completion leg ([`crate::mission_runtime::resume_agent_loop_for_mission`]) uses to fold
+/// its bound-WorkItem advance into the SAME transaction the spine commits the `run_result` in (H3
+/// crash-window atomicity — see [`resume_with_approval_hooked`]). `on_executed = None` is
+/// byte-identical to [`resume`]. The pre-checks run UNCHANGED and the abort predicate is NOT
+/// broadened — the hook only runs AFTER the spine has executed and inside the success transaction.
+pub fn resume_hooked(
+    conn: &Connection,
+    executor: &dyn ToolExecutor,
+    operator_vk: &OperatorVerifyingKey,
+    run_id: &str,
+    signed_blob: &[u8],
+    now_ms: i64,
+    on_executed: Option<ResumeCompletionHook<'_>>,
+) -> Result<ControlOutcome, StorageError> {
     // (1) Decode the courier blob (JSON of a SignedApproval). Malformed ⇒ fail-closed.
     let signed: SignedApprovalIn = match std::str::from_utf8(signed_blob)
         .ok()
@@ -462,8 +491,8 @@ pub fn resume(
         }
     }
 
-    // (3) Delegate VERBATIM to the S6 spine.
-    match resume_with_approval(conn, executor, operator_vk, &approval, now_ms) {
+    // (3) Delegate VERBATIM to the S6 spine (with the optional completion hook threaded through).
+    match resume_with_approval_hooked(conn, executor, operator_vk, &approval, now_ms, on_executed) {
         Ok(outcome) => Ok(ControlOutcome {
             op: "resume",
             // The spine PROCESSED it; `executed` reflects whether the mutation ran. A gate Deny
