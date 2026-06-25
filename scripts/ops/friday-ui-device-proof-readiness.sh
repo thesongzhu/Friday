@@ -18,6 +18,7 @@ EVIDENCE_DIR="${FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR:-}"
 BACKEND_LIVE_PROOF="${FRIDAY_UI_DEVICE_BACKEND_LIVE_PROOF:-}"
 CHANNEL_LIVE_PROOF="${FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF:-}"
 OBJECTIVE_COVERAGE="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
+WORKBENCH_DB="${FRIDAY_WORKBENCH_DB_PATH:-}"
 
 usage() {
   cat <<'EOF'
@@ -26,12 +27,14 @@ usage:
     [--backend-live-proof /abs/backend-proof.json]
     [--channel-live-proof /abs/channel-proof.json]
     [--objective-coverage /abs/objective-coverage.json]
+    [--workbench-db /abs/rust-hub.sqlite]
 
 optional env for live/snapshot checks:
   FRIDAY_MISSION_WORKBENCH_URL=http://127.0.0.1:5173/mission-workbench
   MISSION_ID=mission_...
   FRIDAY_WORKBENCH_SNAPSHOT_FILE=/abs/workbench-response.json
   FRIDAY_WORKBENCH_SNAPSHOT_URL=http://127.0.0.1:3141/v1/mission-spine/workbench
+  FRIDAY_WORKBENCH_DB_PATH=/abs/rust-hub.sqlite
 
 real proof env, all required to assemble:
   MOBILE_EVIDENCE=/abs/mobile.trace
@@ -47,6 +50,7 @@ evidence-dir auto-discovery:
   FRIDAY_UI_DEVICE_BACKEND_LIVE_PROOF=/abs/backend-proof.json
   FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF=/abs/channel-proof.json
   FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE=/abs/objective-coverage.json
+  FRIDAY_WORKBENCH_DB_PATH=/abs/rust-hub.sqlite
 
   Looks for mission-id.txt or manifest mission_id plus:
     mobile.{json,trace,log,png}
@@ -108,6 +112,15 @@ while [ "$#" -gt 0 ]; do
         exit 64
       fi
       OBJECTIVE_COVERAGE="$2"
+      shift
+      ;;
+    --workbench-db)
+      if [ "$#" -lt 2 ]; then
+        echo "FATAL: --workbench-db requires a value" >&2
+        usage >&2
+        exit 64
+      fi
+      WORKBENCH_DB="$2"
       shift
       ;;
     -h|--help)
@@ -275,6 +288,50 @@ export TIMELINE_EVIDENCE="${TIMELINE_EVIDENCE:-}"
 export OBSERVATIONS_MANIFEST="${OBSERVATIONS_MANIFEST:-}"
 export SAME_RUN_EVENTS="${SAME_RUN_EVENTS:-}"
 export FRIDAY_WORKBENCH_SNAPSHOT_FILE="${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}"
+export WORKBENCH_DB="${WORKBENCH_DB:-}"
+
+blockers=()
+notes=()
+
+derive_workbench_snapshot_if_possible() {
+  if [ -n "${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}" ] || [ -n "${FRIDAY_WORKBENCH_SNAPSHOT_URL:-}" ]; then
+    return 0
+  fi
+  if [ -z "${WORKBENCH_DB:-}" ]; then
+    return 0
+  fi
+  if [ -z "${MISSION_ID:-}" ]; then
+    blockers+=("workbench_snapshot_cli:missing_MISSION_ID")
+    return 0
+  fi
+  if [ ! -s "${WORKBENCH_DB}" ]; then
+    blockers+=("workbench_snapshot_cli:db_missing_or_empty")
+    return 0
+  fi
+
+  local snapshot_out
+  local stdout_out
+  local stderr_out
+  if [ -n "$EVIDENCE_DIR" ]; then
+    snapshot_out="$(abs_path "$EVIDENCE_DIR")/workbench-snapshot.json"
+  else
+    snapshot_out="/tmp/friday-workbench-snapshot-${MISSION_ID}.json"
+  fi
+  stdout_out="${snapshot_out}.stdout"
+  stderr_out="${snapshot_out}.stderr"
+  mkdir -p "$(dirname "$snapshot_out")"
+
+  if (cd "${REPO_ROOT}/rust-core" && cargo run -p friday-hub --bin mission_workbench_projection -- \
+    --db "$(abs_path "$WORKBENCH_DB")" \
+    --mission-id "${MISSION_ID}" >"$snapshot_out") >"$stdout_out" 2>"$stderr_out"; then
+    FRIDAY_WORKBENCH_SNAPSHOT_FILE="$snapshot_out"
+    export FRIDAY_WORKBENCH_SNAPSHOT_FILE
+    notes+=("workbench_snapshot_cli:ready:${snapshot_out}")
+  else
+    local rc=$?
+    blockers+=("workbench_snapshot_cli:exit_${rc}")
+  fi
+}
 
 derive_workbench_events_if_possible() {
   if [ -z "${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}" ]; then
@@ -322,6 +379,9 @@ derive_workbench_events_if_possible() {
   fi
 }
 
+derive_workbench_snapshot_if_possible
+derive_workbench_events_if_possible
+
 have_all_evidence=1
 for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELINE_EVIDENCE OBSERVATIONS_MANIFEST; do
   if [ -z "${!name:-}" ]; then
@@ -329,15 +389,10 @@ for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELIN
   fi
 done
 
-blockers=()
-notes=()
-
-derive_workbench_events_if_possible
-
 if [ -n "$EVIDENCE_DIR" ]; then
   notes+=("evidence_dir:$(abs_path "$EVIDENCE_DIR")")
 fi
-for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELINE_EVIDENCE OBSERVATIONS_MANIFEST FRIDAY_WORKBENCH_SNAPSHOT_FILE BACKEND_LIVE_PROOF CHANNEL_LIVE_PROOF OBJECTIVE_COVERAGE; do
+for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELINE_EVIDENCE OBSERVATIONS_MANIFEST FRIDAY_WORKBENCH_SNAPSHOT_FILE WORKBENCH_DB BACKEND_LIVE_PROOF CHANNEL_LIVE_PROOF OBJECTIVE_COVERAGE; do
   if [ -n "${!name:-}" ]; then
     notes+=("resolved_${name}:${!name}")
   fi
