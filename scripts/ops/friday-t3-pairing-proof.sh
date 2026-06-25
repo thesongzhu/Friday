@@ -14,6 +14,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 MODE=""
 DEVICE_ID="${FRIDAY_T3_PAIRING_DEVICE_ID:-friday-t3-pairing-proof-$(date -u +%Y%m%dT%H%M%SZ)}"
 TIMEOUT_SECONDS="${FRIDAY_T3_PAIRING_PROOF_TIMEOUT_SECONDS:-45}"
+ACTION_RUNTIME_OUT="${FRIDAY_T3_PAIRING_ACTION_RUNTIME_OUT:-}"
 
 usage() {
   cat <<'EOF'
@@ -21,6 +22,7 @@ usage:
   scripts/ops/friday-t3-pairing-proof.sh --status-only
   FRIDAY_T3_PAIRING_PROOF_ACK=operator-runs-t3-pairing-proof \
     scripts/ops/friday-t3-pairing-proof.sh --pair [--device-id <id>]
+  ... [--action-runtime-out /abs/action-runtime-evidence.json]
 
 truth:
   Starts the explicit DARK hub_pairing_server, runs the Swift FridayPairingProof client, and
@@ -44,6 +46,14 @@ while [ "$#" -gt 0 ]; do
         exit 3
       fi
       DEVICE_ID="$1"
+      ;;
+    --action-runtime-out)
+      shift
+      if [ "$#" -eq 0 ]; then
+        echo "FATAL: --action-runtime-out requires a value." >&2
+        exit 3
+      fi
+      ACTION_RUNTIME_OUT="$1"
       ;;
     -h|--help)
       usage
@@ -172,4 +182,13 @@ fi
 if [ "${before_passports}" != "sqlite3_unavailable" ] && [ "${after_passports}" != "${before_passports}" ]; then
   echo "FATAL: context_passport count changed during pairing proof; this wrapper must not mint passports." >&2
   exit 7
+fi
+
+if [ -n "${ACTION_RUNTIME_OUT}" ]; then
+  node "${SCRIPT_DIR}/friday-t3-pairing-action-evidence.mjs" \
+    --reconcile="${STATUS_QUERY_OUT}" \
+    --client-output="${CLIENT_OUT}" \
+    --out="${ACTION_RUNTIME_OUT}" \
+    --require-ready >/dev/null
+  echo "action_runtime_evidence=${ACTION_RUNTIME_OUT}"
 fi
