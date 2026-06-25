@@ -81,7 +81,7 @@ struct FridayVoiceScreen: View {
           .font(.callout.weight(.medium))
           .foregroundStyle(MobileTheme.textPrimary)
           .fixedSize(horizontal: false, vertical: true)
-        Text("Readiness only; realtime voice starts after capture and TTS gates are ready.")
+        Text("Readiness plus local voice-loop truth: capture and speech output run from Friday Chat when these gates are ready.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -167,7 +167,7 @@ struct FridayVoiceScreen: View {
           healthy: readiness.ttsProviderConfigured)
         readinessRow(
           title: "Realtime loop",
-          value: readiness.voiceLoopReady ? "ready" : "blocked until capture and speech output are ready",
+          value: readiness.voiceLoopReady ? "ready in Friday Chat" : "blocked until capture and speech output are ready",
           healthy: readiness.voiceLoopReady)
       }
     }

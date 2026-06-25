@@ -34,7 +34,7 @@ final class VoiceReadinessViewModelTests: XCTestCase {
     XCTAssertTrue(complete.voiceLoopReady)
     XCTAssertEqual(
       complete.summary,
-      "Voice capture and TTS provider readiness are both present.")
+      "Voice capture and local speech output provider readiness are both present.")
   }
 
   func testDeniedOrRestrictedPermissionsNeverClaimVoiceReady() {
@@ -113,6 +113,7 @@ final class VoiceReadinessViewModelTests: XCTestCase {
       ttsProviderConfigured: true)
     let completeRows = VoiceReadinessViewModel.actionRows(for: complete)
     XCTAssertEqual(completeRows.first { $0.id == "tts-output" }?.truthLabel, "provider_configured")
+    XCTAssertEqual(completeRows.first { $0.id == "tts-output" }?.detail, "Local speech output provider is configured.")
     XCTAssertEqual(completeRows.first { $0.id == "realtime-loop" }?.truthLabel, "ready")
     XCTAssertEqual(completeRows.first { $0.id == "realtime-loop" }?.enabled, true)
   }

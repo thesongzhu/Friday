@@ -41,7 +41,7 @@ public struct MobileVoiceReadiness: Sendable, Equatable {
 
   public var summary: String {
     if voiceLoopReady {
-      return "Voice capture and TTS provider readiness are both present."
+      return "Voice capture and local speech output provider readiness are both present."
     }
     if speechCaptureReady {
       return "Voice capture is allowed; speech output provider is not configured in this build."
@@ -142,7 +142,7 @@ public final class VoiceReadinessViewModel: ObservableObject {
         id: "tts-output",
         title: "Speech output",
         detail: readiness.ttsProviderConfigured
-          ? "Speech output provider is configured."
+          ? "Local speech output provider is configured."
           : "No speech output provider is configured in this build.",
         truthLabel: readiness.ttsProviderConfigured ? "provider_configured" : "NO-GO",
         enabled: readiness.ttsProviderConfigured),
