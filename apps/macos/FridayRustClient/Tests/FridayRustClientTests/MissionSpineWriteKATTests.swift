@@ -226,6 +226,86 @@ final class MissionSpineWriteKATTests: XCTestCase {
     XCTAssertTrue(json.contains("\"recallable\":false"))
   }
 
+  // MARK: MS4b — ContextPassportTransfer wire shape (nested + no auth_proof)
+
+  /// MS4b: a ContextPassport transfer rides as
+  /// `{"kind":"ContextPassportTransferRequest","request":{…}}` with included item rows and no
+  /// per-request auth proof. The sealed session is the channel auth, matching MissionIntake and
+  /// MemoryDecision.
+  func testMS4b_contextPassportTransferRequestNestedShapeNoAuthProof() throws {
+    let req = ContextPassportTransferRequestWire(
+      passportId: "passport-mobile-1",
+      missionId: "mission-mobile-1",
+      workItemId: "work-mobile-1",
+      destinationLane: "codex",
+      destinationTarget: "codex",
+      items: [
+        ContextPassportItemWire(
+          kind: "summary",
+          label: "Mobile Chat handoff for mission-mobile-1.",
+          included: true,
+          sensitive: false),
+        ContextPassportItemWire(
+          kind: "summary",
+          label: "Answer run ref run-1.",
+          included: true,
+          sensitive: false),
+      ],
+      approvedSensitive: false)
+    let env = FridayEnvelope(msgId: "cp-req", sentAt: 1000, message: .contextPassportTransferRequest(req))
+      .withCorrelation("c1")
+    let json = String(decoding: try env.encodeJSON(), as: UTF8.self)
+
+    XCTAssertTrue(json.contains("\"kind\":\"ContextPassportTransferRequest\""))
+    XCTAssertTrue(json.contains("\"request\":{"), "context passport transfer must NEST under request: \(json)")
+    XCTAssertTrue(json.contains("\"passport_id\":\"passport-mobile-1\""))
+    XCTAssertTrue(json.contains("\"destination_lane\":\"codex\""))
+    XCTAssertTrue(json.contains("\"approved_sensitive\":false"))
+
+    let messageObj = try messageObject(json)
+    XCTAssertEqual(Set(messageObj.keys), ["kind", "request"])
+    let request = try XCTUnwrap(messageObj["request"] as? [String: Any])
+    XCTAssertNil(request["auth_proof"], "ContextPassportTransferRequest carries NO per-request auth_proof")
+    XCTAssertNil(request["forwarded_principal"])
+    XCTAssertEqual(try FridayEnvelope.decodeJSON(Data(json.utf8)).message, .contextPassportTransferRequest(req))
+  }
+
+  /// MS4b: a confirmed ContextPassport transfer result carries only refs/counts; a blocked result
+  /// carries a blocker without fabricating a passport link.
+  func testMS4b_contextPassportTransferResultRoundTripsConfirmedAndBlocked() throws {
+    let confirmed = ContextPassportTransferResultWire(
+      passportId: "passport-mobile-1",
+      missionId: "mission-mobile-1",
+      workItemId: "work-mobile-1",
+      destinationLane: "codex",
+      destinationTarget: "codex",
+      sharedItemCount: 3,
+      missionRefCount: 1,
+      linkId: "context-passport-passport-mobile-1-1",
+      status: "confirmed")
+    let confirmedEnv = FridayEnvelope(msgId: "cp-ok", sentAt: 1, message: .contextPassportTransferResult(confirmed))
+    XCTAssertEqual(
+      try FridayEnvelope.decodeJSON(try confirmedEnv.encodeJSON()).message,
+      .contextPassportTransferResult(confirmed))
+
+    let blocked = ContextPassportTransferResultWire(
+      passportId: "passport-mobile-2",
+      missionId: "mission-mobile-2",
+      destinationLane: "codex",
+      sharedItemCount: 0,
+      missionRefCount: 0,
+      status: "blocked",
+      blocker: "mission_not_found")
+    let blockedEnv = FridayEnvelope(msgId: "cp-blocked", sentAt: 1, message: .contextPassportTransferResult(blocked))
+    let json = String(decoding: try blockedEnv.encodeJSON(), as: UTF8.self)
+    XCTAssertTrue(json.contains("\"kind\":\"ContextPassportTransferResult\""))
+    XCTAssertTrue(json.contains("\"result\":{"))
+    XCTAssertTrue(json.contains("\"blocker\":\"mission_not_found\""))
+    XCTAssertEqual(
+      try FridayEnvelope.decodeJSON(Data(json.utf8)).message,
+      .contextPassportTransferResult(blocked))
+  }
+
   // MARK: MS5 — RunOutcomeLearningDecision wire shape (nested + no auth_proof)
 
   /// MS5: an A1 run-outcome learning decision rides as

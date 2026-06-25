@@ -78,7 +78,25 @@ pub fn upsert_context_passport(conn: &Connection, passport: &ContextPassport) ->
         return Err(unsupported("context_passport mission_id must not be empty"));
     }
     let tx = conn.unchecked_transaction()?;
-    tx.execute(
+    upsert_context_passport_in(&tx, passport)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Persist a built Context Passport + item set inside the caller's existing transaction.
+///
+/// This is for multi-table Hub writes that must commit the passport, mission link, and mission
+/// ref atomically. It intentionally does not open its own transaction.
+pub fn upsert_context_passport_in(conn: &Connection, passport: &ContextPassport) -> Result<()> {
+    if passport.passport_id.trim().is_empty() {
+        return Err(unsupported(
+            "context_passport passport_id must not be empty",
+        ));
+    }
+    if passport.mission_id.trim().is_empty() {
+        return Err(unsupported("context_passport mission_id must not be empty"));
+    }
+    conn.execute(
         "INSERT INTO context_passport
             (passport_id, mission_id, work_item_id, destination_lane, destination_target,
              approved_sensitive, created_at_ms)
@@ -101,12 +119,12 @@ pub fn upsert_context_passport(conn: &Connection, passport: &ContextPassport) ->
         ],
     )?;
     // Replace the child item set wholesale (an upsert of the parent re-states all items).
-    tx.execute(
+    conn.execute(
         "DELETE FROM context_passport_item WHERE passport_id = ?1",
         params![passport.passport_id],
     )?;
     for (seq, item) in passport.items.iter().enumerate() {
-        tx.execute(
+        conn.execute(
             "INSERT INTO context_passport_item
                 (passport_id, seq, kind, label, included, sensitive)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -120,7 +138,6 @@ pub fn upsert_context_passport(conn: &Connection, passport: &ContextPassport) ->
             ],
         )?;
     }
-    tx.commit()?;
     Ok(())
 }
 

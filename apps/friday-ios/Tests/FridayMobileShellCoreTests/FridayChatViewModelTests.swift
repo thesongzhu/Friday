@@ -91,21 +91,33 @@ final class FridayChatViewModelTests: XCTestCase {
 
   final class FakeMissionClient: FridayMobileMissionDispatchingWriteClient, @unchecked Sendable {
     enum MemoryScript { case result(MemoryDecisionResultWire); case fail(FridayWriteClientError) }
+    enum PassportScript { case result(ContextPassportTransferResultWire); case fail(FridayWriteClientError) }
 
     private(set) var submittedIntakes: [MissionIntakeRequestWire] = []
     private(set) var missionContexts: [MissionWorkItemContextWire] = []
     private(set) var dispatchedTasks: [String] = []
     private(set) var memoryRequests: [MemoryDecisionRequestWire] = []
+    private(set) var passportRequests: [ContextPassportTransferRequestWire] = []
     let memoryScript: MemoryScript
+    let passportScript: PassportScript
 
     init(memoryScript: MemoryScript = .result(MemoryDecisionResultWire(
       memoryId: "unused",
       state: "unknown",
       status: "blocked",
       blocker: "unused",
-      recallable: false))
+      recallable: false)),
+      passportScript: PassportScript = .result(ContextPassportTransferResultWire(
+        passportId: "unused",
+        missionId: "unused",
+        destinationLane: "codex",
+        sharedItemCount: 0,
+        missionRefCount: 0,
+        status: "blocked",
+        blocker: "unused"))
     ) {
       self.memoryScript = memoryScript
+      self.passportScript = passportScript
     }
 
     func dispatchAgentRun(
@@ -143,6 +155,16 @@ final class FridayChatViewModelTests: XCTestCase {
     func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire {
       memoryRequests.append(request)
       switch memoryScript {
+      case .result(let result): return result
+      case .fail(let error): throw error
+      }
+    }
+
+    func submitContextPassportTransfer(
+      _ request: ContextPassportTransferRequestWire
+    ) async throws -> ContextPassportTransferResultWire {
+      passportRequests.append(request)
+      switch passportScript {
       case .result(let result): return result
       case .fail(let error): throw error
       }
@@ -640,6 +662,40 @@ final class FridayChatViewModelTests: XCTestCase {
       rejectMemoryVM.contextMemoryDecisionState,
       .confirmed(summary: "rejected · state=rejected · recallable=false"))
 
+    let passportClient = FakeMissionClient(passportScript: .result(ContextPassportTransferResultWire(
+      passportId: "mobile-chat-passport-mission-mobile-passport",
+      missionId: "mission-mobile-passport",
+      workItemId: "work-mobile-passport",
+      destinationLane: "codex",
+      destinationTarget: "codex",
+      sharedItemCount: 3,
+      missionRefCount: 1,
+      linkId: "context-passport-mobile-chat-passport-mission-mobile-passport-1",
+      status: "confirmed")))
+    let passportRead = FakeReadClient(
+      snapshot: try WorkbenchSnapshot(
+        projectionJSON: Data("""
+        {"missionId":"mission-mobile-passport","fridayConversationId":"fconv_mobile_passport",\
+        "runtimeFeedStatus":"live_rust_hub_projection","statusLabels":[],"workItems":[]}
+        """.utf8),
+        generatedAtMs: 0),
+      answerBodies: ["run-first": "Owner-visible mission answer for a context handoff."])
+    let passportVM = FridayChatViewModel(
+      writeClient: passportClient,
+      signer: MockOperatorSigner(),
+      missionClient: passportClient,
+      readClient: passportRead,
+      newId: { "passport" })
+    await passportVM.send("create a mission answer for handoff", routePreference: .codex)
+    await passportVM.submitContextPassportHandoff()
+    XCTAssertEqual(passportClient.passportRequests.count, 1)
+    XCTAssertEqual(passportClient.passportRequests.first?.missionId, "mission-mobile-passport")
+    XCTAssertEqual(passportClient.passportRequests.first?.workItemId, "work-mobile-passport")
+    XCTAssertEqual(passportClient.passportRequests.first?.items.count, 3)
+    XCTAssertEqual(
+      passportVM.contextPassportTransferState,
+      .confirmed(summary: "passport mobile-chat-passport-mission-mobile-passport · items=3"))
+
     try writeMobileChatActionEvidenceIfRequested(
       actions: [
         [
@@ -705,6 +761,16 @@ final class FridayChatViewModelTests: XCTestCase {
         [
           "surface": "mobile",
           "screen": "fridayChat",
+          "action_id": "share",
+          "capability_id": "context_passport_transfer_checklist",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/handoff/passport/\(passportClient.passportRequests.first?.missionId ?? "missing")",
+          "source": "ios_chat_viewmodel_context_passport_transfer_runtime",
+          "truth_label": "swift_viewmodel_context_passport_write_seam_runtime_not_live_hub_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
           "action_id": "check",
           "capability_id": "memory_review_no_silent_write_decide_candidate",
           "status": "pass",
@@ -730,6 +796,8 @@ final class FridayChatViewModelTests: XCTestCase {
         "memory_candidate_id": "cand-chat-1",
         "memory_keep_request_count": keepMemoryClient.memoryRequests.count,
         "memory_reject_request_count": rejectMemoryClient.memoryRequests.count,
+        "context_passport_request_count": passportClient.passportRequests.count,
+        "context_passport_item_count": passportClient.passportRequests.first?.items.count ?? 0,
         "approval_card_run_id": approvalCard.runId,
         "approval_card_digest_len": approvalCard.actionDigest.count,
         "approve_run_id": approveReceipt.runId,

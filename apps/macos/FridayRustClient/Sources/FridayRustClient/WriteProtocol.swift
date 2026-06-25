@@ -805,3 +805,105 @@ public struct MemoryDecisionResultWire: Codable, Equatable, Sendable {
     try c.encode(recallable, forKey: .recallable)
   }
 }
+
+public struct ContextPassportItemWire: Codable, Equatable, Sendable {
+  public var kind: String
+  public var label: String
+  public var included: Bool
+  public var sensitive: Bool
+
+  public init(kind: String, label: String, included: Bool, sensitive: Bool) {
+    self.kind = kind
+    self.label = label
+    self.included = included
+    self.sensitive = sensitive
+  }
+}
+
+public struct ContextPassportTransferRequestWire: Codable, Equatable, Sendable {
+  public var passportId: String
+  public var missionId: String
+  public var workItemId: String?
+  public var destinationLane: String
+  public var destinationTarget: String?
+  public var items: [ContextPassportItemWire]
+  public var approvedSensitive: Bool
+
+  public init(
+    passportId: String,
+    missionId: String,
+    workItemId: String? = nil,
+    destinationLane: String,
+    destinationTarget: String? = nil,
+    items: [ContextPassportItemWire],
+    approvedSensitive: Bool = false
+  ) {
+    self.passportId = passportId
+    self.missionId = missionId
+    self.workItemId = workItemId
+    self.destinationLane = destinationLane
+    self.destinationTarget = destinationTarget
+    self.items = items
+    self.approvedSensitive = approvedSensitive
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case passportId = "passport_id"
+    case missionId = "mission_id"
+    case workItemId = "work_item_id"
+    case destinationLane = "destination_lane"
+    case destinationTarget = "destination_target"
+    case items
+    case approvedSensitive = "approved_sensitive"
+  }
+}
+
+public struct ContextPassportTransferResultWire: Codable, Equatable, Sendable {
+  public var passportId: String
+  public var missionId: String
+  public var workItemId: String?
+  public var destinationLane: String
+  public var destinationTarget: String?
+  public var sharedItemCount: UInt64
+  public var missionRefCount: UInt64
+  public var linkId: String?
+  public var status: String
+  public var blocker: String?
+
+  public init(
+    passportId: String,
+    missionId: String,
+    workItemId: String? = nil,
+    destinationLane: String,
+    destinationTarget: String? = nil,
+    sharedItemCount: UInt64,
+    missionRefCount: UInt64,
+    linkId: String? = nil,
+    status: String,
+    blocker: String? = nil
+  ) {
+    self.passportId = passportId
+    self.missionId = missionId
+    self.workItemId = workItemId
+    self.destinationLane = destinationLane
+    self.destinationTarget = destinationTarget
+    self.sharedItemCount = sharedItemCount
+    self.missionRefCount = missionRefCount
+    self.linkId = linkId
+    self.status = status
+    self.blocker = blocker
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case passportId = "passport_id"
+    case missionId = "mission_id"
+    case workItemId = "work_item_id"
+    case destinationLane = "destination_lane"
+    case destinationTarget = "destination_target"
+    case sharedItemCount = "shared_item_count"
+    case missionRefCount = "mission_ref_count"
+    case linkId = "link_id"
+    case status
+    case blocker
+  }
+}

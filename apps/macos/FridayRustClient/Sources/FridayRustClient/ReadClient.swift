@@ -250,6 +250,10 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "MemoryDecisionRequest")
     case .memoryDecisionResult:
       throw FridayReadClientError.unexpectedResponse(kind: "MemoryDecisionResult")
+    case .contextPassportTransferRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "ContextPassportTransferRequest")
+    case .contextPassportTransferResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "ContextPassportTransferResult")
     case .runOutcomeLearningDecisionRequest:
       throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionRequest")
     case .runOutcomeLearningDecisionResult:
@@ -371,6 +375,10 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "MemoryDecisionRequest")
     case .memoryDecisionResult:
       throw FridayReadClientError.unexpectedResponse(kind: "MemoryDecisionResult")
+    case .contextPassportTransferRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "ContextPassportTransferRequest")
+    case .contextPassportTransferResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "ContextPassportTransferResult")
     case .runOutcomeLearningDecisionRequest:
       throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionRequest")
     case .runOutcomeLearningDecisionResult:

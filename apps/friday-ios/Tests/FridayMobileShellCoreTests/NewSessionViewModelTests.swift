@@ -21,6 +21,21 @@ final class NewSessionViewModelTests: XCTestCase {
       MemoryDecisionResultWire(memoryId: request.memoryId, state: "unknown", status: "blocked", blocker: "unused", recallable: false)
     }
 
+    func submitContextPassportTransfer(
+      _ request: ContextPassportTransferRequestWire
+    ) async throws -> ContextPassportTransferResultWire {
+      ContextPassportTransferResultWire(
+        passportId: request.passportId,
+        missionId: request.missionId,
+        workItemId: request.workItemId,
+        destinationLane: request.destinationLane,
+        destinationTarget: request.destinationTarget,
+        sharedItemCount: 0,
+        missionRefCount: 0,
+        status: "blocked",
+        blocker: "unused")
+    }
+
     func submitRunOutcomeLearningDecision(
       _ request: RunOutcomeLearningDecisionRequestWire
     ) async throws -> RunOutcomeLearningDecisionResultWire {

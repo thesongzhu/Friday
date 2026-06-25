@@ -5,10 +5,10 @@
 # Truth boundary:
 #   Runs iOS Swift product ViewModel tests and exports explicit action-runtime evidence for
 #   Friday Chat send, approval-card render, approve relay, reject relay, and local context-card
-#   affordances. This proves the product ViewModel delegates to governed write/sign/reject seams
-#   and renders refs-only results. It does not start or mutate prod Hub, use the operator's true
-#   signing key, prove live Hub audit receipts, drive a real simulator tap, claim END-BAR, or
-#   prove adoption.
+#   affordances plus the governed context-passport handoff transfer. This proves the product
+#   ViewModel delegates to governed write/sign/reject seams and renders refs-only results. It does
+#   not start or mutate prod Hub, use the operator's true signing key, prove live Hub audit
+#   receipts, drive a real simulator tap, claim END-BAR, or prove adoption.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -68,6 +68,7 @@ for (const expected of [
   ["mobile", "fridayChat", "act", "security_approval_bound_principal_gate_cat10_netnew"],
   ["mobile", "fridayChat", "chat:handoffCard", "ask_friday_chat"],
   ["mobile", "fridayChat", "chat:memoryCard", "ask_friday_chat"],
+  ["mobile", "fridayChat", "share", "context_passport_transfer_checklist"],
   ["mobile", "fridayChat", "check", "memory_review_no_silent_write_decide_candidate"],
   ["mobile", "fridayChat", "act", "memory_review_no_silent_write_decide_candidate"],
 ]) {

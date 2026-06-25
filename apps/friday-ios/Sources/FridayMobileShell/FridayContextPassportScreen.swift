@@ -37,6 +37,7 @@ struct FridayContextPassportScreen: View {
 
     if let status {
       checklistCard(status)
+      sendCard(projection)
       refsCard(status)
       truthCard(status)
     } else {
@@ -138,6 +139,44 @@ struct FridayContextPassportScreen: View {
             .fixedSize(horizontal: false, vertical: true)
         }
       }
+    }
+  }
+
+  private func sendCard(_ projection: HomeProjection) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader("Send", count: 3)
+        Button {
+          Task { await viewModel.submitContextPassportTransfer(for: projection) }
+        } label: {
+          Label("Send with 3 items", systemImage: "checkmark.seal")
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(MobileTheme.cyan)
+        .disabled(viewModel.contextPassportTransferState?.isSent == true)
+        .accessibilityIdentifier("friday.context-passport.send")
+        if let state = viewModel.contextPassportTransferState {
+          candidateDecisionStateView(state)
+        }
+      }
+    }
+  }
+
+  @ViewBuilder private func candidateDecisionStateView(_ state: HomeLearningDecisionState) -> some View {
+    switch state {
+    case .sent:
+      StatusChip(text: "sending", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+    case .confirmed(let summary):
+      Text(summary)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+    case .error(let reason):
+      Text(reason)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.chipWarnFG)
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 
