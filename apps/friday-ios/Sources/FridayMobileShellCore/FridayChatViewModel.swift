@@ -262,6 +262,14 @@ public struct ChatHistoryItem: Identifiable, Codable, Sendable, Equatable {
   }
 }
 
+public struct ChatContextCard: Identifiable, Sendable, Equatable {
+  public let id: String
+  public let title: String
+  public let detail: String
+  public let truthLabel: String
+  public let evidenceRef: String
+}
+
 public protocol ChatHistoryStoring {
   func load() -> [ChatHistoryItem]
   func save(_ items: [ChatHistoryItem])
@@ -332,6 +340,8 @@ public enum ChatPhase: Sendable, Equatable {
 public final class FridayChatViewModel: ObservableObject {
   @Published public private(set) var phase: ChatPhase = .composing
   @Published public private(set) var history: [ChatHistoryItem]
+  @Published public private(set) var contextCards: [ChatContextCard] = []
+  @Published public private(set) var selectedContextCardId: String?
 
   /// The package write client is `Sendable`; each dispatch/control call builds a fresh transport.
   private let writeClient: FridayRustWriteClient
@@ -406,6 +416,7 @@ public final class FridayChatViewModel: ObservableObject {
           answerBodyRunId: answer?.runId,
           answerBodyOutcome: answer?.outcome)
         appendAnswerHistory(receipt)
+        contextCards = Self.contextCards(for: receipt)
         phase = .answered(receipt)
       case .paused(let p):
         // INV-2: a mutating run PAUSED — surface the S6 approval card. No mutation has executed.
@@ -413,6 +424,7 @@ public final class FridayChatViewModel: ObservableObject {
           role: "friday",
           text: "Approval required: \(p.ownerSealedSummary ?? "mutating action")",
           runId: p.runId)
+        contextCards = []
         phase = .pendingApproval(ApprovalCard(p))
       }
     } catch {
@@ -469,6 +481,7 @@ public final class FridayChatViewModel: ObservableObject {
         answerBodyRunId: answer?.runId,
         answerBodyOutcome: answer?.outcome)
       appendAnswerHistory(receipt)
+      contextCards = Self.contextCards(for: receipt)
       phase = .answered(receipt)
     } catch {
       phase = .unavailable(reason: Self.dispatchReason(for: error))
@@ -562,6 +575,7 @@ public final class FridayChatViewModel: ObservableObject {
         runId: receipt.runId,
         receiptRefs: surfacedReceipt.receiptRefs)
       phase = .resumed(surfacedReceipt)
+      contextCards = []
     } catch {
       phase = .unavailable(reason: Self.resumeReason(for: error))
     }
@@ -583,6 +597,7 @@ public final class FridayChatViewModel: ObservableObject {
         runId: receipt.runId,
         receiptRefs: surfacedReceipt.receiptRefs)
       phase = .resumed(surfacedReceipt)
+      contextCards = []
     } catch {
       phase = .unavailable(reason: Self.rejectReason(for: error))
     }
@@ -590,7 +605,14 @@ public final class FridayChatViewModel: ObservableObject {
 
   public func clearHistory() {
     history = []
+    contextCards = []
+    selectedContextCardId = nil
     historyStore.save(history)
+  }
+
+  public func selectContextCard(_ id: String) {
+    guard contextCards.contains(where: { $0.id == id }) else { return }
+    selectedContextCardId = id
   }
 
   /// Reset to a fresh composer after an answer / receipt / unavailable (start a new turn).
@@ -598,6 +620,8 @@ public final class FridayChatViewModel: ObservableObject {
     switch phase {
     case .answered, .resumed, .unavailable:
       phase = .composing
+      contextCards = []
+      selectedContextCardId = nil
     default:
       // Do NOT abandon an in-flight dispatch or a pending approval (would drop the S6 gate).
       break
@@ -653,6 +677,24 @@ public final class FridayChatViewModel: ObservableObject {
       text = "Friday answered (\(receipt.status)). Run \(receipt.runId)."
     }
     appendHistory(role: "friday", text: text, runId: receipt.answerBodyRunId ?? receipt.runId, receiptRefs: receipt.receiptRefs)
+  }
+
+  private static func contextCards(for receipt: ChatAnswerReceipt) -> [ChatContextCard] {
+    let runRef = receipt.answerBodyRunId ?? receipt.followUpRunId ?? receipt.runId
+    return [
+      ChatContextCard(
+        id: "handoff",
+        title: "Handoff",
+        detail: "Prepare a context passport from this answer when the passport send gate is available.",
+        truthLabel: "local",
+        evidenceRef: "swift://mobile/fridayChat/handoff-card/\(runRef)"),
+      ChatContextCard(
+        id: "memory",
+        title: "Memory",
+        detail: "Review memory candidates for this turn through the governed memory surface.",
+        truthLabel: "local",
+        evidenceRef: "swift://mobile/fridayChat/memory-card/\(runRef)"),
+    ]
   }
 
   private func appendHistory(role: String, text: String, runId: String? = nil, receiptRefs: [ChatReceiptRef] = []) {

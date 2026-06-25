@@ -47,6 +47,7 @@ struct FridayChatScreen: View {
 
           historyCard
           phaseCard
+          contextCards
         }
         .padding(16)
       }
@@ -56,6 +57,48 @@ struct FridayChatScreen: View {
     .background(MobileTheme.backgroundWarmOffWhite.ignoresSafeArea())
     .navigationTitle("Friday Chat")
     .navigationBarTitleDisplayMode(.inline)
+  }
+
+  @ViewBuilder private var contextCards: some View {
+    if !viewModel.contextCards.isEmpty {
+      GlassPanel {
+        VStack(alignment: .leading, spacing: 10) {
+          Text("Next")
+            .font(.headline)
+            .foregroundStyle(MobileTheme.textPrimary)
+          ForEach(viewModel.contextCards) { card in
+            Button {
+              viewModel.selectContextCard(card.id)
+            } label: {
+              HStack(alignment: .top, spacing: 10) {
+                Image(systemName: card.id == "handoff" ? "arrowshape.turn.up.right" : "brain.head.profile")
+                  .foregroundStyle(MobileTheme.cyan)
+                  .frame(width: 24)
+                VStack(alignment: .leading, spacing: 3) {
+                  HStack {
+                    Text(card.title)
+                      .font(.caption.weight(.semibold))
+                      .foregroundStyle(MobileTheme.textPrimary)
+                    Spacer()
+                    StatusChip(text: card.truthLabel, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+                  }
+                  Text(card.detail)
+                    .font(.caption2)
+                    .foregroundStyle(MobileTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                  RefPill(label: "evidence", ref: short(card.evidenceRef))
+                }
+              }
+              .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(card.title) card")
+            .accessibilityIdentifier("friday.chat.\(card.id)-card")
+          }
+        }
+      }
+      .accessibilityIdentifier("friday.chat.context-cards")
+    }
   }
 
   // MARK: - The 4-state loop, rendered
