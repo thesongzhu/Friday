@@ -21,6 +21,16 @@ if ! jq -e . "$proof" >/dev/null; then
   exit 3
 fi
 
+contains_fixed_string() {
+  local needle="$1"
+  local target="$2"
+  if command -v rg >/dev/null 2>&1; then
+    rg -q --fixed-strings --text "$needle" "$target"
+    return $?
+  fi
+  LC_ALL=C grep -Fq -- "$needle" "$target"
+}
+
 reject_secret_leaks() {
   local target="$1"
   local label="$2"
@@ -34,7 +44,7 @@ reject_secret_leaks() {
     "raw transcript" \
     "/Users/jarvis/private"
   do
-    if rg -q --fixed-strings --text "$forbidden" "$target"; then
+    if contains_fixed_string "$forbidden" "$target"; then
       echo "BLOCKER: UI/device ${label} leaked forbidden marker: $forbidden" >&2
       exit 4
     fi
@@ -70,7 +80,7 @@ reject_placeholder_markers() {
     "pending-real-capture" \
     "mission_pending_runtime_projection"
   do
-    if rg -q --fixed-strings --text "$marker" "$target"; then
+    if contains_fixed_string "$marker" "$target"; then
       echo "BLOCKER: UI/device ${label} still contains proof-template placeholder marker: $marker" >&2
       exit 5
     fi
