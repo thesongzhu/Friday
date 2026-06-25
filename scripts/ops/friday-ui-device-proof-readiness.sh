@@ -19,6 +19,8 @@ BACKEND_LIVE_PROOF="${FRIDAY_UI_DEVICE_BACKEND_LIVE_PROOF:-}"
 CHANNEL_LIVE_PROOF="${FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF:-}"
 OBJECTIVE_COVERAGE="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
 WORKBENCH_DB="${FRIDAY_WORKBENCH_DB_PATH:-}"
+DESIGN_ACTION_CONTRACT="${FRIDAY_DESIGN_ACTION_CONTRACT:-}"
+DESIGN_ACTION_RUNTIME_EVIDENCE="${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE:-}"
 
 usage() {
   cat <<'EOF'
@@ -28,6 +30,8 @@ usage:
     [--channel-live-proof /abs/channel-proof.json]
     [--objective-coverage /abs/objective-coverage.json]
     [--workbench-db /abs/rust-hub.sqlite]
+    [--design-action-contract /abs/ACTION-CONTRACT.md]
+    [--design-action-runtime-evidence /abs/action-runtime-evidence.json]
 
 optional env for live/snapshot checks:
   FRIDAY_MISSION_WORKBENCH_URL=http://127.0.0.1:5173/mission-workbench
@@ -51,6 +55,8 @@ evidence-dir auto-discovery:
   FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF=/abs/channel-proof.json
   FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE=/abs/objective-coverage.json
   FRIDAY_WORKBENCH_DB_PATH=/abs/rust-hub.sqlite
+  FRIDAY_DESIGN_ACTION_CONTRACT=/abs/ACTION-CONTRACT.md
+  FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE=/abs/action-runtime-evidence.json
 
   Looks for mission-id.txt or manifest mission_id plus:
     mobile.{json,trace,log,png}
@@ -121,6 +127,24 @@ while [ "$#" -gt 0 ]; do
         exit 64
       fi
       WORKBENCH_DB="$2"
+      shift
+      ;;
+    --design-action-contract)
+      if [ "$#" -lt 2 ]; then
+        echo "FATAL: --design-action-contract requires a value" >&2
+        usage >&2
+        exit 64
+      fi
+      DESIGN_ACTION_CONTRACT="$2"
+      shift
+      ;;
+    --design-action-runtime-evidence)
+      if [ "$#" -lt 2 ]; then
+        echo "FATAL: --design-action-runtime-evidence requires a value" >&2
+        usage >&2
+        exit 64
+      fi
+      DESIGN_ACTION_RUNTIME_EVIDENCE="$2"
       shift
       ;;
     -h|--help)
@@ -271,6 +295,11 @@ discover_evidence_dir() {
       "$dir/mission-spine-objective-coverage.json" \
       "$dir/mission-spine-objective-coverage-gate.json" || true)"
   fi
+  if [ -z "${DESIGN_ACTION_RUNTIME_EVIDENCE:-}" ]; then
+    DESIGN_ACTION_RUNTIME_EVIDENCE="$(first_existing \
+      "$dir/action-runtime-evidence.json" \
+      "$dir/design-action-runtime-evidence.json" || true)"
+  fi
 }
 
 json_escape() {
@@ -289,6 +318,8 @@ export OBSERVATIONS_MANIFEST="${OBSERVATIONS_MANIFEST:-}"
 export SAME_RUN_EVENTS="${SAME_RUN_EVENTS:-}"
 export FRIDAY_WORKBENCH_SNAPSHOT_FILE="${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}"
 export WORKBENCH_DB="${WORKBENCH_DB:-}"
+export DESIGN_ACTION_CONTRACT="${DESIGN_ACTION_CONTRACT:-}"
+export DESIGN_ACTION_RUNTIME_EVIDENCE="${DESIGN_ACTION_RUNTIME_EVIDENCE:-}"
 
 blockers=()
 notes=()
@@ -400,6 +431,12 @@ done
 if [ -n "${SAME_RUN_EVENTS:-}" ]; then
   notes+=("resolved_SAME_RUN_EVENTS:${SAME_RUN_EVENTS}")
 fi
+if [ -n "${DESIGN_ACTION_CONTRACT:-}" ]; then
+  notes+=("resolved_DESIGN_ACTION_CONTRACT:${DESIGN_ACTION_CONTRACT}")
+fi
+if [ -n "${DESIGN_ACTION_RUNTIME_EVIDENCE:-}" ]; then
+  notes+=("resolved_DESIGN_ACTION_RUNTIME_EVIDENCE:${DESIGN_ACTION_RUNTIME_EVIDENCE}")
+fi
 
 run_step() {
   local label="$1"
@@ -476,6 +513,51 @@ run_gap_report_if_possible() {
   fi
 }
 
+run_design_action_gap_if_possible() {
+  local contract="${DESIGN_ACTION_CONTRACT:-}"
+  if [ -z "$contract" ] && [ -s "$HOME/Desktop/friday-design-handoff-20260602/ACTION-CONTRACT.md" ]; then
+    contract="$HOME/Desktop/friday-design-handoff-20260602/ACTION-CONTRACT.md"
+  fi
+  if [ -z "$contract" ]; then
+    return 0
+  fi
+
+  local design_gap_out
+  local stdout_out
+  local status
+  if [ -n "$EVIDENCE_DIR" ]; then
+    design_gap_out="$(abs_path "$EVIDENCE_DIR")/design-action-runtime-gap.json"
+  else
+    design_gap_out="/tmp/friday-design-action-runtime-gap.json"
+  fi
+  stdout_out="${design_gap_out}.stdout"
+
+  local args=(
+    "${REPO_ROOT}/scripts/ops/check-friday-design-action-runtime-evidence.mjs"
+    "--repo-root=${REPO_ROOT}"
+    "--contract=$(abs_path "$contract")"
+    "--out=${design_gap_out}"
+  )
+  if [ -n "${EVIDENCE_DIR:-}" ]; then
+    args+=("--evidence-dir=$(abs_path "$EVIDENCE_DIR")")
+  fi
+  if [ -n "${DESIGN_ACTION_RUNTIME_EVIDENCE:-}" ]; then
+    args+=("--runtime-evidence=$(abs_path "$DESIGN_ACTION_RUNTIME_EVIDENCE")")
+  fi
+
+  mkdir -p "$(dirname "$design_gap_out")"
+  if node "${args[@]}" >"$stdout_out"; then
+    status="$(jq -r '.status // "unknown"' "$design_gap_out" 2>/dev/null || printf 'unknown')"
+    notes+=("design_action_runtime_gap:${status}:${design_gap_out}")
+    if [ "$status" != "runtime_actions_covered" ] && [ "${MODE}" = "require-proof" ]; then
+      blockers+=("design_action_runtime_gap:${status}")
+    fi
+  else
+    local rc=$?
+    blockers+=("design_action_runtime_gap:exit_${rc}")
+  fi
+}
+
 EXPECT_NOT_READY_ARGS=(--expect-not-ready)
 if [ "${MODE}" = "require-proof" ]; then
   EXPECT_NOT_READY_ARGS=()
@@ -529,6 +611,7 @@ else
 fi
 
 run_gap_report_if_possible
+run_design_action_gap_if_possible
 
 if [ "${MODE}" = "require-proof" ]; then
   printf 'FATAL: UI/device proof not assembled. blockers=%s\n' "${blockers[*]}" >&2
