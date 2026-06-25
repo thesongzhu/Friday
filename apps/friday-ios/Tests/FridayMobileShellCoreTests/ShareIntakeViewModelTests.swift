@@ -118,6 +118,8 @@ final class ShareIntakeViewModelTests: XCTestCase {
       status: "ready",
       createdOrReady: true,
       clarificationQuestions: [])))
+
+    try writeShareIntakeActionEvidenceIfRequested(request: request)
   }
 
   func testClarificationDoesNotRenderAsSubmitted() async {
@@ -148,5 +150,43 @@ final class ShareIntakeViewModelTests: XCTestCase {
 
     XCTAssertTrue(client.requests.isEmpty)
     XCTAssertEqual(vm.phase, .blocked("Add shared text or a URL before submitting."))
+  }
+
+  private func writeShareIntakeActionEvidenceIfRequested(request: MissionIntakeRequestWire) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment["FRIDAY_MOBILE_SHARE_INTAKE_ACTION_EVIDENCE_DIR"],
+          !rawDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return
+    }
+    let dir = URL(fileURLWithPath: rawDir, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let payload: [String: Any] = [
+      "truth": "mobile_share_intake_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": "shareIntake",
+          "action_id": "mobile/share/send",
+          "capability_id": "ask_friday_chat",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/shareIntake/send/\(request.missionId)",
+          "proof": [
+            "mission_id": request.missionId,
+            "work_item_id": request.workItemId,
+            "friday_conversation_id": request.fridayConversationId,
+            "surface_thread_id": request.surfaceThreadId,
+            "surface_kind": request.surfaceKind,
+            "delivery_route": request.deliveryRoute,
+            "owner_principal": request.ownerPrincipal,
+            "lane": request.lane,
+            "includes_sensitive_context": request.includesSensitiveContext,
+          ],
+          "source": "ios_share_intake_viewmodel_mission_intake_runtime",
+          "truth_label": "swift_viewmodel_mission_intake_write_seam_runtime_not_live_hub_not_endbar",
+        ],
+      ],
+    ]
+    let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: dir.appendingPathComponent("mobile-share-intake-action-evidence.json"), options: .atomic)
   }
 }
