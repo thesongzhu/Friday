@@ -37,6 +37,8 @@ const checks = [
       "pending-request.json",
       "signed-approval.json",
       "FRIDAY_DESKTOP_APPROVAL_SIGNED_APPROVAL",
+      "desktop_approval_approve_action_runtime_evidence_operator_signed_not_endbar",
+      "proof://desktop/approval-approve/",
       "does not read signing keys",
       "did not sign, resume, release, GO, or prove adoption",
     ]),

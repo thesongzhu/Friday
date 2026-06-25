@@ -136,6 +136,35 @@ fs.writeFileSync(out, `${JSON.stringify(evidence, null, 2)}\n`);
 NODE
 }
 
+write_approve_action_runtime_evidence() {
+  local out="$1"
+  local run_id="$2"
+  if [[ -z "${out}" ]]; then
+    return
+  fi
+  mkdir -p "$(dirname "${out}")"
+  node - "${out}" "${run_id}" <<'NODE'
+const fs = require("node:fs");
+const [out, runId] = process.argv.slice(2);
+const evidence = {
+  truth: "desktop_approval_approve_action_runtime_evidence_operator_signed_not_endbar",
+  status: "ready",
+  actions: [
+    {
+      surface: "desktop",
+      screen: "fridayChat",
+      action_id: "check",
+      status: "pass",
+      evidence_ref: `proof://desktop/approval-approve/${runId}`,
+      run_id: runId,
+    },
+  ],
+  caveat: "Approve action evidence only: relayed an operator-signed artifact. It does not prove END-BAR, release, adoption, or key custody.",
+};
+fs.writeFileSync(out, `${JSON.stringify(evidence, null, 2)}\n`);
+NODE
+}
+
 run_dispatch() {
   need_live
   mkdir -p "${ARTIFACT_DIR}"
@@ -159,13 +188,21 @@ run_dispatch() {
 run_resume() {
   need_live
   need_file "FRIDAY_DESKTOP_APPROVAL_SIGNED_APPROVAL" "${SIGNED_APPROVAL}"
-  local run_id
+  local run_id log_file
   run_id="$(load_run_id)"
+  log_file="${ARTIFACT_DIR}/resume.log"
   echo "Friday desktop approval relay proof: resume"
   echo "truth_label=desktop_approval_relay_resume_operator_signed_artifact_verbatim"
   echo "run_id=${run_id}"
   echo "signed_approval=${SIGNED_APPROVAL}"
-  driver --mode resume --run-id "${run_id}" --approval "${SIGNED_APPROVAL}"
+  driver --mode resume --run-id "${run_id}" --approval "${SIGNED_APPROVAL}" | tee "${log_file}"
+  if ! grep -q "\\[resume\\] op=resume accepted=true" "${log_file}"; then
+    fail "resume proof did not report accepted=true."
+  fi
+  write_approve_action_runtime_evidence "${ACTION_RUNTIME_OUT}" "${run_id}"
+  if [[ -n "${ACTION_RUNTIME_OUT}" ]]; then
+    echo "Action runtime evidence: ${ACTION_RUNTIME_OUT}"
+  fi
   echo "Truth: resume relayed the supplied signed artifact; inspect the driver output for accepted/status."
 }
 
