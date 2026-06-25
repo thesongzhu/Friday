@@ -28,6 +28,7 @@ out_dir=""
 mode="offline-truth"
 skip_initial_build=0
 destinations_csv="home,missions,session,contextPassport,tokenLedger,shareIntake,voice,pairing,needsMe,memory,platform,providerAuth,activity,workflows,onboarding,settings"
+settle_seconds="${FRIDAY_IOS_DESIGN_CAPTURE_SETTLE_SECONDS:-6}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -83,6 +84,7 @@ case "${mode}" in
   *) die "unsupported --mode '${mode}'" ;;
 esac
 [ -n "${destinations_csv}" ] || die "--destinations must not be empty"
+[[ "${settle_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "FRIDAY_IOS_DESIGN_CAPTURE_SETTLE_SECONDS must be numeric"
 
 IFS=',' read -r -a destinations <<< "${destinations_csv}"
 for destination in "${destinations[@]}"; do
@@ -116,31 +118,6 @@ fi
 udid="$(xcrun simctl list devices available | grep -Eo '\(([0-9A-F-]{36})\) \(Booted\)' | grep -Eo '[0-9A-F-]{36}' | head -1 || true)"
 [ -n "${udid}" ] || die "no booted simulator after build/reuse"
 
-live_loopback_launch_args=()
-live_loopback_launch_env=()
-if [ "${mode}" = "live-loopback" ]; then
-  live_loopback_launch_args=(--live-read --live-write --live-pairing --live-device-keypair --simulator-file-device-keypair)
-  live_loopback_launch_env=(
-    SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ=1
-    SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE=1
-    SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_PAIRING=1
-    SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR=1
-    SIMCTL_CHILD_FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR=1
-  )
-  if [[ -n "${FRIDAY_MOBILE_LIVE_READ_HOST:-}" ]]; then
-    live_loopback_launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ_HOST="${FRIDAY_MOBILE_LIVE_READ_HOST}")
-  fi
-  if [[ -n "${FRIDAY_MOBILE_LIVE_READ_PORT:-}" ]]; then
-    live_loopback_launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ_PORT="${FRIDAY_MOBILE_LIVE_READ_PORT}")
-  fi
-  if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_HOST:-}" ]]; then
-    live_loopback_launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_HOST="${FRIDAY_MOBILE_LIVE_WRITE_HOST}")
-  fi
-  if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_PORT:-}" ]]; then
-    live_loopback_launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_PORT="${FRIDAY_MOBILE_LIVE_WRITE_PORT}")
-  fi
-fi
-
 capture_rows=()
 for destination in "${destinations[@]}"; do
   shot="${out_dir}/screenshots/${destination}.png"
@@ -152,14 +129,40 @@ for destination in "${destinations[@]}"; do
     printf 'reused initial build screenshot\n' > "${screenshot_log}"
   else
     launch_cmd=(xcrun simctl launch --terminate-running-process "${udid}" com.friday.shell)
-    launch_args=("${live_loopback_launch_args[@]}" "--initial-destination=${destination}")
-    launch_env=("${live_loopback_launch_env[@]}" "SIMCTL_CHILD_FRIDAY_MOBILE_INITIAL_DESTINATION=${destination}")
-    if [ "${#launch_env[@]}" -gt 0 ]; then
-      env "${launch_env[@]}" "${launch_cmd[@]}" "${launch_args[@]}" >"${launch_log}" 2>&1
-    else
-      "${launch_cmd[@]}" "${launch_args[@]}" >"${launch_log}" 2>&1
+    launch_args=("--initial-destination=${destination}")
+    launch_env=("SIMCTL_CHILD_FRIDAY_MOBILE_INITIAL_DESTINATION=${destination}")
+    if [ "${mode}" = "live-loopback" ]; then
+      launch_args=(
+        --live-read
+        --live-write
+        --live-pairing
+        --live-device-keypair
+        --simulator-file-device-keypair
+        "${launch_args[@]}"
+      )
+      launch_env=(
+        SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ=1
+        SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE=1
+        SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_PAIRING=1
+        SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR=1
+        SIMCTL_CHILD_FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR=1
+        "${launch_env[@]}"
+      )
+      if [[ -n "${FRIDAY_MOBILE_LIVE_READ_HOST:-}" ]]; then
+        launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ_HOST="${FRIDAY_MOBILE_LIVE_READ_HOST}")
+      fi
+      if [[ -n "${FRIDAY_MOBILE_LIVE_READ_PORT:-}" ]]; then
+        launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ_PORT="${FRIDAY_MOBILE_LIVE_READ_PORT}")
+      fi
+      if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_HOST:-}" ]]; then
+        launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_HOST="${FRIDAY_MOBILE_LIVE_WRITE_HOST}")
+      fi
+      if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_PORT:-}" ]]; then
+        launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_PORT="${FRIDAY_MOBILE_LIVE_WRITE_PORT}")
+      fi
     fi
-    sleep 6
+    env "${launch_env[@]}" "${launch_cmd[@]}" "${launch_args[@]}" >"${launch_log}" 2>&1
+    sleep "${settle_seconds}"
     xcrun simctl io "${udid}" screenshot "${shot}" >"${screenshot_log}" 2>&1
   fi
 
