@@ -959,6 +959,106 @@ describe("createFridayAutonomyRoutes control route retirement", () => {
   );
 });
 
+describe("createFridayAutonomyRoutes principal user-scoping (IDOR)", () => {
+  function createUserScopedRoutes() {
+    const listStandingGoals = vi.fn(() => []);
+    const listAgenda = vi.fn(() => []);
+    const plan = vi.fn(async () => ({ id: "plan-1" }));
+    const createStandingGoal = vi.fn(async () => ({
+      goal: { id: "goal-1", userId: "user-1", objective: "Ship Friday", status: "active" },
+      agendaItem: { id: "agenda-1", userId: "user-1", goalId: "goal-1", status: "pending" },
+    }));
+    const routes = createFridayAutonomyRoutes({
+      allowTestOnlyCapabilityAcquisitionExecution: true,
+      allowTestOnlyAutonomyPolicyMutation: true,
+      allowTestOnlyStandingAgendaExecution: true,
+      listUpgradeStatus: () => ({ items: [] }),
+      acquisitionService: {
+        plan,
+        startRun: vi.fn(async () => ({ id: "run-1" })),
+        approveRun: vi.fn(async () => ({ id: "run-1" })),
+        cancelRun: vi.fn(() => ({ id: "run-1" })),
+      },
+      standingAgendaService: {
+        listStandingGoals,
+        listAgenda,
+        createStandingGoal,
+        updateStandingGoal: vi.fn(() => ({ id: "goal-1", userId: "user-1", objective: "Ship Friday", status: "active" })),
+        approveAgendaItem: vi.fn(() => ({ id: "agenda-1", userId: "user-1", status: "approved" })),
+        runAgendaItem: vi.fn(async () => ({ runId: "run-1", status: "queued" })),
+      },
+    });
+    return { routes, listStandingGoals, listAgenda, plan, createStandingGoal };
+  }
+
+  function contextWithoutUserId(input: {
+    body?: Record<string, unknown>;
+    params?: Record<string, string>;
+    query?: Record<string, unknown>;
+  } = {}) {
+    return {
+      requestId: "req-1",
+      receivedAt: "2026-05-07T18:00:00.000Z",
+      params: input.params ?? {},
+      query: input.query ?? {},
+      body: input.body ?? {},
+      headers: {},
+      principal: { ...principal, userId: undefined },
+    };
+  }
+
+  it("ignores a caller-supplied query userId and scopes standing.goals.list to the authenticated principal", async () => {
+    const { routes, listStandingGoals } = createUserScopedRoutes();
+    const route = routes.find((entry) => entry.operationId === "standing.goals.list")!;
+
+    await route.handler(makeRouteContext({ query: { userId: "admin-001" } }));
+
+    expect(listStandingGoals).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-1" }));
+    expect(listStandingGoals).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "admin-001" }));
+  });
+
+  it("ignores a caller-supplied query userId and scopes agenda.list to the authenticated principal", async () => {
+    const { routes, listAgenda } = createUserScopedRoutes();
+    const route = routes.find((entry) => entry.operationId === "agenda.list")!;
+
+    await route.handler(makeRouteContext({ query: { userId: "admin-001" } }));
+
+    expect(listAgenda).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-1" }));
+    expect(listAgenda).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "admin-001" }));
+  });
+
+  it("ignores a caller-supplied query userId and scopes capabilities.acquisition.plan to the authenticated principal", async () => {
+    const { routes, plan } = createUserScopedRoutes();
+    const route = routes.find((entry) => entry.operationId === "capabilities.acquisition.plan")!;
+
+    await route.handler(makeRouteContext({ query: { goal: "Ship Friday", userId: "admin-001" } }));
+
+    expect(plan).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-1" }));
+    expect(plan).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "admin-001" }));
+  });
+
+  it("ignores a caller-supplied body userId and scopes standing.goals.create to the authenticated principal", async () => {
+    const { routes, createStandingGoal } = createUserScopedRoutes();
+    const route = routes.find((entry) => entry.operationId === "standing.goals.create")!;
+
+    await route.handler(makeRouteContext({ body: { objective: "Ship Friday", userId: "admin-001" } }));
+
+    expect(createStandingGoal).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-1" }));
+    expect(createStandingGoal).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "admin-001" }));
+  });
+
+  it("fail-closes with 401 when the principal carries no userId, even if a userId is supplied in the query", async () => {
+    const { routes, listStandingGoals } = createUserScopedRoutes();
+    const route = routes.find((entry) => entry.operationId === "standing.goals.list")!;
+
+    await expect(
+      route.handler(contextWithoutUserId({ query: { userId: "admin-001" } })),
+    ).rejects.toMatchObject({ httpStatus: 401 });
+
+    expect(listStandingGoals).not.toHaveBeenCalled();
+  });
+});
+
 describe("createFridayAutonomyRoutes skill lifecycle approval", () => {
   it.each([
     {
