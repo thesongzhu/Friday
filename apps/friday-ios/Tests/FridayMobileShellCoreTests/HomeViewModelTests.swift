@@ -384,6 +384,7 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.providerReceiptRefs, ["proof://provider/1"])
     XCTAssertEqual(p.channelReceiptRefs, ["proof://surface/mobile/1"])
     XCTAssertEqual(p.workItems.map(\.title), ["Draft mission", "Needs approval"])
+    XCTAssertEqual(p.providerWorkItems, [])
     XCTAssertEqual(p.workItems.filter(\.needsAttention).map(\.id), ["wi-1", "wi-2"])
     XCTAssertEqual(p.workItems.last?.recoveryKind, "retryable")
     XCTAssertEqual(p.workItems.last?.canRetry, true)
@@ -411,6 +412,51 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.t3ProvisioningStatus?.checklistRows.last?.statusText, "shared")
     XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile surface read the mission projection.")
     XCTAssertEqual(p.needsMeCount, 4)
+  }
+
+  func testProviderWorkItemsOnlyIncludesProviderLinkedRows() throws {
+    let data = Data("""
+    {
+      "missionId": "mission-provider-work",
+      "fridayConversationId": "conv-provider-work",
+      "runtimeFeedStatus": "live_rust_hub_projection",
+      "statusLabels": [],
+      "workItems": [
+        {
+          "workItemId": "wi-general",
+          "title": "Draft owner note",
+          "state": "waiting",
+          "owner": "friday_owned",
+          "proofRef": "proof://wi/general",
+          "done": false,
+          "blockingReason": "waiting on operator review",
+          "recoveryKind": "needs_operator",
+          "canRetry": false,
+          "canCancel": true
+        },
+        {
+          "workItemId": "wi-provider",
+          "title": "Codex provider run needs receipt",
+          "state": "blocked",
+          "owner": "provider:codex",
+          "proofRef": "proof://provider/codex-run",
+          "done": false,
+          "blockingReason": "provider receipt not reconciled",
+          "recoveryKind": "provider_retryable",
+          "canRetry": true,
+          "canCancel": true
+        }
+      ]
+    }
+    """.utf8)
+
+    let snapshot = try WorkbenchSnapshot(projectionJSON: data, generatedAtMs: 1_780_640_000_000)
+    let projection = HomeProjection(snapshot)
+
+    XCTAssertEqual(projection.workItems.map(\.id), ["wi-general", "wi-provider"])
+    XCTAssertEqual(projection.providerWorkItems.map(\.id), ["wi-provider"])
+    XCTAssertFalse(try XCTUnwrap(projection.workItems.first).isProviderLinked)
+    XCTAssertTrue(try XCTUnwrap(projection.workItems.last).isProviderLinked)
   }
 
   func testT3ProvisioningHomeSummarySurfacesOperatorGapsWithoutClaimingReady() throws {
