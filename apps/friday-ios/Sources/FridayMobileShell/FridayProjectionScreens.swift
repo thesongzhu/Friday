@@ -61,6 +61,19 @@ private enum ProjectionSurface {
     }
   }
 
+  var identifierSlug: String {
+    switch self {
+    case .missions: return "missions"
+    case .needsMe: return "needs-me"
+    case .memory: return "memory"
+    case .platform: return "platform"
+    case .activity: return "activity"
+    case .workflows: return "workflows"
+    case .onboarding: return "onboarding"
+    case .settings: return "settings"
+    }
+  }
+
   var statusLabel: String {
     switch self {
     case .missions: return "mission truth"
@@ -114,7 +127,12 @@ struct FridayProjectionScreen: View {
     case .loaded(let projection):
       loadedContent(surface, projection)
     case .unavailable(let reason):
-      UnavailableView(reason: reason)
+      UnavailableView(
+        reason: reason,
+        title: "\(surface.title) unavailable",
+        detail: "This destination renders only live Hub projection state and will not invent cached readiness.",
+        systemImage: surface.icon,
+        identifier: "friday.\(surface.identifierSlug).unavailable")
     }
   }
 

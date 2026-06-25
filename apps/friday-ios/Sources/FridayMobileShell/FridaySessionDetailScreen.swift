@@ -13,7 +13,12 @@ struct FridaySessionDetailScreen: View {
         case .idle, .loading:
           loadingView
         case .unavailable(let reason):
-          UnavailableView(reason: reason)
+          UnavailableView(
+            reason: reason,
+            title: "Session detail unavailable",
+            detail: "Transcript, proof receipts, and continuation controls appear after a live session projection is readable.",
+            systemImage: "rectangle.connected.to.line.below",
+            identifier: "friday.session-detail.unavailable")
         case .loaded(let projection):
           loadedContent(projection)
         }

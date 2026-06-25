@@ -13,7 +13,12 @@ struct FridayContextPassportScreen: View {
           loadingView
         case .unavailable(let reason):
           header(status: "unavailable", ready: false)
-          UnavailableView(reason: reason)
+          UnavailableView(
+            reason: reason,
+            title: "Context Passport unavailable",
+            detail: "PairAck, trust grant, and context passport truth are read from the Hub projection.",
+            systemImage: "checklist.checked",
+            identifier: "friday.context-passport.unavailable")
         case .loaded(let projection):
           loadedContent(projection)
         }
