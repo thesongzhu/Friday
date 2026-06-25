@@ -534,6 +534,11 @@ final class FridayChatViewModelTests: XCTestCase {
     guard case let .answered(answerReceipt) = sendVM.phase else {
       return XCTFail("expected answered, got \(sendVM.phase)")
     }
+    XCTAssertEqual(sendVM.contextCards.map(\.id), ["handoff", "memory"])
+    sendVM.selectContextCard("handoff")
+    XCTAssertEqual(sendVM.selectedContextCardId, "handoff")
+    sendVM.selectContextCard("memory")
+    XCTAssertEqual(sendVM.selectedContextCardId, "memory")
 
     let approveClient = FakeWriteClient(
       dispatch: .pause(makePause("run-chat-approve")),
@@ -610,9 +615,31 @@ final class FridayChatViewModelTests: XCTestCase {
           "source": "ios_chat_viewmodel_reject_runtime",
           "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_operator_key_not_endbar",
         ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "chat:handoffCard",
+          "capability_id": "ask_friday_chat",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/handoff-card/\(answerReceipt.runId)",
+          "source": "ios_chat_viewmodel_context_card_runtime",
+          "truth_label": "swift_viewmodel_local_affordance_runtime_not_passport_send_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "chat:memoryCard",
+          "capability_id": "ask_friday_chat",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/memory-card/\(answerReceipt.runId)",
+          "source": "ios_chat_viewmodel_context_card_runtime",
+          "truth_label": "swift_viewmodel_local_affordance_runtime_not_memory_decision_not_endbar",
+        ],
       ],
       proof: [
         "send_run_id": answerReceipt.runId,
+        "context_card_ids": sendVM.contextCards.map(\.id),
+        "selected_context_card_id": sendVM.selectedContextCardId ?? "",
         "approval_card_run_id": approvalCard.runId,
         "approval_card_digest_len": approvalCard.actionDigest.count,
         "approve_run_id": approveReceipt.runId,
