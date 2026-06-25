@@ -14,7 +14,7 @@ use friday_deepseek::{DeepSeekClient, Transport};
 use friday_storage::channel::get_channel;
 use friday_storage::{Db, StorageError};
 
-use crate::agent_run_control::{resume as agent_run_control_resume, ControlOutcome};
+use crate::agent_run_control::{resume_hooked as agent_run_control_resume_hooked, ControlOutcome};
 use crate::channel_event::{channel_event_id, ingest_channel_inbound, ChannelInboundReceipt};
 use crate::channels::{redact_inbound, resolve_and_verify, InboundRejection, RedactedInbound};
 use crate::mission_context::{
@@ -22,9 +22,9 @@ use crate::mission_context::{
     MissionContextResolution, ResolvedMissionContext,
 };
 use crate::mission_preflight::{
-    attach_channel_inbound_receipt, attach_provider_timeline_state_guarded,
-    attach_provider_timeline_state_guarded_with_completion_receipt, attach_workflow_run_ref,
-    MissionAttachmentOutcome, ProviderTimelineAttachment,
+    attach_channel_inbound_receipt, attach_provider_timeline_state_guarded_with_completion_receipt,
+    attach_provider_timeline_state_off_path_in, attach_workflow_run_ref, MissionAttachmentOutcome,
+    ProviderTimelineAttachment,
 };
 use crate::planner::WorkflowDefinition;
 use crate::provider_timeline::PendingState;
@@ -771,11 +771,18 @@ fn drive_provider_states(
 /// `accepted` outcome (the mutation DID run). The advance is a pure side-effect; it never alters
 /// the returned [`ControlOutcome`].
 ///
-/// **Known boundary (dark PR):** the spine's mutation (its own transaction) and this WorkItem
-/// advance (separate transactions) are not atomic. A crash between them leaves
-/// `run_result=mutation_completed` with the WorkItem still at `ProviderRouted`/`ProviderWaiting` —
-/// an UNDER-claim, never a false proof; the next resume is `executed==false` (nonce consumed) so it
-/// cannot re-advance. Acceptable for this dark, default-off seam.
+/// **Crash-window atomicity (H3 fix).** The spine's `run_result=mutation_completed` write AND this
+/// WorkItem advance now commit in ONE transaction: the advance runs as the spine's `on_executed`
+/// hook INSIDE the success transaction (`resume_with_approval_hooked`), so a crash leaves BOTH the
+/// run_result and the WorkItem hop, or NEITHER. The earlier non-atomic boundary — which could leave
+/// `run_result=mutation_completed` with the WorkItem stuck at `ProviderRouted`/`ProviderWaiting` (an
+/// UNDER-claim) — is closed. The residual under-claim is ONLY the executor-side one: the executor's
+/// file write is the irreducible non-rollbackable side effect committed OUTSIDE the transaction, so
+/// a crash after the file write but before the fold commits degrades to `executed==false` (nonce
+/// consumed, run_result + WorkItem both absent) on the next resume — never a false proof, never a
+/// re-advance (the consumed nonce replay-refuses). The abort predicate is UNCHANGED: the advance
+/// still runs ONLY when the spine returned an `accepted` (executed) outcome under a fresh Ed25519
+/// verify.
 ///
 /// Returns `Result<ControlOutcome, StorageError>` — a drop-in for the bare
 /// `agent_run_control::resume` at the wire seam (same `send_control_result` / `storage_failed`
@@ -788,81 +795,97 @@ pub fn resume_agent_loop_for_mission(
     signed_blob: &[u8],
     now_ms: i64,
 ) -> Result<ControlOutcome, StorageError> {
-    // (a) Delegate to the EXISTING resume spine UNCHANGED. This verifies the Ed25519 signature,
-    //     enforces single-use (nonce consume), runs the reject/cancel + wire-run-binding
-    //     pre-checks, and executes the ONE approved mutation. We add no verification/execution.
-    let outcome = agent_run_control_resume(
+    // (a) Resolve the bound WorkItem from the run's OWN pause-time provider_timeline link ONLY
+    //     (never a wire-supplied id) — a READ on the pre-pause binding, done BEFORE the spine runs
+    //     (the resume never mutates this link). No own-link (non-mission run / foreign nonce), a
+    //     non-provider_timeline kind, or no bound WorkItem ⇒ NO advance hook: the resume runs
+    //     byte-identically to a bare `agent_run_control::resume` on a non-mission run.
+    let advance_binding = match db.find_provider_timeline_link_by_run_id(run_id)? {
+        Some(link)
+            if link.link_kind == MissionLinkKind::ProviderTimeline
+                && link.work_item_id.is_some() =>
+        {
+            // The pause-time link's target_ref is `friday://provider-timeline/{session}#{run_id}`.
+            // Parse the session BACK out so the completion reuses the SAME link_id
+            // (mission_id+work_item+session+run) and UPSERTS the existing link instead of minting a
+            // second one (which would make a future run_id resolution ambiguous → fail-closed). The
+            // run_id segment was matched EXACTLY by the resolver, so the session is everything
+            // between the `provider-timeline/` prefix and the `#`.
+            let session_id =
+                provider_timeline_session_from_target(&link.target_ref).unwrap_or_default();
+            Some((
+                link.mission_id.clone(),
+                link.work_item_id.clone().expect("work_item_id is some"),
+                session_id,
+            ))
+        }
+        // Defense-in-depth: the storage query already filters to provider_timeline.
+        _ => None,
+    };
+
+    // (b) The completion hook: drive ONLY the remaining legal hops WaitingProvider →
+    //     ProviderCompleted with the run as proof. It runs INSIDE the spine's success transaction
+    //     (so the WorkItem advance and the `run_result` commit atomically), ONLY when the spine
+    //     executed the mutation (gate Allow + executor Ok) — `resume_with_approval_hooked` invokes
+    //     it solely on the executed-`Ok` arm, AFTER the nonce is consumed and the executor ran. A
+    //     non-advancing attachment outcome (e.g. an already-completed run ⇒ illegal/duplicate
+    //     transition) is NON-FATAL: the mutation DID run, so we stop driving hops but never error
+    //     the resume (the advance is a side-effect that never changes the returned ControlOutcome).
+    let proof_ref = format!("friday://agent-run/{run_id}");
+    let mut advance_hook =
+        advance_binding
+            .as_ref()
+            .map(|(mission_id, work_item_id, session_id)| {
+                move |tx: &rusqlite::Transaction<'_>| -> Result<(), StorageError> {
+                    for state in [
+                        PendingState::WaitingProvider,
+                        PendingState::ProviderCompleted,
+                    ] {
+                        let attachment = attach_provider_timeline_state_off_path_in(
+                            tx,
+                            ProviderTimelineAttachment {
+                                mission_id: mission_id.clone(),
+                                work_item_id: work_item_id.clone(),
+                                friday_session_id: session_id.clone(),
+                                request_id: run_id.to_string(),
+                                state,
+                                proof_ref: (state == PendingState::ProviderCompleted)
+                                    .then(|| proof_ref.clone()),
+                                now_ms,
+                            },
+                            // (#24b degrade-3) Clear `executing` on the resume completion hop too: a
+                            // resumed run that reaches `CompletedWithProof` must not leave a stale
+                            // marker (terminal rows are already never reconciled by PASS-2, but clearing
+                            // keeps the marker truthful for observability). Lands in the SAME fold tx.
+                            /* clear_executing = */
+                            state == PendingState::ProviderCompleted,
+                            // No separate completion-proof receipt: the proof_ref above is supplied.
+                            None,
+                        )?;
+                        if matches!(attachment, MissionAttachmentOutcome::Blocked { .. }) {
+                            break;
+                        }
+                    }
+                    Ok(())
+                }
+            });
+
+    // (c) Delegate to the EXISTING resume spine. This verifies the Ed25519 signature, enforces
+    //     single-use (nonce consume), runs the reject/cancel + wire-run-binding pre-checks, and
+    //     executes the ONE approved mutation. We add no verification/execution — the only addition
+    //     is the post-execute completion hook, folded into the spine's success transaction.
+    let hook = advance_hook
+        .as_mut()
+        .map(|h| h as crate::resume::ResumeCompletionHook<'_>);
+    agent_run_control_resume_hooked(
         db.conn(),
         executor,
         operator_vk,
         run_id,
         signed_blob,
         now_ms,
-    )?;
-
-    // (b) THE LOOPHOLE GATE. `outcome.accepted == outcome.executed` (agent_run_control.rs:472):
-    //     true IFF gate Allow AND executor Ok. Any refusal / exec-failure is `accepted:false` ⇒
-    //     return the spine outcome UNMODIFIED, WorkItem untouched (stays ProviderRouted). No proof.
-    if !outcome.accepted {
-        return Ok(outcome);
-    }
-
-    // (c) Resolve the bound WorkItem from the run's OWN pause-time provider_timeline link ONLY
-    //     (never a wire-supplied id). No own-link (non-mission run / foreign nonce) ⇒ no advance:
-    //     return the spine outcome unchanged (byte-identical to a bare resume on a non-mission run).
-    let Some(link) = db.find_provider_timeline_link_by_run_id(run_id)? else {
-        return Ok(outcome);
-    };
-    if link.link_kind != MissionLinkKind::ProviderTimeline {
-        // Defense-in-depth: the storage query already filters to provider_timeline.
-        return Ok(outcome);
-    }
-    let Some(work_item_id) = link.work_item_id.clone() else {
-        // A provider_timeline link with no bound WorkItem cannot be completed — leave it.
-        return Ok(outcome);
-    };
-    // The pause-time link's target_ref is `friday://provider-timeline/{session}#{run_id}`. Parse the
-    // session BACK out so the completion reuses the SAME link_id (mission_id+work_item+session+run)
-    // and UPSERTS the existing link instead of minting a second one (which would make a future
-    // run_id resolution ambiguous → fail-closed). The run_id segment was matched EXACTLY by the
-    // resolver, so the session is everything between the `provider-timeline/` prefix and the `#`.
-    let session_id = provider_timeline_session_from_target(&link.target_ref).unwrap_or_default();
-
-    // (d) Drive ONLY the remaining legal hops RoutedToProvider → WaitingProvider →
-    //     ProviderCompleted with the run as proof. `guarded=false` = the inline write (no extra
-    //     audit row, no PK risk); the proof_ref is always supplied so the completion is well-formed.
-    let proof_ref = format!("friday://agent-run/{run_id}");
-    for state in [
-        PendingState::WaitingProvider,
-        PendingState::ProviderCompleted,
-    ] {
-        let attachment = attach_provider_timeline_state_guarded(
-            db,
-            ProviderTimelineAttachment {
-                mission_id: link.mission_id.clone(),
-                work_item_id: work_item_id.clone(),
-                friday_session_id: session_id.clone(),
-                request_id: run_id.to_string(),
-                state,
-                proof_ref: (state == PendingState::ProviderCompleted).then(|| proof_ref.clone()),
-                now_ms,
-            },
-            /* guarded = */ false,
-            // (#24b degrade-3) Clear `executing` on the resume completion hop too: a resumed run that
-            // reaches `CompletedWithProof` must not leave a stale marker (terminal rows are already
-            // never reconciled by PASS-2, but clearing keeps the marker truthful for observability).
-            /* clear_executing = */
-            state == PendingState::ProviderCompleted,
-        )?;
-        // A non-advancing outcome (e.g. an already-completed run ⇒ illegal/duplicate transition) is
-        // NON-FATAL: the mutation DID run (the spine returned accepted), so we still report it. The
-        // advance is a best-effort side-effect that never changes the returned ControlOutcome.
-        if matches!(attachment, MissionAttachmentOutcome::Blocked { .. }) {
-            break;
-        }
-    }
-
-    Ok(outcome)
+        hook,
+    )
 }
 
 /// Parse the `{session}` out of a provider-timeline `target_ref`

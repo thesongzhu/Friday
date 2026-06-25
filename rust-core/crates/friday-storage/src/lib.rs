@@ -71,8 +71,8 @@ pub use provider_timeline_store::{
 pub use retention::{sweep_retention, RetentionOutcome, RetentionWindows};
 pub use run_result::{
     get_run_answer_for_principal, get_run_result, get_run_result_ref, persist_run_result,
-    AnswerDenyReason, PersistRunResultOutcome, RunAnswerAccess, RunResult, RunResultRef,
-    StoredRunResult,
+    persist_run_result_in, AnswerDenyReason, PersistRunResultOutcome, RunAnswerAccess, RunResult,
+    RunResultRef, StoredRunResult,
 };
 pub use schema::{
     hub_code_max, hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES,

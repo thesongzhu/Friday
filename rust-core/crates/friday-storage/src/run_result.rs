@@ -54,7 +54,7 @@
 
 use crate::error::{Result, StorageError};
 use friday_core::gate::{is_anonymous_principal, Actor, ActorKind};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
 
 /// The result of a run, as supplied to [`persist_run_result`]. Deliberately lean:
@@ -270,11 +270,32 @@ pub fn persist_run_result(
     result: &RunResult,
     now_ms: i64,
 ) -> Result<PersistRunResultOutcome> {
+    let tx = conn.unchecked_transaction()?;
+    let outcome = persist_run_result_in(&tx, run_id, result, now_ms)?;
+    tx.commit()?;
+    Ok(outcome)
+}
+
+/// [`persist_run_result`] WITHOUT opening/committing its own transaction — the caller
+/// supplies the [`Transaction`] and is responsible for the surrounding `BEGIN`/`COMMIT`.
+///
+/// This is the seam the resume-completion fold uses (H3 crash-window atomicity): the
+/// resume path commits the `run_result` row AND the bound WorkItem's status advance in ONE
+/// transaction, so a crash leaves BOTH rows or NEITHER — never the intermediate
+/// `run_result=mutation_completed` + WorkItem-still-`ProviderRouted` UNDER-claim. The
+/// check-then-insert + lifecycle-state coherence semantics are byte-identical to the
+/// tx-opening [`persist_run_result`] (which now delegates here); SQLite forbids a nested
+/// `BEGIN`, so a caller already inside a transaction MUST use this variant.
+pub fn persist_run_result_in(
+    tx: &Transaction<'_>,
+    run_id: &str,
+    result: &RunResult,
+    now_ms: i64,
+) -> Result<PersistRunResultOutcome> {
     let answer_bytes = result.answer.as_bytes();
     let answer_sha256 = sha256_hex(answer_bytes);
     let answer_len = answer_bytes.len() as i64;
 
-    let tx = conn.unchecked_transaction()?;
     let existing: Option<String> = tx
         .query_row(
             "SELECT answer_sha256 FROM run_result WHERE run_id = ?1",
@@ -318,8 +339,7 @@ pub fn persist_run_result(
     // clobbers a `cancelled` run, and is harmless when no `agent_run` row exists or on
     // an idempotent re-persist (re-writes the same terminal value). See
     // [`crate::agent_run::mark_run_terminal_state`] for the full no-degrade contract.
-    crate::agent_run::mark_run_terminal_state(&tx, run_id, &result.status, now_ms)?;
-    tx.commit()?;
+    crate::agent_run::mark_run_terminal_state(tx, run_id, &result.status, now_ms)?;
     Ok(outcome)
 }
 

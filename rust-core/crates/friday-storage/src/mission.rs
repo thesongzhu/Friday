@@ -2032,12 +2032,24 @@ pub fn get_mission_body_snapshot(
 /// only acts on `executing == 1` rows).
 pub fn upsert_work_item_clearing_executing(conn: &Connection, item: &WorkItem) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
-    upsert_work_item(&tx, item)?;
-    tx.execute(
+    upsert_work_item_clearing_executing_in(&tx, item)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// [`upsert_work_item_clearing_executing`] WITHOUT opening/committing its own transaction —
+/// the caller supplies the connection (a [`rusqlite::Transaction`] derefs to [`Connection`])
+/// and owns the surrounding `BEGIN`/`COMMIT`. Both statements still land together because
+/// the caller's transaction is the atomic boundary. This is the seam the resume-completion
+/// fold (H3 crash-window atomicity) uses to advance the WorkItem to its resting state inside
+/// the SAME transaction that commits the run's `run_result`; SQLite forbids a nested `BEGIN`,
+/// so a caller already inside a transaction MUST use this variant.
+pub fn upsert_work_item_clearing_executing_in(conn: &Connection, item: &WorkItem) -> Result<()> {
+    upsert_work_item(conn, item)?;
+    conn.execute(
         "UPDATE work_item SET executing = 0 WHERE work_item_id = ?1",
         params![item.work_item_id],
     )?;
-    tx.commit()?;
     Ok(())
 }
 

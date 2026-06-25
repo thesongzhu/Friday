@@ -26,11 +26,17 @@ use friday_core::gate::{canonical_action_bytes, CanonicalApproval, GateDecision}
 use friday_crypto::OperatorVerifyingKey;
 use friday_storage::{
     audit, authorize_mutating_action_ed25519, get_pending_request, persist_run_result,
-    set_pending_status, PendingApprovalRequest, RunResult, StorageError,
+    persist_run_result_in, set_pending_status, PendingApprovalRequest, RunResult, StorageError,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction};
 
 use crate::{build_request_with_policy, RawToolCall, RunPolicy, ToolError, ToolExecutor};
+
+/// A post-execute completion hook run INSIDE the resume success transaction (H3 crash-window
+/// atomicity). It receives the live [`Transaction`] so any write it performs (e.g. the mission
+/// resume-completion leg's WorkItem advance) commits atomically with the spine's `run_result`. An
+/// `Err` rolls back the WHOLE fold (both-or-neither). See [`resume_with_approval_hooked`].
+pub type ResumeCompletionHook<'a> = &'a mut dyn FnMut(&Transaction<'_>) -> Result<(), StorageError>;
 
 /// The result of an ingest+resume attempt. Refs-friendly: it carries the gate decision,
 /// a coarse status, whether the one mutation executed, and a soft link to the audit
@@ -123,6 +129,43 @@ pub fn resume_with_approval(
     approval: &CanonicalApproval,
     now_ms: i64,
 ) -> Result<ResumeOutcome, ResumeError> {
+    resume_with_approval_hooked(conn, executor, operator_vk, approval, now_ms, None)
+}
+
+/// [`resume_with_approval`] with an OPTIONAL post-execute completion hook that runs INSIDE the
+/// success transaction (H3 crash-window atomicity).
+///
+/// The hook is the seam that lets the mission resume-completion leg
+/// ([`crate::mission_runtime::resume_agent_loop_for_mission`]) fold its bound-WorkItem advance into
+/// the SAME transaction that commits the run's `run_result`. On the executed-Ok path the spine now
+/// opens ONE transaction, writes the receipt + consumes the pending status + persists the
+/// `run_result`, then — STILL inside that transaction — calls `on_executed(&tx)` (the WorkItem
+/// advance), and only then commits. A crash therefore leaves BOTH the run_result and the WorkItem
+/// hop, or NEITHER; it can never leave `run_result=mutation_completed` with the WorkItem stuck at
+/// `ProviderRouted` (the previous partial-commit UNDER-claim).
+///
+/// CRITICALLY, the transaction opens ONLY in the executed-`Ok` arm — strictly AFTER
+/// `authorize_mutating_action_ed25519` has already CONSUMED the nonce (the `consumed_approval`
+/// INSERT commits in its own autocommit transaction, UPSTREAM of and OUTSIDE this fold). So a crash
+/// that rolls back the fold still leaves the nonce consumed: a replay re-enters
+/// `authorize_mutating_action_ed25519` and is Denied by the `consumed_approval` PRIMARY-KEY
+/// collision, INDEPENDENT of the (rolled-back, still-`pending`) `pending_approval_request.status`.
+/// The abort predicate is NOT broadened: the gate still verifies Ed25519 + expiry + digest exactly
+/// as before. The [`ToolExecutor`] file write stays OUTSIDE the transaction (its irreducible
+/// non-rollbackable side effect) — so the executor-side under-claim (file written, DB rolled back)
+/// still degrades to `executed == false`, never a worse leak.
+///
+/// `on_executed = None` is byte-identical to the pre-fold spine for every non-mission caller (the
+/// wire path, the bins, the tests): the same three writes, now in one transaction with one commit
+/// instead of three. The refused-arm and exec-failed-arm writes are unchanged.
+pub fn resume_with_approval_hooked(
+    conn: &Connection,
+    executor: &dyn ToolExecutor,
+    operator_vk: &OperatorVerifyingKey,
+    approval: &CanonicalApproval,
+    now_ms: i64,
+    on_executed: Option<ResumeCompletionHook<'_>>,
+) -> Result<ResumeOutcome, ResumeError> {
     // (1) Look up the pending request by the approval's NONCE. An unknown nonce is a hard
     //     refusal — there is no paused action this approval applies to.
     let pending =
@@ -186,11 +229,24 @@ pub fn resume_with_approval(
     //     second ingest of this approval is replay-refused regardless of what happens here.
     match executor.execute(&raw.action, &raw.params) {
         Ok(receipt) => {
+            // (H3 crash-window atomicity) Fold the post-execute writes — the receipt, the
+            // pending-status consume, the `run_result`, AND (for the mission leg) the bound
+            // WorkItem advance via `on_executed` — into ONE transaction. The executor already ran
+            // (its file write is the irreducible side effect, committed above and OUTSIDE this tx),
+            // and the nonce is already consumed by `authorize_mutating_action_ed25519` (its own
+            // autocommit, UPSTREAM). So this tx contains ONLY rollback-safe bookkeeping: a crash
+            // before commit leaves NONE of these rows (the executor under-claim, `executed==false`
+            // on the replay-refused next resume), and a clean commit lands ALL of them together —
+            // never `run_result=mutation_completed` with the WorkItem stuck at `ProviderRouted`.
             let summary = format!("resume.executed:{}", receipt.summary);
-            write_receipt(conn, &event_id, &receipt_id, &run_id, &summary, now_ms)?;
-            set_pending_status(conn, &approval.approval_id, "consumed")?;
-            persist_run_result(
-                conn,
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(StorageError::from)
+                .map_err(ResumeError::Storage)?;
+            write_receipt_in(&tx, &event_id, &receipt_id, &run_id, &summary, now_ms)?;
+            set_pending_status(&tx, &approval.approval_id, "consumed")?;
+            persist_run_result_in(
+                &tx,
                 &run_id,
                 &with_owner(
                     RunResult::new(
@@ -202,6 +258,12 @@ pub fn resume_with_approval(
                 ),
                 now_ms,
             )?;
+            if let Some(hook) = on_executed {
+                hook(&tx)?;
+            }
+            tx.commit()
+                .map_err(StorageError::from)
+                .map_err(ResumeError::Storage)?;
             Ok(ResumeOutcome {
                 run_id,
                 approval_id: approval.approval_id.clone(),
@@ -264,7 +326,8 @@ fn with_owner(result: RunResult, principal_id: Option<&str>) -> RunResult {
 
 /// Write the event-log line + the hash-chained audit receipt in ONE transaction (so the
 /// event log can never get ahead of the ledger on a partial commit) — the same coupling
-/// the loop uses for an executed tool.
+/// the loop uses for an executed tool. Used by the refused / exec-failed arms, which are NOT
+/// folded with any downstream write.
 fn write_receipt(
     conn: &Connection,
     event_id: &str,
@@ -274,15 +337,32 @@ fn write_receipt(
     now_ms: i64,
 ) -> Result<(), StorageError> {
     let tx = conn.unchecked_transaction()?;
-    friday_storage::agent_run::record_event(&tx, event_id, run_id, summary, now_ms)?;
+    write_receipt_in(&tx, event_id, receipt_id, run_id, summary, now_ms)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// [`write_receipt`] WITHOUT opening/committing its own transaction — the caller supplies the
+/// [`Transaction`] and owns the surrounding `BEGIN`/`COMMIT`. This is the variant the executed-Ok
+/// arm uses so the receipt joins the SAME fold transaction as the `run_result` + WorkItem advance
+/// (H3 crash-window atomicity); SQLite forbids a nested `BEGIN`. The event/ledger coupling is
+/// identical — both rows land or neither, now as part of the larger fold.
+fn write_receipt_in(
+    tx: &Transaction<'_>,
+    event_id: &str,
+    receipt_id: &str,
+    run_id: &str,
+    summary: &str,
+    now_ms: i64,
+) -> Result<(), StorageError> {
+    friday_storage::agent_run::record_event(tx, event_id, run_id, summary, now_ms)?;
     audit::append_audit(
-        &tx,
+        tx,
         receipt_id,
         "operator-resume",
         summary,
         Some(run_id),
         now_ms,
     )?;
-    tx.commit()?;
     Ok(())
 }

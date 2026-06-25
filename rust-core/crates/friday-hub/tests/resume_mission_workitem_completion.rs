@@ -33,12 +33,15 @@ use friday_hub::mission_preflight::{
 };
 use friday_hub::mission_runtime::resume_agent_loop_for_mission;
 use friday_hub::provider_timeline::PendingState;
+use friday_hub::resume::resume_with_approval_hooked;
 use friday_hub::{
     build_request_with_policy, run_loop_with_policy, AgentError, AgentLlmClient, AgentStep,
     ExecError, FsToolExecutor, LoopStatus, RawToolCall, RunPolicy, ToolExecutor, ToolReceipt,
     TurnTrace,
 };
-use friday_storage::{agent_run, list_pending_requests_for_run, Db};
+use friday_storage::{
+    agent_run, get_run_result_ref, list_pending_requests_for_run, Db, StorageError,
+};
 
 static C: AtomicU64 = AtomicU64::new(0);
 
@@ -669,5 +672,124 @@ fn no_double_advance_on_already_completed_run() {
     assert_eq!(
         item_after_first.updated_at_ms,
         item_after_second.updated_at_ms
+    );
+}
+
+// ─────────────────────────── crash-window atomicity (H3 fix) ───────────────────────────
+
+/// THE H3 CANARY: the spine's `run_result` write and the bound-WorkItem advance commit in ONE
+/// transaction, so a crash leaves BOTH-or-NEITHER — never the partial `run_result=mutation_completed`
+/// + WorkItem-still-`ProviderRouted` UNDER-claim.
+///
+/// We simulate a crash BETWEEN the (formerly two) writes by passing `resume_with_approval_hooked` an
+/// `on_executed` hook that FAILS after the spine has already written the `run_result` inside the
+/// fold transaction. Because the advance hook and the `run_result` share ONE transaction, the hook's
+/// `Err` rolls back the WHOLE fold: the `run_result` row is ABSENT (the partial commit is gone) AND
+/// the WorkItem is UNCHANGED at `ProviderRouted` (its advance rolled back too).
+///
+/// The executor file write (the irreducible non-rollbackable side effect) DID happen, committed
+/// OUTSIDE the transaction, and the nonce was consumed UPSTREAM (so a replay would replay-refuse).
+/// That is exactly the residual executor-only under-claim: `executed`-then-crash degrades to
+/// `run_result` absent on the next resume, never a false proof. BEFORE this fix the `run_result` row
+/// would survive the failed advance (the bug); after it, both rows vanish together.
+#[test]
+fn fold_rolls_back_run_result_when_advance_hook_fails() {
+    let (sk, vk) = operator();
+    let db = Db::open_hub(&temp_db("foldfail")).unwrap();
+    let ws = Workspace::new("foldfail");
+    let owner = "owner:alice";
+    let run_id = "run-foldfail";
+    seed_mission(&db, "foldfail", owner);
+    bind_to_provider_routed(&db, "foldfail", "friday-session-foldfail", run_id);
+    let (nonce, request) = pause_run(&db, &ws, run_id, owner, &vk, "out-foldfail.txt");
+    let exec = FsToolExecutor::new(&ws.0);
+    let approval = ed_approval(&request, &sk, &nonce, Some(FUTURE));
+
+    // A hook that simulates a crash AFTER the spine wrote run_result, inside the fold tx.
+    let mut hook = |_tx: &rusqlite::Transaction<'_>| -> Result<(), StorageError> {
+        Err(StorageError::Unsupported("simulated mid-fold crash".into()))
+    };
+    let result =
+        resume_with_approval_hooked(db.conn(), &exec, &vk, &approval, NOW, Some(&mut hook));
+
+    // The hook's Err propagates out of the spine (the fold tx never committed).
+    assert!(
+        result.is_err(),
+        "the hook failure must surface (the fold tx is rolled back, not silently committed)"
+    );
+
+    // BOTH-OR-NEITHER: the run_result is ABSENT (rolled back with the failed advance) — NOT a
+    // partial `run_result=mutation_completed`-only under-claim.
+    let rr = get_run_result_ref(db.conn(), run_id).unwrap();
+    assert!(
+        rr.is_none(),
+        "run_result must roll back with the failed WorkItem advance (no partial commit): {rr:?}"
+    );
+
+    // The WorkItem is unchanged at ProviderRouted (its advance rolled back too — no false proof).
+    assert_eq!(
+        work_status(&db, "foldfail"),
+        WorkItemStatus::ProviderRouted,
+        "the WorkItem advance must roll back with the run_result"
+    );
+
+    // The executor file write is the irreducible side effect: it DID run (outside the tx). This is
+    // the residual executor-only under-claim — file present, DB rolled back.
+    assert_eq!(
+        std::fs::read_to_string(ws.join("out-foldfail.txt")).unwrap(),
+        "RESUMED",
+        "the executor file write stays OUTSIDE the fold tx (irreducible side effect)"
+    );
+
+    // The nonce was consumed UPSTREAM (its own autocommit), so a replay replay-refuses — proving the
+    // rolled-back fold did NOT un-consume the nonce (no re-execute path opens).
+    let approval2 = ed_approval(&request, &sk, &nonce, Some(FUTURE));
+    let replay =
+        resume_agent_loop_for_mission(&db, &exec, &vk, run_id, &signed_blob(&approval2), NOW + 1)
+            .unwrap();
+    assert!(
+        !replay.accepted,
+        "the consumed nonce must replay-refuse even after the fold rolled back"
+    );
+    // Still no run_result, still ProviderRouted (the replay-refusal never advances).
+    assert!(get_run_result_ref(db.conn(), run_id).unwrap().is_none());
+    assert_eq!(work_status(&db, "foldfail"), WorkItemStatus::ProviderRouted);
+}
+
+/// The COMMIT side of the both-or-neither coupling: a successful executed resume commits the
+/// `run_result` AND the bound-WorkItem advance TOGETHER (one transaction). Asserts the `run_result`
+/// row is present (`mutation_completed`) exactly when the WorkItem reached `CompletedWithProof` —
+/// the two are never observed apart.
+#[test]
+fn fold_commits_run_result_and_work_item_together() {
+    let (sk, vk) = operator();
+    let db = Db::open_hub(&temp_db("foldok")).unwrap();
+    let ws = Workspace::new("foldok");
+    let owner = "owner:alice";
+    let run_id = "run-foldok";
+    seed_mission(&db, "foldok", owner);
+    bind_to_provider_routed(&db, "foldok", "friday-session-foldok", run_id);
+    let (nonce, request) = pause_run(&db, &ws, run_id, owner, &vk, "out-foldok.txt");
+    let exec = FsToolExecutor::new(&ws.0);
+    let approval = ed_approval(&request, &sk, &nonce, Some(FUTURE));
+
+    // BEFORE: no run_result yet (the paused run defers it to the resume-completion leg).
+    assert!(get_run_result_ref(db.conn(), run_id).unwrap().is_none());
+
+    let outcome =
+        resume_agent_loop_for_mission(&db, &exec, &vk, run_id, &signed_blob(&approval), NOW)
+            .unwrap();
+    assert!(outcome.accepted);
+
+    // AFTER: the run_result is present (mutation_completed) AND the WorkItem is CompletedWithProof —
+    // both committed together by the single fold transaction.
+    let rr = get_run_result_ref(db.conn(), run_id)
+        .unwrap()
+        .expect("run_result committed with the advance");
+    assert_eq!(rr.status, "mutation_completed");
+    assert_eq!(
+        work_status(&db, "foldok"),
+        WorkItemStatus::CompletedWithProof,
+        "the WorkItem advance commits in the SAME tx as the run_result"
     );
 }
