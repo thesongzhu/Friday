@@ -66,6 +66,14 @@ struct CommandSheet: View {
 
   private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
   private let endBarSnapshot = MobileProductEndBarSnapshot()
+  private let selectedT2SurfaceTitles = [
+    "Session",
+    "Context Passport",
+    "Token Ledger",
+    "Share Intake",
+    "Voice",
+    "Needs Me",
+  ]
 
   var body: some View {
     NavigationStack {
@@ -144,5 +152,7 @@ struct CommandSheet: View {
     .frame(maxWidth: .infinity)
     .padding(.top, 8)
     .accessibilityIdentifier("friday.command-sheet.readiness-footer")
+    .accessibilityLabel(
+      "Route coverage is not END-BAR. Selected T2 surfaces: \(selectedT2SurfaceTitles.joined(separator: ", ")).")
   }
 }
