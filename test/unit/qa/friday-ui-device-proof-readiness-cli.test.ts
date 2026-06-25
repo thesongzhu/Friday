@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -771,6 +771,53 @@ describe("friday-ui-device-proof-readiness", () => {
         .split("\n")
         .map((line) => JSON.parse(line) as { event?: string });
       expect(rows).toContainEqual(expect.objectContaining({ event: "proof_receipt_visible_before_done" }));
+      expect(rows).toContainEqual(expect.objectContaining({ event: "mission_workbench_visible" }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("can derive a workbench snapshot from an explicit read-only Rust DB path", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-workbench-db-"));
+    try {
+      writePartialEvidenceDir(tempDir);
+      const fakeBin = join(tempDir, "bin");
+      const fakeDb = join(tempDir, "rust-hub.sqlite");
+      const fakeCargo = join(fakeBin, "cargo");
+      mkdirSync(fakeBin);
+      writeFileSync(fakeDb, "not-empty");
+      writeFileSync(fakeCargo, `#!/usr/bin/env bash
+set -euo pipefail
+cat <<'JSON'
+${JSON.stringify({ snapshot: makeWorkbenchSnapshot() }, null, 2)}
+JSON
+`);
+      chmodSync(fakeCargo, 0o755);
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+        "--workbench-db",
+        fakeDb,
+      ], {
+        cwd: process.cwd(),
+        env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.notes).toContain(`workbench_snapshot_cli:ready:${join(tempDir, "workbench-snapshot.json")}`);
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_merge:ready"))).toBe(true);
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+
+      const rows = readFileSync(join(tempDir, "same-run-events.merged.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { event?: string });
       expect(rows).toContainEqual(expect.objectContaining({ event: "mission_workbench_visible" }));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
