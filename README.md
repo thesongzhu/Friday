@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Your private control plane for AI agents.</strong><br>
-  Hand it a goal. It picks the right AI, checks the work, asks before anything risky, and remembers what you told it — so you're steering, not babysitting. You hold the keys.<br>
+  Hand it a goal. It routes each step to an AI, checks the work, asks before anything risky, and remembers what you told it — so you're steering, not babysitting. You hold the keys.<br>
   Local-first kernel · BYOK · Approval-first · Human-controlled · Evidence-backed
 </p>
 
@@ -26,7 +26,7 @@
 
 The trick with AI agents isn't prompting them yourself all day — it's building **the loop that prompts them for you**. Friday is that loop, turned into a product and made safe:
 
-> **finds the work → hands it to the right AI → checks it actually did it → writes down what's done → picks the next thing** — the system nags the agents, so you don't have to.
+> **finds the work → hands it to an AI → checks it actually did it → writes down what's done → picks the next thing** — the system nags the agents, so you don't have to.
 
 Under the hood it runs Codex, Claude, and DeepSeek like a **metered crew** — cheap models do the thinking and planning, pricey ones do the heavy lifting — keeps the receipts, and hits pause on anything risky until you say go.
 
@@ -36,7 +36,7 @@ Under the hood it runs Codex, Claude, and DeepSeek like a **metered crew** — c
         your goal
            │
            ▼
-   route ── pick the best AI for this step  (you can re-route)
+   route ── pick an AI for this step  (you can re-route)
            │
            ▼
    execute ── governed: risky steps pause for your approval
@@ -45,7 +45,7 @@ Under the hood it runs Codex, Claude, and DeepSeek like a **metered crew** — c
    verify ── prove it's really done  (don't trust "I'm done")
            │
            ▼
-   remember ── candidate → you confirm → it gets smarter
+   remember ── candidate → you confirm → it remembers
            │
            └──────────────► the next thing
 ```
