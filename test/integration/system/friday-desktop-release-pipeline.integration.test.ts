@@ -39,6 +39,7 @@ async function createFixtureRepo(): Promise<string> {
       "check:ios-t2-surface-contract": "node scripts/ops/check-friday-ios-t2-surface-contract.mjs",
       "check:ios-design-destination-capture-contract": "node scripts/ops/check-friday-ios-design-destination-capture-contract.mjs",
       "proof:ios:design-destinations": "bash scripts/ops/friday-ios-design-destination-capture.sh --out-dir \"${FRIDAY_IOS_DESIGN_CAPTURE_OUT:-/tmp/friday-ios-design-destination-capture}\"",
+      "proof:action-runtime:evidence-bundle": "bash scripts/ops/friday-action-runtime-evidence-bundle.sh --out-dir \"${FRIDAY_ACTION_RUNTIME_EVIDENCE_BUNDLE_OUT:-/tmp/friday-action-runtime-evidence-bundle}\"",
       "proof:desktop:live-write-read": "bash scripts/ops/friday-macos-live-write-read-capture.sh --out-dir \"${FRIDAY_DESKTOP_LIVE_WRITE_READ_CAPTURE_OUT:-/tmp/friday-desktop-live-write-read-capture}\"",
       "proof:ui-device:live-write-read-bundle": "bash scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh --out-dir \"${FRIDAY_UI_DEVICE_LIVE_WRITE_READ_BUNDLE_OUT:-/tmp/friday-ui-device-live-write-read-bundle}\"",
       "check:product-auto-followup-contract": "node scripts/ops/check-friday-product-auto-followup-contract.mjs",
@@ -73,6 +74,7 @@ async function createFixtureRepo(): Promise<string> {
     "scripts/ops/check-friday-ios-t2-surface-contract.mjs",
     "scripts/ops/check-friday-ios-design-destination-capture-contract.mjs",
     "scripts/ops/friday-ios-design-destination-capture.sh",
+    "scripts/ops/friday-action-runtime-evidence-bundle.sh",
     "scripts/ops/friday-macos-live-write-read-capture.sh",
     "scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh",
     "scripts/ops/check-friday-product-auto-followup-contract.mjs",
@@ -127,6 +129,11 @@ async function createFixtureRepo(): Promise<string> {
     root,
     "scripts/ops/friday-ios-design-destination-capture.sh",
     "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture ios design destination capture\"\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/friday-action-runtime-evidence-bundle.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture action-runtime evidence bundle\"\n",
   );
   await writeFileWithParents(
     root,
@@ -230,6 +237,14 @@ describe("client ship gate pipeline check", () => {
         }),
         expect.objectContaining({
           target: "proof:ios:design-destinations",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "scripts/ops/friday-action-runtime-evidence-bundle.sh",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "proof:action-runtime:evidence-bundle",
           status: "passed",
         }),
         expect.objectContaining({
