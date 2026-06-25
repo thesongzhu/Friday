@@ -38,12 +38,25 @@
 //! - **Phone** requires a full 10 digits; the oracle also matches bare 7-digit
 //!   locals. This is a DELIBERATE under-match — a bare 7-digit pattern would
 //!   over-redact benign numbers; disclosed, not a parity claim.
-//! - **Residual under-matches (disclosed):** a value with an ASCII word/digit char glued
-//!   to its LEFT (e.g. `x123-45-6789`) still under-matches — only the leading boundary
-//!   remains, and removing it too would let patterns start mid-ASCII-token. Credit-card
-//!   detection is group-aligned (see `luhn_card_subspan`): a PAN glued to a stray digit
-//!   mid-group, or inside one >19-digit run, is not isolated. Both are pre-existing,
-//!   behind the Passport gate for recall, and never leak MORE than before.
+//! - **Full-width / Chinese-IME input** is handled by a restricted 1:1 fold for
+//!   DETECTION only (see `fold_char`): full-width ASCII variants `U+FF01..=U+FF5E`
+//!   (digits `０..９`, latin, `＠`, `－`) and the ideographic space `U+3000` fold to
+//!   their ASCII counterparts before the patterns run, then spans are mapped back so
+//!   the ORIGINAL text is redacted byte-verbatim. This closes the innocent full-width
+//!   digit/punctuation leak (regex `\b`, the `[2-9]` phone class, and the
+//!   `is_ascii_digit` Luhn grouping all assume ASCII). It is deliberately NOT general
+//!   NFKC — that would break offset mapping and silently normalize non-PII recall text.
+//! - **Residual under-matches (disclosed):** (a) a value with an ASCII word/digit char
+//!   glued to its LEFT (e.g. `x123-45-6789`) still under-matches — only the leading
+//!   boundary remains, and removing it too would let patterns start mid-ASCII-token.
+//!   (b) Zero-width chars injected INTO a value (`4111<U+200B>1111…`) defeat detection;
+//!   they are NOT folded/stripped because global zero-width stripping would corrupt
+//!   emoji ZWJ sequences — an adversarial, not innocent, vector. (c) A genuinely-CJK
+//!   email localpart (`用户@…`) is not matched (widening the localpart to `\p{L}` would
+//!   break the CJK-adjacency boundary). (d) Credit-card detection is group-aligned (see
+//!   `luhn_card_subspan`): a PAN glued to a stray digit mid-group, or inside one
+//!   >19-digit run, is not isolated. All are pre-existing or adversarial, behind the
+//!   Passport gate for recall, and never leak MORE than before.
 //!
 //! Redaction is defense-in-depth; the Context Passport sensitive-flag gate is the
 //! primary control and is NOT replaced by this.
@@ -241,18 +254,72 @@ struct Span {
     kind: PiiKind,
 }
 
+/// Fold one char to its ASCII counterpart for DETECTION ONLY. Strictly 1:1
+/// (char -> char), so a folded-string offset maps back to the original by
+/// char-boundary lockstep. This is DELIBERATELY a restricted fold, NOT general
+/// NFKC: NFKC's many-to-one / one-to-many decompositions would break the offset
+/// mapping AND would silently normalize non-PII recall content (a fidelity change
+/// on the sole PII-defense path). Covers the innocent Chinese-IME full-width
+/// vectors — full-width ASCII variants `U+FF01..=U+FF5E` (digits `０..９`, latin,
+/// `＠`, `－`) fold by the fixed `0xFEE0` offset, and the ideographic space
+/// `U+3000` folds to a normal space. Everything else (genuine CJK, zero-width
+/// format chars, Arabic-Indic digits) is identity — those stay residual.
+fn fold_char(c: char) -> char {
+    match c {
+        '\u{3000}' => ' ',
+        '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+        _ => c,
+    }
+}
+
+/// Build the detection copy (every char folded by [`fold_char`]) plus a map from
+/// folded byte-offset -> original byte-offset at every char boundary (ascending,
+/// with an end sentinel). Because the fold is 1:1, regex/Luhn spans found in the
+/// folded copy always land on char boundaries that are present in this map.
+fn fold_for_detection(content: &str) -> (String, Vec<(usize, usize)>) {
+    let mut folded = String::with_capacity(content.len());
+    let mut map: Vec<(usize, usize)> = Vec::new();
+    for (orig_off, c) in content.char_indices() {
+        map.push((folded.len(), orig_off));
+        folded.push(fold_char(c));
+    }
+    map.push((folded.len(), content.len()));
+    (folded, map)
+}
+
+/// Map a folded byte-offset (which sits on a char boundary present in `map`) back
+/// to the original byte-offset.
+fn orig_offset(map: &[(usize, usize)], folded_off: usize) -> usize {
+    match map.binary_search_by_key(&folded_off, |&(f, _)| f) {
+        Ok(i) => map[i].1,
+        // Defensive only: spans are char-aligned, so this branch is unreachable in
+        // practice. Fall back to the nearest preceding boundary's original offset.
+        Err(i) => map.get(i.saturating_sub(1)).map(|&(_, o)| o).unwrap_or(0),
+    }
+}
+
 /// Redact every PII span in `content`, replacing each with its kind marker (e.g.
 /// `[EMAIL]`). Returns the redacted text and the DISTINCT kinds found (stable
 /// order). A credit-card candidate is redacted ONLY if it passes the Luhn check.
 /// Overlapping matches are resolved earliest-start-wins so a span is never
 /// double-replaced.
+///
+/// Detection runs on a restricted-fold COPY (see [`fold_char`]) so innocent
+/// full-width Chinese-IME input (full-width digits/punctuation, ideographic space)
+/// is matched by the same ASCII-oriented patterns; the redaction itself is applied
+/// to the ORIGINAL string at mapped-back offsets, so non-PII text stays
+/// byte-verbatim (no normalization leaks into recalled memory).
 pub fn redact_pii(content: &str) -> (String, Vec<PiiKind>) {
+    let (folded, map) = fold_for_detection(content);
     let mut spans: Vec<Span> = Vec::new();
     for (kind, re) in pii_patterns() {
-        for m in re.find_iter(content) {
+        // Match on the folded detection copy; spans are in folded offsets and are
+        // mapped back to the original before replacement.
+        for m in re.find_iter(&folded) {
             if *kind == PiiKind::CreditCard {
                 // Redact the longest Luhn-valid sub-window, not the whole greedy span,
                 // so an annexed trailing group can't make a real card fail Luhn and drop.
+                // (Runs on the folded ASCII copy, so its byte-grouping stays correct.)
                 if let Some((start, end)) = luhn_card_subspan(m.as_str(), m.start()) {
                     spans.push(Span {
                         start,
@@ -282,10 +349,15 @@ pub fn redact_pii(content: &str) -> (String, Vec<PiiKind>) {
             kept.push(s);
         }
     }
-    // Replace end-to-start so earlier byte offsets stay valid.
+    // Map each kept folded span back to original offsets and replace end-to-start
+    // so earlier byte offsets stay valid. The 1:1 fold keeps the map monotonic, so
+    // non-overlapping folded spans stay non-overlapping (and descending) in the
+    // original.
     let mut result = content.to_string();
     for s in kept.iter().rev() {
-        result.replace_range(s.start..s.end, s.kind.tag());
+        let os = orig_offset(&map, s.start);
+        let oe = orig_offset(&map, s.end);
+        result.replace_range(os..oe, s.kind.tag());
     }
     let mut kinds: Vec<PiiKind> = Vec::new();
     for s in &kept {
@@ -726,6 +798,193 @@ mod tests {
         let (out, kinds) = redact_pii("ssn 123-45-67890 ok");
         assert!(kinds.contains(&PiiKind::Ssn));
         assert!(!out.contains("123-45-6789"), "ssn leaked: {out:?}");
+    }
+
+    /// Build the full-width-ASCII form of an ASCII string (each char + 0xFEE0), e.g.
+    /// "4111" -> "４１１１". Used to construct innocent Chinese-IME test vectors.
+    fn to_fullwidth(s: &str) -> String {
+        s.chars()
+            .map(|c| char::from_u32(c as u32 + 0xFEE0).unwrap_or(c))
+            .collect()
+    }
+
+    #[test]
+    fn fold_matrix_redacts_innocent_fullwidth_vectors_across_left_contexts() {
+        // The restricted full-width->ASCII fold (`fold_char`) closes the innocent
+        // Chinese-IME vectors. Each PII run is tested across 4 LEFT-contexts; the
+        // expected redaction outcome per cell is asserted EXACTLY:
+        //  - in-scope vectors (full-width digits / full-width hyphen U+FF0D /
+        //    ideographic space U+3000) REDACT after a non-word left-context
+        //    (start / ascii-space / CJK).
+        //  - the `asciiword` column LEAKS for ssn/phone/card: a value glued directly
+        //    after an ASCII word char has no leading ASCII `\b`, so no candidate
+        //    forms. This is the PRE-EXISTING leading-boundary design (an ASCII-digit
+        //    "id123-45-6789" leaked before this change too), NOT a new miss — real
+        //    text puts a separator / label / CJK char before the value. Asserted as
+        //    the current contract; a future leading-boundary improvement updates it.
+        //  - ZWSP-card is residual-by-design (asserted to STILL leak): zero-width
+        //    chars are not folded — global-stripping them would break emoji ZWJ.
+        let fw_ssn = to_fullwidth("123456789");
+        let fw_phone = to_fullwidth("2125550143");
+        let fw_card = to_fullwidth("4111111111111111");
+        // (label, core PII run, kind, [start, space, cjk, asciiword] expect-redacted)
+        let cases: &[(&str, &str, PiiKind, [bool; 4])] = &[
+            (
+                "FWdigit-ssn",
+                &fw_ssn,
+                PiiKind::Ssn,
+                [true, true, true, false],
+            ),
+            (
+                "FWdigit-phone",
+                &fw_phone,
+                PiiKind::Phone,
+                [true, true, true, false],
+            ),
+            (
+                "FWdigit-card",
+                &fw_card,
+                PiiKind::CreditCard,
+                [true, true, true, false],
+            ),
+            (
+                "FWsep-ssn",
+                "123\u{FF0D}45\u{FF0D}6789",
+                PiiKind::Ssn,
+                [true, true, true, false],
+            ),
+            (
+                "FWsep-phone",
+                "212\u{FF0D}555\u{FF0D}0143",
+                PiiKind::Phone,
+                [true, true, true, false],
+            ),
+            (
+                "FWsep-card",
+                "4111\u{FF0D}1111\u{FF0D}1111\u{FF0D}1111",
+                PiiKind::CreditCard,
+                [true, true, true, false],
+            ),
+            (
+                "IdeoSp-ssn",
+                "123\u{3000}45\u{3000}6789",
+                PiiKind::Ssn,
+                [true, true, true, false],
+            ),
+            (
+                "IdeoSp-phone",
+                "212\u{3000}555\u{3000}0143",
+                PiiKind::Phone,
+                [true, true, true, false],
+            ),
+            (
+                "IdeoSp-card",
+                "4111\u{3000}1111\u{3000}1111\u{3000}1111",
+                PiiKind::CreditCard,
+                [true, true, true, false],
+            ),
+            // residual-by-design: zero-width injection stays a leak (don't global-strip).
+            (
+                "ZWSP-card",
+                "4111\u{200B}1111\u{200B}1111\u{200B}1111",
+                PiiKind::CreditCard,
+                [false, false, false, false],
+            ),
+        ];
+        let contexts: [(&str, &str); 4] = [
+            ("start", ""),
+            ("space", "x "),
+            ("cjk", "电话"),
+            ("asciiword", "id"),
+        ];
+        for (label, core, kind, expect) in cases {
+            for (i, (clabel, ctx)) in contexts.iter().enumerate() {
+                let input = format!("{ctx}{core} end");
+                let (_out, kinds) = redact_pii(&input);
+                assert_eq!(
+                    kinds.contains(kind),
+                    expect[i],
+                    "{label} ctx={clabel}: expected redacted={} got kinds={:?} for {input:?}",
+                    expect[i],
+                    kinds
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fullwidth_card_in_cjk_is_redacted_and_surrounding_text_byte_verbatim() {
+        // The operator's headline vector: a full-width PAN typed by a Chinese IME,
+        // wrapped in CJK with a full-width comma. Detection runs on the folded copy;
+        // redaction is applied to the ORIGINAL, so the surrounding CJK + full-width
+        // comma are returned byte-verbatim (no NFKC-style normalization of non-PII).
+        let card_fw = to_fullwidth("4111111111111111");
+        let input = format!("我的卡号是{card_fw}，请保密");
+        let (out, kinds) = redact_pii(&input);
+        assert!(
+            kinds.contains(&PiiKind::CreditCard),
+            "full-width card missed: {kinds:?}"
+        );
+        assert!(!out.contains(&card_fw), "full-width PAN leaked: {out:?}");
+        assert!(out.contains("[CREDIT_CARD]"), "no card marker: {out:?}");
+        assert_eq!(
+            out, "我的卡号是[CREDIT_CARD]，请保密",
+            "surrounding non-PII text not byte-verbatim: {out:?}"
+        );
+    }
+
+    #[test]
+    fn fold_keeps_benign_cjk_unchanged_and_fullwidth_redaction_at_ascii_parity() {
+        // Benign CJK prose (no PII) is unchanged: the fold only touches U+3000 +
+        // U+FF01..=U+FF5E, genuine CJK is identity, and the output is byte-verbatim.
+        let prose = "这是一段没有任何个人信息的中文记录，只是偏好笔记";
+        let (out, kinds) = redact_pii(prose);
+        assert!(kinds.is_empty(), "benign CJK prose flagged PII: {kinds:?}");
+        assert_eq!(out, prose, "benign CJK prose was altered: {out:?}");
+
+        // A full-width Luhn-INVALID 16-digit run (e.g. a full-width order id) becomes a
+        // card CANDIDATE after folding but must be REJECTED by Luhn (not redacted as a
+        // card). The fold makes full-width behave IDENTICALLY to the ASCII equivalent, so
+        // it introduces no NEW over-redaction — assert kind PARITY with ASCII rather than
+        // "unchanged". (The SSN pattern's 9-digit over-match on a long digit run is
+        // pre-existing and documented as the safe direction; it fires for ASCII and
+        // full-width alike, so the run is partially `[SSN]`-redacted in BOTH cases.)
+        let invalid = "4111111111111112"; // last digit makes the 16-digit run Luhn-invalid
+        let (_out_ascii, kinds_ascii) = redact_pii(&format!("订单{invalid}已发货"));
+        let (_out_fw, kinds_fw) = redact_pii(&format!("订单{}已发货", to_fullwidth(invalid)));
+        assert!(
+            !kinds_fw.contains(&PiiKind::CreditCard),
+            "Luhn-invalid full-width run wrongly redacted as a card: {kinds_fw:?}"
+        );
+        assert_eq!(
+            kinds_ascii, kinds_fw,
+            "fold changed which PII kinds fire vs the ASCII equivalent: ascii={kinds_ascii:?} fw={kinds_fw:?}"
+        );
+    }
+
+    #[test]
+    fn cjk_localpart_email_is_a_documented_residual_leak() {
+        // Genuinely-CJK email localpart is NOT redacted: the fold doesn't touch CJK,
+        // and widening the localpart class to \p{L} would break the CJK-adjacency
+        // guarantee (it relies on CJK being a NON-word char at the leading boundary).
+        // Disclosed residual, NOT a regression — distinct from full-width-latin
+        // localpart, which folds to ASCII and DOES redact.
+        let (_out, kinds) = redact_pii("用户@example.com 发来邮件");
+        assert!(
+            !kinds.contains(&PiiKind::Email),
+            "CJK-localpart email unexpectedly redacted (residual changed): {kinds:?}"
+        );
+        // Full-width-latin localpart, by contrast, folds to ASCII and redacts.
+        let fw_email = format!("{}@example.com", to_fullwidth("alice"));
+        let (out, kinds) = redact_pii(&format!("邮箱{fw_email}"));
+        assert!(
+            kinds.contains(&PiiKind::Email),
+            "full-width-latin email should fold+redact: {kinds:?}"
+        );
+        assert!(
+            !out.contains(&fw_email),
+            "full-width-latin email leaked: {out:?}"
+        );
     }
 
     // --- ranking --------------------------------------------------------------
