@@ -133,8 +133,8 @@ const checks = [
       "Voice Gates",
       "MobileVoiceReadiness",
       "NO-GO",
-      "TTS provider output is not configured in this build",
-      "Readiness only",
+      "speech output provider",
+      "Readiness plus local voice-loop truth",
     ]),
   },
   {

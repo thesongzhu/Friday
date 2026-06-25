@@ -208,7 +208,7 @@ const checks = [
       "requires a pending approval ref",
       "Add shared text or a URL before submitting.",
       "Share Intake is unavailable",
-      "Readiness only",
+      "Readiness plus local voice-loop truth",
       "No cost data is fabricated",
     ]),
   ),
