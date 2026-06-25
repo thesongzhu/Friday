@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import { FridayDomainError } from "#errors";
 
 export const FRIDAY_HUB_AGENT_RUN_DB_PATH_ENV = "FRIDAY_HUB_AGENT_RUN_DB_PATH";
-export const FRIDAY_EXPECTED_RUST_HUB_SCHEMA_VERSION = 40;
+export const FRIDAY_EXPECTED_RUST_HUB_SCHEMA_VERSION = 41;
 
 export type FridayRustHubSchemaHandshakeStatus = "ok" | "skipped";
 

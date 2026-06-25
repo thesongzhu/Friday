@@ -167,6 +167,30 @@ pub fn sweep_lifecycle(conn: &Connection, now_ms: i64) -> Result<SweepOutcome> {
         params![hard_delete_before],
     )?;
 
+    // M4 receipt — FOLDED INTO THE SWEEP TXN, before commit, so it is ATOMIC with the irreversible
+    // hard-delete. Reversibility rationale: M4's prune leg is IRREVERSIBLE (the rows are gone), so
+    // the invariant is "a hard-delete must NEVER commit without its receipt." The receipt INSERT
+    // therefore shares this txn and its `?` propagates: a receipt-write failure rolls the WHOLE
+    // sweep back, leaving no delete-without-receipt. Rolling back is safe because the reaper is
+    // idempotent and re-runs every tick, so a transient `SQLITE_BUSY` simply retries the whole
+    // sweep next tick. This is the deliberate MIRROR of M3's artifact sweep (retention.rs), where
+    // expiry is REVERSIBLE, so there the receipt is best-effort AFTER the commit and must never
+    // block the delete (receipt-must-not-block-delete vs. delete-must-not-happen-without-receipt).
+    //
+    // Written ONLY on a non-empty sweep so an idle-only tick never grows the log (retention_log has
+    // no sweep of its own); a hard-delete is always non-empty, so a real prune is always recorded.
+    // The prune leg is today armed-but-dormant (`pruned_at = 0` fires nothing until a session ages
+    // through prune), but the receipt path is correct the moment it does.
+    let nonempty =
+        idled != 0 || archived != 0 || pruned != 0 || hard_deleted != 0 || messages_deleted != 0;
+    if nonempty {
+        let summary = format!(
+            "session.reaper:idled={} archived={} pruned={} hard_deleted={} messages_deleted={}",
+            idled, archived, pruned, hard_deleted, messages_deleted,
+        );
+        crate::insert_retention_log_in(&tx, "session.reaper", &summary, now_ms)?;
+    }
+
     tx.commit()?;
 
     Ok(SweepOutcome {
@@ -601,6 +625,130 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kept, 1, "the non-expired session keeps its message");
+    }
+
+    // --- M4 receipt: the reaper records the irreversible-prune counts -----------
+
+    fn retention_log_count(db: &Db) -> i64 {
+        db.conn()
+            .query_row("SELECT COUNT(*) FROM retention_log", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn hard_delete_writes_session_reaper_receipt_with_prune_counts() {
+        // M4: the hard-delete leg is the IRREVERSIBLE prune. A non-empty sweep must leave a
+        // content-free `session.reaper` receipt in `retention_log` carrying the hard_deleted /
+        // messages_deleted counts (the audit of the prune). It is NOT an audit_ledger row.
+        let db = Db::open_hub(&tmp("reaper-receipt")).unwrap();
+        let now = 100_000_000_000_i64;
+        seed(
+            &db,
+            "gone",
+            "pruned",
+            None,
+            None,
+            Some(now - HARD_DELETE_TIMEOUT_MS - 1),
+            1,
+        );
+        append_session_message(
+            db.conn(),
+            "gone",
+            &SessionMessage::new("user", "secret", None),
+            10,
+        )
+        .unwrap();
+        append_session_message(
+            db.conn(),
+            "gone",
+            &SessionMessage::new("assistant", "reply", None),
+            11,
+        )
+        .unwrap();
+
+        let out = sweep_lifecycle(db.conn(), now).unwrap();
+        assert_eq!(out.hard_deleted, 1);
+        assert_eq!(out.messages_deleted, 2);
+
+        assert_eq!(
+            retention_log_count(&db),
+            1,
+            "one non-empty sweep ⇒ one receipt"
+        );
+        let (tick_kind, summary): (String, String) = db
+            .conn()
+            .query_row("SELECT tick_kind, summary FROM retention_log", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(tick_kind, "session.reaper");
+        assert_eq!(
+            summary, "session.reaper:idled=0 archived=0 pruned=0 hard_deleted=1 messages_deleted=2",
+            "receipt carries the irreversible-prune counts"
+        );
+    }
+
+    #[test]
+    fn receipt_failure_rolls_back_hard_delete() {
+        // M4 atomicity invariant: the irreversible hard-delete must NEVER commit without its
+        // receipt. The receipt INSERT is folded into the sweep txn, so if it fails the WHOLE sweep
+        // rolls back. We force a deterministic receipt failure by dropping `retention_log` before
+        // the sweep: `insert_retention_log_in` then errors, `?` propagates, and the txn unwinds.
+        // The eligible session + its messages must SURVIVE (no delete-without-receipt).
+        let db = Db::open_hub(&tmp("reaper-receipt-fail")).unwrap();
+        let now = 100_000_000_000_i64;
+        seed(
+            &db,
+            "survivor",
+            "pruned",
+            None,
+            None,
+            Some(now - HARD_DELETE_TIMEOUT_MS - 1),
+            1,
+        );
+        append_session_message(
+            db.conn(),
+            "survivor",
+            &SessionMessage::new("user", "secret", None),
+            10,
+        )
+        .unwrap();
+
+        // Remove the receipt table so the folded INSERT cannot succeed.
+        db.conn().execute_batch("DROP TABLE retention_log").unwrap();
+
+        let res = sweep_lifecycle(db.conn(), now);
+        assert!(
+            res.is_err(),
+            "a receipt-write failure must surface as an Err, not a silently-committed prune"
+        );
+        assert!(
+            exists(&db, "survivor"),
+            "hard-delete must roll back when its receipt cannot be written"
+        );
+        let msgs: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM agent_session_message WHERE agent_session_id = 'survivor'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(msgs, 1, "child messages must roll back with the parent");
+    }
+
+    #[test]
+    fn empty_reaper_sweep_writes_no_receipt() {
+        // Growth fix: an idle tick (nothing eligible) writes NO receipt — retention_log has no
+        // sweep of its own, so an all-zero row every tick would grow unbounded.
+        let db = Db::open_hub(&tmp("reaper-empty")).unwrap();
+        let out = sweep_lifecycle(db.conn(), 100_000_000_000_i64).unwrap();
+        assert!(out.is_empty(), "no seeded rows ⇒ nothing swept");
+        assert_eq!(
+            retention_log_count(&db),
+            0,
+            "empty reaper sweep ⇒ no receipt"
+        );
     }
 
     // --- idempotency: second back-to-back sweep is a no-op ---------------------

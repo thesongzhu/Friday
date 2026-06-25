@@ -58,6 +58,7 @@
 use crate::error::Result;
 use rusqlite::params;
 use rusqlite::Connection;
+use rusqlite::Transaction;
 
 // ─── Operator-approved default retention windows (ms) ───
 
@@ -258,7 +259,87 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
+    // M3 receipt: record a CONTENT-FREE, counts-only summary of this sweep into `retention_log`
+    // (a SEPARATE table, NOT the hash-chained `audit_ledger`). Written ONLY when the sweep actually
+    // DELETED something — gated on the sum of the per-table delete counts, NOT on
+    // `RetentionOutcome::is_empty()` (which also folds in `table_errors`). An error-only tick (zero
+    // deletions, one or more per-table DELETEs failed) must NOT write a receipt: it would be an
+    // all-zero "nothing destroyed" row that hides the error, and — since `retention_log` has no
+    // sweep of its own — a persistent per-table error would reintroduce the unbounded per-tick
+    // growth this module exists to bound. The error is still surfaced to the caller via the
+    // returned `table_errors`; when a receipt IS written, `errors=` records any concurrent failures
+    // so the row stays honest. The summary carries integer counts only, never a deleted row's
+    // id/body. This is a SEPARATE write AFTER the per-table delete txns (there is no single sweep
+    // txn to join), and it must NEVER break the fail-safe contract (this fn never returns Err) — so
+    // a receipt-write failure is SWALLOWED here, exactly as the session reaper swallows its own.
+    let deleted = out.token_ledger_deleted
+        + out.surface_event_deleted
+        + out.memory_item_deleted
+        + out.work_item_deleted
+        + out.mission_deleted;
+    if deleted > 0 {
+        let summary = format!(
+            "retention.sweep:token_ledger={} surface_event={} memory_item={} work_item={} mission={} errors={}",
+            out.token_ledger_deleted,
+            out.surface_event_deleted,
+            out.memory_item_deleted,
+            out.work_item_deleted,
+            out.mission_deleted,
+            out.table_errors,
+        );
+        let _ = insert_retention_log(conn, "retention.sweep", &summary, now_ms);
+    }
+
     out
+}
+
+/// Insert ONE content-free [`retention_log`] receipt row (its own bounded busy-retry txn,
+/// mirroring [`delete_bounded`]). `summary` is a counts-only string — NEVER a deleted row's
+/// id/body. This writes the M3/M4 receipt table, which is DELIBERATELY SEPARATE from the
+/// hash-chained `audit_ledger` (gap #25): it is un-chained and never references the audit ledger.
+///
+/// `tick_kind` is the sweep that produced the row (`"retention.sweep"` for the artifact sweep,
+/// `"session.reaper"` for the lifecycle reaper). The id is generated in SQL the same way the
+/// tool-usage ledger generates its id, so the caller passes no opaque value.
+pub fn insert_retention_log(
+    conn: &Connection,
+    tick_kind: &str,
+    summary: &str,
+    now_ms: i64,
+) -> Result<()> {
+    crate::with_busy_retry(|| {
+        let tx = conn.unchecked_transaction()?;
+        insert_retention_log_in(&tx, tick_kind, summary, now_ms)?;
+        tx.commit()?;
+        Ok(())
+    })
+}
+
+/// No-BEGIN variant of [`insert_retention_log`]: writes the receipt row into a CALLER-OWNED
+/// transaction without opening (or committing) its own. SQLite forbids nested `BEGIN`, so a caller
+/// that already holds a txn — e.g. the lifecycle reaper, which must record the receipt for an
+/// IRREVERSIBLE hard-delete atomically with that delete — folds the INSERT in via this fn and lets
+/// its own `tx.commit()` seal both. The `?` propagates a write failure to the caller, which is the
+/// POINT for the M4 (irreversible) leg: a receipt failure must roll the whole sweep back so a
+/// hard-delete can NEVER commit without its receipt. This is the deliberate MIRROR of the M3
+/// (reversible) artifact sweep, where [`insert_retention_log`] is called best-effort AFTER the
+/// commit so a receipt failure can never block a reversible expiry.
+///
+/// Does NOT wrap [`crate::with_busy_retry`]: the caller's txn already carries the crate's single
+/// busy-retry policy (or, for `sweep_lifecycle`, re-runs idempotently next tick on `SQLITE_BUSY`),
+/// so wrapping here would double-apply it. `summary` is counts-only — NEVER a deleted row's id/body.
+pub fn insert_retention_log_in(
+    tx: &Transaction<'_>,
+    tick_kind: &str,
+    summary: &str,
+    now_ms: i64,
+) -> Result<()> {
+    tx.execute(
+        "INSERT INTO retention_log (retention_log_id, tick_kind, summary, created_at)
+         VALUES ('retlog:' || lower(hex(randomblob(16))), ?1, ?2, ?3)",
+        params![tick_kind, summary, now_ms],
+    )?;
+    Ok(())
 }
 
 /// Run ONE bounded DELETE inside its OWN transaction and return the deleted row count. The whole
@@ -606,6 +687,67 @@ mod tests {
             crate::audit::verify_audit_chain(db.conn()).unwrap(),
             2,
             "audit chain still clean"
+        );
+
+        // M3 receipt: a non-empty sweep writes EXACTLY ONE retention_log row whose summary
+        // carries the per-table counts (content-free; counts only). It is NOT an audit_ledger
+        // row — the audit count above is unchanged.
+        assert_eq!(
+            count(&db, "retention_log"),
+            1,
+            "one sweep ⇒ one receipt row"
+        );
+        let (tick_kind, summary): (String, String) = db
+            .conn()
+            .query_row("SELECT tick_kind, summary FROM retention_log", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(tick_kind, "retention.sweep");
+        assert_eq!(
+            summary,
+            "retention.sweep:token_ledger=1 surface_event=1 memory_item=1 work_item=1 mission=2 errors=0",
+            "summary records the real per-table counts + the concurrent error count"
+        );
+    }
+
+    // --- a content-free, counts-only receipt is written ONLY on a non-empty sweep ---
+
+    #[test]
+    fn empty_sweep_writes_no_retention_log_row() {
+        // The growth fix: an idle tick (nothing eligible) must NOT write a receipt — otherwise
+        // retention_log (which has no sweep of its own) would grow unbounded, the very problem
+        // this module exists to bound.
+        let db = Db::open_hub(&tmp("empty-receipt")).unwrap();
+        let now = 2_000 * 24 * 60 * 60 * 1000_i64;
+        let out = sweep_retention(db.conn(), now, RetentionWindows::default());
+        assert!(out.is_empty(), "no seeded rows ⇒ nothing deleted");
+        assert_eq!(
+            count(&db, "retention_log"),
+            0,
+            "an empty sweep writes ZERO receipt rows"
+        );
+    }
+
+    // --- an error-only sweep (a per-table DELETE failed, nothing deleted) writes NO receipt ---
+
+    #[test]
+    fn error_only_sweep_writes_no_retention_log_row() {
+        // The receipt is gated on actual DELETIONS, not on `is_empty()` (which folds in
+        // `table_errors`). Drop `mission` so its DELETE errors (table_errors += 1) while every
+        // other table is empty (0 deletions). The sweep must record NO receipt — an all-zero
+        // "nothing destroyed" row would both hide the error and, since retention_log has no sweep
+        // of its own, reintroduce unbounded per-tick growth under a persistent per-table error.
+        let db = Db::open_hub(&tmp("error-only-receipt")).unwrap();
+        let now = 2_000 * 24 * 60 * 60 * 1000_i64;
+        db.conn().execute_batch("DROP TABLE mission").unwrap();
+        let out = sweep_retention(db.conn(), now, RetentionWindows::default());
+        assert!(out.table_errors >= 1, "the dropped-table DELETE must error");
+        assert_eq!(out.mission_deleted, 0, "nothing was deleted");
+        assert_eq!(
+            count(&db, "retention_log"),
+            0,
+            "an error-only sweep (0 deletions) writes ZERO receipt rows"
         );
     }
 
