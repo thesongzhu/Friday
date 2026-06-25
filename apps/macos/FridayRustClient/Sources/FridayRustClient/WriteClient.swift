@@ -175,6 +175,10 @@ public protocol FridayMissionSpineWriteClient: Sendable {
   /// refs-only receipt (`status:"confirmed"`/`"rejected"`/`"blocked"`). `decision` MUST be
   /// `"confirm"` or `"reject"`.
   func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire
+  /// Mint one governed ContextPassport for an existing Mission.
+  func submitContextPassportTransfer(
+    _ request: ContextPassportTransferRequestWire
+  ) async throws -> ContextPassportTransferResultWire
   /// Submit the owner's explicit confirm/reject for ONE pending A1 run-outcome learning candidate.
   func submitRunOutcomeLearningDecision(
     _ request: RunOutcomeLearningDecisionRequestWire
@@ -357,6 +361,7 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
          .activityNeedsMeRequest, .activityNeedsMeSnapshot,
          .missionIntakeRequest, .missionIntakeResult,
          .memoryDecisionRequest, .memoryDecisionResult,
+         .contextPassportTransferRequest, .contextPassportTransferResult,
          .runOutcomeLearningDecisionRequest, .runOutcomeLearningDecisionResult,
          .activityMarkDoneRequest, .activityMarkDoneResult,
          .workItemStatusRequest, .workItemStatusResult:
@@ -419,6 +424,33 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
     let resp = try openEnvelope(respBody, sessionKey: sessionKey)
     switch resp.message {
     case .memoryDecisionResult(let r):
+      return r
+    case .error(let code, let message):
+      throw FridayWriteClientError.serverError(code: code, message: message)
+    default:
+      throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(resp.message))
+    }
+  }
+
+  public func submitContextPassportTransfer(
+    _ request: ContextPassportTransferRequestWire
+  ) async throws -> ContextPassportTransferResultWire {
+    let transport = try makeTransport()
+    let (sessionKey, _) = try handshake(transport)
+    let msgId = "context-passport-transfer-\(request.passportId)"
+    let env = FridayEnvelope(msgId: msgId, sentAt: now(), message: .contextPassportTransferRequest(request))
+      .withCorrelation(msgId)
+    try transport.sendMessage(try sealEnvelope(env, sessionKey: sessionKey))
+    let respBody: [UInt8]
+    do {
+      respBody = try transport.recvMessage()
+    } catch {
+      throw FridayWriteClientError.transport(
+        "no context-passport-transfer result (session ended fail-closed): \(error)")
+    }
+    let resp = try openEnvelope(respBody, sessionKey: sessionKey)
+    switch resp.message {
+    case .contextPassportTransferResult(let r):
       return r
     case .error(let code, let message):
       throw FridayWriteClientError.serverError(code: code, message: message)
@@ -725,6 +757,8 @@ private func dispatchKind(_ message: FridayMessage) -> String {
   case .missionIntakeResult: return "MissionIntakeResult"
   case .memoryDecisionRequest: return "MemoryDecisionRequest"
   case .memoryDecisionResult: return "MemoryDecisionResult"
+  case .contextPassportTransferRequest: return "ContextPassportTransferRequest"
+  case .contextPassportTransferResult: return "ContextPassportTransferResult"
   case .runOutcomeLearningDecisionRequest: return "RunOutcomeLearningDecisionRequest"
   case .runOutcomeLearningDecisionResult: return "RunOutcomeLearningDecisionResult"
   case .activityMarkDoneRequest: return "ActivityMarkDoneRequest"

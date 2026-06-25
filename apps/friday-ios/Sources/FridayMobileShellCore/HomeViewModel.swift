@@ -806,6 +806,7 @@ public final class HomeViewModel: ObservableObject {
   @Published public private(set) var runOutcomeLearningDecisionStates: [String: HomeLearningDecisionState] = [:]
   @Published public private(set) var activityMarkDoneStates: [String: HomeLearningDecisionState] = [:]
   @Published public private(set) var workItemStatusStates: [String: HomeLearningDecisionState] = [:]
+  @Published public private(set) var contextPassportTransferState: HomeLearningDecisionState?
   @Published public private(set) var pairingPreflight: MobilePairingPreflight = .empty
   @Published public private(set) var pairingAttempt: MobilePairingAttempt = .idle
 
@@ -889,6 +890,51 @@ public final class HomeViewModel: ObservableObject {
       }
     } catch {
       memoryDecisionStates[candidateId] = .error(reason: Self.reason(for: error))
+    }
+  }
+
+  public func submitContextPassportTransfer(for projection: HomeProjection) async {
+    guard let writeClient else {
+      contextPassportTransferState = .error(reason: "Write seam not configured.")
+      return
+    }
+    contextPassportTransferState = .sent
+    let request = ContextPassportTransferRequestWire(
+      passportId: "mobile-passport-\(projection.missionId)",
+      missionId: projection.missionId,
+      workItemId: projection.workItemIds.first,
+      destinationLane: "codex",
+      destinationTarget: "codex",
+      items: [
+        ContextPassportItemWire(
+          kind: "summary",
+          label: "Mission \(projection.missionId) context reviewed from mobile Passport surface.",
+          included: true,
+          sensitive: false),
+        ContextPassportItemWire(
+          kind: "summary",
+          label: "Workbench has \(projection.workItemIds.count) work item ref(s).",
+          included: true,
+          sensitive: false),
+        ContextPassportItemWire(
+          kind: "summary",
+          label: "Pending memory candidate count \(projection.memoryCandidates.count).",
+          included: true,
+          sensitive: false),
+      ],
+      approvedSensitive: false)
+    do {
+      let result = try await writeClient.submitContextPassportTransfer(request)
+      switch result.status {
+      case "confirmed":
+        contextPassportTransferState = .confirmed(
+          summary: "passport \(result.passportId) · items=\(result.sharedItemCount)")
+        await refresh()
+      default:
+        contextPassportTransferState = .error(reason: "Context passport blocked — \(result.blocker ?? "blocked")")
+      }
+    } catch {
+      contextPassportTransferState = .error(reason: Self.reason(for: error))
     }
   }
 

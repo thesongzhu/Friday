@@ -528,6 +528,10 @@ public enum FridayMessage: Equatable {
   /// hub→trusted-peer: memory decision receipt (refs-only). Mirrors
   /// `friday_protocol::Message::MemoryDecisionResult` — NESTED `{ result: … }`.
   case memoryDecisionResult(MemoryDecisionResultWire)
+  /// trusted-peer→hub: mint one governed ContextPassport for an existing Mission.
+  case contextPassportTransferRequest(ContextPassportTransferRequestWire)
+  /// hub→trusted-peer: refs-only ContextPassport mint receipt.
+  case contextPassportTransferResult(ContextPassportTransferResultWire)
   /// trusted-peer→hub: confirm/reject ONE pending A1 run-outcome learning candidate.
   /// Mirrors `friday_protocol::Message::RunOutcomeLearningDecisionRequest`.
   case runOutcomeLearningDecisionRequest(RunOutcomeLearningDecisionRequestWire)
@@ -760,6 +764,14 @@ extension FridayMessage: Codable {
     case "MemoryDecisionResult":
       let c = try decoder.container(keyedBy: ResultKey.self)
       self = .memoryDecisionResult(try c.decode(MemoryDecisionResultWire.self, forKey: .result))
+    case "ContextPassportTransferRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .contextPassportTransferRequest(
+        try c.decode(ContextPassportTransferRequestWire.self, forKey: .request))
+    case "ContextPassportTransferResult":
+      let c = try decoder.container(keyedBy: ResultKey.self)
+      self = .contextPassportTransferResult(
+        try c.decode(ContextPassportTransferResultWire.self, forKey: .result))
     case "RunOutcomeLearningDecisionRequest":
       let c = try decoder.container(keyedBy: RequestKey.self)
       self = .runOutcomeLearningDecisionRequest(
@@ -974,6 +986,14 @@ extension FridayMessage: Codable {
       try c.encode(r, forKey: .request)
     case .memoryDecisionResult(let r):
       try tag.encode("MemoryDecisionResult", forKey: .kind)
+      var c = encoder.container(keyedBy: ResultKey.self)
+      try c.encode(r, forKey: .result)
+    case .contextPassportTransferRequest(let r):
+      try tag.encode("ContextPassportTransferRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(r, forKey: .request)
+    case .contextPassportTransferResult(let r):
+      try tag.encode("ContextPassportTransferResult", forKey: .kind)
       var c = encoder.container(keyedBy: ResultKey.self)
       try c.encode(r, forKey: .result)
     case .runOutcomeLearningDecisionRequest(let r):

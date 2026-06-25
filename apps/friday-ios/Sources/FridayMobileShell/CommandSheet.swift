@@ -64,6 +64,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
   case shareIntake
   case voice
   case pairing
+  case newSession
   case needsMe
   case memory
   case platform
@@ -85,6 +86,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .shareIntake: return "Share Intake"
     case .voice: return "Voice"
     case .pairing: return "Device Pairing"
+    case .newSession: return "New Session"
     case .needsMe: return "Needs Me"
     case .memory: return "Memory"
     case .platform: return "Platform"
@@ -106,6 +108,7 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .shareIntake: return "square.and.arrow.down"
     case .voice: return "waveform"
     case .pairing: return "qrcode.viewfinder"
+    case .newSession: return "plus"
     case .needsMe: return "person.crop.circle.badge.exclamationmark"
     case .memory: return "brain.head.profile"
     case .platform: return "square.grid.2x2"
@@ -128,6 +131,8 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     case .providerAuth:
       return .providerWorkspace
     case .shareIntake, .needsMe:
+      return .governedActionGated
+    case .newSession:
       return .governedActionGated
     case .voice, .pairing:
       return .readinessOnly

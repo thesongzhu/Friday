@@ -262,6 +262,16 @@ public struct ChatHistoryItem: Identifiable, Codable, Sendable, Equatable {
   }
 }
 
+public struct ChatContextCard: Identifiable, Sendable, Equatable {
+  public let id: String
+  public let title: String
+  public let detail: String
+  public let truthLabel: String
+  public let evidenceRef: String
+  public let memoryCandidateId: String?
+  public let memoryPreview: String?
+}
+
 public protocol ChatHistoryStoring {
   func load() -> [ChatHistoryItem]
   func save(_ items: [ChatHistoryItem])
@@ -332,10 +342,15 @@ public enum ChatPhase: Sendable, Equatable {
 public final class FridayChatViewModel: ObservableObject {
   @Published public private(set) var phase: ChatPhase = .composing
   @Published public private(set) var history: [ChatHistoryItem]
+  @Published public private(set) var contextCards: [ChatContextCard] = []
+  @Published public private(set) var selectedContextCardId: String?
+  @Published public private(set) var contextMemoryDecisionState: HomeLearningDecisionState?
+  @Published public private(set) var contextPassportTransferState: HomeLearningDecisionState?
 
   /// The package write client is `Sendable`; each dispatch/control call builds a fresh transport.
   private let writeClient: FridayRustWriteClient
   private let missionClient: (any FridayMobileMissionDispatchingWriteClient)?
+  private let memoryDecisionClient: (any FridayMissionSpineWriteClient)?
   private let readClient: FridayRustReadClient?
   private let signer: OperatorSigner
   private let newId: () -> String
@@ -352,6 +367,7 @@ public final class FridayChatViewModel: ObservableObject {
     writeClient: FridayRustWriteClient,
     signer: OperatorSigner,
     missionClient: (any FridayMobileMissionDispatchingWriteClient)? = nil,
+    memoryDecisionClient: (any FridayMissionSpineWriteClient)? = nil,
     readClient: FridayRustReadClient? = nil,
     historyStore: any ChatHistoryStoring = UserDefaultsChatHistoryStore(),
     newId: @escaping () -> String = { UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "") },
@@ -361,6 +377,7 @@ public final class FridayChatViewModel: ObservableObject {
     self.writeClient = writeClient
     self.signer = signer
     self.missionClient = missionClient
+    self.memoryDecisionClient = memoryDecisionClient ?? (writeClient as? any FridayMissionSpineWriteClient)
     self.readClient = readClient
     self.historyStore = historyStore
     self.newId = newId
@@ -406,6 +423,7 @@ public final class FridayChatViewModel: ObservableObject {
           answerBodyRunId: answer?.runId,
           answerBodyOutcome: answer?.outcome)
         appendAnswerHistory(receipt)
+        contextCards = Self.contextCards(for: receipt, memoryCandidate: await firstMemoryCandidate())
         phase = .answered(receipt)
       case .paused(let p):
         // INV-2: a mutating run PAUSED — surface the S6 approval card. No mutation has executed.
@@ -413,6 +431,7 @@ public final class FridayChatViewModel: ObservableObject {
           role: "friday",
           text: "Approval required: \(p.ownerSealedSummary ?? "mutating action")",
           runId: p.runId)
+        contextCards = []
         phase = .pendingApproval(ApprovalCard(p))
       }
     } catch {
@@ -469,6 +488,7 @@ public final class FridayChatViewModel: ObservableObject {
         answerBodyRunId: answer?.runId,
         answerBodyOutcome: answer?.outcome)
       appendAnswerHistory(receipt)
+      contextCards = Self.contextCards(for: receipt, memoryCandidate: await firstMemoryCandidate())
       phase = .answered(receipt)
     } catch {
       phase = .unavailable(reason: Self.dispatchReason(for: error))
@@ -521,6 +541,16 @@ public final class FridayChatViewModel: ObservableObject {
     }
   }
 
+  private func firstMemoryCandidate() async -> HomeMemoryCandidate? {
+    guard let readClient else { return nil }
+    do {
+      let snapshot = try await readClient.fetchWorkbench()
+      return HomeProjection(snapshot).memoryCandidates.first
+    } catch {
+      return nil
+    }
+  }
+
   // MARK: 3. Approve → Resume (the S6 relay — INV-1, INV-2)
 
   /// Approve the paused mutation: obtain the operator's OPAQUE signed blob from the injected
@@ -562,6 +592,7 @@ public final class FridayChatViewModel: ObservableObject {
         runId: receipt.runId,
         receiptRefs: surfacedReceipt.receiptRefs)
       phase = .resumed(surfacedReceipt)
+      contextCards = []
     } catch {
       phase = .unavailable(reason: Self.resumeReason(for: error))
     }
@@ -583,6 +614,7 @@ public final class FridayChatViewModel: ObservableObject {
         runId: receipt.runId,
         receiptRefs: surfacedReceipt.receiptRefs)
       phase = .resumed(surfacedReceipt)
+      contextCards = []
     } catch {
       phase = .unavailable(reason: Self.rejectReason(for: error))
     }
@@ -590,7 +622,120 @@ public final class FridayChatViewModel: ObservableObject {
 
   public func clearHistory() {
     history = []
+    contextCards = []
+    selectedContextCardId = nil
+    contextMemoryDecisionState = nil
+    contextPassportTransferState = nil
     historyStore.save(history)
+  }
+
+  public func selectContextCard(_ id: String) {
+    guard contextCards.contains(where: { $0.id == id }) else { return }
+    selectedContextCardId = id
+  }
+
+  public func decideContextMemory(confirm: Bool) async {
+    let card = contextCards.first { $0.id == "memory" }
+    guard let memoryId = card?.memoryCandidateId, !memoryId.isEmpty else {
+      contextMemoryDecisionState = .error(reason: "No memory candidate is available for this Chat turn.")
+      return
+    }
+    guard let memoryDecisionClient else {
+      contextMemoryDecisionState = .error(reason: "Write seam not configured.")
+      return
+    }
+
+    selectedContextCardId = "memory"
+    contextMemoryDecisionState = .sent
+    let request = MemoryDecisionRequestWire(
+      memoryId: memoryId,
+      ownerPrincipal: liveAgentRunOwnerPrincipal,
+      decision: confirm ? "confirm" : "reject")
+    do {
+      let result = try await memoryDecisionClient.submitMemoryDecision(request)
+      switch result.status {
+      case "confirmed", "rejected":
+        contextMemoryDecisionState = .confirmed(
+          summary: "\(result.status) · state=\(result.state) · recallable=\(result.recallable)")
+        appendHistory(
+          role: "friday",
+          text: "Memory decision \(result.status).",
+          receiptRefs: [
+            ChatReceiptRef(label: "memory_id", ref: result.memoryId),
+            ChatReceiptRef(label: "status", ref: result.status),
+            ChatReceiptRef(label: "state", ref: result.state),
+          ])
+      default:
+        let why = result.blocker ?? "blocked"
+        contextMemoryDecisionState = .error(reason: "Memory decision blocked — \(why)")
+      }
+    } catch {
+      contextMemoryDecisionState = .error(reason: Self.memoryReason(for: error))
+    }
+  }
+
+  public func submitContextPassportHandoff() async {
+    guard case .answered(let receipt) = phase else {
+      contextPassportTransferState = .error(reason: "No answered Chat turn is available for handoff.")
+      return
+    }
+    guard let missionId = receipt.missionId, !missionId.isEmpty else {
+      contextPassportTransferState = .error(reason: "This Chat turn is not bound to a Mission.")
+      return
+    }
+    guard let memoryDecisionClient else {
+      contextPassportTransferState = .error(reason: "Write seam not configured.")
+      return
+    }
+
+    selectedContextCardId = "handoff"
+    contextPassportTransferState = .sent
+    let workItemId = receipt.followUpWorkItemId ?? receipt.workItemId
+    let runRef = receipt.answerBodyRunId ?? receipt.followUpRunId ?? receipt.runId
+    let request = ContextPassportTransferRequestWire(
+      passportId: "mobile-chat-passport-\(missionId)",
+      missionId: missionId,
+      workItemId: workItemId,
+      destinationLane: "codex",
+      destinationTarget: "codex",
+      items: [
+        ContextPassportItemWire(
+          kind: "summary",
+          label: "Mobile Chat handoff for mission \(missionId).",
+          included: true,
+          sensitive: false),
+        ContextPassportItemWire(
+          kind: "summary",
+          label: "Answer run ref \(runRef).",
+          included: true,
+          sensitive: false),
+        ContextPassportItemWire(
+          kind: "summary",
+          label: "Work item ref \(workItemId ?? "not-attached").",
+          included: true,
+          sensitive: false),
+      ],
+      approvedSensitive: false)
+    do {
+      let result = try await memoryDecisionClient.submitContextPassportTransfer(request)
+      switch result.status {
+      case "confirmed":
+        contextPassportTransferState = .confirmed(
+          summary: "passport \(result.passportId) · items=\(result.sharedItemCount)")
+        appendHistory(
+          role: "friday",
+          text: "Context handoff created.",
+          receiptRefs: [
+            ChatReceiptRef(label: "passport_id", ref: result.passportId),
+            ChatReceiptRef(label: "mission_id", ref: result.missionId),
+            ChatReceiptRef(label: "link_id", ref: result.linkId ?? "none"),
+          ])
+      default:
+        contextPassportTransferState = .error(reason: "Context passport blocked — \(result.blocker ?? "blocked")")
+      }
+    } catch {
+      contextPassportTransferState = .error(reason: Self.memoryReason(for: error))
+    }
   }
 
   /// Reset to a fresh composer after an answer / receipt / unavailable (start a new turn).
@@ -598,6 +743,10 @@ public final class FridayChatViewModel: ObservableObject {
     switch phase {
     case .answered, .resumed, .unavailable:
       phase = .composing
+      contextCards = []
+      selectedContextCardId = nil
+      contextMemoryDecisionState = nil
+      contextPassportTransferState = nil
     default:
       // Do NOT abandon an in-flight dispatch or a pending approval (would drop the S6 gate).
       break
@@ -624,6 +773,11 @@ public final class FridayChatViewModel: ObservableObject {
   static func signerReason(for error: Error) -> String {
     if let e = error as? OperatorSignerError { return e.description }
     return "Approval unavailable — \(error)"
+  }
+
+  static func memoryReason(for error: Error) -> String {
+    if let e = error as? FridayWriteClientError { return writeReason(e, verb: "memory decision") }
+    return "Memory decision unavailable — \(error)"
   }
 
   private static func writeReason(_ e: FridayWriteClientError, verb: String) -> String {
@@ -653,6 +807,31 @@ public final class FridayChatViewModel: ObservableObject {
       text = "Friday answered (\(receipt.status)). Run \(receipt.runId)."
     }
     appendHistory(role: "friday", text: text, runId: receipt.answerBodyRunId ?? receipt.runId, receiptRefs: receipt.receiptRefs)
+  }
+
+  private static func contextCards(
+    for receipt: ChatAnswerReceipt,
+    memoryCandidate: HomeMemoryCandidate?
+  ) -> [ChatContextCard] {
+    let runRef = receipt.answerBodyRunId ?? receipt.followUpRunId ?? receipt.runId
+    return [
+      ChatContextCard(
+        id: "handoff",
+        title: "Handoff",
+        detail: "Prepare a context passport from this answer when the passport send gate is available.",
+        truthLabel: "local",
+        evidenceRef: "swift://mobile/fridayChat/handoff-card/\(runRef)",
+        memoryCandidateId: nil,
+        memoryPreview: nil),
+      ChatContextCard(
+        id: "memory",
+        title: "Memory",
+        detail: memoryCandidate?.preview ?? "Review memory candidates for this turn through the governed memory surface.",
+        truthLabel: memoryCandidate == nil ? "local" : "wired",
+        evidenceRef: memoryCandidate?.evidenceRef ?? "swift://mobile/fridayChat/memory-card/\(runRef)",
+        memoryCandidateId: memoryCandidate?.id,
+        memoryPreview: memoryCandidate?.preview),
+    ]
   }
 
   private func appendHistory(role: String, text: String, runId: String? = nil, receiptRefs: [ChatReceiptRef] = []) {

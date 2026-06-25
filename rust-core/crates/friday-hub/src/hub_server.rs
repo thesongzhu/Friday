@@ -22,12 +22,13 @@
 use friday_crypto::{open, DataKey, Sealed};
 use friday_deepseek::{DeepSeekClient, Transport};
 use friday_protocol::{
-    ActivityMarkDoneRequestWire, ActivityMarkDoneResultWire, Envelope, ErrorCode,
-    MemoryDecisionRequestWire, MemoryDecisionResultWire, Message, MissionIntakeRequestWire,
-    MissionIntakeResultWire, MissionLifecycleRequestWire, MissionLifecycleResultWire,
-    MissionProjectionSnapshotWire, MissionTimelineLinkWire, MissionTimelineMissionWire,
-    MissionTimelineRequestWire, MissionTimelineSnapshotWire, MissionTimelineSurfaceEventWire,
-    MissionTimelineWorkItemWire, MissionWorkItemContextWire, ProviderWorkspaceActionRequestWire,
+    ActivityMarkDoneRequestWire, ActivityMarkDoneResultWire, ContextPassportTransferRequestWire,
+    ContextPassportTransferResultWire, Envelope, ErrorCode, MemoryDecisionRequestWire,
+    MemoryDecisionResultWire, Message, MissionIntakeRequestWire, MissionIntakeResultWire,
+    MissionLifecycleRequestWire, MissionLifecycleResultWire, MissionProjectionSnapshotWire,
+    MissionTimelineLinkWire, MissionTimelineMissionWire, MissionTimelineRequestWire,
+    MissionTimelineSnapshotWire, MissionTimelineSurfaceEventWire, MissionTimelineWorkItemWire,
+    MissionWorkItemContextWire, ProviderWorkspaceActionRequestWire,
     ProviderWorkspaceActionResultWire, RouteDecisionControlRequestWire,
     RouteDecisionControlResultWire, RouteDecisionProjectionWire,
     RunOutcomeLearningDecisionRequestWire, RunOutcomeLearningDecisionResultWire,
@@ -59,6 +60,33 @@ use crate::provider_dispatch_adapter::{
 use crate::provider_workspace::ProviderWorkspaceCatalog;
 use crate::runtime::HubRuntime;
 use crate::RecordAskError;
+
+fn parse_passport_lane(value: &str) -> Result<friday_core::WorkLane, &'static str> {
+    match value {
+        "friday_hub" => Ok(friday_core::WorkLane::FridayHub),
+        "codex" => Ok(friday_core::WorkLane::Codex),
+        "claude" => Ok(friday_core::WorkLane::Claude),
+        "deepseek" => Ok(friday_core::WorkLane::DeepSeek),
+        "workflow" => Ok(friday_core::WorkLane::Workflow),
+        "channel" => Ok(friday_core::WorkLane::Channel),
+        "human" => Ok(friday_core::WorkLane::Human),
+        "future_api" => Ok(friday_core::WorkLane::FutureApi),
+        _ => Err("unknown_destination_lane"),
+    }
+}
+
+fn parse_passport_item_kind(value: &str) -> Result<friday_core::PassportItemKind, &'static str> {
+    match value {
+        "memory_snippet" => Ok(friday_core::PassportItemKind::MemorySnippet),
+        "summary" => Ok(friday_core::PassportItemKind::Summary),
+        "file" => Ok(friday_core::PassportItemKind::File),
+        "screenshot" => Ok(friday_core::PassportItemKind::Screenshot),
+        "attachment" => Ok(friday_core::PassportItemKind::Attachment),
+        "provider_secret" => Ok(friday_core::PassportItemKind::ProviderSecret),
+        "raw_token" => Ok(friday_core::PassportItemKind::RawToken),
+        _ => Err("unknown_item_kind"),
+    }
+}
 
 /// A headless Hub runtime serving one or more trusted client sessions. Generic over the
 /// DeepSeek [`Transport`] so tests inject a scripted mock and a live build uses
@@ -163,6 +191,10 @@ impl<T: Transport> HubServer<T> {
             Message::MissionLifecycleRequest { request } => self
                 .mission_lifecycle_result(&corr, request, now_ms)
                 .with_correlation(corr),
+            // Hub-owned context-passport mint — NO provider/model call.
+            Message::ContextPassportTransferRequest { request } => {
+                context_passport_transfer_result_for_db(&self.db, &corr, request, now_ms)
+            }
             // Provider Workspace action pre-dispatch guard. No provider adapter call here.
             Message::ProviderWorkspaceActionRequest { request } => self
                 .provider_workspace_action_result(&corr, request, now_ms)
@@ -1542,6 +1574,250 @@ pub fn memory_decision_result_for_db(
                 status: status.to_string(),
                 blocker: None,
                 recallable,
+            },
+        },
+    )
+    .with_correlation(msg_id.to_string())
+}
+
+/// Mint one ContextPassport for an existing Mission through the canonical Hub gate. The reply is
+/// refs-only and fail-closed: invalid lane/kind/scope or sensitive unapproved items return
+/// `status=blocked` and do not write a partial passport.
+pub fn context_passport_transfer_result_for_db(
+    db: &Db,
+    msg_id: &str,
+    request: ContextPassportTransferRequestWire,
+    now_ms: i64,
+) -> Envelope {
+    let passport_id = request.passport_id.trim();
+    if passport_id.is_empty() {
+        return context_passport_transfer_blocked(msg_id, now_ms, &request, "passport_id_required");
+    }
+    let mission_id = request.mission_id.trim();
+    if mission_id.is_empty() {
+        return context_passport_transfer_blocked(msg_id, now_ms, &request, "mission_id_required");
+    }
+    if request.items.is_empty() {
+        return context_passport_transfer_blocked(msg_id, now_ms, &request, "items_required");
+    }
+
+    let destination_lane = match parse_passport_lane(request.destination_lane.trim()) {
+        Ok(lane) => lane,
+        Err(blocker) => {
+            return context_passport_transfer_blocked(msg_id, now_ms, &request, blocker)
+        }
+    };
+    let mut items = Vec::with_capacity(request.items.len());
+    for item in &request.items {
+        let kind = match parse_passport_item_kind(item.kind.trim()) {
+            Ok(kind) => kind,
+            Err(blocker) => {
+                return context_passport_transfer_blocked(msg_id, now_ms, &request, blocker)
+            }
+        };
+        items.push(friday_core::PassportItem {
+            kind,
+            label: item.label.clone(),
+            included: item.included,
+            sensitive: item.sensitive,
+        });
+    }
+
+    let mut mission = match db.get_mission(mission_id) {
+        Ok(Some(mission)) => mission,
+        Ok(None) => {
+            return context_passport_transfer_blocked(msg_id, now_ms, &request, "mission_not_found")
+        }
+        Err(_) => {
+            return context_passport_transfer_blocked(
+                msg_id,
+                now_ms,
+                &request,
+                "mission_read_failed",
+            )
+        }
+    };
+    if let Some(work_item_id) = request
+        .work_item_id
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        match db.get_work_item(work_item_id) {
+            Ok(Some(work_item)) if work_item.mission_id == mission_id => {}
+            Ok(Some(_)) => {
+                return context_passport_transfer_blocked(
+                    msg_id,
+                    now_ms,
+                    &request,
+                    "work_item_scope_mismatch",
+                )
+            }
+            Ok(None) => {
+                return context_passport_transfer_blocked(
+                    msg_id,
+                    now_ms,
+                    &request,
+                    "work_item_not_found",
+                )
+            }
+            Err(_) => {
+                return context_passport_transfer_blocked(
+                    msg_id,
+                    now_ms,
+                    &request,
+                    "work_item_read_failed",
+                )
+            }
+        }
+    }
+
+    let passport = match friday_core::build_context_passport(
+        passport_id.to_string(),
+        mission_id.to_string(),
+        request
+            .work_item_id
+            .clone()
+            .filter(|value| !value.trim().is_empty()),
+        destination_lane,
+        request
+            .destination_target
+            .clone()
+            .filter(|value| !value.trim().is_empty()),
+        items,
+        request.approved_sensitive,
+        now_ms,
+    ) {
+        Ok(passport) => passport,
+        Err(_) => {
+            return context_passport_transfer_blocked(
+                msg_id,
+                now_ms,
+                &request,
+                "context_passport_blocked",
+            )
+        }
+    };
+
+    let link_id = format!(
+        "context-passport-{}-{}",
+        passport_id
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_')
+            .take(48)
+            .collect::<String>(),
+        now_ms
+    );
+    let tx = match db.conn().unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(_) => {
+            return context_passport_transfer_blocked(
+                msg_id,
+                now_ms,
+                &request,
+                "passport_write_failed",
+            )
+        }
+    };
+    if friday_storage::passport::upsert_context_passport_in(&tx, &passport).is_err() {
+        return context_passport_transfer_blocked(
+            msg_id,
+            now_ms,
+            &request,
+            "passport_write_failed",
+        );
+    }
+    if friday_storage::mission::upsert_mission_link(
+        &tx,
+        &friday_core::MissionLink {
+            link_id: link_id.clone(),
+            mission_id: mission_id.to_string(),
+            work_item_id: request
+                .work_item_id
+                .clone()
+                .filter(|value| !value.trim().is_empty()),
+            link_kind: friday_core::MissionLinkKind::ContextPassport,
+            target_ref: format!("friday://context-passport/{passport_id}"),
+            proof_ref: Some(passport_id.to_string()),
+            created_at_ms: now_ms,
+        },
+    )
+    .is_err()
+    {
+        return context_passport_transfer_blocked(
+            msg_id,
+            now_ms,
+            &request,
+            "mission_link_write_failed",
+        );
+    }
+    if !mission
+        .context_passport_refs
+        .iter()
+        .any(|existing| existing == passport_id)
+    {
+        mission.context_passport_refs.push(passport_id.to_string());
+    }
+    mission.updated_at_ms = now_ms;
+    if friday_storage::mission::upsert_mission(&tx, &mission).is_err() {
+        return context_passport_transfer_blocked(msg_id, now_ms, &request, "mission_write_failed");
+    }
+    if tx.commit().is_err() {
+        return context_passport_transfer_blocked(
+            msg_id,
+            now_ms,
+            &request,
+            "passport_write_failed",
+        );
+    }
+
+    Envelope::new(
+        format!("{msg_id}-context-passport-transfer"),
+        now_ms,
+        Message::ContextPassportTransferResult {
+            result: ContextPassportTransferResultWire {
+                passport_id: passport_id.to_string(),
+                mission_id: mission_id.to_string(),
+                work_item_id: request
+                    .work_item_id
+                    .clone()
+                    .filter(|value| !value.trim().is_empty()),
+                destination_lane: request.destination_lane,
+                destination_target: request.destination_target,
+                shared_item_count: passport.shared_items().len() as u64,
+                mission_ref_count: mission.context_passport_refs.len() as u64,
+                link_id: Some(link_id),
+                status: "confirmed".to_string(),
+                blocker: None,
+            },
+        },
+    )
+    .with_correlation(msg_id.to_string())
+}
+
+fn context_passport_transfer_blocked(
+    msg_id: &str,
+    now_ms: i64,
+    request: &ContextPassportTransferRequestWire,
+    blocker: &str,
+) -> Envelope {
+    Envelope::new(
+        format!("{msg_id}-context-passport-transfer"),
+        now_ms,
+        Message::ContextPassportTransferResult {
+            result: ContextPassportTransferResultWire {
+                passport_id: request.passport_id.clone(),
+                mission_id: request.mission_id.clone(),
+                work_item_id: request
+                    .work_item_id
+                    .clone()
+                    .filter(|value| !value.trim().is_empty()),
+                destination_lane: request.destination_lane.clone(),
+                destination_target: request.destination_target.clone(),
+                shared_item_count: 0,
+                mission_ref_count: 0,
+                link_id: None,
+                status: "blocked".to_string(),
+                blocker: Some(blocker.to_string()),
             },
         },
     )

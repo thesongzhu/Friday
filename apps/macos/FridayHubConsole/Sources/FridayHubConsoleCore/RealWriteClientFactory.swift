@@ -142,6 +142,11 @@ struct HonestlyUnavailableWriteClient: FridayMissionSpineWriteClient, FridayMiss
   func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire {
     throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
   }
+  func submitContextPassportTransfer(
+    _ request: ContextPassportTransferRequestWire
+  ) async throws -> ContextPassportTransferResultWire {
+    throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
+  }
   func submitRunOutcomeLearningDecision(
     _ request: RunOutcomeLearningDecisionRequestWire
   ) async throws -> RunOutcomeLearningDecisionResultWire {

@@ -199,23 +199,31 @@ final class HomeViewModelTests: XCTestCase {
       case result(ActivityMarkDoneResultWire)
       case fail(Error)
     }
+    enum PassportScript {
+      case result(ContextPassportTransferResultWire)
+      case fail(Error)
+    }
 
     let learningScript: LearningScript?
     let memoryScript: MemoryScript?
     let activityScript: ActivityScript?
+    let passportScript: PassportScript?
     private(set) var memoryRequests: [MemoryDecisionRequestWire] = []
     private(set) var learningRequests: [RunOutcomeLearningDecisionRequestWire] = []
     private(set) var activityMarkDoneRequests: [ActivityMarkDoneRequestWire] = []
+    private(set) var passportRequests: [ContextPassportTransferRequestWire] = []
     private(set) var workItemStatusRequests: [WorkItemStatusRequestWire] = []
 
     init(
       learningScript: LearningScript? = nil,
       memoryScript: MemoryScript? = nil,
-      activityScript: ActivityScript? = nil
+      activityScript: ActivityScript? = nil,
+      passportScript: PassportScript? = nil
     ) {
       self.learningScript = learningScript
       self.memoryScript = memoryScript
       self.activityScript = activityScript
+      self.passportScript = passportScript
     }
 
     func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire {
@@ -246,6 +254,17 @@ final class HomeViewModelTests: XCTestCase {
       activityMarkDoneRequests.append(request)
       guard let activityScript else { throw NSError(domain: "unused", code: 1) }
       switch activityScript {
+      case .result(let result): return result
+      case .fail(let error): throw error
+      }
+    }
+
+    func submitContextPassportTransfer(
+      _ request: ContextPassportTransferRequestWire
+    ) async throws -> ContextPassportTransferResultWire {
+      passportRequests.append(request)
+      guard let passportScript else { throw NSError(domain: "unused", code: 1) }
+      switch passportScript {
       case .result(let result): return result
       case .fail(let error): throw error
       }
@@ -846,6 +865,7 @@ final class HomeViewModelTests: XCTestCase {
       fileSuffix: "confirm",
       screen: "memory",
       actionId: "check",
+      additionalActionIds: ["memory_resolve"],
       evidenceRef: "proof://mobile/memory-confirm/cand-1",
       request: try XCTUnwrap(write.memoryRequests.first),
       result: MemoryDecisionResultWire(
@@ -884,6 +904,7 @@ final class HomeViewModelTests: XCTestCase {
       fileSuffix: "reject",
       screen: "memory",
       actionId: "act",
+      additionalActionIds: ["memory_resolve"],
       evidenceRef: "proof://mobile/memory-reject/cand-1",
       request: try XCTUnwrap(write.memoryRequests.first),
       result: MemoryDecisionResultWire(
@@ -933,10 +954,66 @@ final class HomeViewModelTests: XCTestCase {
       .error(reason: "Write seam not configured."))
   }
 
+  func testSubmitContextPassportTransferRendersConfirmedAndRefreshes() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeMissionWriteClient(passportScript: .result(ContextPassportTransferResultWire(
+      passportId: "mobile-passport-mission-7",
+      missionId: "mission-7",
+      workItemId: "wi-1",
+      destinationLane: "codex",
+      destinationTarget: "codex",
+      sharedItemCount: 3,
+      missionRefCount: 1,
+      linkId: "context-passport-mobile-passport-mission-7-1",
+      status: "confirmed")))
+    let vm = HomeViewModel(
+      client: read,
+      writeClient: write,
+      writeOwnerPrincipal: "owner-ios")
+    let projection = HomeProjection(try sampleSnapshot())
+
+    await vm.submitContextPassportTransfer(for: projection)
+
+    XCTAssertEqual(write.passportRequests.count, 1)
+    XCTAssertEqual(write.passportRequests.first?.passportId, "mobile-passport-mission-7")
+    XCTAssertEqual(write.passportRequests.first?.missionId, "mission-7")
+    XCTAssertEqual(write.passportRequests.first?.workItemId, "wi-1")
+    XCTAssertEqual(write.passportRequests.first?.destinationLane, "codex")
+    XCTAssertEqual(write.passportRequests.first?.destinationTarget, "codex")
+    XCTAssertEqual(write.passportRequests.first?.items.count, 3)
+    XCTAssertEqual(read.fetchWorkbenchCount, 1)
+    XCTAssertEqual(
+      vm.contextPassportTransferState,
+      .confirmed(summary: "passport mobile-passport-mission-7 · items=3"))
+    try writeMobilePassportTransferActionEvidenceIfRequested(
+      request: try XCTUnwrap(write.passportRequests.first),
+      result: ContextPassportTransferResultWire(
+        passportId: "mobile-passport-mission-7",
+        missionId: "mission-7",
+        workItemId: "wi-1",
+        destinationLane: "codex",
+        destinationTarget: "codex",
+        sharedItemCount: 3,
+        missionRefCount: 1,
+        linkId: "context-passport-mobile-passport-mission-7-1",
+        status: "confirmed"))
+  }
+
+  func testSubmitContextPassportTransferWithoutWriteClientIsUnavailable() async throws {
+    let vm = HomeViewModel(client: FakeReadClient(.snapshot(try sampleSnapshot())))
+
+    await vm.submitContextPassportTransfer(for: HomeProjection(try sampleSnapshot()))
+
+    XCTAssertEqual(
+      vm.contextPassportTransferState,
+      .error(reason: "Write seam not configured."))
+  }
+
   private func writeMobileMemoryActionEvidenceIfRequested(
     fileSuffix: String,
     screen: String,
     actionId: String,
+    additionalActionIds: [String] = [],
     evidenceRef: String,
     request: MemoryDecisionRequestWire,
     result: MemoryDecisionResultWire
@@ -945,6 +1022,19 @@ final class HomeViewModelTests: XCTestCase {
       "FRIDAY_MOBILE_MEMORY_ACTION_EVIDENCE_DIR"
     ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
       return
+    }
+
+    let actions: [[String: Any]] = ([actionId] + additionalActionIds).map { candidateActionId in
+      [
+        "surface": "mobile",
+        "screen": screen,
+        "action_id": candidateActionId,
+        "capability_id": "memory_review_no_silent_write_decide_candidate",
+        "status": "pass",
+        "evidence_ref": evidenceRef,
+        "source": "ios_home_viewmodel_memory_decision_runtime",
+        "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_audit_not_sim_tap",
+      ]
     }
 
     let proof: [String: Any] = [
@@ -963,18 +1053,7 @@ final class HomeViewModelTests: XCTestCase {
         "blocker": result.blocker.map { $0 as Any } ?? NSNull(),
         "recallable": result.recallable,
       ],
-      "actions": [
-        [
-          "surface": "mobile",
-          "screen": screen,
-          "action_id": actionId,
-          "capability_id": "memory_review_no_silent_write_decide_candidate",
-          "status": "pass",
-          "evidence_ref": evidenceRef,
-          "source": "ios_home_viewmodel_memory_decision_runtime",
-          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_audit_not_sim_tap",
-        ],
-      ],
+      "actions": actions,
       "caveat": "This is Swift product ViewModel runtime evidence that the mobile memory action delegates to the write seam and renders the refs-only result. It is not a live Hub memory-spine audit receipt, not a simulator tap, not END-BAR, and not adoption.",
     ]
 
@@ -984,6 +1063,63 @@ final class HomeViewModelTests: XCTestCase {
     let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
     try data.write(to: out, options: .atomic)
     print("[mobile-memory-action-evidence] proofOut=\(out.path)")
+  }
+
+  private func writeMobilePassportTransferActionEvidenceIfRequested(
+    request: ContextPassportTransferRequestWire,
+    result: ContextPassportTransferResultWire
+  ) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment[
+      "FRIDAY_MOBILE_PASSPORT_TRANSFER_ACTION_EVIDENCE_DIR"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+      return
+    }
+
+    let proof: [String: Any] = [
+      "truth": "mobile_passport_transfer_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+      "request": [
+        "passport_id": request.passportId,
+        "mission_id": request.missionId,
+        "work_item_id": request.workItemId.map { $0 as Any } ?? NSNull(),
+        "destination_lane": request.destinationLane,
+        "destination_target": request.destinationTarget.map { $0 as Any } ?? NSNull(),
+        "item_count": request.items.count,
+        "approved_sensitive": request.approvedSensitive,
+      ],
+      "result": [
+        "passport_id": result.passportId,
+        "mission_id": result.missionId,
+        "work_item_id": result.workItemId.map { $0 as Any } ?? NSNull(),
+        "destination_lane": result.destinationLane,
+        "destination_target": result.destinationTarget.map { $0 as Any } ?? NSNull(),
+        "shared_item_count": result.sharedItemCount,
+        "mission_ref_count": result.missionRefCount,
+        "link_id": result.linkId.map { $0 as Any } ?? NSNull(),
+        "status": result.status,
+      ],
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": "passport",
+          "action_id": "check",
+          "capability_id": "context_passport_transfer_checklist",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/passport/send/\(request.missionId)",
+          "source": "ios_home_viewmodel_context_passport_transfer_runtime",
+          "truth_label": "swift_viewmodel_context_passport_write_seam_runtime_not_live_hub_not_endbar",
+        ],
+      ],
+      "caveat": "This is Swift product ViewModel runtime evidence that the mobile Passport action delegates to the governed context-passport write seam and renders a refs-only result. It is not a live Hub audit receipt, not a simulator tap, not END-BAR, and not adoption.",
+    ]
+
+    let dir = URL(fileURLWithPath: rawDir)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let out = dir.appendingPathComponent("mobile-passport-transfer-action-evidence.json")
+    let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: out, options: .atomic)
+    print("[mobile-passport-transfer-action-evidence] proofOut=\(out.path)")
   }
 
   private func writeHomeRefreshActionEvidenceIfRequested(

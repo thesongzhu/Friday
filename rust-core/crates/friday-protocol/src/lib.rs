@@ -431,6 +431,54 @@ pub struct MemoryDecisionResultWire {
     pub recallable: bool,
 }
 
+/// One refs-only context-passport item proposed by a trusted client. Labels are operator/user
+/// reviewed summaries or refs; sensitive raw material must not ride this wire. The Hub runs the
+/// canonical context-passport gate before persisting any row.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextPassportItemWire {
+    pub kind: String,
+    pub label: String,
+    pub included: bool,
+    pub sensitive: bool,
+}
+
+/// Client request to mint one ContextPassport for an existing Mission. This is a Hub-owned
+/// governance mutation over the sealed peer session, never a provider/model call and never direct
+/// DB access from the client.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextPassportTransferRequestWire {
+    pub passport_id: String,
+    pub mission_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_item_id: Option<String>,
+    pub destination_lane: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination_target: Option<String>,
+    #[serde(default)]
+    pub items: Vec<ContextPassportItemWire>,
+    #[serde(default)]
+    pub approved_sensitive: bool,
+}
+
+/// Hub response for context-passport minting. Refs-only; never echoes item content.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextPassportTransferResultWire {
+    pub passport_id: String,
+    pub mission_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_item_id: Option<String>,
+    pub destination_lane: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination_target: Option<String>,
+    pub shared_item_count: u64,
+    pub mission_ref_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_id: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+}
+
 /// Client request to apply the OWNER's explicit confirm/reject decision to ONE
 /// pending A1 run-outcome learning candidate. This is refs-only governance over a
 /// candidate row that already points at a run/session; it never carries the run
@@ -1499,6 +1547,15 @@ pub enum Message {
     /// the resulting lifecycle state, a coarse status, and whether it is now
     /// recallable. NEVER the candidate's content (the content stays Hub-side).
     MemoryDecisionResult { result: MemoryDecisionResultWire },
+    /// client->hub: mint one ContextPassport for an existing Mission through the Hub gate.
+    /// Never a provider/model call; never direct client DB writes.
+    ContextPassportTransferRequest {
+        request: ContextPassportTransferRequestWire,
+    },
+    /// hub->client: refs-only context-passport mint receipt.
+    ContextPassportTransferResult {
+        result: ContextPassportTransferResultWire,
+    },
     /// client->hub: confirm/reject ONE pending A1 run-outcome learning candidate.
     /// Owner scope is derived server-side from the candidate's bound session/run.
     /// Never a provider/model call and never carries the run answer body.

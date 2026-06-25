@@ -47,6 +47,7 @@ struct FridayChatScreen: View {
 
           historyCard
           phaseCard
+          contextCards
         }
         .padding(16)
       }
@@ -56,6 +57,118 @@ struct FridayChatScreen: View {
     .background(MobileTheme.backgroundWarmOffWhite.ignoresSafeArea())
     .navigationTitle("Friday Chat")
     .navigationBarTitleDisplayMode(.inline)
+  }
+
+  @ViewBuilder private var contextCards: some View {
+    if !viewModel.contextCards.isEmpty {
+      GlassPanel {
+        VStack(alignment: .leading, spacing: 10) {
+          Text("Next")
+            .font(.headline)
+            .foregroundStyle(MobileTheme.textPrimary)
+          ForEach(viewModel.contextCards) { card in
+            contextCardRow(card)
+          }
+        }
+      }
+      .accessibilityIdentifier("friday.chat.context-cards")
+    }
+  }
+
+  private func contextCardRow(_ card: ChatContextCard) -> some View {
+    HStack(alignment: .top, spacing: 10) {
+      Image(systemName: card.id == "handoff" ? "arrowshape.turn.up.right" : "brain.head.profile")
+        .foregroundStyle(MobileTheme.cyan)
+        .frame(width: 24)
+      VStack(alignment: .leading, spacing: 3) {
+        HStack {
+          Text(card.title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(MobileTheme.textPrimary)
+          Spacer()
+          StatusChip(text: card.truthLabel, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+        }
+        Text(card.detail)
+          .font(.caption2)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        RefPill(label: "evidence", ref: short(card.evidenceRef))
+        if card.id == "handoff" {
+          handoffControls
+        }
+        if card.id == "handoff", let state = viewModel.contextPassportTransferState {
+          candidateDecisionStateView(state)
+        }
+        if card.id == "memory", card.memoryCandidateId != nil {
+          memoryDecisionControls
+        }
+        if card.id == "memory", let state = viewModel.contextMemoryDecisionState {
+          candidateDecisionStateView(state)
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .contentShape(Rectangle())
+    .onTapGesture { viewModel.selectContextCard(card.id) }
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("\(card.title) card")
+    .accessibilityIdentifier("friday.chat.\(card.id)-card")
+  }
+
+  private var handoffControls: some View {
+    Button {
+      Task { await viewModel.submitContextPassportHandoff() }
+    } label: {
+      Label("Create handoff", systemImage: "arrowshape.turn.up.right")
+        .font(.caption.weight(.semibold))
+    }
+    .buttonStyle(.bordered)
+    .disabled(viewModel.contextPassportTransferState?.isSent == true)
+    .accessibilityIdentifier("friday.chat.handoff-card.share")
+  }
+
+  private var memoryDecisionControls: some View {
+    HStack(spacing: 8) {
+      Button {
+        Task { await viewModel.decideContextMemory(confirm: true) }
+      } label: {
+        Image(systemName: "checkmark")
+          .frame(width: 26, height: 26)
+      }
+      .buttonStyle(.borderedProminent)
+      .tint(MobileTheme.cyan)
+      .disabled(viewModel.contextMemoryDecisionState?.isSent == true)
+      .accessibilityLabel("Keep memory candidate")
+      .accessibilityIdentifier("friday.chat.memory-card.keep")
+
+      Button {
+        Task { await viewModel.decideContextMemory(confirm: false) }
+      } label: {
+        Image(systemName: "xmark")
+          .frame(width: 26, height: 26)
+      }
+      .buttonStyle(.bordered)
+      .disabled(viewModel.contextMemoryDecisionState?.isSent == true)
+      .accessibilityLabel("Reject memory candidate")
+      .accessibilityIdentifier("friday.chat.memory-card.reject")
+    }
+  }
+
+  @ViewBuilder private func candidateDecisionStateView(_ state: HomeLearningDecisionState) -> some View {
+    switch state {
+    case .sent:
+      StatusChip(text: "sending", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+    case .confirmed(let summary):
+      Text(summary)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+    case .error(let reason):
+      Text(reason)
+        .font(.caption2)
+        .foregroundStyle(MobileTheme.chipWarnFG)
+        .fixedSize(horizontal: false, vertical: true)
+    }
   }
 
   // MARK: - The 4-state loop, rendered

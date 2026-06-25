@@ -682,7 +682,7 @@ final class SessionContinuationViewModelTests: XCTestCase {
     XCTAssertTrue(failed.resumedRunIds.isEmpty)
   }
 
-  func testStopUsesGovernedCancelRunAndSurfacesReceipt() async {
+  func testStopUsesGovernedCancelRunAndSurfacesReceipt() async throws {
     let client = FakeSessionReadClient()
     let write = FakeSessionWriteClient()
     let vm = SessionContinuationViewModel(
@@ -698,6 +698,11 @@ final class SessionContinuationViewModelTests: XCTestCase {
     XCTAssertEqual(
       vm.controlStates["stop"],
       .succeeded(summary: "cancel: cancelled · accepted · audit://cancel/run-1"))
+    try writeWorkflowRunControlActionEvidenceIfRequested(
+      runId: "run-1",
+      auditRef: "audit://cancel/run-1",
+      cancelledRunIds: write.cancelledRunIds,
+      cancelReasons: write.cancelReasons)
   }
 
   func testStopRefusalAndTransportFailureRenderError() async {
@@ -789,5 +794,113 @@ final class SessionContinuationViewModelTests: XCTestCase {
     XCTAssertEqual(snapshot.controls.first { $0.id == "files" }?.truthLabel, "read arm")
     XCTAssertEqual(snapshot.controls.first { $0.id == "history" }?.truthLabel, "read arm")
     XCTAssertEqual(snapshot.controls.first { $0.id == "attachments" }?.truthLabel, "NO-GO")
+  }
+
+  func testSessionSidecarOpenCloseKeepsProviderPrivate() throws {
+    let vm = SessionContinuationViewModel(client: FakeSessionReadClient())
+
+    XCTAssertFalse(vm.sidecarState.isOpen)
+    vm.openSidecar()
+    XCTAssertTrue(vm.sidecarState.isOpen)
+    XCTAssertEqual(vm.sidecarState.actionState, .idle)
+
+    vm.analyzeSidecarPrivately()
+    XCTAssertEqual(
+      vm.sidecarState.actionState,
+      .ready(summary: "Private Friday analysis ready. Nothing has been sent to the provider."))
+
+    vm.blockSidecarExternalAction("Send to provider")
+    guard case .blocked(let reason) = vm.sidecarState.actionState else {
+      return XCTFail("expected blocked external sidecar action")
+    }
+    XCTAssertTrue(reason.contains("governed confirmation path"))
+
+    vm.closeSidecar()
+    XCTAssertFalse(vm.sidecarState.isOpen)
+    try writeSessionSidecarActionEvidenceIfRequested()
+  }
+
+  private func writeSessionSidecarActionEvidenceIfRequested() throws {
+    guard let rawDir = ProcessInfo.processInfo.environment["FRIDAY_MOBILE_SESSION_SIDECAR_ACTION_EVIDENCE_DIR"],
+          !rawDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return
+    }
+    let dir = URL(fileURLWithPath: rawDir, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let payload: [String: Any] = [
+      "truth": "mobile_session_sidecar_action_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": "session",
+          "action_id": "sidecar_open",
+          "capability_id": "friday_sidecar_private",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/session/sidecar/open",
+          "proof": [
+            "sidecar_open": true,
+            "provider_sent": false,
+            "external_actions_blocked_without_confirm": true,
+          ],
+        ],
+        [
+          "surface": "mobile",
+          "screen": "session",
+          "action_id": "sidecar_close",
+          "capability_id": "friday_sidecar_private",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/session/sidecar/close",
+          "proof": [
+            "sidecar_open_after_close": false,
+            "provider_sent": false,
+            "external_actions_blocked_without_confirm": true,
+          ],
+        ],
+      ],
+    ]
+    let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: dir.appendingPathComponent("mobile-session-sidecar-action-evidence.json"), options: .atomic)
+  }
+
+  private func writeWorkflowRunControlActionEvidenceIfRequested(
+    runId: String,
+    auditRef: String,
+    cancelledRunIds: [String],
+    cancelReasons: [String?]
+  ) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment["FRIDAY_MOBILE_WORKFLOW_ACTION_EVIDENCE_DIR"],
+          !rawDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return
+    }
+    let dir = URL(fileURLWithPath: rawDir, isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let payload: [String: Any] = [
+      "truth": "mobile_workflow_action_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": "workflow",
+          "action_id": "workflow_run_control",
+          "capability_id": "session_control_native_set",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/workflow/run-control/\(runId)",
+          "source": "ios_session_continuation_viewmodel_stop_runtime",
+          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_sim_tap",
+        ],
+      ],
+      "proof": [
+        "run_id": runId,
+        "op": "cancel",
+        "audit_ref": auditRef,
+        "cancelled_run_ids": cancelledRunIds,
+        "cancel_reasons": cancelReasons.map { $0 ?? "" },
+      ],
+      "caveat": "Partial runtime evidence only: iOS SessionContinuation ViewModel run-control delegates to the governed write seam and renders a refs-only receipt. This is not a live Hub audit receipt, not a simulator tap, not END-BAR, and not adoption.",
+    ]
+    let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: dir.appendingPathComponent("mobile-workflow-action-evidence.json"), options: .atomic)
   }
 }

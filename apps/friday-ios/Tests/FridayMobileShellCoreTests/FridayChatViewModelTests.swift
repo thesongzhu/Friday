@@ -90,9 +90,35 @@ final class FridayChatViewModelTests: XCTestCase {
   }
 
   final class FakeMissionClient: FridayMobileMissionDispatchingWriteClient, @unchecked Sendable {
+    enum MemoryScript { case result(MemoryDecisionResultWire); case fail(FridayWriteClientError) }
+    enum PassportScript { case result(ContextPassportTransferResultWire); case fail(FridayWriteClientError) }
+
     private(set) var submittedIntakes: [MissionIntakeRequestWire] = []
     private(set) var missionContexts: [MissionWorkItemContextWire] = []
     private(set) var dispatchedTasks: [String] = []
+    private(set) var memoryRequests: [MemoryDecisionRequestWire] = []
+    private(set) var passportRequests: [ContextPassportTransferRequestWire] = []
+    let memoryScript: MemoryScript
+    let passportScript: PassportScript
+
+    init(memoryScript: MemoryScript = .result(MemoryDecisionResultWire(
+      memoryId: "unused",
+      state: "unknown",
+      status: "blocked",
+      blocker: "unused",
+      recallable: false)),
+      passportScript: PassportScript = .result(ContextPassportTransferResultWire(
+        passportId: "unused",
+        missionId: "unused",
+        destinationLane: "codex",
+        sharedItemCount: 0,
+        missionRefCount: 0,
+        status: "blocked",
+        blocker: "unused"))
+    ) {
+      self.memoryScript = memoryScript
+      self.passportScript = passportScript
+    }
 
     func dispatchAgentRun(
       task: String,
@@ -127,12 +153,21 @@ final class FridayChatViewModelTests: XCTestCase {
     }
 
     func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire {
-      MemoryDecisionResultWire(
-        memoryId: request.memoryId,
-        state: "unknown",
-        status: "blocked",
-        blocker: "unused",
-        recallable: false)
+      memoryRequests.append(request)
+      switch memoryScript {
+      case .result(let result): return result
+      case .fail(let error): throw error
+      }
+    }
+
+    func submitContextPassportTransfer(
+      _ request: ContextPassportTransferRequestWire
+    ) async throws -> ContextPassportTransferResultWire {
+      passportRequests.append(request)
+      switch passportScript {
+      case .result(let result): return result
+      case .fail(let error): throw error
+      }
     }
 
     func submitRunOutcomeLearningDecision(
@@ -239,6 +274,43 @@ final class FridayChatViewModelTests: XCTestCase {
   private func makePause(_ runId: String = "run-1") -> PausedOutcome {
     PausedOutcome(runId: runId, approvalId: "ap-nonce-\(runId)",
                   actionDigest: String(repeating: "c", count: 64), ownerSealedSummary: "write_file(notes.md)")
+  }
+
+  private func makeMemoryCandidateSnapshot(id: String = "cand-chat-1") throws -> WorkbenchSnapshot {
+    try WorkbenchSnapshot(
+      projectionJSON: Data("""
+      {"missionId":"mission-chat","fridayConversationId":"fconv-chat",\
+      "runtimeFeedStatus":"live_rust_hub_projection","statusLabels":[],"workItems":[],\
+      "memoryCandidates":[{"id":"\(id)","preview":"Remember Friday prefers batched PRs","state":"candidate_review_only","grantsMemoryAuthority":false,"evidenceRef":"proof://mobile/fridayChat/memory/\(id)"}]}
+      """.utf8),
+      generatedAtMs: 0)
+  }
+
+  private func writeMobileChatActionEvidenceIfRequested(
+    actions: [[String: Any]],
+    proof: [String: Any]
+  ) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment[
+      "FRIDAY_MOBILE_CHAT_ACTION_EVIDENCE_DIR"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+      return
+    }
+
+    let payload: [String: Any] = [
+      "truth": "mobile_chat_action_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+      "proof": proof,
+      "actions": actions,
+      "caveat": "Partial runtime evidence only: iOS Chat ViewModel actions delegate to the governed write/sign/reject seams and render refs-only results. This is not a simulator tap, not a live Hub audit receipt, not true operator-key approval, not END-BAR, and not adoption.",
+    ]
+
+    let dir = URL(fileURLWithPath: rawDir)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let out = dir.appendingPathComponent("action-runtime-evidence.json")
+    let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: out, options: .atomic)
+    print("[mobile-chat-action-evidence] proofOut=\(out.path)")
   }
 
   // MARK: 1. Compose → Send → Answer (mock)
@@ -498,6 +570,243 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertEqual(client.relayedBlobs.first, expected, "INV-1: the signer blob must ride VERBATIM")
     XCTAssertTrue(vm.history.last?.receiptRefs.contains(ChatReceiptRef(label: "audit_ref", ref: "audit://chain/run-1")) == true)
     XCTAssertTrue(vm.history.last?.receiptRefs.contains(ChatReceiptRef(label: "truth", ref: "rust_wired")) == true)
+  }
+
+  func testMobileChatActionEvidenceCoversSendApprovalCardAndControls() async throws {
+    let sendClient = FakeWriteClient(dispatch: .answer(makeAnswer("run-chat-send")))
+    let sendVM = FridayChatViewModel(writeClient: sendClient, signer: MockOperatorSigner())
+    await sendVM.send("summarize the current Friday closure status")
+    guard case let .answered(answerReceipt) = sendVM.phase else {
+      return XCTFail("expected answered, got \(sendVM.phase)")
+    }
+    XCTAssertEqual(sendVM.contextCards.map(\.id), ["handoff", "memory"])
+    sendVM.selectContextCard("handoff")
+    XCTAssertEqual(sendVM.selectedContextCardId, "handoff")
+    sendVM.selectContextCard("memory")
+    XCTAssertEqual(sendVM.selectedContextCardId, "memory")
+
+    let approveClient = FakeWriteClient(
+      dispatch: .pause(makePause("run-chat-approve")),
+      resume: .accepted(ResumeRelayResult(
+        runId: "run-chat-approve",
+        op: "resume",
+        accepted: true,
+        status: "mutation_completed",
+        auditRef: "audit://mobile-chat/approve")))
+    let approveVM = FridayChatViewModel(writeClient: approveClient, signer: MockOperatorSigner())
+    await approveVM.send("edit notes.md")
+    guard case let .pendingApproval(approvalCard) = approveVM.phase else {
+      return XCTFail("expected pending approval, got \(approveVM.phase)")
+    }
+    await approveVM.approve()
+    guard case let .resumed(approveReceipt) = approveVM.phase else {
+      return XCTFail("expected approve resume receipt, got \(approveVM.phase)")
+    }
+
+    let rejectClient = FakeWriteClient(
+      dispatch: .pause(makePause("run-chat-reject")),
+      reject: .accepted(ResumeRelayResult(
+        runId: "run-chat-reject",
+        op: "reject",
+        accepted: true,
+        status: "rejected",
+        auditRef: "audit://mobile-chat/reject")))
+    let rejectVM = FridayChatViewModel(writeClient: rejectClient, signer: MockOperatorSigner())
+    await rejectVM.send("edit notes.md")
+    await rejectVM.reject()
+    guard case let .resumed(rejectReceipt) = rejectVM.phase else {
+      return XCTFail("expected reject receipt, got \(rejectVM.phase)")
+    }
+
+    let memoryRead = FakeReadClient(snapshot: try makeMemoryCandidateSnapshot())
+    let keepMemoryClient = FakeMissionClient(memoryScript: .result(MemoryDecisionResultWire(
+      memoryId: "cand-chat-1",
+      state: "confirmed",
+      status: "confirmed",
+      recallable: true)))
+    let keepMemoryVM = FridayChatViewModel(
+      writeClient: keepMemoryClient,
+      signer: MockOperatorSigner(),
+      readClient: memoryRead)
+    await keepMemoryVM.send("summarize the memory candidate")
+    XCTAssertEqual(keepMemoryVM.contextCards.first(where: { $0.id == "memory" })?.memoryCandidateId, "cand-chat-1")
+    await keepMemoryVM.decideContextMemory(confirm: true)
+    XCTAssertEqual(keepMemoryClient.memoryRequests, [
+      MemoryDecisionRequestWire(
+        memoryId: "cand-chat-1",
+        ownerPrincipal: liveAgentRunOwnerPrincipal,
+        decision: "confirm"),
+    ])
+    XCTAssertEqual(
+      keepMemoryVM.contextMemoryDecisionState,
+      .confirmed(summary: "confirmed · state=confirmed · recallable=true"))
+
+    let rejectMemoryClient = FakeMissionClient(memoryScript: .result(MemoryDecisionResultWire(
+      memoryId: "cand-chat-1",
+      state: "rejected",
+      status: "rejected",
+      recallable: false)))
+    let rejectMemoryVM = FridayChatViewModel(
+      writeClient: rejectMemoryClient,
+      signer: MockOperatorSigner(),
+      readClient: memoryRead)
+    await rejectMemoryVM.send("summarize the memory candidate")
+    await rejectMemoryVM.decideContextMemory(confirm: false)
+    XCTAssertEqual(rejectMemoryClient.memoryRequests, [
+      MemoryDecisionRequestWire(
+        memoryId: "cand-chat-1",
+        ownerPrincipal: liveAgentRunOwnerPrincipal,
+        decision: "reject"),
+    ])
+    XCTAssertEqual(
+      rejectMemoryVM.contextMemoryDecisionState,
+      .confirmed(summary: "rejected · state=rejected · recallable=false"))
+
+    let passportClient = FakeMissionClient(passportScript: .result(ContextPassportTransferResultWire(
+      passportId: "mobile-chat-passport-mission-mobile-passport",
+      missionId: "mission-mobile-passport",
+      workItemId: "work-mobile-passport",
+      destinationLane: "codex",
+      destinationTarget: "codex",
+      sharedItemCount: 3,
+      missionRefCount: 1,
+      linkId: "context-passport-mobile-chat-passport-mission-mobile-passport-1",
+      status: "confirmed")))
+    let passportRead = FakeReadClient(
+      snapshot: try WorkbenchSnapshot(
+        projectionJSON: Data("""
+        {"missionId":"mission-mobile-passport","fridayConversationId":"fconv_mobile_passport",\
+        "runtimeFeedStatus":"live_rust_hub_projection","statusLabels":[],"workItems":[]}
+        """.utf8),
+        generatedAtMs: 0),
+      answerBodies: ["run-first": "Owner-visible mission answer for a context handoff."])
+    let passportVM = FridayChatViewModel(
+      writeClient: passportClient,
+      signer: MockOperatorSigner(),
+      missionClient: passportClient,
+      readClient: passportRead,
+      newId: { "passport" })
+    await passportVM.send("create a mission answer for handoff", routePreference: .codex)
+    await passportVM.submitContextPassportHandoff()
+    XCTAssertEqual(passportClient.passportRequests.count, 1)
+    XCTAssertEqual(passportClient.passportRequests.first?.missionId, "mission-mobile-passport")
+    XCTAssertEqual(passportClient.passportRequests.first?.workItemId, "work-mobile-passport")
+    XCTAssertEqual(passportClient.passportRequests.first?.items.count, 3)
+    XCTAssertEqual(
+      passportVM.contextPassportTransferState,
+      .confirmed(summary: "passport mobile-chat-passport-mission-mobile-passport · items=3"))
+
+    try writeMobileChatActionEvidenceIfRequested(
+      actions: [
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "chat:typing",
+          "capability_id": "ask_friday_chat",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/send/\(answerReceipt.runId)",
+          "source": "ios_chat_viewmodel_send_runtime",
+          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_operator_key_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "chat:approveCard",
+          "capability_id": "ask_friday_chat",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/approval-card/\(approvalCard.runId)",
+          "source": "ios_chat_viewmodel_paused_approval_card_runtime",
+          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_operator_key_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "check",
+          "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/approve/\(approveReceipt.runId)",
+          "source": "ios_chat_viewmodel_approve_relay_runtime",
+          "truth_label": "swift_viewmodel_mock_operator_signer_not_true_key_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "act",
+          "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/reject/\(rejectReceipt.runId)",
+          "source": "ios_chat_viewmodel_reject_runtime",
+          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_operator_key_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "chat:handoffCard",
+          "capability_id": "ask_friday_chat",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/handoff-card/\(answerReceipt.runId)",
+          "source": "ios_chat_viewmodel_context_card_runtime",
+          "truth_label": "swift_viewmodel_local_affordance_runtime_not_passport_send_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "chat:memoryCard",
+          "capability_id": "ask_friday_chat",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/memory-card/\(answerReceipt.runId)",
+          "source": "ios_chat_viewmodel_context_card_runtime",
+          "truth_label": "swift_viewmodel_local_affordance_runtime_not_memory_decision_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "share",
+          "capability_id": "context_passport_transfer_checklist",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/handoff/passport/\(passportClient.passportRequests.first?.missionId ?? "missing")",
+          "source": "ios_chat_viewmodel_context_passport_transfer_runtime",
+          "truth_label": "swift_viewmodel_context_passport_write_seam_runtime_not_live_hub_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "check",
+          "capability_id": "memory_review_no_silent_write_decide_candidate",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/memory/confirm/cand-chat-1",
+          "source": "ios_chat_viewmodel_memory_decision_runtime",
+          "truth_label": "swift_viewmodel_memory_decision_write_seam_runtime_not_live_hub_not_endbar",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "fridayChat",
+          "action_id": "act",
+          "capability_id": "memory_review_no_silent_write_decide_candidate",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/fridayChat/memory/reject/cand-chat-1",
+          "source": "ios_chat_viewmodel_memory_decision_runtime",
+          "truth_label": "swift_viewmodel_memory_decision_write_seam_runtime_not_live_hub_not_endbar",
+        ],
+      ],
+      proof: [
+        "send_run_id": answerReceipt.runId,
+        "context_card_ids": sendVM.contextCards.map(\.id),
+        "selected_context_card_id": sendVM.selectedContextCardId ?? "",
+        "memory_candidate_id": "cand-chat-1",
+        "memory_keep_request_count": keepMemoryClient.memoryRequests.count,
+        "memory_reject_request_count": rejectMemoryClient.memoryRequests.count,
+        "context_passport_request_count": passportClient.passportRequests.count,
+        "context_passport_item_count": passportClient.passportRequests.first?.items.count ?? 0,
+        "approval_card_run_id": approvalCard.runId,
+        "approval_card_digest_len": approvalCard.actionDigest.count,
+        "approve_run_id": approveReceipt.runId,
+        "approve_status": approveReceipt.status,
+        "reject_run_id": rejectReceipt.runId,
+        "reject_status": rejectReceipt.status,
+        "approve_relay_count": approveClient.resumedRunIds.count,
+        "reject_relay_count": rejectClient.rejectedRunIds.count,
+      ])
   }
 
   /// A server REFUSAL (`accepted=false`) is a SUCCESSFUL relay of a refusal — the action did NOT
