@@ -88,6 +88,10 @@ public struct HomeProjection: Sendable, Equatable {
       + runOutcomeLearningCandidates.count
   }
 
+  public var providerWorkItems: [HomeWorkItem] {
+    workItems.filter(\.isProviderLinked)
+  }
+
   public var isLoadedEmpty: Bool {
     workItemIds.isEmpty
       && providerReceiptRefs.isEmpty
@@ -210,6 +214,18 @@ public struct HomeWorkItem: Sendable, Identifiable, Equatable {
 
   public var needsAttention: Bool {
     !done && (["blocked", "waiting", "error", "stale"].contains(state) || canRetry || canCancel)
+  }
+
+  public var isProviderLinked: Bool {
+    let haystack = [
+      title,
+      state,
+      owner,
+      proofRef ?? "",
+      blockingReason,
+      recoveryKind,
+    ].joined(separator: " ").lowercased()
+    return ["provider", "codex", "claude", "deepseek", "anthropic"].contains { haystack.contains($0) }
   }
 }
 

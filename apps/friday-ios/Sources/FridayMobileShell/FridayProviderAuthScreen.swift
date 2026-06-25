@@ -131,31 +131,67 @@ struct FridayProviderAuthScreen: View {
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
-      if projection.workItems.isEmpty {
-        Text("No provider work-item refs in the current projection.")
+      let providerItems = projection.providerWorkItems
+      if providerItems.isEmpty {
+        Text("No provider-linked WorkItem refs in the current projection.")
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)
       } else {
-        ForEach(projection.workItems.prefix(3)) { item in
-          HStack(spacing: 8) {
-            Image(systemName: item.needsAttention ? "exclamationmark.triangle" : "circle.dashed")
-              .foregroundStyle(item.needsAttention ? MobileTheme.coral : MobileTheme.textSecondary)
-              .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-              Text(item.title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(MobileTheme.textPrimary)
-                .lineLimit(1)
-              Text("\(item.owner) · \(item.state)")
-                .font(.caption2)
-                .foregroundStyle(MobileTheme.textSecondary)
-                .lineLimit(1)
-            }
-            Spacer()
+        Text("Provider-linked WorkItems")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(MobileTheme.textPrimary)
+        ForEach(providerItems.prefix(3)) { item in
+          providerWorkItemRow(item)
+        }
+      }
+    }
+    .accessibilityIdentifier("friday.provider-workspace.provider-work-items")
+  }
+
+  private func providerWorkItemRow(_ item: HomeWorkItem) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 8) {
+        Image(systemName: item.needsAttention ? "exclamationmark.triangle" : "circle.dashed")
+          .foregroundStyle(item.needsAttention ? MobileTheme.coral : MobileTheme.textSecondary)
+          .frame(width: 18)
+        VStack(alignment: .leading, spacing: 2) {
+          Text(item.title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(MobileTheme.textPrimary)
+            .lineLimit(1)
+          Text("\(item.owner) · \(item.state)")
+            .font(.caption2)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .lineLimit(1)
+        }
+        Spacer()
+        StatusChip(
+          text: item.done ? "done" : (item.needsAttention ? "needs action" : "visible"),
+          bg: item.done ? MobileTheme.chipDoneBG : (item.needsAttention ? MobileTheme.chipWarnBG : MobileTheme.chipNeutralBG),
+          fg: item.done ? MobileTheme.chipDoneFG : (item.needsAttention ? MobileTheme.chipWarnFG : MobileTheme.chipNeutralFG))
+      }
+      if !item.blockingReason.isEmpty {
+        Text(item.blockingReason)
+          .font(.caption2)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      if let proofRef = item.proofRef, !proofRef.isEmpty {
+        RefPill(label: "work_item_proof", ref: proofRef)
+      }
+      if item.canRetry || item.canCancel {
+        HStack(spacing: 8) {
+          if item.canRetry {
+            StatusChip(text: "retry exposed on Home", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
+          }
+          if item.canCancel {
+            StatusChip(text: "cancel exposed on Home", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
           }
         }
       }
     }
+    .padding(10)
+    .background(MobileTheme.chipNeutralBG, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
   }
 
   private func routeDecisionCard(_ projection: HomeProjection) -> some View {
