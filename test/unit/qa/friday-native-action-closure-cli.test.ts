@@ -42,6 +42,7 @@ const requiredFixtureFiles = [
   "apps/macos/FridayHubConsole/Sources/FridayHubConsole/DesktopProjectionScreens.swift",
   "apps/macos/FridayHubConsole/Sources/FridayHubConsole/DesktopChatScreen.swift",
   "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/OperationsOverviewViewModel.swift",
+  "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/DesktopProductReadinessContract.swift",
   "apps/macos/FridayHubConsole/Tests/FridayHubConsoleCoreTests/OperationsOverviewViewModelTests.swift",
 ];
 

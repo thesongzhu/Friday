@@ -63,6 +63,7 @@ const files = {
   desktopProjection: read(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsole/DesktopProjectionScreens.swift"),
   desktopChat: read(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsole/DesktopChatScreen.swift"),
   desktopVM: read(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/OperationsOverviewViewModel.swift"),
+  desktopProductContract: read(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/DesktopProductReadinessContract.swift"),
   desktopTests: read(root, "apps/macos/FridayHubConsole/Tests/FridayHubConsoleCoreTests/OperationsOverviewViewModelTests.swift"),
   packageJson: read(root, "package.json"),
 };
@@ -98,6 +99,10 @@ const desktopUi = [
   files.desktopOps,
   files.desktopProjection,
   files.desktopChat,
+].join("\n");
+const desktopNavContract = [
+  files.desktopNav,
+  files.desktopProductContract,
 ].join("\n");
 const desktopTests = files.desktopTests;
 
@@ -240,8 +245,8 @@ const checks = [
   ),
   check(
     "desktop-nav-does-not-hide-workbench-destinations",
-    "apps/macos/FridayHubConsole/Sources/FridayHubConsole/Navigation.swift",
-    includesAll(files.desktopNav, [
+    "apps/macos/FridayHubConsole/Sources/FridayHubConsole/Navigation.swift + apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/DesktopProductReadinessContract.swift",
+    includesAll(desktopNavContract, [
       "case operations",
       "case chat",
       "case providerAdmin",
@@ -257,7 +262,7 @@ const checks = [
       "case media",
       "case settings",
       "case evidence",
-      "var isBuilt: Bool { true }",
+      "var isBuilt: Bool { contract.routeBuilt }",
     ]),
   ),
   check(

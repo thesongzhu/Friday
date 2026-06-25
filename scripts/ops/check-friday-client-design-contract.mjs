@@ -80,7 +80,10 @@ const checks = checkSourceSet(repoRoot, [
   },
   {
     label: "macOS nav rail covers selected desktop Hub Console destinations",
-    path: "apps/macos/FridayHubConsole/Sources/FridayHubConsole/Navigation.swift",
+    paths: [
+      "apps/macos/FridayHubConsole/Sources/FridayHubConsole/Navigation.swift",
+      "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/DesktopProductReadinessContract.swift",
+    ],
     requiredCases: [
       "operations",
       "chat",
@@ -113,6 +116,7 @@ const checks = checkSourceSet(repoRoot, [
       "Media / Link",
       "Settings",
       "Evidence Search",
+      "var isBuilt: Bool { contract.routeBuilt }",
     ],
   },
   {

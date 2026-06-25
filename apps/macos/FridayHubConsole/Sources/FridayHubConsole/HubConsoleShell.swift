@@ -101,7 +101,7 @@ struct NavRail: View {
         Text("Governed workbench")
           .font(.system(size: 10, weight: .semibold))
           .foregroundStyle(HubTheme.textPrimary)
-        Text("Live read + gated writes")
+        Text(readinessFooterText)
           .font(.system(size: 10))
           .foregroundStyle(HubTheme.textSecondary)
       }
@@ -111,6 +111,11 @@ struct NavRail: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .background(HubTheme.navRailBackground)
+  }
+
+  private var readinessFooterText: String {
+    let snapshot = DesktopProductEndBarSnapshot()
+    return "\(snapshot.routeCoverageCount)/\(snapshot.totalCount) routes · \(snapshot.endBarReadyCount)/\(snapshot.totalCount) END-BAR"
   }
 }
 
@@ -131,6 +136,13 @@ struct NavRailItem: View {
         Spacer()
         if !destination.isBuilt {
           Text("soon")
+            .font(.system(size: 9, weight: .medium))
+            .foregroundStyle(HubTheme.textSecondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(Color.black.opacity(0.05)))
+        } else if !destination.contract.blockers.isEmpty {
+          Text(destination.contract.tier.label)
             .font(.system(size: 9, weight: .medium))
             .foregroundStyle(HubTheme.textSecondary)
             .padding(.horizontal, 5)
