@@ -48,13 +48,20 @@ describe("check-friday-design-action-runtime-evidence", () => {
       const report = JSON.parse(output) as {
         truth?: string;
         status?: string;
-        counts?: { actionableRows?: number; missingRuntimeEvidence?: number };
+        counts?: {
+          actionableRows?: number;
+          uniqueActionableRows?: number;
+          missingRuntimeEvidence?: number;
+          missingUniqueRuntimeEvidence?: number;
+        };
         gaps?: { missingRuntimeEvidence?: Array<{ actionId?: string }> };
       };
       expect(report.truth).toBe("design_action_runtime_gap_report_not_endbar_not_runtime_adoption");
       expect(report.status).toBe("gaps_present");
       expect(report.counts?.actionableRows).toBe(2);
+      expect(report.counts?.uniqueActionableRows).toBe(2);
       expect(report.counts?.missingRuntimeEvidence).toBe(2);
+      expect(report.counts?.missingUniqueRuntimeEvidence).toBe(2);
       expect(report.gaps?.missingRuntimeEvidence).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ actionId: "act" }),
@@ -88,11 +95,12 @@ describe("check-friday-design-action-runtime-evidence", () => {
       ], { cwd: process.cwd(), encoding: "utf8" });
       const report = JSON.parse(output) as {
         status?: string;
-        counts?: { missingRuntimeEvidence?: number };
+        counts?: { missingRuntimeEvidence?: number; missingUniqueRuntimeEvidence?: number };
         gaps?: { missingRuntimeEvidence?: Array<{ surface?: string; actionId?: string }> };
       };
       expect(report.status).toBe("gaps_present");
       expect(report.counts?.missingRuntimeEvidence).toBe(1);
+      expect(report.counts?.missingUniqueRuntimeEvidence).toBe(1);
       expect(report.gaps?.missingRuntimeEvidence).toEqual([
         expect.objectContaining({ surface: "desktop", actionId: "check" }),
       ]);
