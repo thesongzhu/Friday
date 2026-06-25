@@ -227,7 +227,10 @@ function runtimeEvidenceFor(row, runtimeRows) {
     if (candidate.status !== "pass") return false;
     if (candidate.surface && candidate.surface !== row.surface) return false;
     if (candidate.screen && candidate.screen !== row.screen) return false;
-    return candidate.actionId === row.actionId || candidate.capabilityId === row.capabilityId;
+    if (candidate.actionId && row.actionId && candidate.actionId !== row.actionId) return false;
+    if (candidate.capabilityId && row.capabilityId) return candidate.capabilityId === row.capabilityId;
+    if (candidate.actionId && row.actionId) return true;
+    return candidate.capabilityId === row.capabilityId;
   }) || null;
 }
 

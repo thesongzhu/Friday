@@ -353,6 +353,9 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.agentSessionId, "session-1")
     XCTAssertEqual(p.workItemIds, ["wi-1", "wi-2"])                 // refs/ids only (INV-5)
     XCTAssertTrue(vm.state.isOnline)
+    try writeHomeRefreshActionEvidenceIfRequested(
+      missionId: p.missionId,
+      evidenceRef: "proof://mobile/home-refresh/\(p.missionId)")
   }
 
   func testHomeViewModelCarriesInjectedDevicePairingReadiness() async throws {
@@ -839,6 +842,55 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(
       vm.memoryDecisionStates["cand-1"],
       .confirmed(summary: "confirmed · state=confirmed · recallable=true"))
+    try writeMobileMemoryActionEvidenceIfRequested(
+      fileSuffix: "confirm",
+      screen: "memory",
+      actionId: "check",
+      evidenceRef: "proof://mobile/memory-confirm/cand-1",
+      request: try XCTUnwrap(write.memoryRequests.first),
+      result: MemoryDecisionResultWire(
+        memoryId: "cand-1",
+        state: "confirmed",
+        status: "confirmed",
+        recallable: true))
+  }
+
+  func testDecideMemoryRejectRendersRejectedAndRefreshes() async throws {
+    let read = FakeReadClient(.snapshot(try sampleSnapshot()))
+    let write = FakeMissionWriteClient(memoryScript: .result(
+      MemoryDecisionResultWire(
+        memoryId: "cand-1",
+        state: "rejected",
+        status: "rejected",
+        recallable: false)))
+    let vm = HomeViewModel(
+      client: read,
+      writeClient: write,
+      writeOwnerPrincipal: "owner-ios")
+
+    await vm.decideMemory(candidateId: "cand-1", confirm: false)
+
+    XCTAssertEqual(write.memoryRequests, [
+      MemoryDecisionRequestWire(
+        memoryId: "cand-1",
+        ownerPrincipal: "owner-ios",
+        decision: "reject"),
+    ])
+    XCTAssertEqual(read.fetchWorkbenchCount, 1)
+    XCTAssertEqual(
+      vm.memoryDecisionStates["cand-1"],
+      .confirmed(summary: "rejected · state=rejected · recallable=false"))
+    try writeMobileMemoryActionEvidenceIfRequested(
+      fileSuffix: "reject",
+      screen: "memory",
+      actionId: "act",
+      evidenceRef: "proof://mobile/memory-reject/cand-1",
+      request: try XCTUnwrap(write.memoryRequests.first),
+      result: MemoryDecisionResultWire(
+        memoryId: "cand-1",
+        state: "rejected",
+        status: "rejected",
+        recallable: false))
   }
 
   func testDecideMemoryBlockedRendersErrorNotConfirmed() async throws {
@@ -879,6 +931,97 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(
       vm.memoryDecisionStates["cand-1"],
       .error(reason: "Write seam not configured."))
+  }
+
+  private func writeMobileMemoryActionEvidenceIfRequested(
+    fileSuffix: String,
+    screen: String,
+    actionId: String,
+    evidenceRef: String,
+    request: MemoryDecisionRequestWire,
+    result: MemoryDecisionResultWire
+  ) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment[
+      "FRIDAY_MOBILE_MEMORY_ACTION_EVIDENCE_DIR"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+      return
+    }
+
+    let proof: [String: Any] = [
+      "truth": "mobile_memory_action_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+      "request": [
+        "memory_id": request.memoryId,
+        "owner_principal": request.ownerPrincipal,
+        "decision": request.decision,
+      ],
+      "result": [
+        "memory_id": result.memoryId,
+        "state": result.state,
+        "status": result.status,
+        "blocker": result.blocker.map { $0 as Any } ?? NSNull(),
+        "recallable": result.recallable,
+      ],
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": screen,
+          "action_id": actionId,
+          "capability_id": "memory_review_no_silent_write_decide_candidate",
+          "status": "pass",
+          "evidence_ref": evidenceRef,
+          "source": "ios_home_viewmodel_memory_decision_runtime",
+          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_audit_not_sim_tap",
+        ],
+      ],
+      "caveat": "This is Swift product ViewModel runtime evidence that the mobile memory action delegates to the write seam and renders the refs-only result. It is not a live Hub memory-spine audit receipt, not a simulator tap, not END-BAR, and not adoption.",
+    ]
+
+    let dir = URL(fileURLWithPath: rawDir)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let out = dir.appendingPathComponent("mobile-memory-\(fileSuffix)-action-evidence.json")
+    let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: out, options: .atomic)
+    print("[mobile-memory-action-evidence] proofOut=\(out.path)")
+  }
+
+  private func writeHomeRefreshActionEvidenceIfRequested(
+    missionId: String,
+    evidenceRef: String
+  ) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment[
+      "FRIDAY_MOBILE_MEMORY_ACTION_EVIDENCE_DIR"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+      return
+    }
+
+    let proof: [String: Any] = [
+      "truth": "mobile_home_refresh_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+      "mission_id": missionId,
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": "home",
+          "action_id": "refresh",
+          "capability_id": "transport_connection_state",
+          "status": "pass",
+          "evidence_ref": evidenceRef,
+          "source": "ios_home_viewmodel_refresh_runtime",
+          "truth_label": "swift_viewmodel_read_refresh_runtime_not_live_hub_not_sim_tap",
+        ],
+      ],
+      "caveat": "This is Swift product ViewModel runtime evidence that Home refresh re-reads and renders the refs-only projection. It is not a live Hub read, not a simulator tap, not END-BAR, and not adoption.",
+    ]
+
+    let dir = URL(fileURLWithPath: rawDir)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let out = dir.appendingPathComponent("mobile-home-refresh-action-evidence.json")
+    let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: out, options: .atomic)
+    print("[mobile-home-refresh-action-evidence] proofOut=\(out.path)")
   }
 }
 
