@@ -427,6 +427,22 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    // (INFO-sub2 observability) The OPTIONAL background AUDIT-CHAIN VERIFIER (DEFAULT-OFF). Spawn a
+    // background thread that opens its OWN connection READ-ONLY and periodically recomputes the
+    // hash-chained `audit_ledger` from genesis, logging the verified count or ALARMing on a broken
+    // chain — BUT ONLY when the operator has explicitly enabled it via
+    // `FRIDAY_AUDIT_CHAIN_VERIFY_ENABLED` (exact trimmed "1"). Unset/anything-else ⇒ the thread is
+    // NOT spawned ⇒ no second DB connection, no chain recompute, NOTHING runs ⇒ byte-identical to
+    // today. It is pure OBSERVABILITY: it NEVER writes (the read-only connection cannot) and NEVER
+    // fails-closed/refuses service — a broken chain is an alarm, not a serve gate.
+    if audit_chain_verify_enabled() {
+        spawn_audit_chain_verifier(db_path.clone());
+    } else {
+        eprintln!(
+            "hub_agent_run_server: audit-chain verifier DISABLED (set FRIDAY_AUDIT_CHAIN_VERIFY_ENABLED=1 to enable) — no background integrity verification"
+        );
+    }
+
     // (A1 run-controls) Read the run-control flag ONCE at boot (default-off). When false the
     // server emits/handles EXACTLY the pre-A1 wire (a paused run ⇒ `AgentRunResult{no_answer}`;
     // a control message ⇒ benign keepalive echo), so deploying a v13 binary changes NO live
@@ -635,6 +651,26 @@ const SESSION_REAPER_INTERVAL: Duration = Duration::from_secs(120);
 /// the pre-#25 reaper, which only swept `agent_session`). Wire-live = (deploy + set this flag) is
 /// a SEPARATE operator-gated step.
 const RETENTION_SWEEP_ENABLED_ENV: &str = "FRIDAY_RETENTION_SWEEP";
+
+/// (INFO-sub2 observability) The env flag that gates the OPTIONAL background AUDIT-CHAIN VERIFIER.
+/// DEFAULT-OFF and STRICT exact-1 (the program-standard idiom used by the scheduler/retention
+/// flags, NOT the reaper's `1|true`): the verifier thread is spawned ONLY when
+/// `FRIDAY_AUDIT_CHAIN_VERIFY_ENABLED` is exactly the trimmed `"1"`. Unset, empty, `"true"`, `"0"`,
+/// or any other value ⇒ the thread is NEVER spawned ⇒ no second DB connection, no chain recompute,
+/// NOTHING runs ⇒ byte-identical to today. This is purely OBSERVABILITY: when ON it opens the DB
+/// READ-ONLY and periodically recomputes the hash-chained `audit_ledger` from genesis, logging the
+/// verified count or ALARMING on a broken chain (the `diagnostics`-policy Verified/Broken mapping).
+/// It NEVER fails-closed / refuses boot and NEVER writes (the read-only connection physically
+/// cannot) — the opposite of the verify-then-write anti-pattern. Wire-live = (deploy + set this
+/// flag) is a SEPARATE operator step; OFF is the safe default for every deploy.
+const AUDIT_CHAIN_VERIFY_ENABLED_ENV: &str = "FRIDAY_AUDIT_CHAIN_VERIFY_ENABLED";
+
+/// The audit-chain verifier cadence. Deliberately CONSERVATIVE (hourly) and NOT copied from the
+/// reaper's 120s / scheduler's 60s: `verify_audit_chain` recomputes the ENTIRE chain from genesis
+/// on every call (O(full `audit_ledger`)), a different cost profile than those bounded per-tick
+/// sweeps, so a tight cadence would re-walk the whole ledger needlessly. Hourly is ample for an
+/// integrity-anomaly alarm.
+const AUDIT_CHAIN_VERIFY_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// (A1 run-controls) The env flag that gates the on-wire RUN-CONTROL protocol. DEFAULT-OFF: the
 /// server emits `AgentRunPaused` (instead of the pre-A1 `AgentRunResult{no_answer}` for a paused
@@ -948,6 +984,110 @@ fn spawn_session_reaper(db_path: String, retention_on: bool) {
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
             run_session_reaper_tick(&db, retention_on, now_ms);
+        }
+    });
+}
+
+/// (INFO-sub2 observability) Whether the operator has explicitly enabled the background
+/// audit-chain verifier. Fail-closed: only the exact trimmed `"1"` enables it; everything else
+/// (including unset) is OFF.
+fn audit_chain_verify_enabled() -> bool {
+    audit_chain_verify_enabled_from(env::var(AUDIT_CHAIN_VERIFY_ENABLED_ENV).ok().as_deref())
+}
+
+/// Pure flag-matcher for [`AUDIT_CHAIN_VERIFY_ENABLED_ENV`] (separated from the env read so it is
+/// testable without mutating the process-global environment). DEFAULT-OFF: `None` (unset) ⇒ false;
+/// ON only for the exact opt-in value `"1"` (trimmed), matching the scheduler/retention exact-1
+/// idiom; everything else (including `"true"`) ⇒ false.
+fn audit_chain_verify_enabled_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+/// (INFO-sub2 observability) Run ONE audit-chain verification pass against `db` and surface the
+/// result. READ-ONLY: it calls [`friday_storage::audit::verify_audit_chain`] (a SELECT-only chain
+/// recompute that NEVER writes rows) and maps the outcome through the same `diagnostics`-module
+/// policy — `Ok(entries)` ⇒ [`ChainStatus::Verified`] (log the verified count), `Err(_)` ⇒
+/// [`ChainStatus::Broken`] (ALARM, never silently suppressed). It does NOT fail-closed / refuse
+/// service: a broken chain is an OBSERVABILITY alarm, not a boot/serve gate. Logs are refs-only
+/// (a count, or the broken-chain reason string which is an `audit_id`, never a row body).
+///
+/// This is the testable seam (mirrors `run_session_reaper_tick`): the spawned thread just loops
+/// `sleep; tick`, so tests drive THIS function directly against a seeded DB without spawning a
+/// thread or sleeping. Returns the surfaced [`ChainStatus`] (the thread discards it; tests assert
+/// on it) so the Verified/Broken mapping is directly testable.
+fn run_audit_chain_verify_tick(db: &friday_storage::Db) -> friday_hub::diagnostics::ChainStatus {
+    use friday_hub::diagnostics::ChainStatus;
+    // Map the read-only verify result through the SAME `diagnostics` policy (Ok→Verified /
+    // Err→Broken). Routing through `ChainStatus` keeps this verifier's anomaly-surfacing semantics
+    // identical to the `DiagnosticsSnapshot` collector.
+    let status = match friday_storage::audit::verify_audit_chain(db.conn()) {
+        Ok(entries) => ChainStatus::Verified { entries },
+        Err(e) => ChainStatus::Broken {
+            reason: e.to_string(),
+        },
+    };
+    match &status {
+        // Stay quiet on an empty/genesis ledger to avoid boot-time log spam; log only when there
+        // is something verified.
+        ChainStatus::Verified { entries } if *entries > 0 => {
+            eprintln!(
+                "hub_agent_run_server: audit-chain verifier OK — {entries} entries verified from genesis"
+            );
+        }
+        ChainStatus::Verified { .. } => {}
+        // ALARM (the diagnostics Err→Broken policy). Surfaced loudly; never suppressed, never
+        // fail-closed (observability only). The reason is an `audit_id`, not a row body.
+        ChainStatus::Broken { reason } => {
+            eprintln!(
+                "hub_agent_run_server: AUDIT-CHAIN BROKEN — integrity alarm: {reason} (observability alarm; serving continues)"
+            );
+        }
+    }
+    status
+}
+
+/// (INFO-sub2 observability) Spawn the OPTIONAL background audit-chain verifier on its OWN thread +
+/// OWN DB connection (mirrors [`spawn_session_reaper`], EXCEPT it opens the DB **READ-ONLY** via
+/// `Db::open_hub_readonly`). The read-only `SQLITE_OPEN_READ_ONLY` connection enforces the
+/// read-only contract at the OS level — this thread CANNOT write audit rows even by mistake (the
+/// opposite of the verify-then-write anti-pattern). It runs [`run_audit_chain_verify_tick`] (a
+/// full chain recompute) ONCE immediately (the BOOT verify — this is `boot-chainverify`: a chain
+/// already broken at startup must surface NOW, not one interval later) and then on every
+/// [`AUDIT_CHAIN_VERIFY_INTERVAL`], logging OK / ALARMing on Broken. The boot verify is safe: by
+/// the time this thread opens read-only, the main server connection has already migrated the DB
+/// to the code's schema version, so the read-only open's strict version check passes. (It is a
+/// `loop { tick; sleep }` — NOT the reaper's `loop { sleep; tick }` — precisely because the reaper
+/// has nothing urgent at boot whereas a tamper alarm does.)
+///
+/// Errors are LOGGED and the thread exits or the loop continues — the verifier NEVER panics the
+/// daemon and NEVER refuses service (it is observability, not a gate). A failed read-only open
+/// (e.g. a schema-version mismatch during a deploy-gap) logs and the verifier simply does not run;
+/// serving is unaffected.
+fn spawn_audit_chain_verifier(db_path: String) {
+    thread::spawn(move || {
+        // Open this thread's OWN connection READ-ONLY. A failed open is logged and the verifier
+        // exits (the daemon keeps serving); it does NOT crash the process and NEVER falls back to
+        // a writable connection.
+        let db = match friday_storage::Db::open_hub_readonly(&db_path) {
+            Ok(db) => db,
+            Err(_e) => {
+                // Category only — never the db_path (it can carry the operator's home/username).
+                eprintln!(
+                    "hub_agent_run_server: audit-chain verifier could not open its READ-ONLY DB connection — verifier not running (serving unaffected)"
+                );
+                return;
+            }
+        };
+        eprintln!(
+            "hub_agent_run_server: audit-chain VERIFIER ENABLED (read-only, interval={}s)",
+            AUDIT_CHAIN_VERIFY_INTERVAL.as_secs()
+        );
+        loop {
+            // BOOT-first: verify ONCE immediately, THEN sleep — so a chain already broken at
+            // startup alarms now, not one interval later. The tick logs/alarms internally; the
+            // returned status is for tests.
+            let _ = run_audit_chain_verify_tick(&db);
+            thread::sleep(AUDIT_CHAIN_VERIFY_INTERVAL);
         }
     });
 }
@@ -3455,6 +3595,120 @@ mod tests {
                 .unwrap(),
             0,
             "the tick did not synthesize audit rows"
+        );
+    }
+
+    #[test]
+    fn audit_chain_verify_flag_is_default_off_and_fail_closed() {
+        // (INFO-sub2) DEFAULT-OFF + STRICT exact-1 (the scheduler/retention idiom, NOT the
+        // reaper's 1|true). OFF is the byte-identical guarantee: unset/empty/0/false/true/garbage
+        // ⇒ the verifier thread is NEVER spawned ⇒ no second DB connection, no chain recompute ⇒
+        // today's behavior. The `"true" ⇒ false` assertion is the one that catches an accidental
+        // reaper-style copy.
+        assert!(
+            !audit_chain_verify_enabled_from(None),
+            "unset ⇒ disabled (default-off; the verifier thread is never spawned)"
+        );
+        assert!(
+            !audit_chain_verify_enabled_from(Some("")),
+            "empty ⇒ disabled"
+        );
+        assert!(!audit_chain_verify_enabled_from(Some("0")), "0 ⇒ disabled");
+        assert!(
+            !audit_chain_verify_enabled_from(Some("false")),
+            "false ⇒ disabled"
+        );
+        assert!(
+            !audit_chain_verify_enabled_from(Some("true")),
+            "true is NOT the opt-in value (exact-1 idiom; differs from the reaper flag)"
+        );
+        assert!(
+            !audit_chain_verify_enabled_from(Some("enabled")),
+            "garbage ⇒ disabled"
+        );
+        // Only the exact (trimmed) "1" enables it.
+        assert!(audit_chain_verify_enabled_from(Some("1")), "1 ⇒ enabled");
+        assert!(
+            audit_chain_verify_enabled_from(Some(" 1 ")),
+            "padded 1 ⇒ enabled (trimmed)"
+        );
+    }
+
+    #[test]
+    fn audit_chain_verify_tick_verifies_intact_and_alarms_on_broken_without_writing() {
+        use friday_hub::diagnostics::ChainStatus;
+        let (rt, _ws) = mock_runtime("audit-chain-verify", OWNER);
+
+        let audit_count = || {
+            rt.db()
+                .conn()
+                .query_row("SELECT COUNT(*) FROM audit_ledger", [], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap()
+        };
+
+        // Empty/genesis ledger verifies (Verified{entries:0}); the tick writes NOTHING.
+        assert_eq!(audit_count(), 0, "fresh DB has no audit rows");
+        let status = run_audit_chain_verify_tick(rt.db());
+        assert_eq!(
+            status,
+            ChainStatus::Verified { entries: 0 },
+            "empty chain verifies (genesis)"
+        );
+        assert_eq!(
+            audit_count(),
+            0,
+            "READ-ONLY verify must NEVER synthesize an audit row (anti-M3/M4 verify-then-write)"
+        );
+
+        // Seed ONE REAL chained audit row through the real append path (the chain extends from
+        // genesis). The tick verifies it.
+        {
+            let tx = rt.db().conn().unchecked_transaction().unwrap();
+            friday_storage::audit::append_audit(
+                &tx,
+                "audit-verify-1",
+                "friday_hub",
+                "test_action",
+                None,
+                1_000,
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        let before = audit_count();
+        assert_eq!(before, 1, "seeded one real audit row");
+        let status = run_audit_chain_verify_tick(rt.db());
+        assert_eq!(
+            status,
+            ChainStatus::Verified { entries: 1 },
+            "the one-row chain verifies"
+        );
+        assert_eq!(
+            audit_count(),
+            before,
+            "READ-ONLY verify left the audit_ledger row count unchanged (no write on the verify path)"
+        );
+
+        // TAMPER a HASHED column (`action`) → the recomputed entry_hash mismatches → the tick maps
+        // the Err to the Broken alarm (the diagnostics Err→Broken policy). It does NOT fail-closed.
+        let n = rt
+            .db()
+            .conn()
+            .execute("UPDATE audit_ledger SET action = 'TAMPERED'", [])
+            .unwrap();
+        assert_eq!(n, 1, "tampered the one audit row");
+        let status = run_audit_chain_verify_tick(rt.db());
+        assert!(
+            matches!(status, ChainStatus::Broken { .. }),
+            "a tampered chain must surface Broken (alarm), got {status:?}"
+        );
+        // Even on a broken chain the read-only verify writes nothing (it never tries to "repair").
+        assert_eq!(
+            audit_count(),
+            before,
+            "the alarm path is read-only too — no rows added/removed on a broken chain"
         );
     }
 
