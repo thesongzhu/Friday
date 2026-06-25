@@ -14,7 +14,8 @@ private enum ProjectionSurface {
 
   init?(_ destination: MobileDestination) {
     switch destination {
-    case .home, .session, .contextPassport, .tokenLedger, .shareIntake, .voice, .pairing, .providerAuth:
+    case .home, .session, .contextPassport, .tokenLedger, .shareIntake, .voice, .pairing,
+         .newSession, .providerAuth:
       return nil
     case .missions:
       self = .missions

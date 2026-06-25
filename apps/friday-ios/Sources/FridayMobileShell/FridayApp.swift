@@ -329,6 +329,7 @@ struct RootView: View {
   @StateObject private var homeVM: HomeViewModel
   @StateObject private var sessionContinuationVM: SessionContinuationViewModel
   @StateObject private var shareIntakeVM: ShareIntakeViewModel
+  @StateObject private var newSessionVM: NewSessionViewModel
   @StateObject private var voiceVM: VoiceReadinessViewModel
   private let session: FridaySession
   @State private var destination: MobileDestination = .home
@@ -360,6 +361,7 @@ struct RootView: View {
       signer: session.signer,
       runControlEnabled: session.runControlEnabled))
     _shareIntakeVM = StateObject(wrappedValue: ShareIntakeViewModel(client: session.missionClient))
+    _newSessionVM = StateObject(wrappedValue: NewSessionViewModel(client: session.missionClient))
     _voiceVM = StateObject(wrappedValue: VoiceReadinessViewModel(
       authorizer: SystemVoiceReadinessAuthorizer()))
   }
@@ -378,6 +380,8 @@ struct RootView: View {
           FridayTokenLedgerScreen(viewModel: homeVM)
         case .shareIntake:
           FridayShareIntakeScreen(viewModel: shareIntakeVM)
+        case .newSession:
+          FridayNewSessionScreen(viewModel: newSessionVM)
         case .voice:
           FridayVoiceScreen(viewModel: voiceVM)
         case .pairing:
