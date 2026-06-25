@@ -109,6 +109,7 @@ case "${shared_id}" in (*[[:space:]]*) die "--shared-id must not contain whitesp
 mkdir -p "${out_dir}"
 proof_path="${out_dir}/ios-live-write-read-proof.json"
 events_path="${out_dir}/ios-live-write-read-events.jsonl"
+action_runtime_path="${out_dir}/action-runtime-evidence.json"
 index_path="${out_dir}/capture-index.json"
 
 echo "Friday iOS live write-read capture starting."
@@ -134,15 +135,17 @@ echo "truth=ios_live_write_read_capture_runner_not_ui_device_proof"
 node "${repo_root}/scripts/ops/friday-ios-live-write-read-proof-events.mjs" \
   --proof="${proof_path}" \
   --out="${events_path}" \
+  --action-runtime-out="${action_runtime_path}" \
   --require-ready >/tmp/friday-ios-live-write-read-proof-events.$$.json
 
 [ -s "${events_path}" ] || die "proof-events driver did not create ${events_path}"
+[ -s "${action_runtime_path}" ] || die "proof-events driver did not create ${action_runtime_path}"
 
-node - "${proof_path}" "${events_path}" "${index_path}" <<'NODE'
+node - "${proof_path}" "${events_path}" "${action_runtime_path}" "${index_path}" <<'NODE'
 const { readFileSync, writeFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
 
-const [proofPath, eventsPath, indexPath] = process.argv.slice(2);
+const [proofPath, eventsPath, actionRuntimePath, indexPath] = process.argv.slice(2);
 const proof = JSON.parse(readFileSync(proofPath, "utf8"));
 const events = readFileSync(eventsPath, "utf8")
   .trim()
@@ -162,6 +165,8 @@ const index = {
     proof_sha256: sha256(proofPath),
     events: eventsPath,
     events_sha256: sha256(eventsPath),
+    action_runtime_evidence: actionRuntimePath,
+    action_runtime_evidence_sha256: sha256(actionRuntimePath),
     event_count: events.length,
   },
   blockers: [],
