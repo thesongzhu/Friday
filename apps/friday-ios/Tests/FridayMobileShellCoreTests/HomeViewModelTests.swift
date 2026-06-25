@@ -846,6 +846,7 @@ final class HomeViewModelTests: XCTestCase {
       fileSuffix: "confirm",
       screen: "memory",
       actionId: "check",
+      additionalActionIds: ["memory_resolve"],
       evidenceRef: "proof://mobile/memory-confirm/cand-1",
       request: try XCTUnwrap(write.memoryRequests.first),
       result: MemoryDecisionResultWire(
@@ -884,6 +885,7 @@ final class HomeViewModelTests: XCTestCase {
       fileSuffix: "reject",
       screen: "memory",
       actionId: "act",
+      additionalActionIds: ["memory_resolve"],
       evidenceRef: "proof://mobile/memory-reject/cand-1",
       request: try XCTUnwrap(write.memoryRequests.first),
       result: MemoryDecisionResultWire(
@@ -937,6 +939,7 @@ final class HomeViewModelTests: XCTestCase {
     fileSuffix: String,
     screen: String,
     actionId: String,
+    additionalActionIds: [String] = [],
     evidenceRef: String,
     request: MemoryDecisionRequestWire,
     result: MemoryDecisionResultWire
@@ -945,6 +948,19 @@ final class HomeViewModelTests: XCTestCase {
       "FRIDAY_MOBILE_MEMORY_ACTION_EVIDENCE_DIR"
     ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
       return
+    }
+
+    let actions: [[String: Any]] = ([actionId] + additionalActionIds).map { candidateActionId in
+      [
+        "surface": "mobile",
+        "screen": screen,
+        "action_id": candidateActionId,
+        "capability_id": "memory_review_no_silent_write_decide_candidate",
+        "status": "pass",
+        "evidence_ref": evidenceRef,
+        "source": "ios_home_viewmodel_memory_decision_runtime",
+        "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_audit_not_sim_tap",
+      ]
     }
 
     let proof: [String: Any] = [
@@ -963,18 +979,7 @@ final class HomeViewModelTests: XCTestCase {
         "blocker": result.blocker.map { $0 as Any } ?? NSNull(),
         "recallable": result.recallable,
       ],
-      "actions": [
-        [
-          "surface": "mobile",
-          "screen": screen,
-          "action_id": actionId,
-          "capability_id": "memory_review_no_silent_write_decide_candidate",
-          "status": "pass",
-          "evidence_ref": evidenceRef,
-          "source": "ios_home_viewmodel_memory_decision_runtime",
-          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_audit_not_sim_tap",
-        ],
-      ],
+      "actions": actions,
       "caveat": "This is Swift product ViewModel runtime evidence that the mobile memory action delegates to the write seam and renders the refs-only result. It is not a live Hub memory-spine audit receipt, not a simulator tap, not END-BAR, and not adoption.",
     ]
 
