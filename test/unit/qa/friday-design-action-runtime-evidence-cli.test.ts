@@ -97,6 +97,52 @@ describe("check-friday-design-action-runtime-evidence", () => {
     }
   });
 
+  it("counts native readiness contracts as source hints without counting them as runtime proof", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-design-action-runtime-native-contract-"));
+    try {
+      const contract = writeFile(root, "ACTION-CONTRACT.md", `# Friday Action Contract — mobile + desktop
+
+**This is a wiring contract for the later Rust/native agent, NOT runtime proof.** Every row is design-proof; wired_registry ≠ runtime PASS.
+
+| Surface | Screen [state] | action_id | Label | capability_id | reg | reg_status | truth_status | result/target | Rust/Hub owner · gate · test expectation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mobile | firstLaunch | firstlaunch_scan | Scan to pair | trust_center_pairing_connected_devices | ✓ | wired | wired_registry | result:scanning | Runtime test must prove gate enforcement. |
+`);
+      writeFile(
+        root,
+        "apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift",
+        `enum FridayMobileProductDestination {
+          case pairing
+          var runtimeActionIds: [String] { ["mobile/firstlaunch/scan"] }
+          var title: String { "Device Pairing" }
+          var label: String { "Scan to pair" }
+        }`,
+      );
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--contract=${contract}`,
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        counts?: { missingRuntimeEvidence?: number; missingNativeHints?: number };
+        gaps?: {
+          missingRuntimeEvidence?: Array<{ actionId?: string }>;
+          missingNativeHints?: Array<{ actionId?: string }>;
+        };
+      };
+      expect(report.status).toBe("gaps_present");
+      expect(report.counts?.missingNativeHints).toBe(0);
+      expect(report.gaps?.missingNativeHints).toEqual([]);
+      expect(report.counts?.missingRuntimeEvidence).toBe(1);
+      expect(report.gaps?.missingRuntimeEvidence).toEqual([
+        expect.objectContaining({ actionId: "firstlaunch_scan" }),
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("accepts explicit runtime action evidence but still requires real evidence for every actionable row", () => {
     const { root, contract } = fixtureRepo();
     try {
@@ -175,6 +221,47 @@ describe("check-friday-design-action-runtime-evidence", () => {
       expect(report.counts?.runtimeEvidenceRows).toBe(2);
       expect(report.counts?.missingRuntimeEvidence).toBe(0);
       expect(report.counts?.missingUniqueRuntimeEvidence).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts positional runtime action evidence paths to avoid silent false gaps", () => {
+    const { root, contract } = fixtureRepo();
+    try {
+      const runtime = writeFile(root, "action-runtime-evidence.json", JSON.stringify({
+        actions: [
+          {
+            surface: "mobile",
+            screen: "fridayChat",
+            action_id: "act",
+            status: "pass",
+            evidence_ref: "proof://mobile/send",
+          },
+          {
+            surface: "desktop",
+            screen: "fridayChat",
+            action_id: "check",
+            status: "pass",
+            evidence_ref: "proof://desktop/approve",
+          },
+        ],
+      }, null, 2));
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--contract=${contract}`,
+        runtime,
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        runtimeEvidenceInputs?: string[];
+        counts?: { runtimeEvidenceRows?: number; missingRuntimeEvidence?: number };
+      };
+      expect(report.status).toBe("runtime_actions_covered");
+      expect(report.runtimeEvidenceInputs).toEqual([runtime]);
+      expect(report.counts?.runtimeEvidenceRows).toBe(2);
+      expect(report.counts?.missingRuntimeEvidence).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

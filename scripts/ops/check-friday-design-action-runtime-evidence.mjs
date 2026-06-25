@@ -40,6 +40,28 @@ function argsAll(name) {
   return values;
 }
 
+function positionalRuntimeEvidenceArgs() {
+  const valueFlags = new Set([
+    "--contract",
+    "--evidence-dir",
+    "--out",
+    "--repo-root",
+    "--runtime-evidence",
+  ]);
+  const values = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value.startsWith("--")) {
+      if (!value.includes("=") && valueFlags.has(value) && args[index + 1]) {
+        index += 1;
+      }
+      continue;
+    }
+    values.push(value);
+  }
+  return values;
+}
+
 if (args.includes("--help") || args.includes("-h")) {
   usage();
   process.exit(0);
@@ -50,7 +72,7 @@ const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new
 const defaultContract = `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602/ACTION-CONTRACT.md`;
 const contractPath = resolve(arg("contract") || process.env.FRIDAY_DESIGN_ACTION_CONTRACT || defaultContract);
 const evidenceDir = arg("evidence-dir") || process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR || "";
-const runtimeEvidenceArgs = argsAll("runtime-evidence");
+const runtimeEvidenceArgs = [...argsAll("runtime-evidence"), ...positionalRuntimeEvidenceArgs()];
 const runtimeEvidenceEnv = process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE
   ? process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE.split(/[:\n]/).map((value) => value.trim()).filter(Boolean)
   : [];
@@ -164,6 +186,7 @@ const nativeSources = {
     "apps/friday-ios/Sources/FridayMobileShell/FridayProjectionScreens.swift",
     "apps/friday-ios/Sources/FridayMobileShellCore/HomeViewModel.swift",
     "apps/friday-ios/Sources/FridayMobileShellCore/FridayChatViewModel.swift",
+    "apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift",
     "apps/friday-ios/Sources/FridayMobileShellCore/SessionContinuationViewModel.swift",
     "apps/friday-ios/Sources/FridayMobileShellCore/ShareIntakeViewModel.swift",
     "apps/friday-ios/Sources/FridayMobileShellCore/VoiceReadinessViewModel.swift",
@@ -174,6 +197,7 @@ const nativeSources = {
     "apps/macos/FridayHubConsole/Sources/FridayHubConsole/DesktopChatScreen.swift",
     "apps/macos/FridayHubConsole/Sources/FridayHubConsole/DesktopProjectionScreens.swift",
     "apps/macos/FridayHubConsole/Sources/FridayHubConsole/PairingProvisioningScreen.swift",
+    "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/DesktopProductReadinessContract.swift",
     "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/OperationsOverviewViewModel.swift",
   ]),
 };
