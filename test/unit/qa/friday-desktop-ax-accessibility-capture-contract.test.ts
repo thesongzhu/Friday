@@ -34,6 +34,12 @@ describe("friday-desktop-ax-accessibility-capture contract", () => {
         accessibility_id: "friday.desktop.refresh",
         interaction: "visible",
       }));
+      expect(summary.targets).toContainEqual(expect.objectContaining({
+        runtimeActionId: "desktop/operations/mission-resolve-or-create",
+        accessibility_id: "friday.desktop.mission-card",
+        event: "mission_resolve_or_create_visible",
+        interaction: "visible",
+      }));
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
