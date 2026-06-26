@@ -84,6 +84,12 @@ if (proof) {
   if (proof.secret_policy?.artifact_contains_redacted_text_only !== true) {
     block("channel_live_proof_secret_policy_not_redacted", "artifact_contains_redacted_text_only");
   }
+  const telegram = proof.telegram_live && typeof proof.telegram_live === "object" ? proof.telegram_live : {};
+  const forgedRejected = telegram.forged_bearer_rejected === true || proof.forged_bearer_rejected === true;
+  const nonAllowlistedRejected = telegram.non_allowlisted_sender_rejected === true || proof.non_allowlisted_sender_rejected === true;
+  if (!forgedRejected || !nonAllowlistedRejected) {
+    block("channel_live_proof_replay_controls_missing", "forged_bearer_rejected_and_non_allowlisted_sender_rejected");
+  }
   if (!String(proof.remaining_requirement || "").includes("UI/device consumption evidence")) {
     block("channel_live_proof_missing_ui_device_boundary", "remaining_requirement");
   }
@@ -92,15 +98,26 @@ if (proof) {
 const capturedAt = typeof proof?.generated_at_utc === "string" && proof.generated_at_utc.trim()
   ? proof.generated_at_utc.trim()
   : new Date(0).toISOString();
-const rows = blockers.length === 0 ? [{
-  surface: "channel",
-  event: "same_mission_projection_visible",
-  mission_id: missionId,
-  evidence_ref: channelCapture,
-  truth_label: "derived_from_redacted_channel_live_proof_not_final_ui_device_proof",
-  source: "mission_spine_channel_live_proof",
-  captured_at: capturedAt,
-}] : [];
+const rows = blockers.length === 0 ? [
+  {
+    surface: "channel",
+    event: "same_mission_projection_visible",
+    mission_id: missionId,
+    evidence_ref: channelCapture,
+    truth_label: "derived_from_redacted_channel_live_proof_not_final_ui_device_proof",
+    source: "mission_spine_channel_live_proof",
+    captured_at: capturedAt,
+  },
+  {
+    surface: "channel",
+    event: "channel_replay_blocked_visible",
+    mission_id: missionId,
+    evidence_ref: channelCapture,
+    truth_label: "derived_from_redacted_channel_live_proof_negative_controls_not_final_ui_device_proof",
+    source: "mission_spine_channel_live_proof",
+    captured_at: capturedAt,
+  },
+] : [];
 
 if (blockers.length === 0 && outPath) {
   const out = abs(outPath);
@@ -118,7 +135,7 @@ const output = {
   outputRows: rows.length,
   emittedEvents: rows.map((row) => `${row.surface}:${row.event}`),
   blockers,
-  caveat: "Conservative channel event bridge only. It does not claim replay proof, timeline proof, mobile/desktop/channel convergence, END-BAR, or GO-LIVE.",
+  caveat: "Conservative channel event bridge only. Replay-blocked visibility is emitted only from passed redacted channel-wrapper negative controls; this does not claim timeline proof, mobile/desktop/channel convergence, END-BAR, or GO-LIVE.",
 };
 
 console.log(JSON.stringify(output, null, 2));

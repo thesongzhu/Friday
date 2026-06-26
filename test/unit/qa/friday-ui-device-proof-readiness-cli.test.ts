@@ -141,6 +141,15 @@ function writeRedactedChannelProof(tempDir: string) {
     proof: "mission_spine_channel_live_proof",
     status: "passed",
     generated_at_utc: "2026-06-05T06:10:00Z",
+    telegram_live: {
+      status: "passed",
+      proof: "telegram_inbound_through_rust_channels_pipeline",
+      bot_identity_verified: true,
+      channel_binding_created: true,
+      sender_allowlisted: true,
+      forged_bearer_rejected: true,
+      non_allowlisted_sender_rejected: true,
+    },
     secret_policy: {
       artifact_contains_redacted_text_only: true,
     },
@@ -951,6 +960,11 @@ describe("friday-ui-device-proof-readiness", () => {
       expect(rows).toContainEqual(expect.objectContaining({
         surface: "channel",
         event: "same_mission_projection_visible",
+        evidence_ref: files.channel,
+      }));
+      expect(rows).toContainEqual(expect.objectContaining({
+        surface: "channel",
+        event: "channel_replay_blocked_visible",
         evidence_ref: files.channel,
       }));
     } finally {
