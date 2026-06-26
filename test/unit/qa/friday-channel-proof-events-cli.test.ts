@@ -31,7 +31,7 @@ function writeChannelProof(path: string, overrides: Record<string, unknown> = {}
 }
 
 describe("friday-channel-proof-events", () => {
-  it("emits only the conservative channel same-mission projection event", () => {
+  it("emits conservative channel projection and replay-blocked events from a passed wrapper", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-channel-proof-events-"));
     try {
       const proof = join(tempDir, "channel-live-proof.json");
@@ -60,18 +60,32 @@ describe("friday-channel-proof-events", () => {
 
       expect(result.truth).toBe("channel_proof_events_not_ui_device_proof");
       expect(result.status).toBe("ready");
-      expect(result.outputRows).toBe(1);
-      expect(result.emittedEvents).toEqual(["channel:same_mission_projection_visible"]);
-      expect(result.caveat).toContain("does not claim replay proof");
-      expect(rows).toEqual([{
-        surface: "channel",
-        event: "same_mission_projection_visible",
-        mission_id: missionId,
-        evidence_ref: channelCapture,
-        truth_label: "derived_from_redacted_channel_live_proof_not_final_ui_device_proof",
-        source: "mission_spine_channel_live_proof",
-        captured_at: "2026-06-24T23:59:00.000Z",
-      }]);
+      expect(result.outputRows).toBe(2);
+      expect(result.emittedEvents).toEqual([
+        "channel:same_mission_projection_visible",
+        "channel:channel_replay_blocked_visible",
+      ]);
+      expect(result.caveat).toContain("Replay-blocked visibility is emitted only");
+      expect(rows).toEqual([
+        {
+          surface: "channel",
+          event: "same_mission_projection_visible",
+          mission_id: missionId,
+          evidence_ref: channelCapture,
+          truth_label: "derived_from_redacted_channel_live_proof_not_final_ui_device_proof",
+          source: "mission_spine_channel_live_proof",
+          captured_at: "2026-06-24T23:59:00.000Z",
+        },
+        {
+          surface: "channel",
+          event: "channel_replay_blocked_visible",
+          mission_id: missionId,
+          evidence_ref: channelCapture,
+          truth_label: "derived_from_redacted_channel_live_proof_negative_controls_not_final_ui_device_proof",
+          source: "mission_spine_channel_live_proof",
+          captured_at: "2026-06-24T23:59:00.000Z",
+        },
+      ]);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -105,6 +119,42 @@ describe("friday-channel-proof-events", () => {
         "channel_live_proof_not_passed",
         "channel_live_proof_secret_policy_not_redacted",
       ]));
+      expect(() => readFileSync(out, "utf8")).toThrow();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when replay negative controls are absent", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-channel-proof-events-replay-"));
+    try {
+      const proof = join(tempDir, "channel-live-proof.json");
+      const channelCapture = join(tempDir, "channel-capture.json");
+      const out = join(tempDir, "channel-events.jsonl");
+      writeChannelProof(proof, {
+        telegram_live: {
+          status: "passed",
+          proof: "telegram_inbound_through_rust_channels_pipeline",
+          bot_identity_verified: true,
+          channel_binding_created: true,
+          sender_allowlisted: true,
+        },
+      });
+      writeFileSync(channelCapture, JSON.stringify({ truth: "redacted_channel_capture" }));
+
+      const result = spawnSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--channel-live-proof=${proof}`,
+        `--channel-capture=${channelCapture}`,
+        `--out=${out}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { status?: string; blockers?: Array<{ code?: string }> };
+      expect(output.status).toBe("blocked");
+      expect(output.blockers?.map((blocker) => blocker.code)).toContain("channel_live_proof_replay_controls_missing");
       expect(() => readFileSync(out, "utf8")).toThrow();
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
