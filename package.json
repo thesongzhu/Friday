@@ -70,6 +70,7 @@
     "build:ios:sim": "bash apps/friday-ios/build-sim.sh",
     "proof:ios:live-t3": "bash scripts/ops/friday-ios-sim-live-t3-proof.sh",
     "proof:ios:design-destinations": "bash scripts/ops/friday-ios-design-destination-capture.sh --out-dir \"${FRIDAY_IOS_DESIGN_CAPTURE_OUT:-/tmp/friday-ios-design-destination-capture}\"",
+    "proof:ios:ax-capture": "node scripts/ops/friday-ios-sim-accessibility-capture.mjs --out-dir \"${FRIDAY_IOS_AX_CAPTURE_OUT:-/tmp/friday-ios-sim-accessibility-capture}\" --mission-id \"${FRIDAY_IOS_AX_CAPTURE_MISSION_ID:-mission_ios_sim_ax_capture}\"",
     "proof:action-runtime:evidence-bundle": "bash scripts/ops/friday-action-runtime-evidence-bundle.sh --out-dir \"${FRIDAY_ACTION_RUNTIME_EVIDENCE_BUNDLE_OUT:-/tmp/friday-action-runtime-evidence-bundle}\"",
     "proof:desktop:gui-smoke": "bash scripts/ops/friday-desktop-gui-smoke-proof.sh --out-dir \"${FRIDAY_DESKTOP_GUI_SMOKE_OUT_DIR:-/tmp/friday-desktop-gui-smoke-proof}\"",
     "proof:desktop:ax-capture": "node scripts/ops/friday-desktop-ax-accessibility-capture.mjs --out-dir \"${FRIDAY_DESKTOP_AX_CAPTURE_OUT:-/tmp/friday-desktop-ax-accessibility-capture}\" --mission-id \"${FRIDAY_DESKTOP_AX_CAPTURE_MISSION_ID:-mission_desktop_ax_capture}\"",
