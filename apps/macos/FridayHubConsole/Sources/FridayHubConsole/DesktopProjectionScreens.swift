@@ -516,51 +516,74 @@ struct DesktopProjectionScreen: View {
   }
 
   private func workflowStatus(_ snapshot: WorkbenchSnapshot) -> some View {
-    GlassPanel {
-      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
-        cardTitle("Workflow Work Items")
-        ForEach(snapshot.workItems) { item in
-          VStack(alignment: .leading, spacing: 6) {
-            HStack {
-              Text(item.title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(HubTheme.textPrimary)
-              Spacer()
-              StatusChip(
-                text: item.done ? "done" : "not done",
-                bg: item.done ? HubTheme.chipDoneBG : HubTheme.chipNeutralBG,
-                fg: item.done ? HubTheme.chipDoneFG : HubTheme.chipNeutralFG)
-            }
-            HStack(spacing: 6) {
-              item.state.chip
-              item.owner.chip
-              if item.recoveryKind != "none" {
-                StatusChip(text: item.recoveryKind, bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
-              }
-            }
-            if !item.blockingReason.isEmpty {
-              Text(item.blockingReason)
-                .font(.system(size: 11))
-                .foregroundStyle(HubTheme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            if item.canRetry || item.canCancel {
-              HStack(spacing: 6) {
-                if item.canRetry {
-                  StatusChip(text: "retry available", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
-                }
-                if item.canCancel {
-                  StatusChip(text: "cancel available", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
-                }
-              }
-            }
-            if let proofRef = item.proofRef {
-              RefPill(label: "proofRef", ref: proofRef)
-            }
+    VStack(alignment: .leading, spacing: 16) {
+      GlassPanel {
+        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+          HStack {
+            cardTitle("Workflow Canvas")
+            Spacer()
+            snapshot.routeDecision.truthLabel.chip
           }
-          .padding(.vertical, 4)
+          Text("Canvas + inspector view over the live mission route and WorkItem graph. Controls use the governed WorkItem lifecycle write seam; runtime tap proof is still required before END-BAR.")
+            .font(.system(size: 11))
+            .foregroundStyle(HubTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+          HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+              Text("Route")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(HubTheme.textSecondary)
+              RefPill(label: "selectedRoute", ref: snapshot.routeDecision.selectedRoute)
+              ForEach(snapshot.routeDecision.alternatives, id: \.self) { alternative in
+                RefPill(label: "alternative", ref: alternative)
+              }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            VStack(alignment: .leading, spacing: 6) {
+              Text("Inspector")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(HubTheme.textSecondary)
+              StatusChip(
+                text: "\(snapshot.workItems.count) work items",
+                bg: HubTheme.chipNeutralBG,
+                fg: HubTheme.chipNeutralFG)
+              StatusChip(
+                text: "\(snapshot.attentionWorkItems.count) need attention",
+                bg: snapshot.attentionWorkItems.isEmpty ? HubTheme.chipNeutralBG : HubTheme.chipWarnBG,
+                fg: snapshot.attentionWorkItems.isEmpty ? HubTheme.chipNeutralFG : HubTheme.chipWarnFG)
+              RefPill(label: "action", ref: "desktop/workflow/retry")
+              RefPill(label: "action", ref: "desktop/workflow/cancel")
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+          }
         }
       }
+      .accessibilityIdentifier("friday.desktop.workflow.canvas")
+
+      GlassPanel {
+        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+          cardTitle("Workflow Work Items")
+          if snapshot.workItems.isEmpty {
+            Text("No workflow work-item refs in this projection.")
+              .font(.system(size: 12))
+              .foregroundStyle(HubTheme.textSecondary)
+          } else {
+            ForEach(snapshot.workItems) { item in
+              WorkItemRow(
+                item: item,
+                isSelected: false,
+                recoveryState: viewModel.workItemStatusStates[item.id] ?? .ready,
+                onRetry: { Task { await viewModel.retryWorkItem(item) } },
+                onCancel: { Task { await viewModel.cancelWorkItem(item) } }
+              ) {
+                viewModel.select(.workItem(id: item.id))
+              }
+            }
+          }
+        }
+      }
+      .accessibilityIdentifier("friday.desktop.workflow.work-items")
     }
   }
 

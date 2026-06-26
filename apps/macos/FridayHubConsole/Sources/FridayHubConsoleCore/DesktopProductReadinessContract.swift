@@ -183,9 +183,9 @@ public enum DesktopProductDestinationID: String, CaseIterable, Sendable, Equatab
       return contract(
         title: "Workflow Builder",
         systemImage: "point.3.connected.trianglepath.dotted",
-        tier: .navigationShell,
-        runtimeActionIds: [],
-        blockers: [.init(.needsNativeSurface, label: "canvas+inspector product surface")])
+        tier: .governedActionGated,
+        runtimeActionIds: ["desktop/workflow/retry", "desktop/workflow/cancel"],
+        blockers: [.init(.needsRuntimeEvidence, label: "workflow canvas retry/cancel proof")])
     case .channels:
       return contract(
         title: "Channels",
