@@ -37,6 +37,7 @@ struct FridayContextPassportScreen: View {
 
     if let status {
       checklistCard(status)
+      governedCeremoniesCard(status)
       sendCard(projection)
       refsCard(status)
       truthCard(status)
@@ -142,7 +143,62 @@ struct FridayContextPassportScreen: View {
     }
   }
 
+  private func governedCeremoniesCard(_ status: HomeT3ProvisioningStatus) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader("Governed Ceremonies", count: nil)
+        ceremonyRow(
+          title: "Trust grant",
+          value: "\(status.activeTrustGrantCount) active / \(status.trustGrantCount) total",
+          satisfied: status.activeTrustGrantCount > 0,
+          detail: "Authorizes scoped Friday work; mobile only reads the Hub projection.")
+        ceremonyRow(
+          title: "Context passport",
+          value: "\(status.contextPassportCount) minted",
+          satisfied: status.contextPassportCount > 0,
+          detail: "Shares non-sensitive mission context to the governed destination lane.")
+        ceremonyRow(
+          title: "Shared context items",
+          value: "\(status.contextPassportItemCount) item(s)",
+          satisfied: status.contextPassportItemCount > 0,
+          detail: "Refs-only readiness evidence, not proof of END-BAR adoption.")
+        Text("This screen never mints grants, passports, or signatures. It only renders operator-created Hub rows.")
+          .font(.caption2)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .accessibilityIdentifier("friday.context-passport.governed-ceremonies")
+  }
+
+  private func ceremonyRow(title: String, value: String, satisfied: Bool, detail: String) -> some View {
+    HStack(alignment: .top, spacing: 10) {
+      Image(systemName: satisfied ? "checkmark.seal.fill" : "lock.trianglebadge.exclamationmark")
+        .foregroundStyle(satisfied ? MobileTheme.cyan : MobileTheme.coral)
+        .frame(width: 22)
+      VStack(alignment: .leading, spacing: 4) {
+        HStack {
+          Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(MobileTheme.textPrimary)
+          Spacer()
+          StatusChip(
+            text: value,
+            bg: satisfied ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
+            fg: satisfied ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
+        }
+        Text(detail)
+          .font(.caption2)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
   private func sendCard(_ projection: HomeProjection) -> some View {
+    let status = projection.t3ProvisioningStatus
+    let isReady = status?.isFullyProvisioned == true
+    let missing = status?.missingOperatorSteps.joined(separator: ", ") ?? "T3 projection"
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Send", count: 3)
@@ -154,8 +210,14 @@ struct FridayContextPassportScreen: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(MobileTheme.cyan)
-        .disabled(viewModel.contextPassportTransferState?.isSent == true)
+        .disabled(!isReady || viewModel.contextPassportTransferState?.isSent == true)
         .accessibilityIdentifier("friday.context-passport.send")
+        if !isReady {
+          Text("Send remains unavailable until \(missing) is visible in the Hub projection.")
+            .font(.caption2)
+            .foregroundStyle(MobileTheme.chipWarnFG)
+            .fixedSize(horizontal: false, vertical: true)
+        }
         if let state = viewModel.contextPassportTransferState {
           candidateDecisionStateView(state)
         }
