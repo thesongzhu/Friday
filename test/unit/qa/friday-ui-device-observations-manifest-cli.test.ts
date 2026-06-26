@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -111,6 +111,26 @@ describe("friday-ui-device-observations-manifest", () => {
       ], { cwd: process.cwd(), encoding: "utf8" })) as { readyForAssemble?: boolean; failures?: unknown[] };
       expect(preflight.readyForAssemble).toBe(true);
       expect(preflight.failures).toEqual([]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts evidence refs that resolve to the same file through a symlink", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-observations-realpath-"));
+    try {
+      const refs = writeEvidence(tempDir);
+      const alias = join(tempDir, "desktop-alias.json");
+      symlinkSync(refs.desktop, alias);
+      const rows = completeEvents({ ...refs, desktop: alias });
+      const { result, out } = runManifest(tempDir, refs, rows, ["--require-ready"]);
+
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as { status?: string; blockers?: unknown[] };
+      expect(output.status).toBe("ready");
+      expect(output.blockers).toEqual([]);
+      const manifest = JSON.parse(readFileSync(out, "utf8")) as { transcript_browser?: { evidence_ref?: string } };
+      expect(manifest.transcript_browser?.evidence_ref).toBe(alias);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

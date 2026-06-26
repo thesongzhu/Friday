@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -206,6 +206,32 @@ describe("check-mission-spine-ui-proof-inputs CLI", () => {
       });
       expect(result.evidence.map((entry) => entry.role)).toEqual(["mobile", "desktop", "channel", "timeline"]);
       expect(result.evidence.every((entry) => /^[a-f0-9]{64}$/.test(entry.sha256) && entry.bytes > 0)).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts complete inputs when manifest evidence refs resolve to the same files through symlinks", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-proof-inputs-realpath-"));
+    try {
+      const files = writeEvidenceFiles(tempDir);
+      const aliases = {
+        mobile: join(tempDir, "mobile-link.json"),
+        desktop: join(tempDir, "desktop-link.json"),
+        channel: join(tempDir, "channel-link.json"),
+        timeline: join(tempDir, "timeline-link.json"),
+      };
+      symlinkSync(files.mobile, aliases.mobile);
+      symlinkSync(files.desktop, aliases.desktop);
+      symlinkSync(files.channel, aliases.channel);
+      symlinkSync(files.timeline, aliases.timeline);
+      const manifestPath = join(tempDir, "observations-manifest-realpath.json");
+      writeFileSync(manifestPath, JSON.stringify(makeManifest(aliases), null, 2));
+
+      const result = runInputsCli(files, manifestPath);
+
+      expect(result.readyForAssemble).toBe(true);
+      expect(result.failures).toEqual([]);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

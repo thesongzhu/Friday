@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 
@@ -126,6 +126,16 @@ function abs(path) {
   return isAbsolute(path) ? path : resolve(path);
 }
 
+function evidenceKey(path) {
+  if (!path) return "";
+  const resolved = abs(path);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 function requireFile(label, path) {
   if (label === "channel" && deferChannelProof && !path) {
     return "";
@@ -240,7 +250,7 @@ function normalizeEvent(raw, index, knownEvidenceRefs) {
   if (!surface) block("event_missing_surface", label);
   if (!event) block("event_missing_name", label);
   if (eventMissionId !== missionId) block("event_mission_mismatch", `${label}:${eventMissionId}`);
-  if (!knownEvidenceRefs.has(evidenceRef)) block("event_evidence_ref_unknown", `${label}:${evidenceRef}`);
+  if (!knownEvidenceRefs.has(evidenceKey(evidenceRef))) block("event_evidence_ref_unknown", `${label}:${evidenceRef}`);
   return { surface, event, mission_id: eventMissionId, evidence_ref: evidenceRef };
 }
 
@@ -286,7 +296,7 @@ if (!missionId || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId) || !missionId
 const evidence = Object.fromEntries(
   Object.entries(evidenceArgs).map(([role, path]) => [role, requireFile(role, path)]),
 );
-const knownEvidenceRefs = new Set(Object.values(evidence).filter(Boolean));
+const knownEvidenceRefs = new Set(Object.values(evidence).filter(Boolean).map(evidenceKey));
 const eventFile = requireFile("events", eventsPath);
 const observations = parseJsonl(eventFile).map((raw, index) => normalizeEvent(raw, index, knownEvidenceRefs));
 const manifest = parseManifest(manifestPath);

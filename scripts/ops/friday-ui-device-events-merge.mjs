@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -65,6 +65,16 @@ function block(code, detail) {
 
 function abs(path) {
   return isAbsolute(path) ? path : resolve(path);
+}
+
+function evidenceKey(path) {
+  if (!path) return "";
+  const resolved = abs(path);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 function readableFile(label, path) {
@@ -136,7 +146,7 @@ function normalizedEntry(entry, knownEvidenceRefs) {
   if (!eventMissionId) block("event_missing_mission_id", label);
   if (eventMissionId && eventMissionId !== missionId) block("event_mission_mismatch", `${label}:${eventMissionId}`);
   if (!evidenceRef) block("event_missing_evidence_ref", label);
-  if (knownEvidenceRefs.size > 0 && evidenceRef && !knownEvidenceRefs.has(evidenceRef)) {
+  if (knownEvidenceRefs.size > 0 && evidenceRef && !knownEvidenceRefs.has(evidenceKey(evidenceRef))) {
     block("event_evidence_ref_unknown", `${label}:${evidenceRef}`);
   }
   const normalized = {
@@ -165,7 +175,8 @@ if (eventFiles.length === 0) block("missing_events", "supply --events or --event
 const knownEvidenceRefs = new Set(
   Object.entries(evidenceArgs)
     .map(([role, path]) => readableFile(role, path))
-    .filter(Boolean),
+    .filter(Boolean)
+    .map(evidenceKey),
 );
 
 const rows = eventFiles.flatMap(parseJsonl).map((entry) => normalizedEntry(entry, knownEvidenceRefs));

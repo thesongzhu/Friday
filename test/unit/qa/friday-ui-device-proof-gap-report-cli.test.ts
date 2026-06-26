@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -218,6 +218,29 @@ describe("friday-ui-device-proof-gap-report", () => {
         countsTowardUiDeviceProof: false,
         failures: [],
       }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts evidence refs that resolve to the same file through a symlink", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-gap-report-realpath-"));
+    try {
+      const files = evidenceFiles(tempDir);
+      const alias = join(tempDir, "desktop-alias.json");
+      symlinkSync(files.desktop, alias);
+      const rows = completeRows({ ...files, desktop: alias });
+      const manifest = join(tempDir, "manifest.json");
+      writeFileSync(manifest, JSON.stringify(completeManifest(), null, 2));
+
+      const result = run(tempDir, files, rows, [
+        `--manifest=${manifest}`,
+        "--require-complete",
+      ]);
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as { status?: string; blockers?: unknown[] };
+      expect(output.status).toBe("complete_inputs_observed");
+      expect(output.blockers).toEqual([]);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -86,6 +86,34 @@ describe("friday-ui-device-events-merge", () => {
       expect(result.deduplicatedRows).toBe(1);
       expect(rows).toContainEqual(event("desktop", "mission_workbench_visible", evidence.desktop));
       expect(rows.filter((row) => row.event === "pressure_20_50_consecutive_asks_visible")).toHaveLength(2);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts evidence refs that resolve to the same file through a symlink", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-events-merge-realpath-"));
+    try {
+      const evidence = writeEvidence(tempDir);
+      const alias = join(tempDir, "mobile-alias.json");
+      symlinkSync(evidence.mobile, alias);
+      const input = join(tempDir, "events.jsonl");
+      const out = join(tempDir, "merged.jsonl");
+      writeFileSync(input, `${JSON.stringify(event("mobile", "mission_intake_submitted", alias))}\n`);
+
+      const stdout = execFileSync("node", [
+        "scripts/ops/friday-ui-device-events-merge.mjs",
+        `--mission-id=${missionId}`,
+        `--events=${input}`,
+        `--mobile=${evidence.mobile}`,
+        `--out=${out}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const result = JSON.parse(stdout) as { status?: string; blockers?: unknown[] };
+
+      expect(result.status).toBe("ready");
+      expect(result.blockers).toEqual([]);
+      expect(readFileSync(out, "utf8")).toContain(alias);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
