@@ -338,6 +338,7 @@ struct RootView: View {
   @State private var destination: MobileDestination = .home
   @State private var commandOpen = false
   @State private var chatOpen = false
+  @State private var pendingChatLaunchContext: ChatLaunchContext?
 
   init(session: FridaySession) {
     self.session = session
@@ -382,15 +383,24 @@ struct RootView: View {
         case .tokenLedger:
           FridayTokenLedgerScreen(viewModel: homeVM)
         case .shareIntake:
-          FridayShareIntakeScreen(viewModel: shareIntakeVM) {
+          FridayShareIntakeScreen(viewModel: shareIntakeVM) { receipt in
+            pendingChatLaunchContext = ChatLaunchContext(
+              source: "Share Intake",
+              missionId: receipt.missionId,
+              workItemId: receipt.workItemId,
+              surfaceThreadId: receipt.surfaceThreadId,
+              status: receipt.status,
+              createdOrReady: receipt.createdOrReady)
             chatOpen = true
           }
         case .newSession:
-          FridayNewSessionScreen(viewModel: newSessionVM) {
+          FridayNewSessionScreen(viewModel: newSessionVM) { context in
+            pendingChatLaunchContext = context
             chatOpen = true
           }
         case .voice:
           FridayVoiceScreen(viewModel: voiceVM) {
+            pendingChatLaunchContext = nil
             chatOpen = true
           }
         case .pairing:
@@ -417,6 +427,7 @@ struct RootView: View {
         // Top-BAR 💬: the Friday Chat entry (locked: the ONLY chat entry — no card).
         ToolbarItem(placement: .topBarTrailing) {
           Button {
+            pendingChatLaunchContext = nil
             chatOpen = true
           } label: {
             Image(systemName: "bubble.left.and.bubble.right").foregroundStyle(MobileTheme.cyan)
@@ -437,7 +448,7 @@ struct RootView: View {
       .navigationDestination(isPresented: $chatOpen) {
         // The Friday Chat read-WRITE / S6 surface, driven by the session's REAL write client
         // + the operator-signer relay.
-        FridayChatScreen(session: session)
+        FridayChatScreen(session: session, launchContext: pendingChatLaunchContext)
       }
     }
     .tint(MobileTheme.cyan)

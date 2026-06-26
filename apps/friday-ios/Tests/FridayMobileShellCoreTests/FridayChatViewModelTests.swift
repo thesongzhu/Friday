@@ -809,6 +809,31 @@ final class FridayChatViewModelTests: XCTestCase {
       ])
   }
 
+  func testLaunchContextSeedsRefsOnlyContextCardAndComposerPrefill() async {
+    let context = ChatLaunchContext(
+      source: "Share Intake",
+      missionId: "mission-mobile-share-fixed",
+      workItemId: "work-mobile-share-fixed",
+      surfaceThreadId: "surface-mobile-share-fixed",
+      status: "ready",
+      createdOrReady: true)
+    let vm = FridayChatViewModel(
+      writeClient: FakeWriteClient(dispatch: .answer(makeAnswer())),
+      signer: MockOperatorSigner(),
+      launchContext: context)
+
+    XCTAssertEqual(vm.contextCards.map(\.id), ["launch"])
+    XCTAssertEqual(vm.selectedContextCardId, "launch")
+    XCTAssertEqual(vm.contextCards.first?.truthLabel, "created_or_ready")
+    XCTAssertEqual(
+      vm.contextCards.first?.evidenceRef,
+      "swift://mobile/fridayChat/launch-context/mission-mobile-share-fixed")
+    XCTAssertTrue(context.composerPrefill.contains("mission_id=mission-mobile-share-fixed"))
+    XCTAssertTrue(context.composerPrefill.contains("work_item_id=work-mobile-share-fixed"))
+    XCTAssertTrue(context.composerPrefill.contains("surface_thread_id=surface-mobile-share-fixed"))
+    XCTAssertTrue(context.composerPrefill.contains("do not fabricate missing results"))
+  }
+
   /// A server REFUSAL (`accepted=false`) is a SUCCESSFUL relay of a refusal — the action did NOT
   /// execute, and the loop shows it honestly (not as a transport failure, not as an executed action).
   func testApprove_serverRefusal_isSurfacedAsARefusal() async {

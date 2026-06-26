@@ -3,7 +3,7 @@ import SwiftUI
 
 struct FridayShareIntakeScreen: View {
   @ObservedObject var viewModel: ShareIntakeViewModel
-  var onOpenFridayChat: () -> Void = {}
+  var onOpenFridayChat: (ShareIntakeReceipt) -> Void = { _ in }
 
   var body: some View {
     ScrollView {
@@ -91,7 +91,7 @@ struct FridayShareIntakeScreen: View {
             bg: MobileTheme.chipDoneBG,
             fg: MobileTheme.chipDoneFG)
           Button {
-            onOpenFridayChat()
+            onOpenFridayChat(receipt)
           } label: {
             Label("Continue in Chat", systemImage: "bubble.left.and.bubble.right")
               .frame(maxWidth: .infinity)

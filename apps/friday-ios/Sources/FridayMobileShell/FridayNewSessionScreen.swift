@@ -3,7 +3,7 @@ import SwiftUI
 
 struct FridayNewSessionScreen: View {
   @ObservedObject var viewModel: NewSessionViewModel
-  var onOpenFridayChat: () -> Void = {}
+  var onOpenFridayChat: (ChatLaunchContext) -> Void = { _ in }
   @State private var intent = ""
 
   var body: some View {
@@ -103,7 +103,13 @@ struct FridayNewSessionScreen: View {
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
           Button {
-            onOpenFridayChat()
+            onOpenFridayChat(ChatLaunchContext(
+              source: "New Session",
+              missionId: missionId,
+              workItemId: workItemId,
+              surfaceThreadId: surfaceThreadId,
+              status: status,
+              createdOrReady: createdOrReady))
           } label: {
             Label("Continue in Chat", systemImage: "bubble.left.and.bubble.right")
               .frame(maxWidth: .infinity)

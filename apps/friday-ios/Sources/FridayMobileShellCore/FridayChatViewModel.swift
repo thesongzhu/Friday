@@ -272,6 +272,45 @@ public struct ChatContextCard: Identifiable, Sendable, Equatable {
   public let memoryPreview: String?
 }
 
+public struct ChatLaunchContext: Sendable, Equatable {
+  public let source: String
+  public let missionId: String
+  public let workItemId: String?
+  public let surfaceThreadId: String
+  public let status: String
+  public let createdOrReady: Bool
+
+  public init(
+    source: String,
+    missionId: String,
+    workItemId: String?,
+    surfaceThreadId: String,
+    status: String,
+    createdOrReady: Bool
+  ) {
+    self.source = source
+    self.missionId = missionId
+    self.workItemId = workItemId
+    self.surfaceThreadId = surfaceThreadId
+    self.status = status
+    self.createdOrReady = createdOrReady
+  }
+
+  public var composerPrefill: String {
+    var lines = [
+      "Continue this \(source) Mission.",
+      "mission_id=\(missionId)",
+      "surface_thread_id=\(surfaceThreadId)",
+      "status=\(createdOrReady ? "created_or_ready" : status)",
+    ]
+    if let workItemId, !workItemId.isEmpty {
+      lines.append("work_item_id=\(workItemId)")
+    }
+    lines.append("Use these refs to produce the next owner-visible answer; do not fabricate missing results.")
+    return lines.joined(separator: "\n")
+  }
+}
+
 public protocol ChatHistoryStoring {
   func load() -> [ChatHistoryItem]
   func save(_ items: [ChatHistoryItem])
@@ -371,6 +410,7 @@ public final class FridayChatViewModel: ObservableObject {
     memoryDecisionClient: (any FridayMissionSpineWriteClient)? = nil,
     readClient: FridayRustReadClient? = nil,
     historyStore: any ChatHistoryStoring = UserDefaultsChatHistoryStore(),
+    launchContext: ChatLaunchContext? = nil,
     newId: @escaping () -> String = { UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "") },
     missionIdPrefix: String = "mission-mobile-",
     nowMs: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
@@ -385,6 +425,10 @@ public final class FridayChatViewModel: ObservableObject {
     self.missionIdPrefix = missionIdPrefix
     self.nowMs = nowMs
     self.history = historyStore.load()
+    if let launchContext {
+      self.contextCards = [Self.launchContextCard(launchContext)]
+      self.selectedContextCardId = "launch"
+    }
   }
 
   // MARK: 1. Compose → Send
@@ -833,6 +877,18 @@ public final class FridayChatViewModel: ObservableObject {
         memoryCandidateId: memoryCandidate?.id,
         memoryPreview: memoryCandidate?.preview),
     ]
+  }
+
+  private static func launchContextCard(_ context: ChatLaunchContext) -> ChatContextCard {
+    let workItem = context.workItemId ?? "not-attached"
+    return ChatContextCard(
+      id: "launch",
+      title: "Mission refs",
+      detail: "\(context.source) submitted \(context.missionId) / \(workItem). Send the prefilled Chat turn to continue through the governed live loop.",
+      truthLabel: context.createdOrReady ? "created_or_ready" : context.status,
+      evidenceRef: "swift://mobile/fridayChat/launch-context/\(context.missionId)",
+      memoryCandidateId: nil,
+      memoryPreview: nil)
   }
 
   private func appendHistory(role: String, text: String, runId: String? = nil, receiptRefs: [ChatReceiptRef] = []) {
