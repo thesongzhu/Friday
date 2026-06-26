@@ -12,6 +12,7 @@ usage:
     [--channel-capture /abs/channel-capture.json]
     [--timeline-capture /abs/timeline-capture.json]
     [--accessibility-capture /abs/real-accessibility-capture.json ...]
+    [--stress-capture /abs/real-same-run-stress-capture.json ...]
     [--harvest-dir /abs/artifact-dir ...]
     [--same-run-events /abs/events.jsonl ...]
     [--runtime-evidence-dir /abs/evidence-dir ...]
@@ -46,6 +47,7 @@ channel_capture=""
 timeline_capture=""
 defer_channel_proof="${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}"
 accessibility_captures=()
+stress_captures=()
 harvest_dirs=()
 same_run_events=()
 runtime_evidence_dirs=()
@@ -132,6 +134,15 @@ while [ "$#" -gt 0 ]; do
       accessibility_captures+=("${1#--accessibility-capture=}")
       shift
       ;;
+    --stress-capture)
+      [ "$#" -ge 2 ] || die "--stress-capture requires a value"
+      stress_captures+=("$2")
+      shift 2
+      ;;
+    --stress-capture=*)
+      stress_captures+=("${1#--stress-capture=}")
+      shift
+      ;;
     --harvest-dir)
       [ "$#" -ge 2 ] || die "--harvest-dir requires a value"
       harvest_dirs+=("$2")
@@ -209,7 +220,7 @@ require_file_if_set() {
 }
 
 set +u
-for path in "${accessibility_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
+for path in "${accessibility_captures[@]}" "${stress_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
   require_abs_if_set "input path" "${path}"
 done
 set -u
@@ -266,6 +277,27 @@ if [ "${#accessibility_captures[@]}" -gt 0 ]; then
   same_run_events+=("${accessibility_capture_dir}/accessibility-click-events.jsonl")
   runtime_evidence_dirs+=("${accessibility_capture_dir}")
   accessibility_capture_status="ready"
+fi
+set -u
+
+stress_capture_status="skipped"
+set +u
+if [ "${#stress_captures[@]}" -gt 0 ]; then
+  stress_capture_dir="${out_dir}/stress-capture-events"
+  mkdir -p "${stress_capture_dir}"
+  stress_index=0
+  for stress_capture in "${stress_captures[@]}"; do
+    [ -n "${stress_capture}" ] || continue
+    stress_index=$((stress_index + 1))
+    stress_events="${stress_capture_dir}/stress-events-${stress_index}.jsonl"
+    node "${repo_root}/scripts/ops/friday-ui-device-stress-events.mjs" \
+      "--mission-id=${mission_id}" \
+      "--stress-capture=${stress_capture}" \
+      "--out=${stress_events}" \
+      --require-ready
+    same_run_events+=("${stress_events}")
+  done
+  stress_capture_status="ready"
 fi
 set -u
 
@@ -423,9 +455,9 @@ if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_c
   gap_status="written"
 fi
 
-node - "${summary_out}" "${bundle_index}" "${product_closure_out}" "${readiness_out}" "${capture_dir_status}" "${gap_status}" "${accessibility_capture_status}" <<'NODE'
+node - "${summary_out}" "${bundle_index}" "${product_closure_out}" "${readiness_out}" "${capture_dir_status}" "${gap_status}" "${accessibility_capture_status}" "${stress_capture_status}" <<'NODE'
 const fs = require("node:fs");
-const [summaryOut, bundleIndexPath, productClosurePath, readinessPath, captureDirStatus, gapStatus, accessibilityCaptureStatus] = process.argv.slice(2);
+const [summaryOut, bundleIndexPath, productClosurePath, readinessPath, captureDirStatus, gapStatus, accessibilityCaptureStatus, stressCaptureStatus] = process.argv.slice(2);
 function parseJsonSuffix(text) {
   const trimmed = String(text || "").trim();
   if (!trimmed) throw new Error("empty JSON input");
@@ -459,6 +491,7 @@ const summary = {
   captureDirStatus,
   gapStatus,
   accessibilityCaptureStatus,
+  stressCaptureStatus,
   productClosureStatus: closure.status,
   uiDeviceProofReadiness: closure.stages?.uiDeviceProofReadiness || null,
   readinessStatus: readiness.status,

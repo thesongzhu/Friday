@@ -29,4 +29,18 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("gap_args+=(\"--defer-channel-proof\")");
     expect(source).toContain("real channel, timeline, stress, and negative-control evidence");
   });
+
+  it("threads real stress captures through the existing stress event bridge", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("--stress-capture");
+    expect(source).toContain("stress_captures=()");
+    expect(source).toContain("friday-ui-device-stress-events.mjs");
+    expect(source).toContain("--mission-id=${mission_id}");
+    expect(source).toContain("--stress-capture=${stress_capture}");
+    expect(source).toContain("--out=${stress_events}");
+    expect(source).toContain("--require-ready");
+    expect(source).toContain("same_run_events+=(\"${stress_events}\")");
+    expect(source).toContain("stressCaptureStatus");
+  });
 });
