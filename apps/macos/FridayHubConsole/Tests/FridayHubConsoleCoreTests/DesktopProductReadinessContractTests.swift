@@ -70,7 +70,13 @@ func desktopProductContractSeparatesShellsFromWorkbenchLoops() {
   ])
   #expect(!workflow.blockers.contains { $0.kind == .needsNativeSurface })
   #expect(workflow.blockers.contains { $0.kind == .needsRuntimeEvidence })
-  #expect(channels.tier == .navigationShell)
+  #expect(channels.tier == .liveReadProjection)
+  #expect(channels.runtimeActionIds == [
+    "desktop/channels/receipts",
+    "desktop/channels/surface-events",
+  ])
+  #expect(!channels.blockers.contains { $0.kind == .needsNativeSurface })
+  #expect(channels.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(provider.tier == .providerAdmin)
   #expect(!operations.isEndBarReady)
   #expect(!workflow.isEndBarReady)

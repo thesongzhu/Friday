@@ -190,9 +190,12 @@ public enum DesktopProductDestinationID: String, CaseIterable, Sendable, Equatab
       return contract(
         title: "Channels",
         systemImage: "antenna.radiowaves.left.and.right",
-        tier: .navigationShell,
-        runtimeActionIds: [],
-        blockers: [.init(.needsNativeSurface, label: "channel admin product surface")])
+        tier: .liveReadProjection,
+        runtimeActionIds: [
+          "desktop/channels/receipts",
+          "desktop/channels/surface-events",
+        ],
+        blockers: [.init(.needsRuntimeEvidence, label: "channel admin app proof")])
     case .diagnostics:
       return contract(
         title: "Diagnostics",

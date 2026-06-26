@@ -589,10 +589,63 @@ struct DesktopProjectionScreen: View {
 
   private func channelStatus(_ snapshot: WorkbenchSnapshot) -> some View {
     VStack(alignment: .leading, spacing: 16) {
+      channelAdminCard(snapshot)
       refsCard(title: "Channel Receipt Refs", refs: snapshot.channelReceiptRefs)
-      GlassPanel {
-        VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+      surfaceEventsCard(snapshot)
+    }
+  }
+
+  private func channelAdminCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    let sections = surfaceSections(snapshot)
+    let eventCount = sections.reduce(0) { $0 + $1.events.count }
+    return GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("Channel Admin")
+          Spacer()
+          StatusChip(text: "live read", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+        }
+        Text("Dedicated desktop channel panel over Hub receipt refs and surface/channel transcript projection.")
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        HStack(spacing: 8) {
+          StatusChip(
+            text: "\(snapshot.channelReceiptRefs.count) receipts",
+            bg: HubTheme.chipNeutralBG,
+            fg: HubTheme.chipNeutralFG)
+          StatusChip(
+            text: "\(sections.count) sections",
+            bg: HubTheme.chipNeutralBG,
+            fg: HubTheme.chipNeutralFG)
+          StatusChip(
+            text: "\(eventCount) events",
+            bg: HubTheme.chipNeutralBG,
+            fg: HubTheme.chipNeutralFG)
+        }
+        RefPill(label: "action", ref: "desktop/channels/receipts")
+        RefPill(label: "action", ref: "desktop/channels/surface-events")
+      }
+    }
+    .accessibilityIdentifier("friday.desktop.channels.admin")
+  }
+
+  private func surfaceEventsCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
           cardTitle("Surface Events")
+          Spacer()
+          StatusChip(
+            text: "\(surfaceSections(snapshot).count)",
+            bg: HubTheme.chipNeutralBG,
+            fg: HubTheme.chipNeutralFG)
+        }
+        if surfaceSections(snapshot).isEmpty {
+          Text("No desktop/mobile channel events are projected yet.")
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textSecondary)
+        } else {
           ForEach(surfaceSections(snapshot)) { section in
             VStack(alignment: .leading, spacing: 6) {
               HStack {
@@ -602,10 +655,18 @@ struct DesktopProjectionScreen: View {
                 Spacer()
                 section.status.chip
               }
+              RefPill(label: "mission", ref: section.missionId)
               ForEach(section.events) { event in
                 Text(event.summary)
                   .font(.system(size: 11))
                   .foregroundStyle(HubTheme.textSecondary)
+                  .fixedSize(horizontal: false, vertical: true)
+                if let workItemId = event.workItemId {
+                  RefPill(label: "work", ref: workItemId)
+                }
+                if let proofRef = event.proofRef {
+                  RefPill(label: "proofRef", ref: proofRef)
+                }
                 ForEach(event.evidenceRefs.orderedPairs, id: \.ref) { pair in
                   RefPill(label: pair.label, ref: pair.ref)
                 }
@@ -616,6 +677,7 @@ struct DesktopProjectionScreen: View {
         }
       }
     }
+    .accessibilityIdentifier("friday.desktop.channels.surface-events")
   }
 
   private func evidenceStatus(_ snapshot: WorkbenchSnapshot) -> some View {
