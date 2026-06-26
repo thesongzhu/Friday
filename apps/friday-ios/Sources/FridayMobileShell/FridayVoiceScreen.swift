@@ -3,6 +3,15 @@ import SwiftUI
 
 struct FridayVoiceScreen: View {
   @ObservedObject var viewModel: VoiceReadinessViewModel
+  let onOpenVoiceChat: () -> Void
+
+  init(
+    viewModel: VoiceReadinessViewModel,
+    onOpenVoiceChat: @escaping () -> Void = {}
+  ) {
+    self.viewModel = viewModel
+    self.onOpenVoiceChat = onOpenVoiceChat
+  }
 
   var body: some View {
     ScrollView {
@@ -140,6 +149,16 @@ struct FridayVoiceScreen: View {
               }
               .buttonStyle(.bordered)
               .disabled(!row.enabled || viewModel.state == .loading)
+            } else if row.id == "open-chat-loop" {
+              Button {
+                onOpenVoiceChat()
+              } label: {
+                Text("Open")
+              }
+              .buttonStyle(.bordered)
+              .disabled(!row.enabled || viewModel.state == .loading)
+              .accessibilityLabel("Open Friday Chat voice loop")
+              .accessibilityIdentifier("friday.voice.open-chat-loop")
             }
           }
           .padding(.vertical, 3)

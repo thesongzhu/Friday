@@ -89,13 +89,21 @@ final class VoiceReadinessViewModelTests: XCTestCase {
       speechRecognition: .notDetermined,
       ttsProviderConfigured: false)
     let initialRows = VoiceReadinessViewModel.actionRows(for: initial)
-    XCTAssertEqual(initialRows.map(\.id), ["permission", "speech-capture", "tts-output", "realtime-loop"])
+    XCTAssertEqual(initialRows.map(\.id), [
+      "permission",
+      "speech-capture",
+      "tts-output",
+      "realtime-loop",
+      "open-chat-loop",
+    ])
     XCTAssertEqual(initialRows.first { $0.id == "permission" }?.truthLabel, "native_permission_request")
     XCTAssertEqual(initialRows.first { $0.id == "permission" }?.enabled, true)
     XCTAssertEqual(initialRows.first { $0.id == "tts-output" }?.truthLabel, "NO-GO")
     XCTAssertEqual(initialRows.first { $0.id == "tts-output" }?.enabled, false)
     XCTAssertEqual(initialRows.first { $0.id == "realtime-loop" }?.truthLabel, "blocked")
     XCTAssertEqual(initialRows.first { $0.id == "realtime-loop" }?.enabled, false)
+    XCTAssertEqual(initialRows.first { $0.id == "open-chat-loop" }?.truthLabel, "blocked")
+    XCTAssertEqual(initialRows.first { $0.id == "open-chat-loop" }?.enabled, false)
 
     let captureOnly = MobileVoiceReadiness(
       microphone: .authorized,
@@ -116,5 +124,7 @@ final class VoiceReadinessViewModelTests: XCTestCase {
     XCTAssertEqual(completeRows.first { $0.id == "tts-output" }?.detail, "Local speech output provider is configured.")
     XCTAssertEqual(completeRows.first { $0.id == "realtime-loop" }?.truthLabel, "ready")
     XCTAssertEqual(completeRows.first { $0.id == "realtime-loop" }?.enabled, true)
+    XCTAssertEqual(completeRows.first { $0.id == "open-chat-loop" }?.truthLabel, "native_voice_route_ready")
+    XCTAssertEqual(completeRows.first { $0.id == "open-chat-loop" }?.enabled, true)
   }
 }

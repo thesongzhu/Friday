@@ -76,6 +76,7 @@ func mobileProductContractSeparatesReadinessShellsFromProductLoops() {
     "mobile/voice/permission",
     "mobile/fridayChat/voice-input",
     "mobile/fridayChat/voice-output",
+    "mobile/voice/open-chat-loop",
   ])
   #expect(voice.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(workflows.tier == .navigationShell)

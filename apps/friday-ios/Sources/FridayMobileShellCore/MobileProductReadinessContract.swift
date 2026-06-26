@@ -193,6 +193,7 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
           "mobile/voice/permission",
           "mobile/fridayChat/voice-input",
           "mobile/fridayChat/voice-output",
+          "mobile/voice/open-chat-loop",
         ],
         blockers: [
           .init(.needsRuntimeEvidence, label: "real microphone and speech-output tap proof"),
