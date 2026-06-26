@@ -272,6 +272,13 @@ run_wrapper \
   "mobile-share-intake"
 
 run_wrapper \
+  "mobile voice" \
+  "scripts/ops/friday-mobile-voice-action-evidence.sh" \
+  "FRIDAY_MOBILE_VOICE_ACTION_EVIDENCE_DIR" \
+  "FRIDAY_MOBILE_VOICE_ACTION_RUNTIME_OUT" \
+  "mobile-voice"
+
+run_wrapper \
   "mobile token ledger" \
   "scripts/ops/friday-mobile-token-ledger-action-evidence.sh" \
   "FRIDAY_MOBILE_TOKEN_LEDGER_ACTION_EVIDENCE_DIR" \
