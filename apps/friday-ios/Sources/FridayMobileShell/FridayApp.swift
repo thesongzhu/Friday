@@ -386,7 +386,9 @@ struct RootView: View {
         case .newSession:
           FridayNewSessionScreen(viewModel: newSessionVM)
         case .voice:
-          FridayVoiceScreen(viewModel: voiceVM)
+          FridayVoiceScreen(viewModel: voiceVM) {
+            chatOpen = true
+          }
         case .pairing:
           FridayHomeScreen(viewModel: homeVM, showPairingProvisioning: true)
         case .providerAuth:

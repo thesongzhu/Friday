@@ -150,9 +150,17 @@ public final class VoiceReadinessViewModel: ObservableObject {
         id: "realtime-loop",
         title: "Realtime voice loop",
         detail: readiness.voiceLoopReady
-          ? "Capture and TTS are both ready."
+          ? "Capture and TTS are both ready; open Friday Chat to speak with the governed loop."
           : "Disabled until capture and TTS are both ready.",
         truthLabel: readiness.voiceLoopReady ? "ready" : "blocked",
+        enabled: readiness.voiceLoopReady),
+      MobileVoiceActionRow(
+        id: "open-chat-loop",
+        title: "Open Friday Chat voice loop",
+        detail: readiness.voiceLoopReady
+          ? "Routes to Friday Chat, where mic input and speech output are wired to the live governed turn."
+          : "Blocked until voice capture and speech output are both ready.",
+        truthLabel: readiness.voiceLoopReady ? "native_voice_route_ready" : "blocked",
         enabled: readiness.voiceLoopReady),
     ]
   }
