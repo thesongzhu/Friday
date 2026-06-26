@@ -107,3 +107,14 @@ func mobileProductContractTracksShareIntakeWriteAsBuiltButRuntimeBlocked() {
   #expect(share.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(!share.isEndBarReady)
 }
+
+@Test
+func mobileProductContractTracksNewSessionLaunchIntoChatButRuntimeBlocked() {
+  let newSession = MobileProductDestinationID.newSession.contract
+
+  #expect(newSession.tier == .governedActionGated)
+  #expect(newSession.runtimeActionIds == ["mobile/newSession/play", "mobile/newSession/open-chat-loop"])
+  #expect(!newSession.blockers.contains { $0.kind == .needsLiveWrite })
+  #expect(newSession.blockers.contains { $0.kind == .needsRuntimeEvidence })
+  #expect(!newSession.isEndBarReady)
+}
