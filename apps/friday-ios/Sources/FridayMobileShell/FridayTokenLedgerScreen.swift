@@ -35,9 +35,11 @@ struct FridayTokenLedgerScreen: View {
 
     if let runId {
       runRefCard(runId: runId, projection: projection)
+      receiptRefsCard(projection)
       detailCard
     } else {
       noRunRefCard(projection)
+      receiptRefsCard(projection)
     }
   }
 
@@ -105,7 +107,7 @@ struct FridayTokenLedgerScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("No Run Ref", count: nil)
-        Text("The Home projection does not include a completed run ref yet, so Friday cannot show a token ledger from this app surface.")
+        Text("The Home projection does not include a completed run ref yet, so Friday cannot show per-run token totals from this app surface.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -114,6 +116,29 @@ struct FridayTokenLedgerScreen: View {
       }
     }
     .accessibilityIdentifier("friday.token-ledger.no-run-ref")
+  }
+
+  @ViewBuilder
+  private func receiptRefsCard(_ projection: HomeProjection) -> some View {
+    let count = projection.providerReceiptRefs.count + projection.channelReceiptRefs.count
+    if count > 0 {
+      GlassPanel {
+        VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+          cardHeader("Projected Receipts", count: count)
+          Text("These are refs already projected by the Hub. They are evidence links only; Friday still needs a run ref before showing per-run token totals.")
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+          ForEach(projection.providerReceiptRefs.prefix(5), id: \.self) { ref in
+            RefPill(label: "provider_receipt", ref: ref)
+          }
+          ForEach(projection.channelReceiptRefs.prefix(5), id: \.self) { ref in
+            RefPill(label: "channel_receipt", ref: ref)
+          }
+        }
+      }
+      .accessibilityIdentifier("friday.token-ledger.projected-receipts")
+    }
   }
 
   @ViewBuilder
