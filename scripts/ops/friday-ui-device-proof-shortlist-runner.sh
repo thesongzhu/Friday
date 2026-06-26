@@ -489,19 +489,53 @@ fi
 MISSION_ID="${mission_id}" FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS="${bundle_dir}" bash "${readiness_args[@]}" >"${readiness_out}"
 
 gap_status="skipped_missing_channel_or_timeline"
+gap_event_status="skipped"
 if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_channel_proof}" = "1" ]; }; then
+  gap_events="${evidence_dir}/same-run-events.normalized.jsonl"
+  gap_mobile="${mobile_capture}"
+  gap_desktop="${desktop_capture}"
+  gap_timeline="${timeline_capture}"
+  gap_manifest="${evidence_dir}/observations-manifest.json"
+  if [ ! -s "${gap_events}" ]; then
+    gap_events="${out_dir}/gap-report-events.jsonl"
+    gap_merge_args=(
+      "${repo_root}/scripts/ops/friday-ui-device-events-merge.mjs"
+      "--mission-id=${mission_id}"
+      "--out=${gap_events}"
+      "--require-ready"
+    )
+    for path in "${event_inputs[@]}"; do
+      gap_merge_args+=("--events=${path}")
+    done
+    if node "${gap_merge_args[@]}" >"${gap_events}.stdout"; then
+      gap_event_status="report_only_events_ready"
+    else
+      gap_event_status="report_only_events_blocked"
+    fi
+  else
+    gap_event_status="strict_capture_dir_events_ready"
+    gap_mobile="${evidence_dir}/mobile.json"
+    gap_desktop="${evidence_dir}/desktop.json"
+    gap_timeline="${evidence_dir}/timeline.json"
+  fi
   gap_args=(
     "${repo_root}/scripts/ops/friday-ui-device-proof-gap-report.mjs"
     "--mission-id=${mission_id}"
-    "--events=${evidence_dir}/same-run-events.normalized.jsonl"
-    "--mobile=${evidence_dir}/mobile.json"
-    "--desktop=${evidence_dir}/desktop.json"
-    "--timeline=${evidence_dir}/timeline.json"
-    "--manifest=${evidence_dir}/observations-manifest.json"
+    "--events=${gap_events}"
+    "--mobile=${gap_mobile}"
+    "--desktop=${gap_desktop}"
+    "--timeline=${gap_timeline}"
     "--out=${gap_out}"
   )
   if [ -n "${channel_capture}" ]; then
-    gap_args+=("--channel=${evidence_dir}/channel.json")
+    gap_channel="${evidence_dir}/channel.json"
+    if [ ! -s "${gap_channel}" ]; then
+      gap_channel="${channel_capture}"
+    fi
+    gap_args+=("--channel=${gap_channel}")
+  fi
+  if [ -s "${gap_manifest}" ]; then
+    gap_args+=("--manifest=${gap_manifest}")
   fi
   if [ -n "${backend_live_proof}" ]; then
     gap_args+=("--backend-live-proof=${backend_live_proof}")
@@ -519,9 +553,9 @@ if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_c
   gap_status="written"
 fi
 
-node - "${summary_out}" "${bundle_index}" "${product_closure_out}" "${readiness_out}" "${capture_dir_status}" "${gap_status}" "${accessibility_capture_status}" "${stress_capture_status}" "${workbench_timeline_status}" <<'NODE'
+node - "${summary_out}" "${bundle_index}" "${product_closure_out}" "${readiness_out}" "${capture_dir_status}" "${gap_status}" "${gap_event_status}" "${accessibility_capture_status}" "${stress_capture_status}" "${workbench_timeline_status}" <<'NODE'
 const fs = require("node:fs");
-const [summaryOut, bundleIndexPath, productClosurePath, readinessPath, captureDirStatus, gapStatus, accessibilityCaptureStatus, stressCaptureStatus, workbenchTimelineStatus] = process.argv.slice(2);
+const [summaryOut, bundleIndexPath, productClosurePath, readinessPath, captureDirStatus, gapStatus, gapEventStatus, accessibilityCaptureStatus, stressCaptureStatus, workbenchTimelineStatus] = process.argv.slice(2);
 function parseJsonSuffix(text) {
   const trimmed = String(text || "").trim();
   if (!trimmed) throw new Error("empty JSON input");
@@ -554,6 +588,7 @@ const summary = {
   captures: bundle.captures || {},
   captureDirStatus,
   gapStatus,
+  gapEventStatus,
   accessibilityCaptureStatus,
   stressCaptureStatus,
   workbenchTimelineStatus,

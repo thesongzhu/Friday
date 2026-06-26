@@ -117,6 +117,7 @@ const evidenceArgs = {
   timeline: arg("timeline"),
 };
 const blockers = [];
+const supplementalEvidenceRefs = [];
 
 function block(code, detail) {
   blockers.push({ code, detail });
@@ -250,7 +251,20 @@ function normalizeEvent(raw, index, knownEvidenceRefs) {
   if (!surface) block("event_missing_surface", label);
   if (!event) block("event_missing_name", label);
   if (eventMissionId !== missionId) block("event_mission_mismatch", `${label}:${eventMissionId}`);
-  if (!knownEvidenceRefs.has(evidenceKey(evidenceRef))) block("event_evidence_ref_unknown", `${label}:${evidenceRef}`);
+  const knownEvidenceRef = knownEvidenceRefs.has(evidenceKey(evidenceRef));
+  if (!knownEvidenceRef) {
+    const detail = `${label}:${evidenceRef}`;
+    if (requireComplete) {
+      block("event_evidence_ref_unknown", detail);
+    } else {
+      supplementalEvidenceRefs.push({
+        event: label,
+        evidenceRef,
+        countsTowardStrictProof: false,
+        caveat: "Report-only supplemental event evidence. Strict proof still requires evidence_ref to resolve to the mobile/desktop/channel/timeline capture manifest.",
+      });
+    }
+  }
   return { surface, event, mission_id: eventMissionId, evidence_ref: evidenceRef };
 }
 
@@ -410,6 +424,7 @@ const stressGaps = {
 const gapReport = {
   truth: "ui_device_proof_gap_report_not_proof",
   status: blockers.length === 0 && missingObservations.length === 0 && missingOrderEvents.length === 0 && missingChecks.length === 0
+    && supplementalEvidenceRefs.length === 0
     && pressureAskCount >= 20 && pressureAskCount <= 50 && duplicateSurfaceCount >= 2 && timelinePageCount >= 2
     ? "complete_inputs_observed"
     : "gaps_present",
@@ -437,6 +452,7 @@ const gapReport = {
   },
   capturePlan: capturePlan(missingObservations, stressGaps),
   supportingProofs: supportingProofRows,
+  supplementalEvidenceRefs,
   deferredInputs: deferChannelProof ? [{
     role: "channel",
     status: "deferred_by_operator",

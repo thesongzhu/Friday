@@ -60,6 +60,17 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("workbenchTimelineStatus");
   });
 
+  it("keeps gap reports useful when strict capture-dir assembly is blocked", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("gap-report-events.jsonl");
+    expect(source).toContain("friday-ui-device-events-merge.mjs");
+    expect(source).toContain("gap_event_status=\"report_only_events_ready\"");
+    expect(source).toContain("gapEventStatus");
+    expect(source).toContain("gap_mobile=\"${mobile_capture}\"");
+    expect(source).toContain("if [ -s \"${gap_manifest}\" ]; then");
+  });
+
   it("lets readiness derive workbench events while channel proof is deferred", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-readiness.sh", "utf8");
 
