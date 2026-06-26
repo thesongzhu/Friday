@@ -92,16 +92,19 @@ private enum ProjectionSurface {
 struct FridayProjectionScreen: View {
   let destination: MobileDestination
   @ObservedObject var viewModel: HomeViewModel
+  var onOpenPairing: () -> Void = {}
   @StateObject private var pushNotifications: PushNotificationReadinessViewModel
 
   @MainActor
   init(
     destination: MobileDestination,
     viewModel: HomeViewModel,
+    onOpenPairing: @escaping () -> Void = {},
     pushNotifications: PushNotificationReadinessViewModel? = nil
   ) {
     self.destination = destination
     self.viewModel = viewModel
+    self.onOpenPairing = onOpenPairing
     _pushNotifications = StateObject(wrappedValue: pushNotifications
       ?? PushNotificationReadinessViewModel(authorizer: SystemPushNotificationAuthorizer()))
   }
@@ -566,6 +569,15 @@ struct FridayProjectionScreen: View {
           value: projection.t3ProvisioningStatus?.paired == true ? "paired in Hub" : "no paired device in Hub",
           healthy: projection.t3ProvisioningStatus?.paired == true)
         t3ProvisioningRows(projection.t3ProvisioningStatus)
+        Button {
+          onOpenPairing()
+        } label: {
+          Label("Open Device Pairing", systemImage: "qrcode.viewfinder")
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(MobileTheme.cyan)
+        .accessibilityIdentifier("friday.onboarding.open-device-pairing")
+        RefPill(label: "action", ref: "mobile/onboarding/open-device-pairing")
         readinessRow(
           title: "Provider auth",
           value: "read-only doctor; never stores provider secrets",

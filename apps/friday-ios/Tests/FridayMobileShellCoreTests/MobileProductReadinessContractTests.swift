@@ -69,6 +69,7 @@ func mobileProductContractKeepsApprovalSignatureVisible() {
 func mobileProductContractSeparatesReadinessShellsFromProductLoops() {
   let voice = MobileProductDestinationID.voice.contract
   let workflows = MobileProductDestinationID.workflows.contract
+  let onboarding = MobileProductDestinationID.onboarding.contract
   let provider = MobileProductDestinationID.providerAuth.contract
 
   #expect(voice.tier == .nativeDeviceLoop)
@@ -80,9 +81,14 @@ func mobileProductContractSeparatesReadinessShellsFromProductLoops() {
   ])
   #expect(voice.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(workflows.tier == .navigationShell)
+  #expect(onboarding.tier == .readinessOnly)
+  #expect(onboarding.runtimeActionIds == ["mobile/onboarding/open-device-pairing"])
+  #expect(onboarding.blockers.contains { $0.kind == .needsRuntimeEvidence })
+  #expect(!onboarding.blockers.contains { $0.kind == .needsNativeSurface })
   #expect(provider.tier == .providerWorkspace)
   #expect(!voice.isEndBarReady)
   #expect(!workflows.isEndBarReady)
+  #expect(!onboarding.isEndBarReady)
   #expect(!provider.isEndBarReady)
 }
 

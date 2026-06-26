@@ -258,9 +258,9 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
       return contract(
         title: "Onboarding",
         systemImage: "sparkles.rectangle.stack",
-        tier: .navigationShell,
-        runtimeActionIds: [],
-        blockers: [.init(.needsNativeSurface, label: "zero-config launch flow")])
+        tier: .readinessOnly,
+        runtimeActionIds: ["mobile/onboarding/open-device-pairing"],
+        blockers: [.init(.needsRuntimeEvidence, label: "zero-config launch app proof")])
     case .settings:
       return contract(
         title: "Settings",
