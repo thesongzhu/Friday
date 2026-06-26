@@ -245,6 +245,8 @@ function runSnapshotContract(
     proof: string;
     proof_source: string;
     readyForLiveCaptureInput: boolean;
+    readyForDiagnosticTimelineInput: boolean | null;
+    diagnosticTimelineFailures: Array<{ code: string; detail: string }>;
     failures: Array<{ code: string; detail: string }>;
     summary: {
       transcriptSurfaces?: string[];
@@ -295,6 +297,106 @@ describe("check-mission-workbench-snapshot-contract CLI", () => {
       expect(result.readyForLiveCaptureInput).toBe(true);
       expect(result.failures).toEqual([]);
       expect(result.summary?.transcriptSurfaces).toEqual(["desktop", "mobile", "telegram", "timeline"]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("can report diagnostic timeline readiness without relaxing strict live-capture readiness", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-workbench-contract-diagnostic-timeline-"));
+    try {
+      const missionId = "mission_cli_snapshot_contract";
+      const partial = makeSnapshot({
+        providerReceiptRefs: [],
+        channelReceiptRefs: [],
+        memoryCandidates: [],
+        workItems: [
+          {
+            id: "work_timeline",
+            title: "Bounded timeline read",
+            state: "timeline_read",
+            owner: "friday_owned",
+            proofRef: "proof://timeline/page-2/cursor",
+            done: false,
+            blockingReason: "bounded timeline read only; no WorkItem recovery action applies",
+            recoveryKind: "none",
+            canRetry: false,
+            canCancel: false,
+          },
+        ],
+        timelinePages: [
+          { page: 1, cursor: "cursor_1", nextCursor: "cursor_2", eventRefs: ["event_mobile_intake", "event_desktop_projection"] },
+          { page: 2, cursor: "cursor_2", eventRefs: ["event_timeline_read"] },
+        ],
+        transcriptSections: [
+          {
+            id: "section_cli_snapshot_contract",
+            title: "Mission projection",
+            groupKind: "mission",
+            missionId,
+            truthLabel: "friday_owned",
+            status: "waiting",
+            events: [
+              {
+                id: "event_mobile_intake",
+                missionId,
+                surface: "mobile",
+                status: "ready",
+                truthLabel: "friday_owned",
+                summary: "Mobile Mission intake is attached to the same Mission.",
+                proofRef: "proof://surface/mobile/intake",
+                evidenceRefs: {
+                  surfaceThreadRef: "surface://mobile/thread/redacted",
+                  workflowRef: "workflow://mission/intake",
+                  timelineRef: "timeline://mission/page-1/event-mobile-intake",
+                },
+                capturedAt: "2026-06-05T06:10:00Z",
+              },
+              {
+                id: "event_desktop_projection",
+                missionId,
+                surface: "desktop",
+                status: "waiting",
+                truthLabel: "friday_owned",
+                summary: "Desktop projection is visible for the same Mission.",
+                proofRef: "proof://surface/desktop/projection",
+                evidenceRefs: {
+                  surfaceThreadRef: "surface://desktop/thread/redacted",
+                  timelineRef: "timeline://mission/page-1/event-desktop-projection",
+                },
+                capturedAt: "2026-06-05T06:10:01Z",
+              },
+              {
+                id: "event_timeline_read",
+                missionId,
+                workItemId: "work_timeline",
+                surface: "timeline",
+                status: "timeline_read",
+                truthLabel: "friday_owned",
+                summary: "Timeline read is bounded and not completion.",
+                proofRef: "proof://timeline/page-2/cursor",
+                evidenceRefs: {
+                  workflowRef: "workflow://mission/bounded-timeline-read",
+                  timelineRef: "timeline://mission/page-2/cursor",
+                },
+                capturedAt: "2026-06-05T06:10:02Z",
+              },
+            ],
+          },
+        ],
+      });
+      const filePath = join(tempDir, "snapshot.json");
+      writeFileSync(filePath, JSON.stringify({ snapshot: partial }, null, 2));
+
+      const result = runSnapshotContract(filePath, ["--diagnostic-timeline-only"]);
+      const failureCodes = result.failures.map((failure) => failure.code);
+
+      expect(result.readyForLiveCaptureInput).toBe(false);
+      expect(result.readyForDiagnosticTimelineInput).toBe(true);
+      expect(result.diagnosticTimelineFailures).toEqual([]);
+      expect(failureCodes).toContain("channel_receipt_refs_missing");
+      expect(failureCodes).toContain("completed_with_proof_ref_missing");
+      expect(result.summary?.transcriptSurfaces).toEqual(["desktop", "mobile", "timeline"]);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

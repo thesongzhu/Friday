@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const expectNotReady = args.includes("--expect-not-ready");
+const diagnosticTimelineOnly = args.includes("--diagnostic-timeline-only");
 const helpRequested = args.includes("--help") || args.includes("-h");
 
 const placeholderMarkers = [
@@ -91,6 +92,8 @@ function usage() {
 Options:
   --mission-id=mission_...     Require the live snapshot to use this Mission id.
   --expect-not-ready           Exit 0 only when the snapshot is not final-capture ready.
+  --diagnostic-timeline-only   Also report whether bounded timeline rows can be
+                               derived for diagnostic, non-proof use.
 
 This is a live snapshot contract preflight only. It does not write a
 MISSION_SPINE_UI_DEVICE_PROOF artifact, does not set env, does not capture
@@ -106,6 +109,24 @@ function argValue(name, envName) {
 
 function recordFailure(failures, code, detail) {
   failures.push({ code, detail });
+}
+
+function isDiagnosticTimelineIgnorableFailure(failure) {
+  if (!failure || typeof failure !== "object") return false;
+  if (failure.code === "provider_receipt_refs_missing") return true;
+  if (failure.code === "channel_receipt_refs_missing") return true;
+  if (failure.code === "provider_ack_not_done_missing") return true;
+  if (failure.code === "completed_with_proof_ref_missing") return true;
+  if (failure.code === "memory_candidates_missing") return true;
+  if (failure.code === "transcript_events_too_few") return true;
+  if (failure.code === "transcript_surface_missing" && failure.detail === "telegram") return true;
+  if (
+    failure.code === "transcript_evidence_facet_missing"
+    && ["channelRef", "providerRef", "proofReceiptRef", "skillRunRef"].includes(failure.detail)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function asObject(value) {
@@ -536,6 +557,12 @@ if (filePath && !url) {
 const snapshot = payload ? unwrapSnapshot(payload, failures) : null;
 const summary = validateSnapshot(snapshot, expectedMissionId, failures);
 const readyForLiveCaptureInput = failures.length === 0;
+const diagnosticTimelineFailures = diagnosticTimelineOnly
+  ? failures.filter((failure) => !isDiagnosticTimelineIgnorableFailure(failure))
+  : [];
+const readyForDiagnosticTimelineInput = diagnosticTimelineOnly
+  ? diagnosticTimelineFailures.length === 0
+  : null;
 
 const result = {
   proof: "mission_workbench_snapshot_contract_preflight",
@@ -543,6 +570,8 @@ const result = {
   source: filePath ? { kind: "file", path: filePath } : url ? { kind: "url", url } : null,
   expectedMissionId: expectedMissionId || null,
   readyForLiveCaptureInput,
+  readyForDiagnosticTimelineInput,
+  diagnosticTimelineFailures,
   summary,
   failures,
 };
@@ -553,4 +582,4 @@ if (expectNotReady) {
   process.exit(readyForLiveCaptureInput ? 1 : 0);
 }
 
-process.exit(readyForLiveCaptureInput ? 0 : 1);
+process.exit(readyForLiveCaptureInput || readyForDiagnosticTimelineInput ? 0 : 1);

@@ -137,6 +137,7 @@ function runPreflight() {
     sourceFile ? `--file=${sourceFile}` : `--url=${sourceUrl}`,
   ];
   if (missionId) preflightArgs.push(`--mission-id=${missionId}`);
+  if (deferChannelProof) preflightArgs.push("--diagnostic-timeline-only");
   const result = spawnSync(process.execPath, preflightArgs, {
     cwd: process.cwd(),
     encoding: "utf8",
@@ -147,7 +148,9 @@ function runPreflight() {
   } catch {
     block("preflight_output_invalid_json", result.stderr || "no stdout");
   }
-  if (result.status !== 0 || parsed?.readyForLiveCaptureInput !== true) {
+  const ready = parsed?.readyForLiveCaptureInput === true
+    || (deferChannelProof && parsed?.readyForDiagnosticTimelineInput === true);
+  if (result.status !== 0 || ready !== true) {
     block("snapshot_preflight_not_ready", JSON.stringify(parsed?.failures || []));
   }
   return parsed;
@@ -181,7 +184,7 @@ function firstCapturedAt(events) {
     || new Date().toISOString();
 }
 
-function makeRows(snapshot, evidence) {
+function makeRows(snapshot, evidence, truthLabel) {
   const rows = [];
   const transcriptEvents = collectTranscriptEvents(snapshot);
   const capturedAt = firstCapturedAt(transcriptEvents);
@@ -191,7 +194,7 @@ function makeRows(snapshot, evidence) {
       event,
       mission_id: missionId,
       evidence_ref: evidenceRef,
-      truth_label: "derived_from_preflighted_workbench_snapshot_not_final_proof",
+      truth_label: truthLabel,
       source,
       captured_at: capturedAt,
     });
@@ -264,7 +267,10 @@ const preflight = runPreflight();
 const payload = sourceFile ? readJson(sourceFile) : sourceUrl ? await readJsonFromUrl(sourceUrl) : null;
 const snapshot = payload ? unwrapSnapshot(payload) : {};
 
-const rows = blockers.length === 0 ? makeRows(snapshot, evidence) : [];
+const rowTruthLabel = preflight?.readyForLiveCaptureInput === true
+  ? "derived_from_preflighted_workbench_snapshot_not_final_proof"
+  : "derived_from_diagnostic_workbench_snapshot_not_final_proof";
+const rows = blockers.length === 0 ? makeRows(snapshot, evidence, rowTruthLabel) : [];
 if (rows.length === 0 && blockers.length === 0) block("no_derivable_events", "snapshot produced no diagnostic rows");
 
 if (blockers.length === 0) {
@@ -280,6 +286,7 @@ const output = {
   out: outPath ? abs(outPath) : null,
   derivedEvents: rows.length,
   preflightReady: preflight?.readyForLiveCaptureInput === true,
+  diagnosticTimelineReady: preflight?.readyForDiagnosticTimelineInput === true,
   deferredInputs: deferChannelProof ? [{
     role: "channel",
     status: "deferred_by_operator",
