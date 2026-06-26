@@ -168,4 +168,128 @@ describe("check-friday-uiux-action-traceability", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("separates design-annex gaps from missing runtime evidence", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-uiux-action-traceability-annex-"));
+    try {
+      const designRoot = join(root, "design");
+      writeFile(designRoot, "ACTION-CONTRACT.md", `# Friday Action Contract — mobile + desktop
+
+**This is a wiring contract for the later Rust/native agent, NOT runtime proof.** Every row is design-proof; wired_registry ≠ runtime PASS.
+
+| Surface | Screen [state] | action_id | Label | capability_id | reg | reg_status | truth_status | result/target | Rust/Hub owner · gate · test expectation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mobile | home | refresh | Retry now | transport_connection_state | ✓ | wired | wired_registry | result:confirmed | Runtime test must prove gate enforcement. |
+`);
+      writeFile(
+        root,
+        "apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift",
+        `enum MobileProductDestinationID {
+        case shareIntake
+        var contract: MobileProductDestinationContract {
+          switch self {
+          case .shareIntake:
+          return contract(
+            title: "Share Intake",
+            systemImage: "square.and.arrow.down",
+            tier: .governedActionGated,
+            runtimeActionIds: ["mobile/share/send"],
+            blockers: [])
+        }
+        }
+        private func contract(
+          title: String,
+          systemImage: String,
+          tier: MobileProductLoopTier,
+          runtimeActionIds: [String],
+          blockers: [MobileProductBlocker]
+        ) -> MobileProductDestinationContract { fatalError() }
+        }
+`,
+      );
+      writeFile(
+        root,
+        "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/DesktopProductReadinessContract.swift",
+        `enum DesktopProductDestinationID {
+        case empty
+        var contract: DesktopProductDestinationContract {
+          switch self {
+          case .empty:
+          return contract(
+            title: "Empty",
+            systemImage: "circle",
+            tier: .navigationShell,
+            runtimeActionIds: [],
+            blockers: [])
+        }
+        }
+        private func contract(
+          title: String,
+          systemImage: String,
+          tier: DesktopProductLoopTier,
+          runtimeActionIds: [String],
+          blockers: [DesktopProductBlocker]
+        ) -> DesktopProductDestinationContract { fatalError() }
+        }
+`,
+      );
+      const evidenceDir = join(root, "evidence");
+      writeFile(evidenceDir, "mobile/action-runtime-evidence.json", JSON.stringify({
+        actions: [
+          {
+            surface: "mobile",
+            screen: "share",
+            action_id: "send",
+            capability_id: "share_intake_governed_send",
+            status: "pass",
+            evidence_ref: "proof://mobile/share-send",
+          },
+        ],
+      }, null, 2));
+
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        "--runtime-evidence-dir",
+        evidenceDir,
+        "--compact",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        counts?: {
+          productActionsMissingDesign?: number;
+          productActionsMissingDesignRuntimeCovered?: number;
+          productActionsMissingDesignRuntimeMissing?: number;
+          productActionsMissingRuntimeEvidence?: number;
+        };
+        gaps?: {
+          productActionsMissingDesign?: Array<{
+            runtimeActionId?: string;
+            runtimeEvidenceMatched?: boolean;
+            evidenceRefs?: string[];
+            recommendedNext?: string;
+          }>;
+          productActionsMissingRuntimeEvidence?: Array<unknown>;
+        };
+      };
+
+      expect(report.status).toBe("traceability_gaps_present");
+      expect(report.counts?.productActionsMissingDesign).toBe(1);
+      expect(report.counts?.productActionsMissingDesignRuntimeCovered).toBe(1);
+      expect(report.counts?.productActionsMissingDesignRuntimeMissing).toBe(0);
+      expect(report.counts?.productActionsMissingRuntimeEvidence).toBe(0);
+      expect(report.gaps?.productActionsMissingRuntimeEvidence).toEqual([]);
+      expect(report.gaps?.productActionsMissingDesign).toEqual([
+        expect.objectContaining({
+          runtimeActionId: "mobile/share/send",
+          runtimeEvidenceMatched: true,
+          evidenceRefs: ["proof://mobile/share-send"],
+          recommendedNext: "add or reconcile a design contract annex row; runtime action evidence is already present",
+        }),
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

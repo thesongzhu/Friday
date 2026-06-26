@@ -422,6 +422,10 @@ const productActions = tracedDestinations.flatMap((destination) => destination.a
 })));
 const productActionsMissingDesign = productActions.filter((action) => !action.designContractMatched);
 const productActionsMissingRuntime = productActions.filter((action) => !action.runtimeEvidenceMatched);
+const productActionsMissingDesignRuntimeCovered = productActionsMissingDesign
+  .filter((action) => action.runtimeEvidenceMatched);
+const productActionsMissingDesignRuntimeMissing = productActionsMissingDesign
+  .filter((action) => !action.runtimeEvidenceMatched);
 const destinationsWithoutRuntimeActions = tracedDestinations.filter((destination) => destination.runtimeActionIds.length === 0);
 const destinationsWithBlockers = tracedDestinations.filter((destination) => destination.blockers.length > 0);
 
@@ -448,6 +452,8 @@ const report = {
     runtimeEvidenceInputs: runtimeEvidencePaths.length,
     runtimeEvidenceActionRows: evidenceActions.length,
     productActionsMissingDesign: productActionsMissingDesign.length,
+    productActionsMissingDesignRuntimeCovered: productActionsMissingDesignRuntimeCovered.length,
+    productActionsMissingDesignRuntimeMissing: productActionsMissingDesignRuntimeMissing.length,
     productActionsMissingRuntimeEvidence: productActionsMissingRuntime.length,
     destinationsWithoutRuntimeActions: destinationsWithoutRuntimeActions.length,
     destinationsStillBlocked: destinationsWithBlockers.length,
@@ -467,11 +473,23 @@ const report = {
     }];
   })),
   gaps: {
-    productActionsMissingDesign: productActionsMissingDesign.map(({ surface, destination, runtimeActionId, tier }) => ({
+    productActionsMissingDesign: productActionsMissingDesign.map(({
       surface,
       destination,
       runtimeActionId,
       tier,
+      runtimeEvidenceMatched,
+      evidenceRefs,
+    }) => ({
+      surface,
+      destination,
+      runtimeActionId,
+      tier,
+      runtimeEvidenceMatched,
+      evidenceRefs,
+      recommendedNext: runtimeEvidenceMatched
+        ? "add or reconcile a design contract annex row; runtime action evidence is already present"
+        : "capture runtime action evidence and reconcile the design contract row",
     })).slice(0, compact ? 40 : undefined),
     productActionsMissingRuntimeEvidence: productActionsMissingRuntime.map(({ surface, destination, runtimeActionId, tier, designContractMatched }) => ({
       surface,
