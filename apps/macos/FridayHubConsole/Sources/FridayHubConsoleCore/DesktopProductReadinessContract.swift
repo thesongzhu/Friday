@@ -135,7 +135,10 @@ public enum DesktopProductDestinationID: String, CaseIterable, Sendable, Equatab
         title: "Operations Overview",
         systemImage: "gauge.with.dots.needle.bottom.50percent",
         tier: .liveWorkbench,
-        runtimeActionIds: ["desktop/operations/refresh"],
+        runtimeActionIds: [
+          "desktop/operations/refresh",
+          "desktop/operations/mission-resolve-or-create",
+        ],
         blockers: [.init(.needsRuntimeEvidence, label: "same-run user proof")])
     case .chat:
       return contract(

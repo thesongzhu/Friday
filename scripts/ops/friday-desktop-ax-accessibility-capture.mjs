@@ -99,6 +99,7 @@ function parseDesktopDestinations() {
 
 const defaultActionMap = new Map([
   ["desktop/operations/refresh", { destination: "operations", screen: "operations", accessibility_id: "friday.desktop.refresh", event: "mission_workbench_visible", interaction: "visible" }],
+  ["desktop/operations/mission-resolve-or-create", { destination: "operations", screen: "operations", accessibility_id: "friday.desktop.mission-card", event: "mission_resolve_or_create_visible", interaction: "visible" }],
   ["desktop/fridayChat/act", { destination: "chat", screen: "fridayChat", accessibility_id: "friday.desktop.chat.send", event: "mission_bound_provider_action_visible", interaction: "visible" }],
   ["desktop/fridayChat/check", { destination: "chat", screen: "fridayChat", accessibility_id: "friday.desktop.chat.review", event: "mission_bound_provider_action_visible", interaction: "visible" }],
   ["desktop/session/list", { destination: "session", screen: "session", accessibility_id: "friday.desktop.session-detail", event: "transcript_browser_visible", interaction: "visible" }],
