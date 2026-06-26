@@ -13,6 +13,7 @@ function usage() {
     [--events-dir=/abs/dir] \\
     [--mobile=/abs/mobile-capture] [--desktop=/abs/desktop-capture] \\
     [--channel=/abs/channel-capture] [--timeline=/abs/timeline-capture] \\
+    [--extra-evidence-ref=/abs/real-evidence ...] \\
     --out=/abs/same-run-events.jsonl [--require-ready]
 
 Truth: this merges already-captured same-run UI/device event rows. It validates
@@ -51,6 +52,7 @@ const missionId = arg("mission-id");
 const outPath = arg("out");
 const eventInputs = argsAll("events");
 const eventDirs = argsAll("events-dir");
+const extraEvidenceRefs = argsAll("extra-evidence-ref");
 const evidenceArgs = {
   mobile: arg("mobile"),
   desktop: arg("desktop"),
@@ -173,7 +175,10 @@ const eventFiles = [
 if (eventFiles.length === 0) block("missing_events", "supply --events or --events-dir");
 
 const knownEvidenceRefs = new Set(
-  Object.entries(evidenceArgs)
+  [
+    ...Object.entries(evidenceArgs).map(([role, path]) => [role, path]),
+    ...extraEvidenceRefs.map((path, index) => [`extra-evidence-ref:${index + 1}`, path]),
+  ]
     .map(([role, path]) => readableFile(role, path))
     .filter(Boolean)
     .map(evidenceKey),
@@ -213,6 +218,7 @@ const output = {
   inputRows: rows.length,
   outputRows: uniqueRows.length,
   deduplicatedRows: Math.max(0, rows.length - uniqueRows.length),
+  extraEvidenceRefs: extraEvidenceRefs.map(abs),
   knownEvidenceRefs: [...knownEvidenceRefs].sort(),
   blockers,
   caveat: "Merge only. Missing observations must still be captured from real same-run UI/device evidence before proof assembly.",
