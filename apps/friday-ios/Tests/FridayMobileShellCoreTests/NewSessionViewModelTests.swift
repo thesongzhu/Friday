@@ -96,7 +96,10 @@ final class NewSessionViewModelTests: XCTestCase {
       .launched(
         summary: "ready · mission=mission-mobile-new-session-fixed · work_item=work-mobile-new-session-fixed",
         missionId: "mission-mobile-new-session-fixed",
-        workItemId: "work-mobile-new-session-fixed"))
+        workItemId: "work-mobile-new-session-fixed",
+        surfaceThreadId: "surface-mobile-new-session-fixed",
+        status: "ready",
+        createdOrReady: true))
 
     try writeNewSessionActionEvidenceIfRequested()
   }
@@ -122,6 +125,9 @@ final class NewSessionViewModelTests: XCTestCase {
           "proof": [
             "mission_id": "mission-mobile-new-session-fixed",
             "work_item_id": "work-mobile-new-session-fixed",
+            "surface_thread_id": "surface-mobile-new-session-fixed",
+            "status": "ready",
+            "created_or_ready": true,
             "surface_kind": "mobile",
             "delivery_route": "ios://friday-mobile/new-session/fixed",
           ],

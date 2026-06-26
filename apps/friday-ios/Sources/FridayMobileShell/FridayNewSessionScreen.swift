@@ -83,7 +83,7 @@ struct FridayNewSessionScreen: View {
             .foregroundStyle(MobileTheme.textSecondary)
         }
       }
-    case .launched(let summary, let missionId, let workItemId):
+    case .launched(let summary, let missionId, let workItemId, let surfaceThreadId, let status, let createdOrReady):
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
           cardHeader("Submitted", count: nil)
@@ -92,6 +92,15 @@ struct FridayNewSessionScreen: View {
             .foregroundStyle(MobileTheme.textPrimary)
           RefPill(label: "mission_id", ref: missionId)
           RefPill(label: "work_item_id", ref: workItemId)
+          RefPill(label: "surface", ref: surfaceThreadId)
+          StatusChip(
+            text: createdOrReady ? "created_or_ready" : status,
+            bg: MobileTheme.chipDoneBG,
+            fg: MobileTheme.chipDoneFG)
+          Text("Refs-only receipt. Provider execution and readable results still require the governed live loop to finish.")
+            .font(.caption2)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
       }
     case .blocked(let reason):
