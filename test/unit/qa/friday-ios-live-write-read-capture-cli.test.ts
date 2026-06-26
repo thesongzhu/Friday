@@ -8,8 +8,9 @@ const script = "scripts/ops/friday-ios-live-write-read-capture.sh";
 const missionId = "mission-mobile-live-roundtrip-wrapper";
 const workItemId = "work-mobile-live-roundtrip-wrapper";
 const sharedId = "mission-shared-live-write-read";
+const exactMissionId = "codex-organic-mission-ios-contract";
 
-function fakeSwiftScript(dir: string, proofStatus = "pass", requiredSharedId = "") {
+function fakeSwiftScript(dir: string, proofStatus = "pass", requiredSharedId = "", requiredMissionId = "") {
   const bin = join(dir, "bin");
   mkdirSync(bin, { recursive: true });
   const path = join(bin, "swift");
@@ -18,6 +19,7 @@ set -euo pipefail
 [ "$1" = "test" ] || exit 42
 [ -n "\${FRIDAY_MOBILE_LIVE_WRITE_READ_ROUNDTRIP_PROOF_OUT:-}" ] || exit 43
 if [ -n "${requiredSharedId}" ] && [ "\${FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID:-}" != "${requiredSharedId}" ]; then exit 44; fi
+if [ -n "${requiredMissionId}" ] && [ "\${FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID:-}" != "${requiredMissionId}" ]; then exit 45; fi
 cat >"\${FRIDAY_MOBILE_LIVE_WRITE_READ_ROUNDTRIP_PROOF_OUT}" <<'JSON'
 {
   "truth_label": "ios_mobile_live_write_read_roundtrip_proof_not_ui_device_proof",
@@ -95,6 +97,30 @@ describe("friday-ios-live-write-read-capture", () => {
     }
   });
 
+  it("passes an exact mission id to the live Swift proof", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ios-live-capture-exact-mission-"));
+    try {
+      const outDir = join(tempDir, "capture");
+      const fakeBin = fakeSwiftScript(tempDir, "pass", "", exactMissionId);
+      const stdout = execFileSync("bash", [
+        script,
+        `--out-dir=${outDir}`,
+        `--mission-id=${exactMissionId}`,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        },
+      });
+
+      expect(stdout).toContain("PASS - mobile live write-read proof");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when the proof-events driver refuses the artifact", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ios-live-capture-blocked-"));
     try {
@@ -123,5 +149,19 @@ describe("friday-ios-live-write-read-capture", () => {
     });
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("--out-dir must be absolute");
+  });
+
+  it("rejects ambiguous shared and exact mission identity", () => {
+    const result = spawnSync("bash", [
+      script,
+      `--out-dir=${tmpdir()}`,
+      `--shared-id=${sharedId}`,
+      `--mission-id=${exactMissionId}`,
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--mission-id and --shared-id are mutually exclusive");
   });
 });

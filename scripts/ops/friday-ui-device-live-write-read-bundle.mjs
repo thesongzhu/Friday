@@ -12,7 +12,7 @@ function usage() {
     --out-dir=/abs/bundle-dir \\
     --mobile-capture-dir=/abs/ios-live-write-read-capture \\
     --desktop-capture-dir=/abs/macos-live-write-read-capture \\
-    [--mission-id=mission_...] [--require-ready]
+    [--mission-id=mission_...] [--exact-mission-id=codex-organic-mission-...] [--require-ready]
 
 Truth: this indexes existing iOS/macOS live write-read capture artifacts into a
 single partial bundle. It does not create channel/timeline/stress observations,
@@ -32,7 +32,8 @@ if (args.includes("--help") || args.includes("-h")) {
 
 const requireReady = args.includes("--require-ready");
 const outDirArg = arg("out-dir");
-const rawExpectedMissionId = arg("mission-id");
+const rawExactExpectedMissionId = arg("exact-mission-id");
+const rawExpectedMissionId = rawExactExpectedMissionId || arg("mission-id");
 const captureDirs = {
   mobile: arg("mobile-capture-dir"),
   desktop: arg("desktop-capture-dir"),
@@ -51,8 +52,9 @@ function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-function canonicalMissionId(value) {
+function canonicalMissionId(value, exact = false) {
   if (!value) return "";
+  if (exact) return value;
   return value.startsWith("mission_") ? value : `mission_${value}`;
 }
 
@@ -157,7 +159,7 @@ if (outDirArg && !isAbsolute(outDirArg)) block("out_dir_not_absolute", outDirArg
 if (rawExpectedMissionId && !rawExpectedMissionId.toLowerCase().includes("mission")) {
   block("mission_id_unexpected_shape", rawExpectedMissionId);
 }
-const expectedMissionId = canonicalMissionId(rawExpectedMissionId);
+const expectedMissionId = canonicalMissionId(rawExpectedMissionId, Boolean(rawExactExpectedMissionId));
 
 const outDir = outDirArg ? abs(outDirArg) : "";
 const dirs = Object.fromEntries(Object.entries(captureDirs).map(([role, value]) => [role, requireDir(value, `${role}-capture-dir`)]));

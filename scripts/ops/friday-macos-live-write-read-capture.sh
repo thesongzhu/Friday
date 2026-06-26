@@ -5,6 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 usage:
   scripts/ops/friday-macos-live-write-read-capture.sh --out-dir /abs/capture-dir
+    [--mission-id codex-organic-mission-...]
     [--shared-id mission_ui_device_...]
 
 Runs the env-gated macOS live write->read projection proof, converts the
@@ -25,6 +26,7 @@ die() {
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out_dir=""
 shared_id="${FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID:-}"
+mission_id="${FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID:-}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -46,6 +48,15 @@ while [ "$#" -gt 0 ]; do
       shared_id="${1#--shared-id=}"
       shift
       ;;
+    --mission-id)
+      [ "$#" -ge 2 ] || die "--mission-id requires a value"
+      mission_id="$2"
+      shift 2
+      ;;
+    --mission-id=*)
+      mission_id="${1#--mission-id=}"
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -62,6 +73,13 @@ case "${out_dir}" in
   *) die "--out-dir must be absolute" ;;
 esac
 case "${shared_id}" in (*[[:space:]]*) die "--shared-id must not contain whitespace" ;; esac
+case "${mission_id}" in (*[[:space:]]*) die "--mission-id must not contain whitespace" ;; esac
+if [ -n "${shared_id}" ] && [ -n "${mission_id}" ]; then
+  die "--mission-id and --shared-id are mutually exclusive"
+fi
+if [ -n "${mission_id}" ]; then
+  case "${mission_id}" in (*mission*) ;; *) die "--mission-id must contain mission" ;; esac
+fi
 
 mkdir -p "${out_dir}"
 proof_path="${out_dir}/macos-live-write-read-proof.json"
@@ -78,6 +96,7 @@ echo "truth=macos_live_write_read_capture_runner_not_ui_device_proof"
   FRIDAY_CONSOLE_LIVE_WRITE_READ_ROUNDTRIP_TEST=1 \
   FRIDAY_DESKTOP_LIVE_WRITE_READ_ROUNDTRIP_PROOF_OUT="${proof_path}" \
   FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID="${shared_id}" \
+  FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID="${mission_id}" \
     swift test --package-path apps/macos/FridayHubConsole --filter LiveWriteReadProjectionRoundTrip
 )
 
