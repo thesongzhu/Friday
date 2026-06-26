@@ -107,8 +107,29 @@ fn telegram_inbound_through_rust_channels_pipeline() {
             }
         }
     }
-    let (from_id, text) =
-        found.expect("timed out: no text message from the trusted user within the window");
+    let Some((from_id, text)) = found else {
+        let evidence = serde_json::json!({
+            "proof": "telegram_inbound_through_rust_channels_pipeline",
+            "status": "failed_timeout",
+            "bot_identity_verified": true,
+            "channel_binding_created": false,
+            "sender_id_present": false,
+            "sender_allowlisted": false,
+            "bound_principal_id": "owner",
+            "bearer_auth_accepted_correct": false,
+            "forged_bearer_rejected": false,
+            "non_allowlisted_sender_rejected": false,
+            "pii_kinds_redacted": "[]",
+            "redacted_text": "",
+            "raw_text_chars": 0,
+            "failure_reason": "timed out waiting for one text message from the trusted user within the live proof window"
+        });
+        let out = std::env::var("TELEGRAM_PROOF_OUT")
+            .unwrap_or_else(|_| "telegram_live_proof.json".to_string());
+        std::fs::write(&out, serde_json::to_string_pretty(&evidence).unwrap())
+            .expect("write timeout diagnostic artifact");
+        panic!("timed out: no text message from the trusted user within the window");
+    };
 
     // 3) Drive the REAL channels pipeline with the real sender id + text.
     let db = Db::open_hub(&tmp_db()).expect("open hub db");
