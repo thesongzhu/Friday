@@ -5,6 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 usage:
   scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh --out-dir /abs/capture-root
+    [--mission-id codex-organic-mission-...]
     [--shared-id mission_ui_device_...]
     [--read-host 127.0.0.1] [--read-port 48751]
     [--write-host 127.0.0.1] [--write-port 48750]
@@ -40,6 +41,7 @@ read_port="${FRIDAY_MOBILE_LIVE_READ_PORT:-48751}"
 write_host="${FRIDAY_MOBILE_LIVE_WRITE_HOST:-127.0.0.1}"
 write_port="${FRIDAY_MOBILE_LIVE_WRITE_PORT:-48750}"
 shared_id="${FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID:-}"
+mission_id="${FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID:-}"
 channel_capture=""
 timeline_capture=""
 same_run_events=""
@@ -68,6 +70,15 @@ while [ "$#" -gt 0 ]; do
       ;;
     --shared-id=*)
       shared_id="${1#--shared-id=}"
+      shift
+      ;;
+    --mission-id)
+      [ "$#" -ge 2 ] || die "--mission-id requires a value"
+      mission_id="$2"
+      shift 2
+      ;;
+    --mission-id=*)
+      mission_id="${1#--mission-id=}"
       shift
       ;;
     --read-host)
@@ -202,14 +213,25 @@ done
 set -u
 
 if [ -z "${shared_id}" ]; then
-  shared_id="mission-ui-device-live-write-read-$(date -u +%Y%m%dT%H%M%SZ)-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+  if [ -z "${mission_id}" ]; then
+    shared_id="mission-ui-device-live-write-read-$(date -u +%Y%m%dT%H%M%SZ)-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+  fi
 fi
 case "${shared_id}" in (*[[:space:]]*) die "--shared-id must not contain whitespace" ;; esac
-case "${shared_id}" in (*mission*) ;; *) die "--shared-id must contain mission" ;; esac
-case "${shared_id}" in
-  mission_*) canonical_shared_mission_id="${shared_id}" ;;
-  *) canonical_shared_mission_id="mission_${shared_id}" ;;
-esac
+case "${mission_id}" in (*[[:space:]]*) die "--mission-id must not contain whitespace" ;; esac
+if [ -n "${shared_id}" ] && [ -n "${mission_id}" ]; then
+  die "--mission-id and --shared-id are mutually exclusive"
+fi
+if [ -n "${mission_id}" ]; then
+  case "${mission_id}" in (*mission*) ;; *) die "--mission-id must contain mission" ;; esac
+  canonical_shared_mission_id="${mission_id}"
+else
+  case "${shared_id}" in (*mission*) ;; *) die "--shared-id must contain mission" ;; esac
+  case "${shared_id}" in
+    mission_*) canonical_shared_mission_id="${shared_id}" ;;
+    *) canonical_shared_mission_id="mission_${shared_id}" ;;
+  esac
+fi
 
 mobile_dir="${out_dir}/mobile"
 desktop_dir="${out_dir}/desktop"
@@ -223,7 +245,15 @@ mkdir -p "${out_dir}"
 echo "Friday UI/device live write-read capture bundle starting."
 echo "out_dir=${out_dir}"
 echo "shared_id=${shared_id}"
+echo "mission_id=${mission_id}"
 echo "truth=ui_device_live_write_read_capture_bundle_orchestrator_not_full_proof"
+
+runner_identity_args=()
+if [ -n "${mission_id}" ]; then
+  runner_identity_args+=(--mission-id "${mission_id}")
+else
+  runner_identity_args+=(--shared-id "${shared_id}")
+fi
 
 bash "${repo_root}/scripts/ops/friday-ios-live-write-read-capture.sh" \
   --out-dir "${mobile_dir}" \
@@ -231,18 +261,25 @@ bash "${repo_root}/scripts/ops/friday-ios-live-write-read-capture.sh" \
   --read-port "${read_port}" \
   --write-host "${write_host}" \
   --write-port "${write_port}" \
-  --shared-id "${shared_id}"
+  "${runner_identity_args[@]}"
 
 bash "${repo_root}/scripts/ops/friday-macos-live-write-read-capture.sh" \
   --out-dir "${desktop_dir}" \
-  --shared-id "${shared_id}"
+  "${runner_identity_args[@]}"
 
-node "${repo_root}/scripts/ops/friday-ui-device-live-write-read-bundle.mjs" \
-  --out-dir="${bundle_dir}" \
-  --mobile-capture-dir="${mobile_dir}" \
-  --desktop-capture-dir="${desktop_dir}" \
-  --mission-id="${canonical_shared_mission_id}" \
-  --require-ready
+bundle_args=(
+  "${repo_root}/scripts/ops/friday-ui-device-live-write-read-bundle.mjs"
+  "--out-dir=${bundle_dir}"
+  "--mobile-capture-dir=${mobile_dir}"
+  "--desktop-capture-dir=${desktop_dir}"
+  "--require-ready"
+)
+if [ -n "${mission_id}" ]; then
+  bundle_args+=("--exact-mission-id=${canonical_shared_mission_id}")
+else
+  bundle_args+=("--mission-id=${canonical_shared_mission_id}")
+fi
+node "${bundle_args[@]}"
 
 action_runtime_evidence="${bundle_dir}/action-runtime-evidence.json"
 design_action_report="${bundle_dir}/design-action-runtime-gap.json"

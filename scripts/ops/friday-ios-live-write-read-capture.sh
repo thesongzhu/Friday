@@ -7,6 +7,7 @@ usage:
   scripts/ops/friday-ios-live-write-read-capture.sh --out-dir /abs/capture-dir
     [--read-host 127.0.0.1] [--read-port 48751]
     [--write-host 127.0.0.1] [--write-port 48750]
+    [--mission-id codex-organic-mission-...]
     [--shared-id mission_ui_device_...]
 
 Runs the env-gated iOS live write->read projection proof, converts the redacted
@@ -30,6 +31,7 @@ read_port="${FRIDAY_MOBILE_LIVE_READ_PORT:-48751}"
 write_host="${FRIDAY_MOBILE_LIVE_WRITE_HOST:-127.0.0.1}"
 write_port="${FRIDAY_MOBILE_LIVE_WRITE_PORT:-48750}"
 shared_id="${FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID:-}"
+mission_id="${FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID:-}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -87,6 +89,15 @@ while [ "$#" -gt 0 ]; do
       shared_id="${1#--shared-id=}"
       shift
       ;;
+    --mission-id)
+      [ "$#" -ge 2 ] || die "--mission-id requires a value"
+      mission_id="$2"
+      shift 2
+      ;;
+    --mission-id=*)
+      mission_id="${1#--mission-id=}"
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -105,6 +116,13 @@ esac
 case "${read_port}" in (*[!0-9]*|"") die "--read-port must be numeric" ;; esac
 case "${write_port}" in (*[!0-9]*|"") die "--write-port must be numeric" ;; esac
 case "${shared_id}" in (*[[:space:]]*) die "--shared-id must not contain whitespace" ;; esac
+case "${mission_id}" in (*[[:space:]]*) die "--mission-id must not contain whitespace" ;; esac
+if [ -n "${shared_id}" ] && [ -n "${mission_id}" ]; then
+  die "--mission-id and --shared-id are mutually exclusive"
+fi
+if [ -n "${mission_id}" ]; then
+  case "${mission_id}" in (*mission*) ;; *) die "--mission-id must contain mission" ;; esac
+fi
 
 mkdir -p "${out_dir}"
 proof_path="${out_dir}/ios-live-write-read-proof.json"
@@ -127,6 +145,7 @@ echo "truth=ios_live_write_read_capture_runner_not_ui_device_proof"
   FRIDAY_MOBILE_LIVE_WRITE_HOST="${write_host}" \
   FRIDAY_MOBILE_LIVE_WRITE_PORT="${write_port}" \
   FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID="${shared_id}" \
+  FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID="${mission_id}" \
     swift test --package-path apps/friday-ios --filter LiveWriteReadProjectionRoundTrip
 )
 

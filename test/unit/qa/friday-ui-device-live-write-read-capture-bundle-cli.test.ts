@@ -7,16 +7,23 @@ import { describe, expect, it } from "vitest";
 const script = "scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh";
 const sharedId = "mission-ui-device-live-write-read-test";
 const canonicalMissionId = `mission_${sharedId}`;
+const exactMissionId = "codex-organic-mission-contract";
 const workItemId = "work-ui-device-live-write-read-test";
 
-function fakeSwiftScript(dir: string, expectedSharedId = sharedId) {
+function fakeSwiftScript(
+  dir: string,
+  expectedSharedId = sharedId,
+  expectedMissionId = "",
+  emittedMissionId = canonicalMissionId,
+) {
   const bin = join(dir, "bin");
   mkdirSync(bin, { recursive: true });
   const path = join(bin, "swift");
   writeFileSync(path, `#!/usr/bin/env bash
 set -euo pipefail
 [ "$1" = "test" ] || exit 42
-[ "\${FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID:-}" = "${expectedSharedId}" ] || exit 44
+if [ -n "${expectedSharedId}" ] && [ "\${FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID:-}" != "${expectedSharedId}" ]; then exit 44; fi
+if [ -n "${expectedMissionId}" ] && [ "\${FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID:-}" != "${expectedMissionId}" ]; then exit 45; fi
 if [ -n "\${FRIDAY_MOBILE_LIVE_WRITE_READ_ROUNDTRIP_PROOF_OUT:-}" ]; then
   surface_kind="mobile"
   truth_label="ios_mobile_live_write_read_roundtrip_proof_not_ui_device_proof"
@@ -34,19 +41,19 @@ cat >"\${proof_out}" <<JSON
   "truth_label": "\${truth_label}",
   "status": "pass",
   "generated_at_utc": "2026-06-24T12:00:00Z",
-  "mission_id": "${canonicalMissionId}",
+  "mission_id": "${emittedMissionId}",
   "work_item_id": "${workItemId}",
   "surface_kind": "\${surface_kind}",
   "delivery_route": "\${route}",
   "write": {
     "status": "ready",
     "created_or_ready": true,
-    "mission_id": "${canonicalMissionId}",
+    "mission_id": "${emittedMissionId}",
     "work_item_id": "${workItemId}",
     "endpoint": { "host": "127.0.0.1", "port": 48750 }
   },
   "read_projection": {
-    "mission_id": "${canonicalMissionId}",
+    "mission_id": "${emittedMissionId}",
     "work_item_ids": ["${workItemId}"],
     "contains_written_work_item": true,
     "generated_at_ms": 1782290000000,
@@ -229,6 +236,43 @@ describe("friday-ui-device-live-write-read-capture-bundle", () => {
     }
   });
 
+  it("binds mobile and desktop captures to an exact existing mission id", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-orchestrator-exact-mission-"));
+    try {
+      const outDir = join(tempDir, "capture");
+      const fakeBin = fakeSwiftScript(tempDir, "", exactMissionId, exactMissionId);
+
+      const stdout = execFile("bash", [
+        script,
+        `--out-dir=${outDir}`,
+        `--mission-id=${exactMissionId}`,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        },
+      });
+
+      expect(stdout).toContain("PASS - same-mission mobile+desktop live write-read capture bundle written");
+      const index = JSON.parse(readFileSync(join(outDir, "bundle", "live-write-read-bundle-index.json"), "utf8")) as {
+        missionId?: string;
+      };
+      expect(index.missionId).toBe(exactMissionId);
+      const mobileProof = JSON.parse(readFileSync(join(outDir, "mobile", "ios-live-write-read-proof.json"), "utf8")) as {
+        mission_id?: string;
+      };
+      const desktopProof = JSON.parse(readFileSync(join(outDir, "desktop", "macos-live-write-read-proof.json"), "utf8")) as {
+        mission_id?: string;
+      };
+      expect(mobileProof.mission_id).toBe(exactMissionId);
+      expect(desktopProof.mission_id).toBe(exactMissionId);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects relative output directories and malformed shared ids before running captures", () => {
     const relative = spawn("bash", [script, "--out-dir=relative"], {
       cwd: process.cwd(),
@@ -243,5 +287,17 @@ describe("friday-ui-device-live-write-read-capture-bundle", () => {
     });
     expect(malformed.status).toBe(2);
     expect(malformed.stderr).toContain("--shared-id must contain mission");
+
+    const ambiguous = spawn("bash", [
+      script,
+      `--out-dir=${tmpdir()}`,
+      `--shared-id=${sharedId}`,
+      `--mission-id=${exactMissionId}`,
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+    expect(ambiguous.status).toBe(2);
+    expect(ambiguous.stderr).toContain("--mission-id and --shared-id are mutually exclusive");
   });
 });

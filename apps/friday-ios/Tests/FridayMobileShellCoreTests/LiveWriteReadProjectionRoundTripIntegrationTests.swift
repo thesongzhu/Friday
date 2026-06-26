@@ -135,6 +135,12 @@ private struct LiveWriteReadMissionIdentity {
 }
 
 private func liveWriteReadMissionIdentity(defaultSurface: String) -> LiveWriteReadMissionIdentity {
+  let rawMissionId = ProcessInfo.processInfo.environment["FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID"]?
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+  if let rawMissionId, !rawMissionId.isEmpty {
+    return LiveWriteReadMissionIdentity(id: rawMissionId, missionId: rawMissionId, usesSharedId: true)
+  }
+
   let rawSharedId = ProcessInfo.processInfo.environment["FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID"]?
     .trimmingCharacters(in: .whitespacesAndNewlines)
   if let rawSharedId, !rawSharedId.isEmpty {
