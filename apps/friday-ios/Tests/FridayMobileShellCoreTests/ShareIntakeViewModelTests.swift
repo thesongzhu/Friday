@@ -197,6 +197,23 @@ final class ShareIntakeViewModelTests: XCTestCase {
           "source": "ios_share_intake_viewmodel_mission_intake_runtime",
           "truth_label": "swift_viewmodel_mission_intake_write_seam_runtime_not_live_hub_not_endbar",
         ],
+        [
+          "surface": "mobile",
+          "screen": "shareIntake",
+          "action_id": "mobile/share/open-chat-loop",
+          "capability_id": "ask_friday_chat",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/shareIntake/open-chat-loop/\(request.missionId)",
+          "proof": [
+            "mission_id": request.missionId,
+            "work_item_id": request.workItemId,
+            "surface_thread_id": request.surfaceThreadId,
+            "status": "ready",
+            "chat_launch_context_ref": "swift://mobile/fridayChat/launch-context/\(request.missionId)",
+          ],
+          "source": "ios_share_intake_viewmodel_chat_launch_context_runtime",
+          "truth_label": "swift_viewmodel_chat_launch_context_runtime_not_live_hub_not_endbar",
+        ],
       ],
     ]
     let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
