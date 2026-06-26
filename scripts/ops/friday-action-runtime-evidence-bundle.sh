@@ -310,7 +310,15 @@ if [ "${checker_exit}" -ne 0 ] && [ "${REQUIRE_COMPLETE}" != "1" ]; then
   die "design action runtime checker failed with blockers; see ${design_report}"
 fi
 
-node - "${OUT_DIR}" "${design_report}" "${paths_file}" "${checker_exit}" "${EXTRA_ACTION_EVIDENCE_DIRS[@]}" <<'NODE'
+extra_evidence_dir_args=()
+set +u
+for extra_dir in "${EXTRA_ACTION_EVIDENCE_DIRS[@]}"; do
+  extra_evidence_dir_args+=("${extra_dir}")
+done
+set -u
+
+set +u
+node - "${OUT_DIR}" "${design_report}" "${paths_file}" "${checker_exit}" "${extra_evidence_dir_args[@]}" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -343,6 +351,7 @@ console.log(JSON.stringify({
   index: out,
 }, null, 2));
 NODE
+set -u
 
 if [ "${checker_exit}" -ne 0 ]; then
   exit "${checker_exit}"
