@@ -22,17 +22,18 @@ struct FridayChatScreen: View {
   /// Whether the S6 pause/approve/resume is enabled (the run-control flag). OFF ⇒ read-only.
   private let runControlEnabled: Bool
   @State private var routePreference: MissionRoutePreference = .auto
+  @State private var draft: String
 
-  init(session: FridaySession) {
+  init(session: FridaySession, launchContext: ChatLaunchContext? = nil) {
     self.runControlEnabled = session.runControlEnabled
+    _draft = State(initialValue: launchContext?.composerPrefill ?? "")
     _viewModel = StateObject(wrappedValue: FridayChatViewModel(
       writeClient: session.writeClient,
       signer: session.signer,
       missionClient: session.missionClient,
-      readClient: session.readClient))
+      readClient: session.readClient,
+      launchContext: launchContext))
   }
-
-  @State private var draft = ""
 
   var body: some View {
     VStack(spacing: 0) {
@@ -77,7 +78,7 @@ struct FridayChatScreen: View {
 
   private func contextCardRow(_ card: ChatContextCard) -> some View {
     HStack(alignment: .top, spacing: 10) {
-      Image(systemName: card.id == "handoff" ? "arrowshape.turn.up.right" : "brain.head.profile")
+      Image(systemName: contextCardIcon(card.id))
         .foregroundStyle(MobileTheme.cyan)
         .frame(width: 24)
       VStack(alignment: .leading, spacing: 3) {
@@ -113,6 +114,14 @@ struct FridayChatScreen: View {
     .accessibilityElement(children: .contain)
     .accessibilityLabel("\(card.title) card")
     .accessibilityIdentifier("friday.chat.\(card.id)-card")
+  }
+
+  private func contextCardIcon(_ id: String) -> String {
+    switch id {
+    case "handoff": return "arrowshape.turn.up.right"
+    case "launch": return "link.badge.plus"
+    default: return "brain.head.profile"
+    }
   }
 
   private var handoffControls: some View {
