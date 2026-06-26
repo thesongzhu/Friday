@@ -72,6 +72,7 @@
     "proof:ios:design-destinations": "bash scripts/ops/friday-ios-design-destination-capture.sh --out-dir \"${FRIDAY_IOS_DESIGN_CAPTURE_OUT:-/tmp/friday-ios-design-destination-capture}\"",
     "proof:action-runtime:evidence-bundle": "bash scripts/ops/friday-action-runtime-evidence-bundle.sh --out-dir \"${FRIDAY_ACTION_RUNTIME_EVIDENCE_BUNDLE_OUT:-/tmp/friday-action-runtime-evidence-bundle}\"",
     "proof:desktop:gui-smoke": "bash scripts/ops/friday-desktop-gui-smoke-proof.sh --out-dir \"${FRIDAY_DESKTOP_GUI_SMOKE_OUT_DIR:-/tmp/friday-desktop-gui-smoke-proof}\"",
+    "proof:desktop:ax-capture": "node scripts/ops/friday-desktop-ax-accessibility-capture.mjs --out-dir \"${FRIDAY_DESKTOP_AX_CAPTURE_OUT:-/tmp/friday-desktop-ax-accessibility-capture}\" --mission-id \"${FRIDAY_DESKTOP_AX_CAPTURE_MISSION_ID:-mission_desktop_ax_capture}\"",
     "proof:desktop:live-write-read": "bash scripts/ops/friday-macos-live-write-read-capture.sh --out-dir \"${FRIDAY_DESKTOP_LIVE_WRITE_READ_CAPTURE_OUT:-/tmp/friday-desktop-live-write-read-capture}\"",
     "proof:ui-device:live-write-read-bundle": "bash scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh --out-dir \"${FRIDAY_UI_DEVICE_LIVE_WRITE_READ_BUNDLE_OUT:-/tmp/friday-ui-device-live-write-read-bundle}\"",
     "proof:uiux:real-use-driver": "bash scripts/ops/friday-uiux-real-use-proof-driver.sh --out-dir \"${FRIDAY_UIUX_REAL_USE_PROOF_OUT:-/tmp/friday-uiux-real-use-proof-driver}\"",

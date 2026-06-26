@@ -1,0 +1,469 @@
+#!/usr/bin/env node
+
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+
+const args = process.argv.slice(2);
+
+function usage() {
+  console.error(`usage:
+  node scripts/ops/friday-desktop-ax-accessibility-capture.mjs \\
+    --mission-id=mission_... --out-dir=/abs/out-dir
+    [--repo-root=/abs/repo] [--app-dir=/abs/FridayHubConsole.app]
+    [--timeout-seconds=20] [--plan-only] [--require-observed]
+
+Truth:
+  Launches or attaches to the real macOS FridayHubConsole app, navigates selected
+  desktop destinations via Accessibility, and emits a real accessibility capture
+  JSON accepted by friday-ui-device-accessibility-click-capture.mjs. It does not
+  fabricate clicks, does not use screenshots as proof, does not click governed or
+  destructive actions, and is not END-BAR/adoption proof.`);
+}
+
+function arg(name) {
+  const prefix = `--${name}=`;
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value.startsWith(prefix)) return value.slice(prefix.length);
+    if (value === `--${name}` && args[index + 1]) return args[index + 1];
+  }
+  return "";
+}
+
+if (args.includes("--help") || args.includes("-h")) {
+  usage();
+  process.exit(0);
+}
+
+const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new URL("../..", import.meta.url).pathname);
+const missionId = arg("mission-id");
+const outDir = arg("out-dir");
+const appDirArg = arg("app-dir") || process.env.FRIDAY_HUB_CONSOLE_APP_DIR || "";
+const timeoutSeconds = Number(arg("timeout-seconds") || process.env.FRIDAY_DESKTOP_AX_CAPTURE_TIMEOUT_SECONDS || "20");
+const planOnly = args.includes("--plan-only");
+const requireObserved = args.includes("--require-observed");
+const blockers = [];
+
+function block(code, detail) {
+  blockers.push({ code, detail });
+}
+
+function requireAbsoluteDir(label, value) {
+  if (!value) {
+    block("missing_arg", label);
+    return "";
+  }
+  if (!isAbsolute(value)) {
+    block("path_not_absolute", `${label}:${value}`);
+    return "";
+  }
+  return value;
+}
+
+function read(path) {
+  return readFileSync(path, "utf8");
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function run(command, commandArgs, options = {}) {
+  return spawnSync(command, commandArgs, {
+    cwd: repoRoot,
+    encoding: "utf8",
+    ...options,
+  });
+}
+
+function parseDesktopDestinations() {
+  const contractPath = resolve(repoRoot, "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/DesktopProductReadinessContract.swift");
+  const source = read(contractPath);
+  const rows = [];
+  const caseMatches = [...source.matchAll(/case \.([A-Za-z0-9_]+):\s*return contract\(([\s\S]*?)(?=\n\s*case \.|^\s*\}\n\s*private func contract)/gm)];
+  for (const match of caseMatches) {
+    const destination = match[1];
+    const body = match[2];
+    const title = body.match(/title:\s*"([^"]+)"/)?.[1] || destination;
+    const tier = body.match(/tier:\s*\.([A-Za-z0-9_]+)/)?.[1] || "";
+    const actionBlock = body.match(/runtimeActionIds:\s*\[([\s\S]*?)\]/)?.[1] || "";
+    const runtimeActionIds = [...actionBlock.matchAll(/"([^"]+)"/g)].map((item) => item[1]);
+    rows.push({ destination, title, tier, runtimeActionIds });
+  }
+  return rows;
+}
+
+const defaultActionMap = new Map([
+  ["desktop/operations/refresh", { destination: "operations", screen: "operations", accessibility_id: "friday.desktop.refresh", event: "mission_workbench_visible", interaction: "visible" }],
+  ["desktop/fridayChat/act", { destination: "chat", screen: "fridayChat", accessibility_id: "friday.desktop.chat.send", event: "mission_bound_provider_action_visible", interaction: "visible" }],
+  ["desktop/fridayChat/check", { destination: "chat", screen: "fridayChat", accessibility_id: "friday.desktop.chat.review", event: "mission_bound_provider_action_visible", interaction: "visible" }],
+  ["desktop/session/list", { destination: "session", screen: "session", accessibility_id: "friday.desktop.session-detail", event: "transcript_browser_visible", interaction: "visible" }],
+  ["desktop/session/open", { destination: "session", screen: "session", accessibility_id: "friday.desktop.session-detail", event: "transcript_browser_visible", interaction: "visible" }],
+  ["desktop/session/link", { destination: "session", screen: "session", accessibility_id: "friday.desktop.session-detail", event: "transcript_browser_visible", interaction: "visible" }],
+  ["desktop/pairing/manifest", { destination: "pairingProvisioning", screen: "pairingProvisioning", accessibility_id: "friday.desktop.pairing-provisioning-path", event: "same_mission_projection_visible", interaction: "visible" }],
+  ["desktop/workflow/retry", { destination: "workflow", screen: "workflow", accessibility_id: "friday.desktop.workflow.canvas", event: "mission_workbench_visible", interaction: "visible" }],
+  ["desktop/workflow/cancel", { destination: "workflow", screen: "workflow", accessibility_id: "friday.desktop.workflow.canvas", event: "mission_workbench_visible", interaction: "visible" }],
+  ["desktop/channels/receipts", { destination: "channels", screen: "channels", accessibility_id: "friday.desktop.channels.admin", event: "same_mission_mobile_desktop_channel_visible", interaction: "visible" }],
+  ["desktop/channels/surface-events", { destination: "channels", screen: "channels", accessibility_id: "friday.desktop.channels.surface-events", event: "same_mission_mobile_desktop_channel_visible", interaction: "visible" }],
+  ["desktop/recovery/retry", { destination: "recovery", screen: "recovery", accessibility_id: "friday.desktop.workflow.work-items", event: "reconnect_stale_verified", interaction: "visible" }],
+  ["desktop/recovery/cancel", { destination: "recovery", screen: "recovery", accessibility_id: "friday.desktop.workflow.work-items", event: "reconnect_stale_verified", interaction: "visible" }],
+  ["desktop/memory/act", { destination: "memory", screen: "memory", accessibility_id: "friday.desktop.evidence.memory-review", event: "same_mission_projection_visible", interaction: "visible" }],
+  ["desktop/memory/check", { destination: "memory", screen: "memory", accessibility_id: "friday.desktop.evidence.memory-review", event: "same_mission_projection_visible", interaction: "visible" }],
+]);
+
+function actionPlan() {
+  return parseDesktopDestinations().flatMap((destination) =>
+    destination.runtimeActionIds.map((runtimeActionId) => ({
+      runtimeActionId,
+      destination: defaultActionMap.get(runtimeActionId)?.destination || destination.destination,
+      title: destination.title,
+      tier: destination.tier,
+      ...(defaultActionMap.get(runtimeActionId) || {
+        screen: destination.destination,
+        accessibility_id: `friday.desktop.nav.${destination.destination}`,
+        event: "mission_workbench_visible",
+        interaction: "visible",
+      }),
+    })),
+  );
+}
+
+function jsonOut(path, value) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function appleString(value) {
+  return `"${String(value).replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}"`;
+}
+
+function osascript(script) {
+  return run("/usr/bin/osascript", ["-e", script], { timeout: timeoutSeconds * 1000 });
+}
+
+function waitForWindow() {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (Date.now() < deadline) {
+    const result = osascript(`
+tell application "FridayHubConsole" to activate
+delay 0.2
+tell application "System Events"
+  if exists process "FridayHubConsole" then
+    tell process "FridayHubConsole"
+      set frontmost to true
+      if (count of windows) > 0 then return "ready"
+    end tell
+  end if
+end tell
+return "not_ready"`);
+    if (result.status === 0 && result.stdout.trim() === "ready") return true;
+  }
+  return false;
+}
+
+function captureTreeRaw() {
+  const script = `
+set outputLines to {}
+on cleanText(v)
+  set s to v as text
+  set AppleScript's text item delimiters to tab
+  set parts to text items of s
+  set AppleScript's text item delimiters to " "
+  set s to parts as text
+  set AppleScript's text item delimiters to linefeed
+  set parts to text items of s
+  set AppleScript's text item delimiters to " "
+  return parts as text
+end cleanText
+on appendElement(e, depth)
+  global outputLines
+  set roleValue to ""
+  set nameValue to ""
+  set descriptionValue to ""
+  set identifierValue to ""
+  set enabledValue to ""
+  try
+    set roleValue to my cleanText(role of e)
+  end try
+  try
+    set nameValue to my cleanText(name of e)
+  end try
+  try
+    set descriptionValue to my cleanText(description of e)
+  end try
+  try
+    tell application "System Events"
+      set identifierValue to my cleanText(value of attribute "AXIdentifier" of e)
+    end tell
+  end try
+  try
+    set enabledValue to my cleanText(enabled of e)
+  end try
+  set end of outputLines to ((depth as text) & tab & roleValue & tab & identifierValue & tab & nameValue & tab & descriptionValue & tab & enabledValue)
+  if depth < 9 then
+    try
+      tell application "System Events"
+        set childElements to UI elements of e
+      end tell
+      repeat with childElement in childElements
+        my appendElement(childElement, depth + 1)
+      end repeat
+    end try
+  end if
+end appendElement
+tell application "System Events"
+  tell process "FridayHubConsole"
+    if (count of windows) = 0 then return ""
+    my appendElement(window 1, 0)
+  end tell
+end tell
+set AppleScript's text item delimiters to linefeed
+return outputLines as text`;
+  const result = osascript(script);
+  if (result.status !== 0) {
+    block("ax_tree_capture_failed", result.stderr.trim() || result.stdout.trim() || String(result.status));
+    return "";
+  }
+  return result.stdout;
+}
+
+function clickNav(destination, title) {
+  const identifier = `friday.desktop.nav.${destination}`;
+  const script = `
+set didClick to false
+on clickMatchingElement(e, identifierValue, titleValue, depth)
+  global didClick
+  if didClick is true then return
+  try
+    tell application "System Events"
+      if (value of attribute "AXIdentifier" of e) is identifierValue then
+        click e
+        set didClick to true
+        return
+      end if
+    end tell
+  end try
+  try
+    tell application "System Events"
+      if (name of e) contains titleValue then
+        click e
+        set didClick to true
+        return
+      end if
+    end tell
+  end try
+  if depth < 8 then
+    try
+      tell application "System Events"
+        set childElements to UI elements of e
+      end tell
+      repeat with childElement in childElements
+        my clickMatchingElement(childElement, identifierValue, titleValue, depth + 1)
+        if didClick is true then return
+      end repeat
+    end try
+  end if
+end clickMatchingElement
+tell application "FridayHubConsole" to activate
+delay 0.1
+tell application "System Events"
+  tell process "FridayHubConsole"
+    if (count of windows) = 0 then return "window_missing"
+    my clickMatchingElement(window 1, ${appleString(identifier)}, ${appleString(title || destination)}, 0)
+    if didClick then return "clicked"
+  end tell
+end tell
+return "not_found"`;
+  return osascript(script);
+}
+
+function parseRawTree(raw) {
+  return raw.split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      const [depth = "", role = "", identifier = "", name = "", description = "", enabled = ""] = line.split("\t");
+      return { depth: Number(depth) || 0, role, identifier, name, description, enabled };
+    });
+}
+
+function elementMatches(element, accessibilityId) {
+  const haystack = [element.identifier, element.name, element.description].join("\n");
+  return haystack.includes(accessibilityId);
+}
+
+const targets = actionPlan();
+const summaryPath = outDir ? resolve(outDir, "desktop-ax-accessibility-capture-summary.json") : "";
+const capturePath = outDir ? resolve(outDir, "desktop-ax-accessibility-capture.json") : "";
+const rawPath = outDir ? resolve(outDir, "desktop-ax-tree.raw.txt") : "";
+
+if (!missionId || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId) || !missionId.toLowerCase().includes("mission")) {
+  block("mission_id_unexpected_shape", missionId || "<missing>");
+}
+const resolvedOutDir = requireAbsoluteDir("out-dir", outDir);
+if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 5) block("timeout_invalid", String(timeoutSeconds));
+
+if (planOnly) {
+  const summary = {
+    generated_at_utc: new Date().toISOString(),
+    truth: "desktop_ax_accessibility_capture_plan_only_not_runtime_proof",
+    status: blockers.length === 0 ? "plan_ready" : "blocked",
+    targetCount: targets.length,
+    targets,
+    blockers,
+    caveat: "Plan-only mode does not launch or inspect the app and is not UI/device proof.",
+  };
+  if (summaryPath) jsonOut(summaryPath, summary);
+  console.log(JSON.stringify(summary, null, 2));
+  process.exit(blockers.length > 0 ? 2 : 0);
+}
+
+if (process.platform !== "darwin") block("platform_not_darwin", process.platform);
+if (blockers.length > 0) {
+  const summary = {
+    generated_at_utc: new Date().toISOString(),
+    truth: "desktop_ax_accessibility_capture_blocked_not_runtime_proof",
+    status: "blocked",
+    blockers,
+  };
+  if (summaryPath) jsonOut(summaryPath, summary);
+  console.error(JSON.stringify(summary, null, 2));
+  process.exit(2);
+}
+
+mkdirSync(resolvedOutDir, { recursive: true });
+let appDir = appDirArg;
+if (!appDir) {
+  const build = run("bash", [resolve(repoRoot, "scripts/ops/build-friday-hub-console-app.sh"), repoRoot], { timeout: timeoutSeconds * 1000 * 6 });
+  if (build.status !== 0) {
+    block("app_build_failed", build.stderr.trim() || build.stdout.trim() || String(build.status));
+  } else {
+    appDir = build.stdout.trim().split(/\r?\n/).at(-1) || "";
+  }
+}
+if (!isAbsolute(appDir)) block("app_dir_not_absolute", appDir || "<missing>");
+const appBinary = appDir ? resolve(appDir, "Contents/MacOS/FridayHubConsole") : "";
+if (!appBinary || !existsSync(appBinary)) block("app_binary_missing", appBinary || "<missing>");
+if (appBinary && existsSync(appBinary)) {
+  try {
+    if (!statSync(appBinary).isFile()) block("app_binary_not_file", appBinary);
+  } catch {
+    block("app_binary_unreadable", appBinary);
+  }
+}
+
+let appProcess = null;
+if (blockers.length === 0) {
+  appProcess = spawn(appBinary, [], {
+    cwd: repoRoot,
+    env: { ...process.env, FRIDAY_CONSOLE_MOCK: "0" },
+    detached: true,
+    stdio: "ignore",
+  });
+  appProcess.unref();
+  if (appProcess.pid) {
+    process.on("exit", () => {
+      try {
+        spawnSync("/usr/bin/osascript", ["-e", "tell application \"FridayHubConsole\" to quit"], { stdio: "ignore" });
+      } catch {
+        // Best-effort cleanup of the app process this script launched.
+      }
+    });
+  } else {
+    block("app_launch_failed", "pid_missing");
+  }
+}
+
+const ready = blockers.length === 0 ? waitForWindow() : false;
+if (!ready) block("app_window_not_ready", "FridayHubConsole");
+
+const observedActions = [];
+const rawSnapshots = [];
+const missingTargets = [];
+if (ready) {
+  const byDestination = new Map();
+  for (const target of targets) {
+    const list = byDestination.get(target.destination) || [];
+    list.push(target);
+    byDestination.set(target.destination, list);
+  }
+
+  for (const [destination, destinationTargets] of byDestination.entries()) {
+    const nav = clickNav(destination, destinationTargets[0]?.title || destination);
+    const navStatus = nav.status === 0 ? nav.stdout.trim() : nav.stderr.trim();
+    await new Promise((resolveWait) => setTimeout(resolveWait, 350));
+    const raw = captureTreeRaw();
+    rawSnapshots.push(`--- destination=${destination} nav=${navStatus} ---\n${raw}`);
+    const elements = parseRawTree(raw);
+    for (const target of destinationTargets) {
+      const matched = elements.find((element) => elementMatches(element, target.accessibility_id));
+      if (!matched) {
+        missingTargets.push({
+          runtimeActionId: target.runtimeActionId,
+          destination: target.destination,
+          accessibility_id: target.accessibility_id,
+        });
+        continue;
+      }
+      observedActions.push({
+        screen: target.screen,
+        runtimeActionId: target.runtimeActionId,
+        action_id: target.runtimeActionId,
+        capability_id: target.runtimeActionId,
+        accessibility_id: target.accessibility_id,
+        interaction: target.interaction,
+        status: "pass",
+        event: target.event,
+        evidence_ref: rawPath,
+        captured_at: new Date().toISOString(),
+        matched_role: matched.role,
+        matched_name: matched.name,
+        matched_description: matched.description,
+      });
+    }
+  }
+}
+
+writeFileSync(rawPath, `${rawSnapshots.join("\n")}\n`);
+const capture = {
+  truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
+  mission_id: missionId,
+  surface: "desktop",
+  capture_method: "macos_accessibility",
+  evidence_ref: rawPath,
+  ui_actions: observedActions,
+};
+jsonOut(capturePath, capture);
+
+if (requireObserved && observedActions.length === 0) block("observed_actions_missing", "no mapped desktop accessibility actions observed");
+
+const summary = {
+  generated_at_utc: new Date().toISOString(),
+  truth: "desktop_ax_accessibility_capture_real_app_not_endbar_not_adoption",
+  status: blockers.length === 0 && observedActions.length > 0 ? "partial_capture_ready" : "blocked_or_empty",
+  repo: {
+    root: repoRoot,
+    head: run("git", ["rev-parse", "HEAD"]).stdout.trim(),
+  },
+  app: {
+    dir: appDir,
+    binary: appBinary,
+  },
+  capture: {
+    path: capturePath,
+    raw_tree: rawPath,
+    observed_count: observedActions.length,
+    missing_count: missingTargets.length,
+    missing_targets: missingTargets,
+  },
+  blockers,
+  caveats: [
+    "This is real macOS Accessibility inspection of FridayHubConsole, not screenshot proof.",
+    "Only visible, safe observations are emitted; governed/destructive actions are not auto-clicked.",
+    "Passing here is not END-BAR, not adoption, and must still be consumed by the strict UI/device runner.",
+  ],
+};
+jsonOut(summaryPath, summary);
+console.log(JSON.stringify(summary, null, 2));
+process.exit(blockers.length > 0 || (requireObserved && observedActions.length === 0) ? 2 : 0);
