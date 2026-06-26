@@ -16,6 +16,7 @@ usage:
     [--same-run-events /abs/events.jsonl ...]
     [--runtime-evidence-dir /abs/evidence-dir ...]
     [--extra-action-runtime-evidence /abs/action-runtime-evidence.json ...]
+    [--defer-channel-proof]
     [--skip-action-bundle]
     [--plan-only]
 
@@ -45,6 +46,7 @@ objective_coverage="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
 channel_live_proof="${FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF:-}"
 channel_capture="${FRIDAY_UI_DEVICE_CHANNEL_CAPTURE:-}"
 timeline_capture="${FRIDAY_UI_DEVICE_TIMELINE_CAPTURE:-}"
+defer_channel_proof="${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}"
 plan_only=0
 skip_action_bundle=0
 accessibility_captures=()
@@ -165,6 +167,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --extra-action-runtime-evidence=*)
       extra_action_runtime_evidence+=("${1#--extra-action-runtime-evidence=}")
+      shift
+      ;;
+    --defer-channel-proof)
+      defer_channel_proof=1
       shift
       ;;
     --skip-action-bundle)
@@ -296,6 +302,9 @@ if [ -n "${channel_capture}" ]; then
 fi
 if [ -n "${timeline_capture}" ]; then
   shortlist_args+=("--timeline-capture" "${timeline_capture}")
+fi
+if [ "${defer_channel_proof}" = "1" ]; then
+  shortlist_args+=("--defer-channel-proof")
 fi
 set +u
 for path in "${accessibility_captures[@]}"; do
