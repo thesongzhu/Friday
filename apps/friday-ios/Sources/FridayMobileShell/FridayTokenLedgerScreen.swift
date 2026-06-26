@@ -96,6 +96,7 @@ struct FridayTokenLedgerScreen: View {
           Label("Refresh Ledger", systemImage: "arrow.clockwise")
         }
         .disabled(viewModel.detailState.isLoading)
+        .accessibilityIdentifier("friday.token-ledger.refresh")
       }
     }
     .task(id: runId) {

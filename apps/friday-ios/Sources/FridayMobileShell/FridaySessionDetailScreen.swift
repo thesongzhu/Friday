@@ -243,6 +243,7 @@ struct FridaySessionDetailScreen: View {
             .buttonStyle(.bordered)
             .disabled(!control.isEnabled || controlStateDisablesButton(controlState))
             .accessibilityLabel("\(control.title) \(control.truthLabel). \(control.reason)")
+            .accessibilityIdentifier("friday.session.control.\(control.id)")
           }
         }
       }

@@ -432,6 +432,7 @@ struct FridayChatScreen: View {
           }
           .buttonStyle(.borderedProminent).tint(MobileTheme.cyan)
           .accessibilityLabel("Approve Friday action")
+          .accessibilityIdentifier("friday.chat.approval.approve")
           Button(role: .destructive) {
             Task { await viewModel.reject() }
           } label: {
@@ -439,6 +440,7 @@ struct FridayChatScreen: View {
           }
           .buttonStyle(.bordered)
           .accessibilityLabel("Reject Friday action")
+          .accessibilityIdentifier("friday.chat.approval.reject")
         }
       }
     }

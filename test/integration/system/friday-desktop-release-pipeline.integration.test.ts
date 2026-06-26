@@ -37,6 +37,7 @@ async function createFixtureRepo(): Promise<string> {
       "check:client-design-contract": "node scripts/ops/check-friday-client-design-contract.mjs",
       "check:native-action-closure": "node scripts/ops/check-friday-native-action-closure.mjs",
       "check:ios-t2-surface-contract": "node scripts/ops/check-friday-ios-t2-surface-contract.mjs",
+      "check:ios-action-accessibility-map": "node scripts/ops/check-friday-ios-action-accessibility-map.mjs",
       "check:ios-design-destination-capture-contract": "node scripts/ops/check-friday-ios-design-destination-capture-contract.mjs",
       "proof:ios:design-destinations": "bash scripts/ops/friday-ios-design-destination-capture.sh --out-dir \"${FRIDAY_IOS_DESIGN_CAPTURE_OUT:-/tmp/friday-ios-design-destination-capture}\"",
       "proof:action-runtime:evidence-bundle": "bash scripts/ops/friday-action-runtime-evidence-bundle.sh --out-dir \"${FRIDAY_ACTION_RUNTIME_EVIDENCE_BUNDLE_OUT:-/tmp/friday-action-runtime-evidence-bundle}\"",
@@ -74,6 +75,7 @@ async function createFixtureRepo(): Promise<string> {
     "scripts/ops/check-friday-client-design-contract.mjs",
     "scripts/ops/check-friday-native-action-closure.mjs",
     "scripts/ops/check-friday-ios-t2-surface-contract.mjs",
+    "scripts/ops/check-friday-ios-action-accessibility-map.mjs",
     "scripts/ops/check-friday-ios-design-destination-capture-contract.mjs",
     "scripts/ops/friday-ios-design-destination-capture.sh",
     "scripts/ops/friday-action-runtime-evidence-bundle.sh",
@@ -123,6 +125,11 @@ async function createFixtureRepo(): Promise<string> {
     root,
     "scripts/ops/check-friday-ios-t2-surface-contract.mjs",
     "#!/usr/bin/env node\nconsole.log(JSON.stringify({status:\"passed\", truthLabel:\"fixture_ios_t2_surface_contract\"}));\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/check-friday-ios-action-accessibility-map.mjs",
+    "#!/usr/bin/env node\nconsole.log(JSON.stringify({status:\"ios_actions_linked\", truth_label:\"fixture_ios_action_accessibility_map\"}));\n",
   );
   await writeFileWithParents(
     root,
@@ -243,6 +250,14 @@ describe("client ship gate pipeline check", () => {
         }),
         expect.objectContaining({
           target: "check:ios-t2-surface-contract",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "scripts/ops/check-friday-ios-action-accessibility-map.mjs",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          target: "check:ios-action-accessibility-map",
           status: "passed",
         }),
         expect.objectContaining({
