@@ -272,11 +272,39 @@ run_wrapper \
   "mobile-share-intake"
 
 run_wrapper \
+  "mobile token ledger" \
+  "scripts/ops/friday-mobile-token-ledger-action-evidence.sh" \
+  "FRIDAY_MOBILE_TOKEN_LEDGER_ACTION_EVIDENCE_DIR" \
+  "FRIDAY_MOBILE_TOKEN_LEDGER_ACTION_RUNTIME_OUT" \
+  "mobile-token-ledger"
+
+run_wrapper \
+  "mobile provider auth" \
+  "scripts/ops/friday-mobile-provider-auth-action-evidence.sh" \
+  "FRIDAY_MOBILE_PROVIDER_AUTH_ACTION_EVIDENCE_DIR" \
+  "FRIDAY_MOBILE_PROVIDER_AUTH_ACTION_RUNTIME_OUT" \
+  "mobile-provider-auth"
+
+run_wrapper \
+  "mobile activity" \
+  "scripts/ops/friday-mobile-activity-action-evidence.sh" \
+  "FRIDAY_MOBILE_ACTIVITY_ACTION_EVIDENCE_DIR" \
+  "FRIDAY_MOBILE_ACTIVITY_ACTION_RUNTIME_OUT" \
+  "mobile-activity"
+
+run_wrapper \
   "desktop chat/memory" \
   "scripts/ops/friday-desktop-chat-memory-action-evidence.sh" \
   "FRIDAY_DESKTOP_CHAT_MEMORY_ACTION_EVIDENCE_DIR" \
   "FRIDAY_DESKTOP_CHAT_MEMORY_ACTION_RUNTIME_OUT" \
   "desktop-chat-memory"
+
+run_wrapper \
+  "desktop pairing" \
+  "scripts/ops/friday-desktop-pairing-action-evidence.sh" \
+  "FRIDAY_DESKTOP_PAIRING_ACTION_EVIDENCE_DIR" \
+  "FRIDAY_DESKTOP_PAIRING_ACTION_RUNTIME_OUT" \
+  "desktop-pairing"
 
 set +u
 for extra in "${EXTRA_ACTION_EVIDENCE[@]}"; do
