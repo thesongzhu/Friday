@@ -210,7 +210,7 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
         title: "New Session",
         systemImage: "plus",
         tier: .governedActionGated,
-        runtimeActionIds: ["mobile/newSession/play"],
+        runtimeActionIds: ["mobile/newSession/play", "mobile/newSession/open-chat-loop"],
         blockers: [.init(.needsRuntimeEvidence, label: "provider result round-trip")])
     case .needsMe:
       return contract(

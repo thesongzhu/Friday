@@ -3,6 +3,7 @@ import SwiftUI
 
 struct FridayNewSessionScreen: View {
   @ObservedObject var viewModel: NewSessionViewModel
+  var onOpenFridayChat: () -> Void = {}
   @State private var intent = ""
 
   var body: some View {
@@ -101,6 +102,15 @@ struct FridayNewSessionScreen: View {
             .font(.caption2)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
+          Button {
+            onOpenFridayChat()
+          } label: {
+            Label("Continue in Chat", systemImage: "bubble.left.and.bubble.right")
+              .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.borderedProminent)
+          .tint(MobileTheme.cyan)
+          .accessibilityIdentifier("friday.new-session.open-chat-loop")
         }
       }
     case .blocked(let reason):
