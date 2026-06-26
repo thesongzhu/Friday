@@ -359,24 +359,21 @@ struct FridayProviderAuthScreen: View {
               .foregroundStyle(MobileTheme.textPrimary)
             Spacer()
             StatusChip(
-              text: detail.providerReadiness == nil ? "not provider doctor" : "read",
-              bg: detail.providerReadiness == nil ? MobileTheme.chipWarnBG : MobileTheme.chipPendingBG,
-              fg: detail.providerReadiness == nil ? MobileTheme.chipWarnFG : MobileTheme.chipPendingFG)
+              text: detail.providerReadiness == nil ? "readback" : "provider doctor",
+              bg: MobileTheme.chipPendingBG,
+              fg: MobileTheme.chipPendingFG)
           }
           Text(detail.summary)
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
             .fixedSize(horizontal: false, vertical: true)
+          RefPill(label: "generated", ref: generatedText(detail.generatedAtMs))
           if let providerReadiness = detail.providerReadiness {
             ProviderReadinessPanel(detail: providerReadiness)
           } else {
-            Text("The latest read result is not a provider doctor projection.")
-              .font(.caption)
-              .foregroundStyle(MobileTheme.textSecondary)
+            genericReadbackFacts(detail)
           }
-          ForEach(detail.refs, id: \.self) { ref in
-            RefPill(label: "proof", ref: ref)
-          }
+          detailRefs(detail.refs)
         }
       }
       .accessibilityIdentifier("friday.provider-auth.detail")
@@ -393,5 +390,57 @@ struct FridayProviderAuthScreen: View {
         }
       }
     }
+  }
+
+  @ViewBuilder
+  private func genericReadbackFacts(_ detail: HomeReadDetail) -> some View {
+    if detail.facts.isEmpty {
+      Text("The latest read result returned no typed facts; refs below remain the only evidence.")
+        .font(.caption)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+    } else {
+      VStack(alignment: .leading, spacing: 8) {
+        Text("Readback Facts")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(MobileTheme.textPrimary)
+        ForEach(detail.facts) { fact in
+          factRow(fact)
+        }
+      }
+      .accessibilityIdentifier("friday.provider-auth.readback-facts")
+    }
+  }
+
+  @ViewBuilder
+  private func detailRefs(_ refs: [String]) -> some View {
+    if !refs.isEmpty {
+      VStack(alignment: .leading, spacing: 8) {
+        Text("Evidence Refs")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(MobileTheme.textPrimary)
+        ForEach(refs, id: \.self) { ref in
+          RefPill(label: "proof", ref: ref)
+        }
+      }
+    }
+  }
+
+  private func factRow(_ fact: HomeReadDetailFact) -> some View {
+    HStack(spacing: 10) {
+      Text(fact.label)
+        .font(.caption)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .frame(width: 92, alignment: .leading)
+      Text(fact.value)
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(MobileTheme.textPrimary)
+        .lineLimit(2)
+        .minimumScaleFactor(0.8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 8)
+    .background(MobileTheme.chipNeutralBG, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
   }
 }
