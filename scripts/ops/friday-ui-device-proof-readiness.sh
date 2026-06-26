@@ -21,6 +21,7 @@ OBJECTIVE_COVERAGE="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
 WORKBENCH_DB="${FRIDAY_WORKBENCH_DB_PATH:-}"
 DESIGN_ACTION_CONTRACT="${FRIDAY_DESIGN_ACTION_CONTRACT:-}"
 DESIGN_ACTION_RUNTIME_EVIDENCE="${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE:-}"
+DEFER_CHANNEL_PROOF="${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}"
 DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS=()
 if [ -n "${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS:-}" ]; then
   IFS=':' read -r -a DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS <<<"${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS}"
@@ -33,6 +34,7 @@ usage:
     [--backend-live-proof /abs/backend-proof.json]
     [--channel-live-proof /abs/channel-proof.json]
     [--objective-coverage /abs/objective-coverage.json]
+    [--defer-channel-proof]
     [--workbench-db /abs/rust-hub.sqlite]
     [--design-action-contract /abs/ACTION-CONTRACT.md]
     [--design-action-runtime-evidence /abs/action-runtime-evidence.json]
@@ -59,6 +61,7 @@ evidence-dir auto-discovery:
   FRIDAY_UI_DEVICE_BACKEND_LIVE_PROOF=/abs/backend-proof.json
   FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF=/abs/channel-proof.json
   FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE=/abs/objective-coverage.json
+  FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF=1
   FRIDAY_WORKBENCH_DB_PATH=/abs/rust-hub.sqlite
   FRIDAY_DESIGN_ACTION_CONTRACT=/abs/ACTION-CONTRACT.md
   FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE=/abs/action-runtime-evidence.json
@@ -128,6 +131,9 @@ while [ "$#" -gt 0 ]; do
       fi
       OBJECTIVE_COVERAGE="$2"
       shift
+      ;;
+    --defer-channel-proof)
+      DEFER_CHANNEL_PROOF=1
       ;;
     --workbench-db)
       if [ "$#" -lt 2 ]; then
@@ -642,7 +648,10 @@ run_note_step() {
 }
 
 run_gap_report_if_possible() {
-  if [ -z "${MISSION_ID:-}" ] || [ -z "${MOBILE_EVIDENCE:-}" ] || [ -z "${DESKTOP_EVIDENCE:-}" ] || [ -z "${CHANNEL_EVIDENCE:-}" ] || [ -z "${TIMELINE_EVIDENCE:-}" ] || [ -z "${SAME_RUN_EVENTS:-}" ]; then
+  if [ -z "${MISSION_ID:-}" ] || [ -z "${MOBILE_EVIDENCE:-}" ] || [ -z "${DESKTOP_EVIDENCE:-}" ] || [ -z "${TIMELINE_EVIDENCE:-}" ] || [ -z "${SAME_RUN_EVENTS:-}" ]; then
+    return 0
+  fi
+  if [ -z "${CHANNEL_EVIDENCE:-}" ] && [ "${DEFER_CHANNEL_PROOF}" != "1" ]; then
     return 0
   fi
 
@@ -662,10 +671,15 @@ run_gap_report_if_possible() {
     "--events=${SAME_RUN_EVENTS}"
     "--mobile=${MOBILE_EVIDENCE}"
     "--desktop=${DESKTOP_EVIDENCE}"
-    "--channel=${CHANNEL_EVIDENCE}"
     "--timeline=${TIMELINE_EVIDENCE}"
     "--out=${gap_out}"
   )
+  if [ -n "${CHANNEL_EVIDENCE:-}" ]; then
+    args+=("--channel=${CHANNEL_EVIDENCE}")
+  fi
+  if [ "${DEFER_CHANNEL_PROOF}" = "1" ]; then
+    args+=("--defer-channel-proof")
+  fi
   if [ -n "${OBSERVATIONS_MANIFEST:-}" ]; then
     args+=("--manifest=${OBSERVATIONS_MANIFEST}")
   fi

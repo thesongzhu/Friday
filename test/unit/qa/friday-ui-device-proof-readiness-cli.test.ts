@@ -737,6 +737,53 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
+  it("can defer channel proof in report-only mode without satisfying UI proof", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-defer-channel-"));
+    try {
+      const files = writePartialEvidenceDir(tempDir);
+      rmSync(files.channel, { force: true });
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+        "--defer-channel-proof",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        truth?: string;
+        status?: string;
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.truth).toBe("report_only_not_ui_device_proof");
+      expect(result.status).toBe("blocked");
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+      expect(result.notes?.some((note) => note.includes("ui_device_gap_report:gaps_present"))).toBe(true);
+
+      const gapReport = JSON.parse(readFileSync(join(tempDir, "gap-report.json"), "utf8")) as {
+        status?: string;
+        deferredInputs?: Array<{ role?: string; status?: string; countsTowardUiDeviceProof?: boolean }>;
+        capturePlan?: Array<{ surface?: string; deferred?: boolean }>;
+      };
+      expect(gapReport.status).toBe("gaps_present");
+      expect(gapReport.deferredInputs).toContainEqual(expect.objectContaining({
+        role: "channel",
+        status: "deferred_by_operator",
+        countsTowardUiDeviceProof: false,
+      }));
+      expect(gapReport.capturePlan).toContainEqual(expect.objectContaining({
+        surface: "channel",
+        deferred: true,
+      }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("discovers indexed channel and timeline evidence without satisfying UI proof", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-indexed-roles-"));
     try {
