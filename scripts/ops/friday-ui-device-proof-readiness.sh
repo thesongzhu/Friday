@@ -508,7 +508,10 @@ derive_workbench_events_if_possible() {
   if [ -z "${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}" ]; then
     return 0
   fi
-  if [ -z "${MISSION_ID:-}" ] || [ -z "${MOBILE_EVIDENCE:-}" ] || [ -z "${DESKTOP_EVIDENCE:-}" ] || [ -z "${CHANNEL_EVIDENCE:-}" ] || [ -z "${TIMELINE_EVIDENCE:-}" ]; then
+  if [ -z "${MISSION_ID:-}" ] || [ -z "${MOBILE_EVIDENCE:-}" ] || [ -z "${DESKTOP_EVIDENCE:-}" ] || [ -z "${TIMELINE_EVIDENCE:-}" ]; then
+    return 0
+  fi
+  if [ -z "${CHANNEL_EVIDENCE:-}" ] && [ "${DEFER_CHANNEL_PROOF}" != "1" ]; then
     return 0
   fi
 
@@ -527,14 +530,23 @@ derive_workbench_events_if_possible() {
   mkdir -p "$(dirname "$derived_out")"
   existing_events="${SAME_RUN_EVENTS:-}"
 
-  if node "${REPO_ROOT}/scripts/ops/friday-workbench-snapshot-events.mjs" \
-    "--mission-id=${MISSION_ID}" \
-    "--file=${FRIDAY_WORKBENCH_SNAPSHOT_FILE}" \
-    "--mobile=${MOBILE_EVIDENCE}" \
-    "--desktop=${DESKTOP_EVIDENCE}" \
-    "--channel=${CHANNEL_EVIDENCE}" \
-    "--timeline=${TIMELINE_EVIDENCE}" \
-    "--out=${derived_out}" >"$stdout_out"; then
+  local args=(
+    "${REPO_ROOT}/scripts/ops/friday-workbench-snapshot-events.mjs"
+    "--mission-id=${MISSION_ID}"
+    "--file=${FRIDAY_WORKBENCH_SNAPSHOT_FILE}"
+    "--mobile=${MOBILE_EVIDENCE}"
+    "--desktop=${DESKTOP_EVIDENCE}"
+    "--timeline=${TIMELINE_EVIDENCE}"
+    "--out=${derived_out}"
+  )
+  if [ -n "${CHANNEL_EVIDENCE:-}" ]; then
+    args+=("--channel=${CHANNEL_EVIDENCE}")
+  fi
+  if [ "${DEFER_CHANNEL_PROOF}" = "1" ]; then
+    args+=("--defer-channel-proof")
+  fi
+
+  if node "${args[@]}" >"$stdout_out"; then
     if [ -n "$existing_events" ]; then
       awk '!seen[$0]++' "$existing_events" "$derived_out" >"$merged_out"
       SAME_RUN_EVENTS="$merged_out"
