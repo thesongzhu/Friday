@@ -361,6 +361,25 @@ final class HomeViewModelTests: XCTestCase {
     return try WorkbenchSnapshot(projectionJSON: Data(json.utf8), generatedAtMs: 1_780_640_010_000)
   }
 
+  private func receiptOnlySnapshot() throws -> WorkbenchSnapshot {
+    let json = """
+    {
+      "missionId": "mission-receipts-only",
+      "fridayConversationId": "conv-receipts-only",
+      "runtimeFeedStatus": "live_rust_hub_projection",
+      "statusLabels": [],
+      "workItems": [],
+      "providerReceiptRefs": ["proof://provider/codex-receipt"],
+      "channelReceiptRefs": ["proof://surface/mobile-receipt"],
+      "memoryCandidates": [],
+      "runOutcomeLearningCandidates": [],
+      "capabilityStates": [],
+      "transcriptSections": []
+    }
+    """
+    return try WorkbenchSnapshot(projectionJSON: Data(json.utf8), generatedAtMs: 1_780_640_020_000)
+  }
+
   func testRefresh_loadsRefsOnlyProjection() async throws {
     let snapshot = try sampleSnapshot()
     let vm = HomeViewModel(client: FakeReadClient(.snapshot(snapshot)))
@@ -533,6 +552,16 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertNil(p.tokenLedgerRunId)
     XCTAssertTrue(vm.state.isOnline)
     XCTAssertNil(vm.state.projection?.statusLabels.first)
+  }
+
+  func testRefresh_providerReceiptsDoNotFabricateTokenLedgerRunRef() async throws {
+    let vm = HomeViewModel(client: FakeReadClient(.snapshot(try receiptOnlySnapshot())))
+    await vm.refresh()
+    guard case .loaded(let p) = vm.state else { return XCTFail("expected loaded projection, got \(vm.state)") }
+    XCTAssertEqual(p.providerReceiptRefs, ["proof://provider/codex-receipt"])
+    XCTAssertEqual(p.channelReceiptRefs, ["proof://surface/mobile-receipt"])
+    XCTAssertNil(p.tokenLedgerRunId)
+    XCTAssertFalse(p.isLoadedEmpty)
   }
 
   func testRefresh_nonEmptyProjectionIsNotLoadedEmpty() async throws {
