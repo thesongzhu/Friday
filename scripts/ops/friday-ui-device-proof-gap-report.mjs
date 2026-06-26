@@ -80,7 +80,7 @@ function usage() {
     --timeline=/abs/timeline-evidence \\
     [--manifest=/abs/observations-manifest.json] \\
     [--backend-live-proof=/abs/backend-proof.json] \\
-    [--channel-live-proof=/abs/channel-proof.json] \\
+    [--channel-live-proof=/abs/channel-proof.json] [--defer-channel-proof] \\
     [--objective-coverage=/abs/objective-coverage.json] \\
     [--out=/abs/gap-report.json] [--require-complete]
 
@@ -99,6 +99,8 @@ if (args.includes("--help") || args.includes("-h")) {
 }
 
 const requireComplete = args.includes("--require-complete");
+const deferChannelProof = args.includes("--defer-channel-proof")
+  || process.env.FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF === "1";
 const missionId = arg("mission-id");
 const eventsPath = arg("events");
 const manifestPath = arg("manifest");
@@ -125,6 +127,9 @@ function abs(path) {
 }
 
 function requireFile(label, path) {
+  if (label === "channel" && deferChannelProof && !path) {
+    return "";
+  }
   if (!path) {
     block("missing_arg", label);
     return "";
@@ -338,6 +343,7 @@ function capturePlan(missingObservationRows, stressState) {
       missingEvents: [...new Set(entry.events)].sort(),
       stressRequirements: [...new Set(entry.stress)].sort(),
       evidenceRole: entry.surface,
+      deferred: entry.surface === "channel" && deferChannelProof,
       truth: "capture_real_same_run_events_only_no_synthetic_rows",
     }))
     .sort((a, b) => a.surface.localeCompare(b.surface));
@@ -376,8 +382,14 @@ const gapReport = {
   },
   capturePlan: capturePlan(missingObservations, stressGaps),
   supportingProofs: supportingProofRows,
+  deferredInputs: deferChannelProof ? [{
+    role: "channel",
+    status: "deferred_by_operator",
+    countsTowardUiDeviceProof: false,
+    caveat: "Channel live proof is deferred for this report-only run. This does not satisfy channel observations or END-BAR UI/device proof.",
+  }] : [],
   blockers,
-  caveat: "Gap report only. Capture missing observations from a real same-run mobile/desktop/channel/timeline run before assembling proof.",
+  caveat: "Gap report only. Capture missing observations from a real same-run mobile/desktop/channel/timeline run before assembling proof. Deferred inputs are never counted as proof.",
 };
 
 if (outPath) {
