@@ -11,6 +11,7 @@ function usage() {
   node scripts/ops/friday-desktop-ax-accessibility-capture.mjs \\
     --mission-id=mission_... --out-dir=/abs/out-dir
     [--repo-root=/abs/repo] [--app-dir=/abs/FridayHubConsole.app]
+    [--destinations=operations,chat,...] [--workbench-mission-id=mission_...]
     [--timeout-seconds=20] [--plan-only] [--require-observed]
 
 Truth:
@@ -40,6 +41,8 @@ const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new
 const missionId = arg("mission-id");
 const outDir = arg("out-dir");
 const appDirArg = arg("app-dir") || process.env.FRIDAY_HUB_CONSOLE_APP_DIR || "";
+const destinationsCsv = arg("destinations") || process.env.FRIDAY_DESKTOP_AX_CAPTURE_DESTINATIONS || "";
+const workbenchMissionId = arg("workbench-mission-id") || process.env.FRIDAY_DESKTOP_AX_WORKBENCH_MISSION_ID || "";
 const timeoutSeconds = Number(arg("timeout-seconds") || process.env.FRIDAY_DESKTOP_AX_CAPTURE_TIMEOUT_SECONDS || "20");
 const planOnly = args.includes("--plan-only");
 const requireObserved = args.includes("--require-observed");
@@ -113,7 +116,10 @@ const defaultActionMap = new Map([
 ]);
 
 function actionPlan() {
-  return parseDesktopDestinations().flatMap((destination) =>
+  const destinationFilter = new Set(destinationsCsv.split(",").map((value) => value.trim()).filter(Boolean));
+  return parseDesktopDestinations()
+    .filter((destination) => destinationFilter.size === 0 || destinationFilter.has(destination.destination))
+    .flatMap((destination) =>
     destination.runtimeActionIds.map((runtimeActionId) => ({
       runtimeActionId,
       destination: defaultActionMap.get(runtimeActionId)?.destination || destination.destination,
@@ -125,8 +131,7 @@ function actionPlan() {
         event: "mission_workbench_visible",
         interaction: "visible",
       }),
-    })),
-  );
+    })));
 }
 
 function jsonOut(path, value) {
@@ -146,8 +151,6 @@ function waitForWindow() {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() < deadline) {
     const result = osascript(`
-tell application "FridayHubConsole" to activate
-delay 0.2
 tell application "System Events"
   if exists process "FridayHubConsole" then
     tell process "FridayHubConsole"
@@ -265,10 +268,9 @@ on clickMatchingElement(e, identifierValue, titleValue, depth)
     end try
   end if
 end clickMatchingElement
-tell application "FridayHubConsole" to activate
-delay 0.1
 tell application "System Events"
   tell process "FridayHubConsole"
+    set frontmost to true
     if (count of windows) = 0 then return "window_missing"
     my clickMatchingElement(window 1, ${appleString(identifier)}, ${appleString(title || destination)}, 0)
     if didClick then return "clicked"
@@ -353,35 +355,54 @@ if (appBinary && existsSync(appBinary)) {
   }
 }
 
-let appProcess = null;
-if (blockers.length === 0) {
-  appProcess = spawn(appBinary, [], {
+function quitApp() {
+  spawnSync("/usr/bin/osascript", ["-e", "tell application \"FridayHubConsole\" to quit"], { stdio: "ignore", timeout: 1500 });
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const probe = spawnSync("/usr/bin/osascript", [
+      "-e",
+      "tell application \"System Events\" to if exists process \"FridayHubConsole\" then return \"running\" else return \"missing\"",
+    ], { encoding: "utf8", timeout: 1500 });
+    if (probe.stdout.trim() === "missing") return;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+  }
+}
+
+function launchApp(destination) {
+  quitApp();
+  const launchArgs = [`--initial-destination=${destination}`];
+  if (workbenchMissionId) launchArgs.push(`--mission-id=${workbenchMissionId}`);
+  const appProcess = spawn(appBinary, launchArgs, {
     cwd: repoRoot,
-    env: { ...process.env, FRIDAY_CONSOLE_MOCK: "0" },
+    env: {
+      ...process.env,
+      FRIDAY_CONSOLE_MOCK: "0",
+      FRIDAY_CONSOLE_INITIAL_DESTINATION: destination,
+      ...(workbenchMissionId ? { FRIDAY_CONSOLE_MISSION_ID: workbenchMissionId } : {}),
+    },
     detached: true,
     stdio: "ignore",
   });
   appProcess.unref();
-  if (appProcess.pid) {
-    process.on("exit", () => {
-      try {
-        spawnSync("/usr/bin/osascript", ["-e", "tell application \"FridayHubConsole\" to quit"], { stdio: "ignore" });
-      } catch {
-        // Best-effort cleanup of the app process this script launched.
-      }
-    });
-  } else {
+  if (!appProcess.pid) {
     block("app_launch_failed", "pid_missing");
+    return false;
   }
+  return waitForWindow();
 }
 
-const ready = blockers.length === 0 ? waitForWindow() : false;
-if (!ready) block("app_window_not_ready", "FridayHubConsole");
+process.on("exit", () => {
+  try {
+    quitApp();
+  } catch {
+    // Best-effort cleanup of the app process this script launched.
+  }
+});
 
 const observedActions = [];
 const rawSnapshots = [];
 const missingTargets = [];
-if (ready) {
+if (blockers.length === 0) {
   const byDestination = new Map();
   for (const target of targets) {
     const list = byDestination.get(target.destination) || [];
@@ -390,8 +411,13 @@ if (ready) {
   }
 
   for (const [destination, destinationTargets] of byDestination.entries()) {
+    const ready = launchApp(destination);
+    if (!ready) {
+      block("app_window_not_ready", `FridayHubConsole:${destination}`);
+      continue;
+    }
     const nav = clickNav(destination, destinationTargets[0]?.title || destination);
-    const navStatus = nav.status === 0 ? nav.stdout.trim() : nav.stderr.trim();
+    const navStatus = `initial_destination;${nav.status === 0 ? nav.stdout.trim() : nav.stderr.trim()}`;
     await new Promise((resolveWait) => setTimeout(resolveWait, 350));
     const raw = captureTreeRaw();
     rawSnapshots.push(`--- destination=${destination} nav=${navStatus} ---\n${raw}`);

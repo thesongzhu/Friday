@@ -48,6 +48,7 @@ struct FridayHubConsoleApp: App {
   var body: some Scene {
     WindowGroup("Friday Hub Console") {
       HubConsoleShell(
+        initialDestination: Self.initialDestination,
         client: Self.readClient,
         writeClient: Self.writeClient,
         missionRunClient: Self.writeClient,
@@ -65,6 +66,53 @@ struct FridayHubConsoleApp: App {
     return args.contains("--use-mock-read-client") || env["FRIDAY_CONSOLE_MOCK"] == "1"
   }
 
+  /// Proof-runner destination override. Normal user launches default to Operations.
+  /// This mirrors the iOS simulator `--initial-destination` seam and changes only
+  /// the first visible desktop route; it does not alter live/mock or trust behavior.
+  private static var initialDestination: HubDestination {
+    let args = ProcessInfo.processInfo.arguments
+    let env = ProcessInfo.processInfo.environment
+    if let envValue = env["FRIDAY_CONSOLE_INITIAL_DESTINATION"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+       let destination = HubDestination(rawValue: envValue) {
+      return destination
+    }
+    for (index, arg) in args.enumerated() {
+      if arg.hasPrefix("--initial-destination=") {
+        let rawValue = String(arg.dropFirst("--initial-destination=".count))
+        if let destination = HubDestination(rawValue: rawValue) {
+          return destination
+        }
+      }
+      if arg == "--initial-destination", args.indices.contains(index + 1),
+         let destination = HubDestination(rawValue: args[index + 1]) {
+        return destination
+      }
+    }
+    return .operations
+  }
+
+  /// Optional live-read projection target for proof/user launches. Normal user launches leave this
+  /// unset, so the server keeps its existing "first active Mission" behavior.
+  private static var missionId: String? {
+    let args = ProcessInfo.processInfo.arguments
+    let env = ProcessInfo.processInfo.environment
+    if let envValue = env["FRIDAY_CONSOLE_MISSION_ID"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !envValue.isEmpty {
+      return envValue
+    }
+    for (index, arg) in args.enumerated() {
+      if arg.hasPrefix("--mission-id=") {
+        let value = String(arg.dropFirst("--mission-id=".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+      }
+      if arg == "--mission-id", args.indices.contains(index + 1) {
+        let value = args[index + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+      }
+    }
+    return nil
+  }
+
   /// The read client the shell uses. DEFAULT = LIVE; MOCK only when explicitly opted in.
   static var readClient: FridayRustReadClient {
     // MOCK is an explicit design/demo opt-in only (re-adopting #682's `--use-mock-read-client`
@@ -77,7 +125,7 @@ struct FridayHubConsoleApp: App {
     // back to the mock, which would fabricate a ready view the live seam did not produce.
     // (The actual connect happens later in the shell's async refresh; this is non-blocking.)
     do {
-      return try RealReadClientFactory.makeLive()
+      return try RealReadClientFactory.makeLive(missionId: Self.missionId)
     } catch {
       return RealReadClientFactory.makeHonestlyUnavailable(reason: "\(error)")
     }

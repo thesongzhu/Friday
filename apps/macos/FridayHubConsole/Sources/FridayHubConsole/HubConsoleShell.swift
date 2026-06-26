@@ -7,10 +7,12 @@ import SwiftUI
 ///
 /// Default screen = Operations Overview (locked: screen = operations).
 struct HubConsoleShell: View {
-  @State private var destination: HubDestination = .operations
+  @State private var destination: HubDestination
   @StateObject private var operationsVM: OperationsOverviewViewModel
+  private let initialDestination: HubDestination
 
   init(
+    initialDestination: HubDestination = .operations,
     client: FridayRustReadClient,
     writeClient: FridayMissionSpineWriteClient? = nil,
     missionRunClient: FridayMissionBoundRunWriteClient? = nil,
@@ -24,6 +26,8 @@ struct HubConsoleShell: View {
         missionRunClient: missionRunClient,
         approvalSigner: approvalSigner,
         approvalResumeClient: approvalResumeClient))
+    _destination = State(initialValue: initialDestination)
+    self.initialDestination = initialDestination
   }
 
   var body: some View {
@@ -47,6 +51,9 @@ struct HubConsoleShell: View {
     }
     .frame(minWidth: 1080, minHeight: 680)
     .background(HubTheme.backgroundWarmOffWhite)
+    .onAppear {
+      destination = initialDestination
+    }
     .task {
       // Initial read on launch.
       if case .idle = operationsVM.state {
