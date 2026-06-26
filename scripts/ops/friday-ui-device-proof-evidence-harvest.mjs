@@ -11,7 +11,7 @@ function usage() {
   node scripts/ops/friday-ui-device-proof-evidence-harvest.mjs \\
     --mission-id=mission_... \\
     --search-dir=/abs/artifacts [--search-dir=/abs/other-artifacts ...] \\
-    [--out=/abs/harvest.json] [--require-ready]
+    [--out=/abs/harvest.json] [--require-ready] [--defer-channel-proof]
 
 Truth: scans existing artifact files and reports which ones are eligible inputs
 for the strict UI/device proof pipeline. It does not create proof rows, does not
@@ -47,6 +47,7 @@ const missionId = arg("mission-id");
 const searchDirs = argsAll("search-dir");
 const out = arg("out");
 const requireReady = args.includes("--require-ready");
+const deferChannelProof = args.includes("--defer-channel-proof") || process.env.FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF === "1";
 const blockers = [];
 
 function block(code, detail) {
@@ -206,6 +207,7 @@ const selected = {
 };
 
 for (const role of ["mobile", "desktop", "channel", "timeline"]) {
+  if (role === "channel" && deferChannelProof) continue;
   if (!selected[role]) block("missing_eligible_capture", role);
 }
 if (!selected.manifest && selected.events.length === 0) {
@@ -238,12 +240,30 @@ const proofRunnerCommand = [
   ...selected.events.map((path) => `--same-run-events ${path}`),
 ].filter(Boolean).join(" \\\n  ");
 
+const deferredInputs = [];
+if (deferChannelProof && !selected.channel) {
+  deferredInputs.push({
+    role: "channel",
+    status: "deferred_by_operator",
+    countsTowardUiDeviceProof: false,
+    caveat: "Channel live proof is intentionally deferred; this harvest can unblock non-channel evidence work but cannot satisfy strict UI/device proof or END-BAR.",
+  });
+}
+
+const pipelineReady = blockers.length === 0 && deferredInputs.length === 0;
+const status = pipelineReady
+  ? "ready_for_strict_pipeline"
+  : blockers.length === 0 && deferredInputs.length > 0
+    ? "non_channel_inputs_ready_channel_deferred"
+    : "partial";
+
 const result = {
   truth: "ui_device_proof_evidence_harvest_not_proof_not_endbar",
-  status: blockers.length === 0 ? "ready_for_strict_pipeline" : "partial",
+  status,
   missionId,
   searched: searchDirs.map(abs),
   selected,
+  deferredInputs,
   counts: {
     candidates: candidates.length,
     eligible: candidates.filter((candidate) => candidate.eligible).length,
@@ -263,4 +283,4 @@ if (out) {
 }
 
 console.log(JSON.stringify(result, null, 2));
-process.exit(blockers.length === 0 || !requireReady ? 0 : 2);
+process.exit(pipelineReady || !requireReady ? 0 : 2);

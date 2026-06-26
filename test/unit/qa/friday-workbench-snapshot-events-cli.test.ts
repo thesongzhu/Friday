@@ -217,4 +217,46 @@ describe("friday-workbench-snapshot-events CLI", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("can derive non-channel diagnostic rows when channel evidence is deferred", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-workbench-events-channel-deferred-"));
+    try {
+      const snapshotPath = join(tempDir, "snapshot.json");
+      const out = join(tempDir, "workbench-derived-events.jsonl");
+      const files = writeEvidence(tempDir);
+      writeFileSync(snapshotPath, JSON.stringify({ snapshot: makeSnapshot() }, null, 2));
+
+      const stdout = execFileSync(process.execPath, [
+        "scripts/ops/friday-workbench-snapshot-events.mjs",
+        "--mission-id=mission_workbench_events_bridge",
+        `--file=${snapshotPath}`,
+        `--mobile=${files.mobile}`,
+        `--desktop=${files.desktop}`,
+        `--timeline=${files.timeline}`,
+        `--out=${out}`,
+        "--defer-channel-proof",
+        "--require-ready",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout) as {
+        status?: string;
+        deferredInputs?: Array<{ role?: string; countsTowardUiDeviceProof?: boolean }>;
+      };
+      const rows = readFileSync(out, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      const keys = rows.map((row) => `${row.surface}:${row.event}`);
+
+      expect(result.status).toBe("ready");
+      expect(result.deferredInputs).toContainEqual(expect.objectContaining({
+        role: "channel",
+        countsTowardUiDeviceProof: false,
+      }));
+      expect(keys).toContain("timeline:bounded_page_2_visible");
+      expect(keys).not.toContain("channel:same_mission_projection_visible");
+      expect(keys).not.toContain("*:same_mission_mobile_desktop_channel_visible");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });

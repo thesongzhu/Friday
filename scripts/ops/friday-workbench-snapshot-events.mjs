@@ -19,6 +19,7 @@ function usage() {
 
 Options:
   --url=http://127.0.0.1:3141/v1/mission-spine/workbench
+  --defer-channel-proof
   --require-ready
 
 Truth: this bridges a preflight-passing Mission Workbench snapshot into
@@ -37,6 +38,7 @@ if (args.includes("--help") || args.includes("-h")) {
 }
 
 const requireReady = args.includes("--require-ready");
+const deferChannelProof = args.includes("--defer-channel-proof") || process.env.FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF === "1";
 const missionId = arg("mission-id") || process.env.MISSION_ID || "";
 const sourceFile = arg("file") || process.env.MISSION_WORKBENCH_SNAPSHOT_FILE || "";
 const sourceUrl = arg("url") || process.env.MISSION_WORKBENCH_SNAPSHOT_URL || "";
@@ -218,7 +220,7 @@ function makeRows(snapshot, evidence) {
     add("desktop", "mission_workbench_visible", evidence.desktop, "transcript_surface:desktop");
     add("desktop", "transcript_browser_visible", evidence.desktop, "transcript_surface:desktop");
   }
-  if (hasTranscriptSurface(transcriptEvents, "telegram") || array(snapshot.channelReceiptRefs).length > 0) {
+  if (evidence.channel && (hasTranscriptSurface(transcriptEvents, "telegram") || array(snapshot.channelReceiptRefs).length > 0)) {
     add("channel", "same_mission_projection_visible", evidence.channel, "channel_receipt_refs");
   }
   if (array(snapshot.timelinePages).some((page) => object(page).page === 1)) {
@@ -237,6 +239,7 @@ function makeRows(snapshot, evidence) {
   if (
     hasTranscriptSurface(transcriptEvents, "mobile")
     && hasTranscriptSurface(transcriptEvents, "desktop")
+    && evidence.channel
     && (hasTranscriptSurface(transcriptEvents, "telegram") || array(snapshot.channelReceiptRefs).length > 0)
   ) {
     add("*", "same_mission_mobile_desktop_channel_visible", evidence.desktop, "transcript_surfaces:mobile_desktop_channel");
@@ -249,9 +252,14 @@ if (!missionId || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId) || !missionId
 }
 if (!outPath) block("missing_arg", "out");
 
-const evidence = Object.fromEntries(
-  Object.entries(evidenceArgs).map(([role, path]) => [role, requireFile(role, path)]),
-);
+const evidence = {};
+for (const [role, path] of Object.entries(evidenceArgs)) {
+  if (role === "channel" && deferChannelProof && !path) {
+    evidence[role] = "";
+  } else {
+    evidence[role] = requireFile(role, path);
+  }
+}
 const preflight = runPreflight();
 const payload = sourceFile ? readJson(sourceFile) : sourceUrl ? await readJsonFromUrl(sourceUrl) : null;
 const snapshot = payload ? unwrapSnapshot(payload) : {};
@@ -272,6 +280,12 @@ const output = {
   out: outPath ? abs(outPath) : null,
   derivedEvents: rows.length,
   preflightReady: preflight?.readyForLiveCaptureInput === true,
+  deferredInputs: deferChannelProof ? [{
+    role: "channel",
+    status: "deferred_by_operator",
+    countsTowardUiDeviceProof: false,
+    caveat: "Channel evidence is deferred; this bridge emits only diagnostic non-channel rows and never counts as channel proof.",
+  }] : [],
   blockers,
   caveat: "Diagnostic bridge only. Stress/security/network/device observations still require real same-run capture before final proof.",
 };
