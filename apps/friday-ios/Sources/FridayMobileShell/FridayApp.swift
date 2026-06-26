@@ -401,8 +401,11 @@ struct RootView: View {
           FridayHomeScreen(viewModel: homeVM, showPairingProvisioning: true)
         case .providerAuth:
           FridayProviderAuthScreen(viewModel: homeVM)
-        case .missions, .needsMe, .memory, .platform, .activity, .workflows, .onboarding,
-             .settings:
+        case .onboarding:
+          FridayProjectionScreen(destination: destination, viewModel: homeVM) {
+            destination = .pairing
+          }
+        case .missions, .needsMe, .memory, .platform, .activity, .workflows, .settings:
           FridayProjectionScreen(destination: destination, viewModel: homeVM)
         }
       }
