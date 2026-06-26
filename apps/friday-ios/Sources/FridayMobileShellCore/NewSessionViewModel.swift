@@ -4,7 +4,13 @@ import FridayRustClient
 public enum NewSessionLaunchState: Sendable, Equatable {
   case idle
   case launching
-  case launched(summary: String, missionId: String, workItemId: String)
+  case launched(
+    summary: String,
+    missionId: String,
+    workItemId: String,
+    surfaceThreadId: String,
+    status: String,
+    createdOrReady: Bool)
   case blocked(reason: String)
 }
 
@@ -51,7 +57,10 @@ public final class NewSessionViewModel: ObservableObject {
       launchState = .launched(
         summary: "\(result.status) · mission=\(result.missionId) · work_item=\(workItemId)",
         missionId: result.missionId,
-        workItemId: workItemId)
+        workItemId: workItemId,
+        surfaceThreadId: result.surfaceThreadId,
+        status: result.status,
+        createdOrReady: result.createdOrReady)
     } catch {
       launchState = .blocked(reason: Self.reason(for: error))
     }
