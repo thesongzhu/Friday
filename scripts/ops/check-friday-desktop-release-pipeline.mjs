@@ -307,6 +307,36 @@ function runIosDesignDestinationCaptureContractCheck(repoRoot) {
   };
 }
 
+function runDesktopGuiSmokeContractCheck(repoRoot) {
+  const scriptPath = path.join(repoRoot, "scripts", "ops", "check-friday-desktop-gui-smoke-contract.mjs");
+  if (!fs.existsSync(scriptPath)) {
+    return {
+      kind: "command",
+      label: "Desktop GUI smoke contract check",
+      target: "scripts/ops/check-friday-desktop-gui-smoke-contract.mjs",
+      status: "failed",
+      exitCode: 1,
+      stderr: "desktop GUI smoke contract script is missing",
+    };
+  }
+
+  const result = spawnSync(process.execPath, [scriptPath, repoRoot], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: process.env,
+  });
+
+  return {
+    kind: "command",
+    label: "Desktop GUI smoke contract check",
+    target: "scripts/ops/check-friday-desktop-gui-smoke-contract.mjs",
+    status: result.status === 0 ? "passed" : "failed",
+    exitCode: result.status ?? 1,
+    stdout: (result.stdout ?? "").trim(),
+    stderr: (result.stderr ?? "").trim(),
+  };
+}
+
 const repoRoot = resolveRepoRoot();
 const pkg = readPackageJson(repoRoot);
 
@@ -325,6 +355,8 @@ const checks = [
     ["scripts/ops/check-friday-ios-design-destination-capture-contract.mjs", "iOS selected design destination capture contract check"],
     ["scripts/ops/friday-ios-design-destination-capture.sh", "iOS selected design destination capture proof script"],
     ["scripts/ops/friday-action-runtime-evidence-bundle.sh", "Native action-runtime evidence bundle proof script"],
+    ["scripts/ops/check-friday-desktop-gui-smoke-contract.mjs", "Desktop GUI smoke contract check"],
+    ["scripts/ops/friday-desktop-gui-smoke-proof.sh", "Desktop GUI smoke proof script"],
     ["scripts/ops/friday-macos-live-write-read-capture.sh", "macOS live write-read capture proof script"],
     ["scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh", "UI/device live write-read bundle proof script"],
     ["scripts/ops/check-friday-product-auto-followup-contract.mjs", "Product auto-followup contract check"],
@@ -358,6 +390,8 @@ const checks = [
     "check:ios-design-destination-capture-contract",
     "proof:ios:design-destinations",
     "proof:action-runtime:evidence-bundle",
+    "check:desktop-gui-smoke-contract",
+    "proof:desktop:gui-smoke",
     "proof:desktop:live-write-read",
     "proof:ui-device:live-write-read-bundle",
     "check:product-auto-followup-contract",
@@ -381,6 +415,7 @@ const checks = [
   runDesignContractCheck(repoRoot),
   runNativeActionClosureCheck(repoRoot),
   runIosDesignDestinationCaptureContractCheck(repoRoot),
+  runDesktopGuiSmokeContractCheck(repoRoot),
   ...artifactFreshnessChecks(repoRoot),
 ];
 
