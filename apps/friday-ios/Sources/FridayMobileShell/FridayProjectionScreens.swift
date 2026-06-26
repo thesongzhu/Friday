@@ -510,22 +510,41 @@ struct FridayProjectionScreen: View {
   private func workflowCard(_ projection: HomeProjection) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("Workflow", count: nil)
+        cardHeader("Workflow Control", count: projection.workItems.count)
+        Text("Route refs and WorkItem lifecycle controls are rendered from the live Hub projection. Retry/cancel use the governed write seam; this surface still needs real app proof before END-BAR.")
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
         if let selected = projection.routeSelected {
           RefPill(label: "selectedRoute", ref: selected)
         }
-        ForEach(projection.routeAlternatives, id: \.self) { alternative in
-          RefPill(label: "alternative", ref: alternative)
+        if !projection.routeAlternatives.isEmpty {
+          VStack(alignment: .leading, spacing: 6) {
+            Text("Route Alternatives")
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(MobileTheme.textSecondary)
+            ForEach(projection.routeAlternatives, id: \.self) { alternative in
+              RefPill(label: "alternative", ref: alternative)
+            }
+          }
+        }
+        HStack(spacing: 6) {
+          RefPill(label: "action", ref: "mobile/workflow/retry")
+          RefPill(label: "action", ref: "mobile/workflow/cancel")
         }
         if projection.workItems.isEmpty {
           emptyText("No workflow work-item refs.")
         } else {
-          ForEach(projection.workItems) { item in
-            workItemRow(item)
+          VStack(alignment: .leading, spacing: 8) {
+            ForEach(projection.workItems) { item in
+              workItemRow(item)
+                .accessibilityIdentifier("friday.workflow.work-item.\(item.id)")
+            }
           }
         }
       }
     }
+    .accessibilityIdentifier("friday.workflow.control-surface")
   }
 
   private func receiptRefsCard(_ projection: HomeProjection) -> some View {

@@ -80,7 +80,13 @@ func mobileProductContractSeparatesReadinessShellsFromProductLoops() {
     "mobile/voice/open-chat-loop",
   ])
   #expect(voice.blockers.contains { $0.kind == .needsRuntimeEvidence })
-  #expect(workflows.tier == .navigationShell)
+  #expect(workflows.tier == .governedActionGated)
+  #expect(workflows.runtimeActionIds == [
+    "mobile/workflow/retry",
+    "mobile/workflow/cancel",
+  ])
+  #expect(!workflows.blockers.contains { $0.kind == .needsNativeSurface })
+  #expect(workflows.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(onboarding.tier == .readinessOnly)
   #expect(onboarding.runtimeActionIds == ["mobile/onboarding/open-device-pairing"])
   #expect(onboarding.blockers.contains { $0.kind == .needsRuntimeEvidence })

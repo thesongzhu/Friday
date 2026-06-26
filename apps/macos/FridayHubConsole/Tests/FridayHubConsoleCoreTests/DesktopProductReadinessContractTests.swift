@@ -63,7 +63,13 @@ func desktopProductContractSeparatesShellsFromWorkbenchLoops() {
   let provider = DesktopProductDestinationID.providerAdmin.contract
 
   #expect(operations.tier == .liveWorkbench)
-  #expect(workflow.tier == .navigationShell)
+  #expect(workflow.tier == .governedActionGated)
+  #expect(workflow.runtimeActionIds == [
+    "desktop/workflow/retry",
+    "desktop/workflow/cancel",
+  ])
+  #expect(!workflow.blockers.contains { $0.kind == .needsNativeSurface })
+  #expect(workflow.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(channels.tier == .navigationShell)
   #expect(provider.tier == .providerAdmin)
   #expect(!operations.isEndBarReady)

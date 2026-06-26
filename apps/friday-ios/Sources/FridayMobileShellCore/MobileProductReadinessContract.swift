@@ -251,9 +251,9 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
       return contract(
         title: "Workflows",
         systemImage: "arrow.triangle.branch",
-        tier: .navigationShell,
-        runtimeActionIds: [],
-        blockers: [.init(.needsNativeSurface, label: "workflow builder surface")])
+        tier: .governedActionGated,
+        runtimeActionIds: ["mobile/workflow/retry", "mobile/workflow/cancel"],
+        blockers: [.init(.needsRuntimeEvidence, label: "workflow retry/cancel app proof")])
     case .onboarding:
       return contract(
         title: "Onboarding",
