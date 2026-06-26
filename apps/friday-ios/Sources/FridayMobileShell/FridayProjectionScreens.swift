@@ -494,6 +494,7 @@ struct FridayProjectionScreen: View {
                 .buttonStyle(.bordered)
                 .disabled(candidateDecisionControlsDisabled(doneState))
                 .accessibilityLabel("Mark activity done")
+                .accessibilityIdentifier("friday.activity.mark-done")
               }
               candidateDecisionStateView(doneState, pendingText: "Marking activity done...")
               if let proofRef = event.proofRef {
@@ -773,6 +774,7 @@ struct FridayProjectionScreen: View {
             .buttonStyle(.bordered)
             .disabled(candidateDecisionControlsDisabled(recoveryState))
             .accessibilityLabel("Retry WorkItem")
+            .accessibilityIdentifier("friday.workflow.retry-work-item")
           }
           if item.canCancel {
             Button {
@@ -784,6 +786,7 @@ struct FridayProjectionScreen: View {
             .buttonStyle(.bordered)
             .disabled(candidateDecisionControlsDisabled(recoveryState))
             .accessibilityLabel("Cancel WorkItem")
+            .accessibilityIdentifier("friday.workflow.cancel-work-item")
           }
         }
         candidateDecisionStateView(recoveryState, pendingText: "Updating WorkItem...")
@@ -814,6 +817,7 @@ struct FridayProjectionScreen: View {
           .tint(MobileTheme.cyan)
           .disabled(candidateDecisionControlsDisabled(decisionState))
           .accessibilityLabel("Confirm memory candidate")
+          .accessibilityIdentifier("friday.memory.confirm-candidate")
 
           Button {
             Task { await viewModel.decideMemory(candidateId: candidate.id, confirm: false) }
@@ -824,6 +828,7 @@ struct FridayProjectionScreen: View {
           .buttonStyle(.bordered)
           .disabled(candidateDecisionControlsDisabled(decisionState))
           .accessibilityLabel("Reject memory candidate")
+          .accessibilityIdentifier("friday.memory.reject-candidate")
         }
       }
       HStack(spacing: 6) {

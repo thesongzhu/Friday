@@ -275,6 +275,7 @@ struct FridayProviderAuthScreen: View {
           Label("Sessions", systemImage: "rectangle.stack")
         }
         .disabled(viewModel.detailState.isLoading)
+        .accessibilityIdentifier("friday.provider-workspace.sessions")
         if let agentSessionId = projection.agentSessionId {
           Button {
             Task { await viewModel.loadDetail(.sessionOpen(agentSessionId: agentSessionId)) }
@@ -282,12 +283,14 @@ struct FridayProviderAuthScreen: View {
             Label("Open", systemImage: "text.bubble")
           }
           .disabled(viewModel.detailState.isLoading)
+          .accessibilityIdentifier("friday.provider-workspace.session-open")
           Button {
             Task { await viewModel.loadDetail(.sessionLinkState(agentSessionId: agentSessionId)) }
           } label: {
             Label("Link", systemImage: "link")
           }
           .disabled(viewModel.detailState.isLoading)
+          .accessibilityIdentifier("friday.provider-workspace.session-link")
         }
       }
       .buttonStyle(.bordered)
@@ -442,5 +445,11 @@ struct FridayProviderAuthScreen: View {
     .padding(.horizontal, 10)
     .padding(.vertical, 8)
     .background(MobileTheme.chipNeutralBG, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+  }
+
+  private func generatedText(_ generatedAtMs: Int64) -> String {
+    guard generatedAtMs > 0 else { return "unknown" }
+    let date = Date(timeIntervalSince1970: Double(generatedAtMs) / 1000.0)
+    return date.formatted(date: .abbreviated, time: .shortened)
   }
 }

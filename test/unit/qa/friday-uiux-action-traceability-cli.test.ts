@@ -1,0 +1,171 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const script = "scripts/ops/check-friday-uiux-action-traceability.mjs";
+
+function writeFile(root: string, relative: string, body: string) {
+  const target = join(root, relative);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, body);
+  return target;
+}
+
+function writeFixture(root: string) {
+  const designRoot = join(root, "design");
+  writeFile(designRoot, "ACTION-CONTRACT.md", `# Friday Action Contract — mobile + desktop
+
+**This is a wiring contract for the later Rust/native agent, NOT runtime proof.** Every row is design-proof; wired_registry ≠ runtime PASS.
+
+| Surface | Screen [state] | action_id | Label | capability_id | reg | reg_status | truth_status | result/target | Rust/Hub owner · gate · test expectation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mobile | home | refresh | Retry now | transport_connection_state | ✓ | wired | wired_registry | result:confirmed | Runtime test must prove gate enforcement. |
+| desktop | memory | check | Confirm | memory_review_no_silent_write_decide_candidate | ✓ | wired | wired_registry | result:confirmed | Runtime test must prove gate enforcement. |
+`);
+  writeFile(
+    root,
+    "apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift",
+    `enum MobileProductDestinationID {
+    case home
+    var contract: MobileProductDestinationContract {
+      switch self {
+      case .home:
+      return contract(
+        title: "Friday Home",
+        systemImage: "house",
+        tier: .liveReadProjection,
+        runtimeActionIds: ["mobile/home/refresh"],
+        blockers: [])
+    }
+    }
+    private func contract(
+      title: String,
+      systemImage: String,
+      tier: MobileProductLoopTier,
+      runtimeActionIds: [String],
+      blockers: [MobileProductBlocker]
+    ) -> MobileProductDestinationContract { fatalError() }
+    }
+`,
+  );
+  writeFile(
+    root,
+    "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/DesktopProductReadinessContract.swift",
+    `enum DesktopProductDestinationID {
+    case memory
+    var contract: DesktopProductDestinationContract {
+      switch self {
+      case .memory:
+      return contract(
+        title: "Memory",
+        systemImage: "brain.head.profile",
+        tier: .governedActionGated,
+        runtimeActionIds: ["desktop/memory/check"],
+        blockers: [])
+    }
+    }
+    private func contract(
+      title: String,
+      systemImage: String,
+      tier: DesktopProductLoopTier,
+      runtimeActionIds: [String],
+      blockers: [DesktopProductBlocker]
+    ) -> DesktopProductDestinationContract { fatalError() }
+    }
+`,
+  );
+  writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridayHomeScreen.swift", "Retry now refresh");
+  writeFile(root, "apps/friday-ios/Sources/FridayMobileShellCore/HomeViewModel.swift", "func refresh() {}");
+  writeFile(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsole/DesktopProjectionScreens.swift", "Button(\"Confirm\") {}");
+  writeFile(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/OperationsOverviewViewModel.swift", "func decideMemory() {}");
+  for (const file of [
+    "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift",
+    "apps/friday-ios/Sources/FridayMobileShell/FridayApp.swift",
+    "apps/friday-ios/Sources/FridayMobileShell/FridayChatScreen.swift",
+    "apps/friday-ios/Sources/FridayMobileShell/FridaySessionDetailScreen.swift",
+    "apps/friday-ios/Sources/FridayMobileShell/FridayContextPassportScreen.swift",
+    "apps/friday-ios/Sources/FridayMobileShell/FridayProviderAuthScreen.swift",
+    "apps/friday-ios/Sources/FridayMobileShell/FridayShareIntakeScreen.swift",
+    "apps/friday-ios/Sources/FridayMobileShell/FridayTokenLedgerScreen.swift",
+    "apps/friday-ios/Sources/FridayMobileShell/FridayVoiceScreen.swift",
+    "apps/friday-ios/Sources/FridayMobileShell/FridayProjectionScreens.swift",
+    "apps/friday-ios/Sources/FridayMobileShellCore/FridayChatViewModel.swift",
+    "apps/friday-ios/Sources/FridayMobileShellCore/SessionContinuationViewModel.swift",
+    "apps/friday-ios/Sources/FridayMobileShellCore/ShareIntakeViewModel.swift",
+    "apps/friday-ios/Sources/FridayMobileShellCore/VoiceReadinessViewModel.swift",
+    "apps/macos/FridayHubConsole/Sources/FridayHubConsole/Navigation.swift",
+    "apps/macos/FridayHubConsole/Sources/FridayHubConsole/OperationsOverviewScreen.swift",
+    "apps/macos/FridayHubConsole/Sources/FridayHubConsole/DesktopChatScreen.swift",
+    "apps/macos/FridayHubConsole/Sources/FridayHubConsole/PairingProvisioningScreen.swift",
+  ]) {
+    const target = join(root, file);
+    if (!readFileSyncOrEmpty(target)) writeFile(root, file, "placeholder");
+  }
+  return designRoot;
+}
+
+function readFileSyncOrEmpty(path: string) {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+describe("check-friday-uiux-action-traceability", () => {
+  it("discovers nested runtime evidence bundles and writes the requested report", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-uiux-action-traceability-"));
+    try {
+      const designRoot = writeFixture(root);
+      const evidenceDir = join(root, "evidence");
+      writeFile(evidenceDir, "mobile/action-runtime-evidence.json", JSON.stringify({
+        actions: [
+          {
+            surface: "mobile",
+            screen: "home",
+            action_id: "refresh",
+            capability_id: "transport_connection_state",
+            status: "pass",
+            evidence_ref: "proof://mobile/home-refresh",
+          },
+        ],
+      }, null, 2));
+      writeFile(evidenceDir, "desktop/action-runtime-evidence.json", JSON.stringify({
+        actions: [
+          {
+            surface: "desktop",
+            screen: "memory",
+            action_id: "check",
+            capability_id: "memory_review_no_silent_write_decide_candidate",
+            status: "pass",
+            evidence_ref: "proof://desktop/memory-confirm",
+          },
+        ],
+      }, null, 2));
+      const out = join(root, "reports", "uiux-action-traceability.json");
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        "--runtime-evidence-dir",
+        evidenceDir,
+        "--out",
+        out,
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        counts?: { runtimeEvidenceInputs?: number; runtimeEvidenceActionRows?: number; productActionsMissingRuntimeEvidence?: number };
+      };
+      const persisted = JSON.parse(readFileSync(out, "utf8")) as typeof report;
+      expect(report.status).toBe("product_runtime_actions_traceable");
+      expect(report.counts?.runtimeEvidenceInputs).toBe(2);
+      expect(report.counts?.runtimeEvidenceActionRows).toBe(2);
+      expect(report.counts?.productActionsMissingRuntimeEvidence).toBe(0);
+      expect(persisted.status).toBe("product_runtime_actions_traceable");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

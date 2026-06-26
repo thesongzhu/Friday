@@ -89,6 +89,7 @@ struct CommandSheet: View {
             }
             .buttonStyle(.plain)
             .disabled(!dest.isBuilt)
+            .accessibilityIdentifier("friday.command-sheet.destination.\(dest.rawValue)")
           }
         }
         .padding(16)
@@ -100,7 +101,9 @@ struct CommandSheet: View {
       .navigationBarTitleDisplayMode(.large)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
-          Button("Done") { isOpen = false }.tint(MobileTheme.cyan)
+          Button("Done") { isOpen = false }
+            .tint(MobileTheme.cyan)
+            .accessibilityIdentifier("friday.command-sheet.done")
         }
       }
     }

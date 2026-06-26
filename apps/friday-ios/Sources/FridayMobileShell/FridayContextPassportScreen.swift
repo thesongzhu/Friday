@@ -199,7 +199,7 @@ struct FridayContextPassportScreen: View {
     let status = projection.t3ProvisioningStatus
     let isReady = status?.isFullyProvisioned == true
     let missing = status?.missingOperatorSteps.joined(separator: ", ") ?? "T3 projection"
-    GlassPanel {
+    return GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Send", count: 3)
         Button {

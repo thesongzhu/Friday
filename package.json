@@ -112,6 +112,7 @@
     "check:client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
     "check:ios-live-evidence-contract": "node scripts/ops/check-friday-ios-live-evidence-contract.mjs",
     "check:ios-t2-surface-contract": "node scripts/ops/check-friday-ios-t2-surface-contract.mjs",
+    "check:ios-action-accessibility-map": "node scripts/ops/check-friday-ios-action-accessibility-map.mjs",
     "check:ios-design-destination-capture-contract": "node scripts/ops/check-friday-ios-design-destination-capture-contract.mjs",
     "check:desktop-gui-smoke-contract": "node scripts/ops/check-friday-desktop-gui-smoke-contract.mjs",
     "check:product-auto-followup-contract": "node scripts/ops/check-friday-product-auto-followup-contract.mjs",

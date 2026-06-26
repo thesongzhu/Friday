@@ -103,6 +103,7 @@ struct FridayVoiceScreen: View {
           .buttonStyle(.borderedProminent)
           .tint(MobileTheme.cyan)
           .disabled(viewModel.state == .loading)
+          .accessibilityIdentifier("friday.voice.permission")
         } else {
           Button {
             Task { await viewModel.refresh() }
@@ -149,6 +150,7 @@ struct FridayVoiceScreen: View {
               }
               .buttonStyle(.bordered)
               .disabled(!row.enabled || viewModel.state == .loading)
+              .accessibilityIdentifier("friday.voice.permission")
             } else if row.id == "open-chat-loop" {
               Button {
                 onOpenVoiceChat()

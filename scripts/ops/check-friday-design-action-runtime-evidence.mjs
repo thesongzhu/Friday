@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -22,7 +22,12 @@ static Swift bindings, or UI/device capture bundles as END-BAR completion.`);
 
 function arg(name) {
   const prefix = `--${name}=`;
-  return args.find((value) => value.startsWith(prefix))?.slice(prefix.length) || "";
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value.startsWith(prefix)) return value.slice(prefix.length);
+    if (value === `--${name}` && args[index + 1]) return args[index + 1];
+  }
+  return "";
 }
 
 function argsAll(name) {
@@ -131,8 +136,36 @@ function runtimeEvidenceCandidatesFromDir(dir) {
     "capture-index.json",
   ].flatMap((name) => pathsFromIndex(resolve(root, name)));
   const fromList = pathsFromTextList(resolve(root, "runtime-evidence-paths.txt"));
-  const discovered = uniquePaths([...direct.filter(existingFile), ...fromIndexes, ...fromList]).filter(existingFile);
+  const discovered = uniquePaths([
+    ...direct.filter(existingFile),
+    ...fromIndexes,
+    ...fromList,
+    ...runtimeEvidenceFilesUnder(root, 3),
+  ]).filter(existingFile);
   return discovered.length > 0 ? discovered : direct;
+}
+
+function runtimeEvidenceFilesUnder(root, maxDepth) {
+  const found = [];
+  function walk(dir, depth) {
+    if (depth > maxDepth) return;
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = resolve(dir, entry.name);
+      if (entry.isFile() && ["action-runtime-evidence.json", "design-action-runtime-evidence.json"].includes(entry.name)) {
+        found.push(child);
+      } else if (entry.isDirectory()) {
+        walk(child, depth + 1);
+      }
+    }
+  }
+  walk(root, 0);
+  return found;
 }
 
 const runtimeEvidenceCandidates = runtimeEvidenceArgs.length > 0

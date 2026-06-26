@@ -420,6 +420,7 @@ struct RootView: View {
             Image(systemName: "square.grid.2x2").foregroundStyle(MobileTheme.cyan)
           }
           .accessibilityLabel("Open Command Sheet")
+          .accessibilityIdentifier("friday.mobile.toolbar.command-sheet")
         }
         // Top-BAR 💬: the Friday Chat entry (locked: the ONLY chat entry — no card).
         ToolbarItem(placement: .topBarTrailing) {
@@ -430,6 +431,7 @@ struct RootView: View {
             Image(systemName: "bubble.left.and.bubble.right").foregroundStyle(MobileTheme.cyan)
           }
           .accessibilityLabel("Open Friday Chat")
+          .accessibilityIdentifier("friday.mobile.toolbar.chat")
         }
         ToolbarItem(placement: .topBarTrailing) {
           // Small Mark for the app itself.
@@ -439,6 +441,7 @@ struct RootView: View {
             Image(systemName: "arrow.clockwise").foregroundStyle(MobileTheme.cyan)
           }
           .accessibilityLabel("Refresh Status")
+          .accessibilityIdentifier("friday.mobile.toolbar.refresh")
           .disabled(homeVM.state.isLoading)
         }
       }

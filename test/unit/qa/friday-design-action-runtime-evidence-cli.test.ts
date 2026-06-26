@@ -217,10 +217,62 @@ describe("check-friday-design-action-runtime-evidence", () => {
         counts?: { runtimeEvidenceRows?: number; missingRuntimeEvidence?: number; missingUniqueRuntimeEvidence?: number };
       };
       expect(report.status).toBe("runtime_actions_covered");
-      expect(report.runtimeEvidenceInputs).toEqual([mobileRuntime, desktopRuntime]);
+      expect(report.runtimeEvidenceInputs?.sort()).toEqual([mobileRuntime, desktopRuntime].sort());
       expect(report.counts?.runtimeEvidenceRows).toBe(2);
       expect(report.counts?.missingRuntimeEvidence).toBe(0);
       expect(report.counts?.missingUniqueRuntimeEvidence).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers nested action evidence from an evidence dir and accepts spaced --out", () => {
+    const { root, contract } = fixtureRepo();
+    try {
+      const evidenceDir = join(root, "runtime-evidence");
+      const mobileRuntime = writeFile(evidenceDir, "mobile/action-runtime-evidence.json", JSON.stringify({
+        actions: [
+          {
+            surface: "mobile",
+            screen: "fridayChat",
+            action_id: "act",
+            status: "pass",
+            evidence_ref: "proof://mobile/send",
+          },
+        ],
+      }, null, 2));
+      const desktopRuntime = writeFile(evidenceDir, "desktop/action-runtime-evidence.json", JSON.stringify({
+        actions: [
+          {
+            surface: "desktop",
+            screen: "fridayChat",
+            action_id: "check",
+            status: "pass",
+            evidence_ref: "proof://desktop/approve",
+          },
+        ],
+      }, null, 2));
+      const out = join(root, "reports", "design-action-runtime.json");
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--contract=${contract}`,
+        "--evidence-dir",
+        evidenceDir,
+        "--out",
+        out,
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        runtimeEvidenceInputs?: string[];
+        counts?: { runtimeEvidenceRows?: number; missingRuntimeEvidence?: number };
+      };
+      const persisted = JSON.parse(readFileSync(out, "utf8")) as typeof report;
+      expect(report.status).toBe("runtime_actions_covered");
+      expect(report.runtimeEvidenceInputs?.sort()).toEqual([mobileRuntime, desktopRuntime].sort());
+      expect(report.counts?.runtimeEvidenceRows).toBe(2);
+      expect(report.counts?.missingRuntimeEvidence).toBe(0);
+      expect(persisted.status).toBe("runtime_actions_covered");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
