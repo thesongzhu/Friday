@@ -766,19 +766,34 @@ describe("friday-ui-device-proof-readiness", () => {
 
       const gapReport = JSON.parse(readFileSync(join(tempDir, "gap-report.json"), "utf8")) as {
         status?: string;
-        deferredInputs?: Array<{ role?: string; status?: string; countsTowardUiDeviceProof?: boolean }>;
+        gaps?: { deferredObservations?: Array<{ surface?: string; event?: string; deferred?: boolean }> };
+        deferredInputs?: Array<{
+          role?: string;
+          status?: string;
+          countsTowardUiDeviceProof?: boolean;
+          missingObservations?: Array<{ surface?: string; event?: string; deferred?: boolean }>;
+        }>;
         capturePlan?: Array<{ surface?: string; deferred?: boolean }>;
       };
       expect(gapReport.status).toBe("gaps_present");
+      expect(gapReport.gaps?.deferredObservations).toContainEqual(expect.objectContaining({
+        surface: "channel",
+        event: "same_mission_projection_visible",
+        deferred: true,
+      }));
       expect(gapReport.deferredInputs).toContainEqual(expect.objectContaining({
         role: "channel",
         status: "deferred_by_operator",
         countsTowardUiDeviceProof: false,
+        missingObservations: expect.arrayContaining([
+          expect.objectContaining({
+            surface: "channel",
+            event: "same_mission_projection_visible",
+            deferred: true,
+          }),
+        ]),
       }));
-      expect(gapReport.capturePlan).toContainEqual(expect.objectContaining({
-        surface: "channel",
-        deferred: true,
-      }));
+      expect(gapReport.capturePlan?.some((entry) => entry.surface === "channel")).toBe(false);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

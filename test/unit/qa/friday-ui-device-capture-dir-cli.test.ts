@@ -168,8 +168,20 @@ function completeEventRows(refs: ReturnType<typeof writeEvidence>) {
   return rows;
 }
 
+function nonChannelEventRows(refs: ReturnType<typeof writeEvidence>) {
+  return completeEventRows(refs).filter((row) => {
+    const eventRow = row as { surface?: string; event?: string };
+    return eventRow.surface !== "channel" && !String(eventRow.event || "").includes("channel");
+  });
+}
+
 function writeEvents(path: string, refs: ReturnType<typeof writeEvidence>) {
   const rows = completeEventRows(refs);
+  writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+}
+
+function writeNonChannelEvents(path: string, refs: ReturnType<typeof writeEvidence>) {
+  const rows = nonChannelEventRows(refs);
   writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
 }
 
@@ -266,6 +278,63 @@ describe("friday-ui-device-capture-dir", () => {
       };
       expect(manifest.observations?.some((row) => row.evidence_ref === captures.mobile)).toBe(false);
       expect(manifest.observations?.some((row) => row.evidence_ref === join(outDir, "mobile.png"))).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("indexes non-channel captures when channel proof is explicitly deferred without claiming strict preflight", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-channel-deferred-"));
+    try {
+      const captures = writeEvidence(tempDir);
+      const events = join(tempDir, "same-run-events.jsonl");
+      const outDir = join(tempDir, "evidence");
+      writeNonChannelEvents(events, captures);
+
+      const stdout = execFileSync("node", [
+        "scripts/ops/friday-ui-device-capture-dir.mjs",
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        `--mobile=${captures.mobile}`,
+        `--desktop=${captures.desktop}`,
+        `--timeline=${captures.timeline}`,
+        `--events=${events}`,
+        "--defer-channel-proof",
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      const result = JSON.parse(stdout) as {
+        status?: string;
+        captures?: Array<{ role?: string }>;
+        preflight?: { skipped?: boolean; reason?: string; countsTowardUiDeviceProof?: boolean };
+        deferredInputs?: Array<{ role?: string; countsTowardUiDeviceProof?: boolean }>;
+        reuseSummary?: { deferredInputs?: Array<{ role?: string; countsTowardUiDeviceProof?: boolean }> };
+      };
+      expect(result.status).toBe("ready");
+      expect(result.captures?.map((capture) => capture.role).sort()).toEqual(["desktop", "mobile", "timeline"]);
+      expect(result.preflight).toEqual(expect.objectContaining({
+        skipped: true,
+        reason: "channel_deferred",
+        countsTowardUiDeviceProof: false,
+      }));
+      expect(result.deferredInputs).toContainEqual(expect.objectContaining({
+        role: "channel",
+        countsTowardUiDeviceProof: false,
+      }));
+      expect(result.reuseSummary?.deferredInputs).toContainEqual(expect.objectContaining({
+        role: "channel",
+        countsTowardUiDeviceProof: false,
+      }));
+
+      const manifest = JSON.parse(readFileSync(join(outDir, "observations-manifest.json"), "utf8")) as {
+        checks?: Record<string, boolean>;
+        deferred_inputs?: Array<{ role?: string; countsTowardUiDeviceProof?: boolean }>;
+      };
+      expect(manifest.checks?.same_mission_id_channel).toBeUndefined();
+      expect(manifest.deferred_inputs).toContainEqual(expect.objectContaining({
+        role: "channel",
+        countsTowardUiDeviceProof: false,
+      }));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
