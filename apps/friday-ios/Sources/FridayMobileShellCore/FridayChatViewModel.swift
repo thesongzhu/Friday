@@ -361,8 +361,9 @@ public final class FridayChatViewModel: ObservableObject {
   /// - Parameters:
   ///   - writeClient: the real `SealedWSWriteClient` (or a mock in tests/preview). DEFAULT
   ///     read-only / no-grant dispatch; the run-control flag lives on the client.
-  ///   - signer: the operator-signing RELAY seam (INV-1). Mock now (`MockOperatorSigner`); the
-  ///     real desktop signer (PR #671) is the slice-6 / operator-key gate.
+  ///   - signer: the operator-signing RELAY seam (INV-1). The shipped app default is
+  ///     `UnavailableOperatorSigner`; tests may inject `MockOperatorSigner` explicitly, and the
+  ///     real desktop signer (PR #671) remains the slice-6 / operator-key gate.
   public init(
     writeClient: FridayRustWriteClient,
     signer: OperatorSigner,

@@ -3,7 +3,8 @@
 # This is the v1 mobile UI shell wired to the REAL Rust clients: Home (Status + top-bar 💬
 # chat-entry + heroPet) reading the refs-only Mission Workbench projection over the package's
 # `SealedWSReadClient`, + the full-screen pet-centered Friday Chat read-WRITE / S6 surface over
-# `SealedWSWriteClient` + the `OperatorSigner` relay, + the Command Sheet launcher.
+# `SealedWSWriteClient` + the `OperatorSigner` seam. The shipped default signer fail-closes until
+# a real operator signer relay is configured; tests/previews inject the mock explicitly.
 #
 # The shell now depends on the `FridayRustClient` SPM package, which depends on swift-sodium
 # (libsodium via the vendored `Clibsodium.xcframework`). So — unlike the prior mock-only shell —

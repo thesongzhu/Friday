@@ -10,7 +10,8 @@
 // This shell now consumes the PACKAGE's real sealed-WS clients (`FridayRustClient`): the
 // Home reads the refs-only Mission Workbench projection over `SealedWSReadClient`; the
 // Friday Chat surface drives the read-WRITE / S6 loop over `SealedWSWriteClient` + the
-// `OperatorSigner` relay (mock now; the real desktop signer / PR #671 is the slice-6 gate).
+// `OperatorSigner` relay seam. The shipped default signer fail-closes until the real desktop
+// signer relay is configured; tests/previews may inject the mock signer explicitly.
 // The live `NWConnection` transport is the DEFERRED slice-6 AC, so every surface renders
 // honest-unavailable while the Rust servers are DARK — the EXPECTED state. Truth rules
 // (refs-only, truth labels never upgraded, 503/stale/offline AS truth, no key on the app,
@@ -64,7 +65,7 @@ private struct SimulatorFileDeviceKeypairBackend: DeviceKeypairBackend {
 /// INV-1: the device keypair is the X25519 SESSION keypair (transport identity) — it is NOT a
 /// signing key and CANNOT mint an approval. The operator's Ed25519 signing key lives ONLY in
 /// the desktop signer's isolated SecureStore (PR #671); on the phone the signer is an injected
-/// relay (`MockOperatorSigner` today — NOT a real signature).
+/// relay seam. The shipped default is `UnavailableOperatorSigner`, which returns no signature.
 ///
 /// The live network transport (a `NWConnection`-backed `SealedWSTransport`) is the DEFERRED
 /// slice-6 AC; until it is wired the default factory transport throws and every surface renders
@@ -81,8 +82,8 @@ final class FridaySession: ObservableObject {
   let devicePairing: DevicePairingReadiness
   let deviceKeypairBackend: DeviceKeypairBackend
   let makePairingClient: (DeviceKeypair) -> FridayPairingClient?
-  /// The operator-signing RELAY. Mock today (NOT a real signature); the real desktop signer
-  /// (PR #671) is the slice-6 / operator-key gate. The phone holds NO signing key (INV-1).
+  /// The operator-signing RELAY. The shipped default fail-closes until the real desktop signer
+  /// (PR #671) is reachable. The phone holds NO signing key (INV-1).
   let signer: OperatorSigner
 
   /// - Parameter preview: when `true`, the Home read client is the labeled `PreviewReadClient`
@@ -137,7 +138,9 @@ final class FridaySession: ObservableObject {
       self.writeClient = liveWrite ?? Self.honestUnavailableWriteClient(runControlEnabled: runControlEnabled)
       self.missionClient = liveWrite
     }
-    self.signer = MockOperatorSigner()
+    self.signer = preview
+      ? MockOperatorSigner()
+      : UnavailableOperatorSigner(error: .signerUnavailable)
   }
 
   /// The DEFAULT (non-preview) Home read client. DEFAULT = the no-key honest-unavailable client;

@@ -904,6 +904,18 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertTrue(client.resumedRunIds.isEmpty)
   }
 
+  func testApprove_unavailableProductionSignerRelaysNoResume() async {
+    let client = FakeWriteClient(
+      dispatch: .pause(makePause()),
+      resume: .accepted(ResumeRelayResult(runId: "run-1", op: "resume", accepted: true, status: "x", auditRef: nil)))
+    let vm = FridayChatViewModel(writeClient: client, signer: UnavailableOperatorSigner())
+    await vm.send("edit notes.md")
+    await vm.approve()
+    guard case .unavailable(let reason) = vm.phase else { return XCTFail("expected .unavailable") }
+    XCTAssertTrue(reason.lowercased().contains("signer unavailable"), "reason: \(reason)")
+    XCTAssertTrue(client.resumedRunIds.isEmpty, "production unavailable signer must not relay resume")
+  }
+
   // MARK: Honest-unavailable on a connection failure (the dark-server default)
 
   func testSend_transportFailure_rendersHonestUnavailable() async {
