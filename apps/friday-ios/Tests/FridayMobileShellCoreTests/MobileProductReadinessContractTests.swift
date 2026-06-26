@@ -66,6 +66,31 @@ func mobileProductContractKeepsApprovalSignatureVisible() {
 }
 
 @Test
+func mobileProductContractSurfacesBuiltReadOnlyProductActions() {
+  let passport = MobileProductDestinationID.contextPassport.contract
+  let tokenLedger = MobileProductDestinationID.tokenLedger.contract
+  let provider = MobileProductDestinationID.providerAuth.contract
+
+  #expect(passport.runtimeActionIds == [
+    "mobile/passport/checklist",
+    "mobile/passport/send",
+  ])
+  #expect(tokenLedger.runtimeActionIds == [
+    "mobile/tokenLedger/refresh",
+    "mobile/tokenLedger/run-readback",
+  ])
+  #expect(provider.runtimeActionIds == [
+    "mobile/providerAuth/check",
+    "mobile/providerAuth/provider-workspace",
+  ])
+  #expect(provider.blockers.contains { $0.kind == .needsProviderCredential })
+  #expect(provider.blockers.contains { $0.kind == .needsRuntimeEvidence })
+  #expect(!passport.isEndBarReady)
+  #expect(!tokenLedger.isEndBarReady)
+  #expect(!provider.isEndBarReady)
+}
+
+@Test
 func mobileProductContractSeparatesReadinessShellsFromProductLoops() {
   let voice = MobileProductDestinationID.voice.contract
   let workflows = MobileProductDestinationID.workflows.contract

@@ -168,14 +168,20 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
         title: "Context Passport",
         systemImage: "checklist.checked",
         tier: .liveReadProjection,
-        runtimeActionIds: ["mobile/passport/send"],
+        runtimeActionIds: [
+          "mobile/passport/checklist",
+          "mobile/passport/send",
+        ],
         blockers: [.init(.needsRuntimeEvidence, label: "real app transfer proof")])
     case .tokenLedger:
       return contract(
         title: "Token Ledger",
         systemImage: "chart.bar.doc.horizontal",
         tier: .liveReadProjection,
-        runtimeActionIds: [],
+        runtimeActionIds: [
+          "mobile/tokenLedger/refresh",
+          "mobile/tokenLedger/run-readback",
+        ],
         blockers: [.init(.needsRuntimeEvidence, label: "run-backed ledger proof")])
     case .shareIntake:
       return contract(
@@ -238,8 +244,14 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
         title: "Provider Workspace",
         systemImage: "person.badge.key",
         tier: .providerWorkspace,
-        runtimeActionIds: [],
-        blockers: [.init(.needsProviderCredential, label: "all selected provider routes")])
+        runtimeActionIds: [
+          "mobile/providerAuth/check",
+          "mobile/providerAuth/provider-workspace",
+        ],
+        blockers: [
+          .init(.needsProviderCredential, label: "all selected provider routes"),
+          .init(.needsRuntimeEvidence, label: "provider doctor app proof"),
+        ])
     case .activity:
       return contract(
         title: "Activity",
