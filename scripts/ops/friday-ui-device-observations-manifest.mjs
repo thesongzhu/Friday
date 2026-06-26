@@ -112,7 +112,7 @@ function usage() {
     --channel=/abs/channel-capture \\
     --timeline=/abs/timeline-capture \\
     --events=/abs/same-run-events.jsonl \\
-    --out=/abs/observations-manifest.json [--require-ready]
+    --out=/abs/observations-manifest.json [--defer-channel-proof] [--require-ready]
 
 Events must be captured from the same real UI/device run. This tool derives the
 manifest from those captured events; it is not proof and never invents missing
@@ -130,6 +130,8 @@ if (args.includes("--help") || args.includes("-h")) {
 }
 
 const requireReady = args.includes("--require-ready");
+const deferChannelProof = args.includes("--defer-channel-proof")
+  || process.env.FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF === "1";
 const missionId = arg("mission-id");
 const out = arg("out");
 const eventsPath = arg("events");
@@ -161,6 +163,9 @@ function evidenceKey(path) {
 }
 
 function requireFile(label, path) {
+  if (label === "channel" && deferChannelProof && !path) {
+    return "";
+  }
   if (!path) {
     block("missing_arg", label);
     return "";
@@ -243,15 +248,27 @@ if (!out) block("missing_arg", "out");
 
 const evidenceRefs = new Set(Object.values(evidence).filter(Boolean).map(evidenceKey));
 const observations = normalizedEvents(parseJsonl(eventFile), evidenceRefs);
+const activeRequiredObservations = deferChannelProof
+  ? requiredObservations.filter(([surface, event]) => surface !== "channel" && !event.includes("channel"))
+  : requiredObservations;
 
-for (const [surface, event] of requiredObservations) {
+for (const [surface, event] of activeRequiredObservations) {
   if (!hasObservation(observations, surface, event)) {
     block("missing_observation", `${surface}:${event}`);
   }
 }
 
-const checks = Object.fromEntries(requiredChecks.map((check) => [check, true]));
-const stress = Object.fromEntries(requiredStress.map((check) => [check, true]));
+const activeRequiredChecks = deferChannelProof
+  ? requiredChecks.filter((check) => !check.includes("channel"))
+  : requiredChecks;
+const activeRequiredStress = deferChannelProof
+  ? requiredStress.filter((check) => !check.includes("channel"))
+  : requiredStress;
+const activeRequiredOrder = deferChannelProof
+  ? requiredOrder.filter((event) => !event.includes("channel"))
+  : requiredOrder;
+const checks = Object.fromEntries(activeRequiredChecks.map((check) => [check, true]));
+const stress = Object.fromEntries(activeRequiredStress.map((check) => [check, true]));
 stress.mission_bound_ask_count = observations.filter((observation) => observation.event === "pressure_20_50_consecutive_asks_visible").length;
 stress.duplicate_surface_count = observations.filter((observation) => observation.event === "duplicate_preflight_visible").length;
 stress.long_timeline_page_count = observations.filter((observation) => observation.event.startsWith("bounded_page_")).length;
@@ -296,8 +313,14 @@ const manifest = {
   memory_candidates: [
     { id: "memory_candidate_review_only", confirmed: false, grants_memory_authority: false },
   ],
-  event_order: requiredOrder,
+  event_order: activeRequiredOrder,
   observations,
+  deferred_inputs: deferChannelProof ? [{
+    role: "channel",
+    status: "deferred_by_operator",
+    countsTowardUiDeviceProof: false,
+    caveat: "Channel proof is deferred. This manifest can support non-channel evidence work but cannot satisfy strict UI/device proof or END-BAR.",
+  }] : [],
 };
 
 if (out && blockers.length === 0) {
@@ -312,6 +335,7 @@ const output = {
   missionId: missionId || null,
   out: out ? abs(out) : null,
   observations: observations.length,
+  deferredInputs: manifest.deferred_inputs,
   blockers,
   next: blockers.length === 0
     ? "Use this manifest with friday-ui-device-capture-dir.mjs and the strict UI/device proof gate."

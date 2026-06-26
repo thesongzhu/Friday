@@ -289,6 +289,18 @@ function preferredSurface(surface, event) {
   return "desktop";
 }
 
+function isChannelObservationRequirement([surface, event]) {
+  return surface === "channel" || event.includes("channel");
+}
+
+function isChannelOrderEvent(event) {
+  return event.includes("channel");
+}
+
+function isChannelCheck(check) {
+  return check.includes("channel");
+}
+
 if (!missionId || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId) || !missionId.toLowerCase().includes("mission")) {
   block("mission_id_unexpected_shape", missionId || "<missing>");
 }
@@ -302,23 +314,53 @@ const observations = parseJsonl(eventFile).map((raw, index) => normalizeEvent(ra
 const manifest = parseManifest(manifestPath);
 const supportingProofRows = supportingProofs();
 
-const missingObservations = requiredObservations
+const activeRequiredObservations = deferChannelProof
+  ? requiredObservations.filter((requirement) => !isChannelObservationRequirement(requirement))
+  : requiredObservations;
+const deferredObservationRequirements = deferChannelProof
+  ? requiredObservations.filter(isChannelObservationRequirement)
+  : [];
+
+const missingObservations = activeRequiredObservations
   .filter(([surface, event]) => !hasObservation(observations, surface, event))
   .map(([surface, event]) => ({
     surface,
     event,
     preferredCapture: preferredSurface(surface, event),
   }));
+const deferredObservations = deferredObservationRequirements
+  .filter(([surface, event]) => !hasObservation(observations, surface, event))
+  .map(([surface, event]) => ({
+    surface,
+    event,
+    preferredCapture: preferredSurface(surface, event),
+    deferred: true,
+  }));
 
 const observedEvents = new Set(observations.map((observation) => observation.event));
-const missingOrderEvents = requiredOrder.filter((event) => !orderEventObserved(observedEvents, event));
+const activeRequiredOrder = deferChannelProof
+  ? requiredOrder.filter((event) => !isChannelOrderEvent(event))
+  : requiredOrder;
+const deferredOrderEvents = deferChannelProof
+  ? requiredOrder.filter((event) => isChannelOrderEvent(event) && !orderEventObserved(observedEvents, event))
+  : [];
+const missingOrderEvents = activeRequiredOrder.filter((event) => !orderEventObserved(observedEvents, event));
 const pressureAskCount = observations.filter((observation) => observation.event === "pressure_20_50_consecutive_asks_visible").length;
 const duplicateSurfaceCount = observations.filter((observation) => observation.event === "duplicate_preflight_visible").length;
 const timelinePageCount = observations.filter((observation) => observation.event.startsWith("bounded_page_")).length;
 
-const missingChecks = manifest?.checks && typeof manifest.checks === "object"
-  ? requiredChecks.filter((check) => manifest.checks[check] !== true)
+const activeRequiredChecks = deferChannelProof
+  ? requiredChecks.filter((check) => !isChannelCheck(check))
   : requiredChecks;
+const deferredChecks = deferChannelProof
+  ? requiredChecks.filter((check) => {
+      if (!isChannelCheck(check)) return false;
+      return !(manifest?.checks && typeof manifest.checks === "object" && manifest.checks[check] === true);
+    })
+  : [];
+const missingChecks = manifest?.checks && typeof manifest.checks === "object"
+  ? activeRequiredChecks.filter((check) => manifest.checks[check] !== true)
+  : activeRequiredChecks;
 
 function capturePlan(missingObservationRows, stressState) {
   const bySurface = new Map();
@@ -386,8 +428,11 @@ const gapReport = {
   },
   gaps: {
     missingObservations,
+    deferredObservations,
     missingOrderEvents,
+    deferredOrderEvents,
     missingChecks,
+    deferredChecks,
     stress: stressGaps,
   },
   capturePlan: capturePlan(missingObservations, stressGaps),
@@ -397,6 +442,9 @@ const gapReport = {
     status: "deferred_by_operator",
     countsTowardUiDeviceProof: false,
     caveat: "Channel live proof is deferred for this report-only run. This does not satisfy channel observations or END-BAR UI/device proof.",
+    missingObservations: deferredObservations,
+    missingOrderEvents: deferredOrderEvents,
+    missingChecks: deferredChecks,
   }] : [],
   blockers,
   caveat: "Gap report only. Capture missing observations from a real same-run mobile/desktop/channel/timeline run before assembling proof. Deferred inputs are never counted as proof.",

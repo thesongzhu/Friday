@@ -17,7 +17,8 @@ function usage() {
     --channel=/abs/channel-capture \\
     --timeline=/abs/timeline-capture \\
     [--observations-manifest=/abs/observations-manifest.json] \\
-    [--events=/abs/same-run-events.jsonl ...] [--events-dir=/abs/events-dir ...] [--require-ready]
+    [--events=/abs/same-run-events.jsonl ...] [--events-dir=/abs/events-dir ...] \\
+    [--defer-channel-proof] [--require-ready]
 
 Truth: this indexes already-captured files into an evidence-dir shape. It is not a
 UI/device proof and never invents observations. A supplied observations manifest,
@@ -51,6 +52,8 @@ if (args.includes("--help") || args.includes("-h")) {
 }
 
 const requireReady = args.includes("--require-ready");
+const deferChannelProof = args.includes("--defer-channel-proof")
+  || process.env.FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF === "1";
 const missionId = arg("mission-id");
 const outDir = arg("out-dir");
 const manifest = arg("observations-manifest");
@@ -83,6 +86,9 @@ function safeExt(path) {
 }
 
 function checkInput(role, path) {
+  if (role === "channel" && deferChannelProof && !path) {
+    return null;
+  }
   if (!path) {
     block("missing_capture", role);
     return null;
@@ -178,13 +184,15 @@ if (readyToWrite) {
       `--mission-id=${missionId}`,
       `--mobile=${inputByRole.mobile}`,
       `--desktop=${inputByRole.desktop}`,
-      `--channel=${inputByRole.channel}`,
       `--timeline=${inputByRole.timeline}`,
       `--out=${mergedEvents}`,
       "--require-ready",
       ...eventInputs.map((path) => `--events=${path}`),
       ...eventDirs.map((path) => `--events-dir=${path}`),
     ];
+    if (inputByRole.channel) {
+      mergeArgs.splice(4, 0, `--channel=${inputByRole.channel}`);
+    }
     const mergeResult = spawnSync(process.execPath, mergeArgs, { encoding: "utf8" });
     if (mergeResult.status !== 0) {
       copiedManifest = "";
@@ -195,10 +203,11 @@ if (readyToWrite) {
         `--mission-id=${missionId}`,
         `--mobile=${byRole.mobile}`,
         `--desktop=${byRole.desktop}`,
-        `--channel=${byRole.channel}`,
         `--timeline=${byRole.timeline}`,
         `--events=${derivedEvents}`,
         `--out=${copiedManifest}`,
+        ...(byRole.channel ? [`--channel=${byRole.channel}`] : []),
+        ...(deferChannelProof ? ["--defer-channel-proof"] : []),
         "--require-ready",
       ], { encoding: "utf8" });
       if (result.status !== 0) {
@@ -236,6 +245,12 @@ if (readyToWrite) {
         },
     mergedEvents: mergedEvents || null,
     normalizedEvents: derivedEvents || null,
+    deferredInputs: deferChannelProof ? [{
+      role: "channel",
+      status: "deferred_by_operator",
+      countsTowardUiDeviceProof: false,
+      caveat: "Channel proof is deferred. This evidence dir can support non-channel evidence work but cannot satisfy strict UI/device proof or END-BAR.",
+    }] : [],
     nextCommand: "scripts/ops/friday-ui-device-proof-readiness.sh --evidence-dir <dir> --require-proof",
     caveat: "Reuse summary only. The strict readiness/assembler/final gate must still bind hashes and observations before proof.",
   };
@@ -250,6 +265,7 @@ if (readyToWrite) {
     mergedEvents: mergedEvents || null,
     normalizedEvents: derivedEvents || null,
     reuseSummary,
+    deferredInputs: reuseSummary.deferredInputs,
     blockers,
   };
   writeFileSync(join(dir, "capture-index.json"), `${JSON.stringify(index, null, 2)}\n`);
@@ -258,22 +274,32 @@ if (readyToWrite) {
 let preflight = null;
 if (readyToWrite && copiedManifest) {
   const byRole = Object.fromEntries(written.map((capture) => [capture.role, capture.target]));
-  const result = spawnSync(process.execPath, [
-    "scripts/qa/check-mission-spine-ui-proof-inputs.mjs",
-    `--mission-id=${missionId}`,
-    `--mobile=${byRole.mobile}`,
-    `--desktop=${byRole.desktop}`,
-    `--channel=${byRole.channel}`,
-    `--timeline=${byRole.timeline}`,
-    `--manifest=${copiedManifest}`,
-  ], { encoding: "utf8" });
-  preflight = {
-    status: result.status,
-    stdout: result.stdout.trim(),
-    stderr: result.stderr.trim(),
-  };
-  if (result.status !== 0) {
-    block("ui_proof_inputs_preflight_failed", `exit_${result.status}`);
+  if (deferChannelProof) {
+    preflight = {
+      status: null,
+      skipped: true,
+      reason: "channel_deferred",
+      countsTowardUiDeviceProof: false,
+      caveat: "Strict UI proof input preflight requires channel evidence and was intentionally not claimed.",
+    };
+  } else {
+    const result = spawnSync(process.execPath, [
+      "scripts/qa/check-mission-spine-ui-proof-inputs.mjs",
+      `--mission-id=${missionId}`,
+      `--mobile=${byRole.mobile}`,
+      `--desktop=${byRole.desktop}`,
+      `--channel=${byRole.channel}`,
+      `--timeline=${byRole.timeline}`,
+      `--manifest=${copiedManifest}`,
+    ], { encoding: "utf8" });
+    preflight = {
+      status: result.status,
+      stdout: result.stdout.trim(),
+      stderr: result.stderr.trim(),
+    };
+    if (result.status !== 0) {
+      block("ui_proof_inputs_preflight_failed", `exit_${result.status}`);
+    }
   }
 }
 
@@ -288,6 +314,12 @@ const output = {
   normalizedEvents: derivedEvents || null,
   reuseSummary,
   preflight,
+  deferredInputs: deferChannelProof ? [{
+    role: "channel",
+    status: "deferred_by_operator",
+    countsTowardUiDeviceProof: false,
+    caveat: "Channel proof is deferred. This run is not strict UI/device proof or END-BAR.",
+  }] : [],
   blockers,
   next: blockers.length === 0
     ? "Run scripts/ops/friday-ui-device-proof-readiness.sh --evidence-dir <dir> --require-proof after the readiness bridge is present."

@@ -329,22 +329,31 @@ done
 set -u
 
 capture_dir_status="skipped_missing_channel_or_timeline"
-if [ -n "${channel_capture}" ] && [ -n "${timeline_capture}" ]; then
+if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_channel_proof}" = "1" ]; }; then
   capture_dir_args=(
     "${repo_root}/scripts/ops/friday-ui-device-capture-dir.mjs"
     "--mission-id=${mission_id}"
     "--out-dir=${evidence_dir}"
     "--mobile=${mobile_capture}"
     "--desktop=${desktop_capture}"
-    "--channel=${channel_capture}"
     "--timeline=${timeline_capture}"
     "--require-ready"
   )
+  if [ -n "${channel_capture}" ]; then
+    capture_dir_args+=("--channel=${channel_capture}")
+  fi
+  if [ "${defer_channel_proof}" = "1" ]; then
+    capture_dir_args+=("--defer-channel-proof")
+  fi
   for path in "${event_inputs[@]}"; do
     capture_dir_args+=("--events=${path}")
   done
   node "${capture_dir_args[@]}"
-  capture_dir_status="ready"
+  if [ "${defer_channel_proof}" = "1" ]; then
+    capture_dir_status="ready_channel_deferred_non_strict"
+  else
+    capture_dir_status="ready"
+  fi
 else
   echo "capture_dir=skipped_missing_channel_or_timeline"
 fi
@@ -360,13 +369,13 @@ for dir in "${runtime_evidence_dirs[@]}"; do
   closure_args+=("--runtime-evidence-dir=${dir}")
 done
 set -u
-if [ "${capture_dir_status}" = "ready" ]; then
+if [[ "${capture_dir_status}" == ready* ]]; then
   closure_args+=("--evidence-dir=${evidence_dir}")
 fi
 node "${closure_args[@]}"
 
 readiness_args=("${repo_root}/scripts/ops/friday-ui-device-proof-readiness.sh")
-if [ "${capture_dir_status}" = "ready" ]; then
+if [[ "${capture_dir_status}" == ready* ]]; then
   readiness_args+=("--evidence-dir" "${evidence_dir}")
 fi
 if [ -n "${backend_live_proof}" ]; then
@@ -384,18 +393,20 @@ fi
 FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS="${bundle_dir}" bash "${readiness_args[@]}" >"${readiness_out}"
 
 gap_status="skipped_missing_channel_or_timeline"
-if [ -n "${channel_capture}" ] && [ -n "${timeline_capture}" ]; then
+if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_channel_proof}" = "1" ]; }; then
   gap_args=(
     "${repo_root}/scripts/ops/friday-ui-device-proof-gap-report.mjs"
     "--mission-id=${mission_id}"
     "--events=${evidence_dir}/same-run-events.normalized.jsonl"
     "--mobile=${evidence_dir}/mobile.json"
     "--desktop=${evidence_dir}/desktop.json"
-    "--channel=${evidence_dir}/channel.json"
     "--timeline=${evidence_dir}/timeline.json"
     "--manifest=${evidence_dir}/observations-manifest.json"
     "--out=${gap_out}"
   )
+  if [ -n "${channel_capture}" ]; then
+    gap_args+=("--channel=${evidence_dir}/channel.json")
+  fi
   if [ -n "${backend_live_proof}" ]; then
     gap_args+=("--backend-live-proof=${backend_live_proof}")
   fi

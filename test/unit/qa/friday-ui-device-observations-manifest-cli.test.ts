@@ -64,6 +64,13 @@ function completeEvents(refs: ReturnType<typeof writeEvidence>) {
   return rows;
 }
 
+function nonChannelEvents(refs: ReturnType<typeof writeEvidence>) {
+  return completeEvents(refs).filter((row) => {
+    const eventRow = row as { surface?: string; event?: string };
+    return eventRow.surface !== "channel" && !String(eventRow.event || "").includes("channel");
+  });
+}
+
 function runManifest(tempDir: string, refs: ReturnType<typeof writeEvidence>, rows: unknown[], extraArgs: string[] = []) {
   const events = join(tempDir, "same-run-events.jsonl");
   const out = join(tempDir, "observations-manifest.json");
@@ -131,6 +138,56 @@ describe("friday-ui-device-observations-manifest", () => {
       expect(output.blockers).toEqual([]);
       const manifest = JSON.parse(readFileSync(out, "utf8")) as { transcript_browser?: { evidence_ref?: string } };
       expect(manifest.transcript_browser?.evidence_ref).toBe(alias);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("derives non-channel manifest inputs when channel proof is explicitly deferred", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-observations-channel-deferred-"));
+    try {
+      const refs = writeEvidence(tempDir);
+      const events = join(tempDir, "same-run-events.jsonl");
+      const out = join(tempDir, "observations-manifest.json");
+      writeJsonl(events, nonChannelEvents(refs));
+
+      const result = spawnSync("node", [
+        "scripts/ops/friday-ui-device-observations-manifest.mjs",
+        `--mission-id=${missionId}`,
+        `--mobile=${refs.mobile}`,
+        `--desktop=${refs.desktop}`,
+        `--timeline=${refs.timeline}`,
+        `--events=${events}`,
+        `--out=${out}`,
+        "--defer-channel-proof",
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as {
+        status?: string;
+        deferredInputs?: Array<{ role?: string; countsTowardUiDeviceProof?: boolean }>;
+      };
+      expect(output.status).toBe("ready");
+      expect(output.deferredInputs).toContainEqual(expect.objectContaining({
+        role: "channel",
+        countsTowardUiDeviceProof: false,
+      }));
+
+      const manifest = JSON.parse(readFileSync(out, "utf8")) as {
+        checks?: Record<string, boolean>;
+        event_order?: string[];
+        deferred_inputs?: Array<{ role?: string; countsTowardUiDeviceProof?: boolean }>;
+        observations?: Array<{ surface?: string; event?: string }>;
+      };
+      expect(manifest.checks?.same_mission_id_channel).toBeUndefined();
+      expect(manifest.checks?.channel_replay_blocked).toBeUndefined();
+      expect(manifest.event_order).not.toContain("same_mission_mobile_desktop_channel");
+      expect(manifest.observations?.some((row) => row.surface === "channel" || String(row.event).includes("channel"))).toBe(false);
+      expect(manifest.deferred_inputs).toContainEqual(expect.objectContaining({
+        role: "channel",
+        countsTowardUiDeviceProof: false,
+      }));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

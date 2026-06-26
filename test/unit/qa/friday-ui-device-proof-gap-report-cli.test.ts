@@ -223,6 +223,82 @@ describe("friday-ui-device-proof-gap-report", () => {
     }
   });
 
+  it("moves channel gaps into deferred buckets when channel proof is deferred", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-gap-report-defer-channel-"));
+    try {
+      const files = evidenceFiles(tempDir);
+      const events = join(tempDir, "events.jsonl");
+      const rows = completeRows(files)
+        .filter((row) => {
+          const eventName = (row as { event?: string }).event ?? "";
+          const surface = (row as { surface?: string }).surface ?? "";
+          return surface !== "channel" && !eventName.includes("channel");
+        });
+      writeJsonl(events, rows);
+      const manifest = join(tempDir, "manifest.json");
+      const checks = completeManifest().checks;
+      delete checks.same_mission_id_channel;
+      delete checks.channel_replay_blocked;
+      writeFileSync(manifest, JSON.stringify({ checks }, null, 2));
+
+      const result = spawnSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--events=${events}`,
+        `--mobile=${files.mobile}`,
+        `--desktop=${files.desktop}`,
+        `--timeline=${files.timeline}`,
+        `--manifest=${manifest}`,
+        "--defer-channel-proof",
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as {
+        status?: string;
+        gaps?: {
+          missingObservations?: Array<{ event?: string; surface?: string }>;
+          deferredObservations?: Array<{ event?: string; surface?: string; deferred?: boolean }>;
+          missingOrderEvents?: string[];
+          deferredOrderEvents?: string[];
+          missingChecks?: string[];
+          deferredChecks?: string[];
+        };
+        capturePlan?: Array<{ surface?: string }>;
+        deferredInputs?: Array<{
+          role?: string;
+          countsTowardUiDeviceProof?: boolean;
+          missingObservations?: unknown[];
+          missingOrderEvents?: unknown[];
+          missingChecks?: unknown[];
+        }>;
+      };
+      expect(output.status).toBe("complete_inputs_observed");
+      expect(output.gaps?.missingObservations).toEqual([]);
+      expect(output.gaps?.missingOrderEvents).toEqual([]);
+      expect(output.gaps?.missingChecks).toEqual([]);
+      expect(output.capturePlan?.some((entry) => entry.surface === "channel")).toBe(false);
+      expect(output.gaps?.deferredObservations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ surface: "channel", event: "same_mission_projection_visible", deferred: true }),
+        expect.objectContaining({ surface: "*", event: "same_mission_mobile_desktop_channel_visible", deferred: true }),
+        expect.objectContaining({ surface: "*", event: "channel_replay_blocked_visible", deferred: true }),
+      ]));
+      expect(output.gaps?.deferredOrderEvents).toEqual(["same_mission_mobile_desktop_channel"]);
+      expect(output.gaps?.deferredChecks).toEqual(expect.arrayContaining([
+        "same_mission_id_channel",
+        "channel_replay_blocked",
+      ]));
+      expect(output.deferredInputs).toContainEqual(expect.objectContaining({
+        role: "channel",
+        countsTowardUiDeviceProof: false,
+        missingObservations: output.gaps?.deferredObservations,
+        missingOrderEvents: output.gaps?.deferredOrderEvents,
+        missingChecks: output.gaps?.deferredChecks,
+      }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("accepts evidence refs that resolve to the same file through a symlink", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-gap-report-realpath-"));
     try {

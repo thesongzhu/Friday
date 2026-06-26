@@ -22,6 +22,10 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("defer_channel_proof=\"${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}\"");
     expect(source).toContain("harvest_args+=(\"--defer-channel-proof\")");
     expect(source).toContain("readiness_args+=(\"--defer-channel-proof\")");
+    expect(source).toContain("[ -n \"${timeline_capture}\" ] && { [ -n \"${channel_capture}\" ] || [ \"${defer_channel_proof}\" = \"1\" ]; }");
+    expect(source).toContain("capture_dir_args+=(\"--defer-channel-proof\")");
+    expect(source).toContain("capture_dir_status=\"ready_channel_deferred_non_strict\"");
+    expect(source).toContain("[[ \"${capture_dir_status}\" == ready* ]]");
     expect(source).toContain("gap_args+=(\"--defer-channel-proof\")");
     expect(source).toContain("real channel, timeline, stress, and negative-control evidence");
   });
