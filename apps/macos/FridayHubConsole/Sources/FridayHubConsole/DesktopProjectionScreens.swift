@@ -822,6 +822,7 @@ struct DesktopProjectionScreen: View {
       VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
         HStack {
           cardTitle("Memory Review Evidence")
+            .accessibilityIdentifier("friday.desktop.evidence.memory-review")
           Spacer()
           StatusChip(
             text: "\(snapshot.memoryCandidates.count)",
@@ -843,6 +844,7 @@ struct DesktopProjectionScreen: View {
                 .font(.system(size: 12))
                 .foregroundStyle(HubTheme.textPrimary)
                 .lineLimit(2)
+                .accessibilityIdentifier("friday.desktop.evidence.memory-candidate")
               HStack(spacing: 6) {
                 StatusChip(
                   text: candidate.state,
