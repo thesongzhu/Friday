@@ -18,10 +18,10 @@ function usage() {
     [--require-runtime-actions] [--require-ui-device-proof]
 
 Truth: this is a product-closure readiness harness. It links the operator-confirmed
-UI/UX design handoff to current native routes, ViewModel action drivers, optional
-runtime action evidence, and optional UI/device proof evidence. It never treats
-design proof, screenshots, static Swift source, or partial live write/read bundles
-as END-BAR completion.`);
+UI/UX design handoff to selected native routes, ViewModel action drivers,
+runtimeActionIds, optional runtime action evidence, and optional UI/device proof
+evidence. It never treats design proof, screenshots, static Swift source, or
+partial live write/read bundles as END-BAR completion.`);
 }
 
 function arg(name) {
@@ -235,6 +235,12 @@ const clientDesign = runJson("client_design_contract", process.execPath, [
   `${repoRoot}/scripts/ops/check-friday-client-design-contract.mjs`,
   repoRoot,
 ]);
+const nativeLinkage = runJson("uiux_native_linkage", process.execPath, [
+  `${repoRoot}/scripts/ops/check-friday-uiux-native-linkage.mjs`,
+  `--repo-root=${repoRoot}`,
+  `--design-root=${designRoot}`,
+  "--require-complete",
+]);
 const nativeAction = runJson("native_action_closure", process.execPath, [
   `${repoRoot}/scripts/ops/check-friday-native-action-closure.mjs`,
   repoRoot,
@@ -312,12 +318,14 @@ const runtimeReport = designRuntime.parsed || {};
 const readinessReport = uiDeviceReadiness?.parsed || {};
 const traceabilityReport = uiuxTraceability.parsed || {};
 const clientPassed = clientDesign.status === "passed" && clientDesign.parsed?.status === "passed";
+const nativeLinkagePassed = nativeLinkage.status === "passed" && nativeLinkage.parsed?.status === "linked";
 const nativePassed = nativeAction.status === "passed" && nativeAction.parsed?.status === "passed";
 const traceabilityPassed = uiuxTraceability.status === "passed" && ["product_runtime_actions_traceable", "traceability_gaps_present"].includes(traceabilityReport.status);
 const runtimeCovered = runtimeReport.status === "runtime_actions_covered";
 const uiDeviceProofAssembled = readinessReport.status === "pass";
 
 if (!clientPassed) block("client_design_contract_failed", String(clientDesign.exitCode));
+if (!nativeLinkagePassed) block("uiux_native_linkage_failed", nativeLinkage.parsed?.status || String(nativeLinkage.exitCode));
 if (!nativePassed) block("native_action_closure_failed", String(nativeAction.exitCode));
 if (!traceabilityPassed) block("uiux_action_traceability_failed", traceabilityReport.status || String(uiuxTraceability.exitCode));
 if (requireRuntimeActions && !runtimeCovered) block("runtime_actions_not_covered", runtimeReport.status || "unknown");
@@ -350,6 +358,12 @@ const report = {
     clientDesignContract: {
       status: clientDesign.parsed?.status || clientDesign.status,
       truthLabel: clientDesign.parsed?.truthLabel || null,
+    },
+    uiuxNativeLinkage: {
+      status: nativeLinkage.parsed?.status || nativeLinkage.status,
+      counts: nativeLinkage.parsed?.counts || null,
+      gaps: nativeLinkage.parsed?.gaps || [],
+      caveat: nativeLinkage.parsed?.caveat || "Selected-design native linkage only; not screenshot proof, live tap proof, or END-BAR.",
     },
     nativeActionClosure: {
       status: nativeAction.parsed?.status || nativeAction.status,
