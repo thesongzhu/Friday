@@ -16,6 +16,7 @@ usage:
     [--same-run-events /abs/events.jsonl ...]
     [--runtime-evidence-dir /abs/evidence-dir ...]
     [--extra-action-runtime-evidence /abs/action-runtime-evidence.json ...]
+    [--defer-channel-proof]
 
 Runs the already-proven mobile+desktop live write/read capture bundle, then
 assembles the strongest honest UI/device readiness report possible from supplied
@@ -43,6 +44,7 @@ objective_coverage="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
 channel_live_proof="${FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF:-}"
 channel_capture=""
 timeline_capture=""
+defer_channel_proof="${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}"
 accessibility_captures=()
 harvest_dirs=()
 same_run_events=()
@@ -166,6 +168,10 @@ while [ "$#" -gt 0 ]; do
       extra_action_runtime_evidence+=("${1#--extra-action-runtime-evidence=}")
       shift
       ;;
+    --defer-channel-proof)
+      defer_channel_proof=1
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -275,6 +281,9 @@ if [ "${#harvest_dirs[@]}" -gt 0 ]; then
     [ -n "${dir}" ] || continue
     harvest_args+=("--search-dir=${dir}")
   done
+  if [ "${defer_channel_proof}" = "1" ]; then
+    harvest_args+=("--defer-channel-proof")
+  fi
   node "${harvest_args[@]}"
   fill_from_harvest() {
     local field="$1"
@@ -369,6 +378,9 @@ fi
 if [ -n "${objective_coverage}" ]; then
   readiness_args+=("--objective-coverage" "${objective_coverage}")
 fi
+if [ "${defer_channel_proof}" = "1" ]; then
+  readiness_args+=("--defer-channel-proof")
+fi
 FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS="${bundle_dir}" bash "${readiness_args[@]}" >"${readiness_out}"
 
 gap_status="skipped_missing_channel_or_timeline"
@@ -392,6 +404,9 @@ if [ -n "${channel_capture}" ] && [ -n "${timeline_capture}" ]; then
   fi
   if [ -n "${objective_coverage}" ]; then
     gap_args+=("--objective-coverage=${objective_coverage}")
+  fi
+  if [ "${defer_channel_proof}" = "1" ]; then
+    gap_args+=("--defer-channel-proof")
   fi
   node "${gap_args[@]}" || true
   gap_status="written"

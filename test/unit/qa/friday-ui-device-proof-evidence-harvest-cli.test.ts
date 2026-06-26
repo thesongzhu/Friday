@@ -107,4 +107,51 @@ describe("friday-ui-device-proof-evidence-harvest", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("can report non-channel inputs while channel proof is explicitly deferred", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-harvest-channel-deferred-"));
+    try {
+      const artifacts = writeArtifacts(tempDir);
+      rmSync(artifacts.channel, { force: true });
+
+      const reportOnly = spawnSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--search-dir=${tempDir}`,
+        "--defer-channel-proof",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(reportOnly.status).toBe(0);
+      const output = JSON.parse(reportOnly.stdout) as {
+        status?: string;
+        selected?: { channel?: string };
+        deferredInputs?: Array<{ role?: string; countsTowardUiDeviceProof?: boolean }>;
+        blockers?: Array<{ code?: string; detail?: string }>;
+        captureDirCommand?: string | null;
+        proofRunnerCommand?: string;
+      };
+      expect(output.status).toBe("non_channel_inputs_ready_channel_deferred");
+      expect(output.selected?.channel).toBe("");
+      expect(output.deferredInputs).toContainEqual({
+        role: "channel",
+        status: "deferred_by_operator",
+        countsTowardUiDeviceProof: false,
+        caveat: "Channel live proof is intentionally deferred; this harvest can unblock non-channel evidence work but cannot satisfy strict UI/device proof or END-BAR.",
+      });
+      expect(output.blockers).toEqual([]);
+      expect(output.captureDirCommand).toBeNull();
+      expect(output.proofRunnerCommand).not.toContain("--channel-capture");
+
+      const strict = spawnSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--search-dir=${tempDir}`,
+        "--defer-channel-proof",
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(strict.status).toBe(2);
+      expect(JSON.parse(strict.stdout).status).toBe("non_channel_inputs_ready_channel_deferred");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
