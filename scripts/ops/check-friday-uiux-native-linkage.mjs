@@ -276,6 +276,7 @@ const requirements = [
       "friday.desktop.evidence.timeline-pages",
       "friday.desktop.evidence.transcript-browser",
       "friday.desktop.evidence.memory-review",
+      "friday.desktop.evidence.memory-candidate",
     ],
     requiredRuntimeActionIds: ["desktop/workflow/retry", "desktop/workflow/cancel", "desktop/memory/act", "desktop/memory/check"],
   },

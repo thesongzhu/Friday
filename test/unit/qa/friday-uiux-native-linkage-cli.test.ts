@@ -66,7 +66,7 @@ function writeCompleteRepo(root: string) {
   writeFile(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsole/HubConsoleShell.swift", "ProofInspector Navigation");
   writeFile(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsole/ProofInspector.swift", "ProofInspector");
   writeFile(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsole/Navigation.swift", "Navigation var isBuilt: Bool { contract.routeBuilt }");
-  writeFile(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsole/DesktopProjectionScreens.swift", "friday.desktop.provider-route-decision-card friday.desktop.provider-work-items-card friday.desktop.channels.admin friday.desktop.channels.surface-events friday.desktop.workflow.canvas friday.desktop.evidence.timeline-pages friday.desktop.evidence.transcript-browser friday.desktop.evidence.memory-review");
+  writeFile(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsole/DesktopProjectionScreens.swift", "friday.desktop.provider-route-decision-card friday.desktop.provider-work-items-card friday.desktop.channels.admin friday.desktop.channels.surface-events friday.desktop.workflow.canvas friday.desktop.evidence.timeline-pages friday.desktop.evidence.transcript-browser friday.desktop.evidence.memory-review friday.desktop.evidence.memory-candidate");
   writeFile(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsole/DesktopChatScreen.swift", "DesktopChatScreen");
   writeFile(root, "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/DesktopProductReadinessContract.swift", `
     runtimeActionIds: ["desktop/channels/receipts", "desktop/channels/surface-events"]

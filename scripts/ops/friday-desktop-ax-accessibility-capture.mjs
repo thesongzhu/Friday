@@ -109,10 +109,10 @@ const defaultActionMap = new Map([
   ["desktop/workflow/cancel", { destination: "workflow", screen: "workflow", accessibility_id: "friday.desktop.workflow.canvas", event: "mission_workbench_visible", interaction: "visible" }],
   ["desktop/channels/receipts", { destination: "channels", screen: "channels", accessibility_id: "friday.desktop.channels.admin", event: "same_mission_mobile_desktop_channel_visible", interaction: "visible" }],
   ["desktop/channels/surface-events", { destination: "channels", screen: "channels", accessibility_id: "friday.desktop.channels.surface-events", event: "same_mission_mobile_desktop_channel_visible", interaction: "visible" }],
-  ["desktop/recovery/retry", { destination: "recovery", screen: "recovery", accessibility_id: "friday.desktop.workflow.work-items", event: "reconnect_stale_verified", interaction: "visible" }],
-  ["desktop/recovery/cancel", { destination: "recovery", screen: "recovery", accessibility_id: "friday.desktop.workflow.work-items", event: "reconnect_stale_verified", interaction: "visible" }],
-  ["desktop/memory/act", { destination: "memory", screen: "memory", accessibility_id: "friday.desktop.evidence.memory-review", event: "same_mission_projection_visible", interaction: "visible" }],
-  ["desktop/memory/check", { destination: "memory", screen: "memory", accessibility_id: "friday.desktop.evidence.memory-review", event: "same_mission_projection_visible", interaction: "visible" }],
+  ["desktop/recovery/retry", { destination: "recovery", screen: "recovery", accessibility_id: "friday.desktop.recovery.retry-available", visible_text: "retry available", event: "reconnect_stale_verified", interaction: "visible" }],
+  ["desktop/recovery/cancel", { destination: "recovery", screen: "recovery", accessibility_id: "friday.desktop.recovery.cancel-available", visible_text: "cancel available", event: "reconnect_stale_verified", interaction: "visible" }],
+  ["desktop/memory/act", { destination: "memory", screen: "memory", accessibility_id: "friday.desktop.evidence.memory-candidate", visible_text: "Review-only memory candidate attached to this Mission.", event: "same_mission_projection_visible", interaction: "visible" }],
+  ["desktop/memory/check", { destination: "memory", screen: "memory", accessibility_id: "friday.desktop.evidence.memory-candidate", visible_text: "Review-only memory candidate attached to this Mission.", event: "same_mission_projection_visible", interaction: "visible" }],
 ]);
 
 function actionPlan() {
@@ -295,6 +295,15 @@ function elementMatches(element, accessibilityId) {
   return haystack.includes(accessibilityId);
 }
 
+function targetMatches(element, target) {
+  if (elementMatches(element, target.accessibility_id)) return { ok: true, match: "accessibility_id" };
+  if (target.visible_text) {
+    const haystack = [element.name, element.description].join("\n");
+    if (haystack.includes(target.visible_text)) return { ok: true, match: "visible_text" };
+  }
+  return { ok: false, match: "none" };
+}
+
 const targets = actionPlan();
 const summaryPath = outDir ? resolve(outDir, "desktop-ax-accessibility-capture-summary.json") : "";
 const capturePath = outDir ? resolve(outDir, "desktop-ax-accessibility-capture.json") : "";
@@ -423,12 +432,18 @@ if (blockers.length === 0) {
     rawSnapshots.push(`--- destination=${destination} nav=${navStatus} ---\n${raw}`);
     const elements = parseRawTree(raw);
     for (const target of destinationTargets) {
-      const matched = elements.find((element) => elementMatches(element, target.accessibility_id));
+      let matchKind = "none";
+      const matched = elements.find((element) => {
+        const result = targetMatches(element, target);
+        if (result.ok) matchKind = result.match;
+        return result.ok;
+      });
       if (!matched) {
         missingTargets.push({
           runtimeActionId: target.runtimeActionId,
           destination: target.destination,
           accessibility_id: target.accessibility_id,
+          visible_text: target.visible_text || null,
         });
         continue;
       }
@@ -443,9 +458,11 @@ if (blockers.length === 0) {
         event: target.event,
         evidence_ref: rawPath,
         captured_at: new Date().toISOString(),
+        workbench_mission_id: workbenchMissionId || null,
         matched_role: matched.role,
         matched_name: matched.name,
         matched_description: matched.description,
+        matched_by: matchKind,
       });
     }
   }
@@ -455,6 +472,7 @@ writeFileSync(rawPath, `${rawSnapshots.join("\n")}\n`);
 const capture = {
   truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
   mission_id: missionId,
+  workbench_mission_id: workbenchMissionId || null,
   surface: "desktop",
   capture_method: "macos_accessibility",
   evidence_ref: rawPath,
