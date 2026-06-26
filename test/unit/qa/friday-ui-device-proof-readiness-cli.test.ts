@@ -135,6 +135,20 @@ function writeSupportingProofs(tempDir: string) {
   return files;
 }
 
+function writeRedactedChannelProof(tempDir: string) {
+  const proof = join(tempDir, "channel-live-proof.json");
+  writeFileSync(proof, JSON.stringify({
+    proof: "mission_spine_channel_live_proof",
+    status: "passed",
+    generated_at_utc: "2026-06-05T06:10:00Z",
+    secret_policy: {
+      artifact_contains_redacted_text_only: true,
+    },
+    remaining_requirement: "real mobile/desktop/channel UI/device consumption evidence must still pass scripts/mission-spine-ui-device-proof-gate.sh",
+  }, null, 2));
+  return proof;
+}
+
 function writeWorkbenchSnapshotEvidenceDir(tempDir: string) {
   const files = {
     mobile: join(tempDir, "mobile.json"),
@@ -827,6 +841,49 @@ describe("friday-ui-device-proof-readiness", () => {
         role: "objectiveCoverage",
         status: "usable_precondition_not_ui_device_evidence",
         countsTowardUiDeviceProof: false,
+      }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("bridges redacted channel proof into same-run events without treating it as UI proof", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-channel-bridge-"));
+    try {
+      const files = writePartialEvidenceDir(tempDir);
+      const channelProof = writeRedactedChannelProof(tempDir);
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        truth?: string;
+        status?: string;
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.truth).toBe("report_only_not_ui_device_proof");
+      expect(result.status).toBe("blocked");
+      expect(result.notes).toContain(`resolved_CHANNEL_LIVE_PROOF:${channelProof}`);
+      expect(result.notes?.some((note) => note.includes("channel_proof_events_bridge:ready"))).toBe(true);
+      expect(result.notes?.some((note) => note.includes("channel_proof_events_merge:ready"))).toBe(true);
+      expect(result.notes?.some((note) => note.includes("resolved_SAME_RUN_EVENTS") && note.includes("same-run-events.with-channel.jsonl"))).toBe(true);
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+
+      const rows = readFileSync(join(tempDir, "same-run-events.with-channel.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { surface?: string; event?: string; evidence_ref?: string });
+      expect(rows).toContainEqual(expect.objectContaining({
+        surface: "channel",
+        event: "same_mission_projection_visible",
+        evidence_ref: files.channel,
       }));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });

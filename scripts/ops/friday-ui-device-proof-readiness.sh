@@ -520,7 +520,52 @@ derive_workbench_events_if_possible() {
   fi
 }
 
+derive_channel_events_if_possible() {
+  if [ -z "${CHANNEL_LIVE_PROOF:-}" ] || [ -z "${CHANNEL_EVIDENCE:-}" ] || [ -z "${MISSION_ID:-}" ]; then
+    return 0
+  fi
+
+  local derived_out
+  local existing_events
+  local merged_out
+  local stdout_out
+  if [ -n "$EVIDENCE_DIR" ]; then
+    derived_out="$(abs_path "$EVIDENCE_DIR")/channel-derived-events.jsonl"
+    merged_out="$(abs_path "$EVIDENCE_DIR")/same-run-events.with-channel.jsonl"
+  else
+    derived_out="/tmp/friday-channel-derived-events-${MISSION_ID}.jsonl"
+    merged_out="/tmp/friday-same-run-events-with-channel-${MISSION_ID}.jsonl"
+  fi
+  stdout_out="${derived_out}.stdout"
+  mkdir -p "$(dirname "$derived_out")"
+  existing_events="${SAME_RUN_EVENTS:-}"
+
+  if node "${REPO_ROOT}/scripts/ops/friday-channel-proof-events.mjs" \
+    "--mission-id=${MISSION_ID}" \
+    "--channel-live-proof=${CHANNEL_LIVE_PROOF}" \
+    "--channel-capture=${CHANNEL_EVIDENCE}" \
+    "--out=${derived_out}" >"$stdout_out"; then
+    if [ ! -s "$derived_out" ]; then
+      notes+=("channel_proof_events_bridge:no_events")
+      return 0
+    fi
+    if [ -n "$existing_events" ]; then
+      awk '!seen[$0]++' "$existing_events" "$derived_out" >"$merged_out"
+      SAME_RUN_EVENTS="$merged_out"
+      notes+=("channel_proof_events_merge:ready:${merged_out}")
+    else
+      SAME_RUN_EVENTS="$derived_out"
+    fi
+    export SAME_RUN_EVENTS
+    notes+=("channel_proof_events_bridge:ready:${derived_out}")
+  else
+    local rc=$?
+    notes+=("channel_proof_events_bridge:exit_${rc}")
+  fi
+}
+
 derive_workbench_snapshot_if_possible
+derive_channel_events_if_possible
 derive_workbench_events_if_possible
 
 have_all_evidence=1
