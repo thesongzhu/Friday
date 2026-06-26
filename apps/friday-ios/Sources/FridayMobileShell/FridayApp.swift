@@ -382,7 +382,9 @@ struct RootView: View {
         case .tokenLedger:
           FridayTokenLedgerScreen(viewModel: homeVM)
         case .shareIntake:
-          FridayShareIntakeScreen(viewModel: shareIntakeVM)
+          FridayShareIntakeScreen(viewModel: shareIntakeVM) {
+            chatOpen = true
+          }
         case .newSession:
           FridayNewSessionScreen(viewModel: newSessionVM)
         case .voice:

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct FridayShareIntakeScreen: View {
   @ObservedObject var viewModel: ShareIntakeViewModel
+  var onOpenFridayChat: () -> Void = {}
 
   var body: some View {
     ScrollView {
@@ -89,6 +90,15 @@ struct FridayShareIntakeScreen: View {
             text: receipt.createdOrReady ? "created_or_ready" : receipt.status,
             bg: MobileTheme.chipDoneBG,
             fg: MobileTheme.chipDoneFG)
+          Button {
+            onOpenFridayChat()
+          } label: {
+            Label("Continue in Chat", systemImage: "bubble.left.and.bubble.right")
+              .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.borderedProminent)
+          .tint(MobileTheme.cyan)
+          .accessibilityIdentifier("friday.share.open-chat-loop")
           Button("New share") { viewModel.reset() }
             .font(.caption)
             .foregroundStyle(MobileTheme.cyan)

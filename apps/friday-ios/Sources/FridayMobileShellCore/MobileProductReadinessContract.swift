@@ -182,7 +182,7 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
         title: "Share Intake",
         systemImage: "square.and.arrow.down",
         tier: .governedActionGated,
-        runtimeActionIds: ["mobile/share/send"],
+        runtimeActionIds: ["mobile/share/send", "mobile/share/open-chat-loop"],
         blockers: [.init(.needsRuntimeEvidence, label: "share mission-intake app proof")])
     case .voice:
       return contract(

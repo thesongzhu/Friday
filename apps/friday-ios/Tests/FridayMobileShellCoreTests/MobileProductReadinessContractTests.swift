@@ -102,7 +102,7 @@ func mobileProductContractTracksShareIntakeWriteAsBuiltButRuntimeBlocked() {
   let share = MobileProductDestinationID.shareIntake.contract
 
   #expect(share.tier == .governedActionGated)
-  #expect(share.runtimeActionIds == ["mobile/share/send"])
+  #expect(share.runtimeActionIds == ["mobile/share/send", "mobile/share/open-chat-loop"])
   #expect(!share.blockers.contains { $0.kind == .needsLiveWrite })
   #expect(share.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(!share.isEndBarReady)
