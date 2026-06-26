@@ -16,6 +16,9 @@ function usage() {
     --desktop=/abs/desktop-capture \\
     --channel=/abs/channel-capture \\
     --timeline=/abs/timeline-capture \\
+    [--mobile-extra-evidence=/abs/file ...] [--desktop-extra-evidence=/abs/file ...] \\
+    [--channel-extra-evidence=/abs/file ...] [--timeline-extra-evidence=/abs/file ...] \\
+    [--shared-extra-evidence=/abs/file ...] \\
     [--observations-manifest=/abs/observations-manifest.json] \\
     [--events=/abs/same-run-events.jsonl ...] [--events-dir=/abs/events-dir ...] \\
     [--defer-channel-proof] [--require-ready]
@@ -64,6 +67,13 @@ const inputByRole = {
   desktop: arg("desktop"),
   channel: arg("channel"),
   timeline: arg("timeline"),
+};
+const extraInputByRole = {
+  mobile: argsAll("mobile-extra-evidence"),
+  desktop: argsAll("desktop-extra-evidence"),
+  channel: argsAll("channel-extra-evidence"),
+  timeline: argsAll("timeline-extra-evidence"),
+  shared: argsAll("shared-extra-evidence"),
 };
 
 const blockers = [];
@@ -140,9 +150,13 @@ if (!outDir) {
 }
 
 const captures = Object.entries(inputByRole).map(([role, path]) => checkInput(role, path)).filter(Boolean);
+const extraCaptures = Object.entries(extraInputByRole)
+  .flatMap(([role, paths]) => paths.map((path, index) => checkInput(`${role}-extra-${index + 1}`, path)))
+  .filter(Boolean);
 const readyToWrite = blockers.length === 0 && outDir;
 
 let written = [];
+let writtenExtra = [];
 let copiedManifest = "";
 let derivedEvents = "";
 let mergedEvents = "";
@@ -163,6 +177,17 @@ if (readyToWrite) {
       truth: "copied_capture_file_not_proof",
     };
   });
+  writtenExtra = extraCaptures.map((capture) => {
+    const target = join(dir, `${capture.role}${safeExt(capture.source)}`);
+    copyFileSync(capture.source, target);
+    return {
+      ...capture,
+      target,
+      targetName: basename(target),
+      targetSha256: sha256(target),
+      truth: "copied_role_extra_evidence_file_not_proof",
+    };
+  });
 
   if (manifest) {
     const manifestSource = abs(manifest);
@@ -175,7 +200,7 @@ if (readyToWrite) {
     }
   } else if (eventInputs.length > 0 || eventDirs.length > 0) {
     const byRole = Object.fromEntries(written.map((capture) => [capture.role, capture.target]));
-    const sourceToTarget = new Map(written.map((capture) => [capture.source, capture.target]));
+    const sourceToTarget = new Map([...written, ...writtenExtra].map((capture) => [capture.source, capture.target]));
     mergedEvents = join(dir, "same-run-events.merged-source.jsonl");
     derivedEvents = join(dir, "same-run-events.normalized.jsonl");
     copiedManifest = join(dir, "observations-manifest.json");
@@ -189,6 +214,7 @@ if (readyToWrite) {
       "--require-ready",
       ...eventInputs.map((path) => `--events=${path}`),
       ...eventDirs.map((path) => `--events-dir=${path}`),
+      ...extraCaptures.map((capture) => `--extra-evidence-ref=${capture.source}`),
     ];
     if (inputByRole.channel) {
       mergeArgs.splice(4, 0, `--channel=${inputByRole.channel}`);
@@ -208,6 +234,7 @@ if (readyToWrite) {
         `--out=${copiedManifest}`,
         ...(byRole.channel ? [`--channel=${byRole.channel}`] : []),
         ...(deferChannelProof ? ["--defer-channel-proof"] : []),
+        ...writtenExtra.map((capture) => `--extra-evidence-ref=${capture.target}`),
         "--require-ready",
       ], { encoding: "utf8" });
       if (result.status !== 0) {
@@ -228,6 +255,14 @@ if (readyToWrite) {
       sha256: capture.targetSha256,
       bytes: statSync(capture.target).size,
       reusableAsUiDeviceEvidenceInput: true,
+      countsAsProofByItself: false,
+    })),
+    extraCaptures: writtenExtra.map((capture) => ({
+      role: capture.role,
+      path: capture.target,
+      sha256: capture.targetSha256,
+      bytes: statSync(capture.target).size,
+      reusableAsRoleScopedUiDeviceEvidenceInput: true,
       countsAsProofByItself: false,
     })),
     observationsManifest: copiedManifest
@@ -261,6 +296,7 @@ if (readyToWrite) {
     missionId,
     evidenceDir: dir,
     captures: written,
+    extraCaptures: writtenExtra,
     observationsManifest: copiedManifest || null,
     mergedEvents: mergedEvents || null,
     normalizedEvents: derivedEvents || null,
@@ -283,6 +319,10 @@ if (readyToWrite && copiedManifest) {
       caveat: "Strict UI proof input preflight requires channel evidence and was intentionally not claimed.",
     };
   } else {
+    const extraPreflightArgs = writtenExtra.map((capture) => {
+      if (capture.role.startsWith("shared-extra-")) return `--shared-extra-evidence=${capture.target}`;
+      return `--${capture.role.replace(/-extra-\d+$/, "")}-extra-evidence=${capture.target}`;
+    });
     const result = spawnSync(process.execPath, [
       "scripts/qa/check-mission-spine-ui-proof-inputs.mjs",
       `--mission-id=${missionId}`,
@@ -291,6 +331,7 @@ if (readyToWrite && copiedManifest) {
       `--channel=${byRole.channel}`,
       `--timeline=${byRole.timeline}`,
       `--manifest=${copiedManifest}`,
+      ...extraPreflightArgs,
     ], { encoding: "utf8" });
     preflight = {
       status: result.status,
@@ -309,6 +350,7 @@ const output = {
   missionId: missionId || null,
   evidenceDir: outDir ? abs(outDir) : null,
   captures: written,
+  extraCaptures: writtenExtra,
   observationsManifest: copiedManifest || null,
   mergedEvents: mergedEvents || null,
   normalizedEvents: derivedEvents || null,

@@ -340,6 +340,116 @@ describe("friday-ui-device-capture-dir", () => {
     }
   });
 
+  it("copies role-scoped extra evidence and remaps same-run event refs before preflight", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-extra-evidence-"));
+    try {
+      const captures = writeEvidence(tempDir);
+      const desktopAx = join(tempDir, "desktop-ax-tree.txt");
+      const events = join(tempDir, "same-run-events.jsonl");
+      const outDir = join(tempDir, "evidence");
+      writeFileSync(desktopAx, "real desktop accessibility tree bytes\n");
+      const rows = completeEventRows(captures).map((row) => (
+        row.event === "mission_resolve_or_create_visible"
+          ? observation("desktop", "mission_resolve_or_create_visible", desktopAx)
+          : row
+      ));
+      writeFileSync(events, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+
+      const stdout = execFileSync("node", [
+        "scripts/ops/friday-ui-device-capture-dir.mjs",
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        `--mobile=${captures.mobile}`,
+        `--desktop=${captures.desktop}`,
+        `--channel=${captures.channel}`,
+        `--timeline=${captures.timeline}`,
+        `--desktop-extra-evidence=${desktopAx}`,
+        `--events=${events}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      const result = JSON.parse(stdout) as {
+        status?: string;
+        extraCaptures?: Array<{ role?: string; path?: string }>;
+        preflight?: { status?: number };
+      };
+      const copiedAx = join(outDir, "desktop-extra-1.trace");
+      expect(result.status).toBe("ready");
+      expect(result.preflight?.status).toBe(0);
+      expect(result.extraCaptures).toContainEqual(expect.objectContaining({
+        role: "desktop-extra-1",
+        target: copiedAx,
+      }));
+
+      const manifest = JSON.parse(readFileSync(join(outDir, "observations-manifest.json"), "utf8")) as {
+        observations?: Array<{ event?: string; evidence_ref?: string }>;
+      };
+      expect(manifest.observations).toContainEqual(expect.objectContaining({
+        event: "mission_resolve_or_create_visible",
+        evidence_ref: copiedAx,
+      }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("copies shared extra evidence for cross-surface stress rows before preflight", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-shared-extra-evidence-"));
+    try {
+      const captures = writeEvidence(tempDir);
+      const stressReport = join(tempDir, "real-stress-source-report.json");
+      const events = join(tempDir, "same-run-events.jsonl");
+      const outDir = join(tempDir, "evidence");
+      writeFileSync(stressReport, "real same-run stress report bytes\n");
+      const rows = completeEventRows(captures).map((row) => (
+        row.event === "pressure_20_50_consecutive_asks_visible" || row.event === "no_hidden_fallback_verified"
+          ? { ...row, evidence_ref: stressReport }
+          : row
+      ));
+      writeFileSync(events, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+
+      const stdout = execFileSync("node", [
+        "scripts/ops/friday-ui-device-capture-dir.mjs",
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        `--mobile=${captures.mobile}`,
+        `--desktop=${captures.desktop}`,
+        `--channel=${captures.channel}`,
+        `--timeline=${captures.timeline}`,
+        `--shared-extra-evidence=${stressReport}`,
+        `--events=${events}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      const result = JSON.parse(stdout) as {
+        status?: string;
+        extraCaptures?: Array<{ role?: string; path?: string }>;
+        preflight?: { status?: number };
+      };
+      const copiedStress = join(outDir, "shared-extra-1.json");
+      expect(result.status).toBe("ready");
+      expect(result.preflight?.status).toBe(0);
+      expect(result.extraCaptures).toContainEqual(expect.objectContaining({
+        role: "shared-extra-1",
+        target: copiedStress,
+      }));
+
+      const manifest = JSON.parse(readFileSync(join(outDir, "observations-manifest.json"), "utf8")) as {
+        observations?: Array<{ event?: string; evidence_ref?: string }>;
+      };
+      expect(manifest.observations).toContainEqual(expect.objectContaining({
+        event: "pressure_20_50_consecutive_asks_visible",
+        evidence_ref: copiedStress,
+      }));
+      expect(manifest.observations).toContainEqual(expect.objectContaining({
+        event: "no_hidden_fallback_verified",
+        evidence_ref: copiedStress,
+      }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("merges multiple same-run event inputs before deriving the manifest", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-multi-events-"));
     try {
