@@ -11,6 +11,7 @@ usage:
     [--channel-live-proof /abs/channel-live-proof.json]
     [--channel-capture /abs/channel-capture.json]
     [--timeline-capture /abs/timeline-capture.json]
+    [--accessibility-capture /abs/real-accessibility-capture.json ...]
     [--harvest-dir /abs/artifact-dir ...]
     [--same-run-events /abs/events.jsonl ...]
     [--runtime-evidence-dir /abs/evidence-dir ...]
@@ -42,6 +43,7 @@ objective_coverage="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
 channel_live_proof="${FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF:-}"
 channel_capture=""
 timeline_capture=""
+accessibility_captures=()
 harvest_dirs=()
 same_run_events=()
 runtime_evidence_dirs=()
@@ -119,6 +121,15 @@ while [ "$#" -gt 0 ]; do
       timeline_capture="${1#--timeline-capture=}"
       shift
       ;;
+    --accessibility-capture)
+      [ "$#" -ge 2 ] || die "--accessibility-capture requires a value"
+      accessibility_captures+=("$2")
+      shift 2
+      ;;
+    --accessibility-capture=*)
+      accessibility_captures+=("${1#--accessibility-capture=}")
+      shift
+      ;;
     --harvest-dir)
       [ "$#" -ge 2 ] || die "--harvest-dir requires a value"
       harvest_dirs+=("$2")
@@ -192,7 +203,7 @@ require_file_if_set() {
 }
 
 set +u
-for path in "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
+for path in "${accessibility_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
   require_abs_if_set "input path" "${path}"
 done
 set -u
@@ -230,6 +241,27 @@ mobile_capture="${bundle_dir}/mobile/ios-live-write-read-proof.json"
 desktop_capture="${bundle_dir}/desktop/macos-live-write-read-proof.json"
 combined_events="${bundle_dir}/mobile-desktop-live-write-read-events.jsonl"
 mission_id="$(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(j.missionId || "")' "${bundle_index}")"
+
+accessibility_capture_status="skipped"
+set +u
+if [ "${#accessibility_captures[@]}" -gt 0 ]; then
+  accessibility_capture_dir="${out_dir}/accessibility-click-capture"
+  accessibility_args=(
+    "${repo_root}/scripts/ops/friday-ui-device-accessibility-click-capture.mjs"
+    "--mission-id=${mission_id}"
+    "--out-dir=${accessibility_capture_dir}"
+    "--require-ready"
+  )
+  for capture in "${accessibility_captures[@]}"; do
+    [ -n "${capture}" ] || continue
+    accessibility_args+=("--capture=${capture}")
+  done
+  node "${accessibility_args[@]}"
+  same_run_events+=("${accessibility_capture_dir}/accessibility-click-events.jsonl")
+  runtime_evidence_dirs+=("${accessibility_capture_dir}")
+  accessibility_capture_status="ready"
+fi
+set -u
 
 set +u
 if [ "${#harvest_dirs[@]}" -gt 0 ]; then
@@ -365,9 +397,9 @@ if [ -n "${channel_capture}" ] && [ -n "${timeline_capture}" ]; then
   gap_status="written"
 fi
 
-node - "${summary_out}" "${bundle_index}" "${product_closure_out}" "${readiness_out}" "${capture_dir_status}" "${gap_status}" <<'NODE'
+node - "${summary_out}" "${bundle_index}" "${product_closure_out}" "${readiness_out}" "${capture_dir_status}" "${gap_status}" "${accessibility_capture_status}" <<'NODE'
 const fs = require("node:fs");
-const [summaryOut, bundleIndexPath, productClosurePath, readinessPath, captureDirStatus, gapStatus] = process.argv.slice(2);
+const [summaryOut, bundleIndexPath, productClosurePath, readinessPath, captureDirStatus, gapStatus, accessibilityCaptureStatus] = process.argv.slice(2);
 function parseJsonSuffix(text) {
   const trimmed = String(text || "").trim();
   if (!trimmed) throw new Error("empty JSON input");
@@ -400,6 +432,7 @@ const summary = {
   captures: bundle.captures || {},
   captureDirStatus,
   gapStatus,
+  accessibilityCaptureStatus,
   productClosureStatus: closure.status,
   uiDeviceProofReadiness: closure.stages?.uiDeviceProofReadiness || null,
   readinessStatus: readiness.status,
