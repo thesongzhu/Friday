@@ -21,6 +21,10 @@ OBJECTIVE_COVERAGE="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
 WORKBENCH_DB="${FRIDAY_WORKBENCH_DB_PATH:-}"
 DESIGN_ACTION_CONTRACT="${FRIDAY_DESIGN_ACTION_CONTRACT:-}"
 DESIGN_ACTION_RUNTIME_EVIDENCE="${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE:-}"
+DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS=()
+if [ -n "${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS:-}" ]; then
+  IFS=':' read -r -a DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS <<<"${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS}"
+fi
 
 usage() {
   cat <<'EOF'
@@ -32,6 +36,7 @@ usage:
     [--workbench-db /abs/rust-hub.sqlite]
     [--design-action-contract /abs/ACTION-CONTRACT.md]
     [--design-action-runtime-evidence /abs/action-runtime-evidence.json]
+    [--design-action-runtime-evidence-dir /abs/evidence-dir]
 
 optional env for live/snapshot checks:
   FRIDAY_MISSION_WORKBENCH_URL=http://127.0.0.1:5173/mission-workbench
@@ -57,6 +62,7 @@ evidence-dir auto-discovery:
   FRIDAY_WORKBENCH_DB_PATH=/abs/rust-hub.sqlite
   FRIDAY_DESIGN_ACTION_CONTRACT=/abs/ACTION-CONTRACT.md
   FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE=/abs/action-runtime-evidence.json
+  FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS=/abs/evidence-dir:/abs/other-dir
 
   Looks for mission-id.txt or manifest mission_id plus:
     mobile.{json,trace,log,png}
@@ -66,6 +72,9 @@ evidence-dir auto-discovery:
     observations-manifest.json or ui-observations-manifest.json
     same-run-events.normalized.jsonl or same-run-events.jsonl for gap reporting
     workbench-snapshot.json or mission-workbench-snapshot.json for diagnostic event bridging
+    design action runtime evidence from action-runtime-evidence.json,
+      runtime-evidence-paths.txt, action-runtime-evidence-bundle-index.json,
+      live-write-read-bundle-index.json, or capture-index.json.
 
 truth:
   Default report-only mode never writes MISSION_SPINE_UI_DEVICE_PROOF and is not END-BAR proof.
@@ -147,6 +156,15 @@ while [ "$#" -gt 0 ]; do
       DESIGN_ACTION_RUNTIME_EVIDENCE="$2"
       shift
       ;;
+    --design-action-runtime-evidence-dir)
+      if [ "$#" -lt 2 ]; then
+        echo "FATAL: --design-action-runtime-evidence-dir requires a value" >&2
+        usage >&2
+        exit 64
+      fi
+      DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS+=("$2")
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -182,6 +200,85 @@ first_existing() {
     fi
   done
   return 1
+}
+
+discover_action_runtime_evidence_paths() {
+  node - "$@" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+function existingFile(candidate) {
+  try {
+    const stats = fs.statSync(candidate);
+    return stats.isFile() && stats.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+function readJson(candidate) {
+  if (!existingFile(candidate)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(candidate, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function pathsFromList(listPath) {
+  if (!existingFile(listPath)) return [];
+  const listDir = path.dirname(listPath);
+  return fs.readFileSync(listPath, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((candidate) => path.isAbsolute(candidate) ? candidate : path.resolve(listDir, candidate));
+}
+
+function pathsFromIndex(indexPath) {
+  const value = readJson(indexPath);
+  if (!value || typeof value !== "object") return [];
+  const indexDir = path.dirname(indexPath);
+  const arrays = [
+    value.runtime_evidence_paths,
+    value.runtimeEvidencePaths,
+    value.evidence_paths,
+  ].filter(Array.isArray).flat();
+  const singles = [
+    value.action_runtime_evidence,
+    value.actionRuntimeEvidence,
+    value.combined_action_runtime_evidence,
+    value.combinedActionRuntimeEvidence,
+  ].filter((candidate) => typeof candidate === "string" && candidate.trim());
+  return [...arrays, ...singles]
+    .filter((candidate) => typeof candidate === "string" && candidate.trim())
+    .map((candidate) => path.isAbsolute(candidate) ? candidate : path.resolve(indexDir, candidate));
+}
+
+const found = [];
+for (const rawDir of process.argv.slice(2)) {
+  if (!rawDir) continue;
+  const dir = path.resolve(rawDir);
+  found.push(
+    path.join(dir, "action-runtime-evidence.json"),
+    path.join(dir, "design-action-runtime-evidence.json"),
+    path.join(dir, "bundle", "action-runtime-evidence.json"),
+    path.join(dir, "bundle", "design-action-runtime-evidence.json"),
+    ...pathsFromList(path.join(dir, "runtime-evidence-paths.txt")),
+    ...pathsFromList(path.join(dir, "bundle", "runtime-evidence-paths.txt")),
+    ...pathsFromIndex(path.join(dir, "action-runtime-evidence-bundle-index.json")),
+    ...pathsFromIndex(path.join(dir, "live-write-read-bundle-index.json")),
+    ...pathsFromIndex(path.join(dir, "bundle", "live-write-read-bundle-index.json")),
+    ...pathsFromIndex(path.join(dir, "capture-index.json")),
+    ...pathsFromIndex(path.join(dir, "desktop", "capture-index.json")),
+    ...pathsFromIndex(path.join(dir, "mobile", "capture-index.json")),
+  );
+}
+
+for (const candidate of [...new Set(found.map((item) => path.resolve(item)))]) {
+  if (existingFile(candidate)) console.log(candidate);
+}
+NODE
 }
 
 infer_mission_id_from_manifest() {
@@ -309,7 +406,9 @@ discover_evidence_dir() {
   if [ -z "${DESIGN_ACTION_RUNTIME_EVIDENCE:-}" ]; then
     DESIGN_ACTION_RUNTIME_EVIDENCE="$(first_existing \
       "$dir/action-runtime-evidence.json" \
-      "$dir/design-action-runtime-evidence.json" || true)"
+      "$dir/design-action-runtime-evidence.json" \
+      "$dir/bundle/action-runtime-evidence.json" \
+      "$dir/bundle/design-action-runtime-evidence.json" || true)"
   fi
 }
 
@@ -536,6 +635,7 @@ run_design_action_gap_if_possible() {
   local design_gap_out
   local stdout_out
   local status
+  local -a runtime_evidence_paths=()
   if [ -n "$EVIDENCE_DIR" ]; then
     design_gap_out="$(abs_path "$EVIDENCE_DIR")/design-action-runtime-gap.json"
   else
@@ -553,8 +653,29 @@ run_design_action_gap_if_possible() {
     args+=("--evidence-dir=$(abs_path "$EVIDENCE_DIR")")
   fi
   if [ -n "${DESIGN_ACTION_RUNTIME_EVIDENCE:-}" ]; then
-    args+=("--runtime-evidence=$(abs_path "$DESIGN_ACTION_RUNTIME_EVIDENCE")")
+    IFS=':' read -r -a runtime_evidence_paths <<<"${DESIGN_ACTION_RUNTIME_EVIDENCE}"
   fi
+  set +u
+  local -a discovery_dirs=()
+  if [ -n "${EVIDENCE_DIR:-}" ]; then
+    discovery_dirs+=("$(abs_path "$EVIDENCE_DIR")")
+  fi
+  for dir in "${DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS[@]}"; do
+    [ -n "$dir" ] || continue
+    discovery_dirs+=("$(abs_path "$dir")")
+  done
+  if [ "${#discovery_dirs[@]}" -gt 0 ]; then
+    while IFS= read -r discovered_runtime_evidence; do
+      [ -n "$discovered_runtime_evidence" ] && runtime_evidence_paths+=("$discovered_runtime_evidence")
+    done < <(discover_action_runtime_evidence_paths "${discovery_dirs[@]}")
+  fi
+  set -u
+  set +u
+  for runtime_evidence in "${runtime_evidence_paths[@]}"; do
+    [ -n "$runtime_evidence" ] || continue
+    args+=("--runtime-evidence=$(abs_path "$runtime_evidence")")
+  done
+  set -u
 
   mkdir -p "$(dirname "$design_gap_out")"
   if node "${args[@]}" >"$stdout_out"; then

@@ -58,6 +58,53 @@ function writePartialEvidenceDir(tempDir: string) {
   return files;
 }
 
+function writeDesignActionContract(tempDir: string) {
+  const contract = join(tempDir, "ACTION-CONTRACT.md");
+  writeFileSync(contract, `# Friday Action Contract — mobile + desktop
+
+**This is a wiring contract for the later Rust/native agent, NOT runtime proof.** Every row is design-proof; wired_registry ≠ runtime PASS.
+
+| Surface | Screen [state] | action_id | Label | capability_id | reg | reg_status | truth_status | result/target | Rust/Hub owner · gate · test expectation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mobile | fridayChat | act | Send to Friday | ask_friday_chat_compose_send | ✓ | wired | wired_registry | result:submitted | Runtime test must prove gate enforcement. |
+| desktop | fridayChat | check | Approve | security_approval_bound_principal_gate_cat10_netnew | ✓ | wired | wired_registry | result:confirmed | Runtime test must prove gate enforcement. |
+`);
+  return contract;
+}
+
+function writeDesignActionRuntimeBundleDir(tempDir: string) {
+  const bundleDir = join(tempDir, "action-runtime-bundle");
+  const mobileRuntime = join(bundleDir, "mobile-action-runtime-evidence.json");
+  const desktopRuntime = join(bundleDir, "desktop-action-runtime-evidence.json");
+  mkdirSync(bundleDir, { recursive: true });
+  writeFileSync(mobileRuntime, JSON.stringify({
+    actions: [{
+      surface: "mobile",
+      screen: "fridayChat",
+      action_id: "act",
+      capability_id: "ask_friday_chat_compose_send",
+      status: "pass",
+      evidence_ref: "proof://mobile/send",
+    }],
+  }, null, 2));
+  writeFileSync(desktopRuntime, JSON.stringify({
+    actions: [{
+      surface: "desktop",
+      screen: "fridayChat",
+      action_id: "check",
+      capability_id: "security_approval_bound_principal_gate_cat10_netnew",
+      status: "pass",
+      evidence_ref: "proof://desktop/approve",
+    }],
+  }, null, 2));
+  writeFileSync(join(bundleDir, "action-runtime-evidence-bundle-index.json"), JSON.stringify({
+    truth: "action_runtime_evidence_bundle_partial_not_live_hub_not_endbar",
+    status: "ready",
+    runtime_evidence_paths: [mobileRuntime, desktopRuntime],
+  }, null, 2));
+  return { bundleDir, mobileRuntime, desktopRuntime };
+}
+
 function writeSupportingProofs(tempDir: string) {
   const files = {
     backend: join(tempDir, "backend-live-proof.json"),
@@ -626,6 +673,57 @@ describe("friday-ui-device-proof-readiness", () => {
         event: "same_mission_projection_visible",
         preferredCapture: "channel",
       });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers design action runtime evidence bundle indexes without downgrading UI proof truth", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-action-bundle-"));
+    try {
+      writePartialEvidenceDir(tempDir);
+      const contract = writeDesignActionContract(tempDir);
+      const bundle = writeDesignActionRuntimeBundleDir(tempDir);
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+        "--design-action-contract",
+        contract,
+        "--design-action-runtime-evidence-dir",
+        bundle.bundleDir,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        truth?: string;
+        status?: string;
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.truth).toBe("report_only_not_ui_device_proof");
+      expect(result.status).toBe("blocked");
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+      expect(result.notes?.some((note) => note.includes("design_action_runtime_gap:runtime_actions_covered"))).toBe(true);
+
+      const actionReport = JSON.parse(readFileSync(join(tempDir, "design-action-runtime-gap.json"), "utf8")) as {
+        status?: string;
+        runtimeEvidenceInputs?: string[];
+        counts?: {
+          missingRuntimeEvidence?: number;
+          missingUniqueRuntimeEvidence?: number;
+        };
+      };
+      expect(actionReport.status).toBe("runtime_actions_covered");
+      expect(actionReport.runtimeEvidenceInputs).toEqual(expect.arrayContaining([
+        bundle.mobileRuntime,
+        bundle.desktopRuntime,
+      ]));
+      expect(actionReport.counts?.missingRuntimeEvidence).toBe(0);
+      expect(actionReport.counts?.missingUniqueRuntimeEvidence).toBe(0);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
