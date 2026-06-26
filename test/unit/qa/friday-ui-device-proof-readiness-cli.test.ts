@@ -240,6 +240,42 @@ function writeLiveWriteReadBundleDir(tempDir: string) {
   return files;
 }
 
+function writeIndexedChannelTimelineEvidenceDir(tempDir: string) {
+  const files = {
+    mobile: join(tempDir, "mobile.json"),
+    desktop: join(tempDir, "desktop.json"),
+    channel: join(tempDir, "channel", "channel.json"),
+    timeline: join(tempDir, "timeline", "timeline.json"),
+    events: join(tempDir, "same-run-events.jsonl"),
+    index: join(tempDir, "capture-index.json"),
+  };
+
+  mkdirSync(join(tempDir, "channel"), { recursive: true });
+  mkdirSync(join(tempDir, "timeline"), { recursive: true });
+  writeFileSync(join(tempDir, "mission-id.txt"), `${missionId}\n`);
+  writeFileSync(files.mobile, JSON.stringify({ role: "mobile", mission_id: missionId, capture: "redacted mobile qa input" }));
+  writeFileSync(files.desktop, JSON.stringify({ role: "desktop", mission_id: missionId, capture: "redacted desktop qa input" }));
+  writeFileSync(files.channel, JSON.stringify({ role: "channel", mission_id: missionId, capture: "redacted channel qa input" }));
+  writeFileSync(files.timeline, JSON.stringify({ role: "timeline", mission_id: missionId, capture: "redacted timeline qa input" }));
+  writeFileSync(files.events, `${[
+    observation("mobile", "mission_intake_ready", files.mobile),
+    observation("desktop", "same_mission_projection_visible", files.desktop),
+    observation("channel", "same_mission_projection_visible", files.channel),
+    observation("timeline", "bounded_page_1_visible", files.timeline),
+  ].map((row) => JSON.stringify(row)).join("\n")}\n`);
+  writeFileSync(files.index, JSON.stringify({
+    truth: "ui_device_capture_index_not_full_proof",
+    status: "partial_bundle_ready",
+    mission_id: missionId,
+    captures: {
+      channel: { proof: files.channel },
+      timeline: { proof: files.timeline },
+    },
+    combinedEvents: files.events,
+  }, null, 2));
+  return files;
+}
+
 function observation(surface: string, event: string, evidenceRef: string) {
   return { surface, event, mission_id: missionId, evidence_ref: evidenceRef };
 }
@@ -687,6 +723,38 @@ describe("friday-ui-device-proof-readiness", () => {
         event: "same_mission_projection_visible",
         preferredCapture: "channel",
       });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("discovers indexed channel and timeline evidence without satisfying UI proof", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-indexed-roles-"));
+    try {
+      const files = writeIndexedChannelTimelineEvidenceDir(tempDir);
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        truth?: string;
+        status?: string;
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.truth).toBe("report_only_not_ui_device_proof");
+      expect(result.status).toBe("blocked");
+      expect(result.notes).toContain(`resolved_CHANNEL_EVIDENCE:${files.channel}`);
+      expect(result.notes).toContain(`resolved_TIMELINE_EVIDENCE:${files.timeline}`);
+      expect(result.notes).toContain(`resolved_SAME_RUN_EVENTS:${files.events}`);
+      expect(result.notes?.some((note) => note.includes("ui_device_gap_report:gaps_present"))).toBe(true);
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

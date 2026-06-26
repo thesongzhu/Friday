@@ -361,10 +361,34 @@ discover_evidence_dir() {
       "$(infer_capture_index_path "$capture_index" '.captures.desktop.proof')" || true)"
   fi
   if [ -z "${CHANNEL_EVIDENCE:-}" ]; then
-    CHANNEL_EVIDENCE="$(first_existing "$dir/channel.json" "$dir/channel.trace" "$dir/channel.log" "$dir/channel.png" || true)"
+    CHANNEL_EVIDENCE="$(first_existing \
+      "$dir/channel.json" \
+      "$dir/channel.trace" \
+      "$dir/channel.log" \
+      "$dir/channel.png" \
+      "$dir/channel/channel.json" \
+      "$dir/channel/channel.trace" \
+      "$dir/channel/channel.log" \
+      "$dir/channel/channel.png" \
+      "$(infer_capture_index_path "$capture_index" '.captures.channel.proof')" \
+      "$(infer_capture_index_path "$capture_index" '.captures.channel.capture')" \
+      "$(infer_capture_index_path "$capture_index" '.channel.proof')" \
+      "$(infer_capture_index_path "$capture_index" '.channel.capture')" || true)"
   fi
   if [ -z "${TIMELINE_EVIDENCE:-}" ]; then
-    TIMELINE_EVIDENCE="$(first_existing "$dir/timeline.json" "$dir/timeline.trace" "$dir/timeline.log" "$dir/timeline.png" || true)"
+    TIMELINE_EVIDENCE="$(first_existing \
+      "$dir/timeline.json" \
+      "$dir/timeline.trace" \
+      "$dir/timeline.log" \
+      "$dir/timeline.png" \
+      "$dir/timeline/timeline.json" \
+      "$dir/timeline/timeline.trace" \
+      "$dir/timeline/timeline.log" \
+      "$dir/timeline/timeline.png" \
+      "$(infer_capture_index_path "$capture_index" '.captures.timeline.proof')" \
+      "$(infer_capture_index_path "$capture_index" '.captures.timeline.capture')" \
+      "$(infer_capture_index_path "$capture_index" '.timeline.proof')" \
+      "$(infer_capture_index_path "$capture_index" '.timeline.capture')" || true)"
   fi
   if [ -z "${SAME_RUN_EVENTS:-}" ]; then
     SAME_RUN_EVENTS="$(first_existing \
