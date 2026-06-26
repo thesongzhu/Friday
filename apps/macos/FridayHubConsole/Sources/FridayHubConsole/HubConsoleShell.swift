@@ -161,6 +161,10 @@ struct NavRailItem: View {
       )
       .padding(.horizontal, 8)
     }
+    .accessibilityElement(children: .ignore)
+    .accessibilityAddTraits(.isButton)
+    .accessibilityLabel(Text(destination.title))
+    .accessibilityIdentifier("friday.desktop.nav.\(destination.rawValue)")
     .buttonStyle(.plain)
   }
 }
