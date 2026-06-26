@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -150,6 +150,16 @@ function abs(path) {
   return isAbsolute(path) ? path : resolve(path);
 }
 
+function evidenceKey(path) {
+  if (!path) return "";
+  const resolved = abs(path);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 function requireFile(label, path) {
   if (!path) {
     block("missing_arg", label);
@@ -204,7 +214,7 @@ function normalizedEvents(rawEvents, evidenceRefs) {
     if (eventMissionId && eventMissionId !== missionId) {
       block("event_mission_mismatch", `${label}:${eventMissionId}`);
     }
-    if (evidenceRef && !evidenceRefs.has(evidenceRef)) {
+    if (evidenceRef && !evidenceRefs.has(evidenceKey(evidenceRef))) {
       block("event_evidence_ref_unknown", `${label}:${evidenceRef}`);
     }
     return { surface, event, mission_id: eventMissionId, evidence_ref: evidenceRef };
@@ -231,7 +241,7 @@ const evidence = Object.fromEntries(Object.entries(evidenceByRole).map(([role, p
 const eventFile = requireFile("events", eventsPath);
 if (!out) block("missing_arg", "out");
 
-const evidenceRefs = new Set(Object.values(evidence).filter(Boolean));
+const evidenceRefs = new Set(Object.values(evidence).filter(Boolean).map(evidenceKey));
 const observations = normalizedEvents(parseJsonl(eventFile), evidenceRefs);
 
 for (const [surface, event] of requiredObservations) {

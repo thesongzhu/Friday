@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -167,6 +167,16 @@ function pathFor(name, envName) {
   return isAbsolute(value) ? value : resolve(value);
 }
 
+function evidenceKey(path) {
+  if (!path) return "";
+  const resolved = isAbsolute(path) ? path : resolve(path);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 function recordFailure(failures, code, detail) {
   failures.push({ code, detail });
 }
@@ -244,7 +254,7 @@ function observationExists(observations, requiredSurface, eventName, missionId, 
   return observations.some((observation) => {
     if (observation.event !== eventName) return false;
     if (requiredSurface !== "*" && observation.surface !== requiredSurface) return false;
-    return observation.mission_id === missionId && knownEvidenceRefs.has(observation.evidence_ref);
+    return observation.mission_id === missionId && knownEvidenceRefs.has(evidenceKey(observation.evidence_ref));
   });
 }
 
@@ -258,7 +268,7 @@ function isMissionIdProofEligible(value) {
 }
 
 function validateKnownEvidenceRef(value, knownEvidenceRefs, failures, code, detail) {
-  if (!knownEvidenceRefs.has(value)) {
+  if (!knownEvidenceRefs.has(evidenceKey(value))) {
     recordFailure(failures, code, detail);
   }
 }
@@ -272,7 +282,7 @@ function expectedEvidenceRefForSurface(surface, evidenceByRole) {
 }
 
 function validateEvidenceRoleRef(value, expectedValue, failures, code, detail) {
-  if (value !== expectedValue) {
+  if (evidenceKey(value) !== evidenceKey(expectedValue)) {
     recordFailure(failures, code, detail);
   }
 }
@@ -414,7 +424,7 @@ function validateManifest(manifestPath, missionId, evidenceByRole, knownEvidence
     if (pageCount < 2) {
       recordFailure(failures, "stress_timeline_page_count_low", String(pageCount));
     }
-    if (!knownEvidenceRefs.has(manifest.stress.evidence_ref)) {
+    if (!knownEvidenceRefs.has(evidenceKey(manifest.stress.evidence_ref))) {
       recordFailure(failures, "stress_evidence_ref_unknown", String(manifest.stress.evidence_ref || ""));
     }
     validateEvidenceRoleRef(
@@ -476,7 +486,7 @@ function validateManifest(manifestPath, missionId, evidenceByRole, knownEvidence
     if (observation.mission_id !== missionId) {
       recordFailure(failures, "observation_mission_mismatch", String(observation.event || "unknown"));
     }
-    if (!knownEvidenceRefs.has(observation.evidence_ref)) {
+    if (!knownEvidenceRefs.has(evidenceKey(observation.evidence_ref))) {
       recordFailure(failures, "observation_evidence_ref_unknown", String(observation.event || "unknown"));
     }
     const expectedEvidenceRef = expectedEvidenceRefForSurface(observation.surface, evidenceByRole);
@@ -527,7 +537,7 @@ const evidence = Object.entries(evidenceArgs)
   .map(([role, path]) => validateEvidence(role, path, failures))
   .filter(Boolean);
 const evidenceByRole = Object.fromEntries(evidence.map((entry) => [entry.role, entry]));
-const knownEvidenceRefs = new Set(evidence.map((entry) => entry.path));
+const knownEvidenceRefs = new Set(evidence.map((entry) => evidenceKey(entry.path)));
 validateManifest(manifestPath, missionId, evidenceByRole, knownEvidenceRefs, failures);
 
 const readyForAssemble = failures.length === 0;
