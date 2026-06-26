@@ -828,6 +828,9 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertEqual(
       vm.contextCards.first?.evidenceRef,
       "swift://mobile/fridayChat/launch-context/mission-mobile-share-fixed")
+    XCTAssertEqual(
+      context.evidenceRef,
+      "swift://mobile/fridayChat/launch-context/mission-mobile-share-fixed")
     XCTAssertTrue(context.composerPrefill.contains("mission_id=mission-mobile-share-fixed"))
     XCTAssertTrue(context.composerPrefill.contains("work_item_id=work-mobile-share-fixed"))
     XCTAssertTrue(context.composerPrefill.contains("surface_thread_id=surface-mobile-share-fixed"))
