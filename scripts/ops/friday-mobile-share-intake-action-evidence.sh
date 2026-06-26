@@ -67,6 +67,13 @@ if (!fs.existsSync(source)) {
       && row.capability_id === "ask_friday_chat"
       && row.status === "pass");
     if (!found) blockers.push({ code: "missing_share_intake_send_action", detail: source });
+    const foundOpenChatLoop = actions.some((row) =>
+      row.surface === "mobile"
+      && row.screen === "shareIntake"
+      && row.action_id === "mobile/share/open-chat-loop"
+      && row.capability_id === "ask_friday_chat"
+      && row.status === "pass");
+    if (!foundOpenChatLoop) blockers.push({ code: "missing_share_intake_open_chat_loop_action", detail: source });
   }
 }
 

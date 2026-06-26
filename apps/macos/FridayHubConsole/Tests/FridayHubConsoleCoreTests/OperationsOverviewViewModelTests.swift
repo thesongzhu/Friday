@@ -24,6 +24,41 @@ func refreshLoadsRepresentativeSnapshot() async {
   #expect(snapshot?.missionId == "mission_workbench_probe_20260605")
   #expect(snapshot?.runtimeFeedStatus == .liveRustHubProjection)
   #expect(vm.devicePairing == readiness)
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "operations-refresh",
+    screen: "operations",
+    additionalScreens: ["channels"],
+    actionId: "desktop/operations/refresh",
+    capabilityId: "desktop_operations_live_read_projection",
+    evidenceRef: "swift://desktop/operations/refresh/mission_workbench_probe_20260605",
+    source: "macos_operations_viewmodel_refresh_runtime",
+    proof: [
+      "mission_id": snapshot?.missionId ?? "",
+      "runtime_feed_status": snapshot?.runtimeFeedStatus.rawValue ?? "",
+      "channel_receipt_refs": snapshot?.channelReceiptRefs ?? [],
+      "provider_receipt_refs": snapshot?.providerReceiptRefs ?? [],
+    ])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "channels-receipts",
+    screen: "channels",
+    actionId: "desktop/channels/receipts",
+    capabilityId: "desktop_channels_receipt_projection",
+    evidenceRef: "swift://desktop/channels/receipts/mission_workbench_probe_20260605",
+    source: "macos_operations_viewmodel_refresh_runtime",
+    proof: [
+      "channel_receipt_refs": snapshot?.channelReceiptRefs ?? [],
+      "provider_receipt_refs": snapshot?.providerReceiptRefs ?? [],
+    ])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "channels-surface-events",
+    screen: "channels",
+    actionId: "desktop/channels/surface-events",
+    capabilityId: "desktop_channels_surface_event_projection",
+    evidenceRef: "swift://desktop/channels/surface-events/mission_workbench_probe_20260605",
+    source: "macos_operations_viewmodel_refresh_runtime",
+    proof: [
+      "channel_receipt_refs": snapshot?.channelReceiptRefs ?? [],
+    ])
 }
 
 @Test
@@ -1114,11 +1149,13 @@ func loadDetailCallsRunAndNeedsMeReadArms() async {
 func loadDetailCallsSessionAndRunFileReadArms() async {
   let client = DetailReadClient()
   let vm = OperationsOverviewViewModel(client: client)
+  await vm.loadDetail(.sessionList)
   await vm.loadDetail(.sessionOpen(agentSessionId: "session-desktop"))
   await vm.loadDetail(.sessionLinkState(agentSessionId: "session-desktop"))
   await vm.loadDetail(.runFileView(runId: "run-desktop"))
 
   #expect(client.requested == [
+    "sessions",
     "session-open:session-desktop",
     "session-link:session-desktop",
     "run-files:run-desktop",
@@ -1129,6 +1166,30 @@ func loadDetailCallsSessionAndRunFileReadArms() async {
   }
   #expect(detail.title == "Run files")
   #expect(detail.refs.contains("proof://run-files/run-desktop"))
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "session-list",
+    screen: "session",
+    actionId: "desktop/session/list",
+    capabilityId: "desktop_session_read_projection",
+    evidenceRef: "swift://desktop/session/list",
+    source: "macos_operations_viewmodel_detail_read_runtime",
+    proof: ["requested": client.requested])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "session-open",
+    screen: "session",
+    actionId: "desktop/session/open",
+    capabilityId: "desktop_session_read_projection",
+    evidenceRef: "swift://desktop/session/open/session-desktop",
+    source: "macos_operations_viewmodel_detail_read_runtime",
+    proof: ["requested": client.requested])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "session-link",
+    screen: "session",
+    actionId: "desktop/session/link",
+    capabilityId: "desktop_session_read_projection",
+    evidenceRef: "swift://desktop/session/link/session-desktop",
+    source: "macos_operations_viewmodel_detail_read_runtime",
+    proof: ["requested": client.requested])
 }
 
 @Test
@@ -1591,6 +1652,31 @@ func retryWorkItemSendsLifecycleWriteAndRefreshes() async {
   }
   #expect(summary.contains("ready_to_dispatch"))
   #expect(summary.contains("previous=failed_retryable"))
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "workflow-retry",
+    screen: "workflow",
+    additionalScreens: ["recovery"],
+    actionId: "desktop/workflow/retry",
+    capabilityId: "desktop_work_item_lifecycle_control",
+    evidenceRef: "swift://desktop/workflow/retry/work-stale-1",
+    source: "macos_operations_viewmodel_work_item_lifecycle_runtime",
+    proof: [
+      "work_item_id": write.lastWorkItemStatus?.workItemId ?? "",
+      "target_status": write.lastWorkItemStatus?.targetStatus ?? "",
+      "actor_ref": write.lastWorkItemStatus?.actorRef ?? "",
+      "reason": write.lastWorkItemStatus?.reason ?? "",
+    ])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "recovery-retry",
+    screen: "recovery",
+    actionId: "desktop/recovery/retry",
+    capabilityId: "desktop_recovery_lifecycle_control",
+    evidenceRef: "swift://desktop/recovery/retry/work-stale-1",
+    source: "macos_operations_viewmodel_work_item_lifecycle_runtime",
+    proof: [
+      "work_item_id": write.lastWorkItemStatus?.workItemId ?? "",
+      "target_status": write.lastWorkItemStatus?.targetStatus ?? "",
+    ])
 }
 
 @Test
@@ -1625,6 +1711,31 @@ func cancelWorkItemSendsLifecycleWriteAndRefreshes() async {
     return
   }
   #expect(summary.contains("cancelled"))
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "workflow-cancel",
+    screen: "workflow",
+    additionalScreens: ["recovery"],
+    actionId: "desktop/workflow/cancel",
+    capabilityId: "desktop_work_item_lifecycle_control",
+    evidenceRef: "swift://desktop/workflow/cancel/work-inflight-1",
+    source: "macos_operations_viewmodel_work_item_lifecycle_runtime",
+    proof: [
+      "work_item_id": write.lastWorkItemStatus?.workItemId ?? "",
+      "target_status": write.lastWorkItemStatus?.targetStatus ?? "",
+      "actor_ref": write.lastWorkItemStatus?.actorRef ?? "",
+      "reason": write.lastWorkItemStatus?.reason ?? "",
+    ])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "recovery-cancel",
+    screen: "recovery",
+    actionId: "desktop/recovery/cancel",
+    capabilityId: "desktop_recovery_lifecycle_control",
+    evidenceRef: "swift://desktop/recovery/cancel/work-inflight-1",
+    source: "macos_operations_viewmodel_work_item_lifecycle_runtime",
+    proof: [
+      "work_item_id": write.lastWorkItemStatus?.workItemId ?? "",
+      "target_status": write.lastWorkItemStatus?.targetStatus ?? "",
+    ])
 }
 
 @Test

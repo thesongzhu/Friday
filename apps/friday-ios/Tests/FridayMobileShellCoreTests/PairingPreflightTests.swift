@@ -352,23 +352,37 @@ private func writeFirstLaunchActionEvidenceIfRequested(
     return
   }
 
+  var actions: [[String: Any]] = [
+    [
+      "surface": "mobile",
+      "screen": "firstLaunch",
+      "action_id": actionId,
+      "capability_id": "trust_center_pairing_connected_devices",
+      "status": "pass",
+      "evidence_ref": evidenceRef,
+      "source": "ios_home_viewmodel_firstlaunch_pairing_action_runtime",
+      "truth_label": "swift_viewmodel_pairing_action_runtime_not_live_hub_not_sim_tap",
+    ],
+  ]
+  if actionId == "firstlaunch_scan" {
+    actions.append([
+      "surface": "mobile",
+      "screen": "onboarding",
+      "action_id": "mobile/onboarding/open-device-pairing",
+      "capability_id": "trust_center_pairing_connected_devices",
+      "status": "pass",
+      "evidence_ref": "swift://mobile/onboarding/open-device-pairing",
+      "source": "ios_home_viewmodel_firstlaunch_pairing_action_runtime",
+      "truth_label": "swift_viewmodel_pairing_action_runtime_not_live_hub_not_sim_tap",
+    ])
+  }
+
   let payload: [String: Any] = [
     "truth": "mobile_firstlaunch_pairing_action_swift_viewmodel_runtime_not_live_hub_not_endbar",
     "status": "ready",
     "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
     "proof": proof,
-    "actions": [
-      [
-        "surface": "mobile",
-        "screen": "firstLaunch",
-        "action_id": actionId,
-        "capability_id": "trust_center_pairing_connected_devices",
-        "status": "pass",
-        "evidence_ref": evidenceRef,
-        "source": "ios_home_viewmodel_firstlaunch_pairing_action_runtime",
-        "truth_label": "swift_viewmodel_pairing_action_runtime_not_live_hub_not_sim_tap",
-      ],
-    ],
+    "actions": actions,
     "caveat": "Partial runtime evidence only: Swift product ViewModel and Home wiring cover firstLaunch Retry/Cancel semantics. This is not a real simulator tap, not a live Hub PairAck proof, not END-BAR, and not adoption.",
   ]
 

@@ -132,6 +132,23 @@ final class NewSessionViewModelTests: XCTestCase {
             "delivery_route": "ios://friday-mobile/new-session/fixed",
           ],
         ],
+        [
+          "surface": "mobile",
+          "screen": "newSession",
+          "action_id": "mobile/newSession/open-chat-loop",
+          "capability_id": "session_control_native_set",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/newSession/open-chat-loop/mission-mobile-new-session-fixed",
+          "proof": [
+            "mission_id": "mission-mobile-new-session-fixed",
+            "work_item_id": "work-mobile-new-session-fixed",
+            "surface_thread_id": "surface-mobile-new-session-fixed",
+            "status": "ready",
+            "created_or_ready": true,
+            "surface_kind": "mobile",
+            "delivery_route": "ios://friday-mobile/new-session/fixed",
+          ],
+        ],
       ],
     ]
     let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])

@@ -102,6 +102,10 @@ import Testing
   #expect(vm.state.manifestPath == "/tmp/friday-pairing.json")
   #expect(vm.redactedSummary.contains("/tmp/friday-pairing.json"))
   #expect(vm.canRenderQRCode)
+  try writeDesktopPairingActionEvidenceIfRequested(
+    manifestPath: vm.state.manifestPath ?? "",
+    hubId: vm.state.projection?.hubId ?? "",
+    pairingId: vm.state.projection?.pairingId ?? "")
 }
 
 @MainActor
@@ -251,4 +255,47 @@ private func pairingManifestJSON(
     "capabilities_hint": ["read", "write"]
   }
   """
+}
+
+private func writeDesktopPairingActionEvidenceIfRequested(
+  manifestPath: String,
+  hubId: String,
+  pairingId: String
+) throws {
+  guard let rawDir = ProcessInfo.processInfo.environment[
+    "FRIDAY_DESKTOP_PAIRING_ACTION_EVIDENCE_DIR"
+  ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+    return
+  }
+
+  let payload: [String: Any] = [
+    "truth": "desktop_pairing_manifest_swift_viewmodel_runtime_not_live_hub_not_endbar",
+    "status": "ready",
+    "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+    "proof": [
+      "manifest_path": manifestPath,
+      "hub_id": hubId,
+      "pairing_id": pairingId,
+    ],
+    "actions": [
+      [
+        "surface": "desktop",
+        "screen": "pairingProvisioning",
+        "action_id": "desktop/pairing/manifest",
+        "capability_id": "desktop_pairing_manifest_readiness",
+        "status": "pass",
+        "evidence_ref": "swift://desktop/pairing/manifest/\(pairingId)",
+        "source": "macos_pairing_provisioning_viewmodel_runtime",
+        "truth_label": "swift_viewmodel_pairing_manifest_runtime_not_live_hub_not_gui_tap",
+      ],
+    ],
+    "caveat": "Partial runtime evidence only: macOS PairingProvisioning ViewModel loads a redacted pairing manifest from the launcher. This is not live PairAck, not trust-grant minting, not a GUI tap, not END-BAR, and not adoption.",
+  ]
+
+  let dir = URL(fileURLWithPath: rawDir)
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  let out = dir.appendingPathComponent("desktop-pairing-action-evidence.json")
+  let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+  try data.write(to: out, options: .atomic)
+  print("[desktop-pairing-action-evidence] proofOut=\(out.path)")
 }

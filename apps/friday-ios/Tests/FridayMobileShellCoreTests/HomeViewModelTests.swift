@@ -453,6 +453,9 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(p.t3ProvisioningStatus?.checklistRows.last?.statusText, "shared")
     XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile surface read the mission projection.")
     XCTAssertEqual(p.needsMeCount, 4)
+    try writeMobileTokenLedgerActionEvidenceIfRequested(
+      runId: try XCTUnwrap(p.tokenLedgerRunId),
+      evidenceRef: "proof://run/run-1")
   }
 
   func testProviderWorkItemsOnlyIncludesProviderLinkedRows() throws {
@@ -623,6 +626,8 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(detail.providerReadiness?.suggestedTextRoute, "codex")
     XCTAssertEqual(detail.providerReadiness?.suggestedStrongRoute, "codex")
     XCTAssertEqual(detail.providerReadiness?.keyValidationProbed, true)
+    try writeMobileProviderAuthActionEvidenceIfRequested(
+      providerReadiness: try XCTUnwrap(detail.providerReadiness))
   }
 
   func testProviderReadinessRequiresProviderDoctorTruthLabel() throws {
@@ -766,6 +771,9 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(
       vm.activityMarkDoneStates["activity-1"],
       .confirmed(summary: "done · activity_id=activity-1"))
+    try writeMobileActivityActionEvidenceIfRequested(
+      request: try XCTUnwrap(write.activityMarkDoneRequests.first),
+      result: ActivityMarkDoneResultWire(activityId: "activity-1", state: "done", status: "done"))
   }
 
   func testMarkActivityDoneBlockedRendersErrorNotConfirmed() async throws {
@@ -805,6 +813,10 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(
       vm.workItemStatusStates["wi-2"],
       .confirmed(summary: "ready_to_dispatch · work_item_id=wi-2 · previous=unknown"))
+    try writeMobileWorkflowActionEvidenceIfRequested(
+      actionId: "mobile/workflow/retry",
+      request: try XCTUnwrap(write.workItemStatusRequests.first),
+      resultStatus: "ready_to_dispatch")
   }
 
   func testCancelWorkItemSendsLifecycleWriteAndRefreshes() async throws {
@@ -826,6 +838,10 @@ final class HomeViewModelTests: XCTestCase {
     XCTAssertEqual(
       vm.workItemStatusStates["wi-2"],
       .confirmed(summary: "cancelled · work_item_id=wi-2 · previous=unknown"))
+    try writeMobileWorkflowActionEvidenceIfRequested(
+      actionId: "mobile/workflow/cancel",
+      request: try XCTUnwrap(write.workItemStatusRequests.first),
+      resultStatus: "cancelled")
   }
 
   func testRetryWorkItemGuardDoesNotWriteWhenProjectionSaysNotRetryable() async throws {
@@ -1092,6 +1108,200 @@ final class HomeViewModelTests: XCTestCase {
     let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
     try data.write(to: out, options: .atomic)
     print("[mobile-memory-action-evidence] proofOut=\(out.path)")
+  }
+
+  private func writeMobileTokenLedgerActionEvidenceIfRequested(
+    runId: String,
+    evidenceRef: String
+  ) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment[
+      "FRIDAY_MOBILE_TOKEN_LEDGER_ACTION_EVIDENCE_DIR"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+      return
+    }
+
+    let proof: [String: Any] = [
+      "truth": "mobile_token_ledger_swift_projection_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+      "run_id": runId,
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": "tokenLedger",
+          "action_id": "mobile/tokenLedger/refresh",
+          "capability_id": "token_ledger_readback",
+          "status": "pass",
+          "evidence_ref": evidenceRef,
+          "source": "ios_home_projection_token_ledger_ref_runtime",
+          "truth_label": "swift_viewmodel_read_projection_runtime_not_live_hub_not_sim_tap",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "tokenLedger",
+          "action_id": "mobile/tokenLedger/run-readback",
+          "capability_id": "token_ledger_readback",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/tokenLedger/run-readback/\(runId)",
+          "source": "ios_home_projection_token_ledger_ref_runtime",
+          "truth_label": "swift_viewmodel_read_projection_runtime_not_live_hub_not_sim_tap",
+        ],
+      ],
+      "caveat": "Partial runtime evidence only: iOS HomeProjection exposes a run ref for Token Ledger readback. This is not a live Hub token ledger query, not a simulator tap, not END-BAR, and not adoption.",
+    ]
+
+    let dir = URL(fileURLWithPath: rawDir)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let out = dir.appendingPathComponent("mobile-token-ledger-action-evidence.json")
+    let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: out, options: .atomic)
+    print("[mobile-token-ledger-action-evidence] proofOut=\(out.path)")
+  }
+
+  private func writeMobileProviderAuthActionEvidenceIfRequested(
+    providerReadiness: HomeProviderReadinessDetail
+  ) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment[
+      "FRIDAY_MOBILE_PROVIDER_AUTH_ACTION_EVIDENCE_DIR"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+      return
+    }
+
+    let proof: [String: Any] = [
+      "truth": "mobile_provider_auth_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+      "provider_readiness": [
+        "truth_label": providerReadiness.truthLabel,
+        "proof_only": providerReadiness.proofOnly,
+        "ok": providerReadiness.ok,
+        "ready_providers": providerReadiness.readyProviders,
+        "suggested_text_route": providerReadiness.suggestedTextRoute.map { $0 as Any } ?? NSNull(),
+        "suggested_strong_route": providerReadiness.suggestedStrongRoute.map { $0 as Any } ?? NSNull(),
+        "key_validation_probed": providerReadiness.keyValidationProbed.map { $0 as Any } ?? NSNull(),
+      ],
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": "providerAuth",
+          "action_id": "mobile/providerAuth/check",
+          "capability_id": "provider_workspace_doctor_readiness",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/providerAuth/check",
+          "source": "ios_home_viewmodel_provider_doctor_runtime",
+          "truth_label": "swift_viewmodel_provider_doctor_read_runtime_not_live_hub_not_sim_tap",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "providerAuth",
+          "action_id": "mobile/providerAuth/provider-workspace",
+          "capability_id": "provider_workspace_doctor_readiness",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/providerAuth/provider-workspace",
+          "source": "ios_home_viewmodel_provider_doctor_runtime",
+          "truth_label": "swift_viewmodel_provider_workspace_read_runtime_not_live_hub_not_sim_tap",
+        ],
+      ],
+      "caveat": "Partial runtime evidence only: iOS Provider Workspace delegates to the provider-doctor read arm and renders refs-only readiness. This is not a live provider auth ceremony, not provider secret custody, not a simulator tap, not END-BAR, and not adoption.",
+    ]
+
+    let dir = URL(fileURLWithPath: rawDir)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let out = dir.appendingPathComponent("mobile-provider-auth-action-evidence.json")
+    let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: out, options: .atomic)
+    print("[mobile-provider-auth-action-evidence] proofOut=\(out.path)")
+  }
+
+  private func writeMobileActivityActionEvidenceIfRequested(
+    request: ActivityMarkDoneRequestWire,
+    result: ActivityMarkDoneResultWire
+  ) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment[
+      "FRIDAY_MOBILE_ACTIVITY_ACTION_EVIDENCE_DIR"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+      return
+    }
+
+    let proof: [String: Any] = [
+      "truth": "mobile_activity_mark_done_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+      "request": [
+        "activity_id": request.activityId,
+        "reason": request.reason,
+      ],
+      "result": [
+        "activity_id": result.activityId,
+        "state": result.state,
+        "status": result.status,
+      ],
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": "activity",
+          "action_id": "mobile/activity/mark-done",
+          "capability_id": "activity_mark_done_owner_bound",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/activity/mark-done/\(request.activityId)",
+          "source": "ios_home_viewmodel_activity_mark_done_runtime",
+          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_sim_tap",
+        ],
+      ],
+      "caveat": "Partial runtime evidence only: iOS Home ViewModel delegates Activity mark-done to the governed write seam and renders refs-only status. This is not a live Hub audit receipt, not a simulator tap, not END-BAR, and not adoption.",
+    ]
+
+    let dir = URL(fileURLWithPath: rawDir)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let out = dir.appendingPathComponent("mobile-activity-action-evidence.json")
+    let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: out, options: .atomic)
+    print("[mobile-activity-action-evidence] proofOut=\(out.path)")
+  }
+
+  private func writeMobileWorkflowActionEvidenceIfRequested(
+    actionId: String,
+    request: WorkItemStatusRequestWire,
+    resultStatus: String
+  ) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment[
+      "FRIDAY_MOBILE_WORKFLOW_ACTION_EVIDENCE_DIR"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+      return
+    }
+
+    let proof: [String: Any] = [
+      "truth": "mobile_workflow_lifecycle_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+      "request": [
+        "work_item_id": request.workItemId,
+        "target_status": request.targetStatus,
+        "actor_ref": request.actorRef,
+        "reason": request.reason,
+      ],
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": "workflows",
+          "action_id": actionId,
+          "capability_id": "work_item_lifecycle_control",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/workflow/\(resultStatus)/\(request.workItemId)",
+          "source": "ios_home_viewmodel_work_item_lifecycle_runtime",
+          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_sim_tap",
+        ],
+      ],
+      "caveat": "Partial runtime evidence only: iOS Home ViewModel delegates workflow lifecycle actions to the governed write seam and renders refs-only status. This is not a live Hub audit receipt, not a simulator tap, not END-BAR, and not adoption.",
+    ]
+
+    let dir = URL(fileURLWithPath: rawDir)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let safe = actionId.replacingOccurrences(of: "/", with: "-")
+    let out = dir.appendingPathComponent("\(safe)-action-evidence.json")
+    let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: out, options: .atomic)
+    print("[mobile-workflow-action-evidence] proofOut=\(out.path)")
   }
 
   private func writeMobilePassportTransferActionEvidenceIfRequested(

@@ -240,6 +240,24 @@ const nativeAction = runJson("native_action_closure", process.execPath, [
   repoRoot,
 ]);
 
+const traceabilityArgs = [
+  `${repoRoot}/scripts/ops/check-friday-uiux-action-traceability.mjs`,
+  `--repo-root=${repoRoot}`,
+  `--design-root=${designRoot}`,
+  "--compact",
+];
+for (const evidence of runtimeEvidence) {
+  if (validAbsoluteFile(evidence, "runtime-evidence")) {
+    traceabilityArgs.push(`--runtime-evidence=${abs(evidence)}`);
+  }
+}
+for (const dir of runtimeEvidenceDirs) {
+  const resolved = abs(dir);
+  if (existsSync(resolved)) traceabilityArgs.push(`--evidence-dir=${resolved}`);
+}
+if (evidenceDir && existsSync(abs(evidenceDir))) traceabilityArgs.push(`--evidence-dir=${abs(evidenceDir)}`);
+const uiuxTraceability = runJson("uiux_action_traceability", process.execPath, traceabilityArgs);
+
 const designRuntimeArgs = [
   `${repoRoot}/scripts/ops/check-friday-design-action-runtime-evidence.mjs`,
   `--repo-root=${repoRoot}`,
@@ -292,13 +310,16 @@ if (existsSync(`${repoRoot}/scripts/ops/friday-ui-device-proof-readiness.sh`)) {
 
 const runtimeReport = designRuntime.parsed || {};
 const readinessReport = uiDeviceReadiness?.parsed || {};
+const traceabilityReport = uiuxTraceability.parsed || {};
 const clientPassed = clientDesign.status === "passed" && clientDesign.parsed?.status === "passed";
 const nativePassed = nativeAction.status === "passed" && nativeAction.parsed?.status === "passed";
+const traceabilityPassed = uiuxTraceability.status === "passed" && ["product_runtime_actions_traceable", "traceability_gaps_present"].includes(traceabilityReport.status);
 const runtimeCovered = runtimeReport.status === "runtime_actions_covered";
 const uiDeviceProofAssembled = readinessReport.status === "pass";
 
 if (!clientPassed) block("client_design_contract_failed", String(clientDesign.exitCode));
 if (!nativePassed) block("native_action_closure_failed", String(nativeAction.exitCode));
+if (!traceabilityPassed) block("uiux_action_traceability_failed", traceabilityReport.status || String(uiuxTraceability.exitCode));
 if (requireRuntimeActions && !runtimeCovered) block("runtime_actions_not_covered", runtimeReport.status || "unknown");
 if (requireUiDeviceProof && !uiDeviceProofAssembled) block("ui_device_proof_not_assembled", readinessReport.status || "unknown");
 
@@ -335,6 +356,12 @@ const report = {
       passed: nativeAction.parsed?.summary?.passed ?? null,
       failed: nativeAction.parsed?.summary?.failed ?? null,
       truthLabel: nativeAction.parsed?.truthLabel || null,
+    },
+    uiuxActionTraceability: {
+      status: traceabilityReport.status || uiuxTraceability.status,
+      counts: traceabilityReport.counts || null,
+      bySurface: traceabilityReport.bySurface || null,
+      gaps: traceabilityReport.gaps || null,
     },
     designActionRuntime: {
       status: runtimeReport.status || designRuntime.status,

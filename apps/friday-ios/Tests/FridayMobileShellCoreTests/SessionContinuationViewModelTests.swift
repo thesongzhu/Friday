@@ -890,6 +890,16 @@ final class SessionContinuationViewModelTests: XCTestCase {
           "source": "ios_session_continuation_viewmodel_stop_runtime",
           "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_sim_tap",
         ],
+        [
+          "surface": "mobile",
+          "screen": "workflow",
+          "action_id": "mobile/workflow/cancel",
+          "capability_id": "session_control_native_set",
+          "status": "pass",
+          "evidence_ref": "swift://mobile/workflow/cancel/\(runId)",
+          "source": "ios_session_continuation_viewmodel_stop_runtime",
+          "truth_label": "swift_viewmodel_write_client_runtime_not_live_hub_not_sim_tap",
+        ],
       ],
       "proof": [
         "run_id": runId,

@@ -40,6 +40,10 @@ run_swift_test approveNeedsMeItemSignsRefsAndRelaysOpaqueBlob
 run_swift_test rejectNeedsMeApprovalUsesRunControlWithoutSigner
 run_swift_test decideMemoryConfirmRendersConfirmedRecallable
 run_swift_test decideMemoryRejectRendersRejectedNotRecallable
+run_swift_test refreshLoadsRepresentativeSnapshot
+run_swift_test loadDetailCallsSessionAndRunFileReadArms
+run_swift_test retryWorkItemSendsLifecycleWriteAndRefreshes
+run_swift_test cancelWorkItemSendsLifecycleWriteAndRefreshes
 
 node - "${OUT_DIR}" "${ACTION_RUNTIME_OUT}" <<'NODE'
 const fs = require("node:fs");
@@ -51,6 +55,16 @@ const files = [
   path.join(outDir, "desktop-approval-reject-action-evidence.json"),
   path.join(outDir, "desktop-memory-confirm-action-evidence.json"),
   path.join(outDir, "desktop-memory-reject-action-evidence.json"),
+  path.join(outDir, "desktop-operations-refresh-action-evidence.json"),
+  path.join(outDir, "desktop-channels-receipts-action-evidence.json"),
+  path.join(outDir, "desktop-channels-surface-events-action-evidence.json"),
+  path.join(outDir, "desktop-session-list-action-evidence.json"),
+  path.join(outDir, "desktop-session-open-action-evidence.json"),
+  path.join(outDir, "desktop-session-link-action-evidence.json"),
+  path.join(outDir, "desktop-workflow-retry-action-evidence.json"),
+  path.join(outDir, "desktop-recovery-retry-action-evidence.json"),
+  path.join(outDir, "desktop-workflow-cancel-action-evidence.json"),
+  path.join(outDir, "desktop-recovery-cancel-action-evidence.json"),
 ];
 const blockers = [];
 const actions = [];
@@ -78,6 +92,22 @@ for (const file of files) {
   for (const row of rows) {
     actions.push({ ...row, source_proof: file });
   }
+}
+
+for (const actionId of [
+  "desktop/operations/refresh",
+  "desktop/session/list",
+  "desktop/session/open",
+  "desktop/session/link",
+  "desktop/workflow/retry",
+  "desktop/workflow/cancel",
+  "desktop/channels/receipts",
+  "desktop/channels/surface-events",
+  "desktop/recovery/retry",
+  "desktop/recovery/cancel",
+]) {
+  const found = actions.some((row) => row.surface === "desktop" && row.action_id === actionId && row.status === "pass");
+  if (!found) blockers.push({ code: "missing_desktop_product_action", detail: actionId });
 }
 
 const report = {

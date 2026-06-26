@@ -64,8 +64,16 @@ if (!fs.existsSync(source)) {
       blockers.push({ code: "evidence_not_ready", detail: parsed.status || "<missing>" });
     }
     actions = Array.isArray(parsed.actions) ? parsed.actions.map((row) => ({ ...row, source_proof: source })) : [];
-    if (actions.length !== 1) {
+    if (actions.length < 2) {
       blockers.push({ code: "unexpected_action_count", detail: String(actions.length) });
+    }
+    for (const actionId of ["play", "mobile/newSession/open-chat-loop"]) {
+      const found = actions.some((row) =>
+        row.surface === "mobile"
+        && row.screen === "newSession"
+        && row.action_id === actionId
+        && row.status === "pass");
+      if (!found) blockers.push({ code: "missing_new_session_action", detail: actionId });
     }
   }
 }
