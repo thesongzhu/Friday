@@ -8,6 +8,16 @@ public struct ShareIntakeReceipt: Sendable, Equatable {
   public let status: String
   public let createdOrReady: Bool
   public let clarificationQuestions: [String]
+
+  public var chatLaunchContext: ChatLaunchContext {
+    ChatLaunchContext(
+      source: "Share Intake",
+      missionId: missionId,
+      workItemId: workItemId,
+      surfaceThreadId: surfaceThreadId,
+      status: status,
+      createdOrReady: createdOrReady)
+  }
 }
 
 public enum ShareIntakePhase: Sendable, Equatable {

@@ -384,13 +384,7 @@ struct RootView: View {
           FridayTokenLedgerScreen(viewModel: homeVM)
         case .shareIntake:
           FridayShareIntakeScreen(viewModel: shareIntakeVM) { receipt in
-            pendingChatLaunchContext = ChatLaunchContext(
-              source: "Share Intake",
-              missionId: receipt.missionId,
-              workItemId: receipt.workItemId,
-              surfaceThreadId: receipt.surfaceThreadId,
-              status: receipt.status,
-              createdOrReady: receipt.createdOrReady)
+            pendingChatLaunchContext = receipt.chatLaunchContext
             chatOpen = true
           }
         case .newSession:

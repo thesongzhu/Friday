@@ -90,10 +90,27 @@ struct FridayShareIntakeScreen: View {
             text: receipt.createdOrReady ? "created_or_ready" : receipt.status,
             bg: MobileTheme.chipDoneBG,
             fg: MobileTheme.chipDoneFG)
+          Divider().opacity(0.5)
+          HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "arrowshape.turn.up.right.circle")
+              .foregroundStyle(MobileTheme.cyan)
+              .frame(width: 22)
+            VStack(alignment: .leading, spacing: 6) {
+              Text("Friday Chat handoff is armed")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(MobileTheme.textPrimary)
+              Text("The next tap carries these share refs into Chat as a prefilled governed turn. Provider results remain unavailable until the live loop returns them.")
+                .font(.caption2)
+                .foregroundStyle(MobileTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+              RefPill(label: "handoff", ref: receipt.chatLaunchContext.evidenceRef)
+              RefPill(label: "action", ref: "mobile/share/open-chat-loop")
+            }
+          }
           Button {
             onOpenFridayChat(receipt)
           } label: {
-            Label("Continue in Chat", systemImage: "bubble.left.and.bubble.right")
+            Label("Continue in Friday Chat", systemImage: "bubble.left.and.bubble.right")
               .frame(maxWidth: .infinity)
           }
           .buttonStyle(.borderedProminent)

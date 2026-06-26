@@ -118,6 +118,19 @@ final class ShareIntakeViewModelTests: XCTestCase {
       status: "ready",
       createdOrReady: true,
       clarificationQuestions: [])))
+    guard case .submitted(let receipt) = vm.phase else {
+      return XCTFail("expected submitted receipt")
+    }
+    XCTAssertEqual(receipt.chatLaunchContext, ChatLaunchContext(
+      source: "Share Intake",
+      missionId: "mission-mobile-share-fixed",
+      workItemId: "work-mobile-share-fixed",
+      surfaceThreadId: "surface-mobile-share-fixed",
+      status: "ready",
+      createdOrReady: true))
+    XCTAssertEqual(
+      receipt.chatLaunchContext.evidenceRef,
+      "swift://mobile/fridayChat/launch-context/mission-mobile-share-fixed")
 
     try writeShareIntakeActionEvidenceIfRequested(request: request)
   }

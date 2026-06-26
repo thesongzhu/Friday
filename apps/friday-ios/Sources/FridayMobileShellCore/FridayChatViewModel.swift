@@ -309,6 +309,10 @@ public struct ChatLaunchContext: Sendable, Equatable {
     lines.append("Use these refs to produce the next owner-visible answer; do not fabricate missing results.")
     return lines.joined(separator: "\n")
   }
+
+  public var evidenceRef: String {
+    "swift://mobile/fridayChat/launch-context/\(missionId)"
+  }
 }
 
 public protocol ChatHistoryStoring {
@@ -886,7 +890,7 @@ public final class FridayChatViewModel: ObservableObject {
       title: "Mission refs",
       detail: "\(context.source) submitted \(context.missionId) / \(workItem). Send the prefilled Chat turn to continue through the governed live loop.",
       truthLabel: context.createdOrReady ? "created_or_ready" : context.status,
-      evidenceRef: "swift://mobile/fridayChat/launch-context/\(context.missionId)",
+      evidenceRef: context.evidenceRef,
       memoryCandidateId: nil,
       memoryPreview: nil)
   }

@@ -85,6 +85,13 @@ struct FridayNewSessionScreen: View {
         }
       }
     case .launched(let summary, let missionId, let workItemId, let surfaceThreadId, let status, let createdOrReady):
+      let context = ChatLaunchContext(
+        source: "New Session",
+        missionId: missionId,
+        workItemId: workItemId,
+        surfaceThreadId: surfaceThreadId,
+        status: status,
+        createdOrReady: createdOrReady)
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
           cardHeader("Submitted", count: nil)
@@ -102,16 +109,27 @@ struct FridayNewSessionScreen: View {
             .font(.caption2)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
+          Divider().opacity(0.5)
+          HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "arrowshape.turn.up.right.circle")
+              .foregroundStyle(MobileTheme.cyan)
+              .frame(width: 22)
+            VStack(alignment: .leading, spacing: 6) {
+              Text("Friday Chat handoff is armed")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(MobileTheme.textPrimary)
+              Text("The next tap carries these mission refs into Chat as a prefilled governed turn. It still cannot invent missing provider results.")
+                .font(.caption2)
+                .foregroundStyle(MobileTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+              RefPill(label: "handoff", ref: context.evidenceRef)
+              RefPill(label: "action", ref: "mobile/newSession/open-chat-loop")
+            }
+          }
           Button {
-            onOpenFridayChat(ChatLaunchContext(
-              source: "New Session",
-              missionId: missionId,
-              workItemId: workItemId,
-              surfaceThreadId: surfaceThreadId,
-              status: status,
-              createdOrReady: createdOrReady))
+            onOpenFridayChat(context)
           } label: {
-            Label("Continue in Chat", systemImage: "bubble.left.and.bubble.right")
+            Label("Continue in Friday Chat", systemImage: "bubble.left.and.bubble.right")
               .frame(maxWidth: .infinity)
           }
           .buttonStyle(.borderedProminent)
