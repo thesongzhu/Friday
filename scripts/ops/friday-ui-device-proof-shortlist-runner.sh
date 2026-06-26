@@ -11,6 +11,7 @@ usage:
     [--channel-live-proof /abs/channel-live-proof.json]
     [--channel-capture /abs/channel-capture.json]
     [--timeline-capture /abs/timeline-capture.json]
+    [--harvest-dir /abs/artifact-dir ...]
     [--same-run-events /abs/events.jsonl ...]
     [--runtime-evidence-dir /abs/evidence-dir ...]
     [--extra-action-runtime-evidence /abs/action-runtime-evidence.json ...]
@@ -41,6 +42,7 @@ objective_coverage="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
 channel_live_proof="${FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF:-}"
 channel_capture=""
 timeline_capture=""
+harvest_dirs=()
 same_run_events=()
 runtime_evidence_dirs=()
 extra_action_runtime_evidence=()
@@ -117,6 +119,15 @@ while [ "$#" -gt 0 ]; do
       timeline_capture="${1#--timeline-capture=}"
       shift
       ;;
+    --harvest-dir)
+      [ "$#" -ge 2 ] || die "--harvest-dir requires a value"
+      harvest_dirs+=("$2")
+      shift 2
+      ;;
+    --harvest-dir=*)
+      harvest_dirs+=("${1#--harvest-dir=}")
+      shift
+      ;;
     --same-run-events)
       [ "$#" -ge 2 ] || die "--same-run-events requires a value"
       same_run_events+=("$2")
@@ -180,13 +191,8 @@ require_file_if_set() {
   fi
 }
 
-require_file_if_set "--backend-live-proof" "${backend_live_proof}"
-require_file_if_set "--objective-coverage" "${objective_coverage}"
-require_file_if_set "--channel-live-proof" "${channel_live_proof}"
-require_file_if_set "--channel-capture" "${channel_capture}"
-require_file_if_set "--timeline-capture" "${timeline_capture}"
 set +u
-for path in "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
+for path in "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
   require_abs_if_set "input path" "${path}"
 done
 set -u
@@ -223,13 +229,48 @@ bundle_index="${bundle_dir}/live-write-read-bundle-index.json"
 mobile_capture="${bundle_dir}/mobile/ios-live-write-read-proof.json"
 desktop_capture="${bundle_dir}/desktop/macos-live-write-read-proof.json"
 combined_events="${bundle_dir}/mobile-desktop-live-write-read-events.jsonl"
+mission_id="$(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(j.missionId || "")' "${bundle_index}")"
+
+set +u
+if [ "${#harvest_dirs[@]}" -gt 0 ]; then
+  harvest_out="${out_dir}/ui-device-proof-evidence-harvest.json"
+  harvest_args=(
+    "${repo_root}/scripts/ops/friday-ui-device-proof-evidence-harvest.mjs"
+    "--mission-id=${mission_id}"
+    "--out=${harvest_out}"
+  )
+  for dir in "${harvest_dirs[@]}"; do
+    [ -n "${dir}" ] || continue
+    harvest_args+=("--search-dir=${dir}")
+  done
+  node "${harvest_args[@]}"
+  fill_from_harvest() {
+    local field="$1"
+    node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const value=j.selected?.[process.argv[2]]; if (typeof value === "string") console.log(value);' "${harvest_out}" "${field}"
+  }
+  [ -n "${backend_live_proof}" ] || backend_live_proof="$(fill_from_harvest backendLiveProof)"
+  [ -n "${objective_coverage}" ] || objective_coverage="$(fill_from_harvest objectiveCoverage)"
+  [ -n "${channel_live_proof}" ] || channel_live_proof="$(fill_from_harvest channelLiveProof)"
+  [ -n "${channel_capture}" ] || channel_capture="$(fill_from_harvest channel)"
+  [ -n "${timeline_capture}" ] || timeline_capture="$(fill_from_harvest timeline)"
+  while IFS= read -r event_path; do
+    [ -n "${event_path}" ] || continue
+    same_run_events+=("${event_path}")
+  done < <(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); for (const value of j.selected?.events || []) console.log(value);' "${harvest_out}")
+fi
+set -u
+
+require_file_if_set "--backend-live-proof" "${backend_live_proof}"
+require_file_if_set "--objective-coverage" "${objective_coverage}"
+require_file_if_set "--channel-live-proof" "${channel_live_proof}"
+require_file_if_set "--channel-capture" "${channel_capture}"
+require_file_if_set "--timeline-capture" "${timeline_capture}"
 
 event_inputs=("${combined_events}")
 channel_events=""
 if [ -n "${channel_live_proof}" ] || [ -n "${channel_capture}" ]; then
   [ -n "${channel_live_proof}" ] || die "--channel-live-proof is required with --channel-capture"
   [ -n "${channel_capture}" ] || die "--channel-capture is required with --channel-live-proof"
-  mission_id="$(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(j.missionId || "")' "${bundle_index}")"
   channel_events="${out_dir}/channel-events.jsonl"
   node "${repo_root}/scripts/ops/friday-channel-proof-events.mjs" \
     "--mission-id=${mission_id}" \
@@ -248,7 +289,6 @@ set -u
 
 capture_dir_status="skipped_missing_channel_or_timeline"
 if [ -n "${channel_capture}" ] && [ -n "${timeline_capture}" ]; then
-  mission_id="$(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(j.missionId || "")' "${bundle_index}")"
   capture_dir_args=(
     "${repo_root}/scripts/ops/friday-ui-device-capture-dir.mjs"
     "--mission-id=${mission_id}"
@@ -301,7 +341,6 @@ FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS="${bundle_dir}" bash "${readiness_arg
 
 gap_status="skipped_missing_channel_or_timeline"
 if [ -n "${channel_capture}" ] && [ -n "${timeline_capture}" ]; then
-  mission_id="$(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(j.missionId || "")' "${bundle_index}")"
   gap_args=(
     "${repo_root}/scripts/ops/friday-ui-device-proof-gap-report.mjs"
     "--mission-id=${mission_id}"
