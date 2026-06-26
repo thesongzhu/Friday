@@ -335,6 +335,40 @@ describe("friday-ui-device-proof-gap-report", () => {
     }
   });
 
+  it("reports supplemental accessibility evidence refs without treating them as strict proof in report-only mode", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-gap-report-supplemental-"));
+    try {
+      const files = evidenceFiles(tempDir);
+      const axTree = join(tempDir, "desktop-ax-tree.raw.txt");
+      writeFileSync(axTree, "real macOS accessibility tree captured from the app\n");
+      const rows = [
+        event("desktop", "mission_workbench_visible", axTree),
+        event("desktop", "same_mission_projection_visible", files.desktop),
+      ];
+      const result = run(tempDir, files, rows);
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as {
+        status?: string;
+        observed?: { eventRows?: number; surfaces?: string[] };
+        blockers?: Array<{ code?: string }>;
+        supplementalEvidenceRefs?: Array<{
+          evidenceRef?: string;
+          countsTowardStrictProof?: boolean;
+        }>;
+      };
+      expect(output.status).toBe("gaps_present");
+      expect(output.observed?.eventRows).toBe(2);
+      expect(output.observed?.surfaces).toContain("desktop");
+      expect(output.blockers?.map((blocker) => blocker.code)).not.toContain("event_evidence_ref_unknown");
+      expect(output.supplementalEvidenceRefs).toContainEqual(expect.objectContaining({
+        evidenceRef: axTree,
+        countsTowardStrictProof: false,
+      }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("marks complete only when required observations and manifest checks are present", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-gap-report-complete-"));
     try {
