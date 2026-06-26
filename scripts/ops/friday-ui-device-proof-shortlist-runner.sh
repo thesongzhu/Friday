@@ -11,6 +11,7 @@ usage:
     [--channel-live-proof /abs/channel-live-proof.json]
     [--channel-capture /abs/channel-capture.json]
     [--timeline-capture /abs/timeline-capture.json]
+    [--workbench-db /abs/rust-hub.sqlite]
     [--accessibility-capture /abs/real-accessibility-capture.json ...]
     [--stress-capture /abs/real-same-run-stress-capture.json ...]
     [--harvest-dir /abs/artifact-dir ...]
@@ -45,6 +46,7 @@ objective_coverage="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
 channel_live_proof="${FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF:-}"
 channel_capture=""
 timeline_capture=""
+workbench_db="${FRIDAY_WORKBENCH_DB_PATH:-}"
 defer_channel_proof="${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}"
 accessibility_captures=()
 stress_captures=()
@@ -123,6 +125,15 @@ while [ "$#" -gt 0 ]; do
       ;;
     --timeline-capture=*)
       timeline_capture="${1#--timeline-capture=}"
+      shift
+      ;;
+    --workbench-db)
+      [ "$#" -ge 2 ] || die "--workbench-db requires a value"
+      workbench_db="$2"
+      shift 2
+      ;;
+    --workbench-db=*)
+      workbench_db="${1#--workbench-db=}"
       shift
       ;;
     --accessibility-capture)
@@ -338,8 +349,55 @@ require_file_if_set "--objective-coverage" "${objective_coverage}"
 require_file_if_set "--channel-live-proof" "${channel_live_proof}"
 require_file_if_set "--channel-capture" "${channel_capture}"
 require_file_if_set "--timeline-capture" "${timeline_capture}"
+require_file_if_set "--workbench-db" "${workbench_db}"
 
 event_inputs=("${combined_events}")
+workbench_timeline_status="skipped"
+if [ -z "${timeline_capture}" ] && [ -n "${workbench_db}" ]; then
+  workbench_snapshot="${out_dir}/workbench-timeline-capture.json"
+  workbench_snapshot_stdout="${workbench_snapshot}.stdout"
+  workbench_snapshot_stderr="${workbench_snapshot}.stderr"
+  if (cd "${repo_root}/rust-core" && cargo run -p friday-hub --bin mission_workbench_projection -- \
+    --db "${workbench_db}" \
+    --mission-id "${mission_id}" >"${workbench_snapshot}") >"${workbench_snapshot_stdout}" 2>"${workbench_snapshot_stderr}"; then
+    timeline_capture="${workbench_snapshot}"
+    workbench_timeline_status="snapshot_ready"
+  else
+    workbench_timeline_status="snapshot_failed"
+  fi
+fi
+if [ -n "${timeline_capture}" ] && [ "${workbench_timeline_status}" != "snapshot_failed" ]; then
+  workbench_events="${out_dir}/workbench-derived-events.jsonl"
+  workbench_events_args=(
+    "${repo_root}/scripts/ops/friday-workbench-snapshot-events.mjs"
+    "--mission-id=${mission_id}"
+    "--file=${timeline_capture}"
+    "--mobile=${mobile_capture}"
+    "--desktop=${desktop_capture}"
+    "--timeline=${timeline_capture}"
+    "--out=${workbench_events}"
+  )
+  if [ -n "${channel_capture}" ]; then
+    workbench_events_args+=("--channel=${channel_capture}")
+  fi
+  if [ "${defer_channel_proof}" = "1" ]; then
+    workbench_events_args+=("--defer-channel-proof")
+  fi
+  if node "${workbench_events_args[@]}" --require-ready >"${workbench_events}.stdout"; then
+    same_run_events+=("${workbench_events}")
+    if [ "${workbench_timeline_status}" = "skipped" ]; then
+      workbench_timeline_status="events_ready"
+    else
+      workbench_timeline_status="${workbench_timeline_status}_events_ready"
+    fi
+  else
+    if [ "${workbench_timeline_status}" = "skipped" ]; then
+      workbench_timeline_status="events_failed"
+    else
+      workbench_timeline_status="${workbench_timeline_status}_events_failed"
+    fi
+  fi
+fi
 channel_events=""
 if [ -n "${channel_live_proof}" ] || [ -n "${channel_capture}" ]; then
   [ -n "${channel_live_proof}" ] || die "--channel-live-proof is required with --channel-capture"
@@ -380,11 +438,14 @@ if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_c
   for path in "${event_inputs[@]}"; do
     capture_dir_args+=("--events=${path}")
   done
-  node "${capture_dir_args[@]}"
-  if [ "${defer_channel_proof}" = "1" ]; then
-    capture_dir_status="ready_channel_deferred_non_strict"
+  if node "${capture_dir_args[@]}"; then
+    if [ "${defer_channel_proof}" = "1" ]; then
+      capture_dir_status="ready_channel_deferred_non_strict"
+    else
+      capture_dir_status="ready"
+    fi
   else
-    capture_dir_status="ready"
+    capture_dir_status="blocked"
   fi
 else
   echo "capture_dir=skipped_missing_channel_or_timeline"
@@ -419,10 +480,13 @@ fi
 if [ -n "${objective_coverage}" ]; then
   readiness_args+=("--objective-coverage" "${objective_coverage}")
 fi
+if [ -n "${workbench_db}" ]; then
+  readiness_args+=("--workbench-db" "${workbench_db}")
+fi
 if [ "${defer_channel_proof}" = "1" ]; then
   readiness_args+=("--defer-channel-proof")
 fi
-FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS="${bundle_dir}" bash "${readiness_args[@]}" >"${readiness_out}"
+MISSION_ID="${mission_id}" FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS="${bundle_dir}" bash "${readiness_args[@]}" >"${readiness_out}"
 
 gap_status="skipped_missing_channel_or_timeline"
 if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_channel_proof}" = "1" ]; }; then
@@ -455,9 +519,9 @@ if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_c
   gap_status="written"
 fi
 
-node - "${summary_out}" "${bundle_index}" "${product_closure_out}" "${readiness_out}" "${capture_dir_status}" "${gap_status}" "${accessibility_capture_status}" "${stress_capture_status}" <<'NODE'
+node - "${summary_out}" "${bundle_index}" "${product_closure_out}" "${readiness_out}" "${capture_dir_status}" "${gap_status}" "${accessibility_capture_status}" "${stress_capture_status}" "${workbench_timeline_status}" <<'NODE'
 const fs = require("node:fs");
-const [summaryOut, bundleIndexPath, productClosurePath, readinessPath, captureDirStatus, gapStatus, accessibilityCaptureStatus, stressCaptureStatus] = process.argv.slice(2);
+const [summaryOut, bundleIndexPath, productClosurePath, readinessPath, captureDirStatus, gapStatus, accessibilityCaptureStatus, stressCaptureStatus, workbenchTimelineStatus] = process.argv.slice(2);
 function parseJsonSuffix(text) {
   const trimmed = String(text || "").trim();
   if (!trimmed) throw new Error("empty JSON input");
@@ -492,6 +556,7 @@ const summary = {
   gapStatus,
   accessibilityCaptureStatus,
   stressCaptureStatus,
+  workbenchTimelineStatus,
   productClosureStatus: closure.status,
   uiDeviceProofReadiness: closure.stages?.uiDeviceProofReadiness || null,
   readinessStatus: readiness.status,

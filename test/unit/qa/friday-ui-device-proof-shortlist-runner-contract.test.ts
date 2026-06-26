@@ -23,6 +23,8 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("harvest_args+=(\"--defer-channel-proof\")");
     expect(source).toContain("readiness_args+=(\"--defer-channel-proof\")");
     expect(source).toContain("[ -n \"${timeline_capture}\" ] && { [ -n \"${channel_capture}\" ] || [ \"${defer_channel_proof}\" = \"1\" ]; }");
+    expect(source).toContain("if node \"${capture_dir_args[@]}\"; then");
+    expect(source).toContain("capture_dir_status=\"blocked\"");
     expect(source).toContain("capture_dir_args+=(\"--defer-channel-proof\")");
     expect(source).toContain("capture_dir_status=\"ready_channel_deferred_non_strict\"");
     expect(source).toContain("[[ \"${capture_dir_status}\" == ready* ]]");
@@ -42,5 +44,27 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("--require-ready");
     expect(source).toContain("same_run_events+=(\"${stress_events}\")");
     expect(source).toContain("stressCaptureStatus");
+  });
+
+  it("can derive non-channel workbench timeline inputs from the Rust Hub DB", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("--workbench-db");
+    expect(source).toContain("workbench_db=\"${FRIDAY_WORKBENCH_DB_PATH:-}\"");
+    expect(source).toContain("cargo run -p friday-hub --bin mission_workbench_projection");
+    expect(source).toContain("workbench-timeline-capture.json");
+    expect(source).toContain("friday-workbench-snapshot-events.mjs");
+    expect(source).toContain("same_run_events+=(\"${workbench_events}\")");
+    expect(source).toContain("readiness_args+=(\"--workbench-db\" \"${workbench_db}\")");
+    expect(source).toContain("MISSION_ID=\"${mission_id}\" FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS");
+    expect(source).toContain("workbenchTimelineStatus");
+  });
+
+  it("lets readiness derive workbench events while channel proof is deferred", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-readiness.sh", "utf8");
+
+    expect(source).toContain("[ -z \"${CHANNEL_EVIDENCE:-}\" ] && [ \"${DEFER_CHANNEL_PROOF}\" != \"1\" ]");
+    expect(source).toContain("args+=(\"--defer-channel-proof\")");
+    expect(source).toContain("node \"${args[@]}\" >\"$stdout_out\"");
   });
 });
