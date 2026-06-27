@@ -808,13 +808,23 @@ struct StatusBanner: View {
   let labels: [String]
 
   var body: some View {
-    HStack(spacing: 8) {
-      Image(systemName: "exclamationmark.circle").foregroundStyle(MobileTheme.chipWarnFG)
-      ForEach(labels, id: \.self) { label in
-        StatusChip(text: label.uppercased(), bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+    HStack(alignment: .top, spacing: 10) {
+      Image(systemName: "exclamationmark.circle")
+        .font(.system(size: 18, weight: .semibold))
+        .foregroundStyle(MobileTheme.chipWarnFG)
+        .frame(width: 24, height: 24)
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 6) {
+          ForEach(labels, id: \.self) { label in
+            StatusChip(text: label.uppercased(), bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+          }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        Text(summary)
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
       }
-      Text("flagged — rendered as-is")
-        .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
       Spacer()
     }
     .padding(12)
@@ -822,8 +832,22 @@ struct StatusBanner: View {
       RoundedRectangle(cornerRadius: MobileTheme.cornerRadius, style: .continuous)
         .fill(MobileTheme.coralSoft))
     .accessibilityElement(children: .combine)
-    .accessibilityLabel("Friday projection flagged: \(labels.joined(separator: ", "))")
+    .accessibilityLabel("Friday projection needs attention: \(labels.joined(separator: ", ")). \(summary)")
     .accessibilityIdentifier("friday.home.status-banner")
+  }
+
+  private var summary: String {
+    let normalized = Set(labels.map { $0.lowercased() })
+    if normalized.contains("offline") {
+      return "Live projection is visible, but Friday is reporting a connection or surface gap."
+    }
+    if normalized.contains("stale") {
+      return "Live projection is visible, but it may need a refresh before acting."
+    }
+    if normalized.contains("error") {
+      return "Live projection is visible, with an error label preserved for review."
+    }
+    return "Live projection is visible, with Hub labels preserved exactly."
   }
 }
 
