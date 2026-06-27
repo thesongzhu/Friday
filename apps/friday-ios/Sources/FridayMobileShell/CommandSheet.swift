@@ -25,6 +25,9 @@ enum MobileDestination: String, CaseIterable, Identifiable {
   case workflows
   case onboarding
   case settings
+  case petEditor
+  case proofViewer
+  case entrypoints
 
   var id: String { rawValue }
 
@@ -66,35 +69,43 @@ struct CommandSheet: View {
 
   private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
   private let endBarSnapshot = MobileProductEndBarSnapshot()
-  private let selectedMobileSurfaceTitles = [
-    "Session",
-    "Context Passport",
-    "Device Pairing",
-    "Token Ledger",
-    "Share Intake",
-    "Voice",
-    "Needs Me",
+  private let sections: [(String, [MobileDestination])] = [
+    ("Command", [.home, .newSession, .voice, .shareIntake]),
+    ("Work", [.missions, .needsMe, .activity, .workflows]),
+    ("Providers", [.platform, .providerAuth, .session]),
+    ("Trust", [.contextPassport, .memory, .tokenLedger, .proofViewer]),
+    ("Setup", [.pairing, .onboarding, .settings, .petEditor, .entrypoints]),
   ]
 
   var body: some View {
     NavigationStack {
       ScrollView {
-        LazyVGrid(columns: columns, spacing: 14) {
-          ForEach(MobileDestination.allCases) { dest in
-            Button {
-              if dest.isBuilt { destination = dest }
-              isOpen = false
-            } label: {
-              tile(dest)
+        VStack(alignment: .leading, spacing: 18) {
+          ForEach(sections, id: \.0) { section in
+            VStack(alignment: .leading, spacing: 10) {
+              Text(section.0.uppercased())
+                .font(.caption.weight(.bold))
+                .foregroundStyle(MobileTheme.textSecondary)
+                .tracking(3)
+                .accessibilityHidden(true)
+              LazyVGrid(columns: columns, spacing: 14) {
+                ForEach(section.1) { dest in
+                  Button {
+                    if dest.isBuilt { destination = dest }
+                    isOpen = false
+                  } label: {
+                    tile(dest)
+                  }
+                  .buttonStyle(.plain)
+                  .disabled(!dest.isBuilt)
+                  .accessibilityIdentifier("friday.command-sheet.destination.\(dest.rawValue)")
+                }
+              }
             }
-            .buttonStyle(.plain)
-            .disabled(!dest.isBuilt)
-            .accessibilityIdentifier("friday.command-sheet.destination.\(dest.rawValue)")
           }
+          readinessFooter
         }
         .padding(16)
-
-        readinessFooter
       }
       .background(MobileTheme.backgroundWarmOffWhite.ignoresSafeArea())
       .navigationTitle("Friday")
@@ -157,6 +168,6 @@ struct CommandSheet: View {
     .padding(.top, 8)
     .accessibilityIdentifier("friday.command-sheet.readiness-footer")
     .accessibilityLabel(
-      "Route coverage is not END-BAR. Selected mobile surfaces: \(selectedMobileSurfaceTitles.joined(separator: ", ")).")
+      "Route coverage is not END-BAR. Selected mobile surfaces: \(MobileDestination.allCases.map(\.title).joined(separator: ", ")).")
   }
 }

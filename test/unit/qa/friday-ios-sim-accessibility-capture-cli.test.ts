@@ -101,6 +101,18 @@ describe("friday-ios-sim-accessibility-capture", () => {
         runtimeActionId: "mobile/home/refresh",
         accessibilityIds: expect.arrayContaining(["friday.mobile.toolbar.refresh"]),
       }));
+      expect(summary.targets).toContainEqual(expect.objectContaining({
+        runtimeActionId: "mobile/pet/state-mapping",
+        accessibilityIds: expect.arrayContaining(["friday.pet-editor.readiness"]),
+      }));
+      expect(summary.targets).toContainEqual(expect.objectContaining({
+        runtimeActionId: "mobile/proof/viewer-open",
+        accessibilityIds: expect.arrayContaining(["friday.proof-viewer.receipts"]),
+      }));
+      expect(summary.targets).toContainEqual(expect.objectContaining({
+        runtimeActionId: "mobile/entrypoints/readiness",
+        accessibilityIds: expect.arrayContaining(["friday.entrypoints.readiness"]),
+      }));
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
