@@ -461,6 +461,10 @@ for dir in "${runtime_evidence_dirs[@]}"; do
   [ -n "${dir}" ] || continue
   closure_args+=("--runtime-evidence-dir=${dir}")
 done
+for path in "${extra_action_runtime_evidence[@]}"; do
+  [ -n "${path}" ] || continue
+  closure_args+=("--runtime-evidence=${path}")
+done
 set -u
 if [[ "${capture_dir_status}" == ready* ]]; then
   closure_args+=("--evidence-dir=${evidence_dir}")
@@ -483,6 +487,16 @@ fi
 if [ -n "${workbench_db}" ]; then
   readiness_args+=("--workbench-db" "${workbench_db}")
 fi
+set +u
+for dir in "${runtime_evidence_dirs[@]}"; do
+  [ -n "${dir}" ] || continue
+  readiness_args+=("--design-action-runtime-evidence-dir" "${dir}")
+done
+for path in "${extra_action_runtime_evidence[@]}"; do
+  [ -n "${path}" ] || continue
+  readiness_args+=("--design-action-runtime-evidence" "${path}")
+done
+set -u
 if [ "${defer_channel_proof}" = "1" ]; then
   readiness_args+=("--defer-channel-proof")
 fi

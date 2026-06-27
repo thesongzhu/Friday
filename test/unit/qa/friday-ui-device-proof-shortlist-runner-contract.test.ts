@@ -60,6 +60,14 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("workbenchTimelineStatus");
   });
 
+  it("threads external action-runtime evidence into closure and readiness reports", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("closure_args+=(\"--runtime-evidence=${path}\")");
+    expect(source).toContain("readiness_args+=(\"--design-action-runtime-evidence-dir\" \"${dir}\")");
+    expect(source).toContain("readiness_args+=(\"--design-action-runtime-evidence\" \"${path}\")");
+  });
+
   it("keeps gap reports useful when strict capture-dir assembly is blocked", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
 
