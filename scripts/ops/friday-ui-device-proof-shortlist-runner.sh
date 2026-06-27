@@ -6,6 +6,7 @@ usage() {
 usage:
   scripts/ops/friday-ui-device-proof-shortlist-runner.sh --out-dir /abs/run-dir
     [--shared-id mission_ui_device_...]
+    [--mission-id codex-organic-mission-...]
     [--backend-live-proof /abs/backend-proof.json]
     [--objective-coverage /abs/objective-coverage.json]
     [--channel-live-proof /abs/channel-live-proof.json]
@@ -41,6 +42,7 @@ die() {
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out_dir=""
 shared_id="${FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID:-}"
+mission_id_arg="${FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID:-}"
 backend_live_proof="${FRIDAY_UI_DEVICE_BACKEND_LIVE_PROOF:-}"
 objective_coverage="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
 channel_live_proof="${FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF:-}"
@@ -54,6 +56,7 @@ harvest_dirs=()
 same_run_events=()
 runtime_evidence_dirs=()
 extra_action_runtime_evidence=()
+shared_extra_evidence=()
 
 if [ -n "${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS:-}" ]; then
   IFS=':' read -r -a runtime_evidence_dirs <<<"${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS}"
@@ -80,6 +83,15 @@ while [ "$#" -gt 0 ]; do
       ;;
     --shared-id=*)
       shared_id="${1#--shared-id=}"
+      shift
+      ;;
+    --mission-id)
+      [ "$#" -ge 2 ] || die "--mission-id requires a value"
+      mission_id_arg="$2"
+      shift 2
+      ;;
+    --mission-id=*)
+      mission_id_arg="${1#--mission-id=}"
       shift
       ;;
     --backend-live-proof)
@@ -209,6 +221,14 @@ case "${out_dir}" in
   /*) ;;
   *) die "--out-dir must be absolute" ;;
 esac
+case "${shared_id}" in (*[[:space:]]*) die "--shared-id must not contain whitespace" ;; esac
+case "${mission_id_arg}" in (*[[:space:]]*) die "--mission-id must not contain whitespace" ;; esac
+if [ -n "${shared_id}" ] && [ -n "${mission_id_arg}" ]; then
+  die "--shared-id and --mission-id are mutually exclusive"
+fi
+if [ -n "${mission_id_arg}" ]; then
+  case "${mission_id_arg}" in (*mission*) ;; *) die "--mission-id must contain mission" ;; esac
+fi
 
 require_abs_if_set() {
   local label="$1"
@@ -242,6 +262,7 @@ evidence_dir="${out_dir}/evidence"
 summary_out="${out_dir}/ui-device-shortlist-summary.json"
 product_closure_out="${out_dir}/product-closure-readiness.json"
 readiness_out="${out_dir}/ui-device-proof-readiness.json"
+readiness_stdout="${readiness_out}.stdout"
 gap_out="${out_dir}/ui-device-proof-gap-report.json"
 
 capture_args=(
@@ -250,6 +271,9 @@ capture_args=(
 )
 if [ -n "${shared_id}" ]; then
   capture_args+=("--shared-id" "${shared_id}")
+fi
+if [ -n "${mission_id_arg}" ]; then
+  capture_args+=("--mission-id" "${mission_id_arg}")
 fi
 set +u
 for path in "${extra_action_runtime_evidence[@]}"; do
@@ -307,6 +331,11 @@ if [ "${#stress_captures[@]}" -gt 0 ]; then
       "--out=${stress_events}" \
       --require-ready
     same_run_events+=("${stress_events}")
+    stress_evidence_ref="$(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const value=j.evidence_ref || j.evidenceRef || ""; if (typeof value === "string" && value.trim()) console.log(value.trim());' "${stress_capture}")"
+    if [ -n "${stress_evidence_ref}" ]; then
+      require_file_if_set "stress evidence_ref" "${stress_evidence_ref}"
+      shared_extra_evidence+=("${stress_evidence_ref}")
+    fi
   done
   stress_capture_status="ready"
 fi
@@ -438,6 +467,12 @@ if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_c
   for path in "${event_inputs[@]}"; do
     capture_dir_args+=("--events=${path}")
   done
+  set +u
+  for path in "${shared_extra_evidence[@]}"; do
+    [ -n "${path}" ] || continue
+    capture_dir_args+=("--shared-extra-evidence=${path}")
+  done
+  set -u
   if node "${capture_dir_args[@]}"; then
     if [ "${defer_channel_proof}" = "1" ]; then
       capture_dir_status="ready_channel_deferred_non_strict"
@@ -500,7 +535,36 @@ set -u
 if [ "${defer_channel_proof}" = "1" ]; then
   readiness_args+=("--defer-channel-proof")
 fi
-MISSION_ID="${mission_id}" FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS="${bundle_dir}" bash "${readiness_args[@]}" >"${readiness_out}"
+MISSION_ID="${mission_id}" FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS="${bundle_dir}" bash "${readiness_args[@]}" >"${readiness_stdout}"
+node - "${readiness_stdout}" "${readiness_out}" <<'NODE'
+const fs = require("node:fs");
+const [stdoutPath, outPath] = process.argv.slice(2);
+
+function parseJsonSuffix(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) throw new Error("empty readiness output");
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // The readiness wrapper prints self-test lines before its final JSON object.
+  }
+  const starts = [];
+  for (let index = 0; index < trimmed.length; index += 1) {
+    if (trimmed[index] === "{") starts.push(index);
+  }
+  for (const start of starts.reverse()) {
+    try {
+      return JSON.parse(trimmed.slice(start));
+    } catch {
+      // Try the next earlier object start.
+    }
+  }
+  throw new Error("no parseable readiness JSON object suffix");
+}
+
+const readiness = parseJsonSuffix(fs.readFileSync(stdoutPath, "utf8"));
+fs.writeFileSync(outPath, `${JSON.stringify(readiness, null, 2)}\n`);
+NODE
 
 gap_status="skipped_missing_channel_or_timeline"
 gap_event_status="skipped"
