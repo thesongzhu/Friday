@@ -38,4 +38,15 @@ describe("friday-uiux-product-closure-readiness contract", () => {
     expect(source).toContain("does not clear product blockers or satisfy END-BAR by itself");
     expect(source).toContain("residualEndBarBlockers");
   });
+
+  it("accepts an evidence-set manifest without weakening normal validation", () => {
+    const source = readFileSync("scripts/ops/friday-uiux-product-closure-readiness.mjs", "utf8");
+
+    expect(source).toContain("--evidence-set=/abs/uiux-closure-evidence-set.json");
+    expect(source).toContain("FRIDAY_UIUX_PRODUCT_CLOSURE_EVIDENCE_SET");
+    expect(source).toContain("function evidenceSetsFromFiles");
+    expect(source).toContain("runtimeEvidenceDirs");
+    expect(source).toContain("evidence set only lists inputs; each referenced artifact is still revalidated");
+    expect(source).toContain("evidenceSets,");
+  });
 });

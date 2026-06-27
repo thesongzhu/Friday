@@ -12,6 +12,7 @@ function usage() {
     [--repo-root=/abs/repo] \\
     [--design-root=/abs/friday-design-handoff-20260602] \\
     [--evidence-dir=/abs/ui-device-evidence ...] \\
+    [--evidence-set=/abs/uiux-closure-evidence-set.json ...] \\
     [--runtime-evidence=/abs/action-runtime-evidence.json ...] \\
     [--runtime-evidence-dir=/abs/evidence-dir ...] \\
     [--out=/abs/uiux-product-closure-readiness.json] \\
@@ -54,27 +55,6 @@ const requireUiDeviceProof = args.includes("--require-ui-device-proof");
 const deferChannelProof = args.includes("--defer-channel-proof") || process.env.FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF === "1";
 const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new URL("../..", import.meta.url).pathname);
 const designRoot = resolve(arg("design-root") || process.env.FRIDAY_DESIGN_HANDOFF_ROOT || `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602`);
-const evidenceDirs = [
-  ...argsAll("evidence-dir"),
-  ...(process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR
-    ? [process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR]
-    : []),
-  ...(process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIRS
-    ? process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIRS.split(/[:\n]/).filter(Boolean)
-    : []),
-];
-const runtimeEvidence = [
-  ...argsAll("runtime-evidence"),
-  ...(process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE
-    ? process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE.split(/[:\n]/).filter(Boolean)
-    : []),
-];
-const runtimeEvidenceDirs = [
-  ...argsAll("runtime-evidence-dir"),
-  ...(process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS
-    ? process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS.split(/[:\n]/).filter(Boolean)
-    : []),
-];
 const outPath = arg("out") || process.env.FRIDAY_UIUX_PRODUCT_CLOSURE_REPORT || "";
 
 const blockers = [];
@@ -193,6 +173,36 @@ function maybeReadJson(path) {
   }
 }
 
+function stringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((candidate) => typeof candidate === "string" && candidate.trim());
+}
+
+function evidenceSetList(value, names) {
+  for (const name of names) {
+    const list = stringArray(value?.[name]);
+    if (list.length > 0) return list;
+  }
+  return [];
+}
+
+function evidenceSetsFromFiles(paths) {
+  const sets = [];
+  for (const path of paths) {
+    const resolved = abs(path);
+    const value = readJson(resolved, "evidence-set");
+    if (!value || typeof value !== "object") continue;
+    sets.push({
+      path: resolved,
+      evidenceDirs: evidenceSetList(value, ["evidenceDirs", "evidence_dirs", "uiDeviceEvidenceDirs", "ui_device_evidence_dirs"]),
+      runtimeEvidence: evidenceSetList(value, ["runtimeEvidence", "runtime_evidence", "runtimeEvidencePaths", "runtime_evidence_paths"]),
+      runtimeEvidenceDirs: evidenceSetList(value, ["runtimeEvidenceDirs", "runtime_evidence_dirs", "actionRuntimeEvidenceDirs", "action_runtime_evidence_dirs"]),
+      caveat: value.caveat || "evidence set only lists inputs; each referenced artifact is still revalidated by the normal gates",
+    });
+  }
+  return sets;
+}
+
 function runtimeEvidenceFromIndex(indexPath) {
   if (!existsSync(indexPath)) return [];
   const value = maybeReadJson(indexPath);
@@ -240,6 +250,38 @@ function runtimeEvidenceFromDir(dir) {
 function unique(values) {
   return [...new Set(values)];
 }
+
+const evidenceSetPaths = [
+  ...argsAll("evidence-set"),
+  ...(process.env.FRIDAY_UIUX_PRODUCT_CLOSURE_EVIDENCE_SET
+    ? process.env.FRIDAY_UIUX_PRODUCT_CLOSURE_EVIDENCE_SET.split(/[:\n]/).filter(Boolean)
+    : []),
+];
+const evidenceSets = evidenceSetsFromFiles(evidenceSetPaths);
+const evidenceDirs = unique([
+  ...argsAll("evidence-dir"),
+  ...evidenceSets.flatMap((set) => set.evidenceDirs),
+  ...(process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR
+    ? [process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR]
+    : []),
+  ...(process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIRS
+    ? process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIRS.split(/[:\n]/).filter(Boolean)
+    : []),
+]);
+const runtimeEvidence = unique([
+  ...argsAll("runtime-evidence"),
+  ...evidenceSets.flatMap((set) => set.runtimeEvidence),
+  ...(process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE
+    ? process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE.split(/[:\n]/).filter(Boolean)
+    : []),
+]);
+const runtimeEvidenceDirs = unique([
+  ...argsAll("runtime-evidence-dir"),
+  ...evidenceSets.flatMap((set) => set.runtimeEvidenceDirs),
+  ...(process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS
+    ? process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS.split(/[:\n]/).filter(Boolean)
+    : []),
+]);
 
 function uiDeviceEvidenceDirCandidates(dirs) {
   const candidates = [];
@@ -459,6 +501,7 @@ const report = {
     : "blocked",
   repoRoot,
   designRoot,
+  evidenceSets,
   design: {
     contract: designContractPath,
     selections: [
