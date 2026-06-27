@@ -26,6 +26,8 @@ final class MissionSpineWriteWiringTests: XCTestCase {
     case learningBlocked
     case activityDone
     case activityBlocked
+    case providerActionAccepted
+    case providerActionBlocked
     case serverError           // a typed Error frame
   }
 
@@ -47,6 +49,7 @@ final class MissionSpineWriteWiringTests: XCTestCase {
     private(set) var receivedDecision: MemoryDecisionRequestWire?
     private(set) var receivedLearningDecision: RunOutcomeLearningDecisionRequestWire?
     private(set) var receivedActivityMarkDone: ActivityMarkDoneRequestWire?
+    private(set) var receivedProviderWorkspaceAction: ProviderWorkspaceActionRequestWire?
     /// Proves the inbound message object carried NO `auth_proof` (sealed session is the channel auth).
     private(set) var sawAuthProof = false
 
@@ -158,6 +161,36 @@ final class MissionSpineWriteWiringTests: XCTestCase {
           reply = .activityMarkDoneResult(ActivityMarkDoneResultWire(
             activityId: req.activityId, state: "done", status: "done"))
         }
+      case .providerWorkspaceActionRequest(let req):
+        receivedProviderWorkspaceAction = req
+        switch mode {
+        case .serverError:
+          reply = .error(code: .internal, message: "provider workspace action failed")
+        case .providerActionBlocked:
+          reply = .providerWorkspaceActionResult(ProviderWorkspaceActionResultWire(
+            requestId: req.requestId,
+            fridaySessionId: req.fridaySessionId,
+            provider: req.provider,
+            action: req.action,
+            accepted: false,
+            routed: false,
+            status: "blocked",
+            truthLabel: "provider_workspace_action_guard_blocked",
+            blocker: "capability_not_verified",
+            missionContext: req.missionContext))
+        default:
+          reply = .providerWorkspaceActionResult(ProviderWorkspaceActionResultWire(
+            requestId: req.requestId,
+            fridaySessionId: req.fridaySessionId,
+            provider: req.provider,
+            action: req.action,
+            accepted: true,
+            routed: true,
+            status: "accepted",
+            truthLabel: "provider_workspace_action_guard_accepted",
+            dispatchRef: "provider-dispatch-1",
+            missionContext: req.missionContext))
+        }
       default:
         throw FridayWriteClientError.transport("unexpected inbound on the spine session: \(env.msgId)")
       }
@@ -197,6 +230,20 @@ final class MissionSpineWriteWiringTests: XCTestCase {
       missionId: "mission-desktop-1", workItemId: "work-desktop-1",
       title: "Coordinate Friday work", intent: "keep one Mission across every surface",
       lane: "deepseek")
+  }
+
+  private func sampleProviderWorkspaceAction() -> ProviderWorkspaceActionRequestWire {
+    ProviderWorkspaceActionRequestWire(
+      requestId: "provider-action-1",
+      fridaySessionId: "friday-codex-1",
+      provider: "codex",
+      action: "send_turn",
+      capabilityId: "provider.codex.send_turn",
+      payloadRef: "friday://body/user-message/1",
+      missionContext: ProviderWorkspaceMissionContextWire(
+        fridayConversationId: "fconv_desktop_1",
+        missionId: "mission-desktop-1",
+        workItemId: "work-desktop-1"))
   }
 
   // MARK: submitMissionIntake
@@ -337,6 +384,43 @@ final class MissionSpineWriteWiringTests: XCTestCase {
     let (client, _) = try makeClient(mode: .serverError)
     do {
       _ = try await client.submitActivityMarkDone(ActivityMarkDoneRequestWire(activityId: "activity-1"))
+      XCTFail("a typed Error frame must throw")
+    } catch let err as FridayWriteClientError {
+      guard case .serverError = err else { return XCTFail("expected serverError, got \(err)") }
+    }
+  }
+
+  // MARK: submitProviderWorkspaceAction
+
+  func testSubmitProviderWorkspaceAction_acceptedReturnsGuardReceiptNoAuthProof() async throws {
+    let (client, transport) = try makeClient(mode: .providerActionAccepted)
+    let result = try await client.submitProviderWorkspaceAction(sampleProviderWorkspaceAction())
+    XCTAssertEqual(result.requestId, "provider-action-1")
+    XCTAssertEqual(result.fridaySessionId, "friday-codex-1")
+    XCTAssertEqual(result.provider, "codex")
+    XCTAssertEqual(result.action, "send_turn")
+    XCTAssertTrue(result.accepted)
+    XCTAssertTrue(result.routed)
+    XCTAssertEqual(result.status, "accepted")
+    XCTAssertEqual(result.dispatchRef, "provider-dispatch-1")
+    XCTAssertEqual(transport.receivedProviderWorkspaceAction?.capabilityId, "provider.codex.send_turn")
+    XCTAssertEqual(transport.receivedProviderWorkspaceAction?.missionContext?.missionId, "mission-desktop-1")
+    XCTAssertFalse(transport.sawAuthProof, "the provider workspace action request must carry NO auth_proof")
+  }
+
+  func testSubmitProviderWorkspaceAction_blockedIsReturnedReceiptNotThrow() async throws {
+    let (client, _) = try makeClient(mode: .providerActionBlocked)
+    let result = try await client.submitProviderWorkspaceAction(sampleProviderWorkspaceAction())
+    XCTAssertFalse(result.accepted)
+    XCTAssertFalse(result.routed)
+    XCTAssertEqual(result.status, "blocked")
+    XCTAssertEqual(result.blocker, "capability_not_verified")
+  }
+
+  func testSubmitProviderWorkspaceAction_serverError_throwsServerError() async throws {
+    let (client, _) = try makeClient(mode: .serverError)
+    do {
+      _ = try await client.submitProviderWorkspaceAction(sampleProviderWorkspaceAction())
       XCTFail("a typed Error frame must throw")
     } catch let err as FridayWriteClientError {
       guard case .serverError = err else { return XCTFail("expected serverError, got \(err)") }

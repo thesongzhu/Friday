@@ -546,6 +546,11 @@ public enum FridayMessage: Equatable {
   case workItemStatusRequest(WorkItemStatusRequestWire)
   /// hub→trusted-peer: refs-only receipt for a WorkItem lifecycle transition.
   case workItemStatusResult(WorkItemStatusResultWire)
+  /// trusted-peer→hub: request one guarded Provider Workspace action. The Hub validates capability
+  /// + mission context before any provider adapter dispatch.
+  case providerWorkspaceActionRequest(ProviderWorkspaceActionRequestWire)
+  /// hub→trusted-peer: refs-only guard/dispatch receipt for a Provider Workspace action.
+  case providerWorkspaceActionResult(ProviderWorkspaceActionResultWire)
   /// client→read-server: owner-gated run answer body readback. Kept separate from
   /// RunReadback so refs-only projections stay refs-only.
   case runAnswerBodyRequest(RunAnswerBodyRequestWire)
@@ -792,6 +797,13 @@ extension FridayMessage: Codable {
     case "WorkItemStatusResult":
       let c = try decoder.container(keyedBy: ResultKey.self)
       self = .workItemStatusResult(try c.decode(WorkItemStatusResultWire.self, forKey: .result))
+    case "ProviderWorkspaceActionRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .providerWorkspaceActionRequest(
+        try c.decode(ProviderWorkspaceActionRequestWire.self, forKey: .request))
+    case "ProviderWorkspaceActionResult":
+      let c = try decoder.container(keyedBy: ResultKey.self)
+      self = .providerWorkspaceActionResult(try c.decode(ProviderWorkspaceActionResultWire.self, forKey: .result))
     case "RunAnswerBodyRequest":
       let c = try decoder.container(keyedBy: RequestKey.self)
       self = .runAnswerBodyRequest(try c.decode(RunAnswerBodyRequestWire.self, forKey: .request))
@@ -1018,6 +1030,14 @@ extension FridayMessage: Codable {
       try c.encode(r, forKey: .request)
     case .workItemStatusResult(let r):
       try tag.encode("WorkItemStatusResult", forKey: .kind)
+      var c = encoder.container(keyedBy: ResultKey.self)
+      try c.encode(r, forKey: .result)
+    case .providerWorkspaceActionRequest(let r):
+      try tag.encode("ProviderWorkspaceActionRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(r, forKey: .request)
+    case .providerWorkspaceActionResult(let r):
+      try tag.encode("ProviderWorkspaceActionResult", forKey: .kind)
       var c = encoder.container(keyedBy: ResultKey.self)
       try c.encode(r, forKey: .result)
     case .runAnswerBodyRequest(let r):
