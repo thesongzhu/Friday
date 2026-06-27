@@ -689,6 +689,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   private var _lastLearningDecision: RunOutcomeLearningDecisionRequestWire?
   private var _lastActivityMarkDone: ActivityMarkDoneRequestWire?
   private var _lastWorkItemStatus: WorkItemStatusRequestWire?
+  private var _lastProviderWorkspaceAction: ProviderWorkspaceActionRequestWire?
   private var _lastMissionContext: MissionWorkItemContextWire?
   private var _lastMissionRunConstraints: AgentRunConstraintsWire?
   private var _lastResumeRunId: String?
@@ -709,6 +710,9 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   }
   var lastActivityMarkDone: ActivityMarkDoneRequestWire? { lock.withLock { _lastActivityMarkDone } }
   var lastWorkItemStatus: WorkItemStatusRequestWire? { lock.withLock { _lastWorkItemStatus } }
+  var lastProviderWorkspaceAction: ProviderWorkspaceActionRequestWire? {
+    lock.withLock { _lastProviderWorkspaceAction }
+  }
   var lastMissionContext: MissionWorkItemContextWire? { lock.withLock { _lastMissionContext } }
   var lastMissionRunConstraints: AgentRunConstraintsWire? { lock.withLock { _lastMissionRunConstraints } }
   var lastResumeRunId: String? { lock.withLock { _lastResumeRunId } }
@@ -831,6 +835,27 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
       reason: request.reason,
       proofReceiptCount: request.proofReceipt == nil ? 0 : 1,
       updatedAtMs: 1_780_640_000_123)
+  }
+
+  func submitProviderWorkspaceAction(
+    _ request: ProviderWorkspaceActionRequestWire
+  ) async throws -> ProviderWorkspaceActionResultWire {
+    lock.withLock { _lastProviderWorkspaceAction = request }
+    if case .throwsTransport = behavior {
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    }
+    return ProviderWorkspaceActionResultWire(
+      requestId: request.requestId,
+      fridaySessionId: request.fridaySessionId,
+      provider: request.provider,
+      action: request.action,
+      accepted: true,
+      routed: true,
+      status: "verified",
+      truthLabel: "provider_workspace_guarded",
+      proofRef: "proof://provider-workspace/list-sessions",
+      dispatchRef: "dispatch://provider-workspace/list-sessions",
+      missionContext: request.missionContext)
   }
 
   func dispatchMissionBoundAgentRun(
@@ -1851,6 +1876,88 @@ func cancelWorkItemSendsLifecycleWriteAndRefreshes() async {
     proof: [
       "work_item_id": write.lastWorkItemStatus?.workItemId ?? "",
       "target_status": write.lastWorkItemStatus?.targetStatus ?? "",
+    ])
+}
+
+@Test
+@MainActor
+func providerWorkspaceListSessionsSendsGuardedRequestAndRefreshes() async {
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let snapshot = FridayHubConsoleCore.WorkbenchSnapshot(
+    missionId: "mission-provider-workspace",
+    fridayConversationId: "fconv_provider_workspace",
+    agentSessionId: "friday-session-1",
+    runtimeFeedStatus: .liveRustHubProjection,
+    statusLabels: [],
+    duplicatePreflight: MissionWorkbenchDuplicatePreflight(
+      status: "none", duplicateMissionId: "", duplicateWorkItemId: ""),
+    routeDecision: MissionWorkbenchRouteDecision(
+      advisorSummary: "Codex owns Provider Workspace list sessions.",
+      selectedRoute: "codex",
+      alternatives: ["claude"],
+      truthLabel: .fridayOwned),
+    providerReceiptRefs: [],
+    channelReceiptRefs: [],
+    workItems: [
+      MissionWorkbenchWorkItem(
+        id: "work-provider-workspace",
+        title: "Provider Workspace list sessions",
+        state: .providerAck,
+        owner: .fridayOwned,
+        proofRef: "proof://provider-workspace/seed",
+        done: false)
+    ],
+    timelinePages: [],
+    memoryCandidates: [],
+    capabilityStates: [],
+    transcriptSections: [])
+  let vm = OperationsOverviewViewModel(
+    client: StaticWorkbenchReadClient(snapshot: snapshot),
+    writeClient: write,
+    newId: { "guard-1" })
+
+  await vm.requestProviderWorkspaceListSessions(snapshot)
+
+  #expect(write.lastProviderWorkspaceAction == ProviderWorkspaceActionRequestWire(
+    requestId: "desktop-provider-workspace-guard-1",
+    fridaySessionId: "friday-session-1",
+    provider: "codex",
+    action: "list_sessions",
+    capabilityId: "provider.codex.list_sessions",
+    payloadRef: nil,
+    missionContext: ProviderWorkspaceMissionContextWire(
+      fridayConversationId: "fconv_provider_workspace",
+      missionId: "mission-provider-workspace",
+      workItemId: "work-provider-workspace")))
+  let key = OperationsOverviewViewModel.providerWorkspaceListSessionsKey
+  guard case .confirmed(let summary, _, _) = vm.providerWorkspaceActionStates[key] else {
+    Issue.record(
+      "expected provider workspace .confirmed, got \(String(describing: vm.providerWorkspaceActionStates[key]))")
+    return
+  }
+  #expect(summary.contains("codex.list_sessions"))
+  #expect(summary.contains("routed=true"))
+  #expect(vm.latestProviderWorkspaceActionReceipt?.proofRef == "proof://provider-workspace/list-sessions")
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "provider-workspace-list-sessions",
+    screen: "providerAdmin",
+    actionId: "desktop/providerAdmin/provider-workspace-list-sessions",
+    capabilityId: "provider.codex.list_sessions",
+    evidenceRef: "swift://desktop/providerAdmin/provider-workspace/list-sessions",
+    source: "macos_operations_viewmodel_provider_workspace_action_runtime",
+    proof: [
+      "request_id": write.lastProviderWorkspaceAction?.requestId ?? "",
+      "friday_session_id": write.lastProviderWorkspaceAction?.fridaySessionId ?? "",
+      "provider": write.lastProviderWorkspaceAction?.provider ?? "",
+      "action": write.lastProviderWorkspaceAction?.action ?? "",
+      "capability_id": write.lastProviderWorkspaceAction?.capabilityId ?? "",
+      "mission_id": write.lastProviderWorkspaceAction?.missionContext?.missionId ?? "",
+      "work_item_id": write.lastProviderWorkspaceAction?.missionContext?.workItemId ?? "",
+      "accepted": vm.latestProviderWorkspaceActionReceipt?.accepted ?? false,
+      "routed": vm.latestProviderWorkspaceActionReceipt?.routed ?? false,
+      "truth_label": vm.latestProviderWorkspaceActionReceipt?.truthLabel ?? "",
+      "proof_ref": vm.latestProviderWorkspaceActionReceipt?.proofRef ?? "",
+      "dispatch_ref": vm.latestProviderWorkspaceActionReceipt?.dispatchRef ?? "",
     ])
 }
 

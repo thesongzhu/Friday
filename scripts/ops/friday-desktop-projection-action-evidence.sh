@@ -37,6 +37,7 @@ run_swift_test() {
 run_swift_test refreshLoadsRepresentativeSnapshot
 run_swift_test loadDetailCallsProviderDoctorReadArm
 run_swift_test loadDetailCallsRunAndNeedsMeReadArms
+run_swift_test providerWorkspaceListSessionsSendsGuardedRequestAndRefreshes
 
 node - "${OUT_DIR}" "${ACTION_RUNTIME_OUT}" <<'NODE'
 const fs = require("node:fs");
@@ -50,11 +51,13 @@ const files = [
   path.join(outDir, "desktop-skills-capability-matrix-action-evidence.json"),
   path.join(outDir, "desktop-media-evidence-refs-action-evidence.json"),
   path.join(outDir, "desktop-provider-admin-check-action-evidence.json"),
+  path.join(outDir, "desktop-provider-workspace-list-sessions-action-evidence.json"),
   path.join(outDir, "desktop-parity-route-readiness-action-evidence.json"),
   path.join(outDir, "desktop-token-ledger-run-readback-action-evidence.json"),
 ];
 const requiredActions = [
   "desktop/providerAdmin/check",
+  "desktop/providerAdmin/provider-workspace-list-sessions",
   "desktop/parity/route-readiness",
   "desktop/diagnostics/proof-refs",
   "desktop/tokenLedger/run-readback",

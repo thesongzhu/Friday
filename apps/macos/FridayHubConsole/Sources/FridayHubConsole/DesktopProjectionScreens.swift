@@ -358,6 +358,7 @@ struct DesktopProjectionScreen: View {
             .foregroundStyle(HubTheme.textSecondary)
         }
       }
+      providerWorkspaceActionCard(snapshot)
       GlassPanel {
         VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
           cardTitle("Provider State")
@@ -397,6 +398,76 @@ struct DesktopProjectionScreen: View {
       providerRouteDecisionCard(snapshot)
       providerWorkItemsCard(snapshot)
       refsCard(title: "Provider Receipt Refs", refs: snapshot.providerReceiptRefs)
+    }
+  }
+
+  private func providerWorkspaceActionCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    let key = OperationsOverviewViewModel.providerWorkspaceListSessionsKey
+    let state = viewModel.providerWorkspaceActionStates[key] ?? .ready
+    return GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        HStack {
+          cardTitle("Provider Workspace Guard")
+          Spacer()
+          StatusChip(
+            text: snapshot.agentSessionId == nil ? "needs session ref" : "guarded write",
+            bg: snapshot.agentSessionId == nil ? HubTheme.chipWarnBG : HubTheme.chipPendingBG,
+            fg: snapshot.agentSessionId == nil ? HubTheme.chipWarnFG : HubTheme.chipPendingFG)
+        }
+        Text("Requests a Codex list-sessions guard receipt through the sealed WRITE seam. The Hub validates session, capability, and Mission context; blocked receipts render as truth.")
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        HStack(spacing: 8) {
+          Button {
+            Task { await viewModel.requestProviderWorkspaceListSessions(snapshot) }
+          } label: {
+            Label("List Sessions", systemImage: "list.bullet.rectangle")
+          }
+          .buttonStyle(.bordered)
+          .disabled(state.isSent)
+          .accessibilityLabel("Request Provider Workspace list sessions guard receipt")
+          .accessibilityIdentifier("friday.desktop.provider-workspace.list-sessions")
+
+          WriteActionStateView(state: state, pendingText: "Requesting Provider Workspace guard…")
+        }
+        RefPill(label: "capability", ref: "provider.codex.list_sessions")
+        if let agentSessionId = snapshot.agentSessionId {
+          RefPill(label: "friday_session_id", ref: agentSessionId)
+        }
+        if let receipt = viewModel.latestProviderWorkspaceActionReceipt {
+          providerWorkspaceReceipt(receipt)
+        }
+      }
+    }
+    .accessibilityIdentifier("friday.desktop.provider-workspace.guard")
+  }
+
+  private func providerWorkspaceReceipt(_ receipt: ProviderWorkspaceActionReceipt) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 6) {
+        StatusChip(
+          text: receipt.accepted ? "accepted" : "blocked",
+          bg: receipt.accepted ? HubTheme.chipDoneBG : HubTheme.chipWarnBG,
+          fg: receipt.accepted ? HubTheme.chipDoneFG : HubTheme.chipWarnFG)
+        StatusChip(
+          text: receipt.routed ? "routed" : "not routed",
+          bg: receipt.routed ? HubTheme.chipPendingBG : HubTheme.chipNeutralBG,
+          fg: receipt.routed ? HubTheme.chipPendingFG : HubTheme.chipNeutralFG)
+        StatusChip(text: receipt.status, bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+      }
+      Text(receipt.summary)
+        .font(.system(size: 11))
+        .foregroundStyle(HubTheme.textSecondary)
+        .textSelection(.enabled)
+      RefPill(label: "request_id", ref: receipt.requestId)
+      RefPill(label: "capability", ref: receipt.capabilityId)
+      if let proofRef = receipt.proofRef {
+        RefPill(label: "proof", ref: proofRef)
+      }
+      if let dispatchRef = receipt.dispatchRef {
+        RefPill(label: "dispatch", ref: dispatchRef)
+      }
     }
   }
 
