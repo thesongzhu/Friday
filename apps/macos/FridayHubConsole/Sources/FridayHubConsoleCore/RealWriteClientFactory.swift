@@ -158,6 +158,11 @@ struct HonestlyUnavailableWriteClient: FridayMissionSpineWriteClient, FridayMiss
   func submitWorkItemStatus(_ request: WorkItemStatusRequestWire) async throws -> WorkItemStatusResultWire {
     throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
   }
+  func submitProviderWorkspaceAction(
+    _ request: ProviderWorkspaceActionRequestWire
+  ) async throws -> ProviderWorkspaceActionResultWire {
+    throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
+  }
   func dispatchMissionBoundAgentRun(
     task: String,
     missionContext: MissionWorkItemContextWire,

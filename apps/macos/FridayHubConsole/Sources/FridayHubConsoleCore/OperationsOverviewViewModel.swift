@@ -261,6 +261,48 @@ public struct ChatReceiptRef: Sendable, Codable, Equatable, Identifiable {
   }
 }
 
+public struct ProviderWorkspaceActionReceipt: Sendable, Equatable {
+  public let requestId: String
+  public let fridaySessionId: String
+  public let provider: String
+  public let action: String
+  public let capabilityId: String
+  public let accepted: Bool
+  public let routed: Bool
+  public let status: String
+  public let truthLabel: String
+  public let blocker: String?
+  public let proofRef: String?
+  public let dispatchRef: String?
+
+  public init(_ result: ProviderWorkspaceActionResultWire) {
+    self.requestId = result.requestId
+    self.fridaySessionId = result.fridaySessionId
+    self.provider = result.provider
+    self.action = result.action
+    self.capabilityId = "provider.\(result.provider).\(result.action)"
+    self.accepted = result.accepted
+    self.routed = result.routed
+    self.status = result.status
+    self.truthLabel = result.truthLabel
+    self.blocker = result.blocker
+    self.proofRef = result.proofRef
+    self.dispatchRef = result.dispatchRef
+  }
+
+  public var summary: String {
+    var parts = [
+      "\(provider).\(action)",
+      "accepted=\(accepted)",
+      "routed=\(routed)",
+      "status=\(status)",
+      "truth=\(truthLabel)",
+    ]
+    if let blocker, !blocker.isEmpty { parts.append("blocker=\(blocker)") }
+    return parts.joined(separator: " · ")
+  }
+}
+
 public struct ChatNeedsMeItem: Sendable, Equatable, Identifiable {
   public let runId: String
   public let kind: String
@@ -397,6 +439,10 @@ public final class OperationsOverviewViewModel: ObservableObject {
   @Published public private(set) var activityMarkDoneStates: [String: WriteActionState] = [:]
   /// Per WorkItem lifecycle recovery state, keyed by WorkItem id.
   @Published public private(set) var workItemStatusStates: [String: WriteActionState] = [:]
+  /// Provider Workspace guarded action state, keyed by capability/action id.
+  @Published public private(set) var providerWorkspaceActionStates: [String: WriteActionState] = [:]
+  /// Last Provider Workspace guard receipt surfaced to the desktop Provider Admin UI.
+  @Published public private(set) var latestProviderWorkspaceActionReceipt: ProviderWorkspaceActionReceipt?
   /// Structured refs for the latest desktop Chat turn. This avoids parsing status prose in the UI.
   @Published public private(set) var latestChatTurn: ChatTurnRefs?
   /// Refs-only Needs-Me rows for the latest Chat turn's runs.
@@ -825,6 +871,69 @@ public final class OperationsOverviewViewModel: ObservableObject {
     } catch {
       workItemStatusStates[workItemId] = .error(reason: Self.writeReason(for: error))
     }
+  }
+
+  /// Request the safest Provider Workspace guard receipt: Codex `list_sessions`.
+  ///
+  /// This is not raw provider execution. The Hub validates the exact capability id, session link,
+  /// and Mission context before returning a refs-only guard receipt. If the provider dispatch flag
+  /// is off or the capability is gated, the UI renders that blocked receipt as truth.
+  public func requestProviderWorkspaceListSessions(_ snapshot: WorkbenchSnapshot) async {
+    let key = Self.providerWorkspaceListSessionsKey
+    guard let fridaySessionId = snapshot.agentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !fridaySessionId.isEmpty
+    else {
+      providerWorkspaceActionStates[key] = .error(
+        reason: "Provider Workspace action requires an agent session ref.")
+      return
+    }
+    guard let workItemId = Self.providerWorkspaceWorkItemId(snapshot) else {
+      providerWorkspaceActionStates[key] = .error(
+        reason: "Provider Workspace action requires a provider-linked WorkItem ref.")
+      return
+    }
+    guard let writeClient else {
+      providerWorkspaceActionStates[key] = .error(reason: "Write seam not configured.")
+      return
+    }
+
+    providerWorkspaceActionStates[key] = .sent
+    let request = ProviderWorkspaceActionRequestWire(
+      requestId: "desktop-provider-workspace-\(newId())",
+      fridaySessionId: fridaySessionId,
+      provider: "codex",
+      action: "list_sessions",
+      capabilityId: "provider.codex.list_sessions",
+      payloadRef: nil,
+      missionContext: ProviderWorkspaceMissionContextWire(
+        fridayConversationId: snapshot.fridayConversationId,
+        missionId: snapshot.missionId,
+        workItemId: workItemId))
+    do {
+      let result = try await writeClient.submitProviderWorkspaceAction(request)
+      let receipt = ProviderWorkspaceActionReceipt(result)
+      latestProviderWorkspaceActionReceipt = receipt
+      if result.accepted {
+        providerWorkspaceActionStates[key] = .confirmed(summary: receipt.summary)
+      } else {
+        providerWorkspaceActionStates[key] = .error(reason: receipt.summary)
+      }
+      await refresh()
+    } catch {
+      providerWorkspaceActionStates[key] = .error(reason: Self.writeReason(for: error))
+    }
+  }
+
+  public static let providerWorkspaceListSessionsKey = "provider.codex.list_sessions:list_sessions"
+
+  private static func providerWorkspaceWorkItemId(_ snapshot: WorkbenchSnapshot) -> String? {
+    let candidate = snapshot.workItems.first { item in
+      item.state == .providerAck
+        || item.proofRef?.localizedCaseInsensitiveContains("provider") == true
+        || item.title.localizedCaseInsensitiveContains("provider")
+    } ?? snapshot.workItems.first
+    let trimmed = candidate?.id.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return trimmed.isEmpty ? nil : trimmed
   }
 
   private static func resumeSummary(for result: ResumeRelayResult) -> String {
