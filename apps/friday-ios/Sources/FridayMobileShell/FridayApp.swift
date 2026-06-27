@@ -405,7 +405,8 @@ struct RootView: View {
           FridayProjectionScreen(destination: destination, viewModel: homeVM) {
             destination = .pairing
           }
-        case .missions, .needsMe, .memory, .platform, .activity, .workflows, .settings:
+        case .missions, .needsMe, .memory, .platform, .activity, .workflows, .settings,
+             .petEditor, .proofViewer, .entrypoints:
           FridayProjectionScreen(destination: destination, viewModel: homeVM)
         }
       }

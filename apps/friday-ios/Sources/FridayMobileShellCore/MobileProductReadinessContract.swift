@@ -131,6 +131,9 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
   case workflows
   case onboarding
   case settings
+  case petEditor
+  case proofViewer
+  case entrypoints
 
   public var id: String { rawValue }
 
@@ -280,6 +283,27 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
         tier: .statusProjection,
         runtimeActionIds: ["mobile/settings/push-permission"],
         blockers: [.init(.needsRuntimeEvidence, label: "settings mutation proof")])
+    case .petEditor:
+      return contract(
+        title: "Pet Editor",
+        systemImage: "paintpalette",
+        tier: .readinessOnly,
+        runtimeActionIds: ["mobile/pet/state-mapping"],
+        blockers: [.init(.needsRuntimeEvidence, label: "pet state mapping proof")])
+    case .proofViewer:
+      return contract(
+        title: "Proof Viewer",
+        systemImage: "doc.text.magnifyingglass",
+        tier: .liveReadProjection,
+        runtimeActionIds: ["mobile/proof/viewer-open"],
+        blockers: [.init(.needsRuntimeEvidence, label: "proof receipt open proof")])
+    case .entrypoints:
+      return contract(
+        title: "iOS Entrypoints",
+        systemImage: "rectangle.stack.badge.plus",
+        tier: .readinessOnly,
+        runtimeActionIds: ["mobile/entrypoints/readiness"],
+        blockers: [.init(.needsRuntimeEvidence, label: "widget/control/app-intent proof")])
     }
   }
 

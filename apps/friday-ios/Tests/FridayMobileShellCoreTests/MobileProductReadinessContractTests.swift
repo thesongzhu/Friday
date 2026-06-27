@@ -23,6 +23,9 @@ func mobileProductContractCoversOperatorSelectedDestinations() {
     "workflows",
     "onboarding",
     "settings",
+    "petEditor",
+    "proofViewer",
+    "entrypoints",
   ])
   #expect(MobileProductDestinationID.allCases.allSatisfy { $0.contract.routeBuilt })
   #expect(MobileProductDestinationID.allCases.allSatisfy { $0.contract.selectedDesignLocked })
@@ -166,4 +169,30 @@ func mobileProductContractTracksNewSessionLaunchIntoChatButRuntimeBlocked() {
   #expect(!newSession.blockers.contains { $0.kind == .needsLiveWrite })
   #expect(newSession.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(!newSession.isEndBarReady)
+}
+
+@Test
+func mobileProductContractTracksSelectedDesignCompanionProofAndEntrypoints() {
+  let petEditor = MobileProductDestinationID.petEditor.contract
+  let proofViewer = MobileProductDestinationID.proofViewer.contract
+  let entrypoints = MobileProductDestinationID.entrypoints.contract
+
+  #expect(petEditor.title == "Pet Editor")
+  #expect(petEditor.tier == .readinessOnly)
+  #expect(petEditor.runtimeActionIds == ["mobile/pet/state-mapping"])
+  #expect(petEditor.blockers.contains { $0.label == "pet state mapping proof" })
+
+  #expect(proofViewer.title == "Proof Viewer")
+  #expect(proofViewer.tier == .liveReadProjection)
+  #expect(proofViewer.runtimeActionIds == ["mobile/proof/viewer-open"])
+  #expect(proofViewer.blockers.contains { $0.label == "proof receipt open proof" })
+
+  #expect(entrypoints.title == "iOS Entrypoints")
+  #expect(entrypoints.tier == .readinessOnly)
+  #expect(entrypoints.runtimeActionIds == ["mobile/entrypoints/readiness"])
+  #expect(entrypoints.blockers.contains { $0.label == "widget/control/app-intent proof" })
+
+  #expect(!petEditor.isEndBarReady)
+  #expect(!proofViewer.isEndBarReady)
+  #expect(!entrypoints.isEndBarReady)
 }

@@ -11,6 +11,9 @@ private enum ProjectionSurface {
   case workflows
   case onboarding
   case settings
+  case petEditor
+  case proofViewer
+  case entrypoints
 
   init?(_ destination: MobileDestination) {
     switch destination {
@@ -33,6 +36,12 @@ private enum ProjectionSurface {
       self = .onboarding
     case .settings:
       self = .settings
+    case .petEditor:
+      self = .petEditor
+    case .proofViewer:
+      self = .proofViewer
+    case .entrypoints:
+      self = .entrypoints
     }
   }
 
@@ -46,6 +55,9 @@ private enum ProjectionSurface {
     case .workflows: return "arrow.triangle.branch"
     case .onboarding: return "sparkles.rectangle.stack"
     case .settings: return "gearshape"
+    case .petEditor: return "paintpalette"
+    case .proofViewer: return "doc.text.magnifyingglass"
+    case .entrypoints: return "rectangle.stack.badge.plus"
     }
   }
 
@@ -59,6 +71,9 @@ private enum ProjectionSurface {
     case .workflows: return "Workflows"
     case .onboarding: return "Onboarding"
     case .settings: return "Settings"
+    case .petEditor: return "Pet Editor"
+    case .proofViewer: return "Proof Viewer"
+    case .entrypoints: return "iOS Entrypoints"
     }
   }
 
@@ -72,6 +87,9 @@ private enum ProjectionSurface {
     case .workflows: return "workflows"
     case .onboarding: return "onboarding"
     case .settings: return "settings"
+    case .petEditor: return "pet-editor"
+    case .proofViewer: return "proof-viewer"
+    case .entrypoints: return "entrypoints"
     }
   }
 
@@ -85,6 +103,9 @@ private enum ProjectionSurface {
     case .workflows: return "routing and work"
     case .onboarding: return "local readiness"
     case .settings: return "read seam"
+    case .petEditor: return "companion state"
+    case .proofViewer: return "receipt truth"
+    case .entrypoints: return "native launchers"
     }
   }
 }
@@ -205,6 +226,12 @@ struct FridayProjectionScreen: View {
         onboardingCard(projection)
       case .settings:
         settingsCard(projection)
+      case .petEditor:
+        petEditorCard(projection)
+      case .proofViewer:
+        proofViewerCard(projection)
+      case .entrypoints:
+        entrypointsCard(projection)
       }
     }
   }
@@ -673,6 +700,74 @@ struct FridayProjectionScreen: View {
       }
     }
     pushNotificationCard()
+  }
+
+  private func petEditorCard(_ projection: HomeProjection) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader("Companion State", count: nil)
+        Text("The selected mobile design keeps the companion visible, but pet editing is not allowed to invent live state. This screen exposes the current state mapping gap until a real pet-state proof exists.")
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        readinessRow(
+          title: "Hero pet",
+          value: "rendered locally from bundled v9 assets",
+          healthy: true)
+        readinessRow(
+          title: "Live state mapping",
+          value: projection.runtimeFeedStatus.isEmpty ? "not in projection" : projection.runtimeFeedStatus,
+          healthy: false)
+        RefPill(label: "action", ref: "mobile/pet/state-mapping")
+        RefPill(label: "mission_id", ref: projection.missionId)
+      }
+    }
+    .accessibilityIdentifier("friday.pet-editor.readiness")
+  }
+
+  private func proofViewerCard(_ projection: HomeProjection) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader(
+          "Proof Receipts",
+          count: projection.providerReceiptRefs.count + projection.channelReceiptRefs.count)
+        Text("Proof Viewer shows only receipt refs emitted by the live projection. Opening and replaying receipt contents still requires same-run app evidence before END-BAR.")
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if projection.providerReceiptRefs.isEmpty && projection.channelReceiptRefs.isEmpty {
+          emptyText("No proof receipt refs in this projection.")
+        } else {
+          ForEach(projection.providerReceiptRefs, id: \.self) {
+            RefPill(label: "provider", ref: $0)
+          }
+          ForEach(projection.channelReceiptRefs, id: \.self) {
+            RefPill(label: "channel", ref: $0)
+          }
+        }
+        RefPill(label: "action", ref: "mobile/proof/viewer-open")
+      }
+    }
+    .accessibilityIdentifier("friday.proof-viewer.receipts")
+  }
+
+  private func entrypointsCard(_ projection: HomeProjection) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader("Native Entrypoints", count: nil)
+        Text("Widgets, controls, push entry, share intake, and deep links are tracked here as selected-design launch paths. This is readiness evidence, not proof of a completed user loop.")
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        readinessRow(title: "Share intake", value: "friday://share deep link wired", healthy: true)
+        readinessRow(title: "Command sheet", value: "top-left launcher routes selected surfaces", healthy: true)
+        readinessRow(title: "Push entry", value: "local permission surface wired; APNs delivery still unproven", healthy: false)
+        readinessRow(title: "Widget/control", value: "native launcher proof still required", healthy: false)
+        RefPill(label: "action", ref: "mobile/entrypoints/readiness")
+        RefPill(label: "conversation", ref: projection.fridayConversationId)
+      }
+    }
+    .accessibilityIdentifier("friday.entrypoints.readiness")
   }
 
   @ViewBuilder
