@@ -41,7 +41,16 @@ describe("friday-uiux-real-use-proof-driver contract", () => {
 
     expect(source).toContain("check-friday-uiux-native-linkage.mjs");
     expect(source).toContain("friday-action-runtime-evidence-bundle.sh");
+    expect(source).toContain("friday-desktop-ax-accessibility-capture.mjs");
     expect(source).toContain("friday-ui-device-proof-shortlist-runner.sh");
+    expect(source).toContain("--run-desktop-ax-capture");
+    expect(source).toContain("FRIDAY_UIUX_RUN_DESKTOP_AX_CAPTURE:-0");
+    expect(source).toContain("workbench_db=\"${FRIDAY_WORKBENCH_DB_PATH:-}\"");
+    expect(source).toContain("shortlist_args+=(\"--workbench-db\" \"${workbench_db}\")");
+    expect(source).toContain("--mission-id=${canonical_mission_id}");
+    expect(source).toContain("desktop_ax_capture_out=\"${desktop_ax_dir}/desktop-ax-accessibility-capture.json\"");
+    expect(source).toContain("accessibility_captures+=(\"${desktop_ax_capture_out}\")");
+    expect(source).toContain("desktopAccessibilityCapture");
     expect(source).toContain("--accessibility-capture");
     expect(source).toContain("--defer-channel-proof");
     expect(source).toContain("defer_channel_proof=\"${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}\"");

@@ -6,12 +6,19 @@ usage() {
 usage:
   scripts/ops/friday-uiux-real-use-proof-driver.sh --out-dir /abs/run-dir
     [--shared-id mission_ui_device_...]
+    [--mission-id mission_...]
     [--accessibility-capture /abs/real-accessibility-capture.json ...]
+    [--run-desktop-ax-capture]
+    [--desktop-ax-destinations operations,chat,...]
+    [--desktop-ax-app-dir /abs/FridayHubConsole.app]
+    [--desktop-ax-workbench-mission-id mission_...]
+    [--desktop-ax-timeout-seconds 20]
     [--backend-live-proof /abs/backend-proof.json]
     [--objective-coverage /abs/objective-coverage.json]
     [--channel-live-proof /abs/channel-live-proof.json]
     [--channel-capture /abs/channel-capture.json]
     [--timeline-capture /abs/timeline-capture.json]
+    [--workbench-db /abs/rust-hub.sqlite]
     [--harvest-dir /abs/artifact-dir ...]
     [--same-run-events /abs/events.jsonl ...]
     [--runtime-evidence-dir /abs/evidence-dir ...]
@@ -24,7 +31,7 @@ Runs the current fastest honest UI/UX real-use proof chain:
   1. selected-design native linkage gate
   2. optional action-runtime evidence bundle
   3. mobile+desktop live write/read capture bundle
-  4. optional real accessibility click capture normalization
+  4. optional real desktop Accessibility capture and real accessibility click capture normalization
   5. strict UI/device readiness and product-closure reports
 
 Truth:
@@ -41,12 +48,19 @@ die() {
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out_dir=""
 shared_id="${FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID:-}"
+mission_id_arg="${FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID:-}"
 backend_live_proof="${FRIDAY_UI_DEVICE_BACKEND_LIVE_PROOF:-}"
 objective_coverage="${FRIDAY_UI_DEVICE_OBJECTIVE_COVERAGE:-}"
 channel_live_proof="${FRIDAY_UI_DEVICE_CHANNEL_LIVE_PROOF:-}"
 channel_capture="${FRIDAY_UI_DEVICE_CHANNEL_CAPTURE:-}"
 timeline_capture="${FRIDAY_UI_DEVICE_TIMELINE_CAPTURE:-}"
+workbench_db="${FRIDAY_WORKBENCH_DB_PATH:-}"
 defer_channel_proof="${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}"
+run_desktop_ax_capture="${FRIDAY_UIUX_RUN_DESKTOP_AX_CAPTURE:-0}"
+desktop_ax_destinations="${FRIDAY_DESKTOP_AX_CAPTURE_DESTINATIONS:-}"
+desktop_ax_app_dir="${FRIDAY_DESKTOP_AX_APP_DIR:-}"
+desktop_ax_workbench_mission_id="${FRIDAY_DESKTOP_AX_WORKBENCH_MISSION_ID:-}"
+desktop_ax_timeout_seconds="${FRIDAY_DESKTOP_AX_CAPTURE_TIMEOUT_SECONDS:-20}"
 plan_only=0
 skip_action_bundle=0
 accessibility_captures=()
@@ -79,6 +93,15 @@ while [ "$#" -gt 0 ]; do
       shared_id="${1#--shared-id=}"
       shift
       ;;
+    --mission-id)
+      [ "$#" -ge 2 ] || die "--mission-id requires a value"
+      mission_id_arg="$2"
+      shift 2
+      ;;
+    --mission-id=*)
+      mission_id_arg="${1#--mission-id=}"
+      shift
+      ;;
     --accessibility-capture)
       [ "$#" -ge 2 ] || die "--accessibility-capture requires a value"
       accessibility_captures+=("$2")
@@ -86,6 +109,46 @@ while [ "$#" -gt 0 ]; do
       ;;
     --accessibility-capture=*)
       accessibility_captures+=("${1#--accessibility-capture=}")
+      shift
+      ;;
+    --run-desktop-ax-capture)
+      run_desktop_ax_capture=1
+      shift
+      ;;
+    --desktop-ax-destinations)
+      [ "$#" -ge 2 ] || die "--desktop-ax-destinations requires a value"
+      desktop_ax_destinations="$2"
+      shift 2
+      ;;
+    --desktop-ax-destinations=*)
+      desktop_ax_destinations="${1#--desktop-ax-destinations=}"
+      shift
+      ;;
+    --desktop-ax-app-dir)
+      [ "$#" -ge 2 ] || die "--desktop-ax-app-dir requires a value"
+      desktop_ax_app_dir="$2"
+      shift 2
+      ;;
+    --desktop-ax-app-dir=*)
+      desktop_ax_app_dir="${1#--desktop-ax-app-dir=}"
+      shift
+      ;;
+    --desktop-ax-workbench-mission-id)
+      [ "$#" -ge 2 ] || die "--desktop-ax-workbench-mission-id requires a value"
+      desktop_ax_workbench_mission_id="$2"
+      shift 2
+      ;;
+    --desktop-ax-workbench-mission-id=*)
+      desktop_ax_workbench_mission_id="${1#--desktop-ax-workbench-mission-id=}"
+      shift
+      ;;
+    --desktop-ax-timeout-seconds)
+      [ "$#" -ge 2 ] || die "--desktop-ax-timeout-seconds requires a value"
+      desktop_ax_timeout_seconds="$2"
+      shift 2
+      ;;
+    --desktop-ax-timeout-seconds=*)
+      desktop_ax_timeout_seconds="${1#--desktop-ax-timeout-seconds=}"
       shift
       ;;
     --backend-live-proof)
@@ -131,6 +194,15 @@ while [ "$#" -gt 0 ]; do
       ;;
     --timeline-capture=*)
       timeline_capture="${1#--timeline-capture=}"
+      shift
+      ;;
+    --workbench-db)
+      [ "$#" -ge 2 ] || die "--workbench-db requires a value"
+      workbench_db="$2"
+      shift 2
+      ;;
+    --workbench-db=*)
+      workbench_db="${1#--workbench-db=}"
       shift
       ;;
     --harvest-dir)
@@ -197,6 +269,20 @@ case "${out_dir}" in
   *) die "--out-dir must be absolute" ;;
 esac
 case "${shared_id}" in (*[[:space:]]*) die "--shared-id must not contain whitespace" ;; esac
+case "${mission_id_arg}" in (*[[:space:]]*) die "--mission-id must not contain whitespace" ;; esac
+if [ -n "${shared_id}" ] && [ -n "${mission_id_arg}" ]; then
+  die "--shared-id and --mission-id are mutually exclusive"
+fi
+if [ -n "${mission_id_arg}" ]; then
+  case "${mission_id_arg}" in (*mission*) ;; *) die "--mission-id must contain mission" ;; esac
+fi
+case "${run_desktop_ax_capture}" in
+  0|1|false|true) ;;
+  *) die "FRIDAY_UIUX_RUN_DESKTOP_AX_CAPTURE must be 0/1/false/true" ;;
+esac
+if ! [[ "${desktop_ax_timeout_seconds}" =~ ^[0-9]+$ ]] || [[ "${desktop_ax_timeout_seconds}" -lt 5 ]]; then
+  die "--desktop-ax-timeout-seconds must be an integer >= 5"
+fi
 
 require_abs_if_set() {
   local label="$1"
@@ -228,10 +314,28 @@ require_file_if_set "--objective-coverage" "${objective_coverage}"
 require_file_if_set "--channel-live-proof" "${channel_live_proof}"
 require_file_if_set "--channel-capture" "${channel_capture}"
 require_file_if_set "--timeline-capture" "${timeline_capture}"
+require_file_if_set "--workbench-db" "${workbench_db}"
+if [ -n "${desktop_ax_app_dir}" ]; then
+  require_abs_if_set "--desktop-ax-app-dir" "${desktop_ax_app_dir}"
+fi
+
+if [ -z "${shared_id}" ] && [ -z "${mission_id_arg}" ]; then
+  shared_id="mission-uiux-real-use-$(date -u +%Y%m%dT%H%M%SZ)-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+fi
+if [ -n "${mission_id_arg}" ]; then
+  canonical_mission_id="${mission_id_arg}"
+else
+  case "${shared_id}" in
+    mission_*) canonical_mission_id="${shared_id}" ;;
+    *) canonical_mission_id="mission_${shared_id}" ;;
+  esac
+fi
 
 mkdir -p "${out_dir}"
 native_linkage_out="${out_dir}/uiux-native-linkage.json"
 action_bundle_dir="${out_dir}/action-runtime-bundle"
+desktop_ax_dir="${out_dir}/desktop-ax-accessibility"
+desktop_ax_capture_out="${desktop_ax_dir}/desktop-ax-accessibility-capture.json"
 shortlist_dir="${out_dir}/ui-device-shortlist"
 driver_summary="${out_dir}/uiux-real-use-proof-driver-summary.json"
 
@@ -281,12 +385,38 @@ if [ "${skip_action_bundle}" -eq 0 ]; then
   runtime_evidence_dirs+=("${action_bundle_dir}")
 fi
 
+case "${run_desktop_ax_capture}" in
+  1|true)
+    desktop_ax_args=(
+      "${repo_root}/scripts/ops/friday-desktop-ax-accessibility-capture.mjs"
+      "--mission-id=${canonical_mission_id}"
+      "--out-dir=${desktop_ax_dir}"
+      "--timeout-seconds=${desktop_ax_timeout_seconds}"
+      "--require-observed"
+    )
+    if [ -n "${desktop_ax_destinations}" ]; then
+      desktop_ax_args+=("--destinations=${desktop_ax_destinations}")
+    fi
+    if [ -n "${desktop_ax_app_dir}" ]; then
+      desktop_ax_args+=("--app-dir=${desktop_ax_app_dir}")
+    fi
+    if [ -n "${desktop_ax_workbench_mission_id}" ]; then
+      desktop_ax_args+=("--workbench-mission-id=${desktop_ax_workbench_mission_id}")
+    fi
+    node "${desktop_ax_args[@]}"
+    accessibility_captures+=("${desktop_ax_capture_out}")
+    ;;
+esac
+
 shortlist_args=(
   "${repo_root}/scripts/ops/friday-ui-device-proof-shortlist-runner.sh"
   "--out-dir" "${shortlist_dir}"
 )
 if [ -n "${shared_id}" ]; then
   shortlist_args+=("--shared-id" "${shared_id}")
+fi
+if [ -n "${mission_id_arg}" ]; then
+  shortlist_args+=("--mission-id" "${mission_id_arg}")
 fi
 if [ -n "${backend_live_proof}" ]; then
   shortlist_args+=("--backend-live-proof" "${backend_live_proof}")
@@ -302,6 +432,9 @@ if [ -n "${channel_capture}" ]; then
 fi
 if [ -n "${timeline_capture}" ]; then
   shortlist_args+=("--timeline-capture" "${timeline_capture}")
+fi
+if [ -n "${workbench_db}" ]; then
+  shortlist_args+=("--workbench-db" "${workbench_db}")
 fi
 if [ "${defer_channel_proof}" = "1" ]; then
   shortlist_args+=("--defer-channel-proof")
@@ -331,9 +464,9 @@ set -u
 
 bash "${shortlist_args[@]}"
 
-node - "${driver_summary}" "${native_linkage_out}" "${shortlist_dir}/ui-device-shortlist-summary.json" "${action_bundle_dir}/action-runtime-evidence-bundle-index.json" <<'NODE'
+node - "${driver_summary}" "${native_linkage_out}" "${shortlist_dir}/ui-device-shortlist-summary.json" "${action_bundle_dir}/action-runtime-evidence-bundle-index.json" "${desktop_ax_capture_out}" <<'NODE'
 const fs = require("node:fs");
-const [summaryPath, nativePath, shortlistPath, actionBundlePath] = process.argv.slice(2);
+const [summaryPath, nativePath, shortlistPath, actionBundlePath, desktopAxCapturePath] = process.argv.slice(2);
 function readJson(path) {
   try {
     return JSON.parse(fs.readFileSync(path, "utf8"));
@@ -356,6 +489,7 @@ const summary = {
   outputs: {
     nativeLinkage: nativePath,
     actionRuntimeBundle: fs.existsSync(actionBundlePath) ? actionBundlePath : null,
+    desktopAccessibilityCapture: fs.existsSync(desktopAxCapturePath) ? desktopAxCapturePath : null,
     uiDeviceShortlist: shortlistPath,
   },
   caveat: "END-BAR requires strict UI/device readiness with real mobile, desktop, channel, timeline, stress, and negative-control evidence. This driver does not fabricate missing evidence or claim adoption.",
