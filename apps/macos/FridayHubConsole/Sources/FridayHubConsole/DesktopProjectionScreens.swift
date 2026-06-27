@@ -242,7 +242,7 @@ struct DesktopProjectionScreen: View {
             .disabled(viewModel.detailState.isLoading)
           }
 
-          if let runId = snapshot.runOutcomeLearningCandidates.first?.runId, !runId.isEmpty {
+          if let runId = projectedRunId(snapshot) {
             Button {
               Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
             } label: {
@@ -965,7 +965,7 @@ struct DesktopProjectionScreen: View {
 
   private func tokenLedgerStatus(_ snapshot: WorkbenchSnapshot) -> some View {
     VStack(alignment: .leading, spacing: 16) {
-      if let runId = snapshot.runOutcomeLearningCandidates.first?.runId, !runId.isEmpty {
+      if let runId = projectedRunId(snapshot) {
         GlassPanel {
           VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
             HStack {
@@ -1025,6 +1025,13 @@ struct DesktopProjectionScreen: View {
         }
       }
     }
+  }
+
+  private func projectedRunId(_ snapshot: WorkbenchSnapshot) -> String? {
+    if let runId = snapshot.tokenLedgerRunId, !runId.isEmpty {
+      return runId
+    }
+    return snapshot.runOutcomeLearningCandidates.first { !$0.runId.isEmpty }?.runId
   }
 
   private func mediaStatus(_ snapshot: WorkbenchSnapshot) -> some View {

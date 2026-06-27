@@ -435,6 +435,8 @@ func decodesRustProjectionShapedJSON() throws {
       "fridayConversationId": "fconv_x",
       "runtimeFeedStatus": "live_rust_hub_projection",
       "statusLabels": ["stale", "offline", "error"],
+      "agentSessionId": "session_x",
+      "tokenLedgerRunId": "run_x",
       "duplicatePreflight": {
         "status": "opens_existing_mission",
         "duplicateMissionId": "mission_x",
@@ -500,6 +502,8 @@ func decodesRustProjectionShapedJSON() throws {
     """.data(using: .utf8)!
   let snapshot = try JSONDecoder().decode(WorkbenchSnapshot.self, from: json)
   #expect(snapshot.missionId == "mission_x")
+  #expect(snapshot.agentSessionId == "session_x")
+  #expect(snapshot.tokenLedgerRunId == "run_x")
   #expect(snapshot.statusLabels == [.stale, .offline, .error])
   #expect(snapshot.workItems.first?.state == .providerAck)
   #expect(snapshot.workItems.first?.blockingReason == "provider acknowledged; cancel only")
