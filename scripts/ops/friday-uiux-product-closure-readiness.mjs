@@ -391,6 +391,11 @@ const residualEndBarBlockers = Array.isArray(traceabilityReport.gaps?.residualEn
   : Array.isArray(traceabilityReport.gaps?.destinationsStillBlocked)
     ? traceabilityReport.gaps.destinationsStillBlocked
     : [];
+const residualEndBarEvidence = traceabilityReport.residualEndBarEvidence || {
+  truth: "runtime_action_evidence_overlay_not_available_not_endbar",
+  destinationsWithResidualBlockers: residualEndBarBlockers.length,
+  caveat: "No residual evidence overlay was emitted by the traceability report; residual blockers remain product maturity/user-proof requirements.",
+};
 const clientPassed = clientDesign.status === "passed" && clientDesign.parsed?.status === "passed";
 const nativeLinkagePassed = nativeLinkage.status === "passed" && nativeLinkage.parsed?.status === "linked";
 const selectedVisualProofReady = selectedVisualProof.status === "passed" && selectedVisualProof.parsed?.status === "selected_visual_proof_ready";
@@ -467,6 +472,7 @@ const report = {
       bySurface: traceabilityReport.bySurface || null,
       gaps: traceabilityReport.gaps || null,
       residualEndBarBlockers,
+      residualEndBarEvidence,
       caveat: "Residual END-BAR blockers are product maturity/user-proof requirements, not missing runtimeActionId traceability when product_runtime_actions_traceable is reported.",
     },
     designActionRuntime: {
@@ -506,8 +512,9 @@ const report = {
     }]),
     ...(residualEndBarBlockers.length === 0 ? [] : [{
       target: "endbar-residual-product-proof",
-      action: "close the remaining real-user/product-maturity proofs listed by residualEndBarBlockers; these do not mean runtime action wiring is missing, but they still prevent END-BAR/adoption claims",
+      action: "close the remaining real-user/product-maturity proofs listed by residualEndBarBlockers; residualEndBarEvidence may show attached runtime evidence, but that evidence does not clear product blockers or satisfy END-BAR by itself",
       blockers: residualEndBarBlockers,
+      evidence: residualEndBarEvidence,
     }]),
   ],
   notes,
