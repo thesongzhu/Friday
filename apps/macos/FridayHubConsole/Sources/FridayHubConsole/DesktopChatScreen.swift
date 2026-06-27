@@ -255,6 +255,7 @@ struct DesktopChatScreen: View {
         VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
           HStack {
             cardTitle("Needs Review")
+              .accessibilityIdentifier("friday.desktop.chat.review")
             Spacer()
             if let turn = viewModel.latestChatTurn, !turn.runIds.isEmpty {
               Button {

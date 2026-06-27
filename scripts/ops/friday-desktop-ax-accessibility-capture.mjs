@@ -107,7 +107,18 @@ const defaultActionMap = new Map([
   ["desktop/operations/refresh", { destination: "operations", screen: "operations", accessibility_id: "friday.desktop.refresh", event: "mission_workbench_visible", interaction: "visible" }],
   ["desktop/operations/mission-resolve-or-create", { destination: "operations", screen: "operations", accessibility_id: "friday.desktop.mission-card", event: "mission_resolve_or_create_visible", interaction: "visible" }],
   ["desktop/fridayChat/act", { destination: "chat", screen: "fridayChat", accessibility_id: "friday.desktop.chat.send", event: "mission_bound_provider_action_visible", interaction: "visible" }],
-  ["desktop/fridayChat/check", { destination: "chat", screen: "fridayChat", accessibility_id: "friday.desktop.chat.review", event: "mission_bound_provider_action_visible", interaction: "visible" }],
+  ["desktop/fridayChat/check", {
+    destination: "chat",
+    screen: "fridayChat",
+    accessibility_id: "friday.desktop.chat.review",
+    accessibility_ids: [
+      "friday.desktop.chat.review",
+      "friday.desktop.chat.continuity",
+      "friday.desktop.chat.transcript",
+    ],
+    event: "mission_bound_provider_action_visible",
+    interaction: "visible",
+  }],
   ["desktop/session/list", { destination: "session", screen: "session", accessibility_id: "friday.desktop.session-detail", event: "transcript_browser_visible", interaction: "visible" }],
   ["desktop/session/open", { destination: "session", screen: "session", accessibility_id: "friday.desktop.session-detail", event: "transcript_browser_visible", interaction: "visible" }],
   ["desktop/session/link", { destination: "session", screen: "session", accessibility_id: "friday.desktop.session-detail", event: "transcript_browser_visible", interaction: "visible" }],
@@ -295,12 +306,103 @@ function elementMatches(element, accessibilityId) {
 }
 
 function targetMatches(element, target) {
-  if (elementMatches(element, target.accessibility_id)) return { ok: true, match: "accessibility_id" };
+  const ids = Array.isArray(target.accessibility_ids) && target.accessibility_ids.length > 0
+    ? target.accessibility_ids
+    : [target.accessibility_id];
+  for (const id of ids) {
+    if (id && elementMatches(element, id)) return { ok: true, match: id === target.accessibility_id ? "accessibility_id" : "accessibility_id_fallback" };
+  }
   if (target.visible_text) {
     const haystack = [element.name, element.description].join("\n");
     if (haystack.includes(target.visible_text)) return { ok: true, match: "visible_text" };
   }
   return { ok: false, match: "none" };
+}
+
+function captureTargetElement(target) {
+  const ids = Array.isArray(target.accessibility_ids) && target.accessibility_ids.length > 0
+    ? target.accessibility_ids
+    : [target.accessibility_id];
+  const idList = ids.map((id) => String(id || "").replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")).join("\n");
+  const visibleText = target.visible_text || "";
+  const script = `
+set identifierNeedles to paragraphs of ${appleString(idList)}
+set textNeedle to ${appleString(visibleText)}
+set foundLine to ""
+on cleanText(v)
+  set s to v as text
+  set AppleScript's text item delimiters to tab
+  set parts to text items of s
+  set AppleScript's text item delimiters to " "
+  set s to parts as text
+  set AppleScript's text item delimiters to linefeed
+  set parts to text items of s
+  set AppleScript's text item delimiters to " "
+  return parts as text
+end cleanText
+on inspectElement(e, identifierNeedles, textNeedle, depth)
+  global foundLine
+  if foundLine is not "" then return
+  set roleValue to ""
+  set nameValue to ""
+  set identifierValue to ""
+  set descriptionValue to ""
+  try
+    set roleValue to my cleanText(role of e)
+  end try
+  try
+    set nameValue to my cleanText(name of e)
+  end try
+  try
+    set descriptionValue to my cleanText(description of e)
+  end try
+  try
+    tell application "System Events"
+      set identifierValue to my cleanText(value of attribute "AXIdentifier" of e)
+    end tell
+  end try
+  repeat with identifierNeedle in identifierNeedles
+    set idText to identifierNeedle as text
+    if idText is not "" and identifierValue contains idText then
+      set foundLine to ("accessibility_id" & tab & roleValue & tab & identifierValue & tab & nameValue & tab & descriptionValue)
+      return
+    end if
+  end repeat
+  if textNeedle is not "" then
+    if nameValue contains textNeedle or descriptionValue contains textNeedle then
+      set foundLine to ("visible_text" & tab & roleValue & tab & identifierValue & tab & nameValue & tab & descriptionValue)
+      return
+    end if
+  end if
+  if depth < 8 then
+    try
+      tell application "System Events"
+        set childElements to UI elements of e
+      end tell
+      repeat with childElement in childElements
+        my inspectElement(childElement, identifierNeedles, textNeedle, depth + 1)
+        if foundLine is not "" then return
+      end repeat
+    end try
+  end if
+end inspectElement
+tell application "System Events"
+  tell process "FridayHubConsole"
+    if (count of windows) = 0 then return "not_found"
+    my inspectElement(window 1, identifierNeedles, textNeedle, 0)
+  end tell
+end tell
+if foundLine is "" then return "not_found"
+return foundLine`;
+  const result = osascript(script);
+  if (result.status !== 0) {
+    warn("ax_target_capture_failed", `${target.runtimeActionId}:${result.error?.message || result.stderr?.trim() || result.stdout?.trim() || String(result.status)}`);
+    return null;
+  }
+  const line = result.stdout.trim();
+  if (!line || line === "not_found") return null;
+  const [match = "none", role = "", identifier = "", name = "", description = ""] = line.split("\t");
+  return { match, role, identifier, name, description, rawLine: line };
 }
 
 const targets = actionPlan();
@@ -457,11 +559,16 @@ if (blockers.length === 0) {
         if (result.ok) matchKind = result.match;
         return result.ok;
       });
-      if (!matched) {
+      const targetedMatch = matched ? null : captureTargetElement(target);
+      if (targetedMatch) {
+        rawSnapshots.push(`--- destination=${destination} target=${target.runtimeActionId} targeted_ax_probe ---\n${targetedMatch.rawLine}`);
+      }
+      if (!matched && !targetedMatch) {
         missingTargets.push({
           runtimeActionId: target.runtimeActionId,
           destination: target.destination,
           accessibility_id: target.accessibility_id,
+          accessibility_ids: target.accessibility_ids || null,
           visible_text: target.visible_text || null,
         });
         continue;
@@ -478,10 +585,10 @@ if (blockers.length === 0) {
         evidence_ref: rawPath,
         captured_at: new Date().toISOString(),
         workbench_mission_id: workbenchMissionId || null,
-        matched_role: matched.role,
-        matched_name: matched.name,
-        matched_description: matched.description,
-        matched_by: matchKind,
+        matched_role: matched?.role || targetedMatch?.role || "",
+        matched_name: matched?.name || targetedMatch?.name || "",
+        matched_description: matched?.description || targetedMatch?.description || "",
+        matched_by: matched ? matchKind : `targeted_${targetedMatch.match}`,
       });
     }
   }
