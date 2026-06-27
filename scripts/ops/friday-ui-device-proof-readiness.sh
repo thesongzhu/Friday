@@ -566,15 +566,18 @@ derive_workbench_events_if_possible() {
   fi
 
   if node "${args[@]}" >"$stdout_out"; then
-    if [ -n "$existing_events" ]; then
+    if [ -s "$derived_out" ] && [ -n "$existing_events" ]; then
       awk '!seen[$0]++' "$existing_events" "$derived_out" >"$merged_out"
       SAME_RUN_EVENTS="$merged_out"
       notes+=("workbench_snapshot_events_merge:ready:${merged_out}")
-    else
+      notes+=("workbench_snapshot_events_bridge:ready:${derived_out}")
+    elif [ -s "$derived_out" ]; then
       SAME_RUN_EVENTS="$derived_out"
+      notes+=("workbench_snapshot_events_bridge:ready:${derived_out}")
+    else
+      notes+=("workbench_snapshot_events_bridge:no_derived_events:${stdout_out}")
     fi
     export SAME_RUN_EVENTS
-    notes+=("workbench_snapshot_events_bridge:ready:${derived_out}")
   else
     local rc=$?
     blockers+=("workbench_snapshot_events_bridge:exit_${rc}")
