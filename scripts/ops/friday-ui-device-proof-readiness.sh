@@ -448,6 +448,25 @@ json_escape() {
   }
 }
 
+emit_blocked_report() {
+  printf '{\n'
+  printf '  "truth": "report_only_not_ui_device_proof",\n'
+  printf '  "status": "blocked",\n'
+  printf '  "notes": ['
+  for i in "${!notes[@]}"; do
+    [ "$i" -gt 0 ] && printf ', '
+    printf '%s' "$(printf '%s' "${notes[$i]}" | json_escape)"
+  done
+  printf '],\n'
+  printf '  "blockers": ['
+  for i in "${!blockers[@]}"; do
+    [ "$i" -gt 0 ] && printf ', '
+    printf '%s' "$(printf '%s' "${blockers[$i]}" | json_escape)"
+  done
+  printf ']\n'
+  printf '}\n'
+}
+
 discover_evidence_dir "$EVIDENCE_DIR"
 export MISSION_ID="${MISSION_ID:-}"
 export MOBILE_EVIDENCE="${MOBILE_EVIDENCE:-}"
@@ -711,7 +730,25 @@ run_gap_report_if_possible() {
   if node "${args[@]}" >"$stdout_out"; then
     status="$(jq -r '.status // "unknown"' "$gap_out" 2>/dev/null || printf 'unknown')"
     notes+=("ui_device_gap_report:${status}:${gap_out}")
-    if [ "$status" != "complete_inputs_observed" ] && [ "${MODE}" = "require-proof" ]; then
+    local channel_deferred_only=0
+    if [ "${DEFER_CHANNEL_PROOF}" = "1" ]; then
+      channel_deferred_only="$(jq -r '
+        (.blockers // []) as $blockers |
+        (.gaps // {}) as $gaps |
+        if
+          ($blockers | length) == 0 and
+          (($gaps.missingObservations // []) | length) == 0 and
+          (($gaps.missingOrderEvents // []) | length) == 0 and
+          (($gaps.missingChecks // []) | length) == 0 and
+          (
+            (($gaps.deferredObservations // []) | length) +
+            (($gaps.deferredOrderEvents // []) | length) +
+            (($gaps.deferredChecks // []) | length)
+          ) > 0
+        then 1 else 0 end
+      ' "$gap_out" 2>/dev/null || printf '0')"
+    fi
+    if [ "$status" != "complete_inputs_observed" ] && [ "${MODE}" = "require-proof" ] && [ "$channel_deferred_only" != "1" ]; then
       blockers+=("ui_device_gap_report:${status}")
     fi
   else
@@ -848,22 +885,8 @@ run_design_action_gap_if_possible
 
 if [ "${MODE}" = "require-proof" ]; then
   printf 'FATAL: UI/device proof not assembled. blockers=%s\n' "${blockers[*]}" >&2
+  emit_blocked_report
   exit 2
 fi
 
-printf '{\n'
-printf '  "truth": "report_only_not_ui_device_proof",\n'
-printf '  "status": "blocked",\n'
-printf '  "notes": ['
-for i in "${!notes[@]}"; do
-  [ "$i" -gt 0 ] && printf ', '
-  printf '%s' "$(printf '%s' "${notes[$i]}" | json_escape)"
-done
-printf '],\n'
-printf '  "blockers": ['
-for i in "${!blockers[@]}"; do
-  [ "$i" -gt 0 ] && printf ', '
-  printf '%s' "$(printf '%s' "${blockers[$i]}" | json_escape)"
-done
-printf ']\n'
-printf '}\n'
+emit_blocked_report

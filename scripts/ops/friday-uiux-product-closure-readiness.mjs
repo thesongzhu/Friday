@@ -393,6 +393,10 @@ const nativePassed = nativeAction.status === "passed" && nativeAction.parsed?.st
 const traceabilityPassed = uiuxTraceability.status === "passed" && ["product_runtime_actions_traceable", "traceability_gaps_present"].includes(traceabilityReport.status);
 const runtimeCovered = runtimeReport.status === "runtime_actions_covered";
 const uiDeviceProofAssembled = readinessReport.status === "pass";
+const readinessBlockers = Array.isArray(readinessReport.blockers) ? readinessReport.blockers : [];
+const readinessBlockerDetail = readinessBlockers.length > 0
+  ? readinessBlockers.join(",")
+  : readinessReport.status || "unknown";
 
 if (!clientPassed) block("client_design_contract_failed", String(clientDesign.exitCode));
 if (!nativeLinkagePassed) block("uiux_native_linkage_failed", nativeLinkage.parsed?.status || String(nativeLinkage.exitCode));
@@ -400,7 +404,7 @@ if (requireUiDeviceProof && !selectedVisualProofReady) block("selected_visual_pr
 if (!nativePassed) block("native_action_closure_failed", String(nativeAction.exitCode));
 if (!traceabilityPassed) block("uiux_action_traceability_failed", traceabilityReport.status || String(uiuxTraceability.exitCode));
 if (requireRuntimeActions && !runtimeCovered) block("runtime_actions_not_covered", runtimeReport.status || "unknown");
-if (requireUiDeviceProof && !uiDeviceProofAssembled) block("ui_device_proof_not_assembled", readinessReport.status || "unknown");
+if (requireUiDeviceProof && !uiDeviceProofAssembled) block("ui_device_proof_not_assembled", readinessBlockerDetail);
 
 if (!runtimeCovered) {
   notes.push("runtime_action_evidence_gap_present");
