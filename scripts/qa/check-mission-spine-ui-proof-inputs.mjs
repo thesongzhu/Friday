@@ -135,6 +135,9 @@ function usage() {
     --desktop=/abs/desktop-evidence \\
     --channel=/abs/channel-evidence \\
     --timeline=/abs/timeline-evidence \\
+    [--mobile-extra-evidence=/abs/file ...] [--desktop-extra-evidence=/abs/file ...] \\
+    [--channel-extra-evidence=/abs/file ...] [--timeline-extra-evidence=/abs/file ...] \\
+    [--shared-extra-evidence=/abs/file ...] \\
     --manifest=/abs/observations-manifest.json
 
 This is a pre-assemble readiness check only. It does not write a
@@ -147,6 +150,23 @@ function argValue(name, envName) {
   const arg = args.find((value) => value.startsWith(prefix));
   if (arg) return arg.slice(prefix.length);
   return process.env[envName] || "";
+}
+
+function argValues(name, envName) {
+  const prefix = `--${name}=`;
+  const values = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value.startsWith(prefix)) {
+      values.push(value.slice(prefix.length));
+    } else if (value === `--${name}` && args[index + 1]) {
+      values.push(args[index + 1]);
+      index += 1;
+    }
+  }
+  const envValue = process.env[envName] || "";
+  if (envValue) values.push(...envValue.split(":").map((value) => value.trim()).filter(Boolean));
+  return values;
 }
 
 function sha256(textOrBuffer) {
@@ -165,6 +185,10 @@ function pathFor(name, envName) {
   const value = argValue(name, envName);
   if (!value) return "";
   return isAbsolute(value) ? value : resolve(value);
+}
+
+function pathsFor(name, envName) {
+  return argValues(name, envName).map((value) => (isAbsolute(value) ? value : resolve(value)));
 }
 
 function evidenceKey(path) {
@@ -273,21 +297,30 @@ function validateKnownEvidenceRef(value, knownEvidenceRefs, failures, code, deta
   }
 }
 
-function expectedEvidenceRefForSurface(surface, evidenceByRole) {
-  if (surface === "mobile") return evidenceByRole.mobile?.path || "";
-  if (surface === "desktop") return evidenceByRole.desktop?.path || "";
-  if (surface === "channel") return evidenceByRole.channel?.path || "";
-  if (surface === "timeline") return evidenceByRole.timeline?.path || "";
-  return "";
+function evidenceRefsForRole(role, evidenceByRole, extraEvidenceByRole) {
+  return [
+    evidenceByRole[role]?.path,
+    ...(extraEvidenceByRole.shared || []).map((entry) => entry.path),
+    ...(extraEvidenceByRole[role] || []).map((entry) => entry.path),
+  ].filter(Boolean);
+}
+
+function expectedEvidenceRefsForSurface(surface, evidenceByRole, extraEvidenceByRole) {
+  if (surface === "mobile") return evidenceRefsForRole("mobile", evidenceByRole, extraEvidenceByRole);
+  if (surface === "desktop") return evidenceRefsForRole("desktop", evidenceByRole, extraEvidenceByRole);
+  if (surface === "channel") return evidenceRefsForRole("channel", evidenceByRole, extraEvidenceByRole);
+  if (surface === "timeline") return evidenceRefsForRole("timeline", evidenceByRole, extraEvidenceByRole);
+  return [];
 }
 
 function validateEvidenceRoleRef(value, expectedValue, failures, code, detail) {
-  if (evidenceKey(value) !== evidenceKey(expectedValue)) {
+  const expectedValues = Array.isArray(expectedValue) ? expectedValue : [expectedValue].filter(Boolean);
+  if (expectedValues.length > 0 && !expectedValues.map(evidenceKey).includes(evidenceKey(value))) {
     recordFailure(failures, code, detail);
   }
 }
 
-function validateMissionWorkbenchManifest(manifest, evidenceByRole, knownEvidenceRefs, failures) {
+function validateMissionWorkbenchManifest(manifest, evidenceByRole, extraEvidenceByRole, knownEvidenceRefs, failures) {
   const workbench = asObject(manifest.mission_workbench);
   if (!workbench) {
     recordFailure(failures, "manifest_missing_mission_workbench", "mission_workbench");
@@ -315,14 +348,14 @@ function validateMissionWorkbenchManifest(manifest, evidenceByRole, knownEvidenc
   );
   validateEvidenceRoleRef(
     workbench.evidence_ref,
-    evidenceByRole.desktop?.path,
+    evidenceRefsForRole("desktop", evidenceByRole, extraEvidenceByRole),
     failures,
     "mission_workbench_evidence_ref_not_desktop",
     String(workbench.evidence_ref || ""),
   );
 }
 
-function validateTranscriptBrowserManifest(manifest, evidenceByRole, knownEvidenceRefs, failures) {
+function validateTranscriptBrowserManifest(manifest, evidenceByRole, extraEvidenceByRole, knownEvidenceRefs, failures) {
   const browser = asObject(manifest.transcript_browser);
   if (!browser) {
     recordFailure(failures, "manifest_missing_transcript_browser", "transcript_browser");
@@ -350,7 +383,7 @@ function validateTranscriptBrowserManifest(manifest, evidenceByRole, knownEviden
   );
   validateEvidenceRoleRef(
     browser.evidence_ref,
-    evidenceByRole.desktop?.path,
+    evidenceRefsForRole("desktop", evidenceByRole, extraEvidenceByRole),
     failures,
     "transcript_browser_evidence_ref_not_desktop",
     String(browser.evidence_ref || ""),
@@ -371,7 +404,7 @@ function validateTranscriptBrowserManifest(manifest, evidenceByRole, knownEviden
   }
 }
 
-function validateManifest(manifestPath, missionId, evidenceByRole, knownEvidenceRefs, failures) {
+function validateManifest(manifestPath, missionId, evidenceByRole, extraEvidenceByRole, knownEvidenceRefs, failures) {
   if (!manifestPath) {
     recordFailure(failures, "missing_manifest_arg", "manifest");
     return null;
@@ -396,8 +429,8 @@ function validateManifest(manifestPath, missionId, evidenceByRole, knownEvidence
     recordFailure(failures, "manifest_marked_non_real", manifestPath);
   }
 
-  validateMissionWorkbenchManifest(manifest, evidenceByRole, knownEvidenceRefs, failures);
-  validateTranscriptBrowserManifest(manifest, evidenceByRole, knownEvidenceRefs, failures);
+  validateMissionWorkbenchManifest(manifest, evidenceByRole, extraEvidenceByRole, knownEvidenceRefs, failures);
+  validateTranscriptBrowserManifest(manifest, evidenceByRole, extraEvidenceByRole, knownEvidenceRefs, failures);
 
   if (!manifest.checks || typeof manifest.checks !== "object") {
     recordFailure(failures, "manifest_missing_checks", manifestPath);
@@ -429,7 +462,7 @@ function validateManifest(manifestPath, missionId, evidenceByRole, knownEvidence
     }
     validateEvidenceRoleRef(
       manifest.stress.evidence_ref,
-      evidenceByRole.timeline?.path,
+      evidenceRefsForRole("timeline", evidenceByRole, extraEvidenceByRole),
       failures,
       "stress_evidence_ref_not_timeline",
       String(manifest.stress.evidence_ref || ""),
@@ -489,11 +522,11 @@ function validateManifest(manifestPath, missionId, evidenceByRole, knownEvidence
     if (!knownEvidenceRefs.has(evidenceKey(observation.evidence_ref))) {
       recordFailure(failures, "observation_evidence_ref_unknown", String(observation.event || "unknown"));
     }
-    const expectedEvidenceRef = expectedEvidenceRefForSurface(observation.surface, evidenceByRole);
-    if (expectedEvidenceRef) {
+    const expectedEvidenceRefs = expectedEvidenceRefsForSurface(observation.surface, evidenceByRole, extraEvidenceByRole);
+    if (expectedEvidenceRefs.length > 0) {
       validateEvidenceRoleRef(
         observation.evidence_ref,
-        expectedEvidenceRef,
+        expectedEvidenceRefs,
         failures,
         "observation_evidence_ref_role_mismatch",
         `${String(observation.event || "unknown")}:${String(observation.surface || "unknown")}`,
@@ -531,14 +564,28 @@ const evidenceArgs = {
   channel: pathFor("channel", "CHANNEL_EVIDENCE"),
   timeline: pathFor("timeline", "TIMELINE_EVIDENCE"),
 };
+const extraEvidenceArgs = {
+  mobile: pathsFor("mobile-extra-evidence", "MOBILE_EXTRA_EVIDENCE"),
+  desktop: pathsFor("desktop-extra-evidence", "DESKTOP_EXTRA_EVIDENCE"),
+  channel: pathsFor("channel-extra-evidence", "CHANNEL_EXTRA_EVIDENCE"),
+  timeline: pathsFor("timeline-extra-evidence", "TIMELINE_EXTRA_EVIDENCE"),
+  shared: pathsFor("shared-extra-evidence", "SHARED_EXTRA_EVIDENCE"),
+};
 const manifestPath = pathFor("manifest", "OBSERVATIONS_MANIFEST");
 
 const evidence = Object.entries(evidenceArgs)
   .map(([role, path]) => validateEvidence(role, path, failures))
   .filter(Boolean);
 const evidenceByRole = Object.fromEntries(evidence.map((entry) => [entry.role, entry]));
-const knownEvidenceRefs = new Set(evidence.map((entry) => evidenceKey(entry.path)));
-validateManifest(manifestPath, missionId, evidenceByRole, knownEvidenceRefs, failures);
+const extraEvidence = Object.entries(extraEvidenceArgs)
+  .flatMap(([role, paths]) => paths.map((path, index) => validateEvidence(`${role}-extra-${index + 1}`, path, failures)))
+  .filter(Boolean);
+const extraEvidenceByRole = Object.fromEntries(Object.keys(extraEvidenceArgs).map((role) => [
+  role,
+  extraEvidence.filter((entry) => entry.role.startsWith(`${role}-extra-`) || entry.role.startsWith(`${role}-shared-extra-`)),
+]));
+const knownEvidenceRefs = new Set([...evidence, ...extraEvidence].map((entry) => evidenceKey(entry.path)));
+validateManifest(manifestPath, missionId, evidenceByRole, extraEvidenceByRole, knownEvidenceRefs, failures);
 
 const readyForAssemble = failures.length === 0;
 const result = {
@@ -546,7 +593,7 @@ const result = {
   proof_source: "pre_assemble_readiness_only_not_ui_device_proof",
   readyForAssemble,
   missionId: missionId || null,
-  evidence,
+  evidence: [...evidence, ...extraEvidence],
   manifestPath: manifestPath || null,
   failures,
 };

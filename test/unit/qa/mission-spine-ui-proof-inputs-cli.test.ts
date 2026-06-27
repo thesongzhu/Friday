@@ -254,6 +254,68 @@ describe("check-mission-spine-ui-proof-inputs CLI", () => {
     }
   });
 
+  it("accepts additional role-scoped evidence for the same surface without weakening role checks", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-proof-inputs-extra-role-evidence-"));
+    try {
+      const files = writeEvidenceFiles(tempDir);
+      const desktopAx = join(tempDir, "desktop-ax-tree.txt");
+      writeFileSync(desktopAx, "real desktop accessibility tree bytes\n");
+      const baseManifest = makeManifest(files);
+      const manifest = makeManifest(files, {
+        observations: baseManifest.observations.map((observation) => (
+          observation.event === "mission_resolve_or_create_visible"
+            ? { ...observation, evidence_ref: desktopAx }
+            : observation
+        )),
+      });
+      const manifestPath = join(tempDir, "observations-manifest-extra-role-evidence.json");
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+      const result = runInputsCli(files, manifestPath, [`--desktop-extra-evidence=${desktopAx}`]);
+
+      expect(result.readyForAssemble).toBe(true);
+      expect(result.failures).toEqual([]);
+      expect(result.evidence.map((entry) => entry.role)).toContain("desktop-extra-1");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts explicit shared extra evidence for cross-surface stress observations", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-proof-inputs-shared-extra-evidence-"));
+    try {
+      const files = writeEvidenceFiles(tempDir);
+      const stressReport = join(tempDir, "real-stress-source-report.json");
+      writeFileSync(stressReport, "real same-run stress report bytes\n");
+      const baseManifest = makeManifest(files);
+      const manifest = makeManifest(files, {
+        stress: {
+          ...baseManifest.stress,
+          evidence_ref: stressReport,
+        },
+        observations: baseManifest.observations.map((observation) => {
+          if (
+            observation.event === "pressure_20_50_consecutive_asks_visible"
+            || observation.event === "no_hidden_fallback_verified"
+          ) {
+            return { ...observation, evidence_ref: stressReport };
+          }
+          return observation;
+        }),
+      });
+      const manifestPath = join(tempDir, "observations-manifest-shared-extra-evidence.json");
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+      const result = runInputsCli(files, manifestPath, [`--shared-extra-evidence=${stressReport}`]);
+
+      expect(result.readyForAssemble).toBe(true);
+      expect(result.failures).toEqual([]);
+      expect(result.evidence.map((entry) => entry.role)).toContain("shared-extra-1");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed for template or weak manifest inputs in expect-not-ready mode", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-proof-inputs-invalid-"));
     try {
