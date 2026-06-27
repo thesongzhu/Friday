@@ -16,6 +16,8 @@ describe("mission-spine closure audit gate contract", () => {
     expect(script).toContain("uiux_closure_report_in=\"${MISSION_SPINE_UIUX_CLOSURE_REPORT:-}\"");
     expect(script).toContain("\"uiux_product_closure_report\": {");
     expect(script).toContain("\"non_channel_status\": \"$uiux_non_channel_status\"");
+    expect(script).toContain("\"selected_ui_device_evidence_dir\": $uiux_selected_evidence_dir_json");
+    expect(script).toContain("\"ui_device_readiness_candidate_runs\": $uiux_readiness_candidate_runs_json");
     expect(script).toContain("\"uiux_non_channel_report_never_satisfies_strict_ui_device_proof\": true");
     expect(script).toContain("&& \"$ui_device_status\" == \"passed\"");
   });

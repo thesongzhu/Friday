@@ -51,6 +51,11 @@ uiux_non_channel_inputs_resolved="false"
 uiux_channel_deferred_strict_assembly="false"
 uiux_report_notes_json="[]"
 uiux_report_blockers_json="[]"
+uiux_selected_evidence_dir_json="null"
+uiux_selected_score_json="null"
+uiux_readiness_notes_json="[]"
+uiux_readiness_blockers_json="[]"
+uiux_readiness_candidate_runs_json="[]"
 
 echo "[mission-spine-closure] local backend + native/wire proof"
 scripts/mission-spine-proof-gate.sh --local
@@ -148,6 +153,11 @@ if [[ -n "$uiux_closure_report_in" ]]; then
     uiux_channel_deferred_strict_assembly="$(jq -r 'if .stages.nonChannelClosure.channelDeferredStrictAssembly == true then "true" else "false" end' "$uiux_closure_report_in")"
     uiux_report_notes_json="$(jq -c '(.notes // [])' "$uiux_closure_report_in")"
     uiux_report_blockers_json="$(jq -c '(.blockers // [])' "$uiux_closure_report_in")"
+    uiux_selected_evidence_dir_json="$(jq -c '(.stages.uiDeviceProofReadiness.selectedEvidenceDir // null)' "$uiux_closure_report_in")"
+    uiux_selected_score_json="$(jq -c '(.stages.uiDeviceProofReadiness.selectedScore // null)' "$uiux_closure_report_in")"
+    uiux_readiness_notes_json="$(jq -c '(.stages.uiDeviceProofReadiness.notes // [])' "$uiux_closure_report_in")"
+    uiux_readiness_blockers_json="$(jq -c '(.stages.uiDeviceProofReadiness.blockers // [])' "$uiux_closure_report_in")"
+    uiux_readiness_candidate_runs_json="$(jq -c '(.stages.uiDeviceProofReadiness.candidateRuns // []) | map({evidenceDir, score, status, blockers})' "$uiux_closure_report_in")"
   fi
 fi
 
@@ -246,6 +256,11 @@ cat > "$report_out" <<EOF
     "non_channel_status": "$uiux_non_channel_status",
     "non_channel_inputs_resolved": $uiux_non_channel_inputs_resolved,
     "channel_deferred_strict_assembly": $uiux_channel_deferred_strict_assembly,
+    "selected_ui_device_evidence_dir": $uiux_selected_evidence_dir_json,
+    "selected_ui_device_evidence_score": $uiux_selected_score_json,
+    "ui_device_readiness_notes": $uiux_readiness_notes_json,
+    "ui_device_readiness_blockers": $uiux_readiness_blockers_json,
+    "ui_device_readiness_candidate_runs": $uiux_readiness_candidate_runs_json,
     "notes": $uiux_report_notes_json,
     "blockers": $uiux_report_blockers_json,
     "scope": "Optional report-mode bridge to scripts/ops/friday-uiux-product-closure-readiness.mjs output; never satisfies strict MISSION_SPINE_UI_DEVICE_PROOF or full END-BAR while channel proof is deferred"
