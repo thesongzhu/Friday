@@ -39,6 +39,19 @@ func refreshLoadsRepresentativeSnapshot() async {
       "provider_receipt_refs": snapshot?.providerReceiptRefs ?? [],
     ])
   try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "operations-mission-resolve-or-create",
+    screen: "operations",
+    actionId: "desktop/operations/mission-resolve-or-create",
+    capabilityId: "desktop_operations_mission_resolve_or_create_projection",
+    evidenceRef: "swift://desktop/operations/mission-resolve-or-create/mission_workbench_probe_20260605",
+    source: "macos_operations_viewmodel_refresh_runtime",
+    proof: [
+      "mission_id": snapshot?.missionId ?? "",
+      "duplicate_preflight_status": snapshot?.duplicatePreflight.status ?? "",
+      "duplicate_mission_id": snapshot?.duplicatePreflight.duplicateMissionId ?? "",
+      "duplicate_work_item_id": snapshot?.duplicatePreflight.duplicateWorkItemId ?? "",
+    ])
+  try? writeDesktopActionEvidenceIfRequested(
     fileSuffix: "channels-receipts",
     screen: "channels",
     actionId: "desktop/channels/receipts",
