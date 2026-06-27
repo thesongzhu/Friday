@@ -20,7 +20,7 @@ function createFixtureRepo(extraScriptSource = "") {
     },
   }, null, 2));
   writeFileWithParents(root, "scripts/ops/friday-ios-design-destination-capture.sh", `#!/usr/bin/env bash
-destinations_csv="home,missions,session,contextPassport,tokenLedger,shareIntake,voice,pairing,needsMe,memory,platform,providerAuth,activity,workflows,onboarding,settings"
+destinations_csv="home,missions,session,contextPassport,tokenLedger,shareIntake,voice,pairing,needsMe,memory,platform,providerAuth,activity,workflows,onboarding,settings,petEditor,proofViewer,entrypoints"
 truth_label="ios_selected_design_destination_capture_not_live_closure"
 design_source="friday-design-handoff-20260602/saved/mobile-selection.json"
 caveat="not END-BAR / not GO-LIVE; enabled actions still require separate Hub/DB/ledger/proof closure"
@@ -45,6 +45,9 @@ describe("friday-ios-design-destination-capture-contract", () => {
       expect(report.status).toBe("passed");
       expect(report.truthLabel).toBe("ios_design_destination_capture_contract_static_guard_not_runtime_pass");
       expect(report.requiredDestinations).toContain("providerAuth");
+      expect(report.requiredDestinations).toContain("petEditor");
+      expect(report.requiredDestinations).toContain("proofViewer");
+      expect(report.requiredDestinations).toContain("entrypoints");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
