@@ -33,6 +33,9 @@ const requiredDestinations = [
   "workflows",
   "onboarding",
   "settings",
+  "petEditor",
+  "proofViewer",
+  "entrypoints",
 ];
 
 const checks = [];
