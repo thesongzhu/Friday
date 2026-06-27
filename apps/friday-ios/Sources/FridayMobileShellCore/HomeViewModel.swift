@@ -53,6 +53,7 @@ public struct HomeProjection: Sendable, Equatable {
   public let runOutcomeLearningCandidates: [HomeRunOutcomeLearningCandidate]
   public let capabilityStates: [HomeCapabilityState]
   public let t3ProvisioningStatus: HomeT3ProvisioningStatus?
+  public let timelinePages: [HomeTimelinePage]
   public let transcriptEvents: [HomeTranscriptEvent]
   /// The Hub epoch-millis the snapshot was generated (lets the UI flag staleness).
   public let generatedAtMs: Int64
@@ -81,6 +82,7 @@ public struct HomeProjection: Sendable, Equatable {
       raw["runOutcomeLearningCandidates"])
     self.capabilityStates = Self.parseCapabilityStates(raw["capabilityStates"])
     self.t3ProvisioningStatus = HomeT3ProvisioningStatus(raw: raw["t3ProvisioningStatus"])
+    self.timelinePages = Self.parseTimelinePages(raw["timelinePages"])
     self.transcriptEvents = Self.parseTranscriptEvents(raw["transcriptSections"])
     self.generatedAtMs = snapshot.generatedAtMs
   }
@@ -103,6 +105,7 @@ public struct HomeProjection: Sendable, Equatable {
       && runOutcomeLearningCandidates.isEmpty
       && capabilityStates.isEmpty
       && t3ProvisioningStatus == nil
+      && timelinePages.isEmpty
       && transcriptEvents.isEmpty
   }
 
@@ -193,6 +196,23 @@ public struct HomeProjection: Sendable, Equatable {
     }
   }
 
+  private static func parseTimelinePages(_ value: Any?) -> [HomeTimelinePage] {
+    guard let rows = value as? [[String: Any]] else { return [] }
+    return rows.enumerated().map { index, row in
+      HomeTimelinePage(
+        id: (row["id"] as? String) ?? "timeline-page-\(index)",
+        title: (row["title"] as? String) ?? "Timeline page",
+        cursor: row["cursor"] as? String,
+        nextCursor: row["nextCursor"] as? String,
+        retainedFrom: int(row["retainedFrom"]),
+        bounded: row["bounded"] as? Bool ?? false,
+        hasMore: row["hasMore"] as? Bool ?? false,
+        eventRefs: firstStringArray(row, ["eventRefs", "event_refs"]),
+        proofRefs: firstStringArray(row, ["proofRefs", "proof_refs"]),
+        summary: (row["summary"] as? String) ?? "")
+    }
+  }
+
   private static func firstString(_ raw: [String: Any], _ keys: [String]) -> String? {
     keys.lazy.compactMap { raw[$0] as? String }
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -201,6 +221,12 @@ public struct HomeProjection: Sendable, Equatable {
 
   private static func firstStringArray(_ raw: [String: Any], _ keys: [String]) -> [String] {
     keys.lazy.compactMap { raw[$0] as? [String] }.first ?? []
+  }
+
+  private static func int(_ value: Any?) -> Int {
+    if let int = value as? Int { return int }
+    if let number = value as? NSNumber { return number.intValue }
+    return 0
   }
 }
 
@@ -390,6 +416,29 @@ public struct HomeTrustedDeviceSummary: Sendable, Equatable {
     if let int = value as? Int { return Int64(int) }
     if let number = value as? NSNumber { return number.int64Value }
     return 0
+  }
+}
+
+public struct HomeTimelinePage: Sendable, Identifiable, Equatable {
+  public let id: String
+  public let title: String
+  public let cursor: String?
+  public let nextCursor: String?
+  public let retainedFrom: Int
+  public let bounded: Bool
+  public let hasMore: Bool
+  public let eventRefs: [String]
+  public let proofRefs: [String]
+  public let summary: String
+
+  public var statusText: String {
+    if hasMore { return "more" }
+    if bounded { return "bounded" }
+    return "read"
+  }
+
+  public var refsCount: Int {
+    eventRefs.count + proofRefs.count
   }
 }
 
