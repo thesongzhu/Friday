@@ -123,6 +123,10 @@ if [[ -s "$backend_live_proof_out" ]] \
   backend_live_proof_generated_at="$(jq -r '.generated_at_utc // ""' "$backend_live_proof_out")"
 fi
 
+if [[ "$mode" == "--report" && "$backend_live_proof_status" == "passed" && "$deepseek_status" != "passed" ]]; then
+  deepseek_status="satisfied_by_last_backend_live_proof"
+fi
+
 if [[ -s "$channel_live_proof_out" ]] \
   && jq -e '.proof == "mission_spine_channel_live_proof" and .status == "passed"' "$channel_live_proof_out" >/dev/null; then
   channel_live_proof_available="true"
@@ -221,7 +225,8 @@ cat > "$report_out" <<EOF
   "report_semantics": {
     "report_mode_runs_live_positive_gates": false,
     "strict_mode_runs_live_positive_gates": true,
-    "missing_env_in_report_mode_is_not_a_regression_of_prior_strict_live_proof": true
+    "missing_env_in_report_mode_is_not_a_regression_of_prior_strict_live_proof": true,
+    "report_mode_can_satisfy_deepseek_from_last_backend_live_proof": true
   },
   "full_goal_complete": $full_goal_complete
 }
