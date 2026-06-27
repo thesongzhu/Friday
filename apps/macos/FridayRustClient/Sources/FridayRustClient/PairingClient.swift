@@ -168,6 +168,8 @@ private func pairingKind(_ message: FridayMessage) -> String {
   case .activityMarkDoneResult: return "ActivityMarkDoneResult"
   case .workItemStatusRequest: return "WorkItemStatusRequest"
   case .workItemStatusResult: return "WorkItemStatusResult"
+  case .providerWorkspaceActionRequest: return "ProviderWorkspaceActionRequest"
+  case .providerWorkspaceActionResult: return "ProviderWorkspaceActionResult"
   case .runAnswerBodyRequest: return "RunAnswerBodyRequest"
   case .runAnswerBodySnapshot: return "RunAnswerBodySnapshot"
   }

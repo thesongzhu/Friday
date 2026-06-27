@@ -338,6 +338,138 @@ public struct WorkItemStatusResultWire: Codable, Equatable, Sendable {
   }
 }
 
+/// Canonical Mission context for a Provider Workspace action. Mirrors
+/// `friday_protocol::ProviderWorkspaceMissionContextWire`.
+public struct ProviderWorkspaceMissionContextWire: Codable, Equatable, Sendable {
+  public var fridayConversationId: String
+  public var missionId: String
+  public var workItemId: String
+
+  public init(fridayConversationId: String, missionId: String, workItemId: String) {
+    self.fridayConversationId = fridayConversationId
+    self.missionId = missionId
+    self.workItemId = workItemId
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case fridayConversationId = "friday_conversation_id"
+    case missionId = "mission_id"
+    case workItemId = "work_item_id"
+  }
+}
+
+/// Client→hub Provider Workspace action request. This is a governed action selector over an
+/// existing provider workspace session, not raw provider control; Hub validates `capabilityId`
+/// before any adapter dispatch.
+public struct ProviderWorkspaceActionRequestWire: Codable, Equatable, Sendable {
+  public var requestId: String
+  public var fridaySessionId: String
+  public var provider: String
+  public var action: String
+  public var capabilityId: String
+  public var payloadRef: String?
+  public var missionContext: ProviderWorkspaceMissionContextWire?
+
+  public init(
+    requestId: String,
+    fridaySessionId: String,
+    provider: String,
+    action: String,
+    capabilityId: String,
+    payloadRef: String? = nil,
+    missionContext: ProviderWorkspaceMissionContextWire? = nil
+  ) {
+    self.requestId = requestId
+    self.fridaySessionId = fridaySessionId
+    self.provider = provider
+    self.action = action
+    self.capabilityId = capabilityId
+    self.payloadRef = payloadRef
+    self.missionContext = missionContext
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case requestId = "request_id"
+    case fridaySessionId = "friday_session_id"
+    case provider
+    case action
+    case capabilityId = "capability_id"
+    case payloadRef = "payload_ref"
+    case missionContext = "mission_context"
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(requestId, forKey: .requestId)
+    try c.encode(fridaySessionId, forKey: .fridaySessionId)
+    try c.encode(provider, forKey: .provider)
+    try c.encode(action, forKey: .action)
+    try c.encode(capabilityId, forKey: .capabilityId)
+    if let payloadRef { try c.encode(payloadRef, forKey: .payloadRef) }
+    if let missionContext { try c.encode(missionContext, forKey: .missionContext) }
+  }
+}
+
+/// Hub→client Provider Workspace action result. `accepted/routed=false` is a valid guard receipt the
+/// UI must render honestly, not a transport failure.
+public struct ProviderWorkspaceActionResultWire: Codable, Equatable, Sendable {
+  public var requestId: String
+  public var fridaySessionId: String
+  public var provider: String
+  public var action: String
+  public var accepted: Bool
+  public var routed: Bool
+  public var status: String
+  public var truthLabel: String
+  public var blocker: String?
+  public var proofRef: String?
+  public var dispatchRef: String?
+  public var missionContext: ProviderWorkspaceMissionContextWire?
+
+  public init(
+    requestId: String,
+    fridaySessionId: String,
+    provider: String,
+    action: String,
+    accepted: Bool,
+    routed: Bool,
+    status: String,
+    truthLabel: String,
+    blocker: String? = nil,
+    proofRef: String? = nil,
+    dispatchRef: String? = nil,
+    missionContext: ProviderWorkspaceMissionContextWire? = nil
+  ) {
+    self.requestId = requestId
+    self.fridaySessionId = fridaySessionId
+    self.provider = provider
+    self.action = action
+    self.accepted = accepted
+    self.routed = routed
+    self.status = status
+    self.truthLabel = truthLabel
+    self.blocker = blocker
+    self.proofRef = proofRef
+    self.dispatchRef = dispatchRef
+    self.missionContext = missionContext
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case requestId = "request_id"
+    case fridaySessionId = "friday_session_id"
+    case provider
+    case action
+    case accepted
+    case routed
+    case status
+    case truthLabel = "truth_label"
+    case blocker
+    case proofRef = "proof_ref"
+    case dispatchRef = "dispatch_ref"
+    case missionContext = "mission_context"
+  }
+}
+
 /// Client→read-server owner-gated answer-body request. This is a READ-seam message, but the shared
 /// wire types live beside the other protocol structs so `FridayMessage` can encode/decode it.
 public struct RunAnswerBodyRequestWire: Codable, Equatable, Sendable {

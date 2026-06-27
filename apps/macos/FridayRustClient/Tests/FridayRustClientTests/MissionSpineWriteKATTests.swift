@@ -409,4 +409,63 @@ final class MissionSpineWriteKATTests: XCTestCase {
     XCTAssertTrue(json.contains("\"result\":{"))
     XCTAssertTrue(json.contains("\"blocker\":\"unknown_activity\""))
   }
+
+  // MARK: MS8 — ProviderWorkspaceAction wire shape (nested + refs-only guard receipt)
+
+  func testMS8_providerWorkspaceActionRequestNestedShapeNoAuthProof() throws {
+    let ctx = ProviderWorkspaceMissionContextWire(
+      fridayConversationId: "fconv_provider_workspace",
+      missionId: "mission-provider-workspace",
+      workItemId: "work-provider-workspace")
+    let req = ProviderWorkspaceActionRequestWire(
+      requestId: "provider-action-1",
+      fridaySessionId: "friday-codex-1",
+      provider: "codex",
+      action: "send_turn",
+      capabilityId: "provider.codex.send_turn",
+      payloadRef: "friday://body/user-message/1",
+      missionContext: ctx)
+    let env = FridayEnvelope(msgId: "provider-action", sentAt: 1000, message: .providerWorkspaceActionRequest(req))
+      .withCorrelation("c1")
+    let json = String(decoding: try env.encodeJSON(), as: UTF8.self)
+
+    XCTAssertTrue(json.contains("\"kind\":\"ProviderWorkspaceActionRequest\""))
+    XCTAssertTrue(json.contains("\"request\":{"), "provider action must NEST under request: \(json)")
+    XCTAssertTrue(json.contains("\"capability_id\":\"provider.codex.send_turn\""))
+    XCTAssertTrue(json.contains("\"mission_id\":\"mission-provider-workspace\""))
+    XCTAssertFalse(json.contains("auth_proof"))
+    XCTAssertFalse(json.contains("forwarded_principal"))
+    XCTAssertFalse(json.contains("raw user prompt"))
+
+    let messageObj = try messageObject(json)
+    XCTAssertEqual(Set(messageObj.keys), ["kind", "request"])
+    let request = try XCTUnwrap(messageObj["request"] as? [String: Any])
+    XCTAssertNil(request["auth_proof"], "ProviderWorkspaceActionRequest carries NO per-request auth_proof")
+    XCTAssertEqual(try FridayEnvelope.decodeJSON(Data(json.utf8)).message, .providerWorkspaceActionRequest(req))
+  }
+
+  func testMS8_providerWorkspaceActionResultBlockedCarriesGuardTruth() throws {
+    let ctx = ProviderWorkspaceMissionContextWire(
+      fridayConversationId: "fconv_provider_workspace",
+      missionId: "mission-provider-workspace",
+      workItemId: "work-provider-workspace")
+    let result = ProviderWorkspaceActionResultWire(
+      requestId: "provider-action-1",
+      fridaySessionId: "friday-codex-1",
+      provider: "codex",
+      action: "send_turn",
+      accepted: false,
+      routed: false,
+      status: "blocked",
+      truthLabel: "provider_workspace_action_guard_blocked",
+      blocker: "capability_not_verified",
+      missionContext: ctx)
+    let env = FridayEnvelope(msgId: "provider-result", sentAt: 1, message: .providerWorkspaceActionResult(result))
+    XCTAssertEqual(try FridayEnvelope.decodeJSON(try env.encodeJSON()).message, .providerWorkspaceActionResult(result))
+    let json = String(decoding: try env.encodeJSON(), as: UTF8.self)
+    XCTAssertTrue(json.contains("\"result\":{"))
+    XCTAssertTrue(json.contains("\"accepted\":false"))
+    XCTAssertTrue(json.contains("\"routed\":false"))
+    XCTAssertTrue(json.contains("\"blocker\":\"capability_not_verified\""))
+  }
 }
