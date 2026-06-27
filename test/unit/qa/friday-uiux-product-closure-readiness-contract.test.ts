@@ -21,6 +21,16 @@ describe("friday-uiux-product-closure-readiness contract", () => {
     expect(source).not.toContain('report.status === "blocked" && deferChannelProof');
   });
 
+  it("reports non-channel closure without upgrading channel-deferred runs to END-BAR", () => {
+    const source = readFileSync("scripts/ops/friday-uiux-product-closure-readiness.mjs", "utf8");
+
+    expect(source).toContain("nonChannelProductClosureReady");
+    expect(source).toContain("nonChannelClosure:");
+    expect(source).toContain("non_channel_uiux_closure_ready_channel_deferred");
+    expect(source).toContain("Non-channel closure is not END-BAR");
+    expect(source).toContain("never satisfies strict UI/device proof while channel proof is deferred");
+  });
+
   it("surfaces residual evidence overlays without clearing END-BAR blockers", () => {
     const source = readFileSync("scripts/ops/friday-uiux-product-closure-readiness.mjs", "utf8");
 

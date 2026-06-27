@@ -407,6 +407,27 @@ const readinessBlockers = Array.isArray(readinessReport.blockers) ? readinessRep
 const readinessBlockerDetail = readinessBlockers.length > 0
   ? readinessBlockers.join(",")
   : readinessReport.status || "unknown";
+const channelDeferredStrictAssembly = readinessBlockers.includes("ui_device_proof_evidence:channel_deferred_strict_assembly_blocked");
+const readinessNotes = Array.isArray(readinessReport.notes) ? readinessReport.notes : [];
+const nonChannelInputsResolved = [
+  "resolved_MOBILE_EVIDENCE:",
+  "resolved_DESKTOP_EVIDENCE:",
+  "resolved_TIMELINE_EVIDENCE:",
+  "resolved_OBSERVATIONS_MANIFEST:",
+  "resolved_SAME_RUN_EVENTS:",
+].every((prefix) => readinessNotes.some((note) => String(note).startsWith(prefix)));
+const nonChannelUiDeviceClosureReady = !uiDeviceProofAssembled
+  && channelDeferredStrictAssembly
+  && readinessReport.status === "blocked"
+  && nonChannelInputsResolved;
+const nonChannelProductClosureReady = blockers.length === 0
+  && clientPassed
+  && nativeLinkagePassed
+  && selectedVisualProofReady
+  && nativePassed
+  && traceabilityPassed
+  && runtimeCovered
+  && nonChannelUiDeviceClosureReady;
 
 if (!clientPassed) block("client_design_contract_failed", String(clientDesign.exitCode));
 if (!nativeLinkagePassed) block("uiux_native_linkage_failed", nativeLinkage.parsed?.status || String(nativeLinkage.exitCode));
@@ -424,6 +445,9 @@ if (!uiDeviceProofAssembled) {
 }
 if (!selectedVisualProofReady) {
   notes.push("selected_visual_proof_gap_present");
+}
+if (nonChannelProductClosureReady) {
+  notes.push("non_channel_uiux_closure_ready_channel_deferred");
 }
 
 const report = {
@@ -493,6 +517,27 @@ const report = {
       })),
       notes: readinessReport.notes || [],
       blockers: readinessReport.blockers || [],
+    },
+    nonChannelClosure: {
+      status: nonChannelProductClosureReady
+        ? "non_channel_uiux_closure_ready_channel_deferred"
+        : uiDeviceProofAssembled
+          ? "superseded_by_full_ui_device_proof"
+          : "not_ready",
+      channelDeferredStrictAssembly,
+      nonChannelInputsResolved,
+      blockers: nonChannelProductClosureReady ? [
+        "ui_device_proof_evidence:channel_deferred_strict_assembly_blocked",
+      ] : [
+        ...(!clientPassed ? ["client_design_contract_failed"] : []),
+        ...(!nativeLinkagePassed ? ["uiux_native_linkage_failed"] : []),
+        ...(!selectedVisualProofReady ? ["selected_visual_proof_not_ready"] : []),
+        ...(!nativePassed ? ["native_action_closure_failed"] : []),
+        ...(!traceabilityPassed ? ["uiux_action_traceability_failed"] : []),
+        ...(!runtimeCovered ? ["runtime_actions_not_covered"] : []),
+        ...(!nonChannelUiDeviceClosureReady ? ["non_channel_ui_device_inputs_not_ready"] : []),
+      ],
+      caveat: "Non-channel closure is not END-BAR, not GO-LIVE, not adoption, and never satisfies strict UI/device proof while channel proof is deferred.",
     },
   },
   recommendedNextActions: [
