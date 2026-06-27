@@ -189,6 +189,11 @@ public protocol FridayMissionSpineWriteClient: Sendable {
   /// recovery/lifecycle control; the Hub enforces owner binding, legal transitions, audit, and
   /// proof-on-completion.
   func submitWorkItemStatus(_ request: WorkItemStatusRequestWire) async throws -> WorkItemStatusResultWire
+  /// Request one guarded Provider Workspace action. The Hub returns a refs-only guard receipt; an
+  /// `accepted:false` / `routed:false` receipt is returned to the caller as truth, not thrown.
+  func submitProviderWorkspaceAction(
+    _ request: ProviderWorkspaceActionRequestWire
+  ) async throws -> ProviderWorkspaceActionResultWire
 }
 
 /// Product-facing bridge for MissionIntakeResult -> mission-bound AgentRunRequest. This is the
@@ -364,7 +369,8 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
          .contextPassportTransferRequest, .contextPassportTransferResult,
          .runOutcomeLearningDecisionRequest, .runOutcomeLearningDecisionResult,
          .activityMarkDoneRequest, .activityMarkDoneResult,
-         .workItemStatusRequest, .workItemStatusResult:
+         .workItemStatusRequest, .workItemStatusResult,
+         .providerWorkspaceActionRequest, .providerWorkspaceActionResult:
       throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(message))
     case .unsupported(let kind):
       throw FridayWriteClientError.unexpectedResponse(kind: kind)
@@ -535,6 +541,36 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
     let resp = try openEnvelope(respBody, sessionKey: sessionKey)
     switch resp.message {
     case .workItemStatusResult(let r):
+      return r
+    case .error(let code, let message):
+      throw FridayWriteClientError.serverError(code: code, message: message)
+    default:
+      throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(resp.message))
+    }
+  }
+
+  /// Submit one Provider Workspace action over the sealed WRITE session. The request carries no
+  /// per-request `auth_proof`; the authenticated sealed peer is the channel auth, and the Hub still
+  /// validates capability + Mission context before any provider adapter can run.
+  public func submitProviderWorkspaceAction(
+    _ request: ProviderWorkspaceActionRequestWire
+  ) async throws -> ProviderWorkspaceActionResultWire {
+    let transport = try makeTransport()
+    let (sessionKey, _) = try handshake(transport)
+    let msgId = "provider-workspace-action-\(request.requestId)"
+    let env = FridayEnvelope(msgId: msgId, sentAt: now(), message: .providerWorkspaceActionRequest(request))
+      .withCorrelation(msgId)
+    try transport.sendMessage(try sealEnvelope(env, sessionKey: sessionKey))
+    let respBody: [UInt8]
+    do {
+      respBody = try transport.recvMessage()
+    } catch {
+      throw FridayWriteClientError.transport(
+        "no provider-workspace-action result (session ended fail-closed): \(error)")
+    }
+    let resp = try openEnvelope(respBody, sessionKey: sessionKey)
+    switch resp.message {
+    case .providerWorkspaceActionResult(let r):
       return r
     case .error(let code, let message):
       throw FridayWriteClientError.serverError(code: code, message: message)
@@ -765,6 +801,8 @@ private func dispatchKind(_ message: FridayMessage) -> String {
   case .activityMarkDoneResult: return "ActivityMarkDoneResult"
   case .workItemStatusRequest: return "WorkItemStatusRequest"
   case .workItemStatusResult: return "WorkItemStatusResult"
+  case .providerWorkspaceActionRequest: return "ProviderWorkspaceActionRequest"
+  case .providerWorkspaceActionResult: return "ProviderWorkspaceActionResult"
   case .unsupported(let kind): return kind
   }
 }
