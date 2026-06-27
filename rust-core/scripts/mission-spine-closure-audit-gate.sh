@@ -56,6 +56,13 @@ uiux_selected_score_json="null"
 uiux_readiness_notes_json="[]"
 uiux_readiness_blockers_json="[]"
 uiux_readiness_candidate_runs_json="[]"
+uiux_action_traceability_status="not_provided"
+uiux_product_runtime_action_ids_json="null"
+uiux_product_actions_missing_runtime_evidence_json="null"
+uiux_runtime_evidence_inputs_json="null"
+uiux_runtime_evidence_action_rows_json="null"
+uiux_residual_destinations_with_blockers_json="null"
+uiux_residual_destinations_all_runtime_actions_covered_json="null"
 
 echo "[mission-spine-closure] local backend + native/wire proof"
 scripts/mission-spine-proof-gate.sh --local
@@ -158,6 +165,13 @@ if [[ -n "$uiux_closure_report_in" ]]; then
     uiux_readiness_notes_json="$(jq -c '(.stages.uiDeviceProofReadiness.notes // [])' "$uiux_closure_report_in")"
     uiux_readiness_blockers_json="$(jq -c '(.stages.uiDeviceProofReadiness.blockers // [])' "$uiux_closure_report_in")"
     uiux_readiness_candidate_runs_json="$(jq -c '(.stages.uiDeviceProofReadiness.candidateRuns // []) | map({evidenceDir, score, status, blockers})' "$uiux_closure_report_in")"
+    uiux_action_traceability_status="$(jq -r '.stages.uiuxActionTraceability.status // "missing"' "$uiux_closure_report_in")"
+    uiux_product_runtime_action_ids_json="$(jq -c '(.stages.uiuxActionTraceability.counts.productRuntimeActionIds // null)' "$uiux_closure_report_in")"
+    uiux_product_actions_missing_runtime_evidence_json="$(jq -c '(.stages.uiuxActionTraceability.counts.productActionsMissingRuntimeEvidence // null)' "$uiux_closure_report_in")"
+    uiux_runtime_evidence_inputs_json="$(jq -c '(.stages.uiuxActionTraceability.counts.runtimeEvidenceInputs // null)' "$uiux_closure_report_in")"
+    uiux_runtime_evidence_action_rows_json="$(jq -c '(.stages.uiuxActionTraceability.counts.runtimeEvidenceActionRows // null)' "$uiux_closure_report_in")"
+    uiux_residual_destinations_with_blockers_json="$(jq -c '(.stages.uiuxActionTraceability.residualEndBarEvidence.destinationsWithResidualBlockers // null)' "$uiux_closure_report_in")"
+    uiux_residual_destinations_all_runtime_actions_covered_json="$(jq -c '(.stages.uiuxActionTraceability.residualEndBarEvidence.destinationsWithAllRuntimeActionsCovered // null)' "$uiux_closure_report_in")"
   fi
 fi
 
@@ -261,6 +275,16 @@ cat > "$report_out" <<EOF
     "ui_device_readiness_notes": $uiux_readiness_notes_json,
     "ui_device_readiness_blockers": $uiux_readiness_blockers_json,
     "ui_device_readiness_candidate_runs": $uiux_readiness_candidate_runs_json,
+    "action_traceability": {
+      "status": "$uiux_action_traceability_status",
+      "product_runtime_action_ids": $uiux_product_runtime_action_ids_json,
+      "product_actions_missing_runtime_evidence": $uiux_product_actions_missing_runtime_evidence_json,
+      "runtime_evidence_inputs": $uiux_runtime_evidence_inputs_json,
+      "runtime_evidence_action_rows": $uiux_runtime_evidence_action_rows_json,
+      "residual_destinations_with_blockers": $uiux_residual_destinations_with_blockers_json,
+      "residual_destinations_all_runtime_actions_covered": $uiux_residual_destinations_all_runtime_actions_covered_json,
+      "scope": "Traceability counts from the UIUX product-closure report; these counts never clear residual product blockers or satisfy strict UI/device proof by themselves"
+    },
     "notes": $uiux_report_notes_json,
     "blockers": $uiux_report_blockers_json,
     "scope": "Optional report-mode bridge to scripts/ops/friday-uiux-product-closure-readiness.mjs output; never satisfies strict MISSION_SPINE_UI_DEVICE_PROOF or full END-BAR while channel proof is deferred"
