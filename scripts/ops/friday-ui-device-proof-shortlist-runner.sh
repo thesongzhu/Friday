@@ -311,6 +311,40 @@ if [ "${#accessibility_captures[@]}" -gt 0 ]; then
   node "${accessibility_args[@]}"
   same_run_events+=("${accessibility_capture_dir}/accessibility-click-events.jsonl")
   runtime_evidence_dirs+=("${accessibility_capture_dir}")
+  while IFS= read -r accessibility_evidence_ref; do
+    [ -n "${accessibility_evidence_ref}" ] || continue
+    require_file_if_set "accessibility evidence_ref" "${accessibility_evidence_ref}"
+    shared_extra_evidence+=("${accessibility_evidence_ref}")
+  done < <(node - "${accessibility_captures[@]}" <<'NODE'
+const fs = require("node:fs");
+const seen = new Set();
+for (const path of process.argv.slice(2)) {
+  const raw = JSON.parse(fs.readFileSync(path, "utf8"));
+  const captures = Array.isArray(raw?.captures) ? raw.captures : [raw];
+  for (const capture of captures) {
+    const refs = [
+      capture?.evidence_ref,
+      capture?.evidenceRef,
+      ...(Array.isArray(capture?.ui_actions) ? capture.ui_actions : []),
+      ...(Array.isArray(capture?.uiActions) ? capture.uiActions : []),
+    ];
+    for (const value of refs) {
+      const ref = typeof value === "string"
+        ? value
+        : typeof value?.evidence_ref === "string"
+          ? value.evidence_ref
+          : typeof value?.evidenceRef === "string"
+            ? value.evidenceRef
+            : "";
+      if (ref && !seen.has(ref)) {
+        seen.add(ref);
+        console.log(ref);
+      }
+    }
+  }
+}
+NODE
+)
   accessibility_capture_status="ready"
 fi
 set -u

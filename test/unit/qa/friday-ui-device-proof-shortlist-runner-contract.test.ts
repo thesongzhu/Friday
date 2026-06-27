@@ -11,6 +11,8 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("--mission-id=${mission_id}");
     expect(source).toContain("accessibility-click-events.jsonl");
     expect(source).toContain("runtime_evidence_dirs+=(\"${accessibility_capture_dir}\")");
+    expect(source).toContain("require_file_if_set \"accessibility evidence_ref\" \"${accessibility_evidence_ref}\"");
+    expect(source).toContain("shared_extra_evidence+=(\"${accessibility_evidence_ref}\")");
     expect(source).toContain("accessibilityCaptureStatus");
     expect(source).toContain("Runner output is END-BAR only if strict UI/device readiness passes");
   });
