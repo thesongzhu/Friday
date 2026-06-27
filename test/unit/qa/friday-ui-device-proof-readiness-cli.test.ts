@@ -741,6 +741,12 @@ describe("friday-ui-device-proof-readiness", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-defer-channel-"));
     try {
       const files = writePartialEvidenceDir(tempDir);
+      const manifest = join(tempDir, "observations-manifest.json");
+      writeFileSync(manifest, JSON.stringify(makeManifest({
+        ...files,
+        manifest,
+        out: join(tempDir, "assembled-proof.json"),
+      }), null, 2));
       rmSync(files.channel, { force: true });
 
       const stdout = execFileSync("bash", [
@@ -761,7 +767,7 @@ describe("friday-ui-device-proof-readiness", () => {
 
       expect(result.truth).toBe("report_only_not_ui_device_proof");
       expect(result.status).toBe("blocked");
-      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+      expect(result.blockers).toContain("ui_device_proof_evidence:channel_deferred_strict_assembly_blocked");
       expect(result.notes?.some((note) => note.includes("ui_device_gap_report:gaps_present"))).toBe(true);
 
       const gapReport = JSON.parse(readFileSync(join(tempDir, "gap-report.json"), "utf8")) as {

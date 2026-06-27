@@ -56,6 +56,7 @@ const files = [
   path.join(outDir, "desktop-memory-confirm-action-evidence.json"),
   path.join(outDir, "desktop-memory-reject-action-evidence.json"),
   path.join(outDir, "desktop-operations-refresh-action-evidence.json"),
+  path.join(outDir, "desktop-operations-mission-resolve-or-create-action-evidence.json"),
   path.join(outDir, "desktop-channels-receipts-action-evidence.json"),
   path.join(outDir, "desktop-channels-surface-events-action-evidence.json"),
   path.join(outDir, "desktop-session-list-action-evidence.json"),
@@ -96,6 +97,7 @@ for (const file of files) {
 
 for (const actionId of [
   "desktop/operations/refresh",
+  "desktop/operations/mission-resolve-or-create",
   "desktop/session/list",
   "desktop/session/open",
   "desktop/session/link",

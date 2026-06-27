@@ -611,9 +611,11 @@ derive_channel_events_if_possible
 derive_workbench_events_if_possible
 
 have_all_evidence=1
+missing_evidence_env=()
 for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELINE_EVIDENCE OBSERVATIONS_MANIFEST; do
   if [ -z "${!name:-}" ]; then
     have_all_evidence=0
+    missing_evidence_env+=("$name")
   fi
 done
 
@@ -834,7 +836,11 @@ if [ "${have_all_evidence}" = "1" ]; then
     exit 0
   fi
 else
-  blockers+=("ui_device_proof_evidence:missing_required_real_evidence_env")
+  if [ "${DEFER_CHANNEL_PROOF}" = "1" ] && [ "${#missing_evidence_env[@]}" -eq 1 ] && [ "${missing_evidence_env[0]}" = "CHANNEL_EVIDENCE" ]; then
+    blockers+=("ui_device_proof_evidence:channel_deferred_strict_assembly_blocked")
+  else
+    blockers+=("ui_device_proof_evidence:missing_required_real_evidence_env")
+  fi
 fi
 
 run_gap_report_if_possible
