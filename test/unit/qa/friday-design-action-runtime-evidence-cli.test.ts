@@ -198,7 +198,7 @@ describe("check-friday-design-action-runtime-evidence", () => {
           {
             surface: "desktop",
             screen: "fridayChat",
-            action_id: "check",
+            runtime_action_id: "desktop/fridayChat/check",
             status: "pass",
             evidence_ref: "proof://desktop/approve",
           },

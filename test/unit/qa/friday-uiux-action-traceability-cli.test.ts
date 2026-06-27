@@ -125,7 +125,7 @@ describe("check-friday-uiux-action-traceability", () => {
           {
             surface: "mobile",
             screen: "home",
-            action_id: "refresh",
+            runtimeActionId: "mobile/home/refresh",
             capability_id: "transport_connection_state",
             status: "pass",
             evidence_ref: "proof://mobile/home-refresh",

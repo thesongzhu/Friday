@@ -202,6 +202,7 @@ private func writeRoundTripProofIfRequested(
         "surface": "desktop",
         "screen": "fridayChat",
         "action_id": "caprow",
+        "runtime_action_id": "desktop/fridayChat/act",
         "capability_id": "ask_friday_chat_compose_send",
         "status": "pass",
         "evidence_ref": rawPath,
