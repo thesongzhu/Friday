@@ -12,7 +12,7 @@ function usage() {
     --mission-id=mission_... --out-dir=/abs/out-dir
     [--repo-root=/abs/repo] [--app-dir=/abs/FridayHubConsole.app]
     [--destinations=operations,chat,...] [--workbench-mission-id=mission_...]
-    [--timeout-seconds=20] [--plan-only] [--require-observed]
+    [--timeout-seconds=20] [--tree-depth=5] [--plan-only] [--require-observed]
 
 Truth:
   Launches or attaches to the real macOS FridayHubConsole app, navigates selected
@@ -44,6 +44,7 @@ const appDirArg = arg("app-dir") || process.env.FRIDAY_HUB_CONSOLE_APP_DIR || ""
 const destinationsCsv = arg("destinations") || process.env.FRIDAY_DESKTOP_AX_CAPTURE_DESTINATIONS || "";
 const workbenchMissionId = arg("workbench-mission-id") || process.env.FRIDAY_DESKTOP_AX_WORKBENCH_MISSION_ID || "";
 const timeoutSeconds = Number(arg("timeout-seconds") || process.env.FRIDAY_DESKTOP_AX_CAPTURE_TIMEOUT_SECONDS || "20");
+const treeDepth = Number(arg("tree-depth") || process.env.FRIDAY_DESKTOP_AX_TREE_DEPTH || "5");
 const planOnly = args.includes("--plan-only");
 const requireObserved = args.includes("--require-observed");
 const blockers = [];
@@ -189,9 +190,7 @@ on appendElement(e, depth)
   global outputLines
   set roleValue to ""
   set nameValue to ""
-  set descriptionValue to ""
   set identifierValue to ""
-  set enabledValue to ""
   try
     set roleValue to my cleanText(role of e)
   end try
@@ -199,18 +198,12 @@ on appendElement(e, depth)
     set nameValue to my cleanText(name of e)
   end try
   try
-    set descriptionValue to my cleanText(description of e)
-  end try
-  try
     tell application "System Events"
       set identifierValue to my cleanText(value of attribute "AXIdentifier" of e)
     end tell
   end try
-  try
-    set enabledValue to my cleanText(enabled of e)
-  end try
-  set end of outputLines to ((depth as text) & tab & roleValue & tab & identifierValue & tab & nameValue & tab & descriptionValue & tab & enabledValue)
-  if depth < 9 then
+  set end of outputLines to ((depth as text) & tab & roleValue & tab & identifierValue & tab & nameValue & tab & "" & tab & "")
+  if depth < ${Number.isInteger(treeDepth) ? treeDepth : 5} then
     try
       tell application "System Events"
         set childElements to UI elements of e
@@ -231,7 +224,7 @@ set AppleScript's text item delimiters to linefeed
 return outputLines as text`;
   const result = osascript(script);
   if (result.status !== 0) {
-    warn("ax_tree_capture_failed", result.stderr.trim() || result.stdout.trim() || String(result.status));
+    warn("ax_tree_capture_failed", result.error?.message || result.stderr?.trim() || result.stdout?.trim() || String(result.status));
     return "";
   }
   return result.stdout;
@@ -320,6 +313,7 @@ if (!missionId || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId) || !missionId
 }
 const resolvedOutDir = requireAbsoluteDir("out-dir", outDir);
 if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 5) block("timeout_invalid", String(timeoutSeconds));
+if (!Number.isInteger(treeDepth) || treeDepth < 2 || treeDepth > 9) block("tree_depth_invalid", String(treeDepth));
 
 if (planOnly) {
   const summary = {
@@ -327,6 +321,7 @@ if (planOnly) {
     truth: "desktop_ax_accessibility_capture_plan_only_not_runtime_proof",
     status: blockers.length === 0 ? "plan_ready" : "blocked",
     targetCount: targets.length,
+    treeDepth,
     targets,
     blockers,
     caveat: "Plan-only mode does not launch or inspect the app and is not UI/device proof.",
@@ -442,7 +437,6 @@ if (blockers.length === 0) {
         accessibility_id: `friday.desktop.nav.${destination}`,
         interaction: "visible",
         status: "pass",
-        event: "desktop_destination_visible",
         evidence_ref: rawPath,
         captured_at: new Date().toISOString(),
         workbench_mission_id: workbenchMissionId || null,

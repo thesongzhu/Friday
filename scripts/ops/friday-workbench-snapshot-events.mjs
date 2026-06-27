@@ -20,6 +20,7 @@ function usage() {
 Options:
   --url=http://127.0.0.1:3141/v1/mission-spine/workbench
   --defer-channel-proof
+  --allow-partial-events
   --require-ready
 
 Truth: this bridges a preflight-passing Mission Workbench snapshot into
@@ -39,6 +40,7 @@ if (args.includes("--help") || args.includes("-h")) {
 
 const requireReady = args.includes("--require-ready");
 const deferChannelProof = args.includes("--defer-channel-proof") || process.env.FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF === "1";
+const allowPartialEvents = args.includes("--allow-partial-events");
 const missionId = arg("mission-id") || process.env.MISSION_ID || "";
 const sourceFile = arg("file") || process.env.MISSION_WORKBENCH_SNAPSHOT_FILE || "";
 const sourceUrl = arg("url") || process.env.MISSION_WORKBENCH_SNAPSHOT_URL || "";
@@ -282,18 +284,23 @@ const snapshot = payload ? unwrapSnapshot(payload) : {};
 const rowTruthLabel = preflight?.readyForLiveCaptureInput === true
   ? "derived_from_preflighted_workbench_snapshot_not_final_proof"
   : "derived_from_diagnostic_workbench_snapshot_not_final_proof";
-const rows = blockers.length === 0 ? makeRows(snapshot, evidence, rowTruthLabel) : [];
-if (rows.length === 0 && blockers.length === 0) block("no_derivable_events", "snapshot produced no diagnostic rows");
+const canAttemptRows = blockers.length === 0
+  || (allowPartialEvents && payload && Object.values(evidence).every((value) => typeof value === "string"));
+const rows = canAttemptRows ? makeRows(snapshot, evidence, rowTruthLabel) : [];
+if (rows.length === 0 && (blockers.length === 0 || allowPartialEvents)) {
+  block("no_derivable_events", "snapshot produced no diagnostic rows");
+}
 
-if (blockers.length === 0) {
+if (blockers.length === 0 || (allowPartialEvents && rows.length > 0)) {
   const out = abs(outPath);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
 }
+const partialReady = blockers.length > 0 && allowPartialEvents && rows.length > 0;
 
 const output = {
   truth: "workbench_snapshot_events_bridge_diagnostic_not_proof",
-  status: blockers.length === 0 ? "ready" : "blocked",
+  status: blockers.length === 0 ? "ready" : partialReady ? "partial_ready" : "blocked",
   missionId: missionId || null,
   out: outPath ? abs(outPath) : null,
   derivedEvents: rows.length,
@@ -306,8 +313,8 @@ const output = {
     caveat: "Channel evidence is deferred; this bridge emits only diagnostic non-channel rows and never counts as channel proof.",
   }] : [],
   blockers,
-  caveat: "Diagnostic bridge only. Stress/security/network/device observations still require real same-run capture before final proof.",
+  caveat: "Diagnostic bridge only. Partial events are direct observations from the supplied snapshot and do not satisfy full preflight, stress/security/network/device observations, or final proof.",
 };
 
 console.log(JSON.stringify(output, null, 2));
-process.exit(blockers.length === 0 || !requireReady ? 0 : 2);
+process.exit(blockers.length === 0 || partialReady || !requireReady ? 0 : 2);
