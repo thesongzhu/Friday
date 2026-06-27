@@ -127,6 +127,7 @@
     "check:endbar-acceptance-manifest": "node scripts/ops/check-friday-provider-entitlement-manifest.mjs",
     "check:endbar-readiness": "node scripts/ops/check-friday-endbar-readiness.mjs",
     "check:endbar-report-inputs": "node scripts/ops/check-friday-endbar-report-inputs.mjs",
+    "check:provider-entitlement-readiness": "node scripts/ops/check-friday-provider-entitlement-readiness.mjs",
     "check:github-channel-proof-readiness": "node scripts/ops/check-friday-github-channel-proof-readiness.mjs",
     "check:ui-device-accessibility-click-capture": "node scripts/ops/friday-ui-device-accessibility-click-capture.mjs",
     "check:agent-rollout:phase1": "node scripts/ops/run-agent-rollout-acceptance.mjs phase1",
