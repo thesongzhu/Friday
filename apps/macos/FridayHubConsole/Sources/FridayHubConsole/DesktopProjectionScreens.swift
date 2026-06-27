@@ -986,6 +986,7 @@ struct DesktopProjectionScreen: View {
                 StatusChip(text: item.recoveryKind, bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
                 if item.canRetry {
                   StatusChip(text: "retry available", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+                    .accessibilityIdentifier("friday.desktop.recovery.retry-available")
                 }
                 if item.canCancel {
                   StatusChip(text: "cancel available", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
