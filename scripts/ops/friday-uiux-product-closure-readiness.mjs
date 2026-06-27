@@ -386,6 +386,11 @@ if (existsSync(`${repoRoot}/scripts/ops/friday-ui-device-proof-readiness.sh`)) {
 const runtimeReport = designRuntime.parsed || {};
 const readinessReport = uiDeviceReadiness?.parsed || {};
 const traceabilityReport = uiuxTraceability.parsed || {};
+const residualEndBarBlockers = Array.isArray(traceabilityReport.gaps?.residualEndBarBlockers)
+  ? traceabilityReport.gaps.residualEndBarBlockers
+  : Array.isArray(traceabilityReport.gaps?.destinationsStillBlocked)
+    ? traceabilityReport.gaps.destinationsStillBlocked
+    : [];
 const clientPassed = clientDesign.status === "passed" && clientDesign.parsed?.status === "passed";
 const nativeLinkagePassed = nativeLinkage.status === "passed" && nativeLinkage.parsed?.status === "linked";
 const selectedVisualProofReady = selectedVisualProof.status === "passed" && selectedVisualProof.parsed?.status === "selected_visual_proof_ready";
@@ -461,6 +466,8 @@ const report = {
       counts: traceabilityReport.counts || null,
       bySurface: traceabilityReport.bySurface || null,
       gaps: traceabilityReport.gaps || null,
+      residualEndBarBlockers,
+      caveat: "Residual END-BAR blockers are product maturity/user-proof requirements, not missing runtimeActionId traceability when product_runtime_actions_traceable is reported.",
     },
     designActionRuntime: {
       status: runtimeReport.status || designRuntime.status,
@@ -496,6 +503,11 @@ const report = {
       target: "selected-visual-proof",
       action: "capture fresh current-HEAD native mobile destination screenshots and desktop visual/accessibility capture for the operator-selected baseline; static Swift linkage and old proof PNGs do not close visual parity",
       blockers: selectedVisualProof.parsed?.blockers || [],
+    }]),
+    ...(residualEndBarBlockers.length === 0 ? [] : [{
+      target: "endbar-residual-product-proof",
+      action: "close the remaining real-user/product-maturity proofs listed by residualEndBarBlockers; these do not mean runtime action wiring is missing, but they still prevent END-BAR/adoption claims",
+      blockers: residualEndBarBlockers,
     }]),
   ],
   notes,
