@@ -27,6 +27,7 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("capture_dir_status=\"blocked\"");
     expect(source).toContain("capture_dir_args+=(\"--defer-channel-proof\")");
     expect(source).toContain("capture_dir_status=\"ready_channel_deferred_non_strict\"");
+    expect(source).toContain("closure_args+=(\"--defer-channel-proof\")");
     expect(source).toContain("[[ \"${capture_dir_status}\" == ready* ]]");
     expect(source).toContain("gap_args+=(\"--defer-channel-proof\")");
     expect(source).toContain("real channel, timeline, stress, and negative-control evidence");

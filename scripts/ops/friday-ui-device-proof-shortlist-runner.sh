@@ -504,6 +504,9 @@ set -u
 if [[ "${capture_dir_status}" == ready* ]]; then
   closure_args+=("--evidence-dir=${evidence_dir}")
 fi
+if [ "${defer_channel_proof}" = "1" ]; then
+  closure_args+=("--defer-channel-proof")
+fi
 node "${closure_args[@]}"
 
 readiness_args=("${repo_root}/scripts/ops/friday-ui-device-proof-readiness.sh")

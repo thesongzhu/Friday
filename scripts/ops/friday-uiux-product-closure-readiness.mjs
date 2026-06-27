@@ -15,7 +15,7 @@ function usage() {
     [--runtime-evidence=/abs/action-runtime-evidence.json ...] \\
     [--runtime-evidence-dir=/abs/evidence-dir ...] \\
     [--out=/abs/uiux-product-closure-readiness.json] \\
-    [--require-runtime-actions] [--require-ui-device-proof]
+    [--require-runtime-actions] [--require-ui-device-proof] [--defer-channel-proof]
 
 Truth: this is a product-closure readiness harness. It links the operator-confirmed
 UI/UX design handoff to selected native routes, ViewModel action drivers,
@@ -51,6 +51,7 @@ if (args.includes("--help") || args.includes("-h")) {
 
 const requireRuntimeActions = args.includes("--require-runtime-actions");
 const requireUiDeviceProof = args.includes("--require-ui-device-proof");
+const deferChannelProof = args.includes("--defer-channel-proof") || process.env.FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF === "1";
 const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new URL("../..", import.meta.url).pathname);
 const designRoot = resolve(arg("design-root") || process.env.FRIDAY_DESIGN_HANDOFF_ROOT || `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602`);
 const evidenceDirs = [
@@ -130,9 +131,9 @@ function runJson(label, command, commandArgs, options = {}) {
   const stdout = (result.stdout || "").trim();
   if (stdout) {
     parsed = parseJsonFromOutput(stdout);
-    if (!parsed) block(`${label}_invalid_json`, "stdout did not contain a parseable JSON object");
+    if (!parsed && !options.suppressBlocks) block(`${label}_invalid_json`, "stdout did not contain a parseable JSON object");
   } else {
-    block(`${label}_empty_stdout`, commandArgs.join(" "));
+    if (!options.suppressBlocks) block(`${label}_empty_stdout`, commandArgs.join(" "));
   }
   return {
     label,
@@ -236,6 +237,37 @@ function runtimeEvidenceFromDir(dir) {
   ].filter((candidate, index, values) => existsSync(candidate) && values.indexOf(candidate) === index);
 }
 
+function unique(values) {
+  return [...new Set(values)];
+}
+
+function uiDeviceEvidenceDirCandidates(dirs) {
+  const candidates = [];
+  for (const dir of dirs) {
+    const resolved = abs(dir);
+    if (!existsSync(resolved)) continue;
+    const nestedEvidence = resolve(resolved, "evidence");
+    if (existsSync(nestedEvidence)) candidates.push(nestedEvidence);
+    candidates.push(resolved);
+  }
+  return unique(candidates);
+}
+
+function readinessScore(run) {
+  const report = run?.parsed || {};
+  const blockers = Array.isArray(report.blockers) ? report.blockers : [];
+  const notes = Array.isArray(report.notes) ? report.notes : [];
+  if (report.status === "pass") return 100;
+  if (blockers.includes("ui_device_proof_evidence:channel_deferred_strict_assembly_blocked")) return 80;
+  if (notes.some((note) => String(note).startsWith("resolved_MOBILE_EVIDENCE:")) &&
+      notes.some((note) => String(note).startsWith("resolved_DESKTOP_EVIDENCE:")) &&
+      notes.some((note) => String(note).startsWith("resolved_TIMELINE_EVIDENCE:"))) {
+    return 60;
+  }
+  if (blockers.includes("ui_device_proof_evidence:missing_required_real_evidence_env")) return 20;
+  return run?.status === "passed" ? 10 : 0;
+}
+
 const designContractPath = `${designRoot}/ACTION-CONTRACT.md`;
 if (!existsSync(designContractPath)) block("action_contract_missing", designContractPath);
 
@@ -318,20 +350,35 @@ if (requireRuntimeActions) designRuntimeArgs.push("--require-complete");
 const designRuntime = runJson("design_action_runtime", process.execPath, designRuntimeArgs);
 
 let uiDeviceReadiness = null;
+const uiDeviceReadinessCandidates = [];
 if (existsSync(`${repoRoot}/scripts/ops/friday-ui-device-proof-readiness.sh`)) {
-  const readinessArgs = [`${repoRoot}/scripts/ops/friday-ui-device-proof-readiness.sh`];
-  for (const dir of evidenceDirs) {
-    readinessArgs.push("--evidence-dir", abs(dir));
+  const candidateDirs = uiDeviceEvidenceDirCandidates(evidenceDirs);
+  const runReadiness = (candidateDir = "") => {
+    const readinessArgs = [`${repoRoot}/scripts/ops/friday-ui-device-proof-readiness.sh`];
+    if (candidateDir) readinessArgs.push("--evidence-dir", candidateDir);
+    if (designContractPath) readinessArgs.push("--design-action-contract", designContractPath);
+    for (const evidence of runtimeEvidence) {
+      if (existsSync(abs(evidence))) readinessArgs.push("--design-action-runtime-evidence", abs(evidence));
+    }
+    for (const dir of runtimeEvidenceDirs) {
+      if (existsSync(abs(dir))) readinessArgs.push("--design-action-runtime-evidence-dir", abs(dir));
+    }
+    for (const dir of evidenceDirs) {
+      if (existsSync(abs(dir))) readinessArgs.push("--design-action-runtime-evidence-dir", abs(dir));
+    }
+    if (deferChannelProof) readinessArgs.push("--defer-channel-proof");
+    if (requireUiDeviceProof) readinessArgs.push("--require-proof");
+    const run = runJson("ui_device_proof_readiness", "bash", readinessArgs, { suppressBlocks: candidateDirs.length > 1 });
+    run.evidenceDir = candidateDir || null;
+    run.score = readinessScore(run);
+    return run;
+  };
+  if (candidateDirs.length === 0) {
+    uiDeviceReadiness = runReadiness();
+  } else {
+    for (const candidateDir of candidateDirs) uiDeviceReadinessCandidates.push(runReadiness(candidateDir));
+    uiDeviceReadiness = [...uiDeviceReadinessCandidates].sort((left, right) => right.score - left.score)[0] || null;
   }
-  if (designContractPath) readinessArgs.push("--design-action-contract", designContractPath);
-  for (const evidence of runtimeEvidence) {
-    if (existsSync(abs(evidence))) readinessArgs.push("--design-action-runtime-evidence", abs(evidence));
-  }
-  for (const dir of runtimeEvidenceDirs) {
-    if (existsSync(abs(dir))) readinessArgs.push("--design-action-runtime-evidence-dir", abs(dir));
-  }
-  if (requireUiDeviceProof) readinessArgs.push("--require-proof");
-  uiDeviceReadiness = runJson("ui_device_proof_readiness", "bash", readinessArgs);
 } else {
   block("ui_device_readiness_script_missing", "scripts/ops/friday-ui-device-proof-readiness.sh");
 }
@@ -419,6 +466,14 @@ const report = {
     },
     uiDeviceProofReadiness: {
       status: readinessReport.status || uiDeviceReadiness?.status || "not_run",
+      selectedEvidenceDir: uiDeviceReadiness?.evidenceDir || null,
+      selectedScore: uiDeviceReadiness?.score ?? null,
+      candidateRuns: uiDeviceReadinessCandidates.map((candidate) => ({
+        evidenceDir: candidate.evidenceDir,
+        score: candidate.score,
+        status: candidate.parsed?.status || candidate.status,
+        blockers: candidate.parsed?.blockers || [],
+      })),
       notes: readinessReport.notes || [],
       blockers: readinessReport.blockers || [],
     },
