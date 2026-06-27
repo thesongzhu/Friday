@@ -39,6 +39,8 @@ public struct HomeProjection: Sendable, Equatable {
   public let statusLabels: [String]
   /// Optional owner-gated agent session ref for session-specific read arms.
   public let agentSessionId: String?
+  /// Optional owner-gated run ref for token ledger / run readback arms.
+  public let projectedTokenLedgerRunId: String?
   public let routeDecisionSummary: String?
   /// Work-item id REFS (counts/ids only — never a body).
   public let workItemIds: [String]
@@ -66,6 +68,7 @@ public struct HomeProjection: Sendable, Equatable {
       raw,
       ["agentSessionId", "agent_session_id", "fridaySessionId", "friday_session_id"])
       ?? Self.firstStringArray(raw, ["agentSessionIds", "agent_session_ids", "fridaySessionIds", "friday_session_ids"]).first
+    self.projectedTokenLedgerRunId = Self.firstString(raw, ["tokenLedgerRunId", "token_ledger_run_id"])
     self.routeDecisionSummary = snapshot.routeDecisionSummary
     self.workItemIds = snapshot.workItemIds
     self.routeSelected = route?["selectedRoute"] as? String
@@ -104,7 +107,8 @@ public struct HomeProjection: Sendable, Equatable {
   }
 
   public var tokenLedgerRunId: String? {
-    runOutcomeLearningCandidates.lazy.map(\.runId).first { !$0.isEmpty }
+    projectedTokenLedgerRunId
+      ?? runOutcomeLearningCandidates.lazy.map(\.runId).first { !$0.isEmpty }
   }
 
   private static func parseWorkItems(_ value: Any?) -> [HomeWorkItem] {

@@ -19,6 +19,7 @@
 
 use friday_core::{MissionLinkKind, WorkItem, WorkItemStatus, WorkLane};
 use friday_storage::Db;
+use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Map, Value};
 
 /// Project the Mission Workbench snapshot for `requested_mission_id` (or the first active Mission
@@ -83,6 +84,8 @@ pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<
 
     let run_outcome_learning_candidates =
         run_outcome_learning_candidates_json(db, &work_items).map_err(|err| err.to_string())?;
+    let readback_refs =
+        readback_refs_json(db, &work_items, &links).map_err(|err| err.to_string())?;
     let provider_receipt_refs = provider_receipt_refs(&work_items, &links);
     let channel_receipt_refs = channel_receipt_refs(&links);
     let mut transcript_events = Vec::new();
@@ -118,6 +121,8 @@ pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<
         "fridayConversationId": mission.friday_conversation_id,
         "runtimeFeedStatus": "live_rust_hub_projection",
         "statusLabels": ["stale", "offline", "error"],
+        "tokenLedgerRunId": readback_refs.token_ledger_run_id,
+        "agentSessionId": readback_refs.agent_session_id,
         "duplicatePreflight": {
             "status": "opens_existing_mission",
             "duplicateMissionId": mission.mission_id,
@@ -405,6 +410,88 @@ fn run_outcome_learning_candidates_json(
     Ok(rows)
 }
 
+struct ReadbackRefs {
+    token_ledger_run_id: Option<String>,
+    agent_session_id: Option<String>,
+}
+
+fn readback_refs_json(
+    db: &Db,
+    work_items: &[WorkItem],
+    links: &[friday_core::MissionLink],
+) -> rusqlite::Result<ReadbackRefs> {
+    let run_ids = projected_agent_run_ids(work_items, links);
+    Ok(ReadbackRefs {
+        token_ledger_run_id: first_token_ledger_run_id(db, &run_ids)?,
+        agent_session_id: first_agent_session_id(db, &run_ids)?,
+    })
+}
+
+fn projected_agent_run_ids(
+    work_items: &[WorkItem],
+    links: &[friday_core::MissionLink],
+) -> Vec<String> {
+    let mut ids = Vec::new();
+    for item in work_items {
+        push_unique_run_ids(&mut ids, work_item_agent_run_ids(item));
+    }
+    for link in links {
+        let mut candidates = Vec::new();
+        candidates.extend(link.proof_ref.as_deref().and_then(agent_run_id_from_ref));
+        candidates.extend(agent_run_id_from_ref(&link.target_ref));
+        candidates.extend(agent_run_id_from_provider_timeline_ref(&link.target_ref));
+        push_unique_run_ids(&mut ids, candidates);
+    }
+    ids
+}
+
+fn push_unique_run_ids(ids: &mut Vec<String>, candidates: impl IntoIterator<Item = String>) {
+    for run_id in candidates {
+        if !ids.iter().any(|seen| seen == &run_id) {
+            ids.push(run_id);
+        }
+    }
+}
+
+fn first_token_ledger_run_id(db: &Db, run_ids: &[String]) -> rusqlite::Result<Option<String>> {
+    for run_id in run_ids {
+        let found = db
+            .conn()
+            .query_row(
+                "SELECT run_id FROM token_ledger
+                 WHERE run_id = ?1 AND length(trim(run_id)) > 0
+                 ORDER BY created_at DESC
+                 LIMIT 1",
+                params![run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
+    Ok(None)
+}
+
+fn first_agent_session_id(db: &Db, run_ids: &[String]) -> rusqlite::Result<Option<String>> {
+    for run_id in run_ids {
+        let found = db
+            .conn()
+            .query_row(
+                "SELECT agent_session_id FROM agent_session
+                 WHERE agent_session_id = ?1
+                 LIMIT 1",
+                params![run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
+    Ok(None)
+}
+
 fn work_item_agent_run_ids(item: &WorkItem) -> Vec<String> {
     let mut ids: Vec<String> = Vec::new();
     for value in item.proof_receipts.iter().chain(item.output_refs.iter()) {
@@ -429,6 +516,17 @@ fn agent_run_id_from_ref(value: &str) -> Option<String> {
     }
     let run_id = run_id.trim();
     if run_id.is_empty() {
+        return None;
+    }
+    Some(run_id.to_string())
+}
+
+fn agent_run_id_from_provider_timeline_ref(value: &str) -> Option<String> {
+    let (_, run_id) = value
+        .strip_prefix("friday://provider-timeline/")?
+        .rsplit_once('#')?;
+    let run_id = run_id.trim();
+    if run_id.is_empty() || run_id.contains('/') {
         return None;
     }
     Some(run_id.to_string())
@@ -1403,6 +1501,52 @@ mod tests {
                 .and_then(Value::as_str)
                 .is_some_and(|ref_| ref_.starts_with("proof://run-outcome-learning-candidate/"))
         }));
+    }
+
+    #[test]
+    fn projects_readback_refs_only_when_run_has_real_ledger_or_session_rows() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        let run_id = "run-readback-projected";
+        let mut item = db.get_work_item("autodisp-1781492033").unwrap().unwrap();
+        item.status = WorkItemStatus::CompletedWithProof;
+        item.proof_receipts = vec![format!("friday://agent-run/{run_id}")];
+        db.upsert_work_item(&item).unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO token_ledger
+                    (ledger_id, session_id, activity_id, provider_kind, model, base_url_host,
+                     prompt_tokens, completion_tokens, total_tokens, cost_estimate, fallback,
+                     result_link, created_at, run_id)
+                 VALUES (?1, ?2, ?3, 'codex', 'gpt-5.5', 'local',
+                         10, 5, 15, NULL, 0, NULL, ?4, ?2)",
+                params![
+                    format!("{run_id}:t0:ledger"),
+                    run_id,
+                    format!("{run_id}:t0:activity"),
+                    1_780_640_000_300_i64
+                ],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO agent_session (agent_session_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3)",
+                params![run_id, 1_780_640_000_200_i64, 1_780_640_000_300_i64],
+            )
+            .unwrap();
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        assert_eq!(
+            snapshot.get("tokenLedgerRunId").and_then(Value::as_str),
+            Some(run_id),
+            "Token Ledger must unlock from a real token_ledger row, not from a bare proof ref"
+        );
+        assert_eq!(
+            snapshot.get("agentSessionId").and_then(Value::as_str),
+            Some(run_id),
+            "Session read arms must unlock only when the agent_session row exists"
+        );
     }
 
     #[test]
