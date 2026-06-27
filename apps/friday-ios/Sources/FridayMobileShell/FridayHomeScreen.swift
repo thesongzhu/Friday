@@ -101,6 +101,7 @@ struct FridayHomeScreen: View {
 
     commandQueueSection(title: "Needs Me", rows: needsRows(projection), emptyText: "No approval, memory, or recovery items need action.")
     commandQueueSection(title: "Running", rows: runningRows(projection), emptyText: "No active Friday work is visible in this projection.")
+    evidenceFlowCard(projection)
     if projection.isLoadedEmpty {
       loadedEmptyCard(projection)
     }
@@ -409,6 +410,69 @@ struct FridayHomeScreen: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel(viewModel.isOnline ? "Friday status online" : "Friday status offline or stale")
     .accessibilityIdentifier("friday.home.status-card")
+  }
+
+  private func evidenceFlowCard(_ projection: HomeProjection) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        HStack(alignment: .firstTextBaseline) {
+          Text("Evidence flow")
+            .font(.headline)
+            .foregroundStyle(MobileTheme.textPrimary)
+          Spacer()
+          StatusChip(
+            text: projection.timelinePages.isEmpty ? "waiting" : "\(projection.timelinePages.count) pages",
+            bg: projection.timelinePages.isEmpty ? MobileTheme.chipNeutralBG : MobileTheme.chipPendingBG,
+            fg: projection.timelinePages.isEmpty ? MobileTheme.chipNeutralFG : MobileTheme.chipPendingFG)
+        }
+
+        if projection.timelinePages.isEmpty {
+          Text("No bounded mission timeline page is projected yet.")
+            .font(.footnote)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+          ForEach(projection.timelinePages.prefix(3)) { page in
+            VStack(alignment: .leading, spacing: 6) {
+              HStack(spacing: 8) {
+                Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                  .font(.system(size: 15, weight: .semibold))
+                  .foregroundStyle(MobileTheme.cyan)
+                  .accessibilityHidden(true)
+                Text(page.title)
+                  .font(.subheadline.weight(.semibold))
+                  .foregroundStyle(MobileTheme.textPrimary)
+                  .lineLimit(1)
+                Spacer(minLength: 8)
+                StatusChip(text: page.statusText, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+              }
+              if !page.summary.isEmpty {
+                Text(page.summary)
+                  .font(.caption)
+                  .foregroundStyle(MobileTheme.textSecondary)
+                  .lineLimit(2)
+              }
+              HStack(spacing: 8) {
+                RefPill(label: "cursor", ref: page.cursor ?? "start")
+                if let next = page.nextCursor {
+                  RefPill(label: "next", ref: next)
+                }
+                if page.refsCount > 0 {
+                  RefPill(label: "refs", ref: "\(page.refsCount)")
+                }
+              }
+            }
+            .padding(.vertical, 2)
+          }
+        }
+      }
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(
+      projection.timelinePages.isEmpty
+        ? "Evidence flow waiting for bounded mission timeline pages"
+        : "Evidence flow shows \(projection.timelinePages.count) bounded mission timeline pages")
+    .accessibilityIdentifier("friday.home.evidence-flow")
   }
 
   private func devicePairingCard(

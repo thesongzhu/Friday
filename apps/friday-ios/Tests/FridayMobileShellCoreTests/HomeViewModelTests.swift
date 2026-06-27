@@ -314,6 +314,20 @@ final class HomeViewModelTests: XCTestCase {
       "capabilityStates": [
         { "id": "cap-route", "label": "Route advisor", "kind": "advisor", "truthLabel": "friday_owned", "approvalState": "not_required", "dispatchAllowed": true, "summary": "Routes are advisory.", "proofRef": "proof://cap/1" }
       ],
+      "timelinePages": [
+        {
+          "id": "page-1",
+          "title": "Mission timeline",
+          "cursor": "start",
+          "nextCursor": "offset:12",
+          "retainedFrom": 0,
+          "bounded": true,
+          "hasMore": true,
+          "eventRefs": ["event://surface/mobile/1"],
+          "proofRefs": ["proof://timeline/1"],
+          "summary": "Bounded timeline window for the mobile projection."
+        }
+      ],
       "t3ProvisioningStatus": {
         "truthLabel": "rust_hub_t3_provisioning_read_only_no_mint",
         "paired": true,
@@ -452,6 +466,9 @@ final class HomeViewModelTests: XCTestCase {
       true, true, true, true,
     ])
     XCTAssertEqual(p.t3ProvisioningStatus?.checklistRows.last?.statusText, "shared")
+    XCTAssertEqual(p.timelinePages.first?.title, "Mission timeline")
+    XCTAssertEqual(p.timelinePages.first?.statusText, "more")
+    XCTAssertEqual(p.timelinePages.first?.refsCount, 2)
     XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile surface read the mission projection.")
     XCTAssertEqual(p.needsMeCount, 4)
     try writeMobileTokenLedgerActionEvidenceIfRequested(
@@ -1530,6 +1547,9 @@ final class ReadClientFactoryTests: XCTestCase {
     XCTAssertEqual(p.memoryCandidates.first?.grantsMemoryAuthority, false)
     XCTAssertEqual(p.runOutcomeLearningCandidates.first?.evidenceRef, "proof://learning/emulated")
     XCTAssertEqual(p.capabilityStates.first?.dispatchAllowed, false)
+    XCTAssertEqual(p.timelinePages.first?.title, "Live mission timeline")
+    XCTAssertEqual(p.timelinePages.first?.statusText, "bounded")
+    XCTAssertEqual(p.timelinePages.first?.refsCount, 2)
     XCTAssertEqual(p.transcriptEvents.first?.summary, "Mobile UI consumed the owner-gated projection.")
     XCTAssertEqual(p.needsMeCount, 3)
   }
@@ -1664,6 +1684,10 @@ final class EmulatedReadServerTransport: SealedWSTransport {
     "capabilityStates":[{"id":"cap-route","label":"Route advisor","kind":"advisor",\
     "truthLabel":"friday_owned","approvalState":"not_required","dispatchAllowed":false,\
     "summary":"Advisory only","proofRef":"proof://cap/route"}],\
+    "timelinePages":[{"id":"page-emulated","title":"Live mission timeline",\
+    "cursor":"start","nextCursor":null,"retainedFrom":0,"bounded":true,"hasMore":false,\
+    "eventRefs":["event://mobile/a"],"proofRefs":["proof://timeline/a"],\
+    "summary":"Owner-gated bounded timeline page was projected."}],\
     "transcriptSections":[{"id":"sec-a","title":"Mission","groupKind":"mission",\
     "missionId":"mission-emulated","truthLabel":"friday_owned","status":"waiting",\
     "events":[{"id":"evt-a","missionId":"mission-emulated","surface":"mobile",\
