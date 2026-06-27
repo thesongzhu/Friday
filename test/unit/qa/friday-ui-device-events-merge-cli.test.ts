@@ -119,6 +119,52 @@ describe("friday-ui-device-events-merge", () => {
     }
   });
 
+  it("accepts explicitly declared extra evidence refs without assigning them to a surface role", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-events-merge-extra-evidence-"));
+    try {
+      const evidence = writeEvidence(tempDir);
+      const stress = join(tempDir, "real-stress-source-report.json");
+      const input = join(tempDir, "events.jsonl");
+      const out = join(tempDir, "merged.jsonl");
+      writeFileSync(stress, JSON.stringify({ role: "real_stress_source_report", mission_id: missionId }));
+      writeFileSync(input, `${JSON.stringify(event("desktop", "pressure_20_50_consecutive_asks_visible", stress))}\n`);
+
+      const blocked = spawnSync("node", [
+        "scripts/ops/friday-ui-device-events-merge.mjs",
+        `--mission-id=${missionId}`,
+        `--events=${input}`,
+        `--desktop=${evidence.desktop}`,
+        `--out=${out}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const blockedOutput = JSON.parse(blocked.stdout) as { blockers?: Array<{ code?: string }> };
+      expect(blocked.status).toBe(2);
+      expect(blockedOutput.blockers?.map((blocker) => blocker.code)).toContain("event_evidence_ref_unknown");
+
+      const stdout = execFileSync("node", [
+        "scripts/ops/friday-ui-device-events-merge.mjs",
+        `--mission-id=${missionId}`,
+        `--events=${input}`,
+        `--desktop=${evidence.desktop}`,
+        `--extra-evidence-ref=${stress}`,
+        `--out=${out}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const result = JSON.parse(stdout) as {
+        status?: string;
+        outputRows?: number;
+        extraEvidenceRefs?: string[];
+      };
+
+      expect(result.status).toBe("ready");
+      expect(result.outputRows).toBe(1);
+      expect(result.extraEvidenceRefs).toContain(stress);
+      expect(readFileSync(out, "utf8")).toContain("pressure_20_50_consecutive_asks_visible");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed on mission mismatch and does not write merged output", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-events-merge-blocked-"));
     try {

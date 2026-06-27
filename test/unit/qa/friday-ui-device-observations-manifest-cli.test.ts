@@ -143,6 +143,41 @@ describe("friday-ui-device-observations-manifest", () => {
     }
   });
 
+  it("accepts explicitly declared extra evidence refs without assigning them to a surface role", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-observations-extra-evidence-"));
+    try {
+      const refs = writeEvidence(tempDir);
+      const extra = join(tempDir, "desktop-ax-tree.raw.txt");
+      writeFileSync(extra, "real desktop AX tree bytes\n");
+      const rows = completeEvents(refs).map((row) => {
+        const eventRow = row as { event?: string };
+        if (eventRow.event === "mission_resolve_or_create_visible") {
+          return event("desktop", "mission_resolve_or_create_visible", extra);
+        }
+        return row;
+      });
+      const blocked = runManifest(tempDir, refs, rows, ["--require-ready"]);
+      const blockedOutput = JSON.parse(blocked.result.stdout) as { blockers?: Array<{ code?: string }> };
+      expect(blocked.result.status).toBe(2);
+      expect(blockedOutput.blockers?.map((blocker) => blocker.code)).toContain("event_evidence_ref_unknown");
+
+      const { result, out } = runManifest(tempDir, refs, rows, [
+        `--extra-evidence-ref=${extra}`,
+        "--require-ready",
+      ]);
+
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as { status?: string; extraEvidenceRefs?: string[]; blockers?: unknown[] };
+      expect(output.status).toBe("ready");
+      expect(output.extraEvidenceRefs).toContain(extra);
+      expect(output.blockers).toEqual([]);
+      const manifest = JSON.parse(readFileSync(out, "utf8")) as { extra_evidence_refs?: string[] };
+      expect(manifest.extra_evidence_refs).toContain(extra);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("derives non-channel manifest inputs when channel proof is explicitly deferred", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-observations-channel-deferred-"));
     try {

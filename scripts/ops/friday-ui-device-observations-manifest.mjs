@@ -111,6 +111,7 @@ function usage() {
     --desktop=/abs/desktop-capture \\
     --channel=/abs/channel-capture \\
     --timeline=/abs/timeline-capture \\
+    [--extra-evidence-ref=/abs/real-evidence ...] \\
     --events=/abs/same-run-events.jsonl \\
     --out=/abs/observations-manifest.json [--defer-channel-proof] [--require-ready]
 
@@ -124,6 +125,21 @@ function arg(name) {
   return args.find((value) => value.startsWith(prefix))?.slice(prefix.length) || "";
 }
 
+function argsAll(name) {
+  const prefix = `--${name}=`;
+  const values = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value.startsWith(prefix)) {
+      values.push(value.slice(prefix.length));
+    } else if (value === `--${name}` && args[index + 1]) {
+      values.push(args[index + 1]);
+      index += 1;
+    }
+  }
+  return values;
+}
+
 if (args.includes("--help") || args.includes("-h")) {
   usage();
   process.exit(0);
@@ -135,6 +151,7 @@ const deferChannelProof = args.includes("--defer-channel-proof")
 const missionId = arg("mission-id");
 const out = arg("out");
 const eventsPath = arg("events");
+const extraEvidenceRefs = argsAll("extra-evidence-ref");
 const evidenceByRole = {
   mobile: arg("mobile"),
   desktop: arg("desktop"),
@@ -243,10 +260,13 @@ if (!missionId || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId) || !missionId
 }
 
 const evidence = Object.fromEntries(Object.entries(evidenceByRole).map(([role, path]) => [role, requireFile(role, path)]));
+const extraEvidence = extraEvidenceRefs
+  .map((path, index) => requireFile(`extra-evidence-ref:${index + 1}`, path))
+  .filter(Boolean);
 const eventFile = requireFile("events", eventsPath);
 if (!out) block("missing_arg", "out");
 
-const evidenceRefs = new Set(Object.values(evidence).filter(Boolean).map(evidenceKey));
+const evidenceRefs = new Set([...Object.values(evidence).filter(Boolean), ...extraEvidence].map(evidenceKey));
 const observations = normalizedEvents(parseJsonl(eventFile), evidenceRefs);
 const activeRequiredObservations = deferChannelProof
   ? requiredObservations.filter(([surface, event]) => surface !== "channel" && !event.includes("channel"))
@@ -315,6 +335,7 @@ const manifest = {
   ],
   event_order: activeRequiredOrder,
   observations,
+  extra_evidence_refs: extraEvidence,
   deferred_inputs: deferChannelProof ? [{
     role: "channel",
     status: "deferred_by_operator",
@@ -335,6 +356,7 @@ const output = {
   missionId: missionId || null,
   out: out ? abs(out) : null,
   observations: observations.length,
+  extraEvidenceRefs: extraEvidence,
   deferredInputs: manifest.deferred_inputs,
   blockers,
   next: blockers.length === 0
