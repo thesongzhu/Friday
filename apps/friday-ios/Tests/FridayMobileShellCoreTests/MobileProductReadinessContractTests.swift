@@ -67,10 +67,14 @@ func mobileProductContractKeepsApprovalSignatureVisible() {
 
 @Test
 func mobileProductContractSurfacesBuiltReadOnlyProductActions() {
+  let missions = MobileProductDestinationID.missions.contract
   let passport = MobileProductDestinationID.contextPassport.contract
   let tokenLedger = MobileProductDestinationID.tokenLedger.contract
+  let platform = MobileProductDestinationID.platform.contract
   let provider = MobileProductDestinationID.providerAuth.contract
+  let settings = MobileProductDestinationID.settings.contract
 
+  #expect(missions.runtimeActionIds == ["mobile/missions/read"])
   #expect(passport.runtimeActionIds == [
     "mobile/passport/checklist",
     "mobile/passport/send",
@@ -83,11 +87,19 @@ func mobileProductContractSurfacesBuiltReadOnlyProductActions() {
     "mobile/providerAuth/check",
     "mobile/providerAuth/provider-workspace",
   ])
+  #expect(platform.runtimeActionIds == ["mobile/platform/capability-matrix"])
+  #expect(settings.runtimeActionIds == ["mobile/settings/push-permission"])
+  #expect(missions.blockers.contains { $0.kind == .needsLiveWrite })
   #expect(provider.blockers.contains { $0.kind == .needsProviderCredential })
   #expect(provider.blockers.contains { $0.kind == .needsRuntimeEvidence })
+  #expect(platform.blockers.contains { $0.kind == .needsRuntimeEvidence })
+  #expect(settings.blockers.contains { $0.kind == .needsRuntimeEvidence })
+  #expect(!missions.isEndBarReady)
   #expect(!passport.isEndBarReady)
   #expect(!tokenLedger.isEndBarReady)
+  #expect(!platform.isEndBarReady)
   #expect(!provider.isEndBarReady)
+  #expect(!settings.isEndBarReady)
 }
 
 @Test

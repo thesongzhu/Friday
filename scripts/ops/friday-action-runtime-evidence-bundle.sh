@@ -300,6 +300,13 @@ run_wrapper \
   "mobile-activity"
 
 run_wrapper \
+  "mobile projection" \
+  "scripts/ops/friday-mobile-projection-action-evidence.sh" \
+  "FRIDAY_MOBILE_PROJECTION_ACTION_EVIDENCE_DIR" \
+  "FRIDAY_MOBILE_PROJECTION_ACTION_RUNTIME_OUT" \
+  "mobile-projection"
+
+run_wrapper \
   "desktop chat/memory" \
   "scripts/ops/friday-desktop-chat-memory-action-evidence.sh" \
   "FRIDAY_DESKTOP_CHAT_MEMORY_ACTION_EVIDENCE_DIR" \
@@ -312,6 +319,13 @@ run_wrapper \
   "FRIDAY_DESKTOP_PAIRING_ACTION_EVIDENCE_DIR" \
   "FRIDAY_DESKTOP_PAIRING_ACTION_RUNTIME_OUT" \
   "desktop-pairing"
+
+run_wrapper \
+  "desktop projection" \
+  "scripts/ops/friday-desktop-projection-action-evidence.sh" \
+  "FRIDAY_DESKTOP_PROJECTION_ACTION_EVIDENCE_DIR" \
+  "FRIDAY_DESKTOP_PROJECTION_ACTION_RUNTIME_OUT" \
+  "desktop-projection"
 
 set +u
 for extra in "${EXTRA_ACTION_EVIDENCE[@]}"; do

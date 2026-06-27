@@ -10,6 +10,7 @@ function usage() {
   node scripts/ops/check-friday-design-action-runtime-evidence.mjs \\
     [--repo-root=/abs/repo] \\
     [--contract=/abs/ACTION-CONTRACT.md] \\
+    [--contract-annex=/abs/friday-uiux-product-runtime-action-annex.md ...] \\
     [--runtime-evidence=/abs/action-runtime-evidence.json ...] \\
     [--evidence-dir=/abs/ui-device-evidence-or-runtime-bundle] \\
     [--out=/abs/design-action-runtime-gap.json] \\
@@ -76,6 +77,14 @@ const requireComplete = args.includes("--require-complete");
 const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new URL("../..", import.meta.url).pathname);
 const defaultContract = `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602/ACTION-CONTRACT.md`;
 const contractPath = resolve(arg("contract") || process.env.FRIDAY_DESIGN_ACTION_CONTRACT || defaultContract);
+const defaultContractAnnex = resolve(repoRoot, "docs/friday-uiux-product-runtime-action-annex.md");
+const contractAnnexPaths = [
+  ...(existingFile(defaultContractAnnex) ? [defaultContractAnnex] : []),
+  ...argsAll("contract-annex"),
+  ...(process.env.FRIDAY_DESIGN_ACTION_CONTRACT_ANNEX
+    ? process.env.FRIDAY_DESIGN_ACTION_CONTRACT_ANNEX.split(/[:\n]/).filter(Boolean)
+    : []),
+].map((value) => resolve(value));
 const evidenceDir = arg("evidence-dir") || process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR || "";
 const runtimeEvidenceArgs = [...argsAll("runtime-evidence"), ...positionalRuntimeEvidenceArgs()];
 const runtimeEvidenceEnv = process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE
@@ -377,7 +386,10 @@ function uniqueRows(rows) {
   return [...byKey.values()];
 }
 
-const contractRows = parseActionContract(contractPath);
+const contractRows = [
+  ...parseActionContract(contractPath),
+  ...contractAnnexPaths.flatMap((path) => parseActionContract(path)),
+];
 const runtimeRows = runtimeEvidencePaths.flatMap((path) => readRuntimeEvidence(path));
 const actionableRows = contractRows.filter((row) => row.actionable);
 const evidenceRows = actionableRows.map((row) => {

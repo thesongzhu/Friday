@@ -456,6 +456,7 @@ final class HomeViewModelTests: XCTestCase {
     try writeMobileTokenLedgerActionEvidenceIfRequested(
       runId: try XCTUnwrap(p.tokenLedgerRunId),
       evidenceRef: "proof://run/run-1")
+    try writeMobileProjectionActionEvidenceIfRequested(projection: p)
   }
 
   func testProviderWorkItemsOnlyIncludesProviderLinkedRows() throws {
@@ -1156,6 +1157,55 @@ final class HomeViewModelTests: XCTestCase {
     let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
     try data.write(to: out, options: .atomic)
     print("[mobile-token-ledger-action-evidence] proofOut=\(out.path)")
+  }
+
+  private func writeMobileProjectionActionEvidenceIfRequested(
+    projection: HomeProjection
+  ) throws {
+    guard let rawDir = ProcessInfo.processInfo.environment[
+      "FRIDAY_MOBILE_PROJECTION_ACTION_EVIDENCE_DIR"
+    ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+      return
+    }
+
+    let proof: [String: Any] = [
+      "truth": "mobile_projection_action_swift_viewmodel_runtime_not_live_hub_not_endbar",
+      "status": "ready",
+      "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
+      "mission_id": projection.missionId,
+      "work_item_ids": projection.workItemIds,
+      "capability_ids": projection.capabilityStates.map(\.id),
+      "actions": [
+        [
+          "surface": "mobile",
+          "screen": "missions",
+          "action_id": "mobile/missions/read",
+          "capability_id": "mobile_missions_read_projection",
+          "status": projection.workItemIds.isEmpty ? "blocked" : "pass",
+          "evidence_ref": "swift://mobile/missions/read/\(projection.missionId)",
+          "source": "ios_home_projection_missions_runtime",
+          "truth_label": "swift_viewmodel_read_projection_runtime_not_live_hub_not_sim_tap",
+        ],
+        [
+          "surface": "mobile",
+          "screen": "platform",
+          "action_id": "mobile/platform/capability-matrix",
+          "capability_id": "mobile_platform_capability_matrix",
+          "status": projection.capabilityStates.isEmpty ? "blocked" : "pass",
+          "evidence_ref": "swift://mobile/platform/capability-matrix/\(projection.missionId)",
+          "source": "ios_home_projection_capability_matrix_runtime",
+          "truth_label": "swift_viewmodel_read_projection_runtime_not_live_hub_not_sim_tap",
+        ],
+      ],
+      "caveat": "Partial runtime evidence only: iOS HomeProjection exposes mission/work-item refs and capability states to native product destinations. This is not a live Hub mutation, not a simulator tap, not END-BAR, and not adoption.",
+    ]
+
+    let dir = URL(fileURLWithPath: rawDir)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let out = dir.appendingPathComponent("mobile-projection-action-evidence.json")
+    let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: out, options: .atomic)
+    print("[mobile-projection-action-evidence] proofOut=\(out.path)")
   }
 
   private func writeMobileProviderAuthActionEvidenceIfRequested(

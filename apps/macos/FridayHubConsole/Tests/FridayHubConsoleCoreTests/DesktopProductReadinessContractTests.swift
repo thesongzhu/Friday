@@ -61,8 +61,17 @@ func desktopProductContractSeparatesShellsFromWorkbenchLoops() {
   let workflow = DesktopProductDestinationID.workflow.contract
   let channels = DesktopProductDestinationID.channels.contract
   let provider = DesktopProductDestinationID.providerAdmin.contract
+  let parity = DesktopProductDestinationID.parity.contract
+  let diagnostics = DesktopProductDestinationID.diagnostics.contract
+  let tokenLedger = DesktopProductDestinationID.tokenLedger.contract
+  let settings = DesktopProductDestinationID.settings.contract
+  let evidence = DesktopProductDestinationID.evidence.contract
 
   #expect(operations.tier == .liveWorkbench)
+  #expect(operations.runtimeActionIds == [
+    "desktop/operations/refresh",
+    "desktop/operations/mission-resolve-or-create",
+  ])
   #expect(workflow.tier == .governedActionGated)
   #expect(workflow.runtimeActionIds == [
     "desktop/workflow/retry",
@@ -78,10 +87,22 @@ func desktopProductContractSeparatesShellsFromWorkbenchLoops() {
   #expect(!channels.blockers.contains { $0.kind == .needsNativeSurface })
   #expect(channels.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(provider.tier == .providerAdmin)
+  #expect(provider.runtimeActionIds == ["desktop/providerAdmin/check"])
+  #expect(provider.blockers.contains { $0.kind == .needsProviderCredential })
+  #expect(parity.runtimeActionIds == ["desktop/parity/route-readiness"])
+  #expect(diagnostics.runtimeActionIds == ["desktop/diagnostics/proof-refs"])
+  #expect(tokenLedger.runtimeActionIds == ["desktop/tokenLedger/run-readback"])
+  #expect(settings.runtimeActionIds == ["desktop/settings/hub-posture"])
+  #expect(evidence.runtimeActionIds == ["desktop/evidence/index-read"])
   #expect(!operations.isEndBarReady)
   #expect(!workflow.isEndBarReady)
   #expect(!channels.isEndBarReady)
   #expect(!provider.isEndBarReady)
+  #expect(!parity.isEndBarReady)
+  #expect(!diagnostics.isEndBarReady)
+  #expect(!tokenLedger.isEndBarReady)
+  #expect(!settings.isEndBarReady)
+  #expect(!evidence.isEndBarReady)
 }
 
 @Test
