@@ -161,6 +161,8 @@ let copiedManifest = "";
 let derivedEvents = "";
 let mergedEvents = "";
 let reuseSummary = null;
+let derivedManifestProbe = null;
+let mergeProbe = null;
 if (readyToWrite) {
   const dir = abs(outDir);
   mkdirSync(dir, { recursive: true });
@@ -220,6 +222,13 @@ if (readyToWrite) {
       mergeArgs.splice(4, 0, `--channel=${inputByRole.channel}`);
     }
     const mergeResult = spawnSync(process.execPath, mergeArgs, { encoding: "utf8" });
+    mergeProbe = {
+      status: mergeResult.status,
+      stdoutPath: join(dir, "events-merge.stdout.json"),
+      stderrPath: join(dir, "events-merge.stderr.txt"),
+    };
+    writeFileSync(mergeProbe.stdoutPath, mergeResult.stdout || "");
+    writeFileSync(mergeProbe.stderrPath, mergeResult.stderr || "");
     if (mergeResult.status !== 0) {
       copiedManifest = "";
       block("events_merge_failed", `exit_${mergeResult.status}`);
@@ -237,9 +246,29 @@ if (readyToWrite) {
         ...writtenExtra.map((capture) => `--extra-evidence-ref=${capture.target}`),
         "--require-ready",
       ], { encoding: "utf8" });
+      derivedManifestProbe = {
+        status: result.status,
+        stdoutPath: join(dir, "observations-manifest.stdout.json"),
+        stderrPath: join(dir, "observations-manifest.stderr.txt"),
+        parsed: null,
+      };
+      writeFileSync(derivedManifestProbe.stdoutPath, result.stdout || "");
+      writeFileSync(derivedManifestProbe.stderrPath, result.stderr || "");
+      try {
+        derivedManifestProbe.parsed = JSON.parse(result.stdout || "{}");
+      } catch {
+        derivedManifestProbe.parsed = null;
+      }
       if (result.status !== 0) {
         copiedManifest = "";
         block("observations_manifest_derivation_failed", `exit_${result.status}`);
+        if (Array.isArray(derivedManifestProbe.parsed?.blockers)) {
+          for (const blocker of derivedManifestProbe.parsed.blockers) {
+            if (blocker && typeof blocker.code === "string") {
+              block(`observations_manifest:${blocker.code}`, String(blocker.detail || ""));
+            }
+          }
+        }
       }
     }
   } else {
@@ -300,6 +329,8 @@ if (readyToWrite) {
     observationsManifest: copiedManifest || null,
     mergedEvents: mergedEvents || null,
     normalizedEvents: derivedEvents || null,
+    mergeProbe,
+    derivedManifestProbe,
     reuseSummary,
     deferredInputs: reuseSummary.deferredInputs,
     blockers,
@@ -354,6 +385,8 @@ const output = {
   observationsManifest: copiedManifest || null,
   mergedEvents: mergedEvents || null,
   normalizedEvents: derivedEvents || null,
+  mergeProbe,
+  derivedManifestProbe,
   reuseSummary,
   preflight,
   deferredInputs: deferChannelProof ? [{

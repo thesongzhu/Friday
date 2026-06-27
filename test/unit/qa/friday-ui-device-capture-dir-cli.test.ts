@@ -340,6 +340,51 @@ describe("friday-ui-device-capture-dir", () => {
     }
   });
 
+  it("surfaces manifest derivation blockers when same-run observations are incomplete", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-incomplete-events-"));
+    try {
+      const captures = writeEvidence(tempDir);
+      const events = join(tempDir, "same-run-events.jsonl");
+      const outDir = join(tempDir, "evidence");
+      const incompleteRows = nonChannelEventRows(captures).filter((row) => (
+        row.event !== "pressure_20_50_consecutive_asks_visible"
+      ));
+      writeFileSync(events, `${incompleteRows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+
+      const result = spawnSync("node", [
+        "scripts/ops/friday-ui-device-capture-dir.mjs",
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        `--mobile=${captures.mobile}`,
+        `--desktop=${captures.desktop}`,
+        `--timeline=${captures.timeline}`,
+        `--events=${events}`,
+        "--defer-channel-proof",
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as {
+        status?: string;
+        derivedManifestProbe?: { status?: number; parsed?: { blockers?: Array<{ code?: string; detail?: string }> } };
+        blockers?: Array<{ code?: string; detail?: string }>;
+      };
+      expect(output.status).toBe("blocked");
+      expect(output.derivedManifestProbe?.status).toBe(2);
+      expect(output.derivedManifestProbe?.parsed?.blockers).toContainEqual(expect.objectContaining({
+        code: "missing_observation",
+        detail: "*:pressure_20_50_consecutive_asks_visible",
+      }));
+      expect(output.blockers).toContainEqual(expect.objectContaining({
+        code: "observations_manifest:missing_observation",
+        detail: "*:pressure_20_50_consecutive_asks_visible",
+      }));
+      expect(readFileSync(join(outDir, "observations-manifest.stdout.json"), "utf8")).toContain("pressure_20_50_consecutive_asks_visible");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("copies role-scoped extra evidence and remaps same-run event refs before preflight", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-extra-evidence-"));
     try {
