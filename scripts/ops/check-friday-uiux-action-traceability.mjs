@@ -439,7 +439,7 @@ const productActionsMissingDesignRuntimeCovered = productActionsMissingDesign
 const productActionsMissingDesignRuntimeMissing = productActionsMissingDesign
   .filter((action) => !action.runtimeEvidenceMatched);
 const destinationsWithoutRuntimeActions = tracedDestinations.filter((destination) => destination.runtimeActionIds.length === 0);
-const destinationsWithBlockers = tracedDestinations.filter((destination) => destination.blockers.length > 0);
+const destinationsWithResidualEndBarBlockers = tracedDestinations.filter((destination) => destination.blockers.length > 0);
 
 if (requireRuntimeEvidence && productActionsMissingRuntime.length > 0) {
   block("product_runtime_actions_missing_evidence", String(productActionsMissingRuntime.length));
@@ -468,7 +468,10 @@ const report = {
     productActionsMissingDesignRuntimeMissing: productActionsMissingDesignRuntimeMissing.length,
     productActionsMissingRuntimeEvidence: productActionsMissingRuntime.length,
     destinationsWithoutRuntimeActions: destinationsWithoutRuntimeActions.length,
-    destinationsStillBlocked: destinationsWithBlockers.length,
+    destinationsWithResidualEndBarBlockers: destinationsWithResidualEndBarBlockers.length,
+    // Deprecated alias for older readers. These are not traceability blockers;
+    // they are product/END-BAR residuals carried by the native readiness contract.
+    destinationsStillBlocked: destinationsWithResidualEndBarBlockers.length,
   },
   designActionRuntime: {
     status: designActionRuntimeReport?.status || "not_run",
@@ -481,6 +484,8 @@ const report = {
       destinations: destinations.length,
       runtimeActionIds: destinations.reduce((sum, destination) => sum + destination.runtimeActionIds.length, 0),
       traceGaps: destinations.filter((destination) => destination.traceStatus === "trace_gaps_present").length,
+      destinationsWithResidualEndBarBlockers: destinations.filter((destination) => destination.blockers.length > 0).length,
+      // Deprecated alias for older readers.
       blockedDestinations: destinations.filter((destination) => destination.blockers.length > 0).length,
     }];
   })),
@@ -517,7 +522,15 @@ const report = {
       tier,
       blockers,
     })).slice(0, compact ? 40 : undefined),
-    destinationsStillBlocked: destinationsWithBlockers.map(({ surface, id, title, tier, blockers }) => ({
+    residualEndBarBlockers: destinationsWithResidualEndBarBlockers.map(({ surface, id, title, tier, blockers }) => ({
+      surface,
+      id,
+      title,
+      tier,
+      blockers,
+    })).slice(0, compact ? 40 : undefined),
+    // Deprecated alias for older readers.
+    destinationsStillBlocked: destinationsWithResidualEndBarBlockers.map(({ surface, id, title, tier, blockers }) => ({
       surface,
       id,
       title,

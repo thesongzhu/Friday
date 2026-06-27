@@ -292,4 +292,122 @@ describe("check-friday-uiux-action-traceability", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("reports product contract blockers as END-BAR residuals, not traceability failures", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-uiux-action-traceability-residual-"));
+    try {
+      const designRoot = join(root, "design");
+      writeFile(designRoot, "ACTION-CONTRACT.md", `# Friday Action Contract — mobile + desktop
+
+**This is a wiring contract for the later Rust/native agent, NOT runtime proof.** Every row is design-proof; wired_registry ≠ runtime PASS.
+
+| Surface | Screen [state] | action_id | Label | capability_id | reg | reg_status | truth_status | result/target | Rust/Hub owner · gate · test expectation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mobile | home | refresh | Retry now | transport_connection_state | ✓ | wired | wired_registry | result:confirmed | Runtime test must prove gate enforcement. |
+`);
+      writeFile(
+        root,
+        "apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift",
+        `enum MobileProductDestinationID {
+        case home
+        var contract: MobileProductDestinationContract {
+          switch self {
+          case .home:
+          return contract(
+            title: "Friday Home",
+            systemImage: "house",
+            tier: .liveReadProjection,
+            runtimeActionIds: ["mobile/home/refresh"],
+            blockers: [.init(.needsRuntimeEvidence, label: "same-run user proof")])
+        }
+        }
+        private func contract(
+          title: String,
+          systemImage: String,
+          tier: MobileProductLoopTier,
+          runtimeActionIds: [String],
+          blockers: [MobileProductBlocker]
+        ) -> MobileProductDestinationContract { fatalError() }
+        }
+`,
+      );
+      writeFile(
+        root,
+        "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/DesktopProductReadinessContract.swift",
+        `enum DesktopProductDestinationID {
+        case empty
+        var contract: DesktopProductDestinationContract {
+          switch self {
+          case .empty:
+          return contract(
+            title: "Empty",
+            systemImage: "circle",
+            tier: .navigationShell,
+            runtimeActionIds: [],
+            blockers: [])
+        }
+        }
+        private func contract(
+          title: String,
+          systemImage: String,
+          tier: DesktopProductLoopTier,
+          runtimeActionIds: [String],
+          blockers: [DesktopProductBlocker]
+        ) -> DesktopProductDestinationContract { fatalError() }
+        }
+`,
+      );
+      const evidenceDir = join(root, "evidence");
+      writeFile(evidenceDir, "mobile/action-runtime-evidence.json", JSON.stringify({
+        actions: [
+          {
+            surface: "mobile",
+            screen: "home",
+            action_id: "refresh",
+            capability_id: "transport_connection_state",
+            status: "pass",
+            evidence_ref: "proof://mobile/home-refresh",
+          },
+        ],
+      }, null, 2));
+
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        "--runtime-evidence-dir",
+        evidenceDir,
+        "--compact",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        counts?: {
+          productActionsMissingRuntimeEvidence?: number;
+          destinationsWithResidualEndBarBlockers?: number;
+          destinationsStillBlocked?: number;
+        };
+        gaps?: {
+          residualEndBarBlockers?: Array<{ id?: string; blockers?: Array<{ kind?: string; label?: string }> }>;
+          destinationsStillBlocked?: Array<unknown>;
+        };
+      };
+
+      expect(report.status).toBe("product_runtime_actions_traceable");
+      expect(report.counts?.productActionsMissingRuntimeEvidence).toBe(0);
+      expect(report.counts?.destinationsWithResidualEndBarBlockers).toBe(1);
+      expect(report.counts?.destinationsStillBlocked).toBe(1);
+      expect(report.gaps?.residualEndBarBlockers).toEqual([
+        expect.objectContaining({
+          id: "home",
+          blockers: [expect.objectContaining({
+            kind: "needsRuntimeEvidence",
+            label: "same-run user proof",
+          })],
+        }),
+      ]);
+      expect(report.gaps?.destinationsStillBlocked).toEqual(report.gaps?.residualEndBarBlockers);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
