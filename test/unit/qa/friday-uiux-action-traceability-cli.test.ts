@@ -387,8 +387,23 @@ describe("check-friday-uiux-action-traceability", () => {
           destinationsStillBlocked?: number;
         };
         gaps?: {
-          residualEndBarBlockers?: Array<{ id?: string; blockers?: Array<{ kind?: string; label?: string }> }>;
+          residualEndBarBlockers?: Array<{
+            id?: string;
+            blockers?: Array<{ kind?: string; label?: string }>;
+            evidenceOverlay?: {
+              status?: string;
+              runtimeActionCount?: number;
+              runtimeActionsCovered?: number;
+              runtimeActionsMissing?: number;
+              evidenceRefs?: string[];
+            };
+          }>;
           destinationsStillBlocked?: Array<unknown>;
+        };
+        residualEndBarEvidence?: {
+          destinationsWithResidualBlockers?: number;
+          destinationsWithAllRuntimeActionsCovered?: number;
+          destinationsWithNoRuntimeActionEvidence?: number;
         };
       };
 
@@ -403,8 +418,20 @@ describe("check-friday-uiux-action-traceability", () => {
             kind: "needsRuntimeEvidence",
             label: "same-run user proof",
           })],
+          evidenceOverlay: expect.objectContaining({
+            status: "runtime_action_evidence_attached_not_endbar",
+            runtimeActionCount: 1,
+            runtimeActionsCovered: 1,
+            runtimeActionsMissing: 0,
+            evidenceRefs: ["proof://mobile/home-refresh"],
+          }),
         }),
       ]);
+      expect(report.residualEndBarEvidence).toEqual(expect.objectContaining({
+        destinationsWithResidualBlockers: 1,
+        destinationsWithAllRuntimeActionsCovered: 1,
+        destinationsWithNoRuntimeActionEvidence: 0,
+      }));
       expect(report.gaps?.destinationsStillBlocked).toEqual(report.gaps?.residualEndBarBlockers);
     } finally {
       rmSync(root, { recursive: true, force: true });

@@ -441,6 +441,26 @@ const productActionsMissingDesignRuntimeMissing = productActionsMissingDesign
 const destinationsWithoutRuntimeActions = tracedDestinations.filter((destination) => destination.runtimeActionIds.length === 0);
 const destinationsWithResidualEndBarBlockers = tracedDestinations.filter((destination) => destination.blockers.length > 0);
 
+function residualEvidenceOverlay(destination) {
+  const actions = destination.actionTrace || [];
+  const covered = actions.filter((action) => action.runtimeEvidenceMatched);
+  return {
+    status: actions.length === 0
+      ? "no_runtime_actions_declared"
+      : covered.length === actions.length
+        ? "runtime_action_evidence_attached_not_endbar"
+        : covered.length > 0
+          ? "partial_runtime_action_evidence_attached_not_endbar"
+          : "no_runtime_action_evidence_attached",
+    runtimeActionCount: actions.length,
+    runtimeActionsCovered: covered.length,
+    runtimeActionsMissing: actions.length - covered.length,
+    evidenceRefs: unique(covered.flatMap((action) => action.evidenceRefs || [])),
+    evidenceTruthLabels: unique(covered.flatMap((action) => action.evidenceTruthLabels || [])),
+    caveat: "Runtime evidence attached here does not clear ProductReadinessContract blockers or prove END-BAR; strict UI/device proof and product-maturity checks remain required.",
+  };
+}
+
 if (requireRuntimeEvidence && productActionsMissingRuntime.length > 0) {
   block("product_runtime_actions_missing_evidence", String(productActionsMissingRuntime.length));
 }
@@ -522,21 +542,43 @@ const report = {
       tier,
       blockers,
     })).slice(0, compact ? 40 : undefined),
-    residualEndBarBlockers: destinationsWithResidualEndBarBlockers.map(({ surface, id, title, tier, blockers }) => ({
-      surface,
-      id,
-      title,
-      tier,
-      blockers,
+    residualEndBarBlockers: destinationsWithResidualEndBarBlockers.map((destination) => ({
+      surface: destination.surface,
+      id: destination.id,
+      title: destination.title,
+      tier: destination.tier,
+      blockers: destination.blockers,
+      evidenceOverlay: residualEvidenceOverlay(destination),
     })).slice(0, compact ? 40 : undefined),
     // Deprecated alias for older readers.
-    destinationsStillBlocked: destinationsWithResidualEndBarBlockers.map(({ surface, id, title, tier, blockers }) => ({
-      surface,
-      id,
-      title,
-      tier,
-      blockers,
+    destinationsStillBlocked: destinationsWithResidualEndBarBlockers.map((destination) => ({
+      surface: destination.surface,
+      id: destination.id,
+      title: destination.title,
+      tier: destination.tier,
+      blockers: destination.blockers,
+      evidenceOverlay: residualEvidenceOverlay(destination),
     })).slice(0, compact ? 40 : undefined),
+  },
+  residualEndBarEvidence: {
+    truth: "runtime_action_evidence_overlay_not_endbar_not_strict_ui_device_proof",
+    destinationsWithResidualBlockers: destinationsWithResidualEndBarBlockers.length,
+    destinationsWithAllRuntimeActionsCovered: destinationsWithResidualEndBarBlockers
+      .filter((destination) => {
+        const overlay = residualEvidenceOverlay(destination);
+        return overlay.status === "runtime_action_evidence_attached_not_endbar";
+      }).length,
+    destinationsWithPartialRuntimeActionsCovered: destinationsWithResidualEndBarBlockers
+      .filter((destination) => {
+        const overlay = residualEvidenceOverlay(destination);
+        return overlay.status === "partial_runtime_action_evidence_attached_not_endbar";
+      }).length,
+    destinationsWithNoRuntimeActionEvidence: destinationsWithResidualEndBarBlockers
+      .filter((destination) => {
+        const overlay = residualEvidenceOverlay(destination);
+        return overlay.status === "no_runtime_action_evidence_attached";
+      }).length,
+    caveat: "These counts summarize evidence attached beside residual blockers only. They never remove native product blockers, satisfy deferred channel proof, or mark END-BAR ready.",
   },
   destinations: compact ? undefined : tracedDestinations,
   blockers,

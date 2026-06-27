@@ -20,4 +20,12 @@ describe("friday-uiux-product-closure-readiness contract", () => {
     expect(source).toContain("channel_deferred_strict_assembly_blocked");
     expect(source).not.toContain('report.status === "blocked" && deferChannelProof');
   });
+
+  it("surfaces residual evidence overlays without clearing END-BAR blockers", () => {
+    const source = readFileSync("scripts/ops/friday-uiux-product-closure-readiness.mjs", "utf8");
+
+    expect(source).toContain("residualEndBarEvidence");
+    expect(source).toContain("does not clear product blockers or satisfy END-BAR by itself");
+    expect(source).toContain("residualEndBarBlockers");
+  });
 });
