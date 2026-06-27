@@ -127,6 +127,7 @@
     "check:endbar-acceptance-manifest": "node scripts/ops/check-friday-provider-entitlement-manifest.mjs",
     "check:endbar-readiness": "node scripts/ops/check-friday-endbar-readiness.mjs",
     "check:endbar-report-inputs": "node scripts/ops/check-friday-endbar-report-inputs.mjs",
+    "check:integrated-end-to-end-tape": "node scripts/ops/check-friday-integrated-end-to-end-tape-report.mjs",
     "check:mechanism-multiangle-stress": "node scripts/ops/check-friday-mechanism-multiangle-stress-report.mjs",
     "check:provider-entitlement-readiness": "node scripts/ops/check-friday-provider-entitlement-readiness.mjs",
     "check:github-channel-proof-readiness": "node scripts/ops/check-friday-github-channel-proof-readiness.mjs",

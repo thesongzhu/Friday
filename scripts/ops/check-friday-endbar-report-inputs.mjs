@@ -200,6 +200,8 @@ function looksRelevant(path, report) {
     || name.includes("uiux")
     || name.includes("ui-device")
     || name.includes("provider")
+    || name.includes("integrated")
+    || name.includes("tape")
     || name.includes("mission-spine")
     || name.includes("mechanism")
     || name.includes("multiangle")
@@ -211,6 +213,8 @@ function looksRelevant(path, report) {
     || body.includes("ui_device")
     || body.includes("uiux")
     || body.includes("provider")
+    || body.includes("integrated_end_to_end_tape")
+    || body.includes("integrated-tape")
     || body.includes("mission_spine");
 }
 
