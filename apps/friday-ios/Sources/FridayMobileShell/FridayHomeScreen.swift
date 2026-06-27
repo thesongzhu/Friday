@@ -28,6 +28,10 @@ struct FridayHomeScreen: View {
   var body: some View {
     ScrollView {
       VStack(spacing: 16) {
+        if showPairingProvisioning {
+          devicePairingCard(viewModel.devicePairing, viewModel.state.projection?.t3ProvisioningStatus)
+        }
+
         switch viewModel.state {
         case .idle, .loading:
           designIntro(
@@ -52,10 +56,6 @@ struct FridayHomeScreen: View {
           unavailableQueueSection(
             title: "Running",
             emptyText: "Connect Friday to see active work and provider progress.")
-        }
-
-        if showPairingProvisioning {
-          devicePairingCard(viewModel.devicePairing, viewModel.state.projection?.t3ProvisioningStatus)
         }
       }
       .padding(16)
