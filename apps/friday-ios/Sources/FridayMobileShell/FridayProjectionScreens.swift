@@ -338,6 +338,7 @@ struct FridayProjectionScreen: View {
         }
       }
     }
+    .accessibilityIdentifier("friday.missions.read")
   }
 
   private func workItemsCard(_ projection: HomeProjection) -> some View {
@@ -460,6 +461,7 @@ struct FridayProjectionScreen: View {
         }
       }
     }
+    .accessibilityIdentifier("friday.platform.capability-matrix")
   }
 
   private func activityCard(_ projection: HomeProjection) -> some View {
@@ -726,6 +728,7 @@ struct FridayProjectionScreen: View {
             .buttonStyle(.borderedProminent)
             .tint(MobileTheme.cyan)
             .disabled(pushNotifications.state == .loading)
+            .accessibilityIdentifier("friday.settings.push-permission")
           }
         }
       }

@@ -14,6 +14,7 @@ function usage() {
     [--evidence-dir=/abs/runtime-evidence-bundle ...] \\
     [--runtime-evidence-dir=/abs/runtime-evidence-bundle ...] \\
     [--runtime-evidence=/abs/action-runtime-evidence.json ...] \\
+    [--contract-annex=/abs/friday-uiux-product-runtime-action-annex.md ...] \\
     [--out=/abs/uiux-action-traceability.json] \\
     [--require-runtime-evidence]
 
@@ -57,6 +58,14 @@ const requireRuntimeEvidence = args.includes("--require-runtime-evidence");
 const compact = args.includes("--compact");
 const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new URL("../..", import.meta.url).pathname);
 const designRoot = resolve(arg("design-root") || process.env.FRIDAY_DESIGN_HANDOFF_ROOT || `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602`);
+const defaultContractAnnex = resolve(repoRoot, "docs/friday-uiux-product-runtime-action-annex.md");
+const contractAnnexPaths = [
+  ...(existingFile(defaultContractAnnex) ? [defaultContractAnnex] : []),
+  ...argsAll("contract-annex"),
+  ...(process.env.FRIDAY_DESIGN_ACTION_CONTRACT_ANNEX
+    ? process.env.FRIDAY_DESIGN_ACTION_CONTRACT_ANNEX.split(/[:\n]/).filter(Boolean)
+    : []),
+].map((value) => resolve(value));
 const evidenceDirs = [
   ...argsAll("evidence-dir"),
   ...argsAll("runtime-evidence-dir"),
@@ -356,7 +365,10 @@ function runJson(label, commandArgs) {
 }
 
 const actionContractPath = resolve(designRoot, "ACTION-CONTRACT.md");
-const contractRows = parseActionContract(actionContractPath);
+const contractRows = [
+  ...parseActionContract(actionContractPath),
+  ...contractAnnexPaths.flatMap((path) => parseActionContract(path)),
+];
 const actionableContractRows = contractRows.filter((row) => row.actionable);
 const uniqueActionableIdentities = unique(actionableContractRows.map((row) => row.identity));
 const mobileDestinations = parseProductContract(

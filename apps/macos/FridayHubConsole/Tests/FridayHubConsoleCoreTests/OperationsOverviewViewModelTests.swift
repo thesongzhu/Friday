@@ -72,6 +72,43 @@ func refreshLoadsRepresentativeSnapshot() async {
     proof: [
       "channel_receipt_refs": snapshot?.channelReceiptRefs ?? [],
     ])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "diagnostics-proof-refs",
+    screen: "diagnostics",
+    actionId: "desktop/diagnostics/proof-refs",
+    capabilityId: "desktop_diagnostics_proof_refs",
+    evidenceRef: "swift://desktop/diagnostics/proof-refs/mission_workbench_probe_20260605",
+    source: "macos_operations_viewmodel_refresh_runtime",
+    proof: [
+      "runtime_feed_status": snapshot?.runtimeFeedStatus.rawValue ?? "",
+      "status_labels": snapshot?.statusLabels.map(\.rawValue) ?? [],
+      "provider_receipt_refs": snapshot?.providerReceiptRefs ?? [],
+      "channel_receipt_refs": snapshot?.channelReceiptRefs ?? [],
+    ])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "evidence-index-read",
+    screen: "evidence",
+    actionId: "desktop/evidence/index-read",
+    capabilityId: "desktop_evidence_index_read",
+    evidenceRef: "swift://desktop/evidence/index-read/mission_workbench_probe_20260605",
+    source: "macos_operations_viewmodel_refresh_runtime",
+    proof: [
+      "transcript_section_count": snapshot?.transcriptSections.count ?? 0,
+      "timeline_page_count": snapshot?.timelinePages.count ?? 0,
+      "mission_id": snapshot?.missionId ?? "",
+    ])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "settings-hub-posture",
+    screen: "settings",
+    actionId: "desktop/settings/hub-posture",
+    capabilityId: "desktop_settings_hub_posture",
+    evidenceRef: "swift://desktop/settings/hub-posture/mission_workbench_probe_20260605",
+    source: "macos_operations_viewmodel_refresh_runtime",
+    proof: [
+      "runtime_feed_status": snapshot?.runtimeFeedStatus.rawValue ?? "",
+      "t3_provisioning_status": snapshot?.t3ProvisioningStatus?.desktopStatusLabel ?? "",
+      "device_pairing_mode": vm.devicePairing.mode.rawValue,
+    ])
 }
 
 @Test
@@ -278,9 +315,13 @@ private func writeDesktopActionEvidenceIfRequested(
   source: String,
   proof: [String: Any]
 ) throws {
-  guard let rawDir = ProcessInfo.processInfo.environment[
-    "FRIDAY_DESKTOP_CHAT_MEMORY_ACTION_EVIDENCE_DIR"
-  ]?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDir.isEmpty else {
+  let env = ProcessInfo.processInfo.environment
+  let rawDir = (
+    env["FRIDAY_DESKTOP_PROJECTION_ACTION_EVIDENCE_DIR"]
+      ?? env["FRIDAY_DESKTOP_CHAT_MEMORY_ACTION_EVIDENCE_DIR"]
+      ?? ""
+  ).trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !rawDir.isEmpty else {
     return
   }
 
@@ -1121,6 +1162,31 @@ func loadDetailCallsProviderDoctorReadArm() async {
     "api_key_missing",
   ])
   #expect(readiness?.failovers.first?.blockers == ["failover_flag_off"])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "provider-admin-check",
+    screen: "providerAdmin",
+    actionId: "desktop/providerAdmin/check",
+    capabilityId: "desktop_provider_admin_doctor_readiness",
+    evidenceRef: "swift://desktop/providerAdmin/check",
+    source: "macos_operations_viewmodel_provider_doctor_runtime",
+    proof: [
+      "requested": client.requested,
+      "suggested_text_route": readiness?.suggestedTextRoute ?? "",
+      "suggested_strong_route": readiness?.suggestedStrongRoute ?? "",
+      "route_count": readiness?.routes.count ?? 0,
+    ])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "parity-route-readiness",
+    screen: "parity",
+    actionId: "desktop/parity/route-readiness",
+    capabilityId: "desktop_provider_route_parity_readiness",
+    evidenceRef: "swift://desktop/parity/route-readiness",
+    source: "macos_operations_viewmodel_provider_doctor_runtime",
+    proof: [
+      "requested": client.requested,
+      "routes": readiness?.routes.map(\.providerId) ?? [],
+      "failover_blockers": readiness?.failovers.flatMap(\.blockers) ?? [],
+    ])
 }
 
 @Test
@@ -1155,6 +1221,14 @@ func loadDetailCallsRunAndNeedsMeReadArms() async {
   }
   #expect(detail.title == "Needs-me activity")
   #expect(detail.refs.contains("proof://needs/run-desktop"))
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "token-ledger-run-readback",
+    screen: "tokenLedger",
+    actionId: "desktop/tokenLedger/run-readback",
+    capabilityId: "desktop_token_ledger_run_readback",
+    evidenceRef: "swift://desktop/tokenLedger/run-readback/run-desktop",
+    source: "macos_operations_viewmodel_run_readback_runtime",
+    proof: ["requested": client.requested])
 }
 
 @Test

@@ -166,14 +166,14 @@ public enum DesktopProductDestinationID: String, CaseIterable, Sendable, Equatab
         title: "Provider Admin",
         systemImage: "person.badge.key",
         tier: .providerAdmin,
-        runtimeActionIds: [],
+        runtimeActionIds: ["desktop/providerAdmin/check"],
         blockers: [.init(.needsProviderCredential, label: "all selected provider routes")])
     case .parity:
       return contract(
         title: "Provider Parity",
         systemImage: "square.grid.3x3",
         tier: .liveReadProjection,
-        runtimeActionIds: [],
+        runtimeActionIds: ["desktop/parity/route-readiness"],
         blockers: [.init(.needsRuntimeEvidence, label: "multi-provider route proof")])
     case .pairingProvisioning:
       return contract(
@@ -204,7 +204,7 @@ public enum DesktopProductDestinationID: String, CaseIterable, Sendable, Equatab
         title: "Diagnostics",
         systemImage: "stethoscope",
         tier: .liveReadProjection,
-        runtimeActionIds: [],
+        runtimeActionIds: ["desktop/diagnostics/proof-refs"],
         blockers: [.init(.needsRuntimeEvidence, label: "doctor action proof")])
     case .recovery:
       return contract(
@@ -225,7 +225,7 @@ public enum DesktopProductDestinationID: String, CaseIterable, Sendable, Equatab
         title: "Token Ledger",
         systemImage: "chart.bar.doc.horizontal",
         tier: .liveReadProjection,
-        runtimeActionIds: [],
+        runtimeActionIds: ["desktop/tokenLedger/run-readback"],
         blockers: [.init(.needsRuntimeEvidence, label: "run-backed ledger proof")])
     case .skills:
       return contract(
@@ -246,14 +246,14 @@ public enum DesktopProductDestinationID: String, CaseIterable, Sendable, Equatab
         title: "Settings",
         systemImage: "gearshape",
         tier: .navigationShell,
-        runtimeActionIds: [],
+        runtimeActionIds: ["desktop/settings/hub-posture"],
         blockers: [.init(.needsRuntimeEvidence, label: "settings mutation proof")])
     case .evidence:
       return contract(
         title: "Evidence Search",
         systemImage: "doc.text.magnifyingglass",
         tier: .liveReadProjection,
-        runtimeActionIds: [],
+        runtimeActionIds: ["desktop/evidence/index-read"],
         blockers: [.init(.needsRuntimeEvidence, label: "search result proof")])
     }
   }

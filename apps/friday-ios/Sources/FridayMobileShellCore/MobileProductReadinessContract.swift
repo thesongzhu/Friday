@@ -151,7 +151,7 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
         title: "Missions",
         systemImage: "list.bullet.rectangle",
         tier: .liveReadProjection,
-        runtimeActionIds: [],
+        runtimeActionIds: ["mobile/missions/read"],
         blockers: [.init(.needsLiveWrite, label: "dispatch/action controls")])
     case .session:
       return contract(
@@ -237,7 +237,7 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
         title: "Platform",
         systemImage: "square.grid.2x2",
         tier: .statusProjection,
-        runtimeActionIds: [],
+        runtimeActionIds: ["mobile/platform/capability-matrix"],
         blockers: [.init(.needsRuntimeEvidence, label: "capability matrix live proof")])
     case .providerAuth:
       return contract(
@@ -278,7 +278,7 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
         title: "Settings",
         systemImage: "gearshape",
         tier: .statusProjection,
-        runtimeActionIds: [],
+        runtimeActionIds: ["mobile/settings/push-permission"],
         blockers: [.init(.needsRuntimeEvidence, label: "settings mutation proof")])
     }
   }
