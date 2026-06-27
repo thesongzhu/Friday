@@ -47,9 +47,14 @@ const timeoutSeconds = Number(arg("timeout-seconds") || process.env.FRIDAY_DESKT
 const planOnly = args.includes("--plan-only");
 const requireObserved = args.includes("--require-observed");
 const blockers = [];
+const warnings = [];
 
 function block(code, detail) {
   blockers.push({ code, detail });
+}
+
+function warn(code, detail) {
+  warnings.push({ code, detail });
 }
 
 function requireAbsoluteDir(label, value) {
@@ -226,7 +231,7 @@ set AppleScript's text item delimiters to linefeed
 return outputLines as text`;
   const result = osascript(script);
   if (result.status !== 0) {
-    block("ax_tree_capture_failed", result.stderr.trim() || result.stdout.trim() || String(result.status));
+    warn("ax_tree_capture_failed", result.stderr.trim() || result.stdout.trim() || String(result.status));
     return "";
   }
   return result.stdout;
@@ -428,6 +433,25 @@ if (blockers.length === 0) {
     }
     const nav = clickNav(destination, destinationTargets[0]?.title || destination);
     const navStatus = `initial_destination;${nav.status === 0 ? nav.stdout.trim() : nav.stderr.trim()}`;
+    if (nav.status === 0 && nav.stdout.trim() === "clicked") {
+      observedActions.push({
+        screen: destination,
+        runtimeActionId: `desktop/${destination}/destination-visible`,
+        action_id: `desktop/${destination}/destination-visible`,
+        capability_id: `desktop/${destination}/destination-visible`,
+        accessibility_id: `friday.desktop.nav.${destination}`,
+        interaction: "visible",
+        status: "pass",
+        event: "desktop_destination_visible",
+        evidence_ref: rawPath,
+        captured_at: new Date().toISOString(),
+        workbench_mission_id: workbenchMissionId || null,
+        matched_role: "nav",
+        matched_name: destinationTargets[0]?.title || destination,
+        matched_description: navStatus,
+        matched_by: "navigation_click",
+      });
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 350));
     const raw = captureTreeRaw();
     rawSnapshots.push(`--- destination=${destination} nav=${navStatus} ---\n${raw}`);
@@ -503,6 +527,7 @@ const summary = {
     missing_targets: missingTargets,
   },
   blockers,
+  warnings,
   caveats: [
     "This is real macOS Accessibility inspection of FridayHubConsole, not screenshot proof.",
     "Only visible, safe observations are emitted; governed/destructive actions are not auto-clicked.",

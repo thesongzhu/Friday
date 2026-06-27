@@ -30,14 +30,22 @@ struct FridayHomeScreen: View {
       VStack(spacing: 16) {
         switch viewModel.state {
         case .idle, .loading:
-          loadingHeader
-          HeroPet().padding(.top, 4)
+          designIntro(
+            title: greetingTitle,
+            subtitle: "Reading Friday's live projection.")
+          selectedHomeHero
           loadingView
         case .loaded(let projection):
           loadedContent(projection)
         case let .unavailable(reason):
-          unavailableHeader
-          offlineCommandCenter(reason: reason)
+          designIntro(
+            title: greetingTitle,
+            subtitle: "Friday will not show cached or fabricated status.")
+          selectedHomeHero
+          UnavailableView(
+            reason: reason,
+            title: "Hub offline",
+            detail: "Live connection is not set up yet.")
           unavailableQueueSection(
             title: "Needs Me",
             emptyText: "Connect Friday to see approvals, memory candidates, and recovery items.")
@@ -67,22 +75,6 @@ struct FridayHomeScreen: View {
     }
   }
 
-  private var loadingHeader: some View {
-    homeHeader(
-      hubLabel: "Hub loading",
-      hubOnline: false,
-      title: greetingTitle,
-      subtitle: "Reading Friday's live projection.")
-  }
-
-  private var unavailableHeader: some View {
-    homeHeader(
-      hubLabel: "Hub offline",
-      hubOnline: false,
-      title: greetingTitle,
-      subtitle: "Friday will not show cached or fabricated status.")
-  }
-
   private var loadingView: some View {
     VStack(spacing: 12) {
       ProgressView()
@@ -97,18 +89,16 @@ struct FridayHomeScreen: View {
   /// truth labels ride AS-IS; never a fabricated ready view.
   @ViewBuilder
   private func loadedContent(_ projection: HomeProjection) -> some View {
-    homeHeader(
-      hubLabel: projection.statusLabels.isEmpty ? "Hub live" : "Hub flagged",
-      hubOnline: projection.statusLabels.isEmpty,
+    designIntro(
       title: greetingTitle,
       subtitle: "Here is what Friday is watching for you.")
+    selectedHomeHero
 
     // Honest status banner — any stale/offline/error label rides AS truth.
     if !projection.statusLabels.isEmpty {
       StatusBanner(labels: projection.statusLabels)
     }
 
-    attentionHero(projection)
     commandQueueSection(title: "Needs Me", rows: needsRows(projection), emptyText: "No approval, memory, or recovery items need action.")
     commandQueueSection(title: "Running", rows: runningRows(projection), emptyText: "No active Friday work is visible in this projection.")
     if projection.isLoadedEmpty {
@@ -118,6 +108,29 @@ struct FridayHomeScreen: View {
     refsCard(projection)
   }
 
+  /// The selected mobile home starts with a quiet greeting, then the bare Hero Pet stage.
+  /// It must not become an engineering diagnostic header; proof/truth details live below.
+  private func designIntro(title: String, subtitle: String) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text(title)
+        .font(.system(size: 30, weight: .bold))
+        .foregroundStyle(MobileTheme.textPrimary)
+      Text(subtitle)
+        .font(.callout)
+        .foregroundStyle(MobileTheme.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("\(title). \(subtitle)")
+    .accessibilityIdentifier("friday.home.selected-design-intro")
+  }
+
+  private var selectedHomeHero: some View {
+    HeroPet()
+      .accessibilityIdentifier("friday.home.selected-hero-pet")
+  }
+
   private var greetingTitle: String {
     let hour = Calendar.current.component(.hour, from: Date())
     switch hour {
@@ -125,123 +138,6 @@ struct FridayHomeScreen: View {
     case 12..<18: return "Good afternoon"
     default: return "Good evening"
     }
-  }
-
-  private func homeHeader(
-    hubLabel: String,
-    hubOnline: Bool,
-    title: String,
-    subtitle: String
-  ) -> some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack(alignment: .firstTextBaseline) {
-        VStack(alignment: .leading, spacing: 2) {
-          Text("Friday")
-            .font(.title3.weight(.bold))
-            .foregroundStyle(MobileTheme.textPrimary)
-          Text("Private command center")
-            .font(.subheadline)
-            .foregroundStyle(MobileTheme.textSecondary)
-        }
-        Spacer()
-        StatusChip(
-          text: hubLabel,
-          bg: hubOnline ? MobileTheme.chipDoneBG : MobileTheme.chipWarnBG,
-          fg: hubOnline ? MobileTheme.chipDoneFG : MobileTheme.chipWarnFG)
-      }
-      VStack(alignment: .leading, spacing: 6) {
-        Text(title)
-          .font(.system(size: 30, weight: .bold))
-          .foregroundStyle(MobileTheme.textPrimary)
-        Text(subtitle)
-          .font(.callout)
-          .foregroundStyle(MobileTheme.textSecondary)
-      }
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel("\(hubLabel). \(title). \(subtitle)")
-    .accessibilityIdentifier("friday.home.command-center-header")
-  }
-
-  private func attentionHero(_ projection: HomeProjection) -> some View {
-    GlassPanel {
-      HStack(spacing: 14) {
-        HeroPet()
-          .frame(width: 155, height: 155)
-          .scaleEffect(0.67)
-          .frame(width: 112, height: 104)
-          .clipped()
-        VStack(alignment: .leading, spacing: 10) {
-          Text(primaryAttentionTitle(projection))
-            .font(.title3.weight(.bold))
-            .foregroundStyle(MobileTheme.textPrimary)
-            .fixedSize(horizontal: false, vertical: true)
-          HStack(spacing: 8) {
-            StatusChip(
-              text: projection.statusLabels.isEmpty ? "verified projection" : "truth flagged",
-              bg: projection.statusLabels.isEmpty ? MobileTheme.chipDoneBG : MobileTheme.chipWarnBG,
-              fg: projection.statusLabels.isEmpty ? MobileTheme.chipDoneFG : MobileTheme.chipWarnFG)
-            StatusChip(
-              text: "no hidden calls",
-              bg: MobileTheme.chipPendingBG,
-              fg: MobileTheme.chipPendingFG)
-          }
-          if let summary = projection.routeDecisionSummary {
-            Text(summary)
-              .font(.caption)
-              .foregroundStyle(MobileTheme.textSecondary)
-              .lineLimit(2)
-          }
-        }
-      }
-    }
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel(primaryAttentionTitle(projection))
-    .accessibilityIdentifier("friday.home.attention-hero")
-  }
-
-  private func offlineCommandCenter(reason: String) -> some View {
-    GlassPanel {
-      HStack(spacing: 14) {
-        HeroPet()
-          .frame(width: 155, height: 155)
-          .scaleEffect(0.67)
-          .frame(width: 112, height: 104)
-          .clipped()
-        VStack(alignment: .leading, spacing: 10) {
-          Text("Friday is offline.")
-            .font(.title3.weight(.bold))
-            .foregroundStyle(MobileTheme.textPrimary)
-            .fixedSize(horizontal: false, vertical: true)
-          HStack(spacing: 8) {
-            StatusChip(text: "offline", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
-            StatusChip(text: "no cached status", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
-          }
-          Text(reason)
-            .font(.caption)
-            .foregroundStyle(MobileTheme.textSecondary)
-            .lineLimit(3)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-      }
-    }
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel("Friday is offline. \(reason). No cached or fabricated status is shown.")
-    .accessibilityIdentifier("friday.home.offline-command-center")
-  }
-
-  private func primaryAttentionTitle(_ projection: HomeProjection) -> String {
-    if projection.needsMeCount > 0 {
-      return "Friday needs your attention."
-    }
-    if projection.workItems.contains(where: { !$0.done }) {
-      return "Friday is working."
-    }
-    if projection.isLoadedEmpty {
-      return "Friday is connected."
-    }
-    return "Friday is caught up."
   }
 
   private struct QueueRow: Identifiable, Equatable {

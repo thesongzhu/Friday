@@ -11,7 +11,7 @@ function usage() {
   node scripts/ops/friday-uiux-product-closure-readiness.mjs \\
     [--repo-root=/abs/repo] \\
     [--design-root=/abs/friday-design-handoff-20260602] \\
-    [--evidence-dir=/abs/ui-device-evidence] \\
+    [--evidence-dir=/abs/ui-device-evidence ...] \\
     [--runtime-evidence=/abs/action-runtime-evidence.json ...] \\
     [--runtime-evidence-dir=/abs/evidence-dir ...] \\
     [--out=/abs/uiux-product-closure-readiness.json] \\
@@ -53,7 +53,15 @@ const requireRuntimeActions = args.includes("--require-runtime-actions");
 const requireUiDeviceProof = args.includes("--require-ui-device-proof");
 const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new URL("../..", import.meta.url).pathname);
 const designRoot = resolve(arg("design-root") || process.env.FRIDAY_DESIGN_HANDOFF_ROOT || `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602`);
-const evidenceDir = arg("evidence-dir") || process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR || "";
+const evidenceDirs = [
+  ...argsAll("evidence-dir"),
+  ...(process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR
+    ? [process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIR]
+    : []),
+  ...(process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIRS
+    ? process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIRS.split(/[:\n]/).filter(Boolean)
+    : []),
+];
 const runtimeEvidence = [
   ...argsAll("runtime-evidence"),
   ...(process.env.FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE
@@ -246,7 +254,9 @@ const selectedVisualProofArgs = [
   `--repo-root=${repoRoot}`,
   `--design-root=${designRoot}`,
 ];
-if (evidenceDir) selectedVisualProofArgs.push(`--evidence-dir=${abs(evidenceDir)}`);
+for (const dir of evidenceDirs) {
+  selectedVisualProofArgs.push(`--evidence-dir=${abs(dir)}`);
+}
 if (requireUiDeviceProof) selectedVisualProofArgs.push("--require-complete");
 const selectedVisualProof = runJson("selected_visual_proof", process.execPath, selectedVisualProofArgs);
 const nativeAction = runJson("native_action_closure", process.execPath, [
@@ -269,7 +279,9 @@ for (const dir of runtimeEvidenceDirs) {
   const resolved = abs(dir);
   if (existsSync(resolved)) traceabilityArgs.push(`--evidence-dir=${resolved}`);
 }
-if (evidenceDir && existsSync(abs(evidenceDir))) traceabilityArgs.push(`--evidence-dir=${abs(evidenceDir)}`);
+for (const dir of evidenceDirs) {
+  if (existsSync(abs(dir))) traceabilityArgs.push(`--evidence-dir=${abs(dir)}`);
+}
 const uiuxTraceability = runJson("uiux_action_traceability", process.execPath, traceabilityArgs);
 
 const designRuntimeArgs = [
@@ -292,8 +304,8 @@ for (const dir of runtimeEvidenceDirs) {
     }
   }
 }
-if (evidenceDir) {
-  const resolved = abs(evidenceDir);
+for (const dir of evidenceDirs) {
+  const resolved = abs(dir);
   if (!existsSync(resolved)) {
     block("evidence_dir_missing", resolved);
   } else {
@@ -308,7 +320,9 @@ const designRuntime = runJson("design_action_runtime", process.execPath, designR
 let uiDeviceReadiness = null;
 if (existsSync(`${repoRoot}/scripts/ops/friday-ui-device-proof-readiness.sh`)) {
   const readinessArgs = [`${repoRoot}/scripts/ops/friday-ui-device-proof-readiness.sh`];
-  if (evidenceDir) readinessArgs.push("--evidence-dir", abs(evidenceDir));
+  for (const dir of evidenceDirs) {
+    readinessArgs.push("--evidence-dir", abs(dir));
+  }
   if (designContractPath) readinessArgs.push("--design-action-contract", designContractPath);
   for (const evidence of runtimeEvidence) {
     if (existsSync(abs(evidence))) readinessArgs.push("--design-action-runtime-evidence", abs(evidence));

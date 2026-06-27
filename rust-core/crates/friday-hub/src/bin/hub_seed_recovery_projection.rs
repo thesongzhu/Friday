@@ -223,6 +223,9 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TMP_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn refuses_non_controlled_mission_id() {
@@ -253,9 +256,11 @@ mod tests {
 
     fn tmp_db() -> String {
         let mut path = std::env::temp_dir();
+        let counter = TMP_DB_COUNTER.fetch_add(1, Ordering::Relaxed);
         path.push(format!(
-            "friday-seed-recovery-projection-{}-{}.sqlite",
+            "friday-seed-recovery-projection-{}-{}-{}.sqlite",
             std::process::id(),
+            counter,
             now_ms()
         ));
         path.to_string_lossy().to_string()

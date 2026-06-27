@@ -54,6 +54,8 @@ const checks = checkSourceSet(repoRoot, [
     label: "iOS command sheet covers selected mobile destinations",
     paths: [
       "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift",
+      "apps/friday-ios/Sources/FridayMobileShell/FridayApp.swift",
+      "apps/friday-ios/Sources/FridayMobileShell/FridayHomeScreen.swift",
       "apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift",
     ],
     requiredCases: [
@@ -76,6 +78,9 @@ const checks = checkSourceSet(repoRoot, [
       "Route coverage only",
       "Provider Workspace",
       "Device Pairing",
+      "destination == .home ? \"Friday\" : destination.title",
+      "friday.home.selected-design-intro",
+      "friday.home.selected-hero-pet",
     ],
   },
   {
