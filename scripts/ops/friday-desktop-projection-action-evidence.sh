@@ -47,6 +47,8 @@ const files = [
   path.join(outDir, "desktop-diagnostics-proof-refs-action-evidence.json"),
   path.join(outDir, "desktop-evidence-index-read-action-evidence.json"),
   path.join(outDir, "desktop-settings-hub-posture-action-evidence.json"),
+  path.join(outDir, "desktop-skills-capability-matrix-action-evidence.json"),
+  path.join(outDir, "desktop-media-evidence-refs-action-evidence.json"),
   path.join(outDir, "desktop-provider-admin-check-action-evidence.json"),
   path.join(outDir, "desktop-parity-route-readiness-action-evidence.json"),
   path.join(outDir, "desktop-token-ledger-run-readback-action-evidence.json"),
@@ -58,6 +60,8 @@ const requiredActions = [
   "desktop/tokenLedger/run-readback",
   "desktop/settings/hub-posture",
   "desktop/evidence/index-read",
+  "desktop/skills/capability-matrix",
+  "desktop/media/evidence-refs",
 ];
 const blockers = [];
 const actions = [];

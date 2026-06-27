@@ -64,6 +64,8 @@ func desktopProductContractSeparatesShellsFromWorkbenchLoops() {
   let parity = DesktopProductDestinationID.parity.contract
   let diagnostics = DesktopProductDestinationID.diagnostics.contract
   let tokenLedger = DesktopProductDestinationID.tokenLedger.contract
+  let skills = DesktopProductDestinationID.skills.contract
+  let media = DesktopProductDestinationID.media.contract
   let settings = DesktopProductDestinationID.settings.contract
   let evidence = DesktopProductDestinationID.evidence.contract
 
@@ -92,6 +94,12 @@ func desktopProductContractSeparatesShellsFromWorkbenchLoops() {
   #expect(parity.runtimeActionIds == ["desktop/parity/route-readiness"])
   #expect(diagnostics.runtimeActionIds == ["desktop/diagnostics/proof-refs"])
   #expect(tokenLedger.runtimeActionIds == ["desktop/tokenLedger/run-readback"])
+  #expect(skills.runtimeActionIds == ["desktop/skills/capability-matrix"])
+  #expect(media.runtimeActionIds == ["desktop/media/evidence-refs"])
+  #expect(!skills.blockers.contains { $0.kind == .needsNativeSurface })
+  #expect(!media.blockers.contains { $0.kind == .needsNativeSurface })
+  #expect(skills.blockers.contains { $0.kind == .needsRuntimeEvidence })
+  #expect(media.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(settings.runtimeActionIds == ["desktop/settings/hub-posture"])
   #expect(evidence.runtimeActionIds == ["desktop/evidence/index-read"])
   #expect(!operations.isEndBarReady)
@@ -101,6 +109,8 @@ func desktopProductContractSeparatesShellsFromWorkbenchLoops() {
   #expect(!parity.isEndBarReady)
   #expect(!diagnostics.isEndBarReady)
   #expect(!tokenLedger.isEndBarReady)
+  #expect(!skills.isEndBarReady)
+  #expect(!media.isEndBarReady)
   #expect(!settings.isEndBarReady)
   #expect(!evidence.isEndBarReady)
 }

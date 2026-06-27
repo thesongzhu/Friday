@@ -231,16 +231,16 @@ public enum DesktopProductDestinationID: String, CaseIterable, Sendable, Equatab
       return contract(
         title: "Skills / Tools",
         systemImage: "wrench.and.screwdriver",
-        tier: .navigationShell,
-        runtimeActionIds: [],
-        blockers: [.init(.needsNativeSurface, label: "tool install/run controls")])
+        tier: .liveReadProjection,
+        runtimeActionIds: ["desktop/skills/capability-matrix"],
+        blockers: [.init(.needsRuntimeEvidence, label: "tool install/run controls live proof")])
     case .media:
       return contract(
         title: "Media / Link",
         systemImage: "link.badge.plus",
-        tier: .navigationShell,
-        runtimeActionIds: [],
-        blockers: [.init(.needsNativeSurface, label: "media/link product surface")])
+        tier: .liveReadProjection,
+        runtimeActionIds: ["desktop/media/evidence-refs"],
+        blockers: [.init(.needsRuntimeEvidence, label: "media/link adapter proof")])
     case .settings:
       return contract(
         title: "Settings",
