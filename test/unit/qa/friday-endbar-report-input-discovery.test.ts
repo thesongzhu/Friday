@@ -96,4 +96,24 @@ describe("Friday END-BAR report input discovery", () => {
     });
     expect(report.command).toBeNull();
   });
+
+  it("discovers mechanism multiangle stress reports by truth label", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-endbar-inputs-"));
+    const mechanism = writeJson(dir, "current-report.json", {
+      truth: "mechanism_multiangle_stress_report",
+      status: "passed",
+    });
+
+    const report = run([`--search-root=${dir}`], true);
+    const group = report.groups.find((row: { id: string }) => row.id === "mechanism_multiangle_stress");
+
+    expect(group.selectedCandidate).toEqual(expect.objectContaining({
+      path: mechanism,
+      classification: "satisfied",
+    }));
+    expect(report.blockers).toContainEqual({
+      code: "report_candidate_missing",
+      detail: "ui_real_use_mobile_desktop",
+    });
+  });
 });
