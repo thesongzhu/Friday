@@ -69,6 +69,9 @@ const ACTION_MAP = {
   "mobile/onboarding/open-device-pairing": { screen: "onboarding", accessibilityIds: ["friday.onboarding.open-device-pairing"], event: "mission_workbench_visible", interaction: "visible" },
   "mobile/platform/capability-matrix": { screen: "platform", accessibilityIds: ["friday.platform.capability-matrix"], event: "same_mission_projection_visible", interaction: "visible" },
   "mobile/settings/push-permission": { screen: "settings", accessibilityIds: ["friday.settings.push-permission"], event: "mission_workbench_visible", interaction: "visible" },
+  "mobile/pet/state-mapping": { screen: "petEditor", accessibilityIds: ["friday.pet-editor.readiness"], event: "same_mission_projection_visible", interaction: "visible" },
+  "mobile/proof/viewer-open": { screen: "proofViewer", accessibilityIds: ["friday.proof-viewer.receipts"], event: "proof_receipt_visible_before_done", interaction: "visible" },
+  "mobile/entrypoints/readiness": { screen: "entrypoints", accessibilityIds: ["friday.entrypoints.readiness"], event: "mission_workbench_visible", interaction: "visible" },
 };
 
 function usage() {
