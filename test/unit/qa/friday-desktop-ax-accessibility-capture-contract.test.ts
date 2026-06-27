@@ -56,4 +56,14 @@ describe("friday-desktop-ax-accessibility-capture contract", () => {
     expect(source).toContain("friday-ui-device-accessibility-click-capture.mjs");
     expect(navSource).toContain(".accessibilityIdentifier(\"friday.desktop.nav.\\(destination.rawValue)\")");
   });
+
+  it("only emits status-label events from visible accessibility labels", () => {
+    const source = readFileSync(script, "utf8");
+
+    expect(source).toContain("friday.desktop.status-label.");
+    expect(source).toContain("stale_label_visible");
+    expect(source).toContain("offline_label_visible");
+    expect(source).toContain("error_label_visible");
+    expect(source).toContain("matched_by: matchedLabel.identifier.includes(identifier) ? \"accessibility_id\" : \"visible_label\"");
+  });
 });

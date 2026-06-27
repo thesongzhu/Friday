@@ -525,6 +525,9 @@ struct OperationsOverviewScreen: View {
 /// This is the honest "unavailable" state — never a fake-ready screen.
 struct UnavailableView: View {
   let reason: String
+  private var labels: [MissionWorkbenchStatusLabel] {
+    MissionWorkbenchStatusLabel.unavailableReasonLabels(reason)
+  }
 
   var body: some View {
     VStack(spacing: 10) {
@@ -538,13 +541,19 @@ struct UnavailableView: View {
         .font(.system(size: 12))
         .foregroundStyle(HubTheme.textSecondary)
         .multilineTextAlignment(.center)
+      HStack(spacing: 6) {
+        ForEach(labels, id: \.rawValue) { label in
+          label.chip
+            .accessibilityIdentifier("friday.desktop.status-label.\(label.rawValue)")
+        }
+      }
       Text("Showing this as truth — no cached or fabricated status is presented.")
         .font(.system(size: 10))
         .foregroundStyle(HubTheme.textSecondary)
     }
     .padding(28)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .accessibilityElement(children: .combine)
+    .accessibilityElement(children: .contain)
     .accessibilityLabel("Hub projection unavailable. \(reason)")
     .accessibilityIdentifier("friday.desktop.unavailable")
   }
