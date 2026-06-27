@@ -51,6 +51,9 @@ const files = [
 const requiredActions = [
   "mobile/missions/read",
   "mobile/platform/capability-matrix",
+  "mobile/pet/state-mapping",
+  "mobile/proof/viewer-open",
+  "mobile/entrypoints/readiness",
   "mobile/settings/push-permission",
 ];
 const blockers = [];
