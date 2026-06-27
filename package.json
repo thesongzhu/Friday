@@ -121,6 +121,7 @@
     "check:cross-platform-client-ship-gate": "node scripts/ops/check-friday-desktop-release-pipeline.mjs",
     "check:client-design-contract": "node scripts/ops/check-friday-client-design-contract.mjs",
     "check:uiux-native-linkage": "node scripts/ops/check-friday-uiux-native-linkage.mjs",
+    "check:uiux-selected-visual-proof": "node scripts/ops/check-friday-uiux-selected-visual-proof.mjs",
     "check:uiux-action-traceability": "node scripts/ops/check-friday-uiux-action-traceability.mjs",
     "check:uiux-product-closure": "node scripts/ops/friday-uiux-product-closure-readiness.mjs",
     "check:github-channel-proof-readiness": "node scripts/ops/check-friday-github-channel-proof-readiness.mjs",

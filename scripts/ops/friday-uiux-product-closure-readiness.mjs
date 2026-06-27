@@ -241,6 +241,14 @@ const nativeLinkage = runJson("uiux_native_linkage", process.execPath, [
   `--design-root=${designRoot}`,
   "--require-complete",
 ]);
+const selectedVisualProofArgs = [
+  `${repoRoot}/scripts/ops/check-friday-uiux-selected-visual-proof.mjs`,
+  `--repo-root=${repoRoot}`,
+  `--design-root=${designRoot}`,
+];
+if (evidenceDir) selectedVisualProofArgs.push(`--evidence-dir=${abs(evidenceDir)}`);
+if (requireUiDeviceProof) selectedVisualProofArgs.push("--require-complete");
+const selectedVisualProof = runJson("selected_visual_proof", process.execPath, selectedVisualProofArgs);
 const nativeAction = runJson("native_action_closure", process.execPath, [
   `${repoRoot}/scripts/ops/check-friday-native-action-closure.mjs`,
   repoRoot,
@@ -319,6 +327,7 @@ const readinessReport = uiDeviceReadiness?.parsed || {};
 const traceabilityReport = uiuxTraceability.parsed || {};
 const clientPassed = clientDesign.status === "passed" && clientDesign.parsed?.status === "passed";
 const nativeLinkagePassed = nativeLinkage.status === "passed" && nativeLinkage.parsed?.status === "linked";
+const selectedVisualProofReady = selectedVisualProof.status === "passed" && selectedVisualProof.parsed?.status === "selected_visual_proof_ready";
 const nativePassed = nativeAction.status === "passed" && nativeAction.parsed?.status === "passed";
 const traceabilityPassed = uiuxTraceability.status === "passed" && ["product_runtime_actions_traceable", "traceability_gaps_present"].includes(traceabilityReport.status);
 const runtimeCovered = runtimeReport.status === "runtime_actions_covered";
@@ -326,6 +335,7 @@ const uiDeviceProofAssembled = readinessReport.status === "pass";
 
 if (!clientPassed) block("client_design_contract_failed", String(clientDesign.exitCode));
 if (!nativeLinkagePassed) block("uiux_native_linkage_failed", nativeLinkage.parsed?.status || String(nativeLinkage.exitCode));
+if (requireUiDeviceProof && !selectedVisualProofReady) block("selected_visual_proof_not_ready", selectedVisualProof.parsed?.status || String(selectedVisualProof.exitCode));
 if (!nativePassed) block("native_action_closure_failed", String(nativeAction.exitCode));
 if (!traceabilityPassed) block("uiux_action_traceability_failed", traceabilityReport.status || String(uiuxTraceability.exitCode));
 if (requireRuntimeActions && !runtimeCovered) block("runtime_actions_not_covered", runtimeReport.status || "unknown");
@@ -336,6 +346,9 @@ if (!runtimeCovered) {
 }
 if (!uiDeviceProofAssembled) {
   notes.push("ui_device_full_proof_not_assembled");
+}
+if (!selectedVisualProofReady) {
+  notes.push("selected_visual_proof_gap_present");
 }
 
 const report = {
@@ -364,6 +377,13 @@ const report = {
       counts: nativeLinkage.parsed?.counts || null,
       gaps: nativeLinkage.parsed?.gaps || [],
       caveat: nativeLinkage.parsed?.caveat || "Selected-design native linkage only; not screenshot proof, live tap proof, or END-BAR.",
+    },
+    selectedVisualProof: {
+      status: selectedVisualProof.parsed?.status || selectedVisualProof.status,
+      blockers: selectedVisualProof.parsed?.blockers || [],
+      notes: selectedVisualProof.parsed?.notes || [],
+      evidenceInputs: selectedVisualProof.parsed?.evidenceInputs || null,
+      caveat: selectedVisualProof.parsed?.caveat || "Selected visual proof only; not live action closure, release, adoption, or END-BAR.",
     },
     nativeActionClosure: {
       status: nativeAction.parsed?.status || nativeAction.status,
@@ -398,6 +418,11 @@ const report = {
     ...(uiDeviceProofAssembled ? [] : [{
       target: "ui-device-proof",
       action: "supply same-run mobile, desktop, channel, timeline, observations manifest, and stress/negative-control evidence to friday-ui-device-proof-readiness.sh",
+    }]),
+    ...(selectedVisualProofReady ? [] : [{
+      target: "selected-visual-proof",
+      action: "capture fresh current-HEAD native mobile destination screenshots and desktop visual/accessibility capture for the operator-selected baseline; static Swift linkage and old proof PNGs do not close visual parity",
+      blockers: selectedVisualProof.parsed?.blockers || [],
     }]),
   ],
   notes,
