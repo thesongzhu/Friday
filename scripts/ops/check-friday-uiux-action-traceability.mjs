@@ -288,7 +288,7 @@ function runtimeActions(paths) {
         path,
         surface: String(row.surface || ""),
         screen: String(row.screen || ""),
-        actionId: String(row.action_id || row.actionId || ""),
+        actionId: String(row.runtime_action_id || row.runtimeActionId || row.action_id || row.actionId || ""),
         capabilityId: String(row.capability_id || row.capabilityId || ""),
         status: String(row.status || ""),
         evidenceRef: String(row.evidence_ref || row.evidenceRef || ""),

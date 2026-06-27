@@ -92,7 +92,8 @@ describe("friday-macos-live-write-read-proof-events", () => {
           {
             surface: "desktop",
             screen: "fridayChat",
-            action_id: "check",
+            action_id: "caprow",
+            runtime_action_id: "desktop/fridayChat/act",
             capability_id: "security_approval_bound_principal_gate_cat10_netnew",
             status: "pass",
             evidence_ref: "proof://desktop-chat-approve",
@@ -122,7 +123,8 @@ describe("friday-macos-live-write-read-proof-events", () => {
         expect.objectContaining({
           surface: "desktop",
           screen: "fridayChat",
-          action_id: "check",
+          action_id: "desktop/fridayChat/act",
+          source_action_id: "caprow",
           capability_id: "security_approval_bound_principal_gate_cat10_netnew",
           status: "pass",
           evidence_ref: "proof://desktop-chat-approve",

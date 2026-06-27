@@ -89,7 +89,13 @@ function explicitActionRows(value) {
     }
     const surface = typeof row.surface === "string" && row.surface.trim() ? row.surface.trim() : "desktop";
     const screen = typeof row.screen === "string" && row.screen.trim() ? row.screen.trim() : "";
-    const actionId = typeof row.action_id === "string" && row.action_id.trim() ? row.action_id.trim() : "";
+    const rawActionId = typeof row.action_id === "string" && row.action_id.trim() ? row.action_id.trim() : "";
+    const runtimeActionId = typeof row.runtime_action_id === "string" && row.runtime_action_id.trim()
+      ? row.runtime_action_id.trim()
+      : typeof row.runtimeActionId === "string" && row.runtimeActionId.trim()
+        ? row.runtimeActionId.trim()
+        : "";
+    const actionId = runtimeActionId || rawActionId;
     const capabilityId = typeof row.capability_id === "string" && row.capability_id.trim() ? row.capability_id.trim() : "";
     const status = typeof row.status === "string" && row.status.trim() ? row.status.trim() : "";
     const evidence = typeof row.evidence_ref === "string" && row.evidence_ref.trim() ? row.evidence_ref.trim() : evidenceRef;
@@ -101,6 +107,7 @@ function explicitActionRows(value) {
       surface,
       screen,
       action_id: actionId,
+      ...(runtimeActionId && rawActionId && runtimeActionId !== rawActionId ? { source_action_id: rawActionId } : {}),
       capability_id: capabilityId,
       status,
       evidence_ref: evidence,

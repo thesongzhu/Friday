@@ -93,6 +93,7 @@ describe("friday-ios-live-write-read-proof-events", () => {
             surface: "mobile",
             screen: "fridayChat",
             action_id: "chat:typing",
+            runtimeActionId: "mobile/fridayChat/act",
             capability_id: "ask_friday_chat",
             status: "pass",
             evidence_ref: "proof://mobile-chat-send",
@@ -122,7 +123,8 @@ describe("friday-ios-live-write-read-proof-events", () => {
         expect.objectContaining({
           surface: "mobile",
           screen: "fridayChat",
-          action_id: "chat:typing",
+          action_id: "mobile/fridayChat/act",
+          source_action_id: "chat:typing",
           capability_id: "ask_friday_chat",
           status: "pass",
           evidence_ref: "proof://mobile-chat-send",

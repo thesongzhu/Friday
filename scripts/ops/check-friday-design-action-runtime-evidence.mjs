@@ -338,7 +338,7 @@ function readRuntimeEvidence(path) {
       .map((row) => ({
         surface: String(row.surface || ""),
         screen: String(row.screen || ""),
-        actionId: String(row.action_id || row.actionId || ""),
+        actionId: String(row.runtime_action_id || row.runtimeActionId || row.action_id || row.actionId || ""),
         capabilityId: String(row.capability_id || row.capabilityId || ""),
         status: String(row.status || ""),
         evidenceRef: String(row.evidence_ref || row.evidenceRef || ""),
@@ -354,11 +354,53 @@ function runtimeEvidenceFor(row, runtimeRows) {
     if (candidate.status !== "pass") return false;
     if (candidate.surface && candidate.surface !== row.surface) return false;
     if (candidate.screen && candidate.screen !== row.screen) return false;
-    if (candidate.actionId && row.actionId && candidate.actionId !== row.actionId) return false;
+    const actionMatches = candidate.actionId && row.actionId
+      ? actionIdentity(candidate.surface || row.surface, candidate.screen || row.screen, candidate.actionId)
+        === actionIdentity(row.surface, row.screen, row.actionId)
+      : false;
+    if (candidate.actionId && row.actionId && !actionMatches) return false;
     if (candidate.capabilityId && row.capabilityId) return candidate.capabilityId === row.capabilityId;
-    if (candidate.actionId && row.actionId) return true;
+    if (actionMatches) return true;
     return candidate.capabilityId === row.capabilityId;
   }) || null;
+}
+
+function normalizedToken(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function canonicalScreen(screen) {
+  return normalizedToken(screen).replace(/^firstlaunch$/, "firstlaunch");
+}
+
+function canonicalAction(screen, action) {
+  const screenToken = canonicalScreen(screen);
+  let token = normalizedToken(action);
+  if (screenToken && token.startsWith(screenToken)) token = token.slice(screenToken.length);
+  const synonyms = new Map([
+    ["reject", "act"],
+    ["approve", "check"],
+    ["confirm", "check"],
+    ["keep", "check"],
+    ["pairnow", "pairnow"],
+    ["runcontrol", "workflowruncontrol"],
+    ["open", "sidecaropen"],
+    ["close", "sidecarclose"],
+    ["send", "check"],
+    ["checklist", "check"],
+  ]);
+  return synonyms.get(token) || token;
+}
+
+function actionIdentity(surface, screen, action) {
+  if (/^(mobile|desktop)\//i.test(String(action || ""))) return productActionIdentity(action);
+  return `${normalizedToken(surface)}/${canonicalScreen(screen)}/${canonicalAction(screen, action)}`;
+}
+
+function productActionIdentity(actionId) {
+  const parts = String(actionId || "").split("/");
+  const [surface = "", screen = "", ...rest] = parts;
+  return actionIdentity(surface, screen, rest.join("/"));
 }
 
 function summarizeBy(rows, key) {
