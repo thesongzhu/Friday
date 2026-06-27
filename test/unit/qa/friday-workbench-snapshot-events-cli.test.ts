@@ -191,6 +191,7 @@ describe("friday-workbench-snapshot-events CLI", () => {
         status: "ready",
         preflightReady: true,
       });
+      expect(keys).toContain("desktop:mission_resolve_or_create_visible");
       expect(keys).toContain("desktop:mission_workbench_visible");
       expect(keys).toContain("desktop:transcript_browser_visible");
       expect(keys).toContain("channel:same_mission_projection_visible");
@@ -252,6 +253,7 @@ describe("friday-workbench-snapshot-events CLI", () => {
         role: "channel",
         countsTowardUiDeviceProof: false,
       }));
+      expect(keys).toContain("desktop:mission_resolve_or_create_visible");
       expect(keys).toContain("timeline:bounded_page_2_visible");
       expect(keys).not.toContain("channel:same_mission_projection_visible");
       expect(keys).not.toContain("*:same_mission_mobile_desktop_channel_visible");
@@ -328,6 +330,7 @@ describe("friday-workbench-snapshot-events CLI", () => {
       expect(result.status).toBe("ready");
       expect(result.preflightReady).toBe(false);
       expect(result.diagnosticTimelineReady).toBe(true);
+      expect(keys).toContain("desktop:mission_resolve_or_create_visible");
       expect(keys).toContain("timeline:bounded_page_1_visible");
       expect(keys).toContain("timeline:bounded_page_2_visible");
       expect(keys).not.toContain("channel:same_mission_projection_visible");

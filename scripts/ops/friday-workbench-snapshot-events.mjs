@@ -179,6 +179,15 @@ function hasCompletedProof(snapshot) {
   });
 }
 
+function hasResolvedMission(snapshot) {
+  const snapshotMissionId = typeof snapshot.missionId === "string" ? snapshot.missionId.trim() : "";
+  if (snapshotMissionId !== missionId) return false;
+  const conversationId = typeof snapshot.fridayConversationId === "string" ? snapshot.fridayConversationId.trim() : "";
+  const routeDecision = object(snapshot.routeDecision);
+  const routeWorkItemId = typeof routeDecision.workItemId === "string" ? routeDecision.workItemId.trim() : "";
+  return Boolean(conversationId || routeWorkItemId || array(snapshot.workItems).length > 0);
+}
+
 function firstCapturedAt(events) {
   return events.find((event) => typeof event.capturedAt === "string" && event.capturedAt.trim())?.capturedAt
     || new Date().toISOString();
@@ -200,6 +209,9 @@ function makeRows(snapshot, evidence, truthLabel) {
     });
   };
 
+  if (hasResolvedMission(snapshot)) {
+    add("desktop", "mission_resolve_or_create_visible", evidence.desktop, "workbench_snapshot:mission_resolved");
+  }
   if (hasTranscriptSurface(transcriptEvents, "mobile")) {
     add("mobile", "mission_intake_submitted", evidence.mobile, "transcript_surface:mobile");
     add("mobile", "mission_intake_ready", evidence.mobile, "transcript_surface:mobile");

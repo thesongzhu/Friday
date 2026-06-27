@@ -32,6 +32,15 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("real channel, timeline, stress, and negative-control evidence");
   });
 
+  it("can bind the runner to an exact existing Mission instead of only creating a shared-id Mission", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("[--mission-id codex-organic-mission-...]");
+    expect(source).toContain("mission_id_arg=\"${FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID:-}\"");
+    expect(source).toContain("die \"--shared-id and --mission-id are mutually exclusive\"");
+    expect(source).toContain("capture_args+=(\"--mission-id\" \"${mission_id_arg}\")");
+  });
+
   it("threads real stress captures through the existing stress event bridge", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
 
@@ -43,6 +52,10 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("--out=${stress_events}");
     expect(source).toContain("--require-ready");
     expect(source).toContain("same_run_events+=(\"${stress_events}\")");
+    expect(source).toContain("stress_evidence_ref=\"$(node -e");
+    expect(source).toContain("require_file_if_set \"stress evidence_ref\" \"${stress_evidence_ref}\"");
+    expect(source).toContain("shared_extra_evidence+=(\"${stress_evidence_ref}\")");
+    expect(source).toContain("capture_dir_args+=(\"--shared-extra-evidence=${path}\")");
     expect(source).toContain("stressCaptureStatus");
   });
 
@@ -66,6 +79,16 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("closure_args+=(\"--runtime-evidence=${path}\")");
     expect(source).toContain("readiness_args+=(\"--design-action-runtime-evidence-dir\" \"${dir}\")");
     expect(source).toContain("readiness_args+=(\"--design-action-runtime-evidence\" \"${path}\")");
+  });
+
+  it("keeps the readiness report file parseable JSON while preserving wrapper logs", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("readiness_stdout=\"${readiness_out}.stdout\"");
+    expect(source).toContain("bash \"${readiness_args[@]}\" >\"${readiness_stdout}\"");
+    expect(source).toContain("node - \"${readiness_stdout}\" \"${readiness_out}\"");
+    expect(source).toContain("no parseable readiness JSON object suffix");
+    expect(source).toContain("fs.writeFileSync(outPath, `${JSON.stringify(readiness, null, 2)}\\n`)");
   });
 
   it("keeps gap reports useful when strict capture-dir assembly is blocked", () => {
