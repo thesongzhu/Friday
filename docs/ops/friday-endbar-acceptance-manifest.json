@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 1,
+  "truthLabel": "endbar_acceptance_manifest_not_evidence_not_release",
+  "status": "acceptance_defined_not_satisfied",
+  "caveat": "This manifest defines the END-BAR acceptance standard. It is not proof that the standard has passed.",
+  "operatorSources": [
+    {
+      "id": "multiangle-mechanism-stress",
+      "path": "~/Desktop/FRIDAY_MULTIANGLE_STRESS_SPEC_20260618.md",
+      "requiredForEndBar": true,
+      "role": "mechanism stress matrix"
+    },
+    {
+      "id": "ui-real-use-stress",
+      "path": "~/Desktop/FRIDAY_UI_REALUSE_STRESS_SPEC_20260619.md",
+      "requiredForEndBar": true,
+      "role": "mobile and desktop user-use stress matrix"
+    },
+    {
+      "id": "full-product-marching-order",
+      "path": "~/Desktop/FRIDAY_FULL_PRODUCT_MARCHING_ORDER_20260622.md",
+      "requiredForEndBar": true,
+      "role": "T1 through T6 product bar"
+    },
+    {
+      "id": "selected-uiux-design",
+      "path": "~/Desktop/friday-design-handoff-20260602",
+      "requiredForEndBar": true,
+      "role": "operator-selected mobile and desktop UI/UX source"
+    },
+    {
+      "id": "provider-auth-policy",
+      "path": "~/Desktop/FRIDAY_PROVIDER_AUTH_POLICY_20260625.md",
+      "requiredForEndBar": true,
+      "role": "provider entitlement and subscription boundary policy"
+    }
+  ],
+  "acceptanceGroups": [
+    {
+      "id": "mechanism_multiangle_stress",
+      "requiredForEndBar": true,
+      "repoEvidencePaths": [
+        "rust-core/scripts/mission-spine-closure-audit-gate.sh",
+        "rust-core/scripts/mission-spine-proof-gate.sh",
+        "scripts/ops/friday-codex-mission-proof-of-life-keychain.sh",
+        "scripts/ops/friday-claude-mission-proof-of-life-keychain.sh"
+      ],
+      "passBar": [
+        "real provider spend is windowed and joined to run proof",
+        "provider usage receipt is reconciled with token ledger for real-spend cases",
+        "failure-injection paths prove fail-closed behavior without synthetic inserts",
+        "agent-driven stress is not counted as organic adoption or GO-LIVE"
+      ]
+    },
+    {
+      "id": "ui_real_use_mobile_desktop",
+      "requiredForEndBar": true,
+      "repoEvidencePaths": [
+        "scripts/ops/friday-uiux-real-use-proof-driver.sh",
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "scripts/ops/friday-ui-device-proof-shortlist-runner.sh",
+        "scripts/ops/friday-uiux-product-closure-readiness.mjs"
+      ],
+      "passBar": [
+        "mobile and desktop are driven as real app surfaces, not DB-only proof",
+        "rendered pixels, app accessibility tree, DB rows, provider receipts, and git HEAD are linked in one manifest",
+        "honest-unavailable, owner-gate, timeout, leak, accessibility, and cross-surface truth controls are exercised",
+        "simulator evidence remains labeled as simulator evidence and does not substitute for real-device release proof"
+      ]
+    },
+    {
+      "id": "selected_uiux_conformance",
+      "requiredForEndBar": true,
+      "repoEvidencePaths": [
+        "scripts/ops/check-friday-client-design-contract.mjs",
+        "scripts/ops/check-friday-uiux-native-linkage.mjs",
+        "scripts/ops/check-friday-uiux-selected-visual-proof.mjs",
+        "docs/friday-uiux-product-runtime-action-annex.md"
+      ],
+      "passBar": [
+        "operator-selected mobile and desktop design destinations are represented in native code",
+        "runtime action evidence is attached to product actions before action closure is counted",
+        "visual proof is current-HEAD native proof, not static design proof",
+        "residual product blockers remain blockers even when runtime action traceability is complete"
+      ]
+    },
+    {
+      "id": "provider_entitlement_matrix",
+      "requiredForEndBar": true,
+      "repoEvidencePaths": [
+        "test/e2e/live/friday-provider-routing-c3c4-live.e2e.test.ts",
+        "scripts/ops/check-friday-provider-entitlement-manifest.mjs",
+        "docs/ops/friday-endbar-acceptance-manifest.json"
+      ],
+      "passBar": [
+        "DeepSeek API route is tested as a supported BYOK or configured-key provider",
+        "OpenAI API route is tested as a supported API-key provider when an API key is present",
+        "Claude API route is tested as a supported API-key provider when an API key is present",
+        "Codex CLI and Claude CLI are labeled advanced local first-party CLI delegation, not native API or channel proof",
+        "a free ChatGPT web account is explicitly unsupported as an autonomous Friday workflow backend"
+      ]
+    },
+    {
+      "id": "integrated_end_to_end_tape",
+      "requiredForEndBar": true,
+      "repoEvidencePaths": [
+        "scripts/ops/friday-ui-device-live-write-read-capture-bundle.sh",
+        "scripts/ops/friday-product-auto-followup-proof.sh",
+        "scripts/ops/friday-ui-device-observations-manifest.mjs"
+      ],
+      "passBar": [
+        "one linked tape covers goal capture, governed execution, approval or honest pause, result readback, memory confirmation or honest candidate state, and recall",
+        "mobile and desktop consume the same mission truth without stale or fabricated state",
+        "negative controls are included for offline, owner mismatch, reconnect, channel replay, no hidden fallback, and secret redaction",
+        "channel proof is either current and linked or explicitly deferred and therefore not END-BAR"
+      ]
+    }
+  ],
+  "providerEntitlementMatrix": [
+    {
+      "id": "deepseek_api",
+      "status": "supported_api_key_route",
+      "mustPassBeforeEndBar": true,
+      "proof": "real /v1/agent/runs or mission-spine run with fallback=0, usage ledger, and configured DeepSeek key"
+    },
+    {
+      "id": "openai_api",
+      "status": "supported_api_key_route",
+      "mustPassBeforeEndBar": true,
+      "proof": "real provider routing run with OPENAI_API_KEY or FRIDAY_OPENAI_API_KEY present"
+    },
+    {
+      "id": "anthropic_api",
+      "status": "supported_api_key_route",
+      "mustPassBeforeEndBar": true,
+      "proof": "real provider routing run with ANTHROPIC_API_KEY or FRIDAY_ANTHROPIC_API_KEY present"
+    },
+    {
+      "id": "codex_cli",
+      "status": "advanced_local_first_party_cli_delegation",
+      "mustPassBeforeEndBar": false,
+      "proof": "local logged-in Codex CLI route may be tested as Codex route only; it is not OpenAI API proof and not a free ChatGPT backend"
+    },
+    {
+      "id": "claude_cli",
+      "status": "advanced_local_first_party_cli_delegation",
+      "mustPassBeforeEndBar": false,
+      "proof": "local logged-in Claude CLI route may be tested as Claude route only; it is not Anthropic API proof and not channel proof"
+    },
+    {
+      "id": "free_chatgpt_web_account",
+      "status": "unsupported_as_friday_autonomous_backend",
+      "mustPassBeforeEndBar": false,
+      "proof": "negative/boundary check only: do not count browser automation, scraping, subscription replay, or free ChatGPT web access as Friday provider proof"
+    }
+  ],
+  "completionRules": [
+    "END-BAR requires real user-use mobile and desktop product closure, not report coverage alone.",
+    "A green manifest check is only a standard-definition check; it is not runtime evidence.",
+    "Report-mode closure, non-channel closure, simulator-only proof, and agent dogfood never satisfy strict UI/device proof by themselves.",
+    "No synthetic INSERT, no fake organic, no secret echo, no production hub kill, and no gate weakening may be used to satisfy any group."
+  ]
+}
