@@ -409,7 +409,7 @@ struct RootView: View {
           FridayProjectionScreen(destination: destination, viewModel: homeVM)
         }
       }
-      .navigationTitle(destination.title)
+      .navigationTitle(destination == .home ? "Friday" : destination.title)
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         // Top-LEFT: the Command Sheet launcher (locked: commandSheet from top-left).
