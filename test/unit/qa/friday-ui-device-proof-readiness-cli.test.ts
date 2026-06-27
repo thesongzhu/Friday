@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -1110,6 +1110,48 @@ describe("friday-ui-device-proof-readiness", () => {
         .map((line) => JSON.parse(line) as { event?: string });
       expect(rows).toContainEqual(expect.objectContaining({ event: "proof_receipt_visible_before_done" }));
       expect(rows).toContainEqual(expect.objectContaining({ event: "mission_workbench_visible" }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps discovered same-run events when the workbench diagnostic bridge emits no derived events", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-empty-workbench-"));
+    try {
+      const files = writePartialEvidenceDir(tempDir);
+      writeFileSync(join(tempDir, "workbench-snapshot.json"), JSON.stringify({
+        snapshot: {
+          missionId,
+          fridayConversationId: "conversation_cli_ui_device_readiness",
+          runtimeFeedStatus: "live_rust_hub_projection",
+          statusLabels: [],
+          workItems: [],
+        },
+      }, null, 2));
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_bridge:no_derived_events"))).toBe(true);
+      expect(result.notes?.some((note) => note.includes(`resolved_SAME_RUN_EVENTS:${files.events}`))).toBe(true);
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+      expect(result.blockers ?? []).not.toContain("ui_device_gap_report:exit_2");
+      expect(existsSync(join(tempDir, "same-run-events.merged.jsonl"))).toBe(false);
+
+      const gapReport = JSON.parse(readFileSync(join(tempDir, "gap-report.json"), "utf8")) as {
+        blockers?: Array<{ code?: string }>;
+      };
+      expect(gapReport.blockers?.some((blocker) => blocker.code === "events_unreadable")).toBe(false);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
