@@ -37,6 +37,7 @@ const allowedEvents = new Set([
 
 const ACTION_MAP = {
   "mobile/home/refresh": { screen: "home", accessibilityIds: ["friday.mobile.toolbar.refresh"], event: "mission_workbench_visible", interaction: "visible" },
+  "mobile/missions/read": { screen: "missions", accessibilityIds: ["friday.missions.read"], event: "mission_workbench_visible", interaction: "visible" },
   "mobile/session/sidecar/open": { screen: "session", accessibilityIds: ["friday.session.sidecar-open"], event: "mission_workbench_visible", interaction: "visible" },
   "mobile/session/sidecar/close": { screen: "session", accessibilityIds: ["friday.session.sidecar-close"], event: "mission_workbench_visible", interaction: "visible" },
   "mobile/workflow/run-control": { screen: "session", accessibilityIds: ["friday.session.control.resume", "friday.session.control.reject"], event: "provider_ack_not_done_visible", interaction: "visible" },
@@ -66,6 +67,8 @@ const ACTION_MAP = {
   "mobile/workflow/retry": { screen: "workflows", accessibilityIds: ["friday.workflow.retry-work-item", "friday.home.retry-work-item"], event: "reconnect_stale_verified", interaction: "visible" },
   "mobile/workflow/cancel": { screen: "workflows", accessibilityIds: ["friday.workflow.cancel-work-item", "friday.home.cancel-work-item"], event: "reconnect_stale_verified", interaction: "visible" },
   "mobile/onboarding/open-device-pairing": { screen: "onboarding", accessibilityIds: ["friday.onboarding.open-device-pairing"], event: "mission_workbench_visible", interaction: "visible" },
+  "mobile/platform/capability-matrix": { screen: "platform", accessibilityIds: ["friday.platform.capability-matrix"], event: "same_mission_projection_visible", interaction: "visible" },
+  "mobile/settings/push-permission": { screen: "settings", accessibilityIds: ["friday.settings.push-permission"], event: "mission_workbench_visible", interaction: "visible" },
 };
 
 function usage() {

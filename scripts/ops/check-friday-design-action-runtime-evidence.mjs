@@ -49,6 +49,7 @@ function argsAll(name) {
 function positionalRuntimeEvidenceArgs() {
   const valueFlags = new Set([
     "--contract",
+    "--contract-annex",
     "--evidence-dir",
     "--out",
     "--repo-root",
@@ -76,10 +77,11 @@ if (args.includes("--help") || args.includes("-h")) {
 const requireComplete = args.includes("--require-complete");
 const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new URL("../..", import.meta.url).pathname);
 const defaultContract = `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602/ACTION-CONTRACT.md`;
-const contractPath = resolve(arg("contract") || process.env.FRIDAY_DESIGN_ACTION_CONTRACT || defaultContract);
+const explicitContract = arg("contract") || process.env.FRIDAY_DESIGN_ACTION_CONTRACT || "";
+const contractPath = resolve(explicitContract || defaultContract);
 const defaultContractAnnex = resolve(repoRoot, "docs/friday-uiux-product-runtime-action-annex.md");
 const contractAnnexPaths = [
-  ...(existingFile(defaultContractAnnex) ? [defaultContractAnnex] : []),
+  ...(!explicitContract && existingFile(defaultContractAnnex) ? [defaultContractAnnex] : []),
   ...argsAll("contract-annex"),
   ...(process.env.FRIDAY_DESIGN_ACTION_CONTRACT_ANNEX
     ? process.env.FRIDAY_DESIGN_ACTION_CONTRACT_ANNEX.split(/[:\n]/).filter(Boolean)
