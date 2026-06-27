@@ -87,6 +87,49 @@ public enum MissionWorkbenchStatusLabel: String, Codable, Sendable, Equatable {
     let raw = try decoder.singleValueContainer().decode(String.self)
     self = MissionWorkbenchStatusLabel(rawValue: raw) ?? .unknown
   }
+
+  /// Conservative user-visible facets for an unavailable live read. A dark/offline read seam is
+  /// also a stale feed because no fresh projection can be read. These labels describe the rendered
+  /// client state only; they do not fabricate `WorkbenchSnapshot.statusLabels`.
+  public static func unavailableReasonLabels(_ reason: String) -> [MissionWorkbenchStatusLabel] {
+    let lower = reason.lowercased()
+    var labels: [MissionWorkbenchStatusLabel] = []
+    if lower.contains("stale")
+      || lower.contains("offline")
+      || lower.contains("no connection")
+      || lower.contains("connection refused")
+      || lower.contains("connect failed")
+      || lower.contains("connect waiting")
+      || lower.contains("timed out")
+      || lower.contains("no server")
+      || lower.contains("server dark")
+    {
+      labels.append(.stale)
+    }
+    if lower.contains("offline")
+      || lower.contains("no connection")
+      || lower.contains("connection refused")
+      || lower.contains("connect failed")
+      || lower.contains("connect waiting")
+      || lower.contains("timed out")
+      || lower.contains("no server")
+      || lower.contains("server dark")
+    {
+      labels.append(.offline)
+    }
+    if lower.contains("error")
+      || lower.contains("unavailable")
+      || lower.contains("503")
+      || lower.contains("invalid")
+      || lower.contains("unexpected")
+      || lower.contains("malformed")
+      || lower.contains("projection")
+      || labels.contains(.offline)
+    {
+      labels.append(.error)
+    }
+    return labels.isEmpty ? [.error] : Array(Set(labels)).sorted { $0.rawValue < $1.rawValue }
+  }
 }
 
 public enum MissionWorkbenchCapabilityKind: String, Codable, Sendable, Equatable {

@@ -514,6 +514,7 @@ process.on("exit", () => {
 const observedActions = [];
 const rawSnapshots = [];
 const missingTargets = [];
+const observedStatusEvents = new Set();
 if (blockers.length === 0) {
   const byDestination = new Map();
   for (const target of targets) {
@@ -552,6 +553,39 @@ if (blockers.length === 0) {
     const raw = captureTreeRaw();
     rawSnapshots.push(`--- destination=${destination} nav=${navStatus} ---\n${raw}`);
     const elements = parseRawTree(raw);
+    for (const [label, event] of [
+      ["stale", "stale_label_visible"],
+      ["offline", "offline_label_visible"],
+      ["error", "error_label_visible"],
+    ]) {
+      const key = `desktop:${event}`;
+      if (observedStatusEvents.has(key)) continue;
+      const identifier = `friday.desktop.status-label.${label}`;
+      const display = label.toUpperCase();
+      const matchedLabel = elements.find((element) =>
+        element.identifier.includes(identifier)
+        || element.name === display
+        || element.description === display);
+      if (!matchedLabel) continue;
+      observedStatusEvents.add(key);
+      observedActions.push({
+        screen: destination,
+        runtimeActionId: `desktop/status-label/${label}`,
+        action_id: `desktop/status-label/${label}`,
+        capability_id: `desktop/status-label/${label}`,
+        accessibility_id: identifier,
+        interaction: "visible",
+        status: "pass",
+        event,
+        evidence_ref: rawPath,
+        captured_at: new Date().toISOString(),
+        workbench_mission_id: workbenchMissionId || null,
+        matched_role: matchedLabel.role,
+        matched_name: matchedLabel.name,
+        matched_description: matchedLabel.description,
+        matched_by: matchedLabel.identifier.includes(identifier) ? "accessibility_id" : "visible_label",
+      });
+    }
     for (const target of destinationTargets) {
       let matchKind = "none";
       const matched = elements.find((element) => {

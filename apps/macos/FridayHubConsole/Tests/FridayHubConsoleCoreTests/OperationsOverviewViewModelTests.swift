@@ -164,6 +164,13 @@ func refreshRendersUnavailableWhenOffline() async {
 }
 
 @Test
+func unavailableReasonLabelsAreClientStateOnly() {
+  #expect(MissionWorkbenchStatusLabel.unavailableReasonLabels("Hub offline — no connection") == [.error, .offline, .stale])
+  #expect(MissionWorkbenchStatusLabel.unavailableReasonLabels("Projection unavailable: stale read") == [.error, .stale])
+  #expect(MissionWorkbenchStatusLabel.unavailableReasonLabels("Hub unavailable (HTTP 503)") == [.error])
+}
+
+@Test
 func snapshotExercisesEveryHonestRenderingRule() {
   let snapshot = MockReadClient.representativeSnapshot
 

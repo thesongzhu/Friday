@@ -11,7 +11,8 @@ describe("FridayHubConsole initial destination proof seam", () => {
     expect(app).toContain("--initial-destination=");
     expect(app).toContain("FRIDAY_CONSOLE_MISSION_ID");
     expect(app).toContain("--mission-id=");
-    expect(app).toContain("RealReadClientFactory.makeLive(missionId: Self.missionId)");
+    expect(app).toContain("RealReadClientFactory.makeLive(config: Self.liveReadConfig, missionId: Self.missionId)");
+    expect(app).toContain("private static var liveReadConfig: ReadProjectionServerConfig");
     expect(app).toContain("return .operations");
     expect(shell).toContain("initialDestination: HubDestination = .operations");
     expect(shell).toContain("_destination = State(initialValue: initialDestination)");

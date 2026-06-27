@@ -125,10 +125,30 @@ struct FridayHubConsoleApp: App {
     // back to the mock, which would fabricate a ready view the live seam did not produce.
     // (The actual connect happens later in the shell's async refresh; this is non-blocking.)
     do {
-      return try RealReadClientFactory.makeLive(missionId: Self.missionId)
+      return try RealReadClientFactory.makeLive(config: Self.liveReadConfig, missionId: Self.missionId)
     } catch {
       return RealReadClientFactory.makeHonestlyUnavailable(reason: "\(error)")
     }
+  }
+
+  /// Optional operator/proof override for the live read seam. Defaults remain the production
+  /// loopback read-projection server; this is used to prove honest fail-closed UI against an
+  /// isolated dark port without touching the real hub.
+  private static var liveReadConfig: ReadProjectionServerConfig {
+    let env = ProcessInfo.processInfo.environment
+    let base = ReadProjectionServerConfig.liveLoopback
+    let host = env["FRIDAY_CONSOLE_LIVE_READ_HOST"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let portRaw = env["FRIDAY_CONSOLE_LIVE_READ_PORT"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let connectRaw = env["FRIDAY_CONSOLE_LIVE_READ_CONNECT_TIMEOUT"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let receiveRaw = env["FRIDAY_CONSOLE_LIVE_READ_RECEIVE_TIMEOUT"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let port = portRaw.flatMap(UInt16.init) ?? base.port
+    let connectTimeout = connectRaw.flatMap(TimeInterval.init) ?? base.connectTimeout
+    let receiveTimeout = receiveRaw.flatMap(TimeInterval.init) ?? base.receiveTimeout
+    return ReadProjectionServerConfig(
+      host: host?.isEmpty == false ? host! : base.host,
+      port: port,
+      connectTimeout: connectTimeout,
+      receiveTimeout: receiveTimeout)
   }
 
   /// The mission-spine WRITE client the shell uses (Lane-D entry-point-A). Mirrors `readClient`:
