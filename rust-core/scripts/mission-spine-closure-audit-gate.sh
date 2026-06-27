@@ -19,6 +19,7 @@ report_out="${MISSION_SPINE_CLOSURE_REPORT_OUT:-/tmp/friday-mission-spine-closur
 backend_live_proof_out="${MISSION_SPINE_BACKEND_LIVE_PROOF_OUT:-/tmp/friday-mission-spine-backend-live-proof.json}"
 channel_live_proof_out="${MISSION_SPINE_CHANNEL_LIVE_PROOF_OUT:-/tmp/friday-mission-spine-channel-live-proof.json}"
 telegram_raw_proof_out="${TELEGRAM_PROOF_OUT:-/tmp/friday-telegram-live-proof.json}"
+uiux_closure_report_in="${MISSION_SPINE_UIUX_CLOSURE_REPORT:-}"
 generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 deepseek_status="blocked_missing_key"
@@ -43,6 +44,13 @@ telegram_allowed_user_present="false"
 telegram_live_gate_executed="false"
 ui_device_proof_present="false"
 ui_device_gate_executed="false"
+uiux_closure_report_present="false"
+uiux_closure_report_status="not_provided"
+uiux_non_channel_status="not_provided"
+uiux_non_channel_inputs_resolved="false"
+uiux_channel_deferred_strict_assembly="false"
+uiux_report_notes_json="[]"
+uiux_report_blockers_json="[]"
 
 echo "[mission-spine-closure] local backend + native/wire proof"
 scripts/mission-spine-proof-gate.sh --local
@@ -125,6 +133,22 @@ fi
 
 if [[ "$mode" == "--report" && "$backend_live_proof_status" == "passed" && "$deepseek_status" != "passed" ]]; then
   deepseek_status="satisfied_by_last_backend_live_proof"
+fi
+
+if [[ -n "$uiux_closure_report_in" ]]; then
+  uiux_closure_report_present="true"
+  if [[ ! -s "$uiux_closure_report_in" ]]; then
+    uiux_closure_report_status="artifact_missing_or_empty"
+  elif ! jq -e . "$uiux_closure_report_in" >/dev/null; then
+    uiux_closure_report_status="artifact_invalid_json"
+  else
+    uiux_closure_report_status="$(jq -r '.status // "unknown"' "$uiux_closure_report_in")"
+    uiux_non_channel_status="$(jq -r '.stages.nonChannelClosure.status // "missing"' "$uiux_closure_report_in")"
+    uiux_non_channel_inputs_resolved="$(jq -r 'if .stages.nonChannelClosure.nonChannelInputsResolved == true then "true" else "false" end' "$uiux_closure_report_in")"
+    uiux_channel_deferred_strict_assembly="$(jq -r 'if .stages.nonChannelClosure.channelDeferredStrictAssembly == true then "true" else "false" end' "$uiux_closure_report_in")"
+    uiux_report_notes_json="$(jq -c '(.notes // [])' "$uiux_closure_report_in")"
+    uiux_report_blockers_json="$(jq -c '(.blockers // [])' "$uiux_closure_report_in")"
+  fi
 fi
 
 if [[ -s "$channel_live_proof_out" ]] \
@@ -215,6 +239,17 @@ cat > "$report_out" <<EOF
     "required_proof_env": "MISSION_SPINE_UI_DEVICE_PROOF",
     "required_scope": "real mobile/desktop/channel UI or device consumption evidence"
   },
+  "uiux_product_closure_report": {
+    "status": "$uiux_closure_report_status",
+    "artifact": "$uiux_closure_report_in",
+    "report_env_present": $uiux_closure_report_present,
+    "non_channel_status": "$uiux_non_channel_status",
+    "non_channel_inputs_resolved": $uiux_non_channel_inputs_resolved,
+    "channel_deferred_strict_assembly": $uiux_channel_deferred_strict_assembly,
+    "notes": $uiux_report_notes_json,
+    "blockers": $uiux_report_blockers_json,
+    "scope": "Optional report-mode bridge to scripts/ops/friday-uiux-product-closure-readiness.mjs output; never satisfies strict MISSION_SPINE_UI_DEVICE_PROOF or full END-BAR while channel proof is deferred"
+  },
   "next_required_closure": {
     "primary_missing_evidence": "real mobile/desktop/channel UI/device consumption proof",
     "required_artifact_env": "MISSION_SPINE_UI_DEVICE_PROOF",
@@ -226,7 +261,8 @@ cat > "$report_out" <<EOF
     "report_mode_runs_live_positive_gates": false,
     "strict_mode_runs_live_positive_gates": true,
     "missing_env_in_report_mode_is_not_a_regression_of_prior_strict_live_proof": true,
-    "report_mode_can_satisfy_deepseek_from_last_backend_live_proof": true
+    "report_mode_can_satisfy_deepseek_from_last_backend_live_proof": true,
+    "uiux_non_channel_report_never_satisfies_strict_ui_device_proof": true
   },
   "full_goal_complete": $full_goal_complete
 }

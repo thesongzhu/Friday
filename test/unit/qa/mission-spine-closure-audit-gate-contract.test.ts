@@ -11,4 +11,12 @@ describe("mission-spine closure audit gate contract", () => {
     expect(script).toContain("&& \"$deepseek_status\" == \"passed\" \\");
     expect(script).toContain("strict_mode_runs_live_positive_gates\": true");
   });
+
+  it("can surface UIUX non-channel closure reports without satisfying strict UI proof", () => {
+    expect(script).toContain("uiux_closure_report_in=\"${MISSION_SPINE_UIUX_CLOSURE_REPORT:-}\"");
+    expect(script).toContain("\"uiux_product_closure_report\": {");
+    expect(script).toContain("\"non_channel_status\": \"$uiux_non_channel_status\"");
+    expect(script).toContain("\"uiux_non_channel_report_never_satisfies_strict_ui_device_proof\": true");
+    expect(script).toContain("&& \"$ui_device_status\" == \"passed\"");
+  });
 });
