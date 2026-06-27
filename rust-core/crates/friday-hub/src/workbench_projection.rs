@@ -120,7 +120,7 @@ pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<
         "missionId": mission.mission_id,
         "fridayConversationId": mission.friday_conversation_id,
         "runtimeFeedStatus": "live_rust_hub_projection",
-        "statusLabels": ["stale", "offline", "error"],
+        "statusLabels": status_labels_json(&work_items),
         "tokenLedgerRunId": readback_refs.token_ledger_run_id,
         "agentSessionId": readback_refs.agent_session_id,
         "duplicatePreflight": {
@@ -257,6 +257,23 @@ fn work_items_json(work_items: &[WorkItem]) -> Vec<Value> {
         }));
     }
     rows
+}
+
+fn status_labels_json(work_items: &[WorkItem]) -> Vec<&'static str> {
+    let has_stale = work_items
+        .iter()
+        .any(|item| item.status == WorkItemStatus::FailedRetryable);
+    let has_error = work_items
+        .iter()
+        .any(|item| item.status == WorkItemStatus::FailedTerminal);
+    let mut labels = Vec::new();
+    if has_stale {
+        labels.push("stale");
+    }
+    if has_error {
+        labels.push("error");
+    }
+    labels
 }
 
 struct WorkItemRecoveryMetadata {
@@ -1380,6 +1397,23 @@ mod tests {
     }
 
     #[test]
+    fn healthy_live_projection_does_not_emit_stale_offline_or_error_labels() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        let labels = snapshot
+            .get("statusLabels")
+            .and_then(Value::as_array)
+            .expect("statusLabels array");
+
+        assert!(
+            labels.is_empty(),
+            "a successful live Rust Hub projection must not be hard-labelled stale/offline/error"
+        );
+    }
+
+    #[test]
     fn real_failed_retryable_work_item_projects_stale_retry_affordance() {
         let db = Db::open_hub(&tmp()).unwrap();
         let mission_id = seed_real_producer_mission(&db);
@@ -1418,6 +1452,25 @@ mod tests {
             Some(true)
         );
         assert_eq!(projected.get("done").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            snapshot.get("statusLabels").and_then(Value::as_array),
+            Some(&vec![json!("stale")])
+        );
+    }
+
+    #[test]
+    fn failed_terminal_work_item_projects_error_status_label() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        let mut item = db.get_work_item("autodisp-1781492033").unwrap().unwrap();
+        item.status = WorkItemStatus::FailedTerminal;
+        db.upsert_work_item(&item).unwrap();
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        assert_eq!(
+            snapshot.get("statusLabels").and_then(Value::as_array),
+            Some(&vec![json!("error")])
+        );
     }
 
     #[test]
