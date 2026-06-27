@@ -109,6 +109,31 @@ func refreshLoadsRepresentativeSnapshot() async {
       "t3_provisioning_status": snapshot?.t3ProvisioningStatus?.desktopStatusLabel ?? "",
       "device_pairing_mode": vm.devicePairing.mode.rawValue,
     ])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "skills-capability-matrix",
+    screen: "skills",
+    actionId: "desktop/skills/capability-matrix",
+    capabilityId: "desktop_skills_capability_matrix",
+    evidenceRef: "swift://desktop/skills/capability-matrix/mission_workbench_probe_20260605",
+    source: "macos_operations_viewmodel_refresh_runtime",
+    proof: [
+      "capability_count": snapshot?.capabilityStates.count ?? 0,
+      "dispatch_allowed_count": snapshot?.capabilityStates.filter(\.dispatchAllowed).count ?? 0,
+      "capability_truth_labels": snapshot?.capabilityStates.map(\.truthLabel.rawValue) ?? [],
+    ])
+  try? writeDesktopActionEvidenceIfRequested(
+    fileSuffix: "media-evidence-refs",
+    screen: "media",
+    actionId: "desktop/media/evidence-refs",
+    capabilityId: "desktop_media_link_evidence_refs",
+    evidenceRef: "swift://desktop/media/evidence-refs/mission_workbench_probe_20260605",
+    source: "macos_operations_viewmodel_refresh_runtime",
+    proof: [
+      "provider_receipt_refs": snapshot?.providerReceiptRefs ?? [],
+      "channel_receipt_refs": snapshot?.channelReceiptRefs ?? [],
+      "timeline_page_count": snapshot?.timelinePages.count ?? 0,
+      "media_adapters_live": false,
+    ])
 }
 
 @Test
