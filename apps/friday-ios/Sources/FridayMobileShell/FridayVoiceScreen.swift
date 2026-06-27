@@ -84,7 +84,7 @@ struct FridayVoiceScreen: View {
             text: readiness.voiceLoopReady ? "voice ready" : "not ready",
             bg: readiness.voiceLoopReady ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
             fg: readiness.voiceLoopReady ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
-          StatusChip(text: readiness.truthLabel, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+          truthChip(readiness.truthLabel, enabled: readiness.voiceLoopReady)
         }
         Text(readiness.summary)
           .font(.callout.weight(.medium))
@@ -131,10 +131,7 @@ struct FridayVoiceScreen: View {
                 Text(row.title)
                   .font(.caption.weight(.semibold))
                   .foregroundStyle(MobileTheme.textPrimary)
-                StatusChip(
-                  text: row.truthLabel,
-                  bg: row.enabled ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
-                  fg: row.enabled ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
+                truthChip(row.truthLabel, enabled: row.enabled)
               }
               Text(row.detail)
                 .font(.caption2)
@@ -220,6 +217,31 @@ struct FridayVoiceScreen: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       Spacer()
+    }
+  }
+
+  private func truthChip(_ truthLabel: String, enabled: Bool) -> some View {
+    StatusChip(
+      text: voiceTruthDisplayLabel(truthLabel),
+      bg: enabled ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
+      fg: enabled ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
+    .accessibilityLabel("Truth label \(truthLabel)")
+  }
+
+  private func voiceTruthDisplayLabel(_ truthLabel: String) -> String {
+    switch truthLabel {
+    case "mobile_voice_readiness_local_only":
+      return "local"
+    case "native_permission_request":
+      return "permission"
+    case "local_capture_readiness":
+      return "capture"
+    case "provider_configured":
+      return "configured"
+    case "native_voice_route_ready":
+      return "chat route"
+    default:
+      return truthLabel.replacingOccurrences(of: "_", with: " ")
     }
   }
 }
