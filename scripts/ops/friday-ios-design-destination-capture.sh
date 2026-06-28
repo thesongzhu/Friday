@@ -114,6 +114,7 @@ fi
 
 mkdir -p "${out_dir}/screenshots"
 manifest_path="${out_dir}/ios-design-destination-capture-manifest.json"
+repo_head="$(git -C "${repo_root}" rev-parse HEAD 2>/dev/null || true)"
 initial_destination="${destinations[0]}"
 initial_shot="${out_dir}/screenshots/${initial_destination}.png"
 initial_metadata="${initial_shot}.metadata.json"
@@ -211,11 +212,11 @@ for destination in "${destinations[@]}"; do
   capture_rows+=("${destination}|${shot}|${launch_log}|${screenshot_log}")
 done
 
-node - "${manifest_path}" "${mode}" "${destinations_csv}" "${udid}" "${initial_metadata}" "${mission_id}" "${capture_rows[@]}" <<'NODE'
+node - "${manifest_path}" "${mode}" "${destinations_csv}" "${udid}" "${initial_metadata}" "${mission_id}" "${repo_head}" "${capture_rows[@]}" <<'NODE'
 const { createHash } = require("node:crypto");
 const { existsSync, readFileSync, writeFileSync } = require("node:fs");
 
-const [manifestPath, mode, destinationsCsv, simulatorUdid, initialMetadataPath, missionIdOverride, ...rows] = process.argv.slice(2);
+const [manifestPath, mode, destinationsCsv, simulatorUdid, initialMetadataPath, missionIdOverride, repoHead, ...rows] = process.argv.slice(2);
 const sha256 = (target) => createHash("sha256").update(readFileSync(target)).digest("hex");
 const captures = rows.map((row) => {
   const [destination, screenshot, launchLog, screenshotLog] = row.split("|");
@@ -264,6 +265,7 @@ const manifest = {
   truth_label: "ios_selected_design_destination_capture_not_live_closure",
   status: validationErrors.length === 0 ? "ready" : "failed",
   generated_at_utc: new Date().toISOString(),
+  repo_head: repoHead || null,
   mode,
   bundle_id: "com.friday.shell",
   simulator_udid: simulatorUdid,
