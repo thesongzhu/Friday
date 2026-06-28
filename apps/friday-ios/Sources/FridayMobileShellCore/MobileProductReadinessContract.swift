@@ -153,9 +153,13 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
       return contract(
         title: "Missions",
         systemImage: "list.bullet.rectangle",
-        tier: .liveReadProjection,
-        runtimeActionIds: ["mobile/missions/read"],
-        blockers: [.init(.needsLiveWrite, label: "dispatch/action controls")])
+        tier: .governedActionGated,
+        runtimeActionIds: [
+          "mobile/missions/read",
+          "mobile/missions/dispatch",
+          "mobile/missions/open-chat-loop",
+        ],
+        blockers: [.init(.needsRuntimeEvidence, label: "same-run missions dispatch app proof")])
     case .session:
       return contract(
         title: "Session",

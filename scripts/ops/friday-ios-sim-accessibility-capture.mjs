@@ -57,6 +57,8 @@ const ACTION_MAP = {
   "mobile/firstlaunch/cancel": { screen: "pairing", accessibilityIds: ["friday.home.pairing-cancel-button"], event: "reconnect_stale_verified", interaction: "visible" },
   "mobile/newSession/play": { screen: "newSession", accessibilityIds: ["friday.new-session.launch-button"], event: "mission_intake_submitted", interaction: "visible" },
   "mobile/newSession/open-chat-loop": { screen: "newSession", accessibilityIds: ["friday.new-session.open-chat-loop"], event: "mission_intake_ready", interaction: "visible" },
+  "mobile/missions/dispatch": { screen: "missions", accessibilityIds: ["friday.missions.dispatch-button"], event: "mission_intake_submitted", interaction: "visible" },
+  "mobile/missions/open-chat-loop": { screen: "missions", accessibilityIds: ["friday.missions.open-chat-loop"], event: "mission_intake_ready", interaction: "visible" },
   "mobile/approval/check": { screen: "fridayChat", accessibilityIds: ["friday.chat.approval.approve", "friday.session.control.resume"], event: "proof_receipt_visible_before_done", interaction: "visible" },
   "mobile/approval/reject": { screen: "fridayChat", accessibilityIds: ["friday.chat.approval.reject", "friday.session.control.reject"], event: "provider_ack_not_done_visible", interaction: "visible" },
   "mobile/memory/confirm": { screen: "memory", accessibilityIds: ["friday.memory.confirm-candidate", "friday.chat.memory-card.keep"], event: "same_mission_projection_visible", interaction: "visible" },

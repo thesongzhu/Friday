@@ -113,19 +113,26 @@ private enum ProjectionSurface {
 struct FridayProjectionScreen: View {
   let destination: MobileDestination
   @ObservedObject var viewModel: HomeViewModel
+  var onOpenFridayChat: (ChatLaunchContext) -> Void = { _ in }
   var onOpenPairing: () -> Void = {}
+  @State private var missionDispatchIntent = ""
+  @StateObject private var missionDispatch: NewSessionViewModel
   @StateObject private var pushNotifications: PushNotificationReadinessViewModel
 
   @MainActor
   init(
     destination: MobileDestination,
     viewModel: HomeViewModel,
+    missionClient: (any FridayMissionSpineWriteClient)? = nil,
+    onOpenFridayChat: @escaping (ChatLaunchContext) -> Void = { _ in },
     onOpenPairing: @escaping () -> Void = {},
     pushNotifications: PushNotificationReadinessViewModel? = nil
   ) {
     self.destination = destination
     self.viewModel = viewModel
+    self.onOpenFridayChat = onOpenFridayChat
     self.onOpenPairing = onOpenPairing
+    _missionDispatch = StateObject(wrappedValue: NewSessionViewModel(client: missionClient))
     _pushNotifications = StateObject(wrappedValue: pushNotifications
       ?? PushNotificationReadinessViewModel(authorizer: SystemPushNotificationAuthorizer()))
   }
@@ -209,6 +216,7 @@ struct FridayProjectionScreen: View {
       switch surface {
       case .missions:
         missionCard(projection)
+        missionDispatchCard(projection)
         workItemsCard(projection)
       case .needsMe:
         needsMeCard(projection)
@@ -366,6 +374,90 @@ struct FridayProjectionScreen: View {
       }
     }
     .accessibilityIdentifier("friday.missions.read")
+  }
+
+  private func missionDispatchCard(_ projection: HomeProjection) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
+        cardHeader("Dispatch", count: nil)
+        Text("Create governed work from the current mission context. This uses the same Mission Intake write seam as New Session; it does not bypass approval or invent provider results.")
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+        TextField("What should Friday do next?", text: $missionDispatchIntent, axis: .vertical)
+          .lineLimit(2...4)
+          .textInputAutocapitalization(.sentences)
+          .font(.subheadline)
+          .padding(10)
+          .background(Color.white.opacity(0.54), in: RoundedRectangle(cornerRadius: 8))
+          .accessibilityIdentifier("friday.missions.dispatch-input")
+        Button {
+          let goal = missionDispatchIntent.trimmingCharacters(in: .whitespacesAndNewlines)
+          Task { await missionDispatch.launch(intent: goal) }
+        } label: {
+          Label("Dispatch Mission", systemImage: "play.fill")
+            .frame(maxWidth: .infinity, minHeight: 38)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(MobileTheme.cyan)
+        .disabled(missionDispatchIntent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || missionDispatchInFlight)
+        .accessibilityIdentifier("friday.missions.dispatch-button")
+        missionDispatchState
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var missionDispatchState: some View {
+    switch missionDispatch.launchState {
+    case .idle:
+      EmptyView()
+    case .launching:
+      HStack(spacing: 10) {
+        ProgressView()
+        Text("Submitting Mission Intake")
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textSecondary)
+      }
+      .accessibilityIdentifier("friday.missions.dispatch-submitting")
+    case .launched(let summary, let missionId, let workItemId, let surfaceThreadId, let status, let createdOrReady):
+      let context = ChatLaunchContext(
+        source: "Missions",
+        missionId: missionId,
+        workItemId: workItemId,
+        surfaceThreadId: surfaceThreadId,
+        status: status,
+        createdOrReady: createdOrReady)
+      VStack(alignment: .leading, spacing: 8) {
+        Text(summary)
+          .font(.caption)
+          .foregroundStyle(MobileTheme.textPrimary)
+        RefPill(label: "mission_id", ref: missionId)
+        RefPill(label: "work_item_id", ref: workItemId)
+        RefPill(label: "action", ref: "mobile/missions/dispatch")
+        Button {
+          onOpenFridayChat(context)
+        } label: {
+          Label("Continue in Friday Chat", systemImage: "bubble.left.and.bubble.right")
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .tint(MobileTheme.cyan)
+        .accessibilityIdentifier("friday.missions.open-chat-loop")
+      }
+      .accessibilityIdentifier("friday.missions.dispatch-ready")
+    case .blocked(let reason):
+      Text(reason)
+        .font(.caption)
+        .foregroundStyle(MobileTheme.coral)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("friday.missions.dispatch-blocked")
+    }
+  }
+
+  private var missionDispatchInFlight: Bool {
+    if case .launching = missionDispatch.launchState { return true }
+    return false
   }
 
   private func workItemsCard(_ projection: HomeProjection) -> some View {
