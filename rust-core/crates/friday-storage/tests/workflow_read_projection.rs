@@ -106,7 +106,7 @@ fn tampered_step_status_outside_the_engine_vocabulary_fails_the_listing_closed()
     workflow::add_step(db.conn(), "r1:s0", "r1", 0, false, 1).unwrap();
     db.conn()
         .execute(
-            "UPDATE workflow_step SET status = '/Users/jarvis/leak' WHERE step_id = 'r1:s0'",
+            "UPDATE workflow_step SET status = '/Users/example/leak' WHERE step_id = 'r1:s0'",
             [],
         )
         .unwrap();
@@ -117,7 +117,7 @@ fn tampered_step_status_outside_the_engine_vocabulary_fails_the_listing_closed()
         "expected the closed-vocab rejection, got: {msg}"
     );
     // The tampered value itself is never echoed into the error.
-    assert!(!msg.contains("/Users/jarvis/leak"));
+    assert!(!msg.contains("/Users/example/leak"));
 }
 
 #[test]

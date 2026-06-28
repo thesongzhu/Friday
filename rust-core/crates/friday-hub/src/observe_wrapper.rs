@@ -446,7 +446,7 @@ mod tests {
             &session_id,
             "thread/1",
             "gpt-5.5",
-            Some("/Users/jarvis/Projects/Friday"),
+            Some("/Users/example/Projects/Friday"),
             10,
         )
         .unwrap();
@@ -527,7 +527,7 @@ mod tests {
                 matched_claim_id: "claim-codex-provider-session",
                 expected_mission_id: "mission-observe",
                 expected_work_item_id: Some("work-observe"),
-                cwd_ref: "/Users/jarvis/Projects/Friday",
+                cwd_ref: "/Users/example/Projects/Friday",
                 observed_at: 20,
                 provider_session_ref: Some("friday://provider-session/codex-observe-test"),
             },
@@ -589,7 +589,7 @@ mod tests {
                     "claim-codex-provider-session".into(),
                 ],
             },
-            "/Users/jarvis/Projects/Friday",
+            "/Users/example/Projects/Friday",
             22,
         )
         .unwrap();
@@ -659,7 +659,7 @@ mod tests {
                     matched_claim_id: claim_id,
                     expected_mission_id: "mission-observe",
                     expected_work_item_id,
-                    cwd_ref: "/Users/jarvis/Projects/Friday",
+                    cwd_ref: "/Users/example/Projects/Friday",
                     observed_at: 21,
                     provider_session_ref: None,
                 },

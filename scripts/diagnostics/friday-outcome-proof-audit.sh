@@ -14,14 +14,14 @@
 #
 set -euo pipefail
 
-readonly RUST_HUB_DB="${FRIDAY_HUB_AGENT_RUN_DB_PATH:-/Users/jarvis/Library/Application Support/Friday/state/rust-hub.sqlite}"
+readonly RUST_HUB_DB="${FRIDAY_HUB_AGENT_RUN_DB_PATH:-${HOME}/Library/Application Support/Friday/state/rust-hub.sqlite}"
 readonly SINCE_MS="${FRIDAY_OUTCOME_PROOF_AUDIT_SINCE_MS:-0}"
 readonly ALLOW_UNSCOPED="${FRIDAY_OUTCOME_PROOF_AUDIT_ALLOW_UNSCOPED:-0}"
 readonly REQUIRED_RECEIPTS="${FRIDAY_OUTCOME_PROOF_AUDIT_REQUIRED_RECEIPTS:-1}"
 
 SQLITE_BIN="$(command -v sqlite3 || true)"
-if [ -z "${SQLITE_BIN}" ] && [ -x "/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3" ]; then
-  SQLITE_BIN="/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3"
+if [ -z "${SQLITE_BIN}" ] && [ -x "${ANDROID_HOME:-${HOME}/Library/Android/sdk}/platform-tools/sqlite3" ]; then
+  SQLITE_BIN="${ANDROID_HOME:-${HOME}/Library/Android/sdk}/platform-tools/sqlite3"
 fi
 
 require_nonnegative_int() {

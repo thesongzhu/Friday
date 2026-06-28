@@ -611,7 +611,7 @@ mod tests {
     fn forbidden_output_guard_blocks_task_body_and_secret_markers() {
         assert!(reject_forbidden_output(r#"{"task":"raw run body"}"#).is_err());
         assert!(reject_forbidden_output(r#"{"x":"Bearer abc"}"#).is_err());
-        assert!(reject_forbidden_output(r#"{"k":"/Users/jarvis/secret"}"#).is_err());
+        assert!(reject_forbidden_output(r#"{"k":"/Users/example/secret"}"#).is_err());
         // A RELATIVE filename inside an event kind is allowed (not over-redacted).
         assert!(reject_forbidden_output(
             r#"{"event_kinds":["tool.executed:read 15 bytes from notes.md"],"ok":true}"#

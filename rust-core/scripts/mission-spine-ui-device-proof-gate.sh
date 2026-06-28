@@ -42,7 +42,7 @@ reject_secret_leaks() {
     "provider-token" \
     "raw-chat" \
     "raw transcript" \
-    "/Users/jarvis/private"
+    "/Users/example/private"
   do
     if contains_fixed_string "$forbidden" "$target"; then
       echo "BLOCKER: UI/device ${label} leaked forbidden marker: $forbidden" >&2

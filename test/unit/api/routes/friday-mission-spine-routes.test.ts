@@ -689,7 +689,7 @@ describe("createFridayMissionSpineRoutes", () => {
           index === 0
             ? {
               ...event,
-              summary: "Leaked local path /Users/jarvis/private/session.log",
+              summary: "Leaked local path /Users/example/private/session.log",
               proofRef: "/private/tmp/provider-proof.json",
             }
             : event

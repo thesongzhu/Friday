@@ -20,7 +20,7 @@ fn link() -> ProviderSessionLink {
         provider: "codex".into(),
         account_key_hash: "account-hash-never-project".into(), // pragma: allowlist secret
         workspace_id: "workspace-alpha".into(),
-        cwd: Some("/Users/jarvis/private/project".into()),
+        cwd: Some("/Users/example/private/project".into()),
         external_session_id: Some("provider-session-id".into()),
         external_thread_id: Some("provider-thread-id".into()),
         external_url: Some("https://provider.example/private/thread".into()),
@@ -105,7 +105,7 @@ fn link_round_trips_and_projection_redacts_hub_only_fields() {
     let rendered = format!("{:?}", projections[0]);
     for forbidden in [
         "account-hash-never-project",
-        "/Users/jarvis/private/project",
+        "/Users/example/private/project",
         "provider-session-id",
         "provider-thread-id",
         "https://provider.example/private/thread",

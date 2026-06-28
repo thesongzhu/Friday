@@ -54,7 +54,7 @@ const requireRuntimeActions = args.includes("--require-runtime-actions");
 const requireUiDeviceProof = args.includes("--require-ui-device-proof");
 const deferChannelProof = args.includes("--defer-channel-proof") || process.env.FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF === "1";
 const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new URL("../..", import.meta.url).pathname);
-const designRoot = resolve(arg("design-root") || process.env.FRIDAY_DESIGN_HANDOFF_ROOT || `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602`);
+const designRoot = resolve(arg("design-root") || process.env.FRIDAY_DESIGN_HANDOFF_ROOT || `${process.env.HOME || process.env.USERPROFILE || "."}/Desktop/friday-design-handoff-20260602`);
 const outPath = arg("out") || process.env.FRIDAY_UIUX_PRODUCT_CLOSURE_REPORT || "";
 
 const blockers = [];

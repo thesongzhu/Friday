@@ -54,7 +54,7 @@ const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new
 const designRoot = resolve(
   arg("design-root") ||
   process.env.FRIDAY_DESIGN_HANDOFF_ROOT ||
-  `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602`,
+  `${process.env.HOME || process.env.USERPROFILE || "."}/Desktop/friday-design-handoff-20260602`,
 );
 const evidenceDirs = [
   ...argsAll("evidence-dir"),

@@ -2154,9 +2154,9 @@ describe("FridayAgentRoutes", () => {
         id: "run-private-1",
         providerId: "provider-secret-1",
         model: "provider-model-secret",
-        artifactDir: "/Users/jarvis/private/friday/run-private-1",
+        artifactDir: "/Users/example/private/friday/run-private-1",
         artifacts: [
-          { type: "response", path: "/Users/jarvis/private/friday/run-private-1/response.md" },
+          { type: "response", path: "/Users/example/private/friday/run-private-1/response.md" },
         ],
         actualExecution: {
           requestedProviderId: "provider-secret-1",
@@ -2194,7 +2194,7 @@ describe("FridayAgentRoutes", () => {
       const encoded = JSON.stringify(result);
       expect(encoded).not.toContain("provider-secret");
       expect(encoded).not.toContain("provider-model-secret");
-      expect(encoded).not.toContain("/Users/jarvis/private");
+      expect(encoded).not.toContain("/Users/example/private");
       expect(encoded).not.toContain("idem-secret");
       expect(encoded).not.toContain("principal-secret");
       expect(result).toMatchObject({
@@ -2492,9 +2492,9 @@ describe("FridayAgentRoutes", () => {
       const run = createStubRun({
         status: "executing",
         providerId: "provider-secret-1",
-        artifactDir: "/Users/jarvis/private/friday/run-1",
+        artifactDir: "/Users/example/private/friday/run-1",
         artifacts: [
-          { type: "response", path: "/Users/jarvis/private/friday/run-1/response.md" },
+          { type: "response", path: "/Users/example/private/friday/run-1/response.md" },
         ],
       });
       stubDeps.getRun = vi.fn().mockReturnValue(run);
@@ -2508,7 +2508,7 @@ describe("FridayAgentRoutes", () => {
             runId: "run-1",
             toolCallId: "call-1",
             toolName: "shell",
-            params: { command: "cat /Users/jarvis/private/secret.txt" },
+            params: { command: "cat /Users/example/private/secret.txt" },
           },
           emittedAt: "2026-01-01T00:00:01.000Z",
           createdAt: "2026-01-01T00:00:01.000Z",
@@ -2529,7 +2529,7 @@ describe("FridayAgentRoutes", () => {
 
       const encoded = JSON.stringify(result);
       expect(encoded).not.toContain("provider-secret");
-      expect(encoded).not.toContain("/Users/jarvis/private");
+      expect(encoded).not.toContain("/Users/example/private");
       expect(encoded).not.toContain("secret.txt");
       expect(result).toMatchObject({
         streaming: false,

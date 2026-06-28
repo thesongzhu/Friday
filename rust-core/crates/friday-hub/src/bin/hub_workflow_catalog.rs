@@ -848,7 +848,7 @@ mod tests {
         // marker cannot reach stdout through them at all.
         let db = fresh_db("marker");
         let name = "Bearer canary-name";
-        let desc = "/Users/jarvis/secret";
+        let desc = "/Users/example/secret";
         let created = ok_value(
             &db,
             "create",
@@ -1009,7 +1009,7 @@ mod tests {
         assert!(reject_forbidden_output(r#"{"source_meta":"{}"}"#).is_err());
         // Secret/path markers blocked.
         assert!(reject_forbidden_output(r#"{"x":"Bearer abc"}"#).is_err());
-        assert!(reject_forbidden_output(r#"{"k":"/Users/jarvis/x"}"#).is_err());
+        assert!(reject_forbidden_output(r#"{"k":"/Users/example/x"}"#).is_err());
         // The bounded projections + safe refs pass.
         assert!(reject_forbidden_output(
             r#"{"name_sha256":"ab","name_len":2,"slug_sha256":"cd","revision":1,"etag":"00","deployed_version":1}"#

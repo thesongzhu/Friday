@@ -27,7 +27,7 @@ if (args.includes("--help") || args.includes("-h")) {
 }
 
 const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new URL("../..", import.meta.url).pathname);
-const designRoot = resolve(arg("design-root") || process.env.FRIDAY_DESIGN_HANDOFF_ROOT || `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602`);
+const designRoot = resolve(arg("design-root") || process.env.FRIDAY_DESIGN_HANDOFF_ROOT || `${process.env.HOME || process.env.USERPROFILE || "."}/Desktop/friday-design-handoff-20260602`);
 const outPath = arg("out") || process.env.FRIDAY_UIUX_NATIVE_LINKAGE_REPORT || "";
 const requireComplete = args.includes("--require-complete");
 

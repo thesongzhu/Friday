@@ -730,7 +730,7 @@ mod tests {
         assert!(reject_forbidden_output(r#"{"source_meta":"{}"}"#).is_err());
         assert!(reject_forbidden_output(r#"{"evidence_ref":"read 3 bytes"}"#).is_err());
         assert!(reject_forbidden_output(r#"{"x":"Bearer abc"}"#).is_err());
-        assert!(reject_forbidden_output(r#"{"k":"/Users/jarvis/x"}"#).is_err());
+        assert!(reject_forbidden_output(r#"{"k":"/Users/example/x"}"#).is_err());
         // The refs-only key shapes pass.
         assert!(reject_forbidden_output(
             r#"{"status":"completed","step_count":2,"verified_count":2}"#

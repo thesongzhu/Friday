@@ -44,15 +44,15 @@ readonly TS_HUB="http://127.0.0.1:3141"
 # would 400 at validateRequestedRoute's exact-id match, so we use the UUID).
 readonly DEEPSEEK_PROVIDER_ID="fa15f1fe-a0b6-4f79-96c3-4ae8e1be28a4"
 readonly DEEPSEEK_MODEL="deepseek-v4-flash"
-readonly RUST_HUB_DB="/Users/jarvis/Library/Application Support/Friday/state/rust-hub.sqlite"
+readonly RUST_HUB_DB="${HOME}/Library/Application Support/Friday/state/rust-hub.sqlite"
 # The exact 4-tool read-only allowlist the qualifier predicate requires (clause 4).
 readonly PONG_TASK="Reply with exactly one JSON object and nothing else: {\"tool\":\"none\",\"answer\":\"PONG\"}"
 
 # Prefer a sqlite3 on PATH; fall back to the Android platform-tools one present
 # on this box. Read-only immutable opens only.
 SQLITE_BIN="$(command -v sqlite3 || true)"
-if [ -z "${SQLITE_BIN}" ] && [ -x "/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3" ]; then
-  SQLITE_BIN="/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3"
+if [ -z "${SQLITE_BIN}" ] && [ -x "${ANDROID_HOME:-${HOME}/Library/Android/sdk}/platform-tools/sqlite3" ]; then
+  SQLITE_BIN="${ANDROID_HOME:-${HOME}/Library/Android/sdk}/platform-tools/sqlite3"
 fi
 
 # ─── Preflight: required tooling + listeners ───

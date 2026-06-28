@@ -261,7 +261,7 @@ mod tests {
         assert!(reject_forbidden_output(r#"{"content":"raw memory body"}"#).is_err());
         assert!(reject_forbidden_output(r#"{"message_text":"raw msg"}"#).is_err());
         assert!(reject_forbidden_output(r#"{"x":"Bearer abc"}"#).is_err());
-        assert!(reject_forbidden_output(r#"{"k":"/Users/jarvis/secret"}"#).is_err());
+        assert!(reject_forbidden_output(r#"{"k":"/Users/example/secret"}"#).is_err());
         assert!(reject_forbidden_output(r#"{"k":"sk-deadbeef"}"#).is_err());
         // A clean counts-only payload passes.
         assert!(reject_forbidden_output(

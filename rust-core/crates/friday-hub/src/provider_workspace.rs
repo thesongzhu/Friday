@@ -1230,7 +1230,7 @@ mod tests {
             "sk-",
             "provider-token",
             "account-hash",
-            "/Users/jarvis/private",
+            "/Users/example/private",
             "external-thread",
             "https://provider.example/private",
             "rm -rf",

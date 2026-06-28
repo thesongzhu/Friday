@@ -2522,7 +2522,7 @@ mod tests {
             "answer body",
             "raw transcript",
             "sk-",
-            "/Users/jarvis/private",
+            "/Users/example/private",
         ] {
             assert!(
                 !json.contains(forbidden),
@@ -2568,7 +2568,7 @@ mod tests {
             "proof_receipt",
             "completed_with_proof",
             "sk-",
-            "/Users/jarvis/private",
+            "/Users/example/private",
         ] {
             assert!(
                 !json.contains(forbidden),
@@ -2704,7 +2704,7 @@ mod tests {
         for forbidden in [
             "sk-",
             "account-hash",
-            "/Users/jarvis/private",
+            "/Users/example/private",
             "external-thread",
             "https://provider.example/private",
             "raw command body",
@@ -2741,7 +2741,7 @@ mod tests {
                 "rm -rf",
                 "sk-",
                 "provider-token",
-                "/Users/jarvis/private",
+                "/Users/example/private",
                 "https://provider.example/private",
             ] {
                 assert!(
@@ -2765,7 +2765,7 @@ mod tests {
         assert!(json.contains("\"status\":\"active\""));
         for forbidden in [
             "account-hash",
-            "/Users/jarvis/private",
+            "/Users/example/private",
             "external-session",
             "external-thread",
             "https://provider.example/private",
@@ -2801,7 +2801,7 @@ mod tests {
         assert!(!json.contains("\"status\":\"completed_with_proof\""));
         for forbidden in [
             "account-hash",
-            "/Users/jarvis/private",
+            "/Users/example/private",
             "external-session",
             "external-thread",
             "https://provider.example/private",
@@ -2833,7 +2833,7 @@ mod tests {
             "telegram:raw-chat-id",
             "raw transcript",
             "sk-",
-            "/Users/jarvis/private",
+            "/Users/example/private",
         ] {
             assert!(
                 !json.contains(forbidden),
@@ -3048,7 +3048,7 @@ mod tests {
             provider: "codex".into(),
             account_key_hash: "account-hash".into(), // pragma: allowlist secret
             workspace_id: "workspace".into(),
-            cwd: Some("/Users/jarvis/private".into()),
+            cwd: Some("/Users/example/private".into()),
             external_session_id: Some("external-session".into()),
             external_thread_id: Some("external-thread".into()),
             external_url: Some("https://provider.example/private".into()),
@@ -3064,7 +3064,7 @@ mod tests {
         assert!(json.contains("provider_app_server_local"));
         for forbidden in [
             "account-hash",
-            "/Users/jarvis/private",
+            "/Users/example/private",
             "external-session",
             "external-thread",
             "https://provider.example/private",
@@ -3488,7 +3488,7 @@ mod tests {
             "raw transcript",
             "provider-thread",
             "sk-",
-            "/Users/jarvis/private",
+            "/Users/example/private",
         ] {
             assert!(
                 !json.contains(forbidden),
@@ -3545,7 +3545,7 @@ mod tests {
     #[test]
     fn agent_run_paused_is_refs_only_and_round_trips() {
         // Paused carries the nonce + digest + a coarse summary — NEVER a body/args.
-        const ARGS: &str = "rm -rf /Users/jarvis/private/secret";
+        const ARGS: &str = "rm -rf /Users/example/private/secret";
         let msg = Message::AgentRunPaused {
             run_id: "run-1".into(),
             nonce: "a".repeat(64),

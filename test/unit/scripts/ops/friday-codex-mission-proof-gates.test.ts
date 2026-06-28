@@ -1085,7 +1085,7 @@ describe("Codex mission proof gates", () => {
       'check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}"',
     );
     expect(proofSource).toContain(
-      'check_optional_plist_path_contains "${TS_HUB_LAUNCH_PLIST}" "PATH" "/Users/jarvis/.local/bin"',
+      'check_optional_plist_path_contains "${TS_HUB_LAUNCH_PLIST}" "PATH" "${HOME}/.local/bin"',
     );
     expect(proofSource).toContain(
       'if TS_HUB_NODE_BIN="$(plist_optional_env_value "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_NODE_BIN")"; then',
@@ -1118,7 +1118,7 @@ describe("Codex mission proof gates", () => {
       'require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}"',
     );
     expect(proofSource).toContain(
-      'require_launchctl_path_contains "${TS_HUB_LAUNCHCTL_PRINT}" "PATH" "/Users/jarvis/.local/bin"',
+      'require_launchctl_path_contains "${TS_HUB_LAUNCHCTL_PRINT}" "PATH" "${HOME}/.local/bin"',
     );
     expect(proofSource).toContain(
       'TS_HUB_RUNTIME_NODE_BIN="$(launchctl_env_value "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_NODE_BIN" "TS hub")"',

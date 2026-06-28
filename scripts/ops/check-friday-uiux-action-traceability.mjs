@@ -57,7 +57,7 @@ if (args.includes("--help") || args.includes("-h")) {
 const requireRuntimeEvidence = args.includes("--require-runtime-evidence");
 const compact = args.includes("--compact");
 const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new URL("../..", import.meta.url).pathname);
-const designRoot = resolve(arg("design-root") || process.env.FRIDAY_DESIGN_HANDOFF_ROOT || `${process.env.HOME || "/Users/jarvis"}/Desktop/friday-design-handoff-20260602`);
+const designRoot = resolve(arg("design-root") || process.env.FRIDAY_DESIGN_HANDOFF_ROOT || `${process.env.HOME || process.env.USERPROFILE || "."}/Desktop/friday-design-handoff-20260602`);
 const defaultContractAnnex = resolve(repoRoot, "docs/friday-uiux-product-runtime-action-annex.md");
 const contractAnnexPaths = [
   ...(existingFile(defaultContractAnnex) ? [defaultContractAnnex] : []),
