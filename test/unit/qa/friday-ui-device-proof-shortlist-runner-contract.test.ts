@@ -105,6 +105,17 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("if [ -s \"${gap_manifest}\" ]; then");
   });
 
+  it("derives summary fullProofGaps from the latest gap report instead of stale bundle defaults", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("\"${readiness_out}\" \"${gap_out}\"");
+    expect(source).toContain("const gapReport = readOptionalJson(gapReportPath)");
+    expect(source).toContain("function deriveFullProofGaps(bundle, gapReport)");
+    expect(source).toContain("if (isChannelDeferredOnly(gapReport)) return [\"same_mission_mobile_desktop_channel_capture\"]");
+    expect(source).toContain("initialFullProofGaps: bundle.fullProofGaps || []");
+    expect(source).toContain("fullProofGaps,");
+  });
+
   it("lets readiness derive workbench events while channel proof is deferred", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-readiness.sh", "utf8");
 

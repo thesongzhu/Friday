@@ -669,9 +669,9 @@ if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_c
   gap_status="written"
 fi
 
-node - "${summary_out}" "${bundle_index}" "${product_closure_out}" "${readiness_out}" "${capture_dir_status}" "${gap_status}" "${gap_event_status}" "${accessibility_capture_status}" "${stress_capture_status}" "${workbench_timeline_status}" <<'NODE'
+node - "${summary_out}" "${bundle_index}" "${product_closure_out}" "${readiness_out}" "${gap_out}" "${capture_dir_status}" "${gap_status}" "${gap_event_status}" "${accessibility_capture_status}" "${stress_capture_status}" "${workbench_timeline_status}" <<'NODE'
 const fs = require("node:fs");
-const [summaryOut, bundleIndexPath, productClosurePath, readinessPath, captureDirStatus, gapStatus, gapEventStatus, accessibilityCaptureStatus, stressCaptureStatus, workbenchTimelineStatus] = process.argv.slice(2);
+const [summaryOut, bundleIndexPath, productClosurePath, readinessPath, gapReportPath, captureDirStatus, gapStatus, gapEventStatus, accessibilityCaptureStatus, stressCaptureStatus, workbenchTimelineStatus] = process.argv.slice(2);
 function parseJsonSuffix(text) {
   const trimmed = String(text || "").trim();
   if (!trimmed) throw new Error("empty JSON input");
@@ -694,9 +694,65 @@ function parseJsonSuffix(text) {
   throw new Error("no parseable JSON object suffix");
 }
 const readJson = (path) => parseJsonSuffix(fs.readFileSync(path, "utf8"));
+const readOptionalJson = (path) => {
+  if (!path || !fs.existsSync(path)) return null;
+  return readJson(path);
+};
+const add = (set, value) => {
+  if (value) set.add(value);
+};
+function isChannelDeferredOnly(gapReport) {
+  const gaps = gapReport?.gaps || {};
+  const blockers = Array.isArray(gapReport?.blockers) ? gapReport.blockers : [];
+  const missing = [
+    ...(Array.isArray(gaps.missingObservations) ? gaps.missingObservations : []),
+    ...(Array.isArray(gaps.missingOrderEvents) ? gaps.missingOrderEvents : []),
+    ...(Array.isArray(gaps.missingChecks) ? gaps.missingChecks : []),
+  ];
+  const deferredCount = [
+    ...(Array.isArray(gaps.deferredObservations) ? gaps.deferredObservations : []),
+    ...(Array.isArray(gaps.deferredOrderEvents) ? gaps.deferredOrderEvents : []),
+    ...(Array.isArray(gaps.deferredChecks) ? gaps.deferredChecks : []),
+  ].length;
+  return blockers.length === 0 && missing.length === 0 && deferredCount > 0;
+}
+function gapNameFor(value) {
+  const text = typeof value === "string" ? value : JSON.stringify(value || {});
+  if (text.includes("channel")) return "same_mission_mobile_desktop_channel_capture";
+  if (text.includes("bounded_page") || text.includes("timeline")) return "bounded_timeline_capture";
+  if (text.includes("pressure_20_50")) return "pressure_20_50_consecutive_asks";
+  if (text.includes("invalid_key") || text.includes("quota") || text.includes("network") || text.includes("reconnect")) {
+    return "error_quota_network_replay_reconnect_observations";
+  }
+  if (text.includes("secret") || text.includes("hidden_fallback") || text.includes("fallback")) {
+    return "secret_leak_and_hidden_fallback_negative_controls";
+  }
+  return "strict_observations_manifest_from_same_run_events";
+}
+function deriveFullProofGaps(bundle, gapReport) {
+  const fallback = Array.isArray(bundle?.fullProofGaps) ? bundle.fullProofGaps : [];
+  if (!gapReport || typeof gapReport !== "object") return fallback;
+  if (gapReport.status === "complete_inputs_observed") return [];
+  if (isChannelDeferredOnly(gapReport)) return ["same_mission_mobile_desktop_channel_capture"];
+
+  const gaps = gapReport.gaps || {};
+  const result = new Set();
+  for (const row of Array.isArray(gaps.missingObservations) ? gaps.missingObservations : []) add(result, gapNameFor(row));
+  for (const row of Array.isArray(gaps.missingOrderEvents) ? gaps.missingOrderEvents : []) add(result, gapNameFor(row));
+  for (const row of Array.isArray(gaps.missingChecks) ? gaps.missingChecks : []) add(result, gapNameFor(row));
+  const stress = gaps.stress || {};
+  if (stress.pressureAskCountOk === false) add(result, "pressure_20_50_consecutive_asks");
+  if (stress.timelinePageCountOk === false) add(result, "bounded_timeline_capture");
+  if (Array.isArray(gapReport.supplementalEvidenceRefs) && gapReport.supplementalEvidenceRefs.length > 0) {
+    add(result, "strict_observations_manifest_from_same_run_events");
+  }
+  return [...result].sort();
+}
 const bundle = readJson(bundleIndexPath);
 const closure = readJson(productClosurePath);
 const readiness = readJson(readinessPath);
+const gapReport = readOptionalJson(gapReportPath);
+const fullProofGaps = deriveFullProofGaps(bundle, gapReport);
 const summary = {
   truth: "ui_device_shortlist_runner_summary_not_endbar_not_adoption",
   status: readiness.status === "pass" ? "strict_ui_device_ready" : "partial_ready",
@@ -712,7 +768,10 @@ const summary = {
   uiDeviceProofReadiness: closure.stages?.uiDeviceProofReadiness || null,
   readinessStatus: readiness.status,
   readinessBlockers: readiness.blockers || [],
-  fullProofGaps: bundle.fullProofGaps || [],
+  gapReportStatus: gapReport?.status || null,
+  gapReportPath: gapReportPath || null,
+  initialFullProofGaps: bundle.fullProofGaps || [],
+  fullProofGaps,
   caveat: "Runner output is END-BAR only if strict UI/device readiness passes with real channel, timeline, stress, and negative-control evidence. Partial mobile+desktop live write/read capture is not enough.",
 };
 fs.writeFileSync(summaryOut, `${JSON.stringify(summary, null, 2)}\n`);
