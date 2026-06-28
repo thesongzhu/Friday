@@ -17,6 +17,68 @@ async function writeExecutable(filePath: string, content: string) {
 }
 
 describe("friday-ios-design-destination-capture runner", () => {
+  it("defaults selected design captures to design-proof-sample mode", async () => {
+    const root = process.cwd();
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "friday-ios-capture-design-default-"));
+    const binDir = path.join(tempRoot, "bin");
+    const outDir = path.join(tempRoot, "capture");
+
+    await writeExecutable(path.join(binDir, "xcrun"), `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "simctl" ] && [ "$2" = "list" ]; then
+  echo "== Devices =="
+  echo "-- iOS Test --"
+  echo "    iPhone Test (${fakeUdid}) (Booted)"
+  exit 0
+fi
+if [ "$1" = "simctl" ] && [ "$2" = "launch" ]; then
+  echo "launched $*"
+  exit 0
+fi
+if [ "$1" = "simctl" ] && [ "$2" = "io" ] && [ "$4" = "screenshot" ]; then
+  printf 'fake-png-%s\\n' "$5" > "$5"
+  exit 0
+fi
+echo "unexpected xcrun $*" >&2
+exit 64
+`);
+
+    const { stdout } = await execFileAsync(
+      "bash",
+      [
+        path.join(root, script),
+        "--out-dir",
+        outDir,
+        "--destinations",
+        "home,session",
+        "--skip-initial-build",
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          FRIDAY_IOS_DESIGN_CAPTURE_SETTLE_SECONDS: "0",
+        },
+      },
+    );
+
+    expect(stdout).toContain("PASS - selected iOS design destinations captured.");
+    const manifest = JSON.parse(
+      await fs.readFile(path.join(outDir, "ios-design-destination-capture-manifest.json"), "utf8"),
+    ) as {
+      mode: string;
+      caveat: string;
+      relaunch_contract: string;
+    };
+    expect(manifest.mode).toBe("design-proof-sample");
+    expect(manifest.caveat).toContain("offline-truth is negative control only");
+    expect(manifest.relaunch_contract).toContain("design-proof sample");
+    await expect(fs.readFile(path.join(outDir, "screenshots", "session.launch.txt"), "utf8"))
+      .resolves.toContain("--design-proof-sample");
+  });
+
   it("captures multiple offline destinations with skip-initial-build under set -u", async () => {
     const root = process.cwd();
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "friday-ios-capture-runner-"));

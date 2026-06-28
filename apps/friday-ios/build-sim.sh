@@ -28,6 +28,7 @@ Usage:
   apps/friday-ios/build-sim.sh [screenshot-path]
   apps/friday-ios/build-sim.sh --mode offline-truth [--destination pairing] [--shot screenshot-path]
   apps/friday-ios/build-sim.sh --mode live-loopback [--destination pairing] [--shot screenshot-path]
+  apps/friday-ios/build-sim.sh --mode design-proof-sample [--destination pairing] [--shot screenshot-path]
 
 Modes:
   offline-truth  Default. Launches with all FRIDAY_MOBILE_LIVE_* gates OFF and proves the
@@ -35,6 +36,9 @@ Modes:
   live-loopback  Explicit local proof mode. Launches with the existing simulator live gates ON
                  (read/write/pairing/device-keypair) so the app attempts real loopback seams.
                  It still does not flip shipped defaults, mint trust, or hold signing keys.
+  design-proof-sample
+                 Explicit visual parity mode. Launches a labeled PreviewReadClient sample for
+                 operator-selected UI comparison only. It is not runtime proof or END-BAR.
 USAGE
 }
 
@@ -105,6 +109,9 @@ case "$MODE" in
     ;;
   live|live-loopback)
     MODE="live-loopback"
+    ;;
+  design|design-proof|design-proof-sample)
+    MODE="design-proof-sample"
     ;;
   *)
     echo "ERROR: unsupported --mode '$MODE'" >&2
@@ -207,6 +214,13 @@ case "$MODE" in
       LAUNCH_ENV+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_PORT="$FRIDAY_MOBILE_LIVE_WRITE_PORT")
     fi
     ;;
+  design-proof-sample)
+    echo "launch mode: design-proof-sample (labeled selected-design sample; no live seams)"
+    LAUNCH_ARGS=(--design-proof-sample)
+    LAUNCH_ENV=(
+      SIMCTL_CHILD_FRIDAY_MOBILE_DESIGN_PROOF_SAMPLE=1
+    )
+    ;;
 esac
 LAUNCH_CMD=(xcrun simctl launch --terminate-running-process "$UDID" com.friday.shell)
 if [[ -n "$DESTINATION" ]]; then
@@ -287,7 +301,8 @@ cat > "$SHOT.metadata.json" <<JSON
   "live_write_host_override": $LIVE_WRITE_HOST_OVERRIDE_JSON,
   "live_write_port_override": $LIVE_WRITE_PORT_OVERRIDE_JSON,
   "simulator_device_pubkey": $SIMULATOR_DEVICE_PUBKEY_JSON,
-  "caveat": "offline-truth proves honest-unavailable; live-loopback attempts real local read/write/pairing seams but does not claim END-BAR, GO-LIVE, adoption, trust minting, or operator signing."
+  "design_proof_sample_requested": $([[ "$MODE" == "design-proof-sample" ]] && echo true || echo false),
+  "caveat": "offline-truth proves honest-unavailable; design-proof-sample is labeled visual comparison only; live-loopback attempts real local read/write/pairing seams and does not claim END-BAR, GO-LIVE, adoption, trust minting, or operator signing. None of these modes claims END-BAR, GO-LIVE, adoption, trust minting, or operator signing."
 }
 JSON
 echo "screenshot: $SHOT"
@@ -295,6 +310,8 @@ echo "metadata: $SHOT.metadata.json"
 echo "VERIFY: open the screenshot and confirm the 155px Hero Pet card shows the v9 DOG (not blank)."
 if [[ "$MODE" == "offline-truth" ]]; then
   echo "VERIFY: offline-truth mode should honestly show unavailable/disabled state, not a fabricated ready product."
+elif [[ "$MODE" == "design-proof-sample" ]]; then
+  echo "VERIFY: design-proof-sample mode is visual comparison only; do not count it as runtime/live product proof."
 else
   echo "VERIFY: live-loopback mode should show live read/write/pairing requests and any real seam failure AS truth."
 fi

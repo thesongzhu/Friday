@@ -97,6 +97,17 @@ The default simulator launch is an **offline truth proof**. It deliberately keep
 if the live seams are not explicitly enabled. That screenshot proves "no fabricated
 ready state"; it is not a product-ready live-use proof.
 
+For selected-design visual comparison, use the explicit sample lane instead of the
+offline truth lane:
+
+```sh
+apps/friday-ios/build-sim.sh --mode design-proof-sample --shot apps/friday-ios/.build-sim/friday-ios-design-proof-sample.png
+```
+
+`design-proof-sample` renders the labeled `PreviewReadClient` sample so the native
+Home/destinations can be compared against the operator-selected HTML/JSON handoff.
+It is design proof only: no live Hub, no runtime PASS, no END-BAR, and no adoption.
+
 For local live-loopback dogfood, use the explicit mode:
 
 ```sh

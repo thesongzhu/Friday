@@ -27,6 +27,7 @@ const files = {
   app: read(root, "apps/friday-ios/Sources/FridayMobileShell/FridayApp.swift"),
   home: read(root, "apps/friday-ios/Sources/FridayMobileShell/FridayHomeScreen.swift"),
   commandSheet: read(root, "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift"),
+  mobileProductContract: read(root, "apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift"),
   buildSim: read(root, "apps/friday-ios/build-sim.sh"),
   liveT3Proof: read(root, "scripts/ops/friday-ios-sim-live-t3-proof.sh"),
   gatesTests: read(root, "apps/friday-ios/Tests/FridayMobileShellCoreTests/MobileRuntimeGatesTests.swift"),
@@ -83,6 +84,8 @@ const checks = [
       ...requireStrings(files.commandSheet, [
         "Command Sheet",
         "Route coverage is not END-BAR",
+      ]),
+      ...requireStrings(files.mobileProductContract, [
         "Device Pairing",
       ]),
     ],
@@ -115,6 +118,8 @@ const checks = [
       '"simulator_file_device_keypair_requested"',
       '"simulator_device_pubkey"',
       "does not claim END-BAR, GO-LIVE, adoption, trust minting, or operator signing",
+      "design-proof-sample is labeled visual comparison only",
+      '"design_proof_sample_requested"',
     ]),
   },
   {
