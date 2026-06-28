@@ -551,8 +551,8 @@ const ENV_PROVIDER_MAP: ReadonlyArray<{
   defaultModel: string;
   supportedModels?: string[];
 }> = [
-  { envVar: "FRIDAY_ANTHROPIC_API_KEY", kind: "anthropic", defaultModel: "claude-sonnet-4-20250514" },
-  { envVar: "ANTHROPIC_API_KEY", kind: "anthropic", defaultModel: "claude-sonnet-4-20250514" },
+  { envVar: "FRIDAY_ANTHROPIC_API_KEY", kind: "anthropic", defaultModel: "claude-sonnet-4-6" },
+  { envVar: "ANTHROPIC_API_KEY", kind: "anthropic", defaultModel: "claude-sonnet-4-6" },
   { envVar: "OPENAI_API_KEY", kind: "openai", defaultModel: "gpt-4o-mini", supportedModels: ["gpt-4o-mini", "gpt-4o"] },
   { envVar: "DEEPSEEK_API_KEY", kind: "deepseek", defaultModel: "deepseek-v4-pro", supportedModels: ["deepseek-v4-pro", "deepseek-v4-flash"] },
   { envVar: "FRIDAY_DEEPSEEK_API_KEY", kind: "deepseek", defaultModel: "deepseek-v4-pro", supportedModels: ["deepseek-v4-pro", "deepseek-v4-flash"] },

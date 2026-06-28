@@ -98,8 +98,8 @@ const providerSpecs = {
       "FRIDAY_ANTHROPIC_API_KEY",
       "ANTHROPIC_API_KEY",
     ]),
-    model: process.env.FRIDAY_PROVIDER_ENTITLEMENT_ANTHROPIC_MODEL ?? "claude-sonnet-4-20250514",
-    supportedModels: ["claude-sonnet-4-20250514", "claude-opus-4-20250514"],
+    model: process.env.FRIDAY_PROVIDER_ENTITLEMENT_ANTHROPIC_MODEL ?? "claude-sonnet-4-6",
+    supportedModels: ["claude-sonnet-4-6", "claude-opus-4-8"],
   },
 };
 

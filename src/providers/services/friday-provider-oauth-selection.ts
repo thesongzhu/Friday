@@ -268,7 +268,7 @@ function getDefaultModels(kind: FridayProviderKind): string[] {
     case "openai":
       return ["gpt-4o", "gpt-4o-mini", "gpt-4.1"];
     case "anthropic":
-      return ["claude-sonnet-4-20250514", "claude-opus-4-20250514"];
+      return ["claude-sonnet-4-6", "claude-opus-4-8"];
     case "google":
       return ["gemini-2.0-flash", "gemini-1.5-pro"];
     case "ollama":

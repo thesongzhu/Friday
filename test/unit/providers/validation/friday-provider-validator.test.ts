@@ -103,6 +103,28 @@ describe("FridayProviderValidator", () => {
       expect(result.status).toBe("ok");
     });
 
+    it("uses the configured Anthropic model during validation", async () => {
+      let capturedBody = "";
+      mockFetch((_url, init) => {
+        capturedBody = typeof init.body === "string" ? init.body : "";
+        return new Response("{}", { status: 200 });
+      });
+
+      const validator = createFridayProviderValidator();
+      const result = await validator.validate({
+        kind: "anthropic",
+        api: "anthropic-messages",
+        baseUrl: "https://api.anthropic.com",
+        credential: "sk-ant-test",
+        model: "claude-sonnet-4-6",
+      });
+
+      expect(result.status).toBe("ok");
+      expect(JSON.parse(capturedBody)).toMatchObject({
+        model: "claude-sonnet-4-6",
+      });
+    });
+
     it("returns ok on 429 (rate limited but auth valid)", async () => {
       mockFetch(() => new Response("{}", { status: 429 }));
 

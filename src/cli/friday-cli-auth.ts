@@ -44,8 +44,8 @@ export interface FridayCliAuthCommandDeps {
 }
 
 const DEFAULT_ANTHROPIC_MODELS = [
-  "claude-sonnet-4-20250514",
-  "claude-opus-4-20250514",
+  "claude-sonnet-4-6",
+  "claude-opus-4-8",
 ];
 
 const CLI_AUTH_TARGETS = {

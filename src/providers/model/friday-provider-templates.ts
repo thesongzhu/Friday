@@ -59,9 +59,9 @@ const TEMPLATE_META: Partial<Record<FridayProviderKind, FridayProviderTemplateMe
     tier: "official",
     status: "ready",
     modelDefaults: {
-      recommended: "claude-sonnet-4-20250514",
-      fallback: "claude-haiku-3.5",
-      examples: ["claude-sonnet-4-20250514", "claude-opus-4"],
+      recommended: "claude-sonnet-4-6",
+      fallback: "claude-haiku-4-5",
+      examples: ["claude-sonnet-4-6", "claude-opus-4-8"],
     },
     reasoningHints: [
       "Prefer HTTP for tool-capable runs; attach Claude CLI later only for text-only workflows.",

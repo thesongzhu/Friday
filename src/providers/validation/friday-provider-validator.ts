@@ -33,6 +33,7 @@ export interface FridayProviderValidator {
 // ─── Timeout helper ───
 
 const VALIDATION_TIMEOUT_MS = 5_000;
+const DEFAULT_ANTHROPIC_VALIDATION_MODEL = "claude-sonnet-4-6";
 
 async function fetchWithTimeout(
   url: string,
@@ -149,6 +150,7 @@ async function validateOpenAiCodex(
 async function validateAnthropic(
   baseUrl: string,
   credential: string | null,
+  model?: string,
   authMode?: FridayProviderAuthMode,
 ): Promise<FridayProviderValidationState> {
   const url = `${baseUrl.replace(/\/+$/, "")}/v1/messages`;
@@ -166,7 +168,7 @@ async function validateAnthropic(
     }
   }
   const body = JSON.stringify({
-    model: "claude-sonnet-4-20250514",
+    model: model?.trim() || DEFAULT_ANTHROPIC_VALIDATION_MODEL,
     max_tokens: 1,
     ...(isBearerAuth
       ? {
@@ -344,7 +346,7 @@ export function createFridayProviderValidator(): FridayProviderValidator {
         case "openai-codex-responses":
           return validateOpenAiCodex(params.baseUrl, params.credential, params.model);
         case "anthropic-messages":
-          return validateAnthropic(params.baseUrl, params.credential, params.authMode);
+          return validateAnthropic(params.baseUrl, params.credential, params.model, params.authMode);
         case "google-generative-ai":
           return validateGoogle(params.baseUrl, params.credential);
         case "ollama":
