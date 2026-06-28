@@ -3984,7 +3984,7 @@ mod tests {
             provider: "codex".into(),
             account_key_hash: "account-hash-never-project".into(), // pragma: allowlist secret
             workspace_id: "workspace-alpha".into(),
-            cwd: Some("/Users/jarvis/private/project".into()),
+            cwd: Some("/Users/example/private/project".into()),
             external_session_id: Some("provider-session-id".into()),
             external_thread_id: Some("provider-thread-id".into()),
             external_url: Some("https://provider.example/private/thread".into()),
@@ -6254,7 +6254,7 @@ mod tests {
             "provider-token",
             "raw-chat-123",
             "telegram:raw",
-            "/Users/jarvis/private",
+            "/Users/example/private",
             "raw transcript",
             "sk-",
         ] {
@@ -6323,7 +6323,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         for forbidden in [
             "account-hash-never-project",
-            "/Users/jarvis/private/project",
+            "/Users/example/private/project",
             "provider-session-id",
             "provider-thread-id",
             "provider.example/private",
@@ -7234,7 +7234,7 @@ mod tests {
             "message-99",
             "raw-private-candidate",
             "link-with-raw-channel-id",
-            "/Users/jarvis/private",
+            "/Users/example/private",
             "raw transcript",
             "sk-",
         ] {

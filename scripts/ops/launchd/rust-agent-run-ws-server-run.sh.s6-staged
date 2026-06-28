@@ -62,9 +62,9 @@ fi
 export FRIDAY_DEEPSEEK_API_KEY
 export FRIDAY_AGENT_RUN_CONTROL_VIA_RUST=1                          # S6 EDIT: on-wire run-CONTROL + pause/resume
 export FRIDAY_OPERATOR_VK_PATH="$HOME/.friday/operator-approval.vk" # S6 EDIT: operator PUBLIC verify key file (O-2)
-exec /Users/jarvis/Projects/Friday/rust-core/target/release/hub_agent_run_server \
-  --workspace /Users/jarvis/.friday/agent-run-workspace \
-  --db "/Users/jarvis/Library/Application Support/Friday/state/rust-hub.sqlite" \
+exec ${HOME}/Projects/Friday/rust-core/target/release/hub_agent_run_server \
+  --workspace "${HOME}/.friday/agent-run-workspace" \
+  --db "${HOME}/Library/Application Support/Friday/state/rust-hub.sqlite" \
   --port 48750 \
   --owner admin-001 \
-  --store-dir /Users/jarvis/.friday/agent-run-securestore
+  --store-dir "${HOME}/.friday/agent-run-securestore"

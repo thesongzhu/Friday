@@ -380,13 +380,13 @@ mod tests {
         // STRUCTURAL: hand-corrupt the persisted run name with an absolute-path
         // marker — the export still SUCCEEDS, because the name is never emitted
         // verbatim, only its sha256+len. The marker cannot reach stdout.
-        let tampered = "/Users/jarvis/leak";
+        let tampered = "/Users/example/leak";
         let db = seed("canary-name");
         {
             let w = Db::open_hub(&db).unwrap();
             w.conn()
                 .execute(
-                    "UPDATE workflow_run SET name = '/Users/jarvis/leak' WHERE run_id = 'run1'",
+                    "UPDATE workflow_run SET name = '/Users/example/leak' WHERE run_id = 'run1'",
                     [],
                 )
                 .unwrap();
@@ -408,7 +408,7 @@ mod tests {
             let w = Db::open_hub(&db).unwrap();
             w.conn()
                 .execute(
-                    "UPDATE workflow_run SET state = '/Users/jarvis/leak' WHERE run_id = 'run1'",
+                    "UPDATE workflow_run SET state = '/Users/example/leak' WHERE run_id = 'run1'",
                     [],
                 )
                 .unwrap();
@@ -448,7 +448,7 @@ mod tests {
         // leak — the export SUCCEEDS and carries only the sha256 fingerprint, never
         // the path. This is the structural reason the raw text never crosses the
         // storage boundary.
-        let leaky = "/Users/jarvis/secret/receipt.txt";
+        let leaky = "/Users/example/secret/receipt.txt";
         let db = tmp("path-evidence")
             .with_extension("sqlite")
             .to_string_lossy()
@@ -484,7 +484,7 @@ mod tests {
         assert!(reject_forbidden_output(r#"{"evidence_ref":"wrote 3 bytes to x"}"#).is_err());
         assert!(reject_forbidden_output(r#"{"params":[["path","x"]]}"#).is_err());
         assert!(reject_forbidden_output(r#"{"x":"Bearer abc"}"#).is_err());
-        assert!(reject_forbidden_output(r#"{"k":"/Users/jarvis/x"}"#).is_err());
+        assert!(reject_forbidden_output(r#"{"k":"/Users/example/x"}"#).is_err());
         // The refs-only manifest shape (fingerprint, not text) passes.
         assert!(reject_forbidden_output(
             r#"{"steps":[{"step_ref":"run1:s0","status":"verified","evidence_present":true,"evidence_sha256":"00ab","evidence_len":3}]}"#

@@ -165,7 +165,7 @@ mod tests {
         assert!(reject_forbidden_output(r#"{"definition_json":"{...}"}"#).is_err());
         assert!(reject_forbidden_output(r#"{"source_meta":"{...}"}"#).is_err());
         assert!(reject_forbidden_output(r#"{"x":"Bearer abc"}"#).is_err());
-        assert!(reject_forbidden_output(r#"{"k":"/Users/jarvis/x"}"#).is_err());
+        assert!(reject_forbidden_output(r#"{"k":"/Users/example/x"}"#).is_err());
     }
 
     #[test]

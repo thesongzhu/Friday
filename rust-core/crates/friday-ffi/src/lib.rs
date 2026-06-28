@@ -2581,7 +2581,7 @@ mod tests {
             "raw-chat",
             "raw transcript",
             "provider-token",
-            "/Users/jarvis/private",
+            "/Users/example/private",
         ] {
             assert!(
                 !debug.contains(forbidden),
@@ -3142,7 +3142,7 @@ mod tests {
                     "provider-token",
                     "external-thread",
                     "raw-chat",
-                    "/Users/jarvis/private",
+                    "/Users/example/private",
                 ] {
                     assert!(!debug.contains(forbidden));
                 }
@@ -3325,7 +3325,7 @@ mod tests {
                     "telegram:raw-chat-123",
                     "raw-private-candidate",
                     "link-with-raw-channel-id",
-                    "/Users/jarvis/private",
+                    "/Users/example/private",
                     "sk-",
                 ] {
                     assert!(!debug.contains(forbidden));

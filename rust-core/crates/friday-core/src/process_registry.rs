@@ -288,7 +288,7 @@ mod tests {
             pid: 999,
             ppid: None,
             process_kind: ProcessKind::CodexCli,
-            cwd_ref: "/Users/jarvis".into(),
+            cwd_ref: "/Users/example".into(),
             port_bindings: Vec::new(),
             command_hash: Some("sha256:redacted".into()),
             observed_at_ms: 1,

@@ -136,7 +136,7 @@ mod tests {
             provider: "codex".into(),
             account_key_hash: "acct-hash-hidden".into(), // pragma: allowlist secret
             workspace_id: "workspace-a".into(),
-            cwd: Some("/Users/jarvis/private/project".into()),
+            cwd: Some("/Users/example/private/project".into()),
             external_session_id: Some("provider-session-hidden".into()),
             external_thread_id: Some("provider-thread-hidden".into()),
             external_url: Some("https://provider.example/private".into()),
@@ -150,7 +150,7 @@ mod tests {
         let projection = format!("{:?}", link.redacted_projection());
         for forbidden in [
             "acct-hash-hidden",
-            "/Users/jarvis/private/project",
+            "/Users/example/private/project",
             "provider-session-hidden",
             "provider-thread-hidden",
             "https://provider.example/private",

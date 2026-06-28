@@ -170,7 +170,7 @@ fn observation() -> ProcessObservation {
         pid: 54_321,
         ppid: Some(1),
         process_kind: ProcessKind::CodexCli,
-        cwd_ref: "/Users/jarvis".into(),
+        cwd_ref: "/Users/example".into(),
         port_bindings: Vec::new(),
         command_hash: Some("sha256:redacted-command".into()),
         observed_at_ms: 9,

@@ -472,7 +472,7 @@ mod tests {
         // with an absolute-path marker — the projection still SUCCEEDS, because
         // the name is never emitted verbatim, only its sha256 + byte length.
         // The marker cannot reach stdout through the name field at all.
-        let tampered_name = "/Users/jarvis/leak";
+        let tampered_name = "/Users/example/leak";
         let db = seeded_run(
             "canary-name",
             vec![step("read", "read_file", &[("path", "notes.txt")])],
@@ -482,7 +482,7 @@ mod tests {
             let w = friday_storage::Db::open_hub(&db).unwrap();
             w.conn()
                 .execute(
-                    "UPDATE workflow_run SET name = '/Users/jarvis/leak' WHERE run_id = 'run1'",
+                    "UPDATE workflow_run SET name = '/Users/example/leak' WHERE run_id = 'run1'",
                     [],
                 )
                 .unwrap();
@@ -514,7 +514,7 @@ mod tests {
             let w = friday_storage::Db::open_hub(&db).unwrap();
             w.conn()
                 .execute(
-                    "UPDATE workflow_run SET state = '/Users/jarvis/leak' WHERE run_id = 'run1'",
+                    "UPDATE workflow_run SET state = '/Users/example/leak' WHERE run_id = 'run1'",
                     [],
                 )
                 .unwrap();
@@ -575,7 +575,7 @@ mod tests {
         assert!(reject_forbidden_output(r#"{"definition_json":"{}"}"#).is_err());
         assert!(reject_forbidden_output(r#"{"source_meta":"{}"}"#).is_err());
         assert!(reject_forbidden_output(r#"{"x":"Bearer abc"}"#).is_err());
-        assert!(reject_forbidden_output(r#"{"k":"/Users/jarvis/x"}"#).is_err());
+        assert!(reject_forbidden_output(r#"{"k":"/Users/example/x"}"#).is_err());
         // The refs-only step shape passes.
         assert!(reject_forbidden_output(
             r#"{"steps":[{"step_ref":"run1:s0","status":"verified","has_evidence":true}]}"#

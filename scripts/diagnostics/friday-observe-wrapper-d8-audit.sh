@@ -19,7 +19,7 @@
 #
 set -euo pipefail
 
-readonly RUST_HUB_DB="${FRIDAY_HUB_AGENT_RUN_DB_PATH:-/Users/jarvis/Library/Application Support/Friday/state/rust-hub.sqlite}"
+readonly RUST_HUB_DB="${FRIDAY_HUB_AGENT_RUN_DB_PATH:-${HOME}/Library/Application Support/Friday/state/rust-hub.sqlite}"
 readonly TS_HUB="${FRIDAY_TS_HUB_URL:-http://127.0.0.1:3141}"
 readonly RUST_WS_HOST="${FRIDAY_D8_AUDIT_RUST_WS_HOST:-127.0.0.1}"
 readonly RUST_WS_PORT="${FRIDAY_D8_AUDIT_RUST_WS_PORT:-48750}"
@@ -28,14 +28,14 @@ readonly SINCE_MS="${FRIDAY_D8_AUDIT_SINCE_MS:-0}"
 readonly ALLOW_UNSCOPED="${FRIDAY_D8_AUDIT_ALLOW_UNSCOPED:-0}"
 readonly LOG_LINES="${FRIDAY_D8_AUDIT_LOG_LINES:-2000}"
 readonly DETAIL_LIMIT="${FRIDAY_D8_AUDIT_DETAIL_LIMIT:-0}"
-readonly TS_STDOUT_LOG="${FRIDAY_TS_STDOUT_LOG:-/Users/jarvis/.friday/launchd/friday.stdout.log}"
-readonly TS_STDERR_LOG="${FRIDAY_TS_STDERR_LOG:-/Users/jarvis/.friday/launchd/friday.stderr.log}"
-readonly RUST_STDOUT_LOG="${FRIDAY_RUST_STDOUT_LOG:-/Users/jarvis/.friday/launchd/friday-rust-agent-run-ws-server.stdout.log}"
-readonly RUST_STDERR_LOG="${FRIDAY_RUST_STDERR_LOG:-/Users/jarvis/.friday/launchd/friday-rust-agent-run-ws-server.stderr.log}"
+readonly TS_STDOUT_LOG="${FRIDAY_TS_STDOUT_LOG:-${HOME}/.friday/launchd/friday.stdout.log}"
+readonly TS_STDERR_LOG="${FRIDAY_TS_STDERR_LOG:-${HOME}/.friday/launchd/friday.stderr.log}"
+readonly RUST_STDOUT_LOG="${FRIDAY_RUST_STDOUT_LOG:-${HOME}/.friday/launchd/friday-rust-agent-run-ws-server.stdout.log}"
+readonly RUST_STDERR_LOG="${FRIDAY_RUST_STDERR_LOG:-${HOME}/.friday/launchd/friday-rust-agent-run-ws-server.stderr.log}"
 
 SQLITE_BIN="$(command -v sqlite3 || true)"
-if [ -z "${SQLITE_BIN}" ] && [ -x "/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3" ]; then
-  SQLITE_BIN="/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3"
+if [ -z "${SQLITE_BIN}" ] && [ -x "${ANDROID_HOME:-${HOME}/Library/Android/sdk}/platform-tools/sqlite3" ]; then
+  SQLITE_BIN="${ANDROID_HOME:-${HOME}/Library/Android/sdk}/platform-tools/sqlite3"
 fi
 
 require_nonnegative_int() {

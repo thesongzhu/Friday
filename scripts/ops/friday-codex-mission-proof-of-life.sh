@@ -30,7 +30,7 @@
 set -euo pipefail
 
 readonly TS_HUB="${FRIDAY_TS_HUB_URL:-http://127.0.0.1:3141}"
-readonly RUST_HUB_DB="${FRIDAY_HUB_AGENT_RUN_DB_PATH:-/Users/jarvis/Library/Application Support/Friday/state/rust-hub.sqlite}"
+readonly RUST_HUB_DB="${FRIDAY_HUB_AGENT_RUN_DB_PATH:-${HOME}/Library/Application Support/Friday/state/rust-hub.sqlite}"
 readonly OWNER_PRINCIPAL="${FRIDAY_CODEX_MISSION_PROOF_OWNER:-admin-001}"
 readonly TIMEOUT_SEC="${FRIDAY_CODEX_MISSION_PROOF_TIMEOUT_SEC:-300}"
 readonly DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS=300000
@@ -38,13 +38,13 @@ readonly CODEX_MISSION_DISPATCH_TIMEOUT_MS=300000
 readonly POLL_INTERVAL_SEC="${FRIDAY_CODEX_MISSION_PROOF_POLL_INTERVAL_SEC:-3}"
 readonly PASSPHRASE_STDIN="${FRIDAY_CODEX_MISSION_PROOF_PASSPHRASE_STDIN:-0}"
 readonly PREFLIGHT_ONLY="${FRIDAY_CODEX_MISSION_PROOF_PREFLIGHT_ONLY:-0}"
-readonly RUST_WS_LAUNCH_WRAPPER="${FRIDAY_RUST_AGENT_RUN_WS_WRAPPER:-/Users/jarvis/.friday/launchd/rust-agent-run-ws-server-run.sh}"
-readonly RUST_WS_LAUNCH_PLIST="${FRIDAY_RUST_AGENT_RUN_WS_LAUNCH_PLIST:-/Users/jarvis/Library/LaunchAgents/com.friday.rust-agent-run-ws-server.plist}"
+readonly RUST_WS_LAUNCH_WRAPPER="${FRIDAY_RUST_AGENT_RUN_WS_WRAPPER:-${HOME}/.friday/launchd/rust-agent-run-ws-server-run.sh}"
+readonly RUST_WS_LAUNCH_PLIST="${FRIDAY_RUST_AGENT_RUN_WS_LAUNCH_PLIST:-${HOME}/Library/LaunchAgents/com.friday.rust-agent-run-ws-server.plist}"
 readonly RUST_WS_LAUNCH_LABEL="${FRIDAY_RUST_AGENT_RUN_WS_LAUNCH_LABEL:-com.friday.rust-agent-run-ws-server}"
 readonly RUST_WS_LAUNCH_DOMAIN="${FRIDAY_RUST_AGENT_RUN_WS_LAUNCH_DOMAIN:-gui/$(id -u)}"
 readonly RUST_WS_HOST="127.0.0.1"
 readonly RUST_WS_PORT="48750"
-readonly TS_HUB_LAUNCH_PLIST="${FRIDAY_TS_HUB_LAUNCH_PLIST:-/Users/jarvis/Library/LaunchAgents/com.friday.hub.plist}"
+readonly TS_HUB_LAUNCH_PLIST="${FRIDAY_TS_HUB_LAUNCH_PLIST:-${HOME}/Library/LaunchAgents/com.friday.hub.plist}"
 readonly TS_HUB_LAUNCH_LABEL="${FRIDAY_TS_HUB_LAUNCH_LABEL:-com.friday.hub}"
 readonly TS_HUB_LAUNCH_DOMAIN="${FRIDAY_TS_HUB_LAUNCH_DOMAIN:-gui/$(id -u)}"
 readonly CODEX_MODEL="gpt-5.5"
@@ -58,8 +58,8 @@ readonly CAPABILITY_ID="${FRIDAY_CODEX_MISSION_PROOF_CAPABILITY_ID:-observe-wrap
 readonly BODY_REF_PREFIX="friday://body/ops/codex-mission-proof-of-life"
 
 SQLITE_BIN="$(command -v sqlite3 || true)"
-if [ -z "${SQLITE_BIN}" ] && [ -x "/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3" ]; then
-  SQLITE_BIN="/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3"
+if [ -z "${SQLITE_BIN}" ] && [ -x "${ANDROID_HOME:-${HOME}/Library/Android/sdk}/platform-tools/sqlite3" ]; then
+  SQLITE_BIN="${ANDROID_HOME:-${HOME}/Library/Android/sdk}/platform-tools/sqlite3"
 fi
 
 for bin in curl jq node codex launchctl; do
@@ -306,7 +306,7 @@ check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_SPINE_R
 check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1" "TS hub agent-run Rust route flag"
 check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750" "TS hub Rust agent-run WS port"
 check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}" "TS hub Rust DB path"
-check_optional_plist_path_contains "${TS_HUB_LAUNCH_PLIST}" "PATH" "/Users/jarvis/.local/bin" "TS hub PATH"
+check_optional_plist_path_contains "${TS_HUB_LAUNCH_PLIST}" "PATH" "${HOME}/.local/bin" "TS hub PATH"
 if TS_HUB_NODE_BIN="$(plist_optional_env_value "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_NODE_BIN")"; then
   if [ ! -x "${TS_HUB_NODE_BIN}" ]; then
     echo "FATAL: TS hub FRIDAY_NODE_BIN is not executable at: ${TS_HUB_NODE_BIN}" >&2
@@ -403,7 +403,7 @@ require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_MISSION_SPINE_R
 require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1" "live TS hub agent-run Rust route flag"
 require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750" "live TS hub Rust agent-run WS port"
 require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}" "live TS hub Rust DB path"
-require_launchctl_path_contains "${TS_HUB_LAUNCHCTL_PRINT}" "PATH" "/Users/jarvis/.local/bin" "live TS hub PATH"
+require_launchctl_path_contains "${TS_HUB_LAUNCHCTL_PRINT}" "PATH" "${HOME}/.local/bin" "live TS hub PATH"
 TS_HUB_RUNTIME_NODE_BIN="$(launchctl_env_value "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_NODE_BIN" "TS hub")"
 if [ ! -x "${TS_HUB_RUNTIME_NODE_BIN}" ]; then
   echo "FATAL: live TS hub FRIDAY_NODE_BIN is not executable at: ${TS_HUB_RUNTIME_NODE_BIN}" >&2

@@ -77,7 +77,8 @@ import { pathToFileURL } from "node:url";
 import * as path from "node:path";
 
 // ─── Shipped production building blocks (compiled .js — the SAME bytes compose would use) ───
-const PROJECT_ROOT = "/Users/jarvis/Projects/Friday";
+const HOME_DIR = process.env.HOME || process.env.USERPROFILE || ".";
+const PROJECT_ROOT = process.env.FRIDAY_PROJECT_ROOT || path.join(HOME_DIR, "Projects", "Friday");
 const SEALED_CLIENT_JS =
   process.env.FRIDAY_S6_SEALED_CLIENT_JS ||
   `${PROJECT_ROOT}/dist/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js`;
@@ -91,13 +92,13 @@ const DEFAULT_TIMEOUT_MS = 30000;
 const DEFAULT_ARTIFACT_DIR =
   process.env.FRIDAY_S6_ARTIFACT_DIR || path.join(os.tmpdir(), "friday-s6-transport-a");
 const DEFAULT_AGENT_RUN_WORKSPACE =
-  process.env.FRIDAY_S6_AGENT_RUN_WORKSPACE || "/Users/jarvis/.friday/agent-run-workspace";
+  process.env.FRIDAY_S6_AGENT_RUN_WORKSPACE || path.join(HOME_DIR, ".friday", "agent-run-workspace");
 const DEFAULT_PROOF_BASENAME = "s6-proof-artifact.txt";
 const DEFAULT_PENDING_REQUEST_BASENAME = "pending-request.json";
 const DEFAULT_SIGNED_APPROVAL_BASENAME = "signed-approval.json";
 const FORWARDED_PRINCIPAL = "admin-001";
 const DEFAULT_RUST_HUB_DB =
-  "/Users/jarvis/Library/Application Support/Friday/state/rust-hub.sqlite";
+  path.join(HOME_DIR, "Library", "Application Support", "Friday", "state", "rust-hub.sqlite");
 
 // ─── tiny arg parser (mirrors the existing friday-s6-proof-driver.mjs) ───
 function parseArgs(argv) {
