@@ -60,6 +60,31 @@ function traceability(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function satisfaction(root: string, rows: Array<Record<string, unknown>>) {
+  return writeJson(root, "satisfaction.json", {
+    truth: "uiux_product_blocker_satisfaction_manifest",
+    status: "ready",
+    satisfactions: rows,
+  });
+}
+
+function satisfiedHomeRow(overrides: Record<string, unknown> = {}) {
+  return {
+    surface: "mobile",
+    id: "home",
+    kind: "needsRuntimeEvidence",
+    label: "same-run user proof",
+    status: "satisfied",
+    evidenceClass: "same_run_ui_device_product_proof",
+    evidenceRefs: ["proof://same-run/mobile-home"],
+    evidenceTruthLabels: ["same_run_ui_device_product_proof"],
+    sameRun: true,
+    liveConnected: true,
+    currentHead: true,
+    ...overrides,
+  };
+}
+
 describe("check-friday-uiux-product-happy-path", () => {
   it("rejects design-proof-sample as product happy path", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-happy-path-design-only-"));
@@ -116,6 +141,90 @@ describe("check-friday-uiux-product-happy-path", () => {
         code: "residual_endbar_blockers_present",
         detail: "3",
       }));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts matched blocker satisfaction without mutating the native contract", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-happy-path-satisfied-blocker-"));
+    try {
+      const visual = writeJson(root, "visual.json", selectedVisual("live-loopback"));
+      const trace = writeJson(root, "trace.json", traceability({
+        counts: {
+          runtimeEvidenceInputs: 2,
+          productActionsMissingRuntimeEvidence: 0,
+          destinationsWithResidualEndBarBlockers: 1,
+          destinationsStillBlocked: 1,
+        },
+        gaps: {
+          residualEndBarBlockers: [{
+            surface: "mobile",
+            id: "home",
+            blockers: [{ kind: "needsRuntimeEvidence", label: "same-run user proof" }],
+          }],
+        },
+      }));
+      const blockerSatisfaction = satisfaction(root, [satisfiedHomeRow()]);
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${process.cwd()}`,
+        `--selected-visual-report=${visual}`,
+        `--action-traceability-report=${trace}`,
+        `--blocker-satisfaction-report=${blockerSatisfaction}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        blockerSatisfaction?: { residualBlockerCount?: number; satisfiedResidualBlockerCount?: number };
+        blockers?: unknown[];
+      };
+      expect(report.status).toBe("product_happy_path_ready");
+      expect(report.blockerSatisfaction?.residualBlockerCount).toBe(1);
+      expect(report.blockerSatisfaction?.satisfiedResidualBlockerCount).toBe(1);
+      expect(report.blockers).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects blocker satisfaction backed by partial or not-END-BAR evidence labels", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-happy-path-forbidden-satisfaction-"));
+    try {
+      const visual = writeJson(root, "visual.json", selectedVisual("live-loopback"));
+      const trace = writeJson(root, "trace.json", traceability({
+        counts: {
+          runtimeEvidenceInputs: 2,
+          productActionsMissingRuntimeEvidence: 0,
+          destinationsWithResidualEndBarBlockers: 1,
+          destinationsStillBlocked: 1,
+        },
+        gaps: {
+          residualEndBarBlockers: [{
+            surface: "mobile",
+            id: "home",
+            blockers: [{ kind: "needsRuntimeEvidence", label: "same-run user proof" }],
+          }],
+        },
+      }));
+      const blockerSatisfaction = satisfaction(root, [satisfiedHomeRow({
+        evidenceTruthLabels: ["mobile_projection_action_runtime_evidence_partial_not_live_hub_not_endbar"],
+      })]);
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${process.cwd()}`,
+        `--selected-visual-report=${visual}`,
+        `--action-traceability-report=${trace}`,
+        `--blocker-satisfaction-report=${blockerSatisfaction}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string; detail?: string }> };
+      expect(report.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "blocker_satisfaction_report_invalid" }),
+        expect.objectContaining({ code: "residual_endbar_blockers_present" }),
+      ]));
+      expect(JSON.stringify(report.blockers)).toContain("satisfaction_evidence_truth_forbidden");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

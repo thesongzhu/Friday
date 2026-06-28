@@ -12,6 +12,7 @@ function usage() {
     [--repo-root=/abs/repo] [--design-root=/abs/friday-design-handoff-20260602] \\
     [--selected-visual-report=/abs/selected-visual-proof.json] \\
     [--action-traceability-report=/abs/uiux-action-traceability.json] \\
+    [--blocker-satisfaction-report=/abs/product-blocker-satisfaction.json] \\
     [--evidence-dir=/abs/evidence ...] [--runtime-evidence-dir=/abs/runtime-evidence ...] \\
     [--runtime-evidence=/abs/action-runtime-evidence.json ...] [--out=/abs/report.json] \\
     [--require-complete]
@@ -63,6 +64,7 @@ const outPath = arg("out") || process.env.FRIDAY_UIUX_PRODUCT_HAPPY_PATH_REPORT 
 const requireComplete = args.includes("--require-complete");
 const selectedVisualReportPath = arg("selected-visual-report") || process.env.FRIDAY_UIUX_SELECTED_VISUAL_PROOF_REPORT || "";
 const actionTraceabilityReportPath = arg("action-traceability-report") || process.env.FRIDAY_UIUX_ACTION_TRACEABILITY_REPORT || "";
+const blockerSatisfactionReportPath = arg("blocker-satisfaction-report") || process.env.FRIDAY_UIUX_BLOCKER_SATISFACTION_REPORT || "";
 const evidenceDirs = [
   ...argsAll("evidence-dir"),
   ...(process.env.FRIDAY_UIUX_HAPPY_PATH_EVIDENCE_DIRS
@@ -252,11 +254,126 @@ function summarizeTrace(report) {
   };
 }
 
+function residualBlockers(report) {
+  return arrayAt(report, ["gaps", "residualEndBarBlockers"]);
+}
+
+function blockerKey(blocker) {
+  return [
+    String(blocker?.surface || ""),
+    String(blocker?.id || blocker?.destination || ""),
+    String(blocker?.kind || blocker?.blockerKind || ""),
+    String(blocker?.label || blocker?.blockerLabel || ""),
+  ].join("\u001f");
+}
+
+function residualBlockerKeys(report) {
+  const keys = [];
+  for (const destination of residualBlockers(report)) {
+    for (const blocker of arrayAt(destination, ["blockers"])) {
+      keys.push(blockerKey({
+        surface: destination.surface,
+        id: destination.id || destination.destination,
+        kind: blocker.kind,
+        label: blocker.label,
+      }));
+    }
+  }
+  return keys;
+}
+
+const allowedSatisfactionClasses = new Set([
+  "same_run_ui_device_product_proof",
+  "operator_signed_approval_proof",
+  "provider_credential_live_proof",
+  "device_pairing_live_proof",
+  "live_write_read_projection_proof",
+  "memory_behavior_delta_proof",
+  "channel_live_product_proof",
+  "human_release_acceptance",
+]);
+const forbiddenSatisfactionTruth = /(partial|not[-_ ]?endbar|not[-_ ]?proof|design[-_ ]?proof|screenshot|mock|fixture|sample|dry[-_ ]?run|offline|unavailable|placeholder)/i;
+
+function satisfactionRows(report) {
+  if (!report) return [];
+  if (Array.isArray(report.satisfactions)) return report.satisfactions;
+  if (Array.isArray(report.blockers)) return report.blockers;
+  return [];
+}
+
+function blockerSatisfactionReport() {
+  if (!blockerSatisfactionReportPath) {
+    return {
+      source: null,
+      parsed: null,
+      status: "not_supplied",
+      satisfiedKeys: new Set(),
+      invalid: [],
+    };
+  }
+  const parsed = readJson(blockerSatisfactionReportPath, "blocker-satisfaction-report");
+  const invalid = [];
+  const satisfiedKeys = new Set();
+  const truth = String(parsed?.truth || parsed?.truth_label || parsed?.truthLabel || "");
+  if (parsed?.status !== "ready") invalid.push({ code: "satisfaction_report_not_ready", detail: String(parsed?.status || "missing") });
+  if (!/blocker.*satisfaction/i.test(truth)) invalid.push({ code: "satisfaction_truth_unexpected", detail: truth || "missing" });
+
+  for (const [index, row] of satisfactionRows(parsed).entries()) {
+    const label = `satisfactions[${index}]`;
+    const status = String(row?.status || "");
+    const evidenceClass = String(row?.evidenceClass || row?.evidence_class || "");
+    const evidenceRefs = Array.isArray(row?.evidenceRefs)
+      ? row.evidenceRefs
+      : Array.isArray(row?.evidence_refs)
+        ? row.evidence_refs
+        : [];
+    const evidenceTruthLabels = Array.isArray(row?.evidenceTruthLabels)
+      ? row.evidenceTruthLabels
+      : Array.isArray(row?.evidence_truth_labels)
+        ? row.evidence_truth_labels
+        : [];
+    if (status !== "satisfied") invalid.push({ code: "satisfaction_row_not_satisfied", detail: `${label}:${status || "missing"}` });
+    if (!allowedSatisfactionClasses.has(evidenceClass)) invalid.push({ code: "satisfaction_evidence_class_not_allowed", detail: `${label}:${evidenceClass || "missing"}` });
+    if (evidenceRefs.length === 0) invalid.push({ code: "satisfaction_evidence_refs_missing", detail: label });
+    for (const truthLabel of evidenceTruthLabels) {
+      if (forbiddenSatisfactionTruth.test(String(truthLabel || ""))) {
+        invalid.push({ code: "satisfaction_evidence_truth_forbidden", detail: `${label}:${truthLabel}` });
+      }
+    }
+    if (row?.sameRun !== true && row?.same_run !== true) invalid.push({ code: "satisfaction_not_same_run", detail: label });
+    if (row?.liveConnected !== true && row?.live_connected !== true) invalid.push({ code: "satisfaction_not_live_connected", detail: label });
+    if (row?.currentHead !== true && row?.current_head !== true) invalid.push({ code: "satisfaction_not_current_head", detail: label });
+    if (invalid.length === 0 || invalid.every((item) => !String(item.detail || "").startsWith(label))) {
+      satisfiedKeys.add(blockerKey({
+        surface: row?.surface,
+        id: row?.id || row?.destination,
+        kind: row?.kind || row?.blockerKind || row?.blocker_kind,
+        label: row?.label || row?.blockerLabel || row?.blocker_label,
+      }));
+    }
+  }
+
+  return {
+    source: abs(blockerSatisfactionReportPath),
+    parsed,
+    status: invalid.length === 0 ? "ready" : "invalid",
+    satisfiedKeys,
+    invalid,
+  };
+}
+
 const selected = selectedVisualReport();
 const trace = actionTraceabilityReport();
+const satisfaction = blockerSatisfactionReport();
 const selectedReport = selected.parsed || {};
 const traceReport = trace.parsed || {};
 const traceSummary = summarizeTrace(traceReport);
+const residualKeys = residualBlockerKeys(traceReport);
+const unsatisfiedResidualKeys = residualKeys.filter((key) => !satisfaction.satisfiedKeys.has(key));
+const residualBlockerCount = Math.max(traceSummary.destinationsWithResidualEndBarBlockers, residualKeys.length);
+const unsatisfiedResidualBlockerCount = residualKeys.length > 0
+  ? unsatisfiedResidualKeys.length
+  : traceSummary.destinationsWithResidualEndBarBlockers;
 const liveIos = liveEvidenceForSurface(selectedReport, "ios");
 const liveDesktop = liveEvidenceForSurface(selectedReport, "desktop");
 const mobileModes = visualModesForSurface(selectedReport, "ios");
@@ -294,8 +411,11 @@ if (traceSummary.runtimeEvidenceInputs === 0) {
 if (traceSummary.productActionsMissingRuntimeEvidence > 0) {
   block("product_runtime_actions_missing_evidence", String(traceSummary.productActionsMissingRuntimeEvidence));
 }
-if (traceSummary.destinationsWithResidualEndBarBlockers > 0) {
-  block("residual_endbar_blockers_present", String(traceSummary.destinationsWithResidualEndBarBlockers));
+if (satisfaction.invalid.length > 0) {
+  block("blocker_satisfaction_report_invalid", JSON.stringify(satisfaction.invalid.slice(0, 20)));
+}
+if (unsatisfiedResidualBlockerCount > 0) {
+  block("residual_endbar_blockers_present", String(unsatisfiedResidualBlockerCount));
 }
 if (negativeLabels.length > 0) {
   block("negative_happy_path_labels_present", JSON.stringify(negativeLabels.slice(0, 20)));
@@ -319,6 +439,7 @@ const report = {
     evidenceDirs: evidenceDirs.map(abs),
     runtimeEvidenceDirs: runtimeEvidenceDirs.map(abs),
     runtimeEvidence: runtimeEvidence.map(abs),
+    blockerSatisfactionReport: satisfaction.source,
   },
   selectedVisual: {
     status: selectedReport.status || "missing",
@@ -329,6 +450,16 @@ const report = {
     caveat: "Selected visual proof is necessary but insufficient; product happy path requires live connected mobile+desktop evidence, not design-proof-sample, offline-truth, or static AX-only proof.",
   },
   actionTraceability: traceSummary,
+  blockerSatisfaction: {
+    status: satisfaction.status,
+    source: satisfaction.source,
+    residualBlockerCount,
+    satisfiedResidualBlockerCount: residualBlockerCount - unsatisfiedResidualBlockerCount,
+    unsatisfiedResidualBlockerCount,
+    invalid: satisfaction.invalid,
+    caveat:
+      "Blocker satisfaction does not weaken the native ProductReadinessContract. It only lets this gate distinguish residual blockers that have explicit same-run/current-head/live-connected satisfaction evidence from blockers still lacking proof.",
+  },
   negativeHappyPathLabels: negativeLabels,
   blockers,
   notes,
