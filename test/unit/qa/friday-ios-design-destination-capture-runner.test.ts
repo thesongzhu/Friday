@@ -69,10 +69,12 @@ exit 64
       await fs.readFile(path.join(outDir, "ios-design-destination-capture-manifest.json"), "utf8"),
     ) as {
       mode: string;
+      repo_head: string | null;
       caveat: string;
       relaunch_contract: string;
     };
     expect(manifest.mode).toBe("design-proof-sample");
+    expect(manifest.repo_head).toMatch(/^[0-9a-f]{40}$/);
     expect(manifest.caveat).toContain("offline-truth is negative control only");
     expect(manifest.relaunch_contract).toContain("design-proof sample");
     await expect(fs.readFile(path.join(outDir, "screenshots", "session.launch.txt"), "utf8"))
@@ -133,6 +135,7 @@ exit 64
       await fs.readFile(path.join(outDir, "ios-design-destination-capture-manifest.json"), "utf8"),
     ) as {
       status: string;
+      repo_head: string | null;
       mode: string;
       captures: Array<{ destination: string; status: string; screenshot: string }>;
       validation: {
@@ -145,6 +148,7 @@ exit 64
     };
 
     expect(manifest.status).toBe("ready");
+    expect(manifest.repo_head).toMatch(/^[0-9a-f]{40}$/);
     expect(manifest.mode).toBe("offline-truth");
     expect(manifest.captures.map((capture) => capture.destination)).toEqual(["home", "session"]);
     expect(manifest.validation).toEqual({

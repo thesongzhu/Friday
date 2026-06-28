@@ -59,6 +59,12 @@ describe("friday-desktop-ax-accessibility-capture contract", () => {
     expect(source).toContain("Only visible, safe observations are emitted");
     expect(source).toContain("does not click governed or");
     expect(source).toContain("friday-ui-device-accessibility-click-capture.mjs");
+    expect(source).toContain("killSignal: \"SIGKILL\"");
+    expect(source).toContain("timeout: timeoutSeconds * 1000");
+    expect(source).toContain("const overallTimeoutMs = Math.max(timeoutSeconds * 1000 * 4, 30_000)");
+    expect(source).toContain("function overallDeadlineExceeded()");
+    expect(source).toContain("capture_overall_timeout");
+    expect(source).toContain("overall_timeout_ms: overallTimeoutMs");
     expect(navSource).toContain(".accessibilityIdentifier(\"friday.desktop.nav.\\(destination.rawValue)\")");
   });
 

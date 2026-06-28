@@ -23,6 +23,7 @@ function createFixtureRepo(extraScriptSource = "") {
 destinations_csv="home,missions,session,contextPassport,tokenLedger,shareIntake,voice,pairing,needsMe,memory,platform,providerAuth,activity,workflows,onboarding,settings,petEditor,proofViewer,entrypoints"
 truth_label="ios_selected_design_destination_capture_not_live_closure"
 design_source="friday-design-handoff-20260602/saved/mobile-selection.json"
+repo_head="$(git -C "$repo_root" rev-parse HEAD)"
 mode="design-proof-sample"
 negative_control_note="\`offline-truth\` is a negative-control lane only"
 caveat="not END-BAR / not GO-LIVE; design-proof-sample is visual comparison only; enabled actions still require separate Hub/DB/ledger/proof closure"

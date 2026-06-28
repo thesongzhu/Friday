@@ -46,6 +46,8 @@ const workbenchMissionId = arg("workbench-mission-id") || process.env.FRIDAY_DES
 const timeoutSeconds = Number(arg("timeout-seconds") || process.env.FRIDAY_DESKTOP_AX_CAPTURE_TIMEOUT_SECONDS || "20");
 const treeDepth = Number(arg("tree-depth") || process.env.FRIDAY_DESKTOP_AX_TREE_DEPTH || "5");
 const axTraversalDepth = Number.isInteger(treeDepth) ? treeDepth : 5;
+const overallStartedAtMs = Date.now();
+const overallTimeoutMs = Math.max(timeoutSeconds * 1000 * 4, 30_000);
 const planOnly = args.includes("--plan-only");
 const requireObserved = args.includes("--require-observed");
 const liveReadHost = (process.env.FRIDAY_CONSOLE_LIVE_READ_HOST || "").trim();
@@ -190,12 +192,19 @@ function appleString(value) {
 }
 
 function osascript(script) {
-  return run("/usr/bin/osascript", ["-e", script], { timeout: timeoutSeconds * 1000 });
+  return run("/usr/bin/osascript", ["-e", script], {
+    killSignal: "SIGKILL",
+    timeout: timeoutSeconds * 1000,
+  });
+}
+
+function overallDeadlineExceeded() {
+  return Date.now() - overallStartedAtMs > overallTimeoutMs;
 }
 
 function waitForWindow() {
   const deadline = Date.now() + timeoutSeconds * 1000;
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && !overallDeadlineExceeded()) {
     const result = osascript(`
 tell application "System Events"
   if exists process "FridayHubConsole" then
@@ -552,6 +561,10 @@ if (blockers.length === 0) {
   }
 
   for (const [destination, destinationTargets] of byDestination.entries()) {
+    if (overallDeadlineExceeded()) {
+      block("capture_overall_timeout", `stopped before destination:${destination}`);
+      break;
+    }
     const ready = launchApp(destination);
     if (!ready) {
       block("app_window_not_ready", `FridayHubConsole:${destination}`);
@@ -615,6 +628,10 @@ if (blockers.length === 0) {
       });
     }
     for (const target of destinationTargets) {
+      if (overallDeadlineExceeded()) {
+        block("capture_overall_timeout", `stopped before target:${target.runtimeActionId}`);
+        break;
+      }
       let matchKind = "none";
       const matched = elements.find((element) => {
         const result = targetMatches(element, target);
@@ -695,6 +712,7 @@ const summary = {
     raw_tree: rawPath,
     mode: captureMode,
     live_connection: liveConnection,
+    overall_timeout_ms: overallTimeoutMs,
     observed_count: observedActions.length,
     missing_count: missingTargets.length,
     missing_targets: missingTargets,
