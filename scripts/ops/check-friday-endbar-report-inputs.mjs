@@ -10,6 +10,7 @@ function usage() {
   node scripts/ops/check-friday-endbar-report-inputs.mjs \\
     [--repo-root=/abs/repo] \\
     --search-root=/abs/artifact-dir [--search-root=/abs/other-dir ...] \\
+    [--search-roots=/abs/artifact-dir,/abs/other-dir] \\
     [--max-depth=5] [--out=/abs/report-inputs.json]
 
 Truth: discovers existing END-BAR report candidates and prints the readiness
@@ -47,7 +48,10 @@ if (args.includes("--help") || args.includes("-h")) {
 }
 
 const repoRoot = resolve(arg("repo-root") || process.env.FRIDAY_REPO_ROOT || new URL("../..", import.meta.url).pathname);
-const searchRoots = allArgs("search-root").map((path) => isAbsolute(path) ? path : resolve(path));
+const searchRoots = [
+  ...allArgs("search-root"),
+  ...allArgs("search-roots").flatMap((value) => value.split(",").map((item) => item.trim()).filter(Boolean)),
+].map((path) => isAbsolute(path) ? path : resolve(path));
 const outPath = arg("out") || process.env.FRIDAY_ENDBAR_REPORT_INPUT_DISCOVERY || "";
 const maxDepth = Number.parseInt(arg("max-depth") || process.env.FRIDAY_ENDBAR_REPORT_INPUT_MAX_DEPTH || "5", 10);
 
