@@ -67,6 +67,52 @@ describe("Friday END-BAR readiness aggregator", () => {
     expect(report.groups.find((group: { id: string }) => group.id === "ui_real_use_mobile_desktop").status).toBe("deferred");
   });
 
+  it("surfaces shared channel-current blocker across deferred UI and integrated groups", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-endbar-readiness-"));
+    const mechanism = writeJson(dir, "mechanism-multiangle.json", {
+      truth: "mechanism_multiangle_stress_report",
+      status: "complete_inputs_observed",
+    });
+    const provider = writeJson(dir, "provider-entitlement.json", {
+      truth: "provider_entitlement_readiness_report",
+      status: "passed",
+    });
+    const selected = writeJson(dir, "selected-uiux.json", { status: "selected_visual_proof_ready" });
+    const ui = writeJson(dir, "ui-real-use.json", {
+      truth: "ui_real_use_mobile_desktop_report",
+      status: "deferred",
+      deferredInputs: [{ role: "channel", status: "deferred_by_operator" }],
+    });
+    const integrated = writeJson(dir, "integrated-tape.json", {
+      truth: "integrated_end_to_end_tape_report",
+      status: "blocked",
+      blockers: [{
+        code: "no_channel_deferred_signal",
+        detail: "ui_device_proof_evidence:channel_deferred_strict_assembly_blocked",
+      }],
+      fullProofGaps: ["same_mission_mobile_desktop_channel_capture"],
+    });
+
+    const report = run([
+      `--mechanism-report=${mechanism}`,
+      `--ui-real-use-report=${ui}`,
+      `--selected-uiux-report=${selected}`,
+      `--provider-entitlement-report=${provider}`,
+      `--integrated-tape-report=${integrated}`,
+    ]);
+
+    expect(report.status).toBe("blocked");
+    expect(report.strictEndBarReady).toBe(false);
+    expect(report.counts.satisfied).toBe(3);
+    expect(report.counts.deferred).toBe(2);
+    expect(report.sharedBlockers).toContainEqual({
+      key: "channel_current_linked_proof_deferred",
+      status: "deferred",
+      affectedGroups: ["ui_real_use_mobile_desktop", "integrated_end_to_end_tape"],
+      description: "Channel/current-linked proof is deferred, so all affected groups remain outside strict END-BAR.",
+    });
+  });
+
   it("marks strict ready only when every required group has a supplied pass report", () => {
     const dir = mkdtempSync(join(tmpdir(), "friday-endbar-readiness-"));
     const mechanism = writeJson(dir, "mechanism-multiangle.json", {
