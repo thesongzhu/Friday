@@ -10,7 +10,7 @@ function usage() {
   node scripts/ops/friday-macos-live-write-read-proof-events.mjs \\
     --proof=/abs/friday-macos-desktop-roundtrip-proof.json \\
     [--out=/abs/desktop-roundtrip-events.jsonl] \\
-    [--action-runtime-out=/abs/action-runtime-evidence.json] [--require-ready]
+    [--action-runtime-out=/abs/action-runtime-evidence.json] [--head-sha=<git-sha>] [--require-ready]
 
 Truth: converts one real macOS live write-read roundtrip artifact into desktop
 same-run events for the UI/device capture pipeline. It is not END-BAR proof,
@@ -32,6 +32,7 @@ if (args.includes("--help") || args.includes("-h")) {
 const proofPath = arg("proof");
 const outPath = arg("out");
 const actionRuntimeOutPath = arg("action-runtime-out");
+const headSha = arg("head-sha");
 const requireReady = args.includes("--require-ready");
 const blockers = [];
 
@@ -113,6 +114,7 @@ function explicitActionRows(value) {
       evidence_ref: evidence,
       mission_id: missionId,
       work_item_id: workItemId,
+      ...(headSha ? { headSha } : {}),
       source: "macos_desktop_live_write_read_roundtrip_explicit_ui_actions",
       truth_label: "explicit_ui_action_runtime_evidence_not_endbar_not_adoption",
     };
@@ -145,6 +147,7 @@ if (missionId && !missionId.toLowerCase().includes("mission")) {
   block("mission_id_unexpected_shape", missionId);
 }
 if (surfaceKind && surfaceKind !== "desktop") block("surface_kind_not_desktop", surfaceKind);
+if (headSha && !/^[a-f0-9]{7,40}$/i.test(headSha)) block("head_sha_unexpected_shape", headSha);
 
 const write = proof?.write ?? null;
 const writeStatus = stringField(write, "status", "proof.write");
@@ -189,6 +192,7 @@ const events = blockers.length === 0
     mission_id: missionId,
     evidence_ref: evidenceRef,
     work_item_id: workItemId,
+    ...(headSha ? { headSha } : {}),
     source: "macos_desktop_live_write_read_roundtrip_artifact",
     truth_label: "desktop_same_run_event_from_live_write_read_artifact_not_ui_device_proof",
   }))
@@ -207,6 +211,7 @@ if (actionRuntimeOutPath && blockers.length === 0) {
     truth: "action_runtime_evidence_from_explicit_macos_ui_actions_not_endbar",
     status: actionRows.length > 0 ? "ready" : "no_explicit_ui_actions",
     missionId: missionId || null,
+    headSha: headSha || null,
     actions: actionRows,
   }, null, 2)}\n`);
 }
@@ -216,6 +221,7 @@ const output = {
   status: blockers.length === 0 ? "ready" : "blocked",
   missionId: missionId || null,
   workItemId: workItemId || null,
+  headSha: headSha || null,
   evidenceRef: evidenceRef || null,
   out: outPath ? abs(outPath) : null,
   eventCount: events.length,

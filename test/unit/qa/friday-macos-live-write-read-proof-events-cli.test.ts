@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 const script = "scripts/ops/friday-macos-live-write-read-proof-events.mjs";
 const missionId = "mission-desktop-live-roundtrip-cli";
 const workItemId = "work-desktop-live-roundtrip-cli";
+const headSha = "abcdef12".repeat(5);
 
 function proof(overrides: Record<string, unknown> = {}) {
   return {
@@ -52,12 +53,14 @@ describe("friday-macos-live-write-read-proof-events", () => {
         script,
         `--proof=${proofPath}`,
         `--out=${outPath}`,
+        `--head-sha=${headSha}`,
         "--require-ready",
       ], { cwd: process.cwd(), encoding: "utf8" });
 
-      const result = JSON.parse(stdout) as { status?: string; eventCount?: number; blockers?: unknown[] };
+      const result = JSON.parse(stdout) as { status?: string; eventCount?: number; headSha?: string; blockers?: unknown[] };
       expect(result.status).toBe("ready");
       expect(result.eventCount).toBe(5);
+      expect(result.headSha).toBe(headSha);
       expect(JSON.stringify(result)).toContain("no_explicit_ui_actions");
       expect(result.blockers).toEqual([]);
 
@@ -66,6 +69,7 @@ describe("friday-macos-live-write-read-proof-events", () => {
         event?: string;
         mission_id?: string;
         evidence_ref?: string;
+        headSha?: string;
         work_item_id?: string;
       }>;
       expect(rows.map((row) => row.event)).toEqual([
@@ -79,6 +83,7 @@ describe("friday-macos-live-write-read-proof-events", () => {
       expect(new Set(rows.map((row) => row.mission_id))).toEqual(new Set([missionId]));
       expect(new Set(rows.map((row) => row.work_item_id))).toEqual(new Set([workItemId]));
       expect(new Set(rows.map((row) => row.evidence_ref))).toEqual(new Set([proofPath]));
+      expect(new Set(rows.map((row) => row.headSha))).toEqual(new Set([headSha]));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -107,6 +112,7 @@ describe("friday-macos-live-write-read-proof-events", () => {
         `--proof=${proofPath}`,
         `--out=${eventOut}`,
         `--action-runtime-out=${actionOut}`,
+        `--head-sha=${headSha}`,
         "--require-ready",
       ], { cwd: process.cwd(), encoding: "utf8" });
 
@@ -115,10 +121,12 @@ describe("friday-macos-live-write-read-proof-events", () => {
       const actionEvidence = JSON.parse(readFileSync(actionOut, "utf8")) as {
         truth?: string;
         status?: string;
-        actions?: Array<{ surface?: string; screen?: string; action_id?: string; capability_id?: string; status?: string; evidence_ref?: string }>;
+        headSha?: string;
+        actions?: Array<{ surface?: string; screen?: string; action_id?: string; capability_id?: string; status?: string; evidence_ref?: string; headSha?: string }>;
       };
       expect(actionEvidence.truth).toBe("action_runtime_evidence_from_explicit_macos_ui_actions_not_endbar");
       expect(actionEvidence.status).toBe("ready");
+      expect(actionEvidence.headSha).toBe(headSha);
       expect(actionEvidence.actions).toEqual([
         expect.objectContaining({
           surface: "desktop",
@@ -128,6 +136,7 @@ describe("friday-macos-live-write-read-proof-events", () => {
           capability_id: "security_approval_bound_principal_gate_cat10_netnew",
           status: "pass",
           evidence_ref: "proof://desktop-chat-approve",
+          headSha,
         }),
       ]);
     } finally {
@@ -252,6 +261,25 @@ describe("friday-macos-live-write-read-proof-events", () => {
       expect(result.status).toBe(2);
       const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string }> };
       expect(output.blockers?.map((blocker) => blocker.code)).toContain("proof_contains_sensitive_marker");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed head sha metadata", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-macos-roundtrip-events-head-"));
+    try {
+      const proofPath = writeProof(tempDir);
+      const result = spawnSync("node", [
+        script,
+        `--proof=${proofPath}`,
+        "--head-sha=not a sha",
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string }> };
+      expect(output.blockers?.map((blocker) => blocker.code)).toContain("head_sha_unexpected_shape");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
