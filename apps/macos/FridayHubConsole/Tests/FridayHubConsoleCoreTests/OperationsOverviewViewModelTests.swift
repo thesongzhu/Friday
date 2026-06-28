@@ -1969,8 +1969,8 @@ func providerWorkspaceListSessionsSendsGuardedRequestAndRefreshes() async {
 }
 
 @Test
-func operatorApprovalCLISignerRejectsMalformedDigestBeforeInvokingSigner() async {
-  let signer = OperatorApprovalCLISigner(keyPath: "/tmp/not-read-in-this-test")
+func operatorApprovalExternalArtifactSignerRejectsMalformedDigestBeforeReadingArtifact() async {
+  let signer = OperatorApprovalExternalArtifactSigner(signedApprovalPath: "/tmp/not-read-in-this-test")
   do {
     _ = try await signer.signApproval(OperatorApprovalSigningRequest(
       runId: "run-x",
@@ -1987,36 +1987,26 @@ func operatorApprovalCLISignerRejectsMalformedDigestBeforeInvokingSigner() async
 }
 
 @Test
-func operatorApprovalCLISignerWritesRefsOnlyRequestAndRelaysOpaqueStdout() async throws {
+func operatorApprovalExternalArtifactSignerWritesRefsOnlyRequestAndRelaysMatchingSignedArtifact() async throws {
   let temp = try temporaryHome()
   defer { try? FileManager.default.removeItem(at: temp) }
 
-  let capturedArgs = temp.appendingPathComponent("args.txt")
-  let capturedRequest = temp.appendingPathComponent("request.json")
-  let fakeSigner = temp.appendingPathComponent("friday-operator-approve")
-  let fakeKey = temp.appendingPathComponent("operator-test.key")
-  try Data("not-a-real-key\n".utf8).write(to: fakeKey)
-  let signedApproval = #"{"truth_label":"fake_cli_signed_approval","signature":"opaque"}"#
-  let script = """
-    #!/bin/sh
-    set -eu
-    printf '%s\\n' "$@" > '\(capturedArgs.path)'
-    test "$1" = "sign"
-    test "$2" = "--key"
-    test "$3" = "\(fakeKey.path)"
-    test "$4" = "--request"
-    test -f "$5"
-    cat "$5" > '\(capturedRequest.path)'
-    printf '%s' '\(signedApproval)'
+  let signedApproval = """
+    {
+      "scheme": "ed25519",
+      "decision": "approved",
+      "approval_id": "approval-bridge-1",
+      "action_digest": "\(String(repeating: "b", count: 64))",
+      "expires_at": 1900000000000,
+      "issuer": "friday_canonical_gate",
+      "signature": "\(String(repeating: "c", count: 128))"
+    }
     """
-  try script.write(to: fakeSigner, atomically: true, encoding: .utf8)
-  try FileManager.default.setAttributes(
-    [.posixPermissions: NSNumber(value: Int16(0o700))],
-    ofItemAtPath: fakeSigner.path)
+  let signedApprovalFile = temp.appendingPathComponent("signed-approval.json")
+  try Data(signedApproval.utf8).write(to: signedApprovalFile)
 
-  let signer = OperatorApprovalCLISigner(
-    executablePath: fakeSigner.path,
-    keyPath: fakeKey.path,
+  let signer = OperatorApprovalExternalArtifactSigner(
+    signedApprovalPath: signedApprovalFile.path,
     tempDirectory: temp)
   let blob = try await signer.signApproval(OperatorApprovalSigningRequest(
     runId: "run-paused-bridge",
@@ -2027,7 +2017,11 @@ func operatorApprovalCLISignerWritesRefsOnlyRequestAndRelaysOpaqueStdout() async
 
   #expect(String(decoding: blob, as: UTF8.self) == signedApproval)
 
-  let requestData = try Data(contentsOf: capturedRequest)
+  let requestFiles = try FileManager.default.contentsOfDirectory(
+    at: temp, includingPropertiesForKeys: nil)
+    .filter { $0.lastPathComponent.hasPrefix("friday-approval-") }
+  #expect(requestFiles.count == 1)
+  let requestData = try Data(contentsOf: requestFiles[0])
   let requestText = String(decoding: requestData, as: UTF8.self)
   let request = try JSONDecoder().decode(ApprovalRequestFileMirror.self, from: requestData)
   #expect(request.approvalId == "approval-bridge-1")
@@ -2039,16 +2033,39 @@ func operatorApprovalCLISignerWritesRefsOnlyRequestAndRelaysOpaqueStdout() async
   #expect(!requestText.contains("run-paused-bridge"))
   #expect(!requestText.contains("private"))
   #expect(!requestText.contains("body"))
+}
 
-  let args = try String(contentsOf: capturedArgs, encoding: .utf8)
-    .split(separator: "\n")
-    .map(String.init)
-  #expect(args.count == 5)
-  #expect(args[0] == "sign")
-  #expect(args[1] == "--key")
-  #expect(args[2] == fakeKey.path)
-  #expect(args[3] == "--request")
-  #expect(!FileManager.default.fileExists(atPath: args[4]))
+@Test
+func operatorApprovalExternalArtifactSignerRejectsMismatchedSignedArtifact() async throws {
+  let temp = try temporaryHome()
+  defer { try? FileManager.default.removeItem(at: temp) }
+  let signedApprovalFile = temp.appendingPathComponent("signed-approval.json")
+  try Data("""
+    {
+      "decision": "approved",
+      "approval_id": "wrong-approval",
+      "action_digest": "\(String(repeating: "b", count: 64))",
+      "expires_at": 1900000000000,
+      "signature": "\(String(repeating: "c", count: 128))"
+    }
+    """.utf8).write(to: signedApprovalFile)
+
+  let signer = OperatorApprovalExternalArtifactSigner(
+    signedApprovalPath: signedApprovalFile.path,
+    tempDirectory: temp)
+  do {
+    _ = try await signer.signApproval(OperatorApprovalSigningRequest(
+      runId: "run-paused-bridge",
+      approvalId: "approval-bridge-1",
+      actionDigest: String(repeating: "b", count: 64),
+      summary: "write_file paused",
+      expiresAtMs: 1_900_000_000_000))
+    Issue.record("mismatched signed artifact must fail closed")
+  } catch let error as OperatorApprovalSignerError {
+    #expect(error.description.contains("approval_id"))
+  } catch {
+    Issue.record("unexpected error \(error)")
+  }
 }
 
 @Test
