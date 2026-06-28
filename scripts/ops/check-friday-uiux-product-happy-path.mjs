@@ -310,7 +310,7 @@ const allowedSatisfactionClasses = new Set([
   "channel_live_product_proof",
   "human_release_acceptance",
 ]);
-const forbiddenSatisfactionTruth = /(partial|not[-_ ]?endbar|not[-_ ]?proof|design[-_ ]?proof|screenshot|mock|fixture|sample|dry[-_ ]?run|offline|unavailable|placeholder)/i;
+const forbiddenSatisfactionTruth = /(partial|not[-_ ]?(?:endbar|proof|full[-_ ]?proof|product[-_ ]?proof|ui[-_ ]?device[-_ ]?proof)|design[-_ ]?proof|screenshot|mock|fixture|sample|dry[-_ ]?run|offline|unavailable|placeholder)/i;
 
 function satisfactionRows(report) {
   if (!report) return [];
