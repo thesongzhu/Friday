@@ -32,6 +32,7 @@ function writeArtifacts(dir: string) {
     remaining_requirement: "real UI/device consumption evidence still required",
   });
   writeJson(objective, {
+    proof: "mission_spine_objective_backend_wire_coverage",
     remaining_requirement: "UI or device consumption must still pass",
     requirements: [{ required_gate: "scripts/mission-spine-ui-device-proof-gate.sh" }],
   });
@@ -150,6 +151,81 @@ describe("friday-ui-device-proof-evidence-harvest", () => {
       ], { cwd: process.cwd(), encoding: "utf8" });
       expect(strict.status).toBe(2);
       expect(JSON.parse(strict.stdout).status).toBe("non_channel_inputs_ready_channel_deferred");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not classify native linkage as objective coverage just because it lists requirements", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-harvest-native-linkage-"));
+    try {
+      const artifacts = writeArtifacts(tempDir);
+      rmSync(artifacts.objective, { force: true });
+      writeJson(join(tempDir, "uiux-native-linkage.json"), {
+        truth: "uiux_native_linkage_not_screenshot_not_live_tap_not_endbar",
+        status: "linked",
+        requirements: [{ id: "native_route_present" }],
+        remaining_requirement: "UI or device consumption must still pass",
+      });
+
+      const output = execFileSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--search-dir=${tempDir}`,
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const result = JSON.parse(output) as {
+        selected?: { objectiveCoverage?: string };
+        rejected?: Array<{ path?: string }>;
+      };
+      expect(result.selected?.objectiveCoverage).toBe("");
+      expect(result.rejected?.some((candidate) => candidate.path?.endsWith("uiux-native-linkage.json"))).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects artifacts and events that carry a mismatched current head", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-harvest-current-head-"));
+    try {
+      const artifacts = writeArtifacts(tempDir);
+      writeJson(artifacts.mobile, {
+        missionId,
+        headSha: "old-head",
+        truth: "ios_mobile_live_write_read_roundtrip_proof_not_ui_device_proof",
+      });
+      writeFileSync(artifacts.events, `${JSON.stringify({
+        surface: "mobile",
+        event: "mission_intake_submitted",
+        mission_id: missionId,
+        headSha: "old-head",
+        evidence_ref: artifacts.mobile,
+      })}\n`);
+
+      const result = spawnSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--search-dir=${tempDir}`,
+        "--current-head=current-head",
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as {
+        selected?: { mobile?: string; events?: string[] };
+        rejected?: Array<{ path?: string; rejectReasons?: string[] }>;
+        blockers?: Array<{ code?: string; detail?: string }>;
+      };
+      expect(output.selected?.mobile).toBe("");
+      expect(output.selected?.events).toEqual([]);
+      expect(output.rejected).toContainEqual(expect.objectContaining({
+        path: artifacts.mobile,
+        rejectReasons: expect.arrayContaining(["head_mismatch:old-head"]),
+      }));
+      expect(output.rejected).toContainEqual(expect.objectContaining({
+        path: artifacts.events,
+        rejectReasons: expect.arrayContaining(["events_head_mismatch:old-head"]),
+      }));
+      expect(output.blockers).toContainEqual({ code: "missing_eligible_capture", detail: "mobile" });
+      expect(output.blockers).toContainEqual({ code: "missing_manifest_or_events", detail: "need observations-manifest.json or same-run event jsonl" });
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

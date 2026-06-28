@@ -11,7 +11,7 @@ function usage() {
   node scripts/ops/friday-ui-device-proof-evidence-harvest.mjs \\
     --mission-id=mission_... \\
     --search-dir=/abs/artifacts [--search-dir=/abs/other-artifacts ...] \\
-    [--out=/abs/harvest.json] [--require-ready] [--defer-channel-proof]
+    [--out=/abs/harvest.json] [--current-head=<git-sha>] [--require-ready] [--defer-channel-proof]
 
 Truth: scans existing artifact files and reports which ones are eligible inputs
 for the strict UI/device proof pipeline. It does not create proof rows, does not
@@ -46,6 +46,7 @@ if (args.includes("--help") || args.includes("-h")) {
 const missionId = arg("mission-id");
 const searchDirs = argsAll("search-dir");
 const out = arg("out");
+const currentHead = arg("current-head") || process.env.FRIDAY_UI_DEVICE_CURRENT_HEAD || "";
 const requireReady = args.includes("--require-ready");
 const deferChannelProof = args.includes("--defer-channel-proof") || process.env.FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF === "1";
 const blockers = [];
@@ -83,6 +84,28 @@ function jsonMission(value) {
   return "";
 }
 
+function jsonHead(value) {
+  if (!value || typeof value !== "object") return "";
+  const candidates = [
+    value.headSha,
+    value.head_sha,
+    value.gitHead,
+    value.git_head,
+    value.commitSha,
+    value.commit_sha,
+    value.currentHead,
+    value.current_head,
+    value.repo?.headSha,
+    value.repo?.head_sha,
+    value.inputs?.headSha,
+    value.inputs?.head_sha,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return "";
+}
+
 function fileKind(path, json) {
   const lower = path.toLowerCase();
   const name = basename(lower);
@@ -90,7 +113,7 @@ function fileKind(path, json) {
   if (name === "observations-manifest.json") return "manifest";
   if (json?.proof === "mission_spine_backend_api_live_pressure") return "backendLiveProof";
   if (json?.proof === "mission_spine_channel_live_proof") return "channelLiveProof";
-  if (Array.isArray(json?.requirements) || String(json?.remaining_requirement || "").includes("UI or device consumption")) return "objectiveCoverage";
+  if (json?.proof === "mission_spine_objective_backend_wire_coverage") return "objectiveCoverage";
   if (name === "ios-live-write-read-proof.json" || name === "mobile.json") return "mobile";
   if (name === "macos-live-write-read-proof.json" || name === "desktop.json") return "desktop";
   if (name === "timeline-capture.json" || name === "timeline.json" || name === "timeline.trace" || name === "old-timeline-db.json") return "timeline";
@@ -102,8 +125,10 @@ function fileKind(path, json) {
 function shouldReject(path, json, kind) {
   const truth = String(json?.truth || json?.truth_label || "");
   const foundMission = jsonMission(json);
+  const foundHead = jsonHead(json);
   const reasons = [];
   if (foundMission && foundMission !== missionId) reasons.push(`mission_mismatch:${foundMission}`);
+  if (currentHead && foundHead && foundHead !== currentHead) reasons.push(`head_mismatch:${foundHead}`);
   if (truth.includes("synthetic")) reasons.push("synthetic_truth_label");
   if (truth.includes("partial_not_mission_spine_ui_device_proof") && kind !== "timeline") {
     reasons.push("explicit_partial_non_ui_device_truth_label");
@@ -131,6 +156,12 @@ function jsonlRejectReasons(path) {
   const missions = new Set(rows.map((row) => typeof row?.mission_id === "string" ? row.mission_id.trim() : "").filter(Boolean));
   if (missions.size === 0) return ["events_missing_mission_id"];
   if (missions.size !== 1 || !missions.has(missionId)) return [`events_mission_mismatch:${[...missions].sort().join(",")}`];
+  if (currentHead) {
+    const heads = new Set(rows.map((row) => jsonHead(row)).filter(Boolean));
+    if (heads.size > 0 && (heads.size !== 1 || !heads.has(currentHead))) {
+      reasons.push(`events_head_mismatch:${[...heads].sort().join(",")}`);
+    }
+  }
   return reasons;
 }
 
@@ -183,6 +214,7 @@ for (const input of searchDirs) {
       kind,
       path,
       missionId: jsonMission(json) || null,
+      headSha: jsonHead(json) || null,
       truth: typeof json?.truth === "string" ? json.truth : typeof json?.truth_label === "string" ? json.truth_label : null,
       eligible: rejectReasons.length === 0,
       rejectReasons,
@@ -261,6 +293,7 @@ const result = {
   truth: "ui_device_proof_evidence_harvest_not_proof_not_endbar",
   status,
   missionId,
+  currentHead: currentHead || null,
   searched: searchDirs.map(abs),
   selected,
   deferredInputs,
