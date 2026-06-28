@@ -79,17 +79,20 @@ describe("friday-ios-live-write-read-capture", () => {
       const events = readFileSync(join(outDir, "ios-live-write-read-events.jsonl"), "utf8")
         .trim()
         .split("\n")
-        .map((line) => JSON.parse(line)) as Array<{ surface?: string; mission_id?: string }>;
+        .map((line) => JSON.parse(line)) as Array<{ surface?: string; mission_id?: string; headSha?: string }>;
       expect(events).toHaveLength(5);
       expect(new Set(events.map((event) => event.surface))).toEqual(new Set(["mobile"]));
       expect(new Set(events.map((event) => event.mission_id))).toEqual(new Set([missionId]));
 
       const index = JSON.parse(readFileSync(join(outDir, "capture-index.json"), "utf8")) as {
         status?: string;
+        headSha?: string;
         mobile?: { event_count?: number };
         caveat?: string;
       };
       expect(index.status).toBe("ready");
+      expect(index.headSha).toMatch(/^[a-f0-9]{40}$/);
+      expect(new Set(events.map((event) => event.headSha))).toEqual(new Set([index.headSha]));
       expect(index.mobile?.event_count).toBe(5);
       expect(index.caveat).toContain("Mobile same-run capture only");
     } finally {

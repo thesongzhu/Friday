@@ -24,6 +24,7 @@ die() {
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+repo_head="$(git -C "${repo_root}" rev-parse HEAD 2>/dev/null || true)"
 out_dir=""
 shared_id="${FRIDAY_MISSION_SPINE_UI_PROOF_SHARED_ID:-}"
 mission_id="${FRIDAY_MISSION_SPINE_UI_PROOF_MISSION_ID:-}"
@@ -106,16 +107,17 @@ node "${repo_root}/scripts/ops/friday-macos-live-write-read-proof-events.mjs" \
   --proof="${proof_path}" \
   --out="${events_path}" \
   --action-runtime-out="${action_runtime_path}" \
+  ${repo_head:+--head-sha="${repo_head}"} \
   --require-ready >/tmp/friday-macos-live-write-read-proof-events.$$.json
 
 [ -s "${events_path}" ] || die "proof-events driver did not create ${events_path}"
 [ -s "${action_runtime_path}" ] || die "proof-events driver did not create ${action_runtime_path}"
 
-node - "${proof_path}" "${events_path}" "${action_runtime_path}" "${index_path}" <<'NODE'
+node - "${proof_path}" "${events_path}" "${action_runtime_path}" "${index_path}" "${repo_head}" <<'NODE'
 const { readFileSync, writeFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
 
-const [proofPath, eventsPath, actionRuntimePath, indexPath] = process.argv.slice(2);
+const [proofPath, eventsPath, actionRuntimePath, indexPath, repoHead] = process.argv.slice(2);
 const proof = JSON.parse(readFileSync(proofPath, "utf8"));
 const events = readFileSync(eventsPath, "utf8")
   .trim()
@@ -128,6 +130,7 @@ const index = {
   truth_label: "macos_live_write_read_capture_index_not_ui_device_proof",
   status: "ready",
   generated_at_utc: new Date().toISOString(),
+  headSha: repoHead || null,
   mission_id: proof.mission_id,
   work_item_id: proof.work_item_id,
   desktop: {
