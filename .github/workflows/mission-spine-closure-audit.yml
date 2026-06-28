@@ -35,6 +35,9 @@ jobs:
       - name: Toolchain
         run: rustup show && cargo --version
 
+      - name: Install detect-secrets
+        run: pip install detect-secrets==1.5.0
+
       - name: Decode UI/device proof bundle
         working-directory: .
         env:
