@@ -25,6 +25,15 @@ function readJson(path: string) {
 }
 
 describe("Friday provider entitlement runtime proof CLI", () => {
+  it("keeps the Anthropic runtime proof default on a currently valid Claude API model", () => {
+    const source = readFileSync(script, "utf8");
+
+    expect(source).toContain('model: process.env.FRIDAY_PROVIDER_ENTITLEMENT_ANTHROPIC_MODEL ?? "claude-sonnet-4-6"');
+    expect(source).toContain('supportedModels: ["claude-sonnet-4-6", "claude-opus-4-8"]');
+    expect(source).not.toContain("claude-sonnet-4-20250514");
+    expect(source).not.toContain("claude-opus-4-20250514");
+  });
+
   it("writes honest blocked artifacts when provider API-key env vars are absent", () => {
     const dir = mkdtempSync(join(tmpdir(), "friday-provider-entitlement-proof-"));
     const summary = run(["--provider=all", "--preflight-only", "--allow-missing", `--out-dir=${dir}`]);

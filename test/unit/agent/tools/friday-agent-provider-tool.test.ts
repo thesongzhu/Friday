@@ -101,7 +101,8 @@ describe("createFridayAgentProviderTool", () => {
         authMode: "oauth",
         api: "anthropic-messages",
         baseUrl: "https://api.anthropic.com",
-        defaultModel: "claude-sonnet-4-20250514",
+        defaultModel: "claude-sonnet-4-6",
+        supportedModels: ["claude-sonnet-4-6", "claude-opus-4-8"],
         validateOnSave: false,
       }),
     );
