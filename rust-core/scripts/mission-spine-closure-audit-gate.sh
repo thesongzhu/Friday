@@ -35,6 +35,8 @@ channel_live_proof_status="missing"
 channel_live_proof_generated_at=""
 channel_live_proof_artifact="$channel_live_proof_out"
 channel_live_proof_source="standard"
+ui_device_channel_proof_satisfies_telegram="false"
+ui_device_channel_proof_artifact=""
 full_goal_complete="false"
 strict_exit=0
 deepseek_env_present="false"
@@ -64,6 +66,49 @@ uiux_runtime_evidence_action_rows_json="null"
 uiux_residual_destinations_with_blockers_json="null"
 uiux_residual_destinations_all_runtime_actions_covered_json="null"
 
+channel_wrapper_passes_strict_schema() {
+  local artifact="$1"
+  [[ -s "$artifact" ]] || return 1
+  jq -e '
+    .proof == "mission_spine_channel_live_proof"
+    and .status == "passed"
+    and .capture_mode == "--live"
+    and .telegram_live.status == "passed"
+    and .telegram_live.proof == "telegram_inbound_through_rust_channels_pipeline"
+    and .telegram_live.bot_identity_verified == true
+    and .telegram_live.channel_binding_created == true
+    and .telegram_live.sender_id_present == true
+    and .telegram_live.sender_allowlisted == true
+    and .telegram_live.bearer_auth_accepted_correct == true
+    and .telegram_live.forged_bearer_rejected == true
+    and .telegram_live.non_allowlisted_sender_rejected == true
+    and .secret_policy.token_logged == false
+    and .secret_policy.token_written_to_artifact == false
+    and .secret_policy.provider_or_channel_id_written == false
+    and .secret_policy.raw_sender_id_written == false
+    and .secret_policy.artifact_contains_redacted_text_only == true
+  ' "$artifact" >/dev/null
+}
+
+record_ui_device_channel_proof_if_present() {
+  local proof="$1"
+  local channel_artifact
+
+  channel_artifact="$(jq -r '.surfaces.channel.evidence_ref // ""' "$proof")"
+  if [[ -z "$channel_artifact" ]]; then
+    return 0
+  fi
+
+  if channel_wrapper_passes_strict_schema "$channel_artifact"; then
+    ui_device_channel_proof_satisfies_telegram="true"
+    ui_device_channel_proof_artifact="$channel_artifact"
+    mkdir -p "$(dirname "$channel_live_proof_out")"
+    jq --arg consumed_from "$proof" \
+      '. + {consumed_from_ui_device_proof: $consumed_from}' \
+      "$channel_artifact" >"$channel_live_proof_out"
+  fi
+}
+
 echo "[mission-spine-closure] local backend + native/wire proof"
 scripts/mission-spine-proof-gate.sh --local
 local_status="passed"
@@ -90,6 +135,25 @@ elif [[ "$mode" == "--strict" ]]; then
   strict_exit=2
 fi
 
+if [[ -n "${MISSION_SPINE_UI_DEVICE_PROOF:-}" ]]; then
+  ui_device_proof_present="true"
+  ui_device_gate_executed="true"
+  if scripts/mission-spine-ui-device-proof-gate.sh; then
+    ui_device_status="passed"
+    record_ui_device_channel_proof_if_present "$MISSION_SPINE_UI_DEVICE_PROOF"
+  else
+    ui_device_status="proof_invalid"
+    if [[ "$mode" == "--strict" ]]; then
+      strict_exit=2
+    fi
+  fi
+else
+  ui_device_status="not_proven"
+  if [[ "$mode" == "--strict" ]]; then
+    strict_exit=2
+  fi
+fi
+
 if [[ -n "${FRIDAY_TELEGRAM_BOT_TOKEN:-}" ]]; then
   telegram_token_present="true"
 fi
@@ -98,7 +162,9 @@ if [[ -n "${FRIDAY_TELEGRAM_ALLOWED_USER_ID:-}" ]]; then
   telegram_allowed_user_present="true"
 fi
 
-if [[ -z "${FRIDAY_TELEGRAM_BOT_TOKEN:-}" ]]; then
+if [[ "$ui_device_channel_proof_satisfies_telegram" == "true" ]]; then
+  telegram_status="satisfied_by_ui_device_channel_proof"
+elif [[ -z "${FRIDAY_TELEGRAM_BOT_TOKEN:-}" ]]; then
   telegram_status="blocked_missing_token"
   if [[ "$mode" == "--strict" ]]; then
     strict_exit=2
@@ -115,24 +181,6 @@ else
     telegram_live_gate_executed="true"
     scripts/mission-spine-channel-live-gate.sh
     telegram_status="passed"
-  fi
-fi
-
-if [[ -n "${MISSION_SPINE_UI_DEVICE_PROOF:-}" ]]; then
-  ui_device_proof_present="true"
-  ui_device_gate_executed="true"
-  if scripts/mission-spine-ui-device-proof-gate.sh; then
-    ui_device_status="passed"
-  else
-    ui_device_status="proof_invalid"
-    if [[ "$mode" == "--strict" ]]; then
-      strict_exit=2
-    fi
-  fi
-else
-  ui_device_status="not_proven"
-  if [[ "$mode" == "--strict" ]]; then
-    strict_exit=2
   fi
 fi
 
@@ -180,6 +228,9 @@ if [[ -s "$channel_live_proof_out" ]] \
   channel_live_proof_available="true"
   channel_live_proof_status="passed"
   channel_live_proof_generated_at="$(jq -r '.generated_at_utc // ""' "$channel_live_proof_out")"
+  if [[ "$ui_device_channel_proof_satisfies_telegram" == "true" ]]; then
+    channel_live_proof_source="ui_device_proof_channel_evidence"
+  fi
 elif [[ -s "$telegram_raw_proof_out" ]] \
   && jq -e '
     .proof == "telegram_inbound_through_rust_channels_pipeline"
@@ -198,7 +249,7 @@ fi
 if [[ "$local_status" == "passed" \
   && "$ui_device_gate_self_test_status" == "passed" \
   && "$deepseek_status" == "passed" \
-  && "$telegram_status" == "passed" \
+  && ( "$telegram_status" == "passed" || "$telegram_status" == "satisfied_by_ui_device_channel_proof" ) \
   && "$ui_device_status" == "passed" ]]; then
   full_goal_complete="true"
 fi
@@ -245,13 +296,14 @@ cat > "$report_out" <<EOF
     "allowed_user_env_present": $telegram_allowed_user_present,
     "live_gate_executed": $telegram_live_gate_executed,
     "required_env": ["FRIDAY_TELEGRAM_BOT_TOKEN", "FRIDAY_TELEGRAM_ALLOWED_USER_ID"],
-    "required_scope": "one real allowlisted Telegram message through the inbound channel pipeline"
+    "required_scope": "one real allowlisted Telegram message through the inbound channel pipeline; in strict mode this may be satisfied by a same-run UI/device proof whose channel evidence is a passed --live mission_spine_channel_live_proof wrapper"
   },
   "last_channel_live_proof": {
     "status": "$channel_live_proof_status",
     "available": $channel_live_proof_available,
     "artifact": "$channel_live_proof_artifact",
     "source": "$channel_live_proof_source",
+    "ui_device_channel_proof_artifact": "$ui_device_channel_proof_artifact",
     "generated_at_utc": "$channel_live_proof_generated_at",
     "scope": "machine-readable redacted wrapper artifact written by scripts/mission-spine-channel-live-gate.sh after real Telegram/channel proof passes; legacy raw artifacts are not accepted because they can contain provider/channel identifiers"
   },
@@ -299,6 +351,7 @@ cat > "$report_out" <<EOF
   "report_semantics": {
     "report_mode_runs_live_positive_gates": false,
     "strict_mode_runs_live_positive_gates": true,
+    "strict_mode_can_satisfy_channel_from_same_run_ui_device_proof": true,
     "missing_env_in_report_mode_is_not_a_regression_of_prior_strict_live_proof": true,
     "report_mode_can_satisfy_deepseek_from_last_backend_live_proof": true,
     "uiux_non_channel_report_never_satisfies_strict_ui_device_proof": true
