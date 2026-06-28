@@ -164,6 +164,7 @@
     "ops:phase24f:discord-workflow-candidate": "node scripts/ops/phase24f-discord-workflow-candidate-listener.mjs",
     "ops:phase24g:lark-feishu-workflow-candidate": "node scripts/ops/phase24g-lark-feishu-workflow-candidate-listener.mjs",
     "ops:phase24h:telegram-natural-trigger": "node scripts/ops/phase24h-telegram-natural-trigger-listener.mjs",
+    "ops:phase24:release-prompts": "node scripts/ops/phase24-release-proof-prompts.mjs",
     "ops:real-green-gate": "node scripts/ops/run-real-green-gate.mjs",
     "proof:d4:trust-passport": "bash scripts/ops/friday-d4-trust-passport-proof.sh",
     "ops:t3:provisioning-status": "node scripts/ops/friday-t3-provisioning-status.mjs",
