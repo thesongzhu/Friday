@@ -151,4 +151,24 @@ describe("loadProviderTruth", () => {
     expect(truth.hasFallbackLane).toBe(false);
     expect(truth.alerts.some((alert) => alert.code === "fallback_missing")).toBe(true);
   });
+
+  it("reports missing current routing as unavailable instead of offline", async () => {
+    vi.mocked(providersApi.list).mockResolvedValue([provider] as never);
+    vi.mocked(providersApi.listHealth).mockResolvedValue([health] as never);
+    vi.mocked(providersApi.getRouting).mockResolvedValue({
+      fallbackProviderIds: [],
+    });
+    vi.mocked(providersApi.explainRouting).mockResolvedValue({
+      selectedAdjusted: false,
+      candidates: [],
+      reasonText: "no route selected",
+    } as never);
+
+    const truth = await loadProviderTruth();
+
+    expect(truth.status).toBe("unavailable");
+    expect(truth.currentStatus).toBe("unavailable");
+    expect(truth.alerts.some((alert) => alert.code === "truth_unavailable")).toBe(true);
+    expect(truth.errors).toEqual([]);
+  });
 });

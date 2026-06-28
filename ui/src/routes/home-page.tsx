@@ -227,6 +227,12 @@ function runtimeChipParts(status: SystemHealthStatus, locale: "zh" | "en") {
       label: localize(locale, "离线", "Offline"),
     };
   }
+  if (status === "unavailable") {
+    return {
+      color: "var(--amber-600)",
+      label: localize(locale, "能力暂不可用", "Unavailable"),
+    };
+  }
   if (status === "degraded") {
     return {
       color: "var(--amber-600)",
