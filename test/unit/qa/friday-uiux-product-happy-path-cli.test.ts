@@ -230,6 +230,49 @@ describe("check-friday-uiux-product-happy-path", () => {
     }
   });
 
+  it("rejects blocker satisfaction backed by not-ui-device proof labels", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-happy-path-not-ui-device-satisfaction-"));
+    try {
+      const visual = writeJson(root, "visual.json", selectedVisual("live-loopback"));
+      const trace = writeJson(root, "trace.json", traceability({
+        counts: {
+          runtimeEvidenceInputs: 2,
+          productActionsMissingRuntimeEvidence: 0,
+          destinationsWithResidualEndBarBlockers: 1,
+          destinationsStillBlocked: 1,
+        },
+        gaps: {
+          residualEndBarBlockers: [{
+            surface: "mobile",
+            id: "home",
+            blockers: [{ kind: "needsRuntimeEvidence", label: "same-run user proof" }],
+          }],
+        },
+      }));
+      const blockerSatisfaction = satisfaction(root, [satisfiedHomeRow({
+        evidenceClass: "live_write_read_projection_proof",
+        evidenceTruthLabels: ["mobile_same_run_event_from_live_write_read_artifact_not_ui_device_proof"],
+      })]);
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${process.cwd()}`,
+        `--selected-visual-report=${visual}`,
+        `--action-traceability-report=${trace}`,
+        `--blocker-satisfaction-report=${blockerSatisfaction}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string; detail?: string }> };
+      expect(report.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "blocker_satisfaction_report_invalid" }),
+        expect.objectContaining({ code: "residual_endbar_blockers_present" }),
+      ]));
+      expect(JSON.stringify(report.blockers)).toContain("satisfaction_evidence_truth_forbidden");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects negative status labels on the connected happy path", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-happy-path-negative-labels-"));
     try {
