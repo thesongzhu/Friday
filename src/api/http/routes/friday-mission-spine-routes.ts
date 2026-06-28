@@ -81,7 +81,7 @@ export interface FridayMissionSpineRouteDecisionControlResponse {
 const DEFAULT_DISABLED_MESSAGE =
   "Mission Spine workbench projection is unavailable in this runtime; the Rust Hub projection service has not been wired.";
 
-const REQUIRED_STATUS_LABELS = ["stale", "offline", "error"] as const;
+const ALLOWED_STATUS_LABELS = new Set(["stale", "offline", "error"] as const);
 const REQUIRED_TRANSCRIPT_SURFACES = ["mobile", "desktop", "telegram", "timeline"] as const;
 const SURFACE_KINDS = new Set(REQUIRED_TRANSCRIPT_SURFACES);
 const TRANSCRIPT_GROUP_KINDS = new Set(["mission", "work_item", "provider_session", "skill_run", "channel_task", "workflow", "surface", "status", "time"]);
@@ -478,9 +478,15 @@ function validateSnapshotHeader(
   }
   pushIfInvalid(failures, hasText(snapshot.fridayConversationId), "conversation_id_missing");
   pushIfInvalid(failures, snapshot.runtimeFeedStatus === "live_rust_hub_projection", "runtime_feed_not_live");
-
-  for (const label of REQUIRED_STATUS_LABELS) {
-    pushIfInvalid(failures, snapshot.statusLabels.includes(label), `status_label_missing:${label}`);
+  pushIfInvalid(failures, Array.isArray(snapshot.statusLabels), "status_labels_not_array");
+  if (Array.isArray(snapshot.statusLabels)) {
+    for (const [index, label] of snapshot.statusLabels.entries()) {
+      pushIfInvalid(
+        failures,
+        typeof label === "string" && ALLOWED_STATUS_LABELS.has(label as "stale" | "offline" | "error"),
+        `status_label_invalid:${index}:${String(label)}`,
+      );
+    }
   }
 
   pushIfInvalid(failures, snapshot.duplicatePreflight.status === "opens_existing_mission", "duplicate_preflight_not_open_existing");
