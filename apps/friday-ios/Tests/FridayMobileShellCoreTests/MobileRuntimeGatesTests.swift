@@ -48,6 +48,7 @@ func mobileRuntimeGatesAcceptExplicitEnv() {
 func mobileRuntimeGatesReadEndpointOverridesAreExplicit() {
   #expect(MobileRuntimeGates.liveReadHostOverride(args: [], env: [:]) == nil)
   #expect(MobileRuntimeGates.liveReadPortOverride(args: [], env: [:]) == .absent)
+  #expect(MobileRuntimeGates.liveReadMissionIdOverride(args: [], env: [:]) == nil)
 
   #expect(MobileRuntimeGates.liveReadHostOverride(
     args: ["--live-read-host", "127.0.0.1"],
@@ -62,6 +63,18 @@ func mobileRuntimeGatesReadEndpointOverridesAreExplicit() {
   #expect(MobileRuntimeGates.liveReadPortOverride(
     args: [],
     env: ["FRIDAY_MOBILE_LIVE_READ_PORT": "59152"]) == .value(59152))
+  #expect(MobileRuntimeGates.liveReadMissionIdOverride(
+    args: ["--mission-id", "mission-mobile-live"],
+    env: [:]) == "mission-mobile-live")
+  #expect(MobileRuntimeGates.liveReadMissionIdOverride(
+    args: ["--mission-id=mission-mobile-live-eq"],
+    env: [:]) == "mission-mobile-live-eq")
+  #expect(MobileRuntimeGates.liveReadMissionIdOverride(
+    args: [],
+    env: ["FRIDAY_MOBILE_MISSION_ID": "mission-mobile-live-env"]) == "mission-mobile-live-env")
+  #expect(MobileRuntimeGates.liveReadMissionIdOverride(
+    args: ["--mission-id", "   "],
+    env: ["FRIDAY_MOBILE_MISSION_ID": ""]) == nil)
 }
 
 @Test
