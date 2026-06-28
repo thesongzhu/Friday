@@ -25,6 +25,7 @@ Options:
   --db <path>                Hub SQLite DB. Default: macOS Friday rust-hub.sqlite.
   --plist <path>             read-projection LaunchAgent plist.
   --require-current-schema   Exit non-zero if DB schema != repo code_max.
+  --require-running-current  Exit non-zero if the live read process predates repo HEAD.
   --json                     Print JSON only.
   -h, --help                 Show this help.
 
@@ -38,6 +39,7 @@ function parseArgs(argv) {
     plistPath: process.env.FRIDAY_READ_PROJECTION_PLIST || DEFAULT_PLIST,
     json: false,
     requireCurrentSchema: false,
+    requireRunningCurrent: false,
     help: false,
   };
   for (let i = 2; i < argv.length; i += 1) {
@@ -58,6 +60,8 @@ function parseArgs(argv) {
       options.json = true;
     } else if (arg === "--require-current-schema") {
       options.requireCurrentSchema = true;
+    } else if (arg === "--require-running-current") {
+      options.requireRunningCurrent = true;
     } else if (arg === "-h" || arg === "--help") {
       options.help = true;
     } else {
@@ -78,6 +82,18 @@ function run(command, args, opts = {}) {
   }
   if (result.status !== 0) {
     throw new Error(result.stderr.trim() || `${command} exited ${result.status}`);
+  }
+  return result.stdout;
+}
+
+function runOptional(command, args, opts = {}) {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+    ...opts,
+  });
+  if (result.error || result.status !== 0) {
+    return null;
   }
   return result.stdout;
 }
@@ -118,6 +134,75 @@ function readPlistProgramArguments(plistPath) {
   return JSON.parse(raw);
 }
 
+function readRepoHead(repoDir) {
+  const oid = run("git", ["-C", repoDir, "rev-parse", "HEAD"]).trim();
+  const unix = Number(run("git", ["-C", repoDir, "log", "-1", "--format=%ct"]).trim());
+  return {
+    oid,
+    commitUnix: Number.isFinite(unix) ? unix : null,
+    commitMs: Number.isFinite(unix) ? unix * 1000 : null,
+  };
+}
+
+function readListeningPid(port) {
+  if (!port || !/^[0-9]+$/.test(String(port))) {
+    return null;
+  }
+  const stdout = runOptional("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fp"]);
+  if (!stdout) {
+    return null;
+  }
+  const line = stdout
+    .split(/\r?\n/)
+    .find((candidate) => /^p[0-9]+$/.test(candidate));
+  return line ? Number(line.slice(1)) : null;
+}
+
+function readProcessStart(pid) {
+  if (!pid) {
+    return null;
+  }
+  const raw = runOptional("ps", ["-p", String(pid), "-o", "lstart="])?.trim();
+  if (!raw) {
+    return null;
+  }
+  const ms = Date.parse(raw);
+  return {
+    raw,
+    ms: Number.isFinite(ms) ? ms : null,
+  };
+}
+
+function classifyRuntime({ pid, processStartMs, repoHeadCommitMs }) {
+  if (!pid) {
+    return {
+      status: "not_running",
+      ok: false,
+      reason: "No read-projection process is listening on the plist port.",
+    };
+  }
+  if (!processStartMs || !repoHeadCommitMs) {
+    return {
+      status: "runtime_freshness_unknown",
+      ok: false,
+      reason: "Could not compare the process start time to repo HEAD.",
+    };
+  }
+  if (processStartMs < repoHeadCommitMs) {
+    return {
+      status: "runtime_predates_repo_head",
+      ok: false,
+      reason:
+        "The running read-projection process started before this repo HEAD; it cannot prove current-code product behavior.",
+    };
+  }
+  return {
+    status: "runtime_at_or_after_repo_head",
+    ok: true,
+    reason: "The running read-projection process started at or after this repo HEAD commit time.",
+  };
+}
+
 function classifySchema(diskSchemaVersion, repoCodeMax) {
   if (diskSchemaVersion === repoCodeMax) {
     return {
@@ -147,6 +232,7 @@ export function buildReport(options) {
   const dbPath = path.resolve(options.dbPath);
   const plistPath = path.resolve(options.plistPath);
   const repoCodeMax = readHubCodeMax(repoDir);
+  const repoHead = readRepoHead(repoDir);
   const diskSchemaVersion = readDbSchemaVersion(dbPath);
   const schema = classifySchema(diskSchemaVersion, repoCodeMax);
   const programArguments = readPlistProgramArguments(plistPath);
@@ -155,11 +241,19 @@ export function buildReport(options) {
   const plistDbPath = plistDbArgIndex >= 0 ? programArguments[plistDbArgIndex + 1] : null;
   const plistPortArgIndex = Array.isArray(programArguments) ? programArguments.indexOf("--port") : -1;
   const plistPort = plistPortArgIndex >= 0 ? programArguments[plistPortArgIndex + 1] : null;
+  const runningPid = readListeningPid(plistPort);
+  const processStart = readProcessStart(runningPid);
+  const runtime = classifyRuntime({
+    pid: runningPid,
+    processStartMs: processStart?.ms ?? null,
+    repoHeadCommitMs: repoHead.commitMs,
+  });
 
   return {
     truth_label: "read_projection_runtime_freshness_read_only_no_restart_no_migration",
     generated_at_utc: new Date().toISOString(),
     repoDir,
+    repoHead,
     dbPath,
     plistPath,
     repoCodeMax,
@@ -174,8 +268,17 @@ export function buildReport(options) {
       port: plistPort,
       pointsAtCheckedDb: plistDbPath ? path.resolve(plistDbPath) === dbPath : null,
     },
+    runtime: {
+      port: plistPort,
+      pid: runningPid,
+      processStartedAt: processStart?.raw ?? null,
+      processStartedAtMs: processStart?.ms ?? null,
+      status: runtime.status,
+      ok: runtime.ok,
+      reason: runtime.reason,
+    },
     caveat:
-      "This is a read-only cutover sanity check. It does not prove the LaunchAgent was restarted, does not migrate the DB, and does not claim END-BAR, GO-LIVE, or adoption.",
+      "This is a read-only cutover sanity check. It does not start, stop, restart, migrate, or sign. Runtime freshness is based on process start time versus repo HEAD and does not claim END-BAR, GO-LIVE, or adoption.",
   };
 }
 
@@ -192,10 +295,14 @@ function main() {
     console.log(`status=${report.schemaStatus}`);
     console.log(`db_schema=${report.diskSchemaVersion} repo_code_max=${report.repoCodeMax}`);
     console.log(`plist_present=${report.launchd.plistPresent} port=${report.launchd.port ?? "unknown"}`);
+    console.log(`runtime=${report.runtime.status} pid=${report.runtime.pid ?? "none"}`);
     console.log(`reason=${report.reason}`);
     console.log(`truth_label=${report.truth_label}`);
   }
   if (options.requireCurrentSchema && !report.ok) {
+    process.exitCode = 1;
+  }
+  if (options.requireRunningCurrent && !report.runtime.ok) {
     process.exitCode = 1;
   }
 }

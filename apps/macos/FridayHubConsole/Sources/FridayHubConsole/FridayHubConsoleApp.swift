@@ -50,6 +50,7 @@ struct FridayHubConsoleApp: App {
       HubConsoleShell(
         initialDestination: Self.initialDestination,
         client: Self.readClient,
+        devicePairing: Self.devicePairingReadiness,
         writeClient: Self.writeClient,
         missionRunClient: Self.writeClient,
         approvalSigner: Self.approvalSigner,
@@ -149,6 +150,11 @@ struct FridayHubConsoleApp: App {
       port: port,
       connectTimeout: connectTimeout,
       receiveTimeout: receiveTimeout)
+  }
+
+  /// UI truth for the desktop read seam must use the same target as the real read client.
+  private static var devicePairingReadiness: DesktopDevicePairingReadiness {
+    DesktopDevicePairingReadiness.evaluate(config: Self.liveReadConfig)
   }
 
   /// The mission-spine WRITE client the shell uses (Lane-D entry-point-A). Mirrors `readClient`:

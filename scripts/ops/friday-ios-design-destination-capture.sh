@@ -7,6 +7,7 @@ usage:
   scripts/ops/friday-ios-design-destination-capture.sh --out-dir /abs/capture-dir
     [--mode design-proof-sample|live-loopback|offline-truth]
     [--destinations home,session,...]
+    [--mission-id mission-id]
     [--skip-initial-build]
 
 Builds or reuses the current Friday iOS simulator app, launches the selected
@@ -31,6 +32,7 @@ mode="design-proof-sample"
 skip_initial_build=0
 destinations_csv="home,missions,session,contextPassport,tokenLedger,shareIntake,voice,pairing,needsMe,memory,platform,providerAuth,activity,workflows,onboarding,settings,petEditor,proofViewer,entrypoints"
 settle_seconds="${FRIDAY_IOS_DESIGN_CAPTURE_SETTLE_SECONDS:-6}"
+mission_id="${FRIDAY_MOBILE_MISSION_ID:-}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -61,6 +63,15 @@ while [ "$#" -gt 0 ]; do
       destinations_csv="${1#--destinations=}"
       shift
       ;;
+    --mission-id)
+      [ "$#" -ge 2 ] || die "--mission-id requires a value"
+      mission_id="$2"
+      shift 2
+      ;;
+    --mission-id=*)
+      mission_id="${1#--mission-id=}"
+      shift
+      ;;
     --skip-initial-build)
       skip_initial_build=1
       shift
@@ -86,6 +97,9 @@ case "${mode}" in
   design|design-proof|design-proof-sample) mode="design-proof-sample" ;;
   *) die "unsupported --mode '${mode}'" ;;
 esac
+if [ -n "${mission_id}" ] && [ "${mode}" != "live-loopback" ]; then
+  die "--mission-id / FRIDAY_MOBILE_MISSION_ID is only valid in live-loopback mode"
+fi
 [ -n "${destinations_csv}" ] || die "--destinations must not be empty"
 [[ "${settle_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "FRIDAY_IOS_DESIGN_CAPTURE_SETTLE_SECONDS must be numeric"
 
@@ -93,6 +107,10 @@ IFS=',' read -r -a destinations <<< "${destinations_csv}"
 for destination in "${destinations[@]}"; do
   [[ "${destination}" =~ ^[A-Za-z][A-Za-z0-9]*$ ]] || die "invalid destination '${destination}'"
 done
+mission_id="$(printf '%s' "${mission_id}" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+if [ -n "${mission_id}" ] && [[ ! "${mission_id}" =~ ^[A-Za-z0-9._:-]+$ ]]; then
+  die "--mission-id must contain only letters, numbers, dot, underscore, colon, or hyphen"
+fi
 
 mkdir -p "${out_dir}/screenshots"
 manifest_path="${out_dir}/ios-design-destination-capture-manifest.json"
@@ -104,15 +122,22 @@ echo "Friday iOS design destination capture starting."
 echo "out_dir=${out_dir}"
 echo "mode=${mode}"
 echo "destinations=${destinations_csv}"
+if [ -n "${mission_id}" ]; then
+  echo "mission_id=${mission_id}"
+fi
 echo "truth=ios_design_destination_capture_device_screenshots_not_live_closure"
 
 if [ "${skip_initial_build}" -eq 0 ]; then
   (
     cd "${repo_root}"
-    bash apps/friday-ios/build-sim.sh \
+    build_cmd=(bash apps/friday-ios/build-sim.sh \
       --mode "${mode}" \
       --destination "${initial_destination}" \
-      --shot "${initial_shot}"
+      --shot "${initial_shot}")
+    if [ -n "${mission_id}" ]; then
+      build_cmd+=(--mission-id "${mission_id}")
+    fi
+    "${build_cmd[@]}"
   )
 else
   echo "Skipping initial build; reusing installed com.friday.shell on a booted simulator."
@@ -163,6 +188,10 @@ for destination in "${destinations[@]}"; do
       if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_PORT:-}" ]]; then
         launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_PORT="${FRIDAY_MOBILE_LIVE_WRITE_PORT}")
       fi
+      if [ -n "${mission_id}" ]; then
+        launch_args+=("--mission-id=${mission_id}")
+        launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_MISSION_ID="${mission_id}")
+      fi
     elif [ "${mode}" = "design-proof-sample" ]; then
       launch_args=(
         --design-proof-sample
@@ -182,11 +211,11 @@ for destination in "${destinations[@]}"; do
   capture_rows+=("${destination}|${shot}|${launch_log}|${screenshot_log}")
 done
 
-node - "${manifest_path}" "${mode}" "${destinations_csv}" "${udid}" "${initial_metadata}" "${capture_rows[@]}" <<'NODE'
+node - "${manifest_path}" "${mode}" "${destinations_csv}" "${udid}" "${initial_metadata}" "${mission_id}" "${capture_rows[@]}" <<'NODE'
 const { createHash } = require("node:crypto");
 const { existsSync, readFileSync, writeFileSync } = require("node:fs");
 
-const [manifestPath, mode, destinationsCsv, simulatorUdid, initialMetadataPath, ...rows] = process.argv.slice(2);
+const [manifestPath, mode, destinationsCsv, simulatorUdid, initialMetadataPath, missionIdOverride, ...rows] = process.argv.slice(2);
 const sha256 = (target) => createHash("sha256").update(readFileSync(target)).digest("hex");
 const captures = rows.map((row) => {
   const [destination, screenshot, launchLog, screenshotLog] = row.split("|");
@@ -238,6 +267,7 @@ const manifest = {
   mode,
   bundle_id: "com.friday.shell",
   simulator_udid: simulatorUdid,
+  mission_id_override: missionIdOverride || null,
   selected_design_source: "friday-design-handoff-20260602/saved/mobile-selection.json",
   selected_mobile_design: {
     selection_kind: "mobile-final (operator-confirmed 2026-06-04)",

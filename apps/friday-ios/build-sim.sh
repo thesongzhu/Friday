@@ -27,7 +27,7 @@ usage() {
 Usage:
   apps/friday-ios/build-sim.sh [screenshot-path]
   apps/friday-ios/build-sim.sh --mode offline-truth [--destination pairing] [--shot screenshot-path]
-  apps/friday-ios/build-sim.sh --mode live-loopback [--destination pairing] [--shot screenshot-path]
+  apps/friday-ios/build-sim.sh --mode live-loopback [--destination pairing] [--mission-id mission-id] [--shot screenshot-path]
   apps/friday-ios/build-sim.sh --mode design-proof-sample [--destination pairing] [--shot screenshot-path]
 
 Modes:
@@ -48,6 +48,7 @@ APP="$BUILD/FridayShell.app"
 MODE="offline-truth"
 SHOT="$BUILD/friday-ios-sim.png"
 DESTINATION=""
+MISSION_ID="${FRIDAY_MOBILE_MISSION_ID:-}"
 IOS_VERSION="17.0"
 TRIPLE="arm64-apple-ios${IOS_VERSION}-simulator"   # Apple-Silicon host (arm64 sim slice)
 
@@ -86,6 +87,19 @@ while [[ $# -gt 0 ]]; do
       DESTINATION="${1#--destination=}"
       shift
       ;;
+    --mission-id)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --mission-id requires a value" >&2
+        usage >&2
+        exit 2
+      fi
+      MISSION_ID="$2"
+      shift 2
+      ;;
+    --mission-id=*)
+      MISSION_ID="${1#--mission-id=}"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -119,8 +133,17 @@ case "$MODE" in
     exit 2
     ;;
 esac
+if [[ -n "$MISSION_ID" && "$MODE" != "live-loopback" ]]; then
+  echo "ERROR: --mission-id / FRIDAY_MOBILE_MISSION_ID is only valid in live-loopback mode" >&2
+  exit 2
+fi
 if [[ -n "$DESTINATION" && ! "$DESTINATION" =~ ^[A-Za-z][A-Za-z0-9]*$ ]]; then
   echo "ERROR: --destination must be a MobileDestination raw value such as pairing or providerAuth" >&2
+  exit 2
+fi
+MISSION_ID="$(printf '%s' "$MISSION_ID" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+if [[ -n "$MISSION_ID" && ! "$MISSION_ID" =~ ^[A-Za-z0-9._:-]+$ ]]; then
+  echo "ERROR: --mission-id must contain only letters, numbers, dot, underscore, colon, or hyphen" >&2
   exit 2
 fi
 
@@ -213,6 +236,10 @@ case "$MODE" in
     if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_PORT:-}" ]]; then
       LAUNCH_ENV+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_PORT="$FRIDAY_MOBILE_LIVE_WRITE_PORT")
     fi
+    if [[ -n "$MISSION_ID" ]]; then
+      LAUNCH_ARGS+=("--mission-id=$MISSION_ID")
+      LAUNCH_ENV+=(SIMCTL_CHILD_FRIDAY_MOBILE_MISSION_ID="$MISSION_ID")
+    fi
     ;;
   design-proof-sample)
     echo "launch mode: design-proof-sample (labeled selected-design sample; no live seams)"
@@ -246,7 +273,11 @@ LIVE_READ_HOST_OVERRIDE_JSON=null
 LIVE_READ_PORT_OVERRIDE_JSON=null
 LIVE_WRITE_HOST_OVERRIDE_JSON=null
 LIVE_WRITE_PORT_OVERRIDE_JSON=null
+MISSION_ID_OVERRIDE_JSON=null
 if [[ "$MODE" == "live-loopback" ]]; then
+  if [[ -n "$MISSION_ID" ]]; then
+    MISSION_ID_OVERRIDE_JSON="\"$MISSION_ID\""
+  fi
   if [[ -n "${FRIDAY_MOBILE_LIVE_READ_HOST:-}" && "$FRIDAY_MOBILE_LIVE_READ_HOST" =~ ^[A-Za-z0-9._:-]+$ ]]; then
     LIVE_READ_HOST_OVERRIDE_JSON="\"$FRIDAY_MOBILE_LIVE_READ_HOST\""
   fi
@@ -300,6 +331,7 @@ cat > "$SHOT.metadata.json" <<JSON
   "live_read_port_override": $LIVE_READ_PORT_OVERRIDE_JSON,
   "live_write_host_override": $LIVE_WRITE_HOST_OVERRIDE_JSON,
   "live_write_port_override": $LIVE_WRITE_PORT_OVERRIDE_JSON,
+  "mission_id_override": $MISSION_ID_OVERRIDE_JSON,
   "simulator_device_pubkey": $SIMULATOR_DEVICE_PUBKEY_JSON,
   "design_proof_sample_requested": $([[ "$MODE" == "design-proof-sample" ]] && echo true || echo false),
   "caveat": "offline-truth proves honest-unavailable; design-proof-sample is labeled visual comparison only; live-loopback attempts real local read/write/pairing seams and does not claim END-BAR, GO-LIVE, adoption, trust minting, or operator signing. None of these modes claims END-BAR, GO-LIVE, adoption, trust minting, or operator signing."

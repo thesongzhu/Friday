@@ -166,11 +166,15 @@ final class FridaySession: ObservableObject {
     }
     do {
       let config = try liveReadConfig(args: args, env: env)
+      let missionId = MobileRuntimeGates.liveReadMissionIdOverride(args: args, env: env)
       if useDeviceKeypair(args: args, env: env) {
         let device = try DeviceKeypairStore.loadOrGenerate(backend: deviceKeypairBackend)
-        return RealReadClientFactory.makeLive(deviceKeypair: device, config: config)
+        return RealReadClientFactory.makeLive(
+          deviceKeypair: device,
+          config: config,
+          missionId: missionId)
       }
-      return try RealReadClientFactory.makeLive(config: config)
+      return try RealReadClientFactory.makeLive(config: config, missionId: missionId)
     } catch {
       return RealReadClientFactory.makeHonestlyUnavailable(reason: "\(error)")
     }

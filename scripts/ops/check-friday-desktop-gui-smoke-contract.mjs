@@ -31,17 +31,29 @@ const script = read(root, scriptPath);
 
 requireText(script, "desktop_gui_smoke_real_app_launch_screenshot_not_endbar", scriptPath);
 requireText(script, "FRIDAY_DESKTOP_GUI_SMOKE_MODE:-live", scriptPath);
+requireText(script, "FRIDAY_DESKTOP_GUI_SMOKE_REPLACE_EXISTING:-0", scriptPath);
 requireText(script, "FRIDAY_CONSOLE_MOCK=1", scriptPath);
+requireText(script, "existing FridayHubConsole process(es) would contaminate proof", scriptPath);
+requireText(script, "fail", scriptPath);
+requireText(script, "process_preflight", scriptPath);
+requireText(script, "preexisting_friday_hub_console_pids", scriptPath);
+requireText(script, "replace_existing_requested", scriptPath);
+requireText(script, "terminate_friday_console_pids", scriptPath);
+requireText(script, "/usr/bin/osascript - \"${APP_PID}\"", scriptPath);
+requireText(script, "first process whose unix id is targetPid", scriptPath);
+requireText(script, "refusing whole-screen stale proof", scriptPath);
+requireText(script, "Window activation is PID-bound", scriptPath);
 requireText(script, "screencapture -x", scriptPath);
 requireText(script, "This is not END-BAR", scriptPath);
 requireText(script, "not a GUI tap/closed-loop proof", scriptPath);
-requireText(script, "only terminates the app process it spawned", scriptPath);
+requireText(script, "does not kill Friday hub ports or production services", scriptPath);
 requireText(script, "/bin/kill \"${APP_PID}\"", scriptPath);
 
 forbidPattern(script, /\bkillall\b/, scriptPath);
 forbidPattern(script, /\bpkill\b/, scriptPath);
 forbidPattern(script, /lsof\s+-ti\s+:(48750|48751|3141)/, scriptPath);
 forbidPattern(script, /kill\s+-9\s+\$\(lsof/, scriptPath);
+forbidPattern(script, /tell application "FridayHubConsole" to activate/, scriptPath);
 
 const mockDefaultIndex = script.indexOf("FRIDAY_DESKTOP_GUI_SMOKE_MODE:-live");
 const mockAssignmentIndex = script.indexOf("FRIDAY_CONSOLE_MOCK=1");

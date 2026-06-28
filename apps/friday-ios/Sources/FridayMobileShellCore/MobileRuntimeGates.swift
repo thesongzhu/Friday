@@ -50,6 +50,15 @@ public enum MobileRuntimeGates {
     return .value(port)
   }
 
+  public static func liveReadMissionIdOverride(args: [String], env: [String: String]) -> String? {
+    if let arg = value(for: "--mission-id", in: args)?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !arg.isEmpty {
+      return arg
+    }
+    let envValue = env["FRIDAY_MOBILE_MISSION_ID"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return envValue?.isEmpty == false ? envValue : nil
+  }
+
   public static func liveWriteRequested(args: [String], env: [String: String]) -> Bool {
     args.contains("--live-write") || env["FRIDAY_MOBILE_LIVE_WRITE"] == "1"
   }
@@ -90,5 +99,17 @@ public enum MobileRuntimeGates {
       return nil
     }
     return args[index + 1]
+  }
+
+  private static func value(for flag: String, in args: [String]) -> String? {
+    for (index, arg) in args.enumerated() {
+      if arg.hasPrefix("\(flag)=") {
+        return String(arg.dropFirst(flag.count + 1))
+      }
+      if arg == flag, args.indices.contains(index + 1) {
+        return args[index + 1]
+      }
+    }
+    return nil
   }
 }

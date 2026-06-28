@@ -14,6 +14,7 @@ struct HubConsoleShell: View {
   init(
     initialDestination: HubDestination = .operations,
     client: FridayRustReadClient,
+    devicePairing: DesktopDevicePairingReadiness = .evaluate(),
     writeClient: FridayMissionSpineWriteClient? = nil,
     missionRunClient: FridayMissionBoundRunWriteClient? = nil,
     approvalSigner: OperatorApprovalSigner? = nil,
@@ -25,7 +26,8 @@ struct HubConsoleShell: View {
         writeClient: writeClient,
         missionRunClient: missionRunClient,
         approvalSigner: approvalSigner,
-        approvalResumeClient: approvalResumeClient))
+        approvalResumeClient: approvalResumeClient,
+        devicePairing: devicePairing))
     _destination = State(initialValue: initialDestination)
     self.initialDestination = initialDestination
   }
