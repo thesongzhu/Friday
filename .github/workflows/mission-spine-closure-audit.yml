@@ -1,0 +1,66 @@
+name: Mission Spine Closure Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      ui_device_bundle_b64_gz:
+        description: "gzip+base64 tar bundle containing mission-spine-ui-device-proof.json and referenced evidence files"
+        required: true
+        type: string
+
+jobs:
+  strict-closure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: phase-24-live-channels
+    defaults:
+      run:
+        working-directory: rust-core
+    env:
+      FRIDAY_DEEPSEEK_API_KEY: ${{ secrets.FRIDAY_DEEPSEEK_API_KEY || secrets.DEEPSEEK_API_KEY }}
+      FRIDAY_TELEGRAM_BOT_TOKEN: ${{ secrets.FRIDAY_TELEGRAM_BOT_TOKEN }}
+      FRIDAY_TELEGRAM_ALLOWED_USER_ID: ${{ secrets.FRIDAY_TELEGRAM_ALLOWED_USER_ID || vars.FRIDAY_TELEGRAM_ALLOWED_USER_ID }}
+      TELEGRAM_LISTEN_SECONDS: "480"
+      MISSION_SPINE_UI_DEVICE_PROOF: /tmp/friday-ui-device-final-strict-73d243b9-20260628T055513Z/mission-spine-ui-device-proof.json
+      MISSION_SPINE_CLOSURE_REPORT_OUT: /tmp/friday-mission-spine-closure-strict-report.json
+      MISSION_SPINE_BACKEND_LIVE_PROOF_OUT: /tmp/friday-mission-spine-backend-live-proof.json
+      MISSION_SPINE_CHANNEL_LIVE_PROOF_OUT: /tmp/friday-mission-spine-channel-live-proof.json
+      TELEGRAM_PROOF_OUT: /tmp/friday-telegram-live-proof.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Toolchain
+        run: rustup show && cargo --version
+
+      - name: Decode UI/device proof bundle
+        working-directory: .
+        env:
+          UI_DEVICE_BUNDLE_B64_GZ: ${{ inputs.ui_device_bundle_b64_gz }}
+        run: |
+          set -euo pipefail
+          target=/tmp/friday-ui-device-final-strict-73d243b9-20260628T055513Z
+          mkdir -p "$target"
+          printf '%s' "$UI_DEVICE_BUNDLE_B64_GZ" | base64 -d | tar -xzf - -C "$target"
+          test -s "$target/mission-spine-ui-device-proof.json"
+          test -s "$target/mobile.json"
+          test -s "$target/desktop.json"
+          test -s "$target/channel.json"
+          test -s "$target/timeline.json"
+
+      - name: Strict closure audit
+        run: scripts/mission-spine-closure-audit-gate.sh --strict
+
+      - name: Upload strict closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mission-spine-closure-audit-${{ github.run_id }}
+          path: |
+            /tmp/friday-mission-spine-closure-strict-report.json
+            /tmp/friday-mission-spine-backend-live-proof.json
+            /tmp/friday-mission-spine-channel-live-proof.json
+            /tmp/friday-telegram-live-proof.json
+          if-no-files-found: warn
