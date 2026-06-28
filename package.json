@@ -130,6 +130,7 @@
     "check:integrated-end-to-end-tape": "node scripts/ops/check-friday-integrated-end-to-end-tape-report.mjs",
     "check:mechanism-multiangle-stress": "node scripts/ops/check-friday-mechanism-multiangle-stress-report.mjs",
     "check:ui-real-use-mobile-desktop": "node scripts/ops/check-friday-ui-real-use-mobile-desktop-report.mjs",
+    "proof:provider-entitlement-runtime": "node scripts/ops/run-friday-provider-entitlement-runtime-proof.mjs",
     "check:provider-entitlement-readiness": "node scripts/ops/check-friday-provider-entitlement-readiness.mjs",
     "check:github-channel-proof-readiness": "node scripts/ops/check-friday-github-channel-proof-readiness.mjs",
     "check:ui-device-accessibility-click-capture": "node scripts/ops/friday-ui-device-accessibility-click-capture.mjs",
