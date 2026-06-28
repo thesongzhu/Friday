@@ -57,6 +57,14 @@ describe("friday-desktop-ax-accessibility-capture contract", () => {
     expect(navSource).toContain(".accessibilityIdentifier(\"friday.desktop.nav.\\(destination.rawValue)\")");
   });
 
+  it("applies the configured AX tree depth to navigation and targeted probes", () => {
+    const source = readFileSync(script, "utf8");
+
+    expect(source).toContain("const axTraversalDepth = Number.isInteger(treeDepth) ? treeDepth : 5");
+    expect(source).toContain("if depth < ${axTraversalDepth} then");
+    expect(source).not.toContain("if depth < 8 then");
+  });
+
   it("only emits status-label events from visible accessibility labels", () => {
     const source = readFileSync(script, "utf8");
 

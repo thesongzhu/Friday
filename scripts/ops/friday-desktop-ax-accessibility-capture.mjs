@@ -45,6 +45,7 @@ const destinationsCsv = arg("destinations") || process.env.FRIDAY_DESKTOP_AX_CAP
 const workbenchMissionId = arg("workbench-mission-id") || process.env.FRIDAY_DESKTOP_AX_WORKBENCH_MISSION_ID || "";
 const timeoutSeconds = Number(arg("timeout-seconds") || process.env.FRIDAY_DESKTOP_AX_CAPTURE_TIMEOUT_SECONDS || "20");
 const treeDepth = Number(arg("tree-depth") || process.env.FRIDAY_DESKTOP_AX_TREE_DEPTH || "5");
+const axTraversalDepth = Number.isInteger(treeDepth) ? treeDepth : 5;
 const planOnly = args.includes("--plan-only");
 const requireObserved = args.includes("--require-observed");
 const blockers = [];
@@ -214,7 +215,7 @@ on appendElement(e, depth)
     end tell
   end try
   set end of outputLines to ((depth as text) & tab & roleValue & tab & identifierValue & tab & nameValue & tab & "" & tab & "")
-  if depth < ${Number.isInteger(treeDepth) ? treeDepth : 5} then
+  if depth < ${axTraversalDepth} then
     try
       tell application "System Events"
         set childElements to UI elements of e
@@ -266,7 +267,7 @@ on clickMatchingElement(e, identifierValue, titleValue, depth)
       end if
     end tell
   end try
-  if depth < 8 then
+  if depth < ${axTraversalDepth} then
     try
       tell application "System Events"
         set childElements to UI elements of e
@@ -374,7 +375,7 @@ on inspectElement(e, identifierNeedles, textNeedle, depth)
       return
     end if
   end if
-  if depth < 8 then
+  if depth < ${axTraversalDepth} then
     try
       tell application "System Events"
         set childElements to UI elements of e
