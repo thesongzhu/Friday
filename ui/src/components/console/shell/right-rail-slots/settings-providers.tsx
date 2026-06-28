@@ -7,12 +7,14 @@ import { useAppLocale } from "@/providers/locale-provider";
 const STATUS_COLOR: Record<string, string> = {
   healthy: "var(--jade-500)",
   degraded: "var(--amber-600)",
+  unavailable: "var(--amber-600)",
   offline: "var(--rust-500)",
 };
 
 const STATUS_LABEL = {
   healthy: { zh: "正常", en: "Healthy" },
   degraded: { zh: "降级", en: "Degraded" },
+  unavailable: { zh: "暂不可用", en: "Unavailable" },
   offline: { zh: "不可达", en: "Offline" },
 } as const;
 

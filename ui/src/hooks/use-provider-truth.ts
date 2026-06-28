@@ -9,7 +9,7 @@ import type {
   FridayProviderRoutingExplainReport,
 } from "@/lib/api/types";
 
-export type ProviderTruthStatus = "healthy" | "degraded" | "offline";
+export type ProviderTruthStatus = "healthy" | "degraded" | "unavailable" | "offline";
 export type ProviderTruthAlertTone = "warning" | "danger";
 
 type ProviderTruthErrorSource = "providers" | "health" | "routing" | "explain";
@@ -379,14 +379,14 @@ export async function loadProviderTruth(): Promise<ProviderTruthSnapshot> {
   }
 
   const currentStatus: ProviderTruthStatus = !current
-    ? "offline"
+    ? "unavailable"
     : selectedSeverity === "healthy"
       ? "healthy"
       : "degraded";
 
   const hasWorkingRoute = Boolean(current);
   const status: ProviderTruthStatus = !hasWorkingRoute
-    ? "offline"
+    ? "unavailable"
     : alerts.length > 0 || degradedProviders.length > 0 || errors.length > 0
       ? "degraded"
       : "healthy";

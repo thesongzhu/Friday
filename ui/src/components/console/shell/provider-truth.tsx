@@ -8,7 +8,7 @@ function statusTone(status: ProviderTruthStatus): "success" | "warning" | "dange
   if (status === "offline") {
     return "danger";
   }
-  if (status === "degraded") {
+  if (status === "degraded" || status === "unavailable") {
     return "warning";
   }
   return "success";
@@ -17,6 +17,9 @@ function statusTone(status: ProviderTruthStatus): "success" | "warning" | "dange
 function statusLabel(status: ProviderTruthStatus, locale: AppLocale): string {
   if (status === "offline") {
     return localize(locale, "离线", "Offline");
+  }
+  if (status === "unavailable") {
+    return localize(locale, "暂不可用", "Unavailable");
   }
   if (status === "degraded") {
     return localize(locale, "降级", "Degraded");
@@ -28,7 +31,7 @@ function statusDot(status: ProviderTruthStatus): string {
   if (status === "offline") {
     return "var(--rust-500)";
   }
-  if (status === "degraded") {
+  if (status === "degraded" || status === "unavailable") {
     return "var(--amber-600)";
   }
   return "var(--jade-500)";
@@ -185,7 +188,7 @@ export function ProviderTruthCard(props: {
       ?? (loading
         ? localize(locale, "正在读取当前 provider", "Reading current provider")
         : localize(locale, "当前路由不可见", "Current route unavailable")),
-    model: current?.model ?? (loading ? localize(locale, "加载中", "Loading") : localize(locale, "不可用", "Unavailable")),
+    model: current?.model ?? (loading ? localize(locale, "加载中", "Loading") : localize(locale, "未选择", "Not selected")),
     success: localize(
       locale,
       "当前真实链路已确认，provider health 与 routing explain 一致。",

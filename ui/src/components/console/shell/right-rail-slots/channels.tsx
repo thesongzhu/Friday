@@ -75,11 +75,14 @@ export function ChannelsRightRailSlot() {
 }
 
 function buildBadge(
-  status: "healthy" | "degraded" | "offline",
+  status: "healthy" | "degraded" | "unavailable" | "offline",
   locale: "zh" | "en",
 ): { label: string; color: string } {
   if (status === "offline") {
     return { label: localize(locale, "总线离线", "Bus offline"), color: "var(--rust-500)" };
+  }
+  if (status === "unavailable") {
+    return { label: localize(locale, "总线暂不可用", "Bus unavailable"), color: "var(--amber-600)" };
   }
   if (status === "degraded") {
     return { label: localize(locale, "部分降级", "Partially degraded"), color: "var(--amber-600)" };
