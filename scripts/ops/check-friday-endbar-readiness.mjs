@@ -82,12 +82,37 @@ function statusText(value) {
   return String(field(value, "status") || field(value, "result") || field(value, "proof") || "");
 }
 
+function text(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function truthText(value) {
+  return String(field(value, "truth") || field(value, "truth_label") || field(value, "truthLabel") || "");
+}
+
+function haystackFor(report, reportPath = "") {
+  return `${reportPath}\n${statusText(report)}\n${truthText(report)}`.toLowerCase();
+}
+
+function hasAnySignal(value, signals) {
+  return signals.some((signal) => value.includes(signal));
+}
+
 function hasDeferredSignal(value) {
   const status = statusText(value).toLowerCase();
   if (status.includes("defer")) return true;
   if (asArray(field(value, "deferredInputs")).length > 0) return true;
   if (asArray(field(value, "deferred_inputs")).length > 0) return true;
-  const blockers = asArray(field(value, "blockers")).join("\n").toLowerCase();
+  const blockers = [
+    text(field(value, "blockers")),
+    text(field(value, "readinessBlockers")),
+  ].join("\n").toLowerCase();
   return blockers.includes("defer") || blockers.includes("channel_deferred");
 }
 
@@ -103,11 +128,10 @@ function isPassLike(value) {
     "selected_visual_proof_ready",
     "product_runtime_actions_traceable",
     "runtime_actions_covered",
-    "integrated_end_to_end_tape_ready",
   ].includes(status);
 }
 
-function expectedStatusForGroup(groupId, report) {
+function expectedStatusForGroup(groupId, report, reportPath = "") {
   if (!report) return { status: "missing_report", blocker: "report not supplied" };
   if (hasDeferredSignal(report)) {
     return {
@@ -116,9 +140,10 @@ function expectedStatusForGroup(groupId, report) {
     };
   }
   if (groupId === "provider_entitlement_matrix") {
-    return report.status === "passed"
+    const haystack = haystackFor(report, reportPath);
+    return report.status === "passed" && hasAnySignal(haystack, ["provider_entitlement", "provider-entitlement"])
       ? { status: "satisfied" }
-      : { status: "blocked", blocker: statusText(report) || "provider entitlement report not passed" };
+      : { status: "blocked", blocker: statusText(report) || "provider entitlement report not passed or not group-level" };
   }
   if (groupId === "selected_uiux_conformance") {
     const accepted = [
@@ -131,6 +156,27 @@ function expectedStatusForGroup(groupId, report) {
     return accepted.includes(statusText(report))
       ? { status: "satisfied" }
       : { status: "blocked", blocker: statusText(report) || "selected UI/UX report not complete" };
+  }
+  if (groupId === "mechanism_multiangle_stress") {
+    const haystack = haystackFor(report, reportPath);
+    const groupLevel = hasAnySignal(haystack, ["mechanism_multiangle", "mechanism-stress"]);
+    return groupLevel && isPassLike(report)
+      ? { status: "satisfied" }
+      : { status: "blocked", blocker: statusText(report) || "mechanism report not complete or not group-level" };
+  }
+  if (groupId === "ui_real_use_mobile_desktop") {
+    const status = statusText(report);
+    const haystack = haystackFor(report, reportPath);
+    const strictStatus = status === "strict_uiux_real_use_ready" || status === "strict_ui_device_ready";
+    const groupLevel = hasAnySignal(haystack, ["ui_real_use_mobile_desktop", "ui-real-use", "uiux_real_use", "ui-device", "ui_device"]);
+    return (strictStatus || (groupLevel && isPassLike(report)))
+      ? { status: "satisfied" }
+      : { status: "blocked", blocker: status || "UI real-use report not strict or not group-level" };
+  }
+  if (groupId === "integrated_end_to_end_tape") {
+    return statusText(report) === "integrated_end_to_end_tape_ready"
+      ? { status: "satisfied" }
+      : { status: "blocked", blocker: statusText(report) || "integrated tape report not ready" };
   }
   return isPassLike(report)
     ? { status: "satisfied" }
@@ -173,7 +219,7 @@ for (const requiredId of [
 const rows = requiredGroups.map((group) => {
   const id = field(group, "id");
   const loaded = readReport(id, reportInputs[id] || "");
-  const evaluation = expectedStatusForGroup(id, loaded?.value || null);
+  const evaluation = expectedStatusForGroup(id, loaded?.value || null, loaded?.path || "");
   return {
     id,
     requiredForEndBar: true,
