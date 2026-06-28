@@ -69,6 +69,36 @@ describe("Friday END-BAR report input discovery", () => {
     expect(report.blockers).toEqual([]);
   });
 
+  it("accepts comma-separated --search-roots as an alias for repeated search roots", () => {
+    const first = mkdtempSync(join(tmpdir(), "friday-endbar-inputs-a-"));
+    const second = mkdtempSync(join(tmpdir(), "friday-endbar-inputs-b-"));
+
+    const mechanism = writeJson(first, "mechanism-multiangle.json", {
+      truth: "mechanism_multiangle_stress_report",
+      status: "passed",
+    });
+    const ui = writeJson(second, "ui-real-use.json", { status: "strict_uiux_real_use_ready" });
+    const selected = writeJson(first, "selected-uiux.json", { status: "selected_visual_proof_ready" });
+    const provider = writeJson(second, "provider-entitlement.json", { status: "passed" });
+    const integrated = writeJson(first, "integrated-tape.json", { status: "integrated_end_to_end_tape_ready" });
+
+    const report = run([`--search-roots=${first},${second}`]);
+
+    expect(report.searchRoots).toEqual([first, second]);
+    expect(report.status).toBe("complete_candidate_set");
+    expect(report.counts.satisfiedCandidates).toBe(5);
+    expect(report.command).toEqual([
+      "node",
+      "scripts/ops/check-friday-endbar-readiness.mjs",
+      `--mechanism-report=${mechanism}`,
+      `--ui-real-use-report=${ui}`,
+      `--selected-uiux-report=${selected}`,
+      `--provider-entitlement-report=${provider}`,
+      `--integrated-tape-report=${integrated}`,
+      "--require-complete",
+    ]);
+  });
+
   it("keeps provider manifest boundary checks and deferred channel reports out of strict candidates", () => {
     const dir = mkdtempSync(join(tmpdir(), "friday-endbar-inputs-"));
     writeJson(dir, "provider-boundary.json", {
