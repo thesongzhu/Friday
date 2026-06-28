@@ -268,6 +268,15 @@ function evaluateDesktopCapture(path) {
     && /^[0-9]+$/.test(liveConnection.read_port);
   return {
     path,
+    eligibleForAggregate: truthOk && statusOk && desktopLiveConnected,
+    aggregate_key: desktopLiveConnected
+      ? [
+        declaredMode,
+        liveConnection.read_host,
+        liveConnection.read_port,
+        liveConnection.workbench_mission_id,
+      ].join("\u001f")
+      : null,
     status: truthOk && statusOk && missing.length === 0 ? "ready" : "gap",
     truth_label: capture.truth_label || null,
     capture_status: capture.status || null,
@@ -285,6 +294,40 @@ function evaluateDesktopCapture(path) {
     missingDestinations: missing,
     caveat: capture.caveat || null,
   };
+}
+
+function aggregateDesktopCaptures(items) {
+  const groups = new Map();
+  for (const item of items) {
+    if (item.aggregate_key === null || item.eligibleForAggregate !== true) continue;
+    const group = groups.get(item.aggregate_key) || [];
+    group.push(item);
+    groups.set(item.aggregate_key, group);
+  }
+
+  return [...groups.values()]
+    .filter((group) => group.length > 1)
+    .map((group) => {
+      const observed = new Set(group.flatMap((item) => item.observedDestinations || []));
+      const missing = requiredDesktopDestinations.filter((destination) => !observed.has(destination));
+      const first = group[0];
+      return {
+        status: missing.length === 0 ? "ready" : "gap",
+        truth_label: "segmented_desktop_visual_capture_aggregate_not_endbar",
+        capture_status: "segmented_aggregate",
+        generated_at_utc: new Date().toISOString(),
+        mode: first.mode,
+        declaredMode: first.declaredMode,
+        live_connection: first.live_connection,
+        modeStatus: first.modeStatus,
+        requiredDesktopDestinations,
+        observedDestinations: [...observed],
+        missingDestinations: missing,
+        segmentCount: group.length,
+        segmentPaths: group.map((item) => item.path),
+        caveat: "Aggregates same-mission live desktop AX capture segments for selected visual proof only; not END-BAR, adoption, or runtime action closure.",
+      };
+    });
 }
 
 const mobileSelection = selection("mobile");
@@ -305,8 +348,10 @@ if (staleRepoProof.length > 0) {
 
 const iosVisualEvidence = unique(iosManifests).map(evaluateIosManifest);
 const desktopVisualEvidence = unique(desktopCaptures).map(evaluateDesktopCapture);
+const desktopAggregateEvidence = aggregateDesktopCaptures(desktopVisualEvidence);
 const iosReady = iosVisualEvidence.some((item) => item.status === "ready");
-const desktopReady = desktopVisualEvidence.some((item) => item.status === "ready");
+const desktopReady = desktopVisualEvidence.some((item) => item.status === "ready")
+  || desktopAggregateEvidence.some((item) => item.status === "ready");
 
 if (!iosReady) {
   block(
@@ -343,6 +388,7 @@ const report = {
   evidence: {
     ios: iosVisualEvidence,
     desktop: desktopVisualEvidence,
+    desktopAggregates: desktopAggregateEvidence,
     committedProofFreshness: repoProofFreshness,
   },
   notes,

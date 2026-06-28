@@ -94,6 +94,25 @@ function writeReadyEvidence(root: string, mode = "live-loopback") {
   return evidence;
 }
 
+function writeDesktopCapture(root: string, relative: string, screens: string[], mission = "mission_selected_visual_fixture") {
+  const evidence = join(root, relative);
+  writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
+    truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
+    generated_at_utc: "2026-06-27T00:00:00.000Z",
+    status: "partial_capture_ready",
+    mode: "live-loopback",
+    live_connection: {
+      read_host: "127.0.0.1",
+      read_port: "59155",
+      workbench_mission_id: mission,
+      mock: false,
+      status: "mission_bound_live_read_requested",
+    },
+    ui_actions: screens.map((screen) => ({ screen, status: "pass", runtimeActionId: `desktop/${screen}/check` })),
+  }, null, 2));
+  return evidence;
+}
+
 describe("check-friday-uiux-selected-visual-proof", () => {
   it("reports missing selected visual proof without failing default mode", () => {
     const { root, designRoot } = fixture();
@@ -164,6 +183,89 @@ describe("check-friday-uiux-selected-visual-proof", () => {
       const report = JSON.parse(output) as { status?: string; blockers?: unknown[] };
       expect(report.status).toBe("selected_visual_proof_ready");
       expect(report.blockers).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes when same-mission desktop visual evidence is split across live segments", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeReadyEvidence(root);
+      writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
+        truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
+        status: "partial_capture_ready",
+        mode: "live-loopback",
+        live_connection: {
+          read_host: "127.0.0.1",
+          read_port: "59155",
+          workbench_mission_id: "mission_selected_visual_fixture",
+          mock: false,
+          status: "mission_bound_live_read_requested",
+        },
+        ui_actions: ["operations", "chat", "session"].map((screen) => ({ screen, status: "pass", runtimeActionId: `desktop/${screen}/check` })),
+      }, null, 2));
+      const segmentB = writeDesktopCapture(root, "segment-b", ["pairingProvisioning", "providerAdmin", "parity"]);
+      const segmentC = writeDesktopCapture(root, "segment-c", ["workflow", "evidence"]);
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        `--evidence-dir=${segmentB}`,
+        `--evidence-dir=${segmentC}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        blockers?: unknown[];
+        evidence?: { desktopAggregates?: Array<{ status?: string; segmentCount?: number; missingDestinations?: string[] }> };
+      };
+      expect(report.status).toBe("selected_visual_proof_ready");
+      expect(report.blockers).toEqual([]);
+      expect(report.evidence?.desktopAggregates?.[0]).toMatchObject({
+        status: "ready",
+        segmentCount: 3,
+        missingDestinations: [],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not aggregate desktop segments with an invalid proof truth label", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeReadyEvidence(root);
+      writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
+        truth_label: "bad_truth",
+        status: "partial_capture_ready",
+        mode: "live-loopback",
+        live_connection: {
+          read_host: "127.0.0.1",
+          read_port: "59155",
+          workbench_mission_id: "mission_selected_visual_fixture",
+          mock: false,
+          status: "mission_bound_live_read_requested",
+        },
+        ui_actions: ["operations", "chat", "session", "pairingProvisioning", "providerAdmin", "parity", "workflow", "evidence"]
+          .map((screen) => ({ screen, status: "pass", runtimeActionId: `desktop/${screen}/check` })),
+      }, null, 2));
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        status?: string;
+        evidence?: { desktop?: Array<{ eligibleForAggregate?: boolean }>; desktopAggregates?: unknown[] };
+      };
+      expect(report.status).toBe("selected_visual_proof_gaps_present");
+      expect(report.evidence?.desktop?.[0]?.eligibleForAggregate).toBe(false);
+      expect(report.evidence?.desktopAggregates).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
