@@ -26,16 +26,17 @@ usage() {
   cat <<'USAGE'
 Usage:
   apps/friday-ios/build-sim.sh [screenshot-path]
-  apps/friday-ios/build-sim.sh --mode offline-truth [--destination pairing] [--shot screenshot-path]
   apps/friday-ios/build-sim.sh --mode live-loopback [--destination pairing] [--mission-id mission-id] [--shot screenshot-path]
+  apps/friday-ios/build-sim.sh --mode offline-truth [--destination pairing] [--shot screenshot-path]
   apps/friday-ios/build-sim.sh --mode design-proof-sample [--destination pairing] [--shot screenshot-path]
 
 Modes:
-  offline-truth  Default. Launches with all FRIDAY_MOBILE_LIVE_* gates OFF and proves the
+  live-loopback  Default selected-product proof mode. Launches with the existing simulator
+                 live gates ON (read/write/pairing/device-keypair) so the app attempts real
+                 loopback seams. It still does not flip shipped defaults, mint trust, or hold
+                 signing keys.
+  offline-truth  Explicit negative-control mode. Launches with all FRIDAY_MOBILE_LIVE_* gates OFF and proves the
                  shipped app renders honest-unavailable instead of fabricated ready state.
-  live-loopback  Explicit local proof mode. Launches with the existing simulator live gates ON
-                 (read/write/pairing/device-keypair) so the app attempts real loopback seams.
-                 It still does not flip shipped defaults, mint trust, or hold signing keys.
   design-proof-sample
                  Explicit visual parity mode. Launches a labeled PreviewReadClient sample for
                  operator-selected UI comparison only. It is not runtime proof or END-BAR.
@@ -45,7 +46,7 @@ USAGE
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$HERE/.build-sim"
 APP="$BUILD/FridayShell.app"
-MODE="offline-truth"
+MODE="live-loopback"
 SHOT="$BUILD/friday-ios-sim.png"
 DESTINATION=""
 MISSION_ID="${FRIDAY_MOBILE_MISSION_ID:-}"

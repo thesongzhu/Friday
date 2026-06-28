@@ -65,7 +65,7 @@ if (scriptExists) {
     "ios_selected_design_destination_capture_not_live_closure",
     "friday-design-handoff-20260602/saved/mobile-selection.json",
     "repo_head",
-    "design-proof-sample",
+    "mode=\"live-loopback\"",
     "`offline-truth` is a negative-control lane only",
     "not END-BAR",
     "not GO-LIVE",
