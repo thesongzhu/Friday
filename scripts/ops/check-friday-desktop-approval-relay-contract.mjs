@@ -47,8 +47,8 @@ const checks = [
     missing: missingStrings(files.app, [
       "approvalSigner: Self.approvalSigner",
       "approvalResumeClient: Self.writeClient",
-      "OperatorApprovalCLISigner()",
-      "startup never reads or signs with the private key",
+      "OperatorApprovalExternalArtifactSigner()",
+      "never receives a key path or invokes signing from the app",
     ]),
   },
   {
@@ -69,8 +69,9 @@ const checks = [
     missing: missingStrings(files.tests, [
       "approveNeedsMeItemSignsRefsAndRelaysOpaqueBlob",
       "approveNeedsMeItemWithoutSignerFailsClosedWithoutResume",
-      "operatorApprovalCLISignerWritesRefsOnlyRequestAndRelaysOpaqueStdout",
-      "operatorApprovalCLISignerRejectsMalformedDigestBeforeInvokingSigner",
+      "operatorApprovalExternalArtifactSignerWritesRefsOnlyRequestAndRelaysMatchingSignedArtifact",
+      "operatorApprovalExternalArtifactSignerRejectsMalformedDigestBeforeReadingArtifact",
+      "operatorApprovalExternalArtifactSignerRejectsMismatchedSignedArtifact",
       "rejectNeedsMeApprovalUsesRunControlWithoutSigner",
       "cancelNeedsMeRunUsesRunControlReason",
     ]),

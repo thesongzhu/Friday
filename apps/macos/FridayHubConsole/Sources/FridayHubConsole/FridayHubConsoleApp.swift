@@ -174,9 +174,9 @@ struct FridayHubConsoleApp: App {
     }
   }
 
-  /// Operator approval signer bridge. It invokes the external operator CLI only after the operator
-  /// clicks Approve; startup never reads or signs with the private key.
+  /// Operator approval relay. It never receives a key path or invokes signing from the app; the
+  /// operator supplies an already-signed artifact from an external custody boundary.
   static var approvalSigner: OperatorApprovalSigner? {
-    useMock ? nil : OperatorApprovalCLISigner()
+    useMock ? nil : OperatorApprovalExternalArtifactSigner()
   }
 }

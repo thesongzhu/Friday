@@ -38,6 +38,7 @@ public enum OperatorApprovalSignerError: Error, Sendable, Equatable, CustomStrin
   case keyUnprovisioned
   case invalidRequest(String)
   case signerFailed(String)
+  case signedApprovalUnavailable(String)
 
   public var description: String {
     switch self {
@@ -47,33 +48,41 @@ public enum OperatorApprovalSignerError: Error, Sendable, Equatable, CustomStrin
       return "Invalid approval request: \(reason)"
     case let .signerFailed(reason):
       return "Operator signer failed: \(reason)"
+    case let .signedApprovalUnavailable(reason):
+      return "Operator signed approval unavailable: \(reason)"
     }
   }
 }
 
-/// Desktop bridge to `friday-operator-approve sign`. It reads no key bytes itself; the external
-/// operator CLI owns key custody and emits only public signed-approval JSON on stdout.
-public struct OperatorApprovalCLISigner: OperatorApprovalSigner {
-  private let executablePath: String
-  private let keyPath: String?
+/// Desktop relay for an operator-supplied `SignedApproval` artifact.
+///
+/// The app is not a signer. It writes a refs-only pending request the operator can sign outside
+/// the app, and if a signed artifact path is configured it relays those opaque bytes after checking
+/// the public refs match this pause frame. No key path is accepted and no signing command is run.
+public struct OperatorApprovalExternalArtifactSigner: OperatorApprovalSigner {
+  private let signedApprovalPath: String?
   private let tempDirectory: URL
 
   public init(
-    executablePath: String? = ProcessInfo.processInfo.environment["FRIDAY_OPERATOR_APPROVE_BIN"],
-    keyPath: String? = ProcessInfo.processInfo.environment["FRIDAY_OPERATOR_APPROVE_KEY_PATH"],
+    signedApprovalPath: String? = ProcessInfo.processInfo.environment[
+      "FRIDAY_OPERATOR_APPROVE_SIGNED_APPROVAL_PATH"],
     tempDirectory: URL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
   ) {
-    self.executablePath = executablePath?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-      ?? "friday-operator-approve"
-    self.keyPath = keyPath?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    self.signedApprovalPath = signedApprovalPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+      .nilIfEmpty
     self.tempDirectory = tempDirectory
   }
 
   public func signApproval(_ request: OperatorApprovalSigningRequest) async throws -> [UInt8] {
-    guard let keyPath else { throw OperatorApprovalSignerError.keyUnprovisioned }
     let requestFile = try writePendingRequest(request)
-    defer { try? FileManager.default.removeItem(at: requestFile) }
-    return try await runSigner(keyPath: keyPath, requestFile: requestFile)
+    guard let signedApprovalPath else {
+      throw OperatorApprovalSignerError.signedApprovalUnavailable(
+        "refs-only request written to \(requestFile.path); sign it outside the app and set FRIDAY_OPERATOR_APPROVE_SIGNED_APPROVAL_PATH")
+    }
+    let signedApprovalFile = URL(fileURLWithPath: signedApprovalPath)
+    let data = try Data(contentsOf: signedApprovalFile)
+    try validateSignedApproval(data, matches: request)
+    return Array(data)
   }
 
   private func writePendingRequest(_ request: OperatorApprovalSigningRequest) throws -> URL {
@@ -108,41 +117,25 @@ public struct OperatorApprovalCLISigner: OperatorApprovalSigner {
     return file
   }
 
-  private func runSigner(keyPath: String, requestFile: URL) async throws -> [UInt8] {
-    try await withCheckedThrowingContinuation { continuation in
-      let process = Process()
-      let stdout = Pipe()
-      let stderr = Pipe()
-      process.standardOutput = stdout
-      process.standardError = stderr
-
-      if executablePath.contains("/") {
-        process.executableURL = URL(fileURLWithPath: executablePath)
-        process.arguments = ["sign", "--key", keyPath, "--request", requestFile.path]
-      } else {
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executablePath, "sign", "--key", keyPath, "--request", requestFile.path]
-      }
-
-      process.terminationHandler = { completed in
-        let out = stdout.fileHandleForReading.readDataToEndOfFile()
-        let err = stderr.fileHandleForReading.readDataToEndOfFile()
-        if completed.terminationStatus == 0, !out.isEmpty {
-          continuation.resume(returning: Array(out))
-        } else {
-          let stderrText = String(data: err, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-          continuation.resume(
-            throwing: OperatorApprovalSignerError.signerFailed(
-              stderrText?.nilIfEmpty ?? "exit \(completed.terminationStatus)"))
-        }
-      }
-
-      do {
-        try process.run()
-      } catch {
-        continuation.resume(throwing: OperatorApprovalSignerError.signerFailed(error.localizedDescription))
-      }
+  private func validateSignedApproval(
+    _ data: Data,
+    matches request: OperatorApprovalSigningRequest
+  ) throws {
+    let approval = try JSONDecoder().decode(SignedApprovalFile.self, from: data)
+    guard approval.approvalId == request.approvalId else {
+      throw OperatorApprovalSignerError.invalidRequest("signed approval_id does not match pause frame")
+    }
+    guard approval.actionDigest == request.actionDigest else {
+      throw OperatorApprovalSignerError.invalidRequest("signed action_digest does not match pause frame")
+    }
+    guard approval.decision == request.decision else {
+      throw OperatorApprovalSignerError.invalidRequest("signed decision does not match requested decision")
+    }
+    guard approval.expiresAt > 0 else {
+      throw OperatorApprovalSignerError.invalidRequest("signed expires_at must be positive")
+    }
+    guard !approval.signature.isEmpty else {
+      throw OperatorApprovalSignerError.invalidRequest("signed approval is missing signature")
     }
   }
 }
@@ -160,6 +153,21 @@ private struct PendingApprovalRequestFile: Encodable {
     case actionDigest = "action_digest"
     case expiresAt = "expires_at"
     case decision, surface, summary
+  }
+}
+
+private struct SignedApprovalFile: Decodable {
+  let approvalId: String
+  let actionDigest: String
+  let expiresAt: Int64
+  let decision: String
+  let signature: String
+
+  enum CodingKeys: String, CodingKey {
+    case approvalId = "approval_id"
+    case actionDigest = "action_digest"
+    case expiresAt = "expires_at"
+    case decision, signature
   }
 }
 
