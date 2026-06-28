@@ -1,0 +1,123 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const script = "scripts/ops/check-friday-ui-real-use-mobile-desktop-report.mjs";
+
+function writeJson(dir: string, name: string, value: unknown) {
+  const path = join(dir, name);
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  return path;
+}
+
+function touch(dir: string, name: string) {
+  const path = join(dir, name);
+  writeFileSync(path, "{}\n");
+  return path;
+}
+
+function summary(dir: string, overrides: Record<string, unknown> = {}) {
+  const missionId = "mission_ui_real_use_cli";
+  mkdirSync(join(dir, "mobile"), { recursive: true });
+  mkdirSync(join(dir, "desktop"), { recursive: true });
+  return {
+    truth: "ui_device_shortlist_runner_summary_not_endbar_not_adoption",
+    status: "partial_ready",
+    missionId,
+    captures: {
+      mobile: {
+        mission_id: missionId,
+        proof: touch(join(dir, "mobile"), "proof.json"),
+        events: touch(join(dir, "mobile"), "events.jsonl"),
+        action_runtime_evidence: touch(join(dir, "mobile"), "action.json"),
+        event_count: 5,
+        action_count: 1,
+      },
+      desktop: {
+        mission_id: missionId,
+        proof: touch(join(dir, "desktop"), "proof.json"),
+        events: touch(join(dir, "desktop"), "events.jsonl"),
+        action_runtime_evidence: touch(join(dir, "desktop"), "action.json"),
+        event_count: 5,
+        action_count: 1,
+      },
+    },
+    gapStatus: "written",
+    accessibilityCaptureStatus: "ready",
+    stressCaptureStatus: "ready",
+    workbenchTimelineStatus: "snapshot_ready_events_ready",
+    productClosureStatus: "ready_for_runtime_capture",
+    readinessStatus: "pass",
+    readinessBlockers: [],
+    uiDeviceProofReadiness: {
+      status: "pass",
+      blockers: [],
+    },
+    ...overrides,
+  };
+}
+
+function run(args: string[], expectFailure = false) {
+  try {
+    const stdout = execFileSync(process.execPath, [script, ...args], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+    return JSON.parse(stdout);
+  } catch (error) {
+    if (!expectFailure) throw error;
+    const stdout = (error as { stdout?: Buffer | string }).stdout?.toString() || "";
+    return JSON.parse(stdout);
+  }
+}
+
+describe("Friday UI real-use mobile/desktop report", () => {
+  it("passes only when strict UI/device readiness is present with mobile and desktop captures", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-"));
+    const summaryPath = writeJson(dir, "summary.json", summary(dir));
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"]);
+
+    expect(report.truth).toBe("ui_real_use_mobile_desktop_report");
+    expect(report.status).toBe("strict_uiux_real_use_ready");
+    expect(report.passBar.mobile_and_desktop_real_app_surfaces).toBe(true);
+    expect(report.blockers).toEqual([]);
+  });
+
+  it("marks channel-deferred summaries as deferred, not strict-ready", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-"));
+    const summaryPath = writeJson(dir, "summary.json", summary(dir, {
+      readinessStatus: "blocked",
+      readinessBlockers: ["ui_device_proof_evidence:channel_deferred_strict_assembly_blocked"],
+      uiDeviceProofReadiness: {
+        status: "blocked",
+        blockers: ["ui_device_proof_evidence:channel_deferred_strict_assembly_blocked"],
+      },
+    }));
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"], true);
+
+    expect(report.status).toBe("deferred");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "strict_ui_device_readiness_passed" }),
+      expect.objectContaining({ code: "no_deferred_channel_or_external_input" }),
+    ]));
+  });
+
+  it("blocks missing same-mission desktop evidence", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-"));
+    const value = summary(dir);
+    value.captures.desktop.mission_id = "mission_other";
+    value.captures.desktop.events = join(dir, "desktop", "missing.jsonl");
+    const summaryPath = writeJson(dir, "summary.json", value);
+
+    const report = run([`--ui-device-summary=${summaryPath}`]);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "desktop_real_surface_capture" }),
+    ]));
+  });
+});

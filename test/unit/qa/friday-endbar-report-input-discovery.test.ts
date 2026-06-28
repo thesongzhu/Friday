@@ -136,4 +136,31 @@ describe("Friday END-BAR report input discovery", () => {
       detail: "mechanism_multiangle_stress",
     });
   });
+
+  it("discovers strict UI real-use reports and keeps deferred ones non-satisfied", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-endbar-inputs-"));
+    const strict = writeJson(dir, "ui-real-use-strict.json", {
+      truth: "ui_real_use_mobile_desktop_report",
+      status: "strict_uiux_real_use_ready",
+    });
+    writeJson(dir, "ui-real-use-deferred.json", {
+      truth: "ui_real_use_mobile_desktop_report",
+      status: "deferred",
+      blockers: [{ code: "no_deferred_channel_or_external_input" }],
+    });
+
+    const report = run([`--search-root=${dir}`], true);
+    const group = report.groups.find((row: { id: string }) => row.id === "ui_real_use_mobile_desktop");
+
+    expect(group.selectedCandidate).toEqual(expect.objectContaining({
+      path: strict,
+      classification: "satisfied",
+    }));
+    expect(group.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: expect.stringContaining("ui-real-use-deferred.json"),
+        classification: "deferred",
+      }),
+    ]));
+  });
 });

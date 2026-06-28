@@ -198,6 +198,8 @@ function looksRelevant(path, report) {
   const body = `${statusText(report)}\n${truthText(report)}`.toLowerCase();
   return name.includes("endbar")
     || name.includes("uiux")
+    || name.includes("ui-real-use")
+    || name.includes("ui_real_use")
     || name.includes("ui-device")
     || name.includes("provider")
     || name.includes("integrated")
@@ -211,6 +213,7 @@ function looksRelevant(path, report) {
     || body.includes("mechanism_multiangle")
     || body.includes("mechanism-stress")
     || body.includes("ui_device")
+    || body.includes("ui_real_use_mobile_desktop")
     || body.includes("uiux")
     || body.includes("provider")
     || body.includes("integrated_end_to_end_tape")
