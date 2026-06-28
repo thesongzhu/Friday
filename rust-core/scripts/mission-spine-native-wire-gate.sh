@@ -44,6 +44,15 @@ cargo run -p friday-ffi --bin uniffi-bindgen -- \
   generate --library "$ffi_cdylib" --language kotlin --out-dir "$kotlin_out"
 
 echo "[mission-spine-native] verify native-visible Mission Spine helpers"
+contains_generated_symbol() {
+  local symbol="$1"
+  if command -v rg >/dev/null 2>&1; then
+    rg -q "$symbol" "$swift_out" "$kotlin_out"
+  else
+    grep -R -q -- "$symbol" "$swift_out" "$kotlin_out"
+  fi
+}
+
 for required in \
   sampleMissionSpineResponses \
   connectionTruthLabel \
@@ -55,7 +64,7 @@ for required in \
   missionWorkItemStatusIsTerminal \
   missionTimelineLinkGrantsConfirmedMemoryAuthority
 do
-  rg -q "$required" "$swift_out" "$kotlin_out"
+  contains_generated_symbol "$required"
 done
 
 echo "[mission-spine-native] NATIVE/WIRE CONTRACT PASSED"
