@@ -309,4 +309,45 @@ describe("check-friday-uiux-product-happy-path", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("accepts a live desktop aggregate from segmented selected visual proof", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-happy-path-desktop-aggregate-"));
+    try {
+      const visualValue = selectedVisual("live-loopback", {}, {
+        status: "gap",
+        missingDestinations: ["evidence"],
+      }) as {
+        evidence: {
+          desktopAggregates?: Array<Record<string, unknown>>;
+        };
+      };
+      visualValue.evidence.desktopAggregates = [{
+        status: "ready",
+        mode: "live-loopback",
+        capture_status: "segmented_aggregate",
+        segmentCount: 3,
+        missingDestinations: [],
+      }];
+      const visual = writeJson(root, "visual.json", visualValue);
+      const trace = writeJson(root, "trace.json", traceability());
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${process.cwd()}`,
+        `--selected-visual-report=${visual}`,
+        `--action-traceability-report=${trace}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        selectedVisual?: { liveConnectedDesktopEvidenceCount?: number; desktopModes?: string[] };
+        blockers?: unknown[];
+      };
+      expect(report.status).toBe("product_happy_path_ready");
+      expect(report.selectedVisual?.liveConnectedDesktopEvidenceCount).toBe(1);
+      expect(report.selectedVisual?.desktopModes).toEqual(["live-loopback", "live-loopback"]);
+      expect(report.blockers).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

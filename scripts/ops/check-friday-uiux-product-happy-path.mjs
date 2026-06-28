@@ -193,13 +193,22 @@ const liveConnectedVisualModes = new Set([
   "same-run-live",
 ]);
 
-function liveEvidenceForSurface(report, surface) {
+function visualEvidenceEntriesForSurface(report, surface) {
   const entries = arrayAt(report, ["evidence", surface]);
+  if (surface !== "desktop") return entries;
+  return [
+    ...entries,
+    ...arrayAt(report, ["evidence", "desktopAggregates"]),
+  ];
+}
+
+function liveEvidenceForSurface(report, surface) {
+  const entries = visualEvidenceEntriesForSurface(report, surface);
   return entries.filter((item) => item?.status === "ready" && liveConnectedVisualModes.has(String(item?.mode || "")));
 }
 
 function visualModesForSurface(report, surface) {
-  return arrayAt(report, ["evidence", surface])
+  return visualEvidenceEntriesForSurface(report, surface)
     .map((item) => String(item?.mode || ""))
     .filter(Boolean);
 }
@@ -258,6 +267,26 @@ function residualBlockers(report) {
   return arrayAt(report, ["gaps", "residualEndBarBlockers"]);
 }
 
+function residualBlockerRows(report) {
+  const rows = [];
+  for (const destination of residualBlockers(report)) {
+    for (const blocker of arrayAt(destination, ["blockers"])) {
+      const row = {
+        surface: String(destination.surface || ""),
+        id: String(destination.id || destination.destination || ""),
+        title: String(destination.title || ""),
+        kind: String(blocker.kind || ""),
+        label: String(blocker.label || ""),
+      };
+      rows.push({
+        ...row,
+        key: blockerKey(row),
+      });
+    }
+  }
+  return rows;
+}
+
 function blockerKey(blocker) {
   return [
     String(blocker?.surface || ""),
@@ -268,18 +297,7 @@ function blockerKey(blocker) {
 }
 
 function residualBlockerKeys(report) {
-  const keys = [];
-  for (const destination of residualBlockers(report)) {
-    for (const blocker of arrayAt(destination, ["blockers"])) {
-      keys.push(blockerKey({
-        surface: destination.surface,
-        id: destination.id || destination.destination,
-        kind: blocker.kind,
-        label: blocker.label,
-      }));
-    }
-  }
-  return keys;
+  return residualBlockerRows(report).map((row) => row.key);
 }
 
 const allowedSatisfactionClasses = new Set([
@@ -368,8 +386,10 @@ const satisfaction = blockerSatisfactionReport();
 const selectedReport = selected.parsed || {};
 const traceReport = trace.parsed || {};
 const traceSummary = summarizeTrace(traceReport);
+const residualRows = residualBlockerRows(traceReport);
 const residualKeys = residualBlockerKeys(traceReport);
 const unsatisfiedResidualKeys = residualKeys.filter((key) => !satisfaction.satisfiedKeys.has(key));
+const unsatisfiedResidualRows = residualRows.filter((row) => !satisfaction.satisfiedKeys.has(row.key));
 const residualBlockerCount = Math.max(traceSummary.destinationsWithResidualEndBarBlockers, residualKeys.length);
 const unsatisfiedResidualBlockerCount = residualKeys.length > 0
   ? unsatisfiedResidualKeys.length
@@ -456,6 +476,7 @@ const report = {
     residualBlockerCount,
     satisfiedResidualBlockerCount: residualBlockerCount - unsatisfiedResidualBlockerCount,
     unsatisfiedResidualBlockerCount,
+    unsatisfiedResidualBlockers: unsatisfiedResidualRows.map(({ key, ...row }) => row),
     invalid: satisfaction.invalid,
     caveat:
       "Blocker satisfaction does not weaken the native ProductReadinessContract. It only lets this gate distinguish residual blockers that have explicit same-run/current-head/live-connected satisfaction evidence from blockers still lacking proof.",
