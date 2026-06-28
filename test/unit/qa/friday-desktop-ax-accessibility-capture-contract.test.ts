@@ -51,6 +51,11 @@ describe("friday-desktop-ax-accessibility-capture contract", () => {
 
     expect(source).toContain("ui_device_accessibility_click_capture_real_ui_not_endbar");
     expect(source).toContain("macos_accessibility");
+    expect(source).toContain("live_connection");
+    expect(source).toContain("FRIDAY_CONSOLE_LIVE_READ_HOST");
+    expect(source).toContain("FRIDAY_CONSOLE_LIVE_READ_PORT");
+    expect(source).toContain("mission_bound_live_read_requested");
+    expect(source).toContain("live-loopback");
     expect(source).toContain("Only visible, safe observations are emitted");
     expect(source).toContain("does not click governed or");
     expect(source).toContain("friday-ui-device-accessibility-click-capture.mjs");

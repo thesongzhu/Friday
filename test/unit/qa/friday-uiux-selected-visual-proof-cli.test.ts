@@ -70,6 +70,16 @@ function writeReadyEvidence(root: string, mode = "live-loopback") {
   }, null, 2));
   writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
     truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
+    generated_at_utc: "2026-06-27T00:00:00.000Z",
+    status: "partial_capture_ready",
+    mode: "live-loopback",
+    live_connection: {
+      read_host: "127.0.0.1",
+      read_port: "59155",
+      workbench_mission_id: "mission_selected_visual_fixture",
+      mock: false,
+      status: "mission_bound_live_read_requested",
+    },
     ui_actions: [
       "operations",
       "chat",
@@ -154,6 +164,45 @@ describe("check-friday-uiux-selected-visual-proof", () => {
       const report = JSON.parse(output) as { status?: string; blockers?: unknown[] };
       expect(report.status).toBe("selected_visual_proof_ready");
       expect(report.blockers).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not promote a desktop live mode declaration without live connection metadata", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeReadyEvidence(root);
+      writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
+        truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
+        status: "partial_capture_ready",
+        mode: "live-loopback",
+        ui_actions: [
+          "operations",
+          "chat",
+          "session",
+          "pairingProvisioning",
+          "providerAdmin",
+          "parity",
+          "workflow",
+          "evidence",
+        ].map((screen) => ({ screen, status: "pass", runtimeActionId: `desktop/${screen}/check` })),
+      }, null, 2));
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        evidence?: { desktop?: Array<{ mode?: string | null; declaredMode?: string | null; modeStatus?: string }> };
+      };
+      expect(report.status).toBe("selected_visual_proof_ready");
+      expect(report.evidence?.desktop?.[0]?.declaredMode).toBe("live-loopback");
+      expect(report.evidence?.desktop?.[0]?.mode).toBeNull();
+      expect(report.evidence?.desktop?.[0]?.modeStatus).toBe("declared_mode_not_live_connected");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
