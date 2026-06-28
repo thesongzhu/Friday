@@ -48,6 +48,9 @@ const treeDepth = Number(arg("tree-depth") || process.env.FRIDAY_DESKTOP_AX_TREE
 const axTraversalDepth = Number.isInteger(treeDepth) ? treeDepth : 5;
 const planOnly = args.includes("--plan-only");
 const requireObserved = args.includes("--require-observed");
+const liveReadHost = (process.env.FRIDAY_CONSOLE_LIVE_READ_HOST || "").trim();
+const liveReadPort = (process.env.FRIDAY_CONSOLE_LIVE_READ_PORT || "").trim();
+const declaredCaptureMode = (process.env.FRIDAY_DESKTOP_AX_CAPTURE_MODE || "").trim();
 const blockers = [];
 const warnings = [];
 
@@ -77,6 +80,30 @@ function read(path) {
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
+}
+
+function liveConnectionMetadata() {
+  const readPortOk = /^[0-9]+$/.test(liveReadPort);
+  const missionBound = workbenchMissionId.length > 0;
+  const readConfigured = liveReadHost.length > 0 && readPortOk;
+  const mock = process.env.FRIDAY_CONSOLE_MOCK === "1";
+  const status = readConfigured && missionBound && !mock
+    ? "mission_bound_live_read_requested"
+    : "live_read_not_mission_bound";
+  return {
+    read_host: liveReadHost || null,
+    read_port: liveReadPort || null,
+    workbench_mission_id: workbenchMissionId || null,
+    mock,
+    status,
+  };
+}
+
+function captureModeForLiveConnection(liveConnection) {
+  if (declaredCaptureMode) return declaredCaptureMode;
+  return liveConnection.status === "mission_bound_live_read_requested"
+    ? "live-loopback"
+    : "unclassified-real-app";
 }
 
 function run(command, commandArgs, options = {}) {
@@ -630,14 +657,22 @@ if (blockers.length === 0) {
 }
 
 writeFileSync(rawPath, `${rawSnapshots.join("\n")}\n`);
+const liveConnection = liveConnectionMetadata();
+const captureMode = captureModeForLiveConnection(liveConnection);
 const capture = {
   truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
+  generated_at_utc: new Date().toISOString(),
+  status: blockers.length === 0 && observedActions.length > 0 ? "partial_capture_ready" : "blocked_or_empty",
   mission_id: missionId,
   workbench_mission_id: workbenchMissionId || null,
   surface: "desktop",
   capture_method: "macos_accessibility",
+  mode: captureMode,
+  live_connection: liveConnection,
   evidence_ref: rawPath,
   ui_actions: observedActions,
+  caveat:
+    "This is real macOS Accessibility inspection of FridayHubConsole with declared live-read metadata when configured; it is not END-BAR, adoption, or proof that runtime actions closed.",
 };
 jsonOut(capturePath, capture);
 
@@ -658,6 +693,8 @@ const summary = {
   capture: {
     path: capturePath,
     raw_tree: rawPath,
+    mode: captureMode,
+    live_connection: liveConnection,
     observed_count: observedActions.length,
     missing_count: missingTargets.length,
     missing_targets: missingTargets,

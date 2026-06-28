@@ -252,12 +252,34 @@ function evaluateDesktopCapture(path) {
     "ui_device_accessibility_click_capture_real_ui_not_endbar",
   ].includes(capture.truth_label);
   const statusOk = ["ready", "partial_capture_ready", undefined, null].includes(capture.status);
+  const declaredMode = typeof capture.mode === "string" ? capture.mode : null;
+  const liveConnection = capture.live_connection && typeof capture.live_connection === "object"
+    ? capture.live_connection
+    : null;
+  const desktopLiveModes = new Set(["live-loopback", "product-live", "same-run-live"]);
+  const desktopLiveConnected = desktopLiveModes.has(declaredMode)
+    && liveConnection?.status === "mission_bound_live_read_requested"
+    && liveConnection?.mock === false
+    && typeof liveConnection?.workbench_mission_id === "string"
+    && liveConnection.workbench_mission_id.length > 0
+    && typeof liveConnection?.read_host === "string"
+    && liveConnection.read_host.length > 0
+    && typeof liveConnection?.read_port === "string"
+    && /^[0-9]+$/.test(liveConnection.read_port);
   return {
     path,
     status: truthOk && statusOk && missing.length === 0 ? "ready" : "gap",
     truth_label: capture.truth_label || null,
     capture_status: capture.status || null,
     generated_at_utc: capture.generated_at_utc || null,
+    mode: desktopLiveConnected ? declaredMode : null,
+    declaredMode,
+    live_connection: liveConnection,
+    modeStatus: desktopLiveConnected
+      ? "live_connected_visual_proof_mode"
+      : declaredMode
+        ? "declared_mode_not_live_connected"
+        : "missing_live_mode",
     requiredDesktopDestinations,
     observedDestinations: [...observed],
     missingDestinations: missing,
