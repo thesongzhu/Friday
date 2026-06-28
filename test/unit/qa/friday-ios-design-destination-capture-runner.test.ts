@@ -17,7 +17,7 @@ async function writeExecutable(filePath: string, content: string) {
 }
 
 describe("friday-ios-design-destination-capture runner", () => {
-  it("defaults selected design captures to design-proof-sample mode", async () => {
+  it("defaults selected design captures to live-loopback product proof mode", async () => {
     const root = process.cwd();
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "friday-ios-capture-design-default-"));
     const binDir = path.join(tempRoot, "bin");
@@ -73,12 +73,12 @@ exit 64
       caveat: string;
       relaunch_contract: string;
     };
-    expect(manifest.mode).toBe("design-proof-sample");
+    expect(manifest.mode).toBe("live-loopback");
     expect(manifest.repo_head).toMatch(/^[0-9a-f]{40}$/);
     expect(manifest.caveat).toContain("offline-truth is negative control only");
-    expect(manifest.relaunch_contract).toContain("design-proof sample");
+    expect(manifest.relaunch_contract).toContain("live-loopback read/write/pairing/device-keypair gates");
     await expect(fs.readFile(path.join(outDir, "screenshots", "session.launch.txt"), "utf8"))
-      .resolves.toContain("--design-proof-sample");
+      .resolves.toContain("--live-read");
   });
 
   it("captures multiple offline destinations with skip-initial-build under set -u", async () => {

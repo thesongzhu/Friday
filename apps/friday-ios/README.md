@@ -92,13 +92,23 @@ dependency graph for `arm64-apple-ios17.0-simulator` via `swift build --triple â
 then compiles the SwiftUI app against those sim-built modules with `swiftc`, assembles
 `FridayShell.app`, and installs/launches/screenshots it on a booted simulator.
 
-The default simulator launch is an **offline truth proof**. It deliberately keeps all
-`FRIDAY_MOBILE_LIVE_*` gates off, so the expected result is an honest-unavailable UI
-if the live seams are not explicitly enabled. That screenshot proves "no fabricated
-ready state"; it is not a product-ready live-use proof.
+The default simulator launch is the selected-product **live-loopback proof**. It turns on the
+existing simulator read/write/pairing/device-keypair gates so the app attempts the real local
+seams by default when you run the proof command. This does not flip the shipped app's
+fail-closed runtime defaults, mint trust, or hold signing keys; it only makes the local proof
+entrypoint show the product path rather than the negative-control path.
 
-For selected-design visual comparison, use the explicit sample lane instead of the
-offline truth lane:
+For explicit negative-control testing, use the offline truth lane:
+
+```sh
+apps/friday-ios/build-sim.sh --mode offline-truth --shot apps/friday-ios/.build-sim/friday-ios-offline-truth.png
+```
+
+`offline-truth` deliberately keeps all `FRIDAY_MOBILE_LIVE_*` gates off, so the expected result is
+an honest-unavailable UI if the live seams are not explicitly enabled. That screenshot proves
+"no fabricated ready state"; it is not a product-ready live-use proof.
+
+For selected-design visual comparison without live seams, use the explicit sample lane:
 
 ```sh
 apps/friday-ios/build-sim.sh --mode design-proof-sample --shot apps/friday-ios/.build-sim/friday-ios-design-proof-sample.png
@@ -108,7 +118,8 @@ apps/friday-ios/build-sim.sh --mode design-proof-sample --shot apps/friday-ios/.
 Home/destinations can be compared against the operator-selected HTML/JSON handoff.
 It is design proof only: no live Hub, no runtime PASS, no END-BAR, and no adoption.
 
-For local live-loopback dogfood, use the explicit mode:
+For local live-loopback dogfood, the default command is enough; `--mode live-loopback` is accepted
+when you want the mode to be explicit:
 
 ```sh
 apps/friday-ios/build-sim.sh --mode live-loopback --shot apps/friday-ios/.build-sim/friday-ios-live-loopback.png

@@ -16,8 +16,9 @@ a manifest with truth labels.
 
 Truth: this is a design/device capture runner. It does not claim END-BAR,
 GO-LIVE, adoption, operator signing, or live workflow closure.
+Default mode is `live-loopback` so selected UI proof exercises the product path.
 `offline-truth` is a negative-control lane only and is rejected by selected
-visual proof gates; use `design-proof-sample` or `live-loopback` for visual proof.
+visual proof gates; use `design-proof-sample` only for visual comparison without live seams.
 EOF
 }
 
@@ -28,7 +29,7 @@ die() {
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out_dir=""
-mode="design-proof-sample"
+mode="live-loopback"
 skip_initial_build=0
 destinations_csv="home,missions,session,contextPassport,tokenLedger,shareIntake,voice,pairing,needsMe,memory,platform,providerAuth,activity,workflows,onboarding,settings,petEditor,proofViewer,entrypoints"
 settle_seconds="${FRIDAY_IOS_DESIGN_CAPTURE_SETTLE_SECONDS:-6}"
