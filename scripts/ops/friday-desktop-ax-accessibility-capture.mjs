@@ -288,7 +288,11 @@ on clickMatchingElement(e, identifierValue, titleValue, depth)
   try
     tell application "System Events"
       if (value of attribute "AXIdentifier" of e) is identifierValue then
-        click e
+        try
+          perform action "AXPress" of e
+        on error
+          click e
+        end try
         set didClick to true
         return
       end if
@@ -297,7 +301,11 @@ on clickMatchingElement(e, identifierValue, titleValue, depth)
   try
     tell application "System Events"
       if (name of e) contains titleValue then
-        click e
+        try
+          perform action "AXPress" of e
+        on error
+          click e
+        end try
         set didClick to true
         return
       end if
@@ -325,6 +333,24 @@ tell application "System Events"
 end tell
 return "not_found"`;
   return osascript(script);
+}
+
+function rawTreeHasDestination(raw, destination, title) {
+  const haystack = raw || "";
+  return haystack.includes(title) || haystack.includes(`friday.desktop.${destination}`);
+}
+
+function waitForDestination(destination, title) {
+  const destinationWaitMs = Math.min(timeoutSeconds * 1000, 8_000);
+  const deadline = Date.now() + destinationWaitMs;
+  let lastRaw = "";
+  while (Date.now() < deadline && !overallDeadlineExceeded()) {
+    const raw = captureTreeRaw();
+    lastRaw = raw;
+    if (rawTreeHasDestination(raw, destination, title)) return { ready: true, raw };
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+  }
+  return { ready: false, raw: lastRaw };
 }
 
 function parseRawTree(raw) {
@@ -570,8 +596,15 @@ if (blockers.length === 0) {
       block("app_window_not_ready", `FridayHubConsole:${destination}`);
       continue;
     }
-    const nav = clickNav(destination, destinationTargets[0]?.title || destination);
+    const destinationTitle = destinationTargets[0]?.title || destination;
+    let destinationReady = waitForDestination(destination, destinationTitle);
+    const nav = destinationReady.ready
+      ? { status: 0, stdout: "initial_destination_ready", stderr: "" }
+      : clickNav(destination, destinationTitle);
     const navStatus = `initial_destination;${nav.status === 0 ? nav.stdout.trim() : nav.stderr.trim()}`;
+    if (!destinationReady.ready && nav.status === 0 && nav.stdout.trim() === "clicked") {
+      destinationReady = waitForDestination(destination, destinationTitle);
+    }
     if (nav.status === 0 && nav.stdout.trim() === "clicked") {
       observedActions.push({
         screen: destination,
@@ -589,9 +622,26 @@ if (blockers.length === 0) {
         matched_description: navStatus,
         matched_by: "navigation_click",
       });
+    } else if (nav.status === 0 && nav.stdout.trim() === "initial_destination_ready") {
+      observedActions.push({
+        screen: destination,
+        runtimeActionId: `desktop/${destination}/destination-visible`,
+        action_id: `desktop/${destination}/destination-visible`,
+        capability_id: `desktop/${destination}/destination-visible`,
+        accessibility_id: `friday.desktop.nav.${destination}`,
+        interaction: "visible",
+        status: "pass",
+        evidence_ref: rawPath,
+        captured_at: new Date().toISOString(),
+        workbench_mission_id: workbenchMissionId || null,
+        matched_role: "nav",
+        matched_name: destinationTitle,
+        matched_description: navStatus,
+        matched_by: "initial_destination",
+      });
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 350));
-    const raw = captureTreeRaw();
+    const raw = destinationReady.ready ? destinationReady.raw : captureTreeRaw();
     rawSnapshots.push(`--- destination=${destination} nav=${navStatus} ---\n${raw}`);
     const elements = parseRawTree(raw);
     for (const [label, event] of [

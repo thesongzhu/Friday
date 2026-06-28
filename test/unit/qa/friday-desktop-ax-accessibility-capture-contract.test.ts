@@ -65,6 +65,11 @@ describe("friday-desktop-ax-accessibility-capture contract", () => {
     expect(source).toContain("function overallDeadlineExceeded()");
     expect(source).toContain("capture_overall_timeout");
     expect(source).toContain("overall_timeout_ms: overallTimeoutMs");
+    expect(source).toContain("function waitForDestination(destination, title)");
+    expect(source).toContain("const destinationWaitMs = Math.min(timeoutSeconds * 1000, 8_000)");
+    expect(source).toContain("initial_destination_ready");
+    expect(source).toContain("matched_by: \"initial_destination\"");
+    expect(source).toContain("perform action \"AXPress\" of e");
     expect(navSource).toContain(".accessibilityIdentifier(\"friday.desktop.nav.\\(destination.rawValue)\")");
   });
 

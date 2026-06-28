@@ -245,6 +245,43 @@ function runtimeChipParts(status: SystemHealthStatus, locale: "zh" | "en") {
   };
 }
 
+function HeroPetStage(props: {
+  runtimeLabel: string;
+  providerLabel: string;
+  locale: "zh" | "en";
+}) {
+  const { runtimeLabel, providerLabel, locale } = props;
+
+  return (
+    <div
+      className="overflow-hidden rounded-[22px] border px-4 py-4"
+      style={{
+        borderColor: "rgba(26, 40, 35, 0.12)",
+        background: "linear-gradient(180deg, rgba(15, 125, 140, 0.10), rgba(255, 255, 255, 0.72))",
+      }}
+    >
+      <div className="flex min-h-[180px] items-center justify-center rounded-[18px]" style={{ background: "rgba(255, 255, 255, 0.42)" }}>
+        <img
+          alt={localize(locale, "Friday 状态宠物", "Friday status pet")}
+          src="/source/pet/g-sit.png"
+          className="h-[138px] w-[138px] object-contain"
+          draggable={false}
+        />
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-[var(--radius-md)] border px-3 py-2" style={{ borderColor: "rgba(122, 106, 88, 0.18)", background: "var(--surface-2)" }}>
+          <p className="font-semibold" style={{ color: "var(--ink-900)" }}>{localize(locale, "状态", "Status")}</p>
+          <p className="mt-0.5 truncate" style={{ color: "var(--ink-500)" }}>{runtimeLabel}</p>
+        </div>
+        <div className="rounded-[var(--radius-md)] border px-3 py-2" style={{ borderColor: "rgba(122, 106, 88, 0.18)", background: "var(--surface-2)" }}>
+          <p className="font-semibold" style={{ color: "var(--ink-900)" }}>{localize(locale, "Provider", "Provider")}</p>
+          <p className="mt-0.5 truncate" style={{ color: "var(--ink-500)" }}>{providerLabel}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function HomePage() {
   const navigate = useAppNavigate();
   const queryClient = useQueryClient();
@@ -541,16 +578,16 @@ export function HomePage() {
               </span>
             </div>
             <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
-              {localize(locale, "Friday Console", "Friday Console")}
+              {localize(locale, "Friday Home", "Friday Home")}
             </p>
             <h2 className="mt-1 text-3xl font-semibold tracking-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, "先看正在运行的事，再看你该决定什么", "See what is moving before deciding what to do next")}
+              {localize(locale, "状态先行，聊天随时可开", "Status first, chat always one tap away")}
             </h2>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-[color:var(--color-text-secondary)]">
               {localize(
                 locale,
-                "首页主位重新切回控制台视角：先看运行中的任务、待确认边界、接下来自动发生的事，再决定要不要深入到行业包或某个工具页。",
-                "Home is back to a console-first view: watch live runs, review boundaries, and inspect what happens next before diving into a specific pack or tool page.",
+                "首页保持 Chat + Status：先看 Friday 真实运行状态、需要你决定的事和 provider 真路由；要开新任务，点顶部聊天或命令面板进入完整 Friday Chat。",
+                "Home stays Chat + Status: see Friday's live state, decisions waiting on you, and the real provider route; start new work from top chat or the command sheet into full Friday Chat.",
               )}
             </p>
 
@@ -569,6 +606,12 @@ export function HomePage() {
 
           <div className="w-full xl:justify-self-end">
             <div className="space-y-3 xl:ml-auto xl:max-w-[430px]">
+              <HeroPetStage
+                locale={locale}
+                runtimeLabel={runtimeChip.label}
+                providerLabel={providerTruthQuery.data?.current?.providerName ?? localize(locale, "读取中", "Reading")}
+              />
+
               <div className="flex flex-wrap items-center gap-2 xl:justify-end">
                 <span
                   className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 py-1.5 text-xs"
