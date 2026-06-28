@@ -411,12 +411,27 @@ struct RootView: View {
         case .providerAuth:
           FridayProviderAuthScreen(viewModel: homeVM)
         case .onboarding:
-          FridayProjectionScreen(destination: destination, viewModel: homeVM) {
-            destination = .pairing
-          }
+          FridayProjectionScreen(
+            destination: destination,
+            viewModel: homeVM,
+            missionClient: session.missionClient,
+            onOpenFridayChat: { context in
+              pendingChatLaunchContext = context
+              chatOpen = true
+            },
+            onOpenPairing: {
+              destination = .pairing
+            })
         case .missions, .needsMe, .memory, .platform, .activity, .workflows, .settings,
              .petEditor, .proofViewer, .entrypoints:
-          FridayProjectionScreen(destination: destination, viewModel: homeVM)
+          FridayProjectionScreen(
+            destination: destination,
+            viewModel: homeVM,
+            missionClient: session.missionClient,
+            onOpenFridayChat: { context in
+              pendingChatLaunchContext = context
+              chatOpen = true
+            })
         }
       }
       .navigationTitle(destination == .home ? "Friday" : destination.title)

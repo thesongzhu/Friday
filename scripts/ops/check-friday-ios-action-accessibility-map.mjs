@@ -111,6 +111,10 @@ const ACTION_MAP = {
     accessibilityIds: ["friday.mobile.toolbar.refresh"],
     evidenceScripts: ["scripts/ops/friday-mobile-memory-action-evidence.sh"],
   },
+  "mobile/missions/read": {
+    accessibilityIds: ["friday.missions.read"],
+    evidenceScripts: ["scripts/ops/friday-mobile-projection-action-evidence.sh"],
+  },
   "mobile/session/sidecar/open": {
     accessibilityIds: ["friday.session.sidecar-open"],
     evidenceScripts: ["scripts/ops/friday-mobile-session-sidecar-action-evidence.sh"],
@@ -187,6 +191,14 @@ const ACTION_MAP = {
     accessibilityIds: ["friday.new-session.open-chat-loop"],
     evidenceScripts: ["scripts/ops/friday-mobile-new-session-action-evidence.sh"],
   },
+  "mobile/missions/dispatch": {
+    accessibilityIds: ["friday.missions.dispatch-button"],
+    evidenceScripts: ["scripts/ops/friday-mobile-new-session-action-evidence.sh"],
+  },
+  "mobile/missions/open-chat-loop": {
+    accessibilityIds: ["friday.missions.open-chat-loop"],
+    evidenceScripts: ["scripts/ops/friday-mobile-new-session-action-evidence.sh"],
+  },
   "mobile/approval/check": {
     accessibilityIds: ["friday.chat.approval.approve", "friday.session.control.resume"],
     evidenceScripts: ["scripts/ops/friday-mobile-chat-action-evidence.sh"],
@@ -226,6 +238,26 @@ const ACTION_MAP = {
   "mobile/onboarding/open-device-pairing": {
     accessibilityIds: ["friday.onboarding.open-device-pairing"],
     evidenceScripts: ["scripts/ops/friday-mobile-firstlaunch-action-evidence.sh"],
+  },
+  "mobile/platform/capability-matrix": {
+    accessibilityIds: ["friday.platform.capability-matrix"],
+    evidenceScripts: ["scripts/ops/friday-mobile-projection-action-evidence.sh"],
+  },
+  "mobile/settings/push-permission": {
+    accessibilityIds: ["friday.settings.push-permission"],
+    evidenceScripts: ["scripts/ops/friday-mobile-projection-action-evidence.sh"],
+  },
+  "mobile/pet/state-mapping": {
+    accessibilityIds: ["friday.pet-editor.readiness"],
+    evidenceScripts: ["scripts/ops/friday-mobile-projection-action-evidence.sh"],
+  },
+  "mobile/proof/viewer-open": {
+    accessibilityIds: ["friday.proof-viewer.receipts"],
+    evidenceScripts: ["scripts/ops/friday-mobile-projection-action-evidence.sh"],
+  },
+  "mobile/entrypoints/readiness": {
+    accessibilityIds: ["friday.entrypoints.readiness"],
+    evidenceScripts: ["scripts/ops/friday-mobile-projection-action-evidence.sh"],
   },
 };
 

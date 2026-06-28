@@ -77,7 +77,11 @@ func mobileProductContractSurfacesBuiltReadOnlyProductActions() {
   let provider = MobileProductDestinationID.providerAuth.contract
   let settings = MobileProductDestinationID.settings.contract
 
-  #expect(missions.runtimeActionIds == ["mobile/missions/read"])
+  #expect(missions.runtimeActionIds == [
+    "mobile/missions/read",
+    "mobile/missions/dispatch",
+    "mobile/missions/open-chat-loop",
+  ])
   #expect(passport.runtimeActionIds == [
     "mobile/passport/checklist",
     "mobile/passport/send",
@@ -92,7 +96,9 @@ func mobileProductContractSurfacesBuiltReadOnlyProductActions() {
   ])
   #expect(platform.runtimeActionIds == ["mobile/platform/capability-matrix"])
   #expect(settings.runtimeActionIds == ["mobile/settings/push-permission"])
-  #expect(missions.blockers.contains { $0.kind == .needsLiveWrite })
+  #expect(missions.tier == .governedActionGated)
+  #expect(!missions.blockers.contains { $0.kind == .needsLiveWrite })
+  #expect(missions.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(provider.blockers.contains { $0.kind == .needsProviderCredential })
   #expect(provider.blockers.contains { $0.kind == .needsRuntimeEvidence })
   #expect(platform.blockers.contains { $0.kind == .needsRuntimeEvidence })
