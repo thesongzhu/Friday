@@ -144,19 +144,35 @@ export function MobileTopBar(props: {
         borderColor: "rgba(122, 106, 88, 0.18)",
       }}
     >
-      <div className="min-w-0">
-        <p
-          className="text-[10px] font-semibold uppercase tracking-[0.16em]"
-          style={{ color: "var(--ink-300)" }}
+      <div className="flex min-w-0 items-center gap-3">
+        <button
+          type="button"
+          onClick={onToggleMobileMore}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] border"
+          style={{
+            borderColor: "rgba(122, 106, 88, 0.22)",
+            background: "var(--surface-2)",
+            color: "var(--ink-700)",
+          }}
+          aria-label={localize(locale, "打开命令面板", "Open command sheet")}
+          aria-expanded={showMobileMore}
         >
-          Friday
-        </p>
-        <h1
-          className="truncate text-sm font-semibold tracking-tight"
-          style={{ color: "var(--ink-900)" }}
-        >
-          {currentPageTitle}
-        </h1>
+          {showMobileMore ? <PanelRightClose className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+        </button>
+        <div className="min-w-0">
+          <p
+            className="text-[10px] font-semibold uppercase tracking-[0.16em]"
+            style={{ color: "var(--ink-300)" }}
+          >
+            Friday
+          </p>
+          <h1
+            className="truncate text-sm font-semibold tracking-tight"
+            style={{ color: "var(--ink-900)" }}
+          >
+            {currentPageTitle}
+          </h1>
+        </div>
       </div>
 
       <div className="flex items-center gap-2">
@@ -181,20 +197,6 @@ export function MobileTopBar(props: {
         >
           <Globe2 className="h-4 w-4" />
           <span>{locale === "zh" ? "中" : "EN"}</span>
-        </button>
-        <button
-          type="button"
-          onClick={onToggleMobileMore}
-          className="flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)] border"
-          style={{
-            borderColor: "rgba(122, 106, 88, 0.22)",
-            background: "var(--surface-2)",
-            color: "var(--ink-700)",
-          }}
-          aria-label={localize(locale, "更多", "More")}
-          aria-expanded={showMobileMore}
-        >
-          {showMobileMore ? <PanelRightClose className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
         </button>
       </div>
     </header>
