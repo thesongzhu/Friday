@@ -215,13 +215,18 @@ function evaluateIosManifest(path) {
   const missing = requiredMobileDestinations.filter((destination) => !captured.has(destination));
   const truthOk = manifest.truth_label === "ios_selected_design_destination_capture_not_live_closure";
   const statusOk = manifest.status === "ready";
+  const mode = manifest.mode || null;
+  const allowedVisualModes = ["design-proof-sample", "live-loopback"];
+  const modeOk = allowedVisualModes.includes(mode);
   return {
     path,
-    status: truthOk && statusOk && missing.length === 0 ? "ready" : "gap",
+    status: truthOk && statusOk && modeOk && missing.length === 0 ? "ready" : "gap",
     truth_label: manifest.truth_label || null,
     manifest_status: manifest.status || null,
     generated_at_utc: manifest.generated_at_utc || null,
-    mode: manifest.mode || null,
+    mode,
+    allowedVisualModes,
+    modeStatus: modeOk ? "visual_proof_mode" : mode === "offline-truth" ? "negative_control_not_visual_proof" : "missing_or_unknown_mode",
     requiredMobileDestinations,
     capturedDestinations: [...captured],
     missingDestinations: missing,
@@ -284,7 +289,7 @@ const desktopReady = desktopVisualEvidence.some((item) => item.status === "ready
 if (!iosReady) {
   block(
     "mobile_selected_visual_proof_missing",
-    "Run proof:ios:design-destinations on current HEAD and pass its ios-design-destination-capture-manifest.json",
+    "Run proof:ios:design-destinations on current HEAD in design-proof-sample or live-loopback mode and pass its ios-design-destination-capture-manifest.json; offline-truth is a negative-control lane and is not selected visual proof",
   );
 }
 if (!desktopReady) {

@@ -93,8 +93,9 @@ final class FridaySession: ObservableObject {
   init(preview: Bool = false) {
     let args = ProcessInfo.processInfo.arguments
     let env = ProcessInfo.processInfo.environment
-    self.runControlEnabled = preview ? false : Self.runControlRequested(args: args, env: env)
-    let selectedDeviceKeypairBackend: DeviceKeypairBackend = preview
+    let designProofSample = preview || Self.designProofSampleRequested(args: args, env: env)
+    self.runControlEnabled = designProofSample ? false : Self.runControlRequested(args: args, env: env)
+    let selectedDeviceKeypairBackend: DeviceKeypairBackend = designProofSample
       ? KeychainDeviceKeypairBackend()
       : Self.defaultDeviceKeypairBackend(args: args, env: env)
     self.deviceKeypairBackend = selectedDeviceKeypairBackend
@@ -109,13 +110,13 @@ final class FridaySession: ObservableObject {
     // wired here behind an OPT-IN env/arg gate (`FRIDAY_MOBILE_LIVE_READ=1` / `--live-read`,
     // mirroring the desktop `FRIDAY_CONSOLE_LIVE`). The DEFAULT (gate OFF) stays the honest-
     // unavailable client — this PR does NOT flip the shipped default (that is the slice-6 gate).
-    self.readClient = preview
+    self.readClient = designProofSample
       ? PreviewReadClient()
       : Self.defaultReadClient(deviceKeypairBackend: selectedDeviceKeypairBackend)
-    self.devicePairing = preview
+    self.devicePairing = designProofSample
       ? .evaluate(deviceKeypairRequested: false, readLiveRequested: false, writeLiveRequested: false)
       : Self.defaultDevicePairingReadiness(deviceKeypairBackend: selectedDeviceKeypairBackend)
-    self.makePairingClient = preview || !Self.livePairingRequested(args: args, env: env)
+    self.makePairingClient = designProofSample || !Self.livePairingRequested(args: args, env: env)
       ? { _ in nil }
       : Self.defaultPairingClient
 
@@ -128,7 +129,7 @@ final class FridaySession: ObservableObject {
     // A separate device-keypair live path is additive and explicitly opted in with
     // `FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR=1` / `--live-device-keypair`; the shipped default still
     // touches no keychain, opens no socket, and remains honest-unavailable.
-    if preview {
+    if designProofSample {
       self.writeClient = Self.honestUnavailableWriteClient()
       self.missionClient = nil
     } else {
@@ -225,6 +226,10 @@ final class FridaySession: ObservableObject {
 
   static func useDeviceKeypair(args: [String], env: [String: String]) -> Bool {
     MobileRuntimeGates.useDeviceKeypair(args: args, env: env)
+  }
+
+  static func designProofSampleRequested(args: [String], env: [String: String]) -> Bool {
+    MobileRuntimeGates.designProofSampleRequested(args: args, env: env)
   }
 
   static func defaultDeviceKeypairBackend(args: [String], env: [String: String]) -> DeviceKeypairBackend {

@@ -64,6 +64,8 @@ if (scriptExists) {
   const requiredTruthStrings = [
     "ios_selected_design_destination_capture_not_live_closure",
     "friday-design-handoff-20260602/saved/mobile-selection.json",
+    "design-proof-sample",
+    "`offline-truth` is a negative-control lane only",
     "not END-BAR",
     "not GO-LIVE",
     "enabled actions still require separate Hub/DB/ledger/proof closure",
@@ -95,7 +97,7 @@ const report = {
   status: failed.length === 0 ? "passed" : "failed",
   requiredDestinations,
   checks,
-  caveat: "This proves the selected-design capture runner and package hook remain present; it does not claim screenshots were captured, END-BAR, GO-LIVE, adoption, or live action closure.",
+  caveat: "This proves the selected-design capture runner and package hook remain present and that offline-truth is not the selected visual proof lane; it does not claim screenshots were captured, END-BAR, GO-LIVE, adoption, or live action closure.",
 };
 
 console.log(JSON.stringify(report, null, 2));

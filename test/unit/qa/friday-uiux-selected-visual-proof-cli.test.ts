@@ -48,13 +48,13 @@ function fixture() {
   return { root, designRoot };
 }
 
-function writeReadyEvidence(root: string) {
+function writeReadyEvidence(root: string, mode = "live-loopback") {
   const evidence = join(root, "evidence");
   writeFile(evidence, "ios-design-destination-capture-manifest.json", JSON.stringify({
     truth_label: "ios_selected_design_destination_capture_not_live_closure",
     status: "ready",
     generated_at_utc: "2026-06-27T00:00:00.000Z",
-    mode: "live-loopback",
+    mode,
     captures: [
       "home",
       "session",
@@ -135,6 +135,52 @@ describe("check-friday-uiux-selected-visual-proof", () => {
       const report = JSON.parse(output) as { status?: string; blockers?: unknown[] };
       expect(report.status).toBe("selected_visual_proof_ready");
       expect(report.blockers).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes when current selected mobile visual evidence is a design-proof sample", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeReadyEvidence(root, "design-proof-sample");
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as { status?: string; blockers?: unknown[] };
+      expect(report.status).toBe("selected_visual_proof_ready");
+      expect(report.blockers).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects offline-truth captures as selected mobile visual proof", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeReadyEvidence(root, "offline-truth");
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        status?: string;
+        blockers?: Array<{ code?: string }>;
+        evidence?: { ios?: Array<{ modeStatus?: string }> };
+      };
+      expect(report.status).toBe("selected_visual_proof_gaps_present");
+      expect(report.evidence?.ios?.[0]?.modeStatus).toBe("negative_control_not_visual_proof");
+      expect(report.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "mobile_selected_visual_proof_missing" }),
+      ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

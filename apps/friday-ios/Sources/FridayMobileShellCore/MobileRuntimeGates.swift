@@ -22,6 +22,10 @@ public enum MobileRuntimeGates {
       || env["FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR"] == "1"
   }
 
+  public static func designProofSampleRequested(args: [String], env: [String: String]) -> Bool {
+    args.contains("--design-proof-sample") || env["FRIDAY_MOBILE_DESIGN_PROOF_SAMPLE"] == "1"
+  }
+
   public static func liveReadRequested(args: [String], env: [String: String]) -> Bool {
     args.contains("--live-read") || env["FRIDAY_MOBILE_LIVE_READ"] == "1"
   }

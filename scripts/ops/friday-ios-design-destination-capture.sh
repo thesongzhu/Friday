@@ -5,7 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 usage:
   scripts/ops/friday-ios-design-destination-capture.sh --out-dir /abs/capture-dir
-    [--mode offline-truth|live-loopback]
+    [--mode design-proof-sample|live-loopback|offline-truth]
     [--destinations home,session,...]
     [--skip-initial-build]
 
@@ -15,6 +15,8 @@ a manifest with truth labels.
 
 Truth: this is a design/device capture runner. It does not claim END-BAR,
 GO-LIVE, adoption, operator signing, or live workflow closure.
+`offline-truth` is a negative-control lane only and is rejected by selected
+visual proof gates; use `design-proof-sample` or `live-loopback` for visual proof.
 EOF
 }
 
@@ -25,7 +27,7 @@ die() {
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out_dir=""
-mode="offline-truth"
+mode="design-proof-sample"
 skip_initial_build=0
 destinations_csv="home,missions,session,contextPassport,tokenLedger,shareIntake,voice,pairing,needsMe,memory,platform,providerAuth,activity,workflows,onboarding,settings,petEditor,proofViewer,entrypoints"
 settle_seconds="${FRIDAY_IOS_DESIGN_CAPTURE_SETTLE_SECONDS:-6}"
@@ -81,6 +83,7 @@ esac
 case "${mode}" in
   offline|offline-truth) mode="offline-truth" ;;
   live|live-loopback) mode="live-loopback" ;;
+  design|design-proof|design-proof-sample) mode="design-proof-sample" ;;
   *) die "unsupported --mode '${mode}'" ;;
 esac
 [ -n "${destinations_csv}" ] || die "--destinations must not be empty"
@@ -160,6 +163,15 @@ for destination in "${destinations[@]}"; do
       if [[ -n "${FRIDAY_MOBILE_LIVE_WRITE_PORT:-}" ]]; then
         launch_env+=(SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_PORT="${FRIDAY_MOBILE_LIVE_WRITE_PORT}")
       fi
+    elif [ "${mode}" = "design-proof-sample" ]; then
+      launch_args=(
+        --design-proof-sample
+        "${launch_args[@]}"
+      )
+      launch_env=(
+        SIMCTL_CHILD_FRIDAY_MOBILE_DESIGN_PROOF_SAMPLE=1
+        "${launch_env[@]}"
+      )
     fi
     env "${launch_env[@]}" "${launch_cmd[@]}" "${launch_args[@]}" >"${launch_log}" 2>&1
     sleep "${settle_seconds}"
@@ -244,7 +256,9 @@ const manifest = {
   required_destinations: requiredDestinations,
   relaunch_contract: mode === "live-loopback"
     ? "each non-initial destination relaunch propagates the same live-loopback read/write/pairing/device-keypair gates as the initial build launch"
-    : "each destination relaunch keeps mobile live gates off and captures honest-unavailable truth",
+    : mode === "design-proof-sample"
+      ? "each destination relaunch propagates the explicit design-proof sample gate; this is selected visual comparison only and not runtime proof"
+      : "each destination relaunch keeps mobile live gates off and captures honest-unavailable truth; this negative-control lane is not selected visual proof",
   captures,
   validation: {
     missing_captures: missingCaptures,
@@ -254,7 +268,7 @@ const manifest = {
     non_ready_captures: nonReadyCaptures,
   },
   initial_build_metadata: initialMetadata,
-  caveat: "Device screenshots prove selected destinations launch and render truth-labeled UI states only; enabled actions still require separate Hub/DB/ledger/proof closure before END-BAR.",
+  caveat: "Device screenshots prove selected destinations launch and render truth-labeled UI states only; design-proof-sample is visual comparison only, offline-truth is negative control only, and enabled actions still require separate Hub/DB/ledger/proof closure before END-BAR.",
 };
 
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);

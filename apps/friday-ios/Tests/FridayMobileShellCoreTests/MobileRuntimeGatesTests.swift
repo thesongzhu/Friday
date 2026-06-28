@@ -8,6 +8,7 @@ func mobileRuntimeGatesDefaultOff() {
   #expect(!MobileRuntimeGates.livePairingRequested(args: [], env: [:]))
   #expect(!MobileRuntimeGates.useDeviceKeypair(args: [], env: [:]))
   #expect(!MobileRuntimeGates.simulatorFileDeviceKeypairRequested(args: [], env: [:]))
+  #expect(!MobileRuntimeGates.designProofSampleRequested(args: [], env: [:]))
   #expect(!MobileRuntimeGates.runControlRequested(args: [], env: [:]))
 }
 
@@ -20,6 +21,7 @@ func mobileRuntimeGatesAcceptExplicitArgs() {
   #expect(MobileRuntimeGates.simulatorFileDeviceKeypairRequested(
     args: ["--simulator-file-device-keypair"],
     env: [:]))
+  #expect(MobileRuntimeGates.designProofSampleRequested(args: ["--design-proof-sample"], env: [:]))
   #expect(MobileRuntimeGates.runControlRequested(args: ["--agent-run-control-via-rust"], env: [:]))
   #expect(MobileRuntimeGates.runControlRequested(args: ["--run-control"], env: [:]))
 }
@@ -33,6 +35,9 @@ func mobileRuntimeGatesAcceptExplicitEnv() {
   #expect(MobileRuntimeGates.simulatorFileDeviceKeypairRequested(
     args: [],
     env: ["FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR": "1"]))
+  #expect(MobileRuntimeGates.designProofSampleRequested(
+    args: [],
+    env: ["FRIDAY_MOBILE_DESIGN_PROOF_SAMPLE": "1"]))
   #expect(MobileRuntimeGates.runControlRequested(
     args: [],
     env: ["FRIDAY_MOBILE_AGENT_RUN_CONTROL_VIA_RUST": "1"]))
@@ -107,6 +112,9 @@ func mobileRuntimeGatesDoNotAcceptTruthyLookalikes() {
   #expect(!MobileRuntimeGates.simulatorFileDeviceKeypairRequested(
     args: [],
     env: ["FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR": "true"]))
+  #expect(!MobileRuntimeGates.designProofSampleRequested(
+    args: [],
+    env: ["FRIDAY_MOBILE_DESIGN_PROOF_SAMPLE": "true"]))
   #expect(!MobileRuntimeGates.runControlRequested(
     args: [],
     env: ["FRIDAY_MOBILE_AGENT_RUN_CONTROL_VIA_RUST": "true"]))
