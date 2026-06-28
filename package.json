@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/thesongzhu/Friday.git"
+    "url": "git+https://github.com/thesongzhu/Friday.git"
   },
   "keywords": [
     "ai",
@@ -55,7 +55,7 @@
     "LICENSE"
   ],
   "bin": {
-    "friday": "./dist/cli/friday-cli.js"
+    "friday": "dist/cli/friday-cli.js"
   },
   "scripts": {
     "typecheck": "npm run typecheck:src && npm run typecheck:contracts",
