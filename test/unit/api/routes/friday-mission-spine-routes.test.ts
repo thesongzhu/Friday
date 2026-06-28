@@ -338,6 +338,44 @@ describe("createFridayMissionSpineRoutes", () => {
     expect(JSON.stringify(response)).not.toContain("prep fallback");
   });
 
+  it("allows healthy live projections to omit negative status labels", async () => {
+    const healthySnapshot = cloneSnapshot({ statusLabels: [] });
+    const routes = createFridayMissionSpineRoutes({
+      workbench: { getSnapshot: vi.fn(async () => healthySnapshot) },
+      disabledReason: null,
+    });
+    const route = findRoute(routes);
+
+    const response = await route.handler(makeCtx({
+      query: { missionId: "mission_live_projection_test" },
+    }) as never);
+
+    expect(response).toEqual({ snapshot: healthySnapshot });
+  });
+
+  it("fails closed on unknown status labels without requiring negative labels on healthy projections", async () => {
+    const invalidSnapshot = cloneSnapshot({
+      statusLabels: ["online" as never],
+    });
+    const routes = createFridayMissionSpineRoutes({
+      workbench: { getSnapshot: vi.fn(async () => invalidSnapshot) },
+      disabledReason: null,
+    });
+    const route = findRoute(routes);
+
+    let thrown: unknown = null;
+    try {
+      await route.handler(makeCtx() as never);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    const error = thrown as FridayDomainError;
+    expect(error.code).toBe("MISSION_SPINE_WORKBENCH_SNAPSHOT_INVALID");
+    expect(JSON.stringify(error.details)).toContain("status_label_invalid:0:online");
+  });
+
   it("accepts stale WorkItems only when the retry recovery affordance is exposed", async () => {
     const staleSnapshot = cloneSnapshot({
       workItems: snapshot.workItems.map((item, index) => (
