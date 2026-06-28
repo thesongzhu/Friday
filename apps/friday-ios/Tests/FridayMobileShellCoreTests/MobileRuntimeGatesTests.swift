@@ -13,6 +13,50 @@ func mobileRuntimeGatesDefaultOff() {
 }
 
 @Test
+func mobileRuntimeProductLiveLoopbackDefaultsOnlyForProductSimulatorProfile() {
+  #expect(MobileRuntimeGates.productLiveLoopbackDefaultRequested(
+    args: [],
+    env: [:],
+    isSimulator: true))
+  #expect(!MobileRuntimeGates.productLiveLoopbackDefaultRequested(
+    args: [],
+    env: [:],
+    isSimulator: false))
+  #expect(MobileRuntimeGates.productLiveLoopbackDefaultRequested(
+    args: ["--product-live-loopback"],
+    env: [:],
+    isSimulator: false))
+  #expect(MobileRuntimeGates.productLiveLoopbackDefaultRequested(
+    args: [],
+    env: ["FRIDAY_MOBILE_PRODUCT_LIVE_LOOPBACK": "1"],
+    isSimulator: false))
+}
+
+@Test
+func mobileRuntimeProductLiveLoopbackKeepsProofAndOfflineProfilesClosed() {
+  #expect(!MobileRuntimeGates.productLiveLoopbackDefaultRequested(
+    args: ["--design-proof-sample"],
+    env: [:],
+    isSimulator: true))
+  #expect(!MobileRuntimeGates.productLiveLoopbackDefaultRequested(
+    args: ["--offline-truth"],
+    env: [:],
+    isSimulator: true))
+  #expect(!MobileRuntimeGates.productLiveLoopbackDefaultRequested(
+    args: ["--disable-product-live-loopback"],
+    env: [:],
+    isSimulator: true))
+  #expect(!MobileRuntimeGates.productLiveLoopbackDefaultRequested(
+    args: [],
+    env: ["FRIDAY_MOBILE_DISABLE_PRODUCT_LIVE_LOOPBACK": "1"],
+    isSimulator: true))
+  #expect(!MobileRuntimeGates.productLiveLoopbackDefaultRequested(
+    args: [],
+    env: ["FRIDAY_MOBILE_OFFLINE_TRUTH": "1"],
+    isSimulator: true))
+}
+
+@Test
 func mobileRuntimeGatesAcceptExplicitArgs() {
   #expect(MobileRuntimeGates.liveReadRequested(args: ["--live-read"], env: [:]))
   #expect(MobileRuntimeGates.liveWriteRequested(args: ["--live-write"], env: [:]))

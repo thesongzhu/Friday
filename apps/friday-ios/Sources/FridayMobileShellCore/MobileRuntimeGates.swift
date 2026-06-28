@@ -26,6 +26,33 @@ public enum MobileRuntimeGates {
     args.contains("--design-proof-sample") || env["FRIDAY_MOBILE_DESIGN_PROOF_SAMPLE"] == "1"
   }
 
+  /// Product launch profile for local/simulator builds.
+  ///
+  /// Design/offline proof modes stay explicit negative controls. Product mode is additive: it only
+  /// selects the real loopback read/write/pairing seams; those seams still fail closed if the Hub,
+  /// peer enrollment, owner gate, or PairAck is not real.
+  public static func productLiveLoopbackDefaultRequested(
+    args: [String],
+    env: [String: String],
+    isSimulator: Bool
+  ) -> Bool {
+    if designProofSampleRequested(args: args, env: env) {
+      return false
+    }
+    if args.contains("--offline-truth") || env["FRIDAY_MOBILE_OFFLINE_TRUTH"] == "1" {
+      return false
+    }
+    if args.contains("--disable-product-live-loopback")
+      || env["FRIDAY_MOBILE_DISABLE_PRODUCT_LIVE_LOOPBACK"] == "1" {
+      return false
+    }
+    if args.contains("--product-live-loopback")
+      || env["FRIDAY_MOBILE_PRODUCT_LIVE_LOOPBACK"] == "1" {
+      return true
+    }
+    return isSimulator
+  }
+
   public static func liveReadRequested(args: [String], env: [String: String]) -> Bool {
     args.contains("--live-read") || env["FRIDAY_MOBILE_LIVE_READ"] == "1"
   }

@@ -230,6 +230,7 @@ final class FridaySession: ObservableObject {
 
   static func useDeviceKeypair(args: [String], env: [String: String]) -> Bool {
     MobileRuntimeGates.useDeviceKeypair(args: args, env: env)
+      || productLiveLoopbackDefaultRequested(args: args, env: env)
   }
 
   static func designProofSampleRequested(args: [String], env: [String: String]) -> Bool {
@@ -238,15 +239,29 @@ final class FridaySession: ObservableObject {
 
   static func defaultDeviceKeypairBackend(args: [String], env: [String: String]) -> DeviceKeypairBackend {
     #if targetEnvironment(simulator)
-    if MobileRuntimeGates.simulatorFileDeviceKeypairRequested(args: args, env: env) {
+    if MobileRuntimeGates.simulatorFileDeviceKeypairRequested(args: args, env: env)
+      || productLiveLoopbackDefaultRequested(args: args, env: env) {
       return SimulatorFileDeviceKeypairBackend()
     }
     #endif
     return KeychainDeviceKeypairBackend()
   }
 
+  static func productLiveLoopbackDefaultRequested(args: [String], env: [String: String]) -> Bool {
+    #if targetEnvironment(simulator)
+    let isSimulator = true
+    #else
+    let isSimulator = false
+    #endif
+    return MobileRuntimeGates.productLiveLoopbackDefaultRequested(
+      args: args,
+      env: env,
+      isSimulator: isSimulator)
+  }
+
   static func liveReadRequested(args: [String], env: [String: String]) -> Bool {
     MobileRuntimeGates.liveReadRequested(args: args, env: env)
+      || productLiveLoopbackDefaultRequested(args: args, env: env)
   }
 
   static func liveReadConfig(args: [String], env: [String: String]) throws -> ReadProjectionServerConfig {
@@ -266,6 +281,7 @@ final class FridaySession: ObservableObject {
 
   static func liveWriteRequested(args: [String], env: [String: String]) -> Bool {
     MobileRuntimeGates.liveWriteRequested(args: args, env: env)
+      || productLiveLoopbackDefaultRequested(args: args, env: env)
   }
 
   static func liveWriteConfig(args: [String], env: [String: String]) throws -> AgentRunServerConfig {
@@ -285,6 +301,7 @@ final class FridaySession: ObservableObject {
 
   static func livePairingRequested(args: [String], env: [String: String]) -> Bool {
     MobileRuntimeGates.livePairingRequested(args: args, env: env)
+      || productLiveLoopbackDefaultRequested(args: args, env: env)
   }
 
   static func runControlRequested(args: [String], env: [String: String]) -> Bool {
