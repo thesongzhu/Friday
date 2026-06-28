@@ -116,6 +116,27 @@ function hasDeferredSignal(value) {
   return blockers.includes("defer") || blockers.includes("channel_deferred");
 }
 
+function deferredBlockerKey(value) {
+  if (!hasDeferredSignal(value)) return null;
+  const body = [
+    statusText(value),
+    truthText(value),
+    text(field(value, "blockers")),
+    text(field(value, "readinessBlockers")),
+    text(field(value, "deferredInputs")),
+    text(field(value, "deferred_inputs")),
+    text(field(value, "fullProofGaps")),
+  ].join("\n").toLowerCase();
+  if (
+    body.includes("channel")
+    || body.includes("same_mission_mobile_desktop_channel")
+    || body.includes("channel_deferred")
+  ) {
+    return "channel_current_linked_proof_deferred";
+  }
+  return "deferred_external_input";
+}
+
 function isPassLike(value) {
   const status = statusText(value);
   return [
@@ -137,6 +158,7 @@ function expectedStatusForGroup(groupId, report, reportPath = "") {
     return {
       status: "deferred",
       blocker: "deferred input remains outside strict END-BAR",
+      sharedBlockerKey: deferredBlockerKey(report),
     };
   }
   if (groupId === "provider_entitlement_matrix") {
@@ -227,6 +249,7 @@ const rows = requiredGroups.map((group) => {
     reportPath: loaded?.path || null,
     reportStatus: loaded?.value ? statusText(loaded.value) || null : null,
     blocker: evaluation.blocker || null,
+    sharedBlockerKey: evaluation.sharedBlockerKey || null,
     passBar: asArray(field(group, "passBar")),
   };
 });
@@ -240,6 +263,19 @@ for (const row of rows) {
 const satisfiedCount = rows.filter((row) => row.status === "satisfied").length;
 const deferredCount = rows.filter((row) => row.status === "deferred").length;
 const missingReportCount = rows.filter((row) => row.status === "missing_report").length;
+const sharedBlockers = Object.values(rows.reduce((acc, row) => {
+  if (!row.sharedBlockerKey || row.status === "satisfied") return acc;
+  acc[row.sharedBlockerKey] ||= {
+    key: row.sharedBlockerKey,
+    status: row.status,
+    affectedGroups: [],
+    description: row.sharedBlockerKey === "channel_current_linked_proof_deferred"
+      ? "Channel/current-linked proof is deferred, so all affected groups remain outside strict END-BAR."
+      : "A deferred external input keeps all affected groups outside strict END-BAR.",
+  };
+  acc[row.sharedBlockerKey].affectedGroups.push(row.id);
+  return acc;
+}, {}));
 const strictEndBarReady = rows.length > 0 && satisfiedCount === rows.length && blockers.length === 0;
 
 const report = {
@@ -255,6 +291,7 @@ const report = {
   },
   groups: rows,
   blockers,
+  sharedBlockers,
   strictEndBarReady,
   caveat: "This report aggregates supplied evidence reports only. It never creates evidence, never counts deferred channel proof as strict END-BAR, and never turns report coverage into adoption.",
 };
