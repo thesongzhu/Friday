@@ -22,10 +22,12 @@ import {
   findFreePort,
   installWorkflowApprovalStub,
   listWorkflowsByTag,
+  observeChannelOutboundAcks,
   seedWorkflowCandidates,
   tail,
   withTimeout,
   waitForCandidateAck,
+  waitForObservedChannelAck,
   waitForCandidateStatus,
 } from "./lib/workflow-candidate-proof-harness.mjs";
 import {
@@ -274,6 +276,7 @@ function instrumentLarkFeishuPlugin(plugin, config, report, observedEventsByMess
       await originalLifecycle.connect(wrappedOnEvent);
       report.criteria.wsClientConnected = true;
       report.diagnostics.larkFeishuHubAdapter.wsClientConnected = true;
+      report.diagnostics.larkFeishuHubAdapter.wsClientEverConnected = true;
     },
     async disconnect() {
       await originalLifecycle.disconnect();
@@ -341,10 +344,12 @@ function initialReport(config, reportPath) {
       rejectCandidateSeeded: false,
       approveCandidateSeeded: false,
       rejectInboundObserved: false,
+      rejectOutboundAckDelivered: false,
       rejectAckDelivered: false,
       rejectCandidateStatusRejected: false,
       rejectDidNotSaveWorkflow: false,
       approveInboundObserved: false,
+      approveOutboundAckDelivered: false,
       approveAckDelivered: false,
       approveCandidateStatusApproved: false,
       approveSavedWorkflow: false,
@@ -358,6 +363,7 @@ function initialReport(config, reportPath) {
       larkFeishuHubAdapter: {
         platformBrand: config.platformBrand,
         wsClientConnected: false,
+        wsClientEverConnected: false,
         eventCount: 0,
         messageEventCount: 0,
         staleMessageEventCount: 0,
@@ -365,6 +371,7 @@ function initialReport(config, reportPath) {
         lastEvent: null,
         matchedEvent: null,
       },
+      channelOutboundDeliveries: [],
       cleanupFailures: [],
       llmBridgeBoundary: "stubbed_to_bypass_live_llm_workflow_save_via_real_crud_only",
     },
@@ -372,12 +379,16 @@ function initialReport(config, reportPath) {
     rejectFlow: {
       candidateIdTail: null,
       candidateStatusReached: null,
+      outboundAckDelivered: false,
+      outboundAckMessageIdTail: null,
       ackDelivered: false,
       workflowSavedAfter: false,
     },
     approveFlow: {
       candidateIdTail: null,
       candidateStatusReached: null,
+      outboundAckDelivered: false,
+      outboundAckMessageIdTail: null,
       ackDelivered: false,
       workflowSaved: false,
       workflowIdTail: null,
@@ -406,6 +417,12 @@ async function main() {
   let stateDir = "";
   const observedEventsByMessageId = new Map();
   const approvedSlot = { workflowId: null, workflowVersionId: null };
+  let channelSendObserver = null;
+  const persistReport = async (reason) => {
+    report.diagnostics.lastReportUpdateReason = reason;
+    report.diagnostics.lastReportUpdatedAt = new Date().toISOString();
+    await writeReport(report, config.appSecret);
+  };
 
   try {
     const missingEnv = missingRequiredEnv(config);
@@ -459,6 +476,7 @@ async function main() {
       allowedUsers: [config.allowedUserId],
       allowedChats: [config.chatId],
     });
+    channelSendObserver = observeChannelOutboundAcks(hub, report, persistReport);
     await hub.start();
 
     const larkView = hub.channelRegistry.describe(config.platformBrand);
@@ -512,11 +530,24 @@ async function main() {
     console.log(approveText);
 
     const perFlowTimeout = Math.max(60_000, Math.floor(config.timeoutMs / 2));
-    const rejectAck = await waitForCandidateAck(baseUrl, config.platformBrand, config.chatId, rejectCandidateId, "rejected", perFlowTimeout);
+    const rejectOutboundAck = await waitForObservedChannelAck(channelSendObserver, rejectCandidateId, "rejected", perFlowTimeout);
+    if (!rejectOutboundAck) {
+      report.status = "blocked";
+      report.blocker = "PHASE24G_WAITING_FOR_REJECT_OUTBOUND_ACK";
+      report.failures.push(`Reject outbound ack for candidate ${tail(rejectCandidateId)} not delivered within ${perFlowTimeout}ms`);
+      await writeReport(report, config.appSecret);
+      process.exitCode = 2;
+      return;
+    }
+    report.criteria.rejectOutboundAckDelivered = true;
+    report.rejectFlow.outboundAckDelivered = true;
+    report.rejectFlow.outboundAckMessageIdTail = rejectOutboundAck.messageIdTail;
+
+    const rejectAck = await waitForCandidateAck(baseUrl, config.platformBrand, config.chatId, rejectCandidateId, "rejected", Math.min(60_000, perFlowTimeout));
     if (!rejectAck) {
       report.status = "blocked";
-      report.blocker = "PHASE24G_WAITING_FOR_REJECT_ACK";
-      report.failures.push(`Reject ack for candidate ${tail(rejectCandidateId)} not observed within ${perFlowTimeout}ms`);
+      report.blocker = "PHASE24G_REJECT_ACK_SESSION_MIRROR_MISSING";
+      report.failures.push(`Reject ack for candidate ${tail(rejectCandidateId)} reached real ${config.platformDisplayName} outbound but was not mirrored into the session oracle`);
       await writeReport(report, config.appSecret);
       process.exitCode = 2;
       return;
@@ -543,11 +574,24 @@ async function main() {
       return;
     }
 
-    const approveAck = await waitForCandidateAck(baseUrl, config.platformBrand, config.chatId, approveCandidateId, "approved", perFlowTimeout);
+    const approveOutboundAck = await waitForObservedChannelAck(channelSendObserver, approveCandidateId, "approved", perFlowTimeout);
+    if (!approveOutboundAck) {
+      report.status = "blocked";
+      report.blocker = "PHASE24G_WAITING_FOR_APPROVE_OUTBOUND_ACK";
+      report.failures.push(`Approve outbound ack for candidate ${tail(approveCandidateId)} not delivered within ${perFlowTimeout}ms`);
+      await writeReport(report, config.appSecret);
+      process.exitCode = 2;
+      return;
+    }
+    report.criteria.approveOutboundAckDelivered = true;
+    report.approveFlow.outboundAckDelivered = true;
+    report.approveFlow.outboundAckMessageIdTail = approveOutboundAck.messageIdTail;
+
+    const approveAck = await waitForCandidateAck(baseUrl, config.platformBrand, config.chatId, approveCandidateId, "approved", Math.min(60_000, perFlowTimeout));
     if (!approveAck) {
       report.status = "blocked";
-      report.blocker = "PHASE24G_WAITING_FOR_APPROVE_ACK";
-      report.failures.push(`Approve ack for candidate ${tail(approveCandidateId)} not observed within ${perFlowTimeout}ms`);
+      report.blocker = "PHASE24G_APPROVE_ACK_SESSION_MIRROR_MISSING";
+      report.failures.push(`Approve ack for candidate ${tail(approveCandidateId)} reached real ${config.platformDisplayName} outbound but was not mirrored into the session oracle`);
       await writeReport(report, config.appSecret);
       process.exitCode = 2;
       return;
@@ -575,10 +619,12 @@ async function main() {
       "rejectCandidateSeeded",
       "approveCandidateSeeded",
       "rejectInboundObserved",
+      "rejectOutboundAckDelivered",
       "rejectAckDelivered",
       "rejectCandidateStatusRejected",
       "rejectDidNotSaveWorkflow",
       "approveInboundObserved",
+      "approveOutboundAckDelivered",
       "approveAckDelivered",
       "approveCandidateStatusApproved",
       "approveSavedWorkflow",
@@ -601,6 +647,7 @@ async function main() {
     process.exitCode = 1;
   } finally {
     const cleanupFailures = [];
+    channelSendObserver?.restore();
     if (server) {
       await withTimeout(server.close(), 5_000, "http_server_close").catch((error) => {
         cleanupFailures.push(safeError(error, config?.appSecret ?? ""));

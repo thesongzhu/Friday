@@ -28,10 +28,12 @@ import {
   findFreePort,
   installWorkflowApprovalStub,
   listWorkflowsByTag,
+  observeChannelOutboundAcks,
   seedWorkflowCandidates,
   tail,
   withTimeout,
   waitForCandidateAck,
+  waitForObservedChannelAck,
   waitForCandidateStatus,
 } from "./lib/workflow-candidate-proof-harness.mjs";
 import {
@@ -236,13 +238,18 @@ function createInstrumentedDiscordGatewayService(config, report, observedEventsB
         onEvent(event);
       }, (status) => {
         const connected = status === "connected" || gateway.isConnected();
-        report.criteria.gatewayConnected = connected;
+        report.criteria.gatewayConnected = report.criteria.gatewayConnected || connected;
         report.diagnostics.discordHubAdapter.gatewayConnected = connected;
+        report.diagnostics.discordHubAdapter.gatewayEverConnected =
+          report.diagnostics.discordHubAdapter.gatewayEverConnected || connected;
         void persistReport("discord_gateway_status").catch(() => {});
         if (onStatusChange) onStatusChange(status);
       });
-      report.criteria.gatewayConnected = gateway.isConnected();
-      report.diagnostics.discordHubAdapter.gatewayConnected = gateway.isConnected();
+      const connected = gateway.isConnected();
+      report.criteria.gatewayConnected = report.criteria.gatewayConnected || connected;
+      report.diagnostics.discordHubAdapter.gatewayConnected = connected;
+      report.diagnostics.discordHubAdapter.gatewayEverConnected =
+        report.diagnostics.discordHubAdapter.gatewayEverConnected || connected;
     },
     async disconnect() {
       await gateway.disconnect();
@@ -300,10 +307,12 @@ function initialReport(config, reportPath) {
       rejectCandidateSeeded: false,
       approveCandidateSeeded: false,
       rejectInboundObserved: false,
+      rejectOutboundAckDelivered: false,
       rejectAckDelivered: false,
       rejectCandidateStatusRejected: false,
       rejectDidNotSaveWorkflow: false,
       approveInboundObserved: false,
+      approveOutboundAckDelivered: false,
       approveAckDelivered: false,
       approveCandidateStatusApproved: false,
       approveSavedWorkflow: false,
@@ -314,6 +323,7 @@ function initialReport(config, reportPath) {
       proofSource: "instrumented_hub_discord_gateway_plus_seeded_reflex_candidates",
       discordHubAdapter: {
         gatewayConnected: false,
+        gatewayEverConnected: false,
         messageCreateCount: 0,
         messageEventCount: 0,
         staleMessageEventCount: 0,
@@ -321,6 +331,7 @@ function initialReport(config, reportPath) {
         lastMessageCreate: null,
         matchedMessageCreate: null,
       },
+      channelOutboundDeliveries: [],
       cleanupFailures: [],
       llmBridgeBoundary: "stubbed_to_bypass_live_llm_workflow_save_via_real_crud_only",
     },
@@ -328,12 +339,16 @@ function initialReport(config, reportPath) {
     rejectFlow: {
       candidateIdTail: null,
       candidateStatusReached: null,
+      outboundAckDelivered: false,
+      outboundAckMessageIdTail: null,
       ackDelivered: false,
       workflowSavedAfter: false,
     },
     approveFlow: {
       candidateIdTail: null,
       candidateStatusReached: null,
+      outboundAckDelivered: false,
+      outboundAckMessageIdTail: null,
       ackDelivered: false,
       workflowSaved: false,
       workflowIdTail: null,
@@ -375,6 +390,7 @@ async function main() {
   let stateDir = "";
   const observedEventsByMessageId = new Map();
   const approvedSlot = { workflowId: null, workflowVersionId: null };
+  let channelSendObserver = null;
 
   try {
     const missingEnv = missingRequiredEnv(config);
@@ -423,12 +439,16 @@ async function main() {
       allowedUsers: [config.setupUserId],
       allowedChats: [config.channelId],
     });
+    channelSendObserver = observeChannelOutboundAcks(hub, report, persistReport);
     await hub.start();
 
     const discordView = hub.channelRegistry.describe("discord");
     report.criteria.fridayHubChannelConnected = discordView?.status === "connected" && discordView?.running === true;
-    report.criteria.gatewayConnected = instrumentedGateway.isConnected();
-    report.diagnostics.discordHubAdapter.gatewayConnected = instrumentedGateway.isConnected();
+    const gatewayConnected = instrumentedGateway.isConnected();
+    report.criteria.gatewayConnected = report.criteria.gatewayConnected || gatewayConnected;
+    report.diagnostics.discordHubAdapter.gatewayConnected = gatewayConnected;
+    report.diagnostics.discordHubAdapter.gatewayEverConnected =
+      report.diagnostics.discordHubAdapter.gatewayEverConnected || gatewayConnected;
     const allowlistSummary = discordView?.allowlist;
     report.criteria.channelAllowListEnforced =
       allowlistSummary?.hasAllowedUsers === true
@@ -478,11 +498,24 @@ async function main() {
     console.log(approveText);
 
     const perFlowTimeout = Math.max(60_000, Math.floor(config.timeoutMs / 2));
-    const rejectAck = await waitForCandidateAck(baseUrl, "discord", config.channelId, rejectCandidateId, "rejected", perFlowTimeout);
+    const rejectOutboundAck = await waitForObservedChannelAck(channelSendObserver, rejectCandidateId, "rejected", perFlowTimeout);
+    if (!rejectOutboundAck) {
+      report.status = "blocked";
+      report.blocker = "PHASE24F_WAITING_FOR_REJECT_OUTBOUND_ACK";
+      report.failures.push(`Reject outbound ack for candidate ${tail(rejectCandidateId)} not delivered within ${perFlowTimeout}ms`);
+      await writeReport(report, config.botToken);
+      process.exitCode = 2;
+      return;
+    }
+    report.criteria.rejectOutboundAckDelivered = true;
+    report.rejectFlow.outboundAckDelivered = true;
+    report.rejectFlow.outboundAckMessageIdTail = rejectOutboundAck.messageIdTail;
+
+    const rejectAck = await waitForCandidateAck(baseUrl, "discord", config.channelId, rejectCandidateId, "rejected", Math.min(60_000, perFlowTimeout));
     if (!rejectAck) {
       report.status = "blocked";
-      report.blocker = "PHASE24F_WAITING_FOR_REJECT_ACK";
-      report.failures.push(`Reject ack for candidate ${tail(rejectCandidateId)} not observed within ${perFlowTimeout}ms`);
+      report.blocker = "PHASE24F_REJECT_ACK_SESSION_MIRROR_MISSING";
+      report.failures.push(`Reject ack for candidate ${tail(rejectCandidateId)} reached real Discord outbound but was not mirrored into the session oracle`);
       await writeReport(report, config.botToken);
       process.exitCode = 2;
       return;
@@ -513,11 +546,24 @@ async function main() {
       return;
     }
 
-    const approveAck = await waitForCandidateAck(baseUrl, "discord", config.channelId, approveCandidateId, "approved", perFlowTimeout);
+    const approveOutboundAck = await waitForObservedChannelAck(channelSendObserver, approveCandidateId, "approved", perFlowTimeout);
+    if (!approveOutboundAck) {
+      report.status = "blocked";
+      report.blocker = "PHASE24F_WAITING_FOR_APPROVE_OUTBOUND_ACK";
+      report.failures.push(`Approve outbound ack for candidate ${tail(approveCandidateId)} not delivered within ${perFlowTimeout}ms`);
+      await writeReport(report, config.botToken);
+      process.exitCode = 2;
+      return;
+    }
+    report.criteria.approveOutboundAckDelivered = true;
+    report.approveFlow.outboundAckDelivered = true;
+    report.approveFlow.outboundAckMessageIdTail = approveOutboundAck.messageIdTail;
+
+    const approveAck = await waitForCandidateAck(baseUrl, "discord", config.channelId, approveCandidateId, "approved", Math.min(60_000, perFlowTimeout));
     if (!approveAck) {
       report.status = "blocked";
-      report.blocker = "PHASE24F_WAITING_FOR_APPROVE_ACK";
-      report.failures.push(`Approve ack for candidate ${tail(approveCandidateId)} not observed within ${perFlowTimeout}ms`);
+      report.blocker = "PHASE24F_APPROVE_ACK_SESSION_MIRROR_MISSING";
+      report.failures.push(`Approve ack for candidate ${tail(approveCandidateId)} reached real Discord outbound but was not mirrored into the session oracle`);
       await writeReport(report, config.botToken);
       process.exitCode = 2;
       return;
@@ -546,10 +592,12 @@ async function main() {
       "rejectCandidateSeeded",
       "approveCandidateSeeded",
       "rejectInboundObserved",
+      "rejectOutboundAckDelivered",
       "rejectAckDelivered",
       "rejectCandidateStatusRejected",
       "rejectDidNotSaveWorkflow",
       "approveInboundObserved",
+      "approveOutboundAckDelivered",
       "approveAckDelivered",
       "approveCandidateStatusApproved",
       "approveSavedWorkflow",
@@ -572,6 +620,7 @@ async function main() {
     process.exitCode = 1;
   } finally {
     const cleanupFailures = [];
+    channelSendObserver?.restore();
     if (server) {
       await withTimeout(server.close(), 5_000, "http_server_close").catch((error) => {
         cleanupFailures.push(safeError(error, config?.botToken ?? ""));
