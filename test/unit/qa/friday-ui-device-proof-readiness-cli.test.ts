@@ -1168,6 +1168,66 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
+  it("keeps harvesting workbench happy-path rows when negative-control status labels are absent", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-partial-workbench-"));
+    try {
+      writePartialEvidenceDir(tempDir);
+      const partial = makeWorkbenchSnapshot();
+      partial.statusLabels = [];
+      partial.channelReceiptRefs = [];
+      partial.workItems = partial.workItems.filter((item) => item.state !== "provider_ack");
+      partial.transcriptSections = partial.transcriptSections.map((section) => ({
+        ...section,
+        events: section.events.filter((event) => event.surface !== "telegram" && event.status !== "provider_ack"),
+      }));
+      writeFileSync(join(tempDir, "workbench-snapshot.json"), JSON.stringify({ snapshot: partial }, null, 2));
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+        "--defer-channel-proof",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_bridge:ready"))).toBe(true);
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_merge:ready"))).toBe(true);
+      expect(result.notes?.some((note) => note.includes("ui_device_gap_report:gaps_present"))).toBe(true);
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+
+      const rows = readFileSync(join(tempDir, "same-run-events.merged.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { surface?: string; event?: string });
+      expect(rows).toContainEqual(expect.objectContaining({
+        surface: "desktop",
+        event: "mission_workbench_visible",
+      }));
+      expect(rows).toContainEqual(expect.objectContaining({
+        surface: "timeline",
+        event: "bounded_page_2_visible",
+      }));
+      expect(rows).toContainEqual(expect.objectContaining({
+        surface: "timeline",
+        event: "memory_candidate_review_only",
+      }));
+      expect(rows).not.toContainEqual(expect.objectContaining({
+        event: "stale_label_visible",
+      }));
+      expect(rows).not.toContainEqual(expect.objectContaining({
+        surface: "channel",
+      }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps discovered same-run events when the workbench diagnostic bridge emits no derived events", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-empty-workbench-"));
     try {
@@ -1175,7 +1235,7 @@ describe("friday-ui-device-proof-readiness", () => {
       writeFileSync(join(tempDir, "workbench-snapshot.json"), JSON.stringify({
         snapshot: {
           missionId,
-          fridayConversationId: "conversation_cli_ui_device_readiness",
+          fridayConversationId: "",
           runtimeFeedStatus: "live_rust_hub_projection",
           statusLabels: [],
           workItems: [],
