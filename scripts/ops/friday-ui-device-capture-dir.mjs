@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, isAbsolute, join, resolve } from "node:path";
+import { closeSync, copyFileSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const repoScript = (...segments) => join(repoRoot, ...segments);
 
 function usage() {
   console.error(`usage:
@@ -88,6 +91,20 @@ function abs(path) {
 
 function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function runHelperToFiles(args, stdoutPath, stderrPath) {
+  const stdoutFd = openSync(stdoutPath, "w");
+  const stderrFd = openSync(stderrPath, "w");
+  try {
+    return spawnSync(process.execPath, args, {
+      cwd: repoRoot,
+      stdio: ["ignore", stdoutFd, stderrFd],
+    });
+  } finally {
+    closeSync(stdoutFd);
+    closeSync(stderrFd);
+  }
 }
 
 function safeExt(path) {
@@ -207,7 +224,7 @@ if (readyToWrite) {
     derivedEvents = join(dir, "same-run-events.normalized.jsonl");
     copiedManifest = join(dir, "observations-manifest.json");
     const mergeArgs = [
-      "scripts/ops/friday-ui-device-events-merge.mjs",
+      repoScript("scripts", "ops", "friday-ui-device-events-merge.mjs"),
       `--mission-id=${missionId}`,
       `--mobile=${inputByRole.mobile}`,
       `--desktop=${inputByRole.desktop}`,
@@ -221,20 +238,25 @@ if (readyToWrite) {
     if (inputByRole.channel) {
       mergeArgs.splice(4, 0, `--channel=${inputByRole.channel}`);
     }
-    const mergeResult = spawnSync(process.execPath, mergeArgs, { encoding: "utf8" });
     mergeProbe = {
-      status: mergeResult.status,
+      status: null,
       stdoutPath: join(dir, "events-merge.stdout.json"),
       stderrPath: join(dir, "events-merge.stderr.txt"),
     };
-    writeFileSync(mergeProbe.stdoutPath, mergeResult.stdout || "");
-    writeFileSync(mergeProbe.stderrPath, mergeResult.stderr || "");
+    const mergeResult = runHelperToFiles(mergeArgs, mergeProbe.stdoutPath, mergeProbe.stderrPath);
+    mergeProbe.status = mergeResult.status;
     if (mergeResult.status !== 0) {
       copiedManifest = "";
       block("events_merge_failed", `exit_${mergeResult.status}`);
     } else if (normalizeEvents(mergedEvents, sourceToTarget, derivedEvents)) {
-      const result = spawnSync(process.execPath, [
-        "scripts/ops/friday-ui-device-observations-manifest.mjs",
+      derivedManifestProbe = {
+        status: null,
+        stdoutPath: join(dir, "observations-manifest.stdout.json"),
+        stderrPath: join(dir, "observations-manifest.stderr.txt"),
+        parsed: null,
+      };
+      const result = runHelperToFiles([
+        repoScript("scripts", "ops", "friday-ui-device-observations-manifest.mjs"),
         `--mission-id=${missionId}`,
         `--mobile=${byRole.mobile}`,
         `--desktop=${byRole.desktop}`,
@@ -245,17 +267,10 @@ if (readyToWrite) {
         ...(deferChannelProof ? ["--defer-channel-proof"] : []),
         ...writtenExtra.map((capture) => `--extra-evidence-ref=${capture.target}`),
         "--require-ready",
-      ], { encoding: "utf8" });
-      derivedManifestProbe = {
-        status: result.status,
-        stdoutPath: join(dir, "observations-manifest.stdout.json"),
-        stderrPath: join(dir, "observations-manifest.stderr.txt"),
-        parsed: null,
-      };
-      writeFileSync(derivedManifestProbe.stdoutPath, result.stdout || "");
-      writeFileSync(derivedManifestProbe.stderrPath, result.stderr || "");
+      ], derivedManifestProbe.stdoutPath, derivedManifestProbe.stderrPath);
+      derivedManifestProbe.status = result.status;
       try {
-        derivedManifestProbe.parsed = JSON.parse(result.stdout || "{}");
+        derivedManifestProbe.parsed = JSON.parse(readFileSync(derivedManifestProbe.stdoutPath, "utf8") || "{}");
       } catch {
         derivedManifestProbe.parsed = null;
       }
@@ -354,8 +369,10 @@ if (readyToWrite && copiedManifest) {
       if (capture.role.startsWith("shared-extra-")) return `--shared-extra-evidence=${capture.target}`;
       return `--${capture.role.replace(/-extra-\d+$/, "")}-extra-evidence=${capture.target}`;
     });
-    const result = spawnSync(process.execPath, [
-      "scripts/qa/check-mission-spine-ui-proof-inputs.mjs",
+    const preflightStdoutPath = join(abs(outDir), "ui-proof-inputs-preflight.stdout.json");
+    const preflightStderrPath = join(abs(outDir), "ui-proof-inputs-preflight.stderr.txt");
+    const result = runHelperToFiles([
+      repoScript("scripts", "qa", "check-mission-spine-ui-proof-inputs.mjs"),
       `--mission-id=${missionId}`,
       `--mobile=${byRole.mobile}`,
       `--desktop=${byRole.desktop}`,
@@ -363,11 +380,13 @@ if (readyToWrite && copiedManifest) {
       `--timeline=${byRole.timeline}`,
       `--manifest=${copiedManifest}`,
       ...extraPreflightArgs,
-    ], { encoding: "utf8" });
+    ], preflightStdoutPath, preflightStderrPath);
     preflight = {
       status: result.status,
-      stdout: result.stdout.trim(),
-      stderr: result.stderr.trim(),
+      stdoutPath: preflightStdoutPath,
+      stderrPath: preflightStderrPath,
+      stdout: readFileSync(preflightStdoutPath, "utf8").trim(),
+      stderr: readFileSync(preflightStderrPath, "utf8").trim(),
     };
     if (result.status !== 0) {
       block("ui_proof_inputs_preflight_failed", `exit_${result.status}`);
