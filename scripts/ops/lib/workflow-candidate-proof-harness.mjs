@@ -258,6 +258,72 @@ async function waitForCandidateAck(baseUrl, channelKind, chatId, candidateId, ex
   return null;
 }
 
+function observeChannelOutboundAcks(hub, report, persistReport) {
+  const originalSend = hub.channelRegistry.send.bind(hub.channelRegistry);
+  const deliveries = [];
+
+  hub.channelRegistry.send = async (kind, options) => {
+    const text = typeof options?.text === "string" ? options.text : "";
+    const startedAt = new Date().toISOString();
+    try {
+      const delivery = await originalSend(kind, options);
+      const entry = {
+        kind,
+        chatIdTail: tail(options?.chatId),
+        replyToMessageIdTail: tail(options?.replyTo),
+        messageIdTail: tail(delivery?.messageId),
+        deliveredAt: new Date().toISOString(),
+        startedAt,
+        reflexCandidateAck: text.includes("Reflex candidate ") && text.includes(" 已更新为 "),
+        text,
+      };
+      deliveries.push(entry);
+      report.diagnostics.channelOutboundDeliveries = deliveries;
+      await persistReport?.("channel_outbound_delivery").catch(() => {});
+      return delivery;
+    } catch (error) {
+      const entry = {
+        kind,
+        chatIdTail: tail(options?.chatId),
+        replyToMessageIdTail: tail(options?.replyTo),
+        deliveredAt: null,
+        startedAt,
+        error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+        reflexCandidateAck: text.includes("Reflex candidate ") && text.includes(" 已更新为 "),
+        text,
+      };
+      deliveries.push(entry);
+      report.diagnostics.channelOutboundDeliveries = deliveries;
+      await persistReport?.("channel_outbound_delivery_failed").catch(() => {});
+      throw error;
+    }
+  };
+
+  return {
+    deliveries,
+    restore() {
+      hub.channelRegistry.send = originalSend;
+    },
+  };
+}
+
+async function waitForObservedChannelAck(observer, candidateId, expectedStatusWord, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  const needle = `Reflex candidate ${candidateId} 已更新为 ${expectedStatusWord}`;
+  while (Date.now() < deadline) {
+    const found = observer.deliveries.find((entry) =>
+      entry?.reflexCandidateAck === true
+      && typeof entry?.text === "string"
+      && entry.text.includes(needle)
+      && typeof entry?.messageIdTail === "string"
+      && entry.messageIdTail.length > 0
+    );
+    if (found) return found;
+    await delay(1000);
+  }
+  return null;
+}
+
 async function waitForCandidateStatus(stateDir, candidateId, expectedStatus, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let lastSeen = null;
@@ -290,9 +356,11 @@ export {
   getSessionMessages,
   installWorkflowApprovalStub,
   listWorkflowsByTag,
+  observeChannelOutboundAcks,
   seedWorkflowCandidates,
   tail,
   withTimeout,
   waitForCandidateAck,
+  waitForObservedChannelAck,
   waitForCandidateStatus,
 };
