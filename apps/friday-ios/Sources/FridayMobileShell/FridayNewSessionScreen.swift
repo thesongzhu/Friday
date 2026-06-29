@@ -140,7 +140,7 @@ struct FridayNewSessionScreen: View {
     case .blocked(let reason):
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-          cardHeader("Unavailable", count: nil)
+          cardHeader("Needs Connection", count: nil)
           Text(reason)
             .font(.caption)
             .foregroundStyle(MobileTheme.coral)

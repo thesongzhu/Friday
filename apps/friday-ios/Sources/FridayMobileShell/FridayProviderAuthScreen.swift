@@ -82,12 +82,12 @@ struct FridayProviderAuthScreen: View {
     case .unavailable(let reason):
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-          workspaceHeader("Provider Workspace", chip: "offline", healthy: false)
-          Text(reason)
+          workspaceHeader("Provider Workspace", chip: "connect", healthy: false)
+          Text(userFacingReason(reason))
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
-          Text("No provider status, session state, or capability readiness is fabricated while the Hub is unavailable.")
+          Text("Provider status, session state, and capability readiness appear after the Hub connection refreshes.")
             .font(.caption2)
             .foregroundStyle(MobileTheme.textSecondary)
         }
@@ -127,7 +127,7 @@ struct FridayProviderAuthScreen: View {
         metricPill("Running", "\(projection.workItems.filter { !$0.done }.count)")
         metricPill("Capabilities", "\(projection.capabilityStates.count)")
       }
-      Text("Provider Workspace Home: route, queue, session controls, and cost refs are surfaced from the Hub projection; unavailable actions stay explicit instead of becoming fake ready.")
+      Text("Provider Workspace Home: route, queue, session controls, and cost refs are surfaced from the live Hub projection.")
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -386,13 +386,21 @@ struct FridayProviderAuthScreen: View {
           Text(title)
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
-          Text(reason)
+          Text(userFacingReason(reason))
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
         }
       }
     }
+  }
+
+  private func userFacingReason(_ reason: String) -> String {
+    let normalized = reason.lowercased()
+    if normalized.contains("offline") || normalized.contains("transport") || normalized.contains("connection") {
+      return "Friday cannot reach the live Hub from this device. Check the connection, then refresh."
+    }
+    return "Friday needs a fresh provider workspace view before this action can continue."
   }
 
   @ViewBuilder

@@ -99,7 +99,7 @@ struct FridayShareIntakeScreen: View {
               Text("Friday Chat handoff is armed")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(MobileTheme.textPrimary)
-              Text("The next tap carries these share refs into Chat as a prefilled governed turn. Provider results remain unavailable until the live loop returns them.")
+              Text("The next tap carries these share refs into Chat as a prefilled governed turn. Provider results will appear when the live loop returns them.")
                 .font(.caption2)
                 .foregroundStyle(MobileTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -131,9 +131,9 @@ struct FridayShareIntakeScreen: View {
         identifier: "friday.share.blocked")
     case .unavailable(let reason):
       messageCard(
-        title: "Unavailable",
+        title: "Connect Friday",
         systemImage: "wifi.slash",
-        reason: reason,
+        reason: userFacingReason(reason),
         tint: MobileTheme.coral,
         identifier: "friday.share.unavailable")
     }
@@ -158,5 +158,13 @@ struct FridayShareIntakeScreen: View {
       }
     }
     .accessibilityIdentifier(identifier)
+  }
+
+  private func userFacingReason(_ reason: String) -> String {
+    let normalized = reason.lowercased()
+    if normalized.contains("offline") || normalized.contains("transport") || normalized.contains("connection") {
+      return "Friday cannot reach the live Hub from this device. Check the connection, then try again."
+    }
+    return "Friday needs a fresh live Hub connection before this share can continue."
   }
 }

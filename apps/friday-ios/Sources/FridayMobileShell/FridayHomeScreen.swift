@@ -44,18 +44,18 @@ struct FridayHomeScreen: View {
         case let .unavailable(reason):
           designIntro(
             title: greetingTitle,
-            subtitle: "Friday will not show cached or fabricated status.")
+            subtitle: "Connect Friday to the live Hub to see your current work.")
           selectedHomeHero
           UnavailableView(
             reason: reason,
-            title: "Hub offline",
-            detail: "Live connection is not set up yet.")
+            title: "Connect Friday",
+            detail: "Your Hub view is not connected on this device yet.")
           unavailableQueueSection(
             title: "Needs Me",
-            emptyText: "Connect Friday to see approvals, memory candidates, and recovery items.")
+            emptyText: "Approvals, memory candidates, and recovery items will appear here after connection.")
           unavailableQueueSection(
             title: "Running",
-            emptyText: "Connect Friday to see active work and provider progress.")
+            emptyText: "Active work and provider progress will appear here after connection.")
         }
       }
       .padding(16)
@@ -271,7 +271,7 @@ struct FridayHomeScreen: View {
           .tracking(2)
           .foregroundStyle(MobileTheme.textSecondary.opacity(0.72))
         Spacer()
-        StatusChip(text: "offline", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+        StatusChip(text: "connect", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
       }
       GlassPanel {
         Text(emptyText)
@@ -388,7 +388,7 @@ struct FridayHomeScreen: View {
           Text("Status").font(.headline).foregroundStyle(MobileTheme.textPrimary)
           Spacer()
           StatusChip(
-            text: viewModel.isOnline ? "online" : "offline / stale",
+            text: viewModel.isOnline ? "online" : "refresh",
             bg: viewModel.isOnline ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
             fg: viewModel.isOnline ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
         }
@@ -408,7 +408,7 @@ struct FridayHomeScreen: View {
       }
     }
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(viewModel.isOnline ? "Friday status online" : "Friday status offline or stale")
+    .accessibilityLabel(viewModel.isOnline ? "Friday status online" : "Friday status needs refresh")
     .accessibilityIdentifier("friday.home.status-card")
   }
 
@@ -502,11 +502,11 @@ struct FridayHomeScreen: View {
         hubProvisioningRows(t3Status)
         HStack(spacing: 8) {
           StatusChip(
-            text: readiness.readLiveRequested ? "read requested" : "read off",
+            text: readiness.readLiveRequested ? "read link ready" : "read link pending",
             bg: readiness.readLiveRequested ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
             fg: readiness.readLiveRequested ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
           StatusChip(
-            text: readiness.writeLiveRequested ? "write requested" : "write off",
+            text: readiness.writeLiveRequested ? "write link ready" : "write link pending",
             bg: readiness.writeLiveRequested ? MobileTheme.chipWarnBG : MobileTheme.chipNeutralBG,
             fg: readiness.writeLiveRequested ? MobileTheme.chipWarnFG : MobileTheme.chipNeutralFG)
         }
@@ -518,7 +518,7 @@ struct FridayHomeScreen: View {
     }
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
-      "Device pairing \(pairingReadinessLabel(readiness)). \(readiness.reason). \(t3Status?.homeSummary ?? "Hub T3 projection is not loaded.")")
+      "Device pairing \(pairingReadinessLabel(readiness)). \(readiness.reason). \(t3Status?.homeSummary ?? "Hub provisioning status is waiting for a live projection.")")
     .accessibilityIdentifier("friday.home.device-pairing-card")
   }
 
@@ -717,7 +717,7 @@ struct FridayHomeScreen: View {
           bg: status.isFullyProvisioned ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
           fg: status.isFullyProvisioned ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
       } else {
-        StatusChip(text: "not loaded", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+        StatusChip(text: "waiting", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
       }
     }
     if let status {
@@ -741,7 +741,7 @@ struct FridayHomeScreen: View {
       RefPill(label: "context_passport_item_count", ref: String(status.contextPassportItemCount))
       RefPill(label: "truth", ref: status.truthLabel)
     } else {
-      Text("Open a loaded Hub projection to see PairAck, trust grant, and context passport status.")
+        Text("Connect to the live Hub to see PairAck, trust grant, and context passport status.")
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -816,7 +816,7 @@ struct StatusBanner: View {
       VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 6) {
           ForEach(labels, id: \.self) { label in
-            StatusChip(text: label.uppercased(), bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+            StatusChip(text: displayLabel(for: label), bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
           }
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -839,15 +839,28 @@ struct StatusBanner: View {
   private var summary: String {
     let normalized = Set(labels.map { $0.lowercased() })
     if normalized.contains("offline") {
-      return "Live projection is visible, but Friday is reporting a connection or surface gap."
+      return "Friday can see the Hub, but this device needs a fresh live connection before acting."
     }
     if normalized.contains("stale") {
-      return "Live projection is visible, but it may need a refresh before acting."
+      return "Friday can see the Hub, but this view should be refreshed before acting."
     }
     if normalized.contains("error") {
-      return "Live projection is visible, with an error label preserved for review."
+      return "Friday can see the Hub, but one item needs attention before it is safe to act."
     }
-    return "Live projection is visible, with Hub labels preserved exactly."
+    return "Friday can see the Hub, with a status note preserved for review."
+  }
+
+  private func displayLabel(for rawLabel: String) -> String {
+    switch rawLabel.lowercased() {
+    case "offline":
+      return "connect"
+    case "stale":
+      return "refresh"
+    case "error":
+      return "attention"
+    default:
+      return rawLabel
+    }
   }
 }
 
@@ -855,8 +868,8 @@ struct StatusBanner: View {
 /// The honest "unavailable" state — never a fake-ready Home.
 struct UnavailableView: View {
   let reason: String
-  var title = "Friday is offline"
-  var detail = "Live Hub projection is required before this surface can show current state."
+  var title = "Connect Friday"
+  var detail = "A live Hub connection is needed before this screen can show current work."
   var systemImage = "exclamationmark.triangle"
   var identifier = "friday.home.unavailable"
 
@@ -878,20 +891,34 @@ struct UnavailableView: View {
               .fixedSize(horizontal: false, vertical: true)
           }
           Spacer()
-          StatusChip(text: "offline", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+          StatusChip(text: "connect", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
         }
-        Text(reason)
+        Text(userFacingReason)
           .font(.footnote)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         HStack(spacing: 8) {
-          StatusChip(text: "no cache", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
-          StatusChip(text: "no fabricated status", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+          StatusChip(text: "live only", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+          StatusChip(text: "safe view", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
         }
       }
     }
     .accessibilityElement(children: .combine)
-    .accessibilityLabel("\(title). \(detail). \(reason). No cached or fabricated status is shown.")
+    .accessibilityLabel("\(title). \(detail). \(userFacingReason). Friday is showing a live-only safe view.")
     .accessibilityIdentifier(identifier)
+  }
+
+  private var userFacingReason: String {
+    let normalized = reason.lowercased()
+    if normalized.contains("offline") || normalized.contains("connection") || normalized.contains("transport") {
+      return "Friday cannot reach the live Hub from this device. Check the connection, then refresh."
+    }
+    if normalized.contains("503") || normalized.contains("service") {
+      return "The Hub is starting or busy. Refresh once it is ready."
+    }
+    if normalized.contains("projection") {
+      return "Friday needs a fresh Hub projection before this screen can show current work."
+    }
+    return "Friday needs a fresh live Hub view before this screen can show current work."
   }
 }

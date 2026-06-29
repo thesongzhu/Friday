@@ -15,8 +15,8 @@ struct FridaySessionDetailScreen: View {
         case .unavailable(let reason):
           UnavailableView(
             reason: reason,
-            title: "Session detail unavailable",
-            detail: "Transcript, proof receipts, and continuation controls appear after a live session projection is readable.",
+            title: "Connect Session",
+            detail: "Transcript, proof receipts, and continuation controls appear after Friday reads a live session projection.",
             systemImage: "rectangle.connected.to.line.below",
             identifier: "friday.session-detail.unavailable")
         case .loaded(let projection):
@@ -106,7 +106,7 @@ struct FridaySessionDetailScreen: View {
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
           cardHeader("Session Detail", count: nil)
-          Text(reason)
+          Text(userFacingReason(reason))
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
@@ -574,7 +574,7 @@ struct FridaySessionDetailScreen: View {
     case .loaded:
       return StatusChip(text: "loaded", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
     case .unavailable:
-      return StatusChip(text: "unavailable", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+      return StatusChip(text: "needs connection", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
     case .notRequested:
       return StatusChip(text: "no ref", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
     }
@@ -583,6 +583,14 @@ struct FridaySessionDetailScreen: View {
   private func learningDecisionControlsDisabled(_ state: HomeLearningDecisionState?) -> Bool {
     guard let state else { return false }
     return state.isSent || state.isTerminal
+  }
+
+  private func userFacingReason(_ reason: String) -> String {
+    let normalized = reason.lowercased()
+    if normalized.contains("offline") || normalized.contains("transport") || normalized.contains("connection") {
+      return "Friday cannot reach the live Hub from this device. Check the connection, then refresh."
+    }
+    return "Friday needs a fresh live session view before this screen can continue."
   }
 
   @ViewBuilder

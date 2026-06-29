@@ -63,13 +63,13 @@ struct CompanionPane: View {
 
 #else
 
-/// Fallback when WebKit is unavailable (non-Apple toolchains): no animated pet, honest accent only.
+/// Fallback for non-Apple toolchains: no animated pet, status accent only.
 struct CompanionPane: View {
   let state: WorkbenchLoadState
   var body: some View {
     HStack(spacing: 6) {
       PetStatusAccent(state: state)
-      Text("Companion (WebKit unavailable)")
+      Text("Friday companion is loading")
         .font(.system(size: 11))
         .foregroundStyle(HubTheme.textSecondary)
     }

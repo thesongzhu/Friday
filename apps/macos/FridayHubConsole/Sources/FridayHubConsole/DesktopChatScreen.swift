@@ -236,8 +236,8 @@ struct DesktopChatScreen: View {
     case let .error(reason):
       GlassPanel {
         VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
-          StatusChip(text: "unavailable", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
-          Text(reason)
+          StatusChip(text: "needs attention", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+          Text(userFacingChatReason(reason))
             .font(.system(size: 12))
             .foregroundStyle(HubTheme.textSecondary)
         }
@@ -316,8 +316,8 @@ struct DesktopChatScreen: View {
       EmptyView()
     case let .unavailable(reason):
       HStack(spacing: 8) {
-        StatusChip(text: "unavailable", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
-        Text(reason)
+        StatusChip(text: "needs attention", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+        Text(userFacingChatReason(reason))
           .font(.system(size: 12))
           .foregroundStyle(HubTheme.textSecondary)
       }
@@ -587,7 +587,7 @@ struct DesktopChatScreen: View {
         }
       }
     case let .unavailable(title, reason):
-      Text("\(title): \(reason)")
+      Text("\(title): \(userFacingChatReason(reason))")
         .font(.system(size: 12))
         .foregroundStyle(HubTheme.textSecondary)
     }
@@ -603,6 +603,20 @@ struct DesktopChatScreen: View {
     Text(text)
       .font(.system(size: 14, weight: .semibold))
       .foregroundStyle(HubTheme.textPrimary)
+  }
+
+  private func userFacingChatReason(_ reason: String) -> String {
+    let normalized = reason.lowercased()
+    if normalized.contains("approval") {
+      return "Friday needs approval before this action can continue."
+    }
+    if normalized.contains("offline") || normalized.contains("transport") || normalized.contains("connection") {
+      return "Friday cannot reach the live Hub from this window. Check the connection, then try again."
+    }
+    if normalized.contains("paused") {
+      return "Friday paused safely and needs your review before continuing."
+    }
+    return "Friday needs a fresh live connection before this turn can continue."
   }
 }
 
@@ -759,7 +773,7 @@ private final class DesktopVoiceController: ObservableObject {
 
   func startRecording(onTranscript: @escaping @Sendable (String) -> Void) {
     guard let recognizer, recognizer.isAvailable else {
-      status = "Voice input is unavailable on this Mac."
+      status = "Voice input needs microphone and speech recognition support on this Mac."
       return
     }
     SFSpeechRecognizer.requestAuthorization { [weak self] speechStatus in
@@ -807,7 +821,7 @@ private final class DesktopVoiceController: ObservableObject {
     onTranscript: @escaping @Sendable (String) -> Void
   ) {
     guard let recognizer else {
-      status = "Voice input is unavailable on this Mac."
+      status = "Voice input needs microphone and speech recognition support on this Mac."
       return
     }
     stopRecording()

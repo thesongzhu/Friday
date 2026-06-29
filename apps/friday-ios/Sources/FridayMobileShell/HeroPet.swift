@@ -25,8 +25,7 @@ struct HeroPet: View {
       #if canImport(WebKit)
       MobilePetView()
       #else
-      // macOS host build (no WebKit-backed pet): honest placeholder, never a fake pet.
-      Text("Friday companion (WebKit unavailable on host build)")
+      Text("Friday companion is loading")
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
         .multilineTextAlignment(.center)
