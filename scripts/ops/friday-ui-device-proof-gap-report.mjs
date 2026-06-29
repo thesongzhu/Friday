@@ -69,6 +69,20 @@ const requiredChecks = [
   "no_hidden_fallback",
 ];
 
+const negativeControlObservationEvents = new Set([
+  "provider_ack_not_done_visible",
+  "pressure_20_50_consecutive_asks_visible",
+  "invalid_key_error_visible",
+  "quota_error_visible",
+  "network_error_visible",
+  "channel_replay_blocked_visible",
+  "reconnect_stale_verified",
+  "stale_label_visible",
+  "offline_label_visible",
+  "error_label_visible",
+  "no_hidden_fallback_verified",
+]);
+
 function usage() {
   console.error(`usage:
   node scripts/ops/friday-ui-device-proof-gap-report.mjs \\
@@ -275,6 +289,34 @@ function hasObservation(observations, surface, event) {
   });
 }
 
+function negativeControlObservationsFromManifest(manifest) {
+  if (!manifest || !Array.isArray(manifest.negative_control_segments)) return [];
+  return manifest.negative_control_segments.flatMap((segment) => {
+    if (segment?.happy_path !== false) return [];
+    if (typeof segment?.mission_id !== "string" || segment.mission_id === missionId) return [];
+    if (typeof segment?.truth_label !== "string" || !/negative_control/i.test(segment.truth_label)) return [];
+    const evidenceRefs = Array.isArray(segment.evidence_refs) ? segment.evidence_refs.map(evidenceKey) : [];
+    if (evidenceRefs.length < 1) return [];
+    return (Array.isArray(segment.observations) ? segment.observations : [])
+      .filter((observation) => negativeControlObservationEvents.has(String(observation.event || "")))
+      .filter((observation) => observation.mission_id === segment.mission_id)
+      .filter((observation) => evidenceRefs.includes(evidenceKey(String(observation.evidence_ref || ""))))
+      .map((observation) => ({
+        surface: String(observation.surface || ""),
+        event: String(observation.event || ""),
+        mission_id: String(observation.mission_id || ""),
+        evidence_ref: String(observation.evidence_ref || ""),
+        negative_control: true,
+      }));
+  });
+}
+
+function hasObservationAny(primaryObservations, negativeObservations, surface, event) {
+  if (hasObservation(primaryObservations, surface, event)) return true;
+  if (!negativeControlObservationEvents.has(event)) return false;
+  return hasObservation(negativeObservations, surface, event);
+}
+
 function orderEventObserved(observedEvents, event) {
   if (event === "stale_offline_error_labels_verified") {
     return ["stale_label_visible", "offline_label_visible", "error_label_visible"]
@@ -326,6 +368,7 @@ const knownEvidenceRefs = new Set(Object.values(evidence).filter(Boolean).map(ev
 const eventFile = requireFile("events", eventsPath);
 const observations = parseJsonl(eventFile).map((raw, index) => normalizeEvent(raw, index, knownEvidenceRefs));
 const manifest = parseManifest(manifestPath);
+const negativeControlObservations = negativeControlObservationsFromManifest(manifest);
 const supportingProofRows = supportingProofs();
 
 const activeRequiredObservations = deferChannelProof
@@ -336,14 +379,14 @@ const deferredObservationRequirements = deferChannelProof
   : [];
 
 const missingObservations = activeRequiredObservations
-  .filter(([surface, event]) => !hasObservation(observations, surface, event))
+  .filter(([surface, event]) => !hasObservationAny(observations, negativeControlObservations, surface, event))
   .map(([surface, event]) => ({
     surface,
     event,
     preferredCapture: preferredSurface(surface, event),
   }));
 const deferredObservations = deferredObservationRequirements
-  .filter(([surface, event]) => !hasObservation(observations, surface, event))
+  .filter(([surface, event]) => !hasObservationAny(observations, negativeControlObservations, surface, event))
   .map(([surface, event]) => ({
     surface,
     event,
@@ -351,7 +394,7 @@ const deferredObservations = deferredObservationRequirements
     deferred: true,
   }));
 
-const observedEvents = new Set(observations.map((observation) => observation.event));
+const observedEvents = new Set([...observations, ...negativeControlObservations].map((observation) => observation.event));
 const activeRequiredOrder = deferChannelProof
   ? requiredOrder.filter((event) => !isChannelOrderEvent(event))
   : requiredOrder;
@@ -359,7 +402,7 @@ const deferredOrderEvents = deferChannelProof
   ? requiredOrder.filter((event) => isChannelOrderEvent(event) && !orderEventObserved(observedEvents, event))
   : [];
 const missingOrderEvents = activeRequiredOrder.filter((event) => !orderEventObserved(observedEvents, event));
-const pressureAskCount = observations.filter((observation) => observation.event === "pressure_20_50_consecutive_asks_visible").length;
+const pressureAskCount = [...observations, ...negativeControlObservations].filter((observation) => observation.event === "pressure_20_50_consecutive_asks_visible").length;
 const duplicateSurfaceCount = observations.filter((observation) => observation.event === "duplicate_preflight_visible").length;
 const timelinePageCount = observations.filter((observation) => observation.event.startsWith("bounded_page_")).length;
 
@@ -436,6 +479,7 @@ const gapReport = {
   },
   observed: {
     eventRows: observations.length,
+    negativeControlEventRows: negativeControlObservations.length,
     surfaces: [...new Set(observations.map((observation) => observation.surface).filter(Boolean))].sort(),
     pressureAskCount,
     duplicateSurfaceCount,

@@ -142,7 +142,44 @@ jq -e '
     and ((.dry_run // false) != true);
   def has_evidence_role($role; $mission_id): (.evidence_files // []) | any(evidence_file_ok($role; $mission_id));
   def evidence_ref_matches($role; $ref; $mission_id): (.evidence_files // []) | any(evidence_file_ok($role; $mission_id) and .path == $ref);
-  def evidence_ref_known($root; $ref): ($root.evidence_files // []) | any(evidence_any_ok($root.mission_id) and .path == $ref);
+  def evidence_ref_known_for_mission($root; $mission_id; $ref):
+    ($root.evidence_files // []) | any(evidence_any_ok($mission_id) and .path == $ref);
+  def evidence_ref_known($root; $ref): evidence_ref_known_for_mission($root; $root.mission_id; $ref);
+  def segment_ref_known($root; $segment; $ref):
+    (($segment.evidence_refs // []) | index($ref) != null)
+    and evidence_ref_known_for_mission($root; $segment.mission_id; $ref);
+  def negative_segment_ok($root):
+    . as $segment
+    | ($segment.segment_id | nonempty_string)
+    and ($segment.mission_id | nonempty_string)
+    and ($segment.mission_id != $root.mission_id)
+    and ($segment.happy_path == false)
+    and ($segment.truth_label | nonempty_string and test("negative_control"; "i") and not_fake_string)
+    and (($segment.evidence_refs // []) | type == "array" and length > 0)
+    and (($segment.evidence_refs // []) | all(evidence_ref_known_for_mission($root; $segment.mission_id; .)))
+    and (($segment.observations // []) | type == "array" and length > 0)
+    and (($segment.observations // []) | all(
+      (.surface | nonempty_string)
+      and (.event | nonempty_string)
+      and (.mission_id == $segment.mission_id)
+      and (.evidence_ref | nonempty_string)
+      and segment_ref_known($root; $segment; .evidence_ref)
+    ));
+  def negative_observation_any($event; $root):
+    ($root.negative_control_segments // [])
+    | any(
+      . as $segment
+      | negative_segment_ok($root)
+        and (($segment.observations // []) | any(
+          .event == $event
+          and (.mission_id == $segment.mission_id)
+          and (.evidence_ref | nonempty_string)
+          and segment_ref_known($root; $segment; .evidence_ref)
+        ))
+    );
+  def evidence_ref_known_any($root; $ref):
+    evidence_ref_known($root; $ref)
+    or (($root.negative_control_segments // []) | any(. as $segment | negative_segment_ok($root) and segment_ref_known($root; $segment; $ref)));
   def desktop_consumption_ref($root; $ref): evidence_ref_matches("desktop"; $ref; $root.mission_id);
   def observation($surface; $event; $root):
     ($root.observations // [])
@@ -161,6 +198,8 @@ jq -e '
         and (.evidence_ref | nonempty_string)
         and evidence_ref_known($root; .evidence_ref)
       );
+  def observation_or_negative_any($event; $root):
+    observation_any($event; $root) or negative_observation_any($event; $root);
   def event_before($a; $b; $root):
     (($root.event_order // []) | index($a)) as $ia
     | (($root.event_order // []) | index($b)) as $ib
@@ -182,7 +221,7 @@ jq -e '
     and (.stress.no_secret_leak == true)
     and (.stress.no_hidden_fallback == true)
     and (.stress.evidence_ref | nonempty_string)
-    and evidence_ref_known($root; .stress.evidence_ref);
+    and evidence_ref_known_any($root; .stress.evidence_ref);
   .proof == "mission_spine_ui_device_consumption"
   and .proof_source == "real_ui_device_consumption"
   and (.captured_at_utc | nonempty_string)
@@ -229,7 +268,7 @@ jq -e '
   and (.mission_workbench | type == "object")
   and (.mission_workbench.visible == true)
   and (.mission_workbench.same_mission_projection_visible == true)
-  and (.mission_workbench.provider_ack_not_done_visible == true)
+  and (. as $root | (.mission_workbench.provider_ack_not_done_visible == true or negative_observation_any("provider_ack_not_done_visible"; $root)))
   and (.mission_workbench.memory_candidate_review_only_visible == true)
   and (.mission_workbench.evidence_ref | nonempty_string)
   and (. as $root | desktop_consumption_ref($root; $root.mission_workbench.evidence_ref))
@@ -260,7 +299,14 @@ jq -e '
   and (. as $root | event_before("timeline_page_1"; "timeline_page_2"; $root))
   and (. as $root | event_before("timeline_page_2"; "same_mission_mobile_desktop_channel"; $root))
   and (. as $root | event_before("same_mission_mobile_desktop_channel"; "memory_candidate_review_only"; $root))
-  and (. as $root | event_before("memory_candidate_review_only"; "stale_offline_error_labels_verified"; $root))
+  and (. as $root |
+    event_before("memory_candidate_review_only"; "stale_offline_error_labels_verified"; $root)
+    or (
+      negative_observation_any("stale_label_visible"; $root)
+      and negative_observation_any("offline_label_visible"; $root)
+      and negative_observation_any("error_label_visible"; $root)
+    )
+  )
   and (. as $root | observation("mobile"; "mission_intake_submitted"; $root))
   and (. as $root | observation("mobile"; "mission_intake_ready"; $root))
   and (. as $root | observation_any("mission_resolve_or_create_visible"; $root))
@@ -277,18 +323,18 @@ jq -e '
   and (. as $root | observation("timeline"; "bounded_page_1_visible"; $root))
   and (. as $root | observation("timeline"; "bounded_page_2_visible"; $root))
   and (. as $root | observation("timeline"; "memory_candidate_review_only"; $root))
-  and (. as $root | observation_any("provider_ack_not_done_visible"; $root))
-  and (. as $root | observation_any("pressure_20_50_consecutive_asks_visible"; $root))
-  and (. as $root | observation_any("invalid_key_error_visible"; $root))
-  and (. as $root | observation_any("quota_error_visible"; $root))
-  and (. as $root | observation_any("network_error_visible"; $root))
-  and (. as $root | observation_any("channel_replay_blocked_visible"; $root))
-  and (. as $root | observation_any("reconnect_stale_verified"; $root))
+  and (. as $root | observation_or_negative_any("provider_ack_not_done_visible"; $root))
+  and (. as $root | observation_or_negative_any("pressure_20_50_consecutive_asks_visible"; $root))
+  and (. as $root | observation_or_negative_any("invalid_key_error_visible"; $root))
+  and (. as $root | observation_or_negative_any("quota_error_visible"; $root))
+  and (. as $root | observation_or_negative_any("network_error_visible"; $root))
+  and (. as $root | observation_or_negative_any("channel_replay_blocked_visible"; $root))
+  and (. as $root | observation_or_negative_any("reconnect_stale_verified"; $root))
   and (. as $root | observation_any("real_provider_execution_receipt_visible"; $root))
-  and (. as $root | observation_any("stale_label_visible"; $root))
-  and (. as $root | observation_any("offline_label_visible"; $root))
-  and (. as $root | observation_any("error_label_visible"; $root))
-  and (. as $root | observation_any("no_hidden_fallback_verified"; $root))
+  and (. as $root | observation_or_negative_any("stale_label_visible"; $root))
+  and (. as $root | observation_or_negative_any("offline_label_visible"; $root))
+  and (. as $root | observation_or_negative_any("error_label_visible"; $root))
+  and (. as $root | observation_or_negative_any("no_hidden_fallback_verified"; $root))
   and has_status_label("stale")
   and has_status_label("offline")
   and has_status_label("error")

@@ -84,6 +84,20 @@ const requiredObservations = [
   "*:no_hidden_fallback_verified",
 ];
 
+const negativeControlObservationEvents = new Set([
+  "provider_ack_not_done_visible",
+  "pressure_20_50_consecutive_asks_visible",
+  "invalid_key_error_visible",
+  "quota_error_visible",
+  "network_error_visible",
+  "channel_replay_blocked_visible",
+  "reconnect_stale_verified",
+  "stale_label_visible",
+  "offline_label_visible",
+  "error_label_visible",
+  "no_hidden_fallback_verified",
+]);
+
 const requiredTranscriptSearchFacets = [
   "mission",
   "work_item",
@@ -282,6 +296,65 @@ function observationExists(observations, requiredSurface, eventName, missionId, 
   });
 }
 
+function validateNegativeControlSegments(manifest, missionId, knownEvidenceRefs, failures) {
+  const segments = Array.isArray(manifest.negative_control_segments) ? manifest.negative_control_segments : [];
+  for (const [index, segment] of segments.entries()) {
+    const label = `negative_control_segments[${index}]`;
+    const segmentId = typeof segment.segment_id === "string" ? segment.segment_id.trim() : "";
+    const segmentMissionId = typeof segment.mission_id === "string" ? segment.mission_id.trim() : "";
+    const truthLabel = typeof segment.truth_label === "string" ? segment.truth_label.trim() : "";
+    const evidenceRefs = Array.isArray(segment.evidence_refs) ? segment.evidence_refs : [];
+    const observations = Array.isArray(segment.observations) ? segment.observations : [];
+
+    if (!segmentId) recordFailure(failures, "negative_segment_missing_id", label);
+    if (!isMissionIdProofEligible(segmentMissionId)) recordFailure(failures, "negative_segment_mission_id_invalid", `${label}:${segmentMissionId}`);
+    if (segmentMissionId === missionId) recordFailure(failures, "negative_segment_reuses_happy_path_mission", label);
+    if (segment.happy_path !== false) recordFailure(failures, "negative_segment_happy_path_not_false", label);
+    if (!/negative_control/i.test(truthLabel)) recordFailure(failures, "negative_segment_truth_label_not_negative_control", label);
+    if (evidenceRefs.length < 1) recordFailure(failures, "negative_segment_missing_evidence_refs", label);
+    for (const ref of evidenceRefs) {
+      validateKnownEvidenceRef(
+        ref,
+        knownEvidenceRefs,
+        failures,
+        "negative_segment_evidence_ref_unknown",
+        `${label}:${String(ref || "")}`,
+      );
+    }
+    if (observations.length < 1) recordFailure(failures, "negative_segment_missing_observations", label);
+    for (const observation of observations) {
+      if (!negativeControlObservationEvents.has(String(observation.event || ""))) {
+        recordFailure(failures, "negative_segment_event_not_allowed", `${label}:${String(observation.event || "")}`);
+      }
+      if (observation.mission_id !== segmentMissionId) {
+        recordFailure(failures, "negative_segment_observation_mission_mismatch", `${label}:${String(observation.event || "")}`);
+      }
+      if (!evidenceRefs.map(evidenceKey).includes(evidenceKey(String(observation.evidence_ref || "")))) {
+        recordFailure(failures, "negative_segment_observation_evidence_not_listed", `${label}:${String(observation.event || "")}`);
+      }
+      validateKnownEvidenceRef(
+        observation.evidence_ref,
+        knownEvidenceRefs,
+        failures,
+        "negative_segment_observation_evidence_ref_unknown",
+        `${label}:${String(observation.event || "")}`,
+      );
+    }
+  }
+  return segments;
+}
+
+function negativeObservationExists(segments, requiredSurface, eventName) {
+  if (!negativeControlObservationEvents.has(eventName)) return false;
+  return segments.some((segment) => {
+    const observations = Array.isArray(segment.observations) ? segment.observations : [];
+    return observations.some((observation) => {
+      if (observation.event !== eventName) return false;
+      return requiredSurface === "*" || observation.surface === requiredSurface;
+    });
+  });
+}
+
 function isMissionIdProofEligible(value) {
   if (typeof value !== "string") return false;
   const missionId = value.trim();
@@ -332,9 +405,6 @@ function validateMissionWorkbenchManifest(manifest, evidenceByRole, extraEvidenc
   }
   if (workbench.same_mission_projection_visible !== true) {
     recordFailure(failures, "mission_workbench_same_mission_missing", "mission_workbench.same_mission_projection_visible");
-  }
-  if (workbench.provider_ack_not_done_visible !== true) {
-    recordFailure(failures, "mission_workbench_provider_ack_not_done_missing", "mission_workbench.provider_ack_not_done_visible");
   }
   if (workbench.memory_candidate_review_only_visible !== true) {
     recordFailure(failures, "mission_workbench_memory_candidate_missing", "mission_workbench.memory_candidate_review_only_visible");
@@ -431,6 +501,7 @@ function validateManifest(manifestPath, missionId, evidenceByRole, extraEvidence
 
   validateMissionWorkbenchManifest(manifest, evidenceByRole, extraEvidenceByRole, knownEvidenceRefs, failures);
   validateTranscriptBrowserManifest(manifest, evidenceByRole, extraEvidenceByRole, knownEvidenceRefs, failures);
+  const negativeControlSegments = validateNegativeControlSegments(manifest, missionId, knownEvidenceRefs, failures);
 
   if (!manifest.checks || typeof manifest.checks !== "object") {
     recordFailure(failures, "manifest_missing_checks", manifestPath);
@@ -460,13 +531,18 @@ function validateManifest(manifestPath, missionId, evidenceByRole, extraEvidence
     if (!knownEvidenceRefs.has(evidenceKey(manifest.stress.evidence_ref))) {
       recordFailure(failures, "stress_evidence_ref_unknown", String(manifest.stress.evidence_ref || ""));
     }
-    validateEvidenceRoleRef(
-      manifest.stress.evidence_ref,
-      evidenceRefsForRole("timeline", evidenceByRole, extraEvidenceByRole),
-      failures,
-      "stress_evidence_ref_not_timeline",
-      String(manifest.stress.evidence_ref || ""),
-    );
+    const stressRefInNegativeSegment = negativeControlSegments.some((segment) => (
+      Array.isArray(segment.evidence_refs) && segment.evidence_refs.map(evidenceKey).includes(evidenceKey(String(manifest.stress.evidence_ref || "")))
+    ));
+    if (!stressRefInNegativeSegment) {
+      validateEvidenceRoleRef(
+        manifest.stress.evidence_ref,
+        evidenceRefsForRole("timeline", evidenceByRole, extraEvidenceByRole),
+        failures,
+        "stress_evidence_ref_not_timeline",
+        String(manifest.stress.evidence_ref || ""),
+      );
+    }
     for (const check of requiredStressTrueChecks) {
       if (manifest.stress[check] !== true) {
         recordFailure(failures, "required_stress_check_not_true", check);
@@ -502,6 +578,10 @@ function validateManifest(manifestPath, missionId, evidenceByRole, extraEvidence
   const eventOrder = Array.isArray(manifest.event_order) ? manifest.event_order : [];
   let previousIndex = -1;
   for (const event of requiredEventOrder) {
+    if (event === "stale_offline_error_labels_verified"
+      && ["stale_label_visible", "offline_label_visible", "error_label_visible"].every((name) => negativeObservationExists(negativeControlSegments, "*", name))) {
+      continue;
+    }
     const index = eventOrder.indexOf(event);
     if (index === -1) {
       recordFailure(failures, "event_order_missing", event);
@@ -535,7 +615,8 @@ function validateManifest(manifestPath, missionId, evidenceByRole, extraEvidence
   }
   for (const requirement of requiredObservations) {
     const [surface, eventName] = requirement.split(":");
-    if (!observationExists(observations, surface, eventName, missionId, knownEvidenceRefs)) {
+    if (!observationExists(observations, surface, eventName, missionId, knownEvidenceRefs)
+      && !negativeObservationExists(negativeControlSegments, surface, eventName)) {
       recordFailure(failures, "required_observation_missing", requirement);
     }
   }

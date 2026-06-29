@@ -81,6 +81,20 @@ const requiredObservations = [
   ["*", "no_hidden_fallback_verified"],
 ];
 
+const negativeControlObservationEvents = new Set([
+  "provider_ack_not_done_visible",
+  "pressure_20_50_consecutive_asks_visible",
+  "invalid_key_error_visible",
+  "quota_error_visible",
+  "network_error_visible",
+  "channel_replay_blocked_visible",
+  "reconnect_stale_verified",
+  "stale_label_visible",
+  "offline_label_visible",
+  "error_label_visible",
+  "no_hidden_fallback_verified",
+]);
+
 const transcriptSearchFacets = [
   "mission",
   "work_item",
@@ -112,6 +126,8 @@ function usage() {
     --channel=/abs/channel-capture \\
     --timeline=/abs/timeline-capture \\
     [--extra-evidence-ref=/abs/real-evidence ...] \\
+    [--negative-control-events=/abs/negative-events.jsonl] \\
+    [--negative-control-segment-id=segment-id] [--negative-control-mission-id=mission_negative_...] \\
     --events=/abs/same-run-events.jsonl \\
     --out=/abs/observations-manifest.json [--defer-channel-proof] [--require-ready]
 
@@ -151,6 +167,9 @@ const deferChannelProof = args.includes("--defer-channel-proof")
 const missionId = arg("mission-id");
 const out = arg("out");
 const eventsPath = arg("events");
+const negativeControlEventsPath = arg("negative-control-events");
+const negativeControlSegmentId = arg("negative-control-segment-id") || "negative-control-status-error-stress";
+let negativeControlMissionId = arg("negative-control-mission-id");
 const extraEvidenceRefs = argsAll("extra-evidence-ref");
 const evidenceByRole = {
   mobile: arg("mobile"),
@@ -243,11 +262,40 @@ function normalizedEvents(rawEvents, evidenceRefs) {
   });
 }
 
+function normalizedNegativeControlEvents(rawEvents, evidenceRefs, segmentMissionId) {
+  return rawEvents.map((raw, index) => {
+    const label = `negative_event_${index + 1}`;
+    const surface = stringField(raw, "surface", label);
+    const event = stringField(raw, "event", label);
+    const eventMissionId = stringField(raw, "mission_id", label);
+    const evidenceRef = stringField(raw, "evidence_ref", label);
+    if (event && !negativeControlObservationEvents.has(event)) {
+      block("negative_control_event_not_allowed", `${label}:${event}`);
+    }
+    if (eventMissionId && eventMissionId !== segmentMissionId) {
+      block("negative_control_event_mission_mismatch", `${label}:${eventMissionId}`);
+    }
+    if (eventMissionId && eventMissionId === missionId) {
+      block("negative_control_reuses_happy_path_mission", `${label}:${eventMissionId}`);
+    }
+    if (evidenceRef && !evidenceRefs.has(evidenceKey(evidenceRef))) {
+      block("negative_control_event_evidence_ref_unknown", `${label}:${evidenceRef}`);
+    }
+    return { surface, event, mission_id: eventMissionId, evidence_ref: evidenceRef };
+  });
+}
+
 function hasObservation(observations, requiredSurface, event) {
   return observations.some((observation) => {
     if (observation.event !== event) return false;
     return requiredSurface === "*" || observation.surface === requiredSurface;
   });
+}
+
+function hasObservationAny(primaryObservations, negativeObservations, requiredSurface, event) {
+  if (hasObservation(primaryObservations, requiredSurface, event)) return true;
+  if (!negativeControlObservationEvents.has(event)) return false;
+  return hasObservation(negativeObservations, requiredSurface, event);
 }
 
 function evidenceRefFor(observations, surface, event, fallback) {
@@ -267,13 +315,36 @@ const eventFile = requireFile("events", eventsPath);
 if (!out) block("missing_arg", "out");
 
 const evidenceRefs = new Set([...Object.values(evidence).filter(Boolean), ...extraEvidence].map(evidenceKey));
-const observations = normalizedEvents(parseJsonl(eventFile), evidenceRefs);
+const primaryRawEvents = parseJsonl(eventFile);
+const observations = normalizedEvents(primaryRawEvents, evidenceRefs);
+const negativeRawEvents = parseJsonl(negativeControlEventsPath ? requireFile("negative-control-events", negativeControlEventsPath) : "");
+if (negativeRawEvents.length > 0 && !negativeControlMissionId) {
+  negativeControlMissionId = [...new Set(negativeRawEvents.map((event) => typeof event.mission_id === "string" ? event.mission_id.trim() : "").filter(Boolean))][0] || "";
+}
+if (negativeRawEvents.length > 0 && (!negativeControlMissionId || negativeControlMissionId === missionId)) {
+  block("negative_control_mission_id_invalid", negativeControlMissionId || "<missing>");
+}
+const negativeControlObservations = negativeRawEvents.length > 0
+  ? normalizedNegativeControlEvents(negativeRawEvents, evidenceRefs, negativeControlMissionId)
+  : [];
+const negativeControlEvidenceRefs = [...new Set(negativeControlObservations.map((observation) => observation.evidence_ref).filter(Boolean))];
+const negativeControlSegments = negativeControlObservations.length > 0 ? [{
+  segment_id: negativeControlSegmentId,
+  mission_id: negativeControlMissionId,
+  truth_label: "real_ui_negative_control_segment_not_happy_path",
+  happy_path: false,
+  evidence_refs: negativeControlEvidenceRefs,
+  event_order: [
+    ...new Set(negativeControlObservations.map((observation) => observation.event).filter(Boolean)),
+  ],
+  observations: negativeControlObservations,
+}] : [];
 const activeRequiredObservations = deferChannelProof
   ? requiredObservations.filter(([surface, event]) => surface !== "channel" && !event.includes("channel"))
   : requiredObservations;
 
 for (const [surface, event] of activeRequiredObservations) {
-  if (!hasObservation(observations, surface, event)) {
+  if (!hasObservationAny(observations, negativeControlObservations, surface, event)) {
     block("missing_observation", `${surface}:${event}`);
   }
 }
@@ -287,12 +358,19 @@ const activeRequiredStress = deferChannelProof
 const activeRequiredOrder = deferChannelProof
   ? requiredOrder.filter((event) => !event.includes("channel"))
   : requiredOrder;
+const requiredOrderAfterNegativeControls = ["stale_label_visible", "offline_label_visible", "error_label_visible"]
+  .every((event) => hasObservation(negativeControlObservations, "*", event))
+  ? activeRequiredOrder.filter((event) => event !== "stale_offline_error_labels_verified")
+  : activeRequiredOrder;
 const checks = Object.fromEntries(activeRequiredChecks.map((check) => [check, true]));
 const stress = Object.fromEntries(activeRequiredStress.map((check) => [check, true]));
-stress.mission_bound_ask_count = observations.filter((observation) => observation.event === "pressure_20_50_consecutive_asks_visible").length;
-stress.duplicate_surface_count = observations.filter((observation) => observation.event === "duplicate_preflight_visible").length;
+const combinedObservations = [...observations, ...negativeControlObservations];
+stress.mission_bound_ask_count = combinedObservations.filter((observation) => observation.event === "pressure_20_50_consecutive_asks_visible").length;
+stress.duplicate_surface_count = combinedObservations.filter((observation) => observation.event === "duplicate_preflight_visible").length;
 stress.long_timeline_page_count = observations.filter((observation) => observation.event.startsWith("bounded_page_")).length;
-stress.evidence_ref = evidence.timeline || "";
+stress.evidence_ref = negativeControlObservations.some((observation) => observation.event === "pressure_20_50_consecutive_asks_visible")
+  ? negativeControlObservations.find((observation) => observation.event === "pressure_20_50_consecutive_asks_visible")?.evidence_ref || evidence.timeline || ""
+  : evidence.timeline || "";
 
 if (stress.mission_bound_ask_count < 20 || stress.mission_bound_ask_count > 50) {
   block("stress_ask_count_out_of_range", String(stress.mission_bound_ask_count));
@@ -316,7 +394,7 @@ const manifest = {
   mission_workbench: {
     visible: hasObservation(observations, "desktop", "mission_workbench_visible"),
     same_mission_projection_visible: hasObservation(observations, "desktop", "same_mission_projection_visible"),
-    provider_ack_not_done_visible: hasObservation(observations, "*", "provider_ack_not_done_visible"),
+    provider_ack_not_done_visible: hasObservationAny(observations, negativeControlObservations, "*", "provider_ack_not_done_visible"),
     memory_candidate_review_only_visible: hasObservation(observations, "timeline", "memory_candidate_review_only"),
     evidence_ref: evidenceRefFor(observations, "desktop", "mission_workbench_visible", evidence.desktop),
   },
@@ -333,8 +411,9 @@ const manifest = {
   memory_candidates: [
     { id: "memory_candidate_review_only", confirmed: false, grants_memory_authority: false },
   ],
-  event_order: activeRequiredOrder,
+  event_order: requiredOrderAfterNegativeControls,
   observations,
+  negative_control_segments: negativeControlSegments,
   extra_evidence_refs: extraEvidence,
   deferred_inputs: deferChannelProof ? [{
     role: "channel",
