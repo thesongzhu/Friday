@@ -621,6 +621,7 @@ derive_workbench_events_if_possible() {
   if [ "${DEFER_CHANNEL_PROOF}" = "1" ]; then
     args+=("--defer-channel-proof")
   fi
+  args+=("--allow-partial-events")
 
   if node "${args[@]}" >"$stdout_out"; then
     if [ -s "$derived_out" ] && [ -n "$existing_events" ]; then
