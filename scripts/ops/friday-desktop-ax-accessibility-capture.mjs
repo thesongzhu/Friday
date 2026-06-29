@@ -337,10 +337,25 @@ return "not_found"`;
 
 function rawTreeHasDestination(raw, destination, title) {
   const haystack = raw || "";
-  return haystack.includes(title) || haystack.includes(`friday.desktop.${destination}`);
+  return haystack.includes(title)
+    || haystack.includes(`friday.desktop.${destination}`)
+    || haystack.includes(`friday.desktop.destination.${destination}`);
 }
 
 function waitForDestination(destination, title) {
+  const marker = captureTargetElement({
+    runtimeActionId: `desktop/${destination}/destination-marker`,
+    accessibility_id: `friday.desktop.destination.${destination}`,
+    visible_text: title,
+  });
+  if (marker) {
+    return {
+      ready: true,
+      raw: [
+        `0\t${marker.role}\t${marker.identifier}\t${marker.name}\t${marker.description}\t`,
+      ].join("\n"),
+    };
+  }
   const destinationWaitMs = Math.min(timeoutSeconds * 1000, 8_000);
   const deadline = Date.now() + destinationWaitMs;
   let lastRaw = "";
