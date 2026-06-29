@@ -66,8 +66,8 @@ import { createFridayProviderPricingCatalog } from "../cost/friday-provider-pric
 import { createFridayProviderCostRouter } from "../cost/friday-provider-cost-router.js";
 import { createFridayProviderBudgetService } from "../cost/friday-provider-budget-service.js";
 import {
-  FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
   createFridayAnthropicOAuthProvider,
+  FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
 } from "../oauth/friday-anthropic-oauth.js";
 import { createFridayOpenAICodexOAuthProvider } from "../oauth/friday-openai-codex-oauth.js";
 import { createFridayOAuthCredentialStore } from "../oauth/friday-oauth-credential-store.js";
