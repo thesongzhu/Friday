@@ -7,11 +7,7 @@ import type {
   FridayProviderValidationState,
 } from "../model/friday-provider.types.js";
 import { isFridayAnthropicBearerAuthMode } from "../model/friday-provider.types.js";
-
-import {
-  FRIDAY_ANTHROPIC_OAUTH_HEADERS,
-  FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
-} from "../oauth/friday-anthropic-oauth.js";
+import { FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE } from "../oauth/friday-anthropic-oauth.js";
 
 import {
   validateGatewayUrl,
@@ -155,28 +151,19 @@ async function validateAnthropic(
 ): Promise<FridayProviderValidationState> {
   const url = `${baseUrl.replace(/\/+$/, "")}/v1/messages`;
   const isBearerAuth = isFridayAnthropicBearerAuthMode(authMode);
+  if (isBearerAuth) {
+    return makeFailedState("PROVIDER_AUTH_INVALID", FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE, 400);
+  }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "anthropic-version": "2023-06-01",
-    ...(isBearerAuth ? FRIDAY_ANTHROPIC_OAUTH_HEADERS : {}),
   };
   if (credential) {
-    if (isBearerAuth) {
-      headers["Authorization"] = `Bearer ${credential}`;
-    } else {
-      headers["x-api-key"] = credential;
-    }
+    headers["x-api-key"] = credential;
   }
   const body = JSON.stringify({
     model: model?.trim() || DEFAULT_ANTHROPIC_VALIDATION_MODEL,
     max_tokens: 1,
-    ...(isBearerAuth
-      ? {
-          system: [
-            { type: "text", text: FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX },
-          ],
-        }
-      : {}),
     messages: [{ role: "user", content: "hi" }],
   });
   try {

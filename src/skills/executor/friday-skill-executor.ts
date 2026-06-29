@@ -15,8 +15,7 @@ import type { FridaySkillRunSnapshot } from "#ledger";
 import { FridayDomainError } from "#errors";
 import { precompileRegexPattern } from "../../rules/engine/condition-evaluator.js";
 import {
-  FRIDAY_ANTHROPIC_OAUTH_HEADERS,
-  FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
+  FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
   isFridayAnthropicBearerAuthMode,
 } from "#providers";
 import { createFridayShellExecutor } from "./friday-shell-executor.js";
@@ -231,8 +230,11 @@ async function runProviderInference(params: {
         switch (api) {
           case "anthropic-messages":
             if (isFridayAnthropicBearerAuthMode(resolvedRoute.provider.config.authMode)) {
-              headers["Authorization"] = `Bearer ${credential}`;
-              Object.assign(headers, FRIDAY_ANTHROPIC_OAUTH_HEADERS);
+              throw new FridayDomainError(
+                "EXECUTOR_PROVIDER_ERROR",
+                FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
+                { httpStatus: 400 },
+              );
             } else {
               headers["x-api-key"] = credential;
             }
@@ -285,9 +287,6 @@ async function runProviderInference(params: {
           url = `${baseUrl}/v1/messages`;
           body = {
             model,
-            ...(isFridayAnthropicBearerAuthMode(resolvedRoute.provider.config.authMode)
-              ? { system: FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX }
-              : {}),
             messages: [{ role: "user", content: params.prompt }],
             max_tokens: 4096,
           };

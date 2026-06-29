@@ -65,7 +65,10 @@ import { createFridayProviderFallback } from "../routing/friday-provider-fallbac
 import { createFridayProviderPricingCatalog } from "../cost/friday-provider-pricing-catalog.js";
 import { createFridayProviderCostRouter } from "../cost/friday-provider-cost-router.js";
 import { createFridayProviderBudgetService } from "../cost/friday-provider-budget-service.js";
-import { createFridayAnthropicOAuthProvider } from "../oauth/friday-anthropic-oauth.js";
+import {
+  FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
+  createFridayAnthropicOAuthProvider,
+} from "../oauth/friday-anthropic-oauth.js";
 import { createFridayOpenAICodexOAuthProvider } from "../oauth/friday-openai-codex-oauth.js";
 import { createFridayOAuthCredentialStore } from "../oauth/friday-oauth-credential-store.js";
 import { createFridayOAuthProviderRegistry, createFridayOAuthTokenManager } from "../oauth/friday-oauth-token-manager.js";
@@ -1595,16 +1598,11 @@ export function createFridayProviderService(
   }
 
   function anthropicHeaders(profile: FridayProviderProfile, credential: string | null): Record<string, string> {
-    const isBearerAuth = isFridayAnthropicBearerAuthMode(profile.config.authMode);
     return {
       "Content-Type": "application/json",
       "anthropic-version": "2023-06-01",
       ...(profile.config.headers ?? {}),
-      ...(credential
-        ? isBearerAuth
-          ? { Authorization: `Bearer ${credential}` }
-          : { "x-api-key": credential }
-        : {}),
+      ...(credential ? { "x-api-key": credential } : {}),
     };
   }
 
@@ -1778,6 +1776,16 @@ export function createFridayProviderService(
     }
 
     if (profile.config.api === "anthropic-messages") {
+      if (isFridayAnthropicBearerAuthMode(profile.config.authMode)) {
+        return {
+          ok: false,
+          endpoint: `${base}/v1/messages`,
+          status: 400,
+          message: FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
+          standardized: true,
+          probe: capability,
+        };
+      }
       if (capability === "embedding") {
         return {
           ok: false,

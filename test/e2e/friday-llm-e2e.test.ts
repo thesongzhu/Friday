@@ -574,7 +574,7 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LIVE_ANTHROPIC_API_KEY)("Friday L
             model: route.model,
             max_tokens: 256,
             system:
-              "You are Claude Code, Anthropic's official CLI for Claude. Reply with exactly the JSON requested.",
+              "You are Friday. Reply with exactly the JSON requested.",
             messages: [
               {
                 role: "user",

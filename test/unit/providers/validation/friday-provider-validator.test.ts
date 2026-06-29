@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createFridayProviderValidator,
-  FRIDAY_ANTHROPIC_OAUTH_HEADERS,
-  FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
+  FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
 } from "#providers";
 
 describe("FridayProviderValidator", () => {
@@ -171,14 +170,10 @@ describe("FridayProviderValidator", () => {
       expect(capturedHeaders["x-api-key"]).toBe("sk-ant-test");
     });
 
-    it("validates Anthropic with OAuth mode — sends Bearer token and OAuth headers", async () => {
-      let capturedHeaders: Record<string, string> = {};
-      let capturedBody = "";
+    it("fails closed for Anthropic OAuth mode without contacting Anthropic", async () => {
+      const fetchSpy = vi.fn();
       mockFetch((_url, init) => {
-        capturedHeaders = Object.fromEntries(
-          Object.entries(init.headers ?? {}),
-        ) as Record<string, string>;
-        capturedBody = typeof init.body === "string" ? init.body : "";
+        fetchSpy(_url, init);
         return new Response("{}", { status: 200 });
       });
 
@@ -191,53 +186,17 @@ describe("FridayProviderValidator", () => {
         authMode: "oauth",
       });
 
-      expect(result.status).toBe("ok");
-
-      // Should use Authorization: Bearer, NOT x-api-key
-      expect(capturedHeaders["Authorization"]).toBe("Bearer sk-ant-oat01-test-token");
-      expect(capturedHeaders["x-api-key"]).toBeUndefined();
-
-      // Should include OAuth identity headers
-      expect(capturedHeaders["anthropic-beta"]).toContain("oauth-2025-04-20");
-      expect(capturedHeaders["anthropic-beta"]).toContain("claude-code-20250219");
-      expect(capturedHeaders["x-app"]).toBe("cli");
-      expect(capturedHeaders["user-agent"]).toContain("claude-cli");
-      expect(capturedHeaders["anthropic-dangerous-direct-browser-access"]).toBe("true");
-
-      // Body should include OAuth system prefix
-      const parsedBody = JSON.parse(capturedBody) as Record<string, unknown>;
-      const systemContent = parsedBody["system"];
-      const systemText = typeof systemContent === "string"
-        ? systemContent
-        : JSON.stringify(systemContent);
-      expect(systemText).toContain(FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX);
-    });
-
-    it("validates Anthropic with OAuth mode — auth failure returns PROVIDER_AUTH_INVALID", async () => {
-      mockFetch(() => new Response("{}", { status: 401 }));
-
-      const validator = createFridayProviderValidator();
-      const result = await validator.validate({
-        kind: "anthropic",
-        api: "anthropic-messages",
-        baseUrl: "https://api.anthropic.com",
-        credential: "sk-ant-oat01-expired-token",
-        authMode: "oauth",
-      });
-
       expect(result.status).toBe("failed");
       expect(result.errorCode).toBe("PROVIDER_AUTH_INVALID");
-      expect(result.httpStatus).toBe(401);
+      expect(result.httpStatus).toBe(400);
+      expect(result.errorMessage).toBe(FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE);
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
 
-    it("validates Anthropic with token mode — sends Bearer token and Claude-compatible headers", async () => {
-      let capturedHeaders: Record<string, string> = {};
-      let capturedBody = "";
+    it("fails closed for Anthropic token mode without contacting Anthropic", async () => {
+      const fetchSpy = vi.fn();
       mockFetch((_url, init) => {
-        capturedHeaders = Object.fromEntries(
-          Object.entries(init.headers ?? {}),
-        ) as Record<string, string>;
-        capturedBody = typeof init.body === "string" ? init.body : "";
+        fetchSpy(_url, init);
         return new Response("{}", { status: 200 });
       });
 
@@ -250,17 +209,11 @@ describe("FridayProviderValidator", () => {
         authMode: "token",
       });
 
-      expect(result.status).toBe("ok");
-      expect(capturedHeaders["Authorization"]).toBe("Bearer sk-ant-token01-test-token");
-      expect(capturedHeaders["x-api-key"]).toBeUndefined();
-      expect(capturedHeaders["anthropic-beta"]).toContain("oauth-2025-04-20");
-
-      const parsedBody = JSON.parse(capturedBody) as Record<string, unknown>;
-      const systemContent = parsedBody["system"];
-      const systemText = typeof systemContent === "string"
-        ? systemContent
-        : JSON.stringify(systemContent);
-      expect(systemText).toContain(FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX);
+      expect(result.status).toBe("failed");
+      expect(result.errorCode).toBe("PROVIDER_AUTH_INVALID");
+      expect(result.httpStatus).toBe(400);
+      expect(result.errorMessage).toBe(FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE);
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 
