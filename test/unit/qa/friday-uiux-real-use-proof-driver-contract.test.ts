@@ -51,6 +51,10 @@ describe("friday-uiux-real-use-proof-driver contract", () => {
     expect(source).toContain("desktop_ax_capture_out=\"${desktop_ax_dir}/desktop-ax-accessibility-capture.json\"");
     expect(source).toContain("accessibility_captures+=(\"${desktop_ax_capture_out}\")");
     expect(source).toContain("desktopAccessibilityCapture");
+    expect(source).toContain("desktopAccessibilityCaptureStatus");
+    expect(source).toContain("desktop_ax_capture_failed_or_partial");
+    expect(source).toContain("ui_device_shortlist_failed_or_partial");
+    expect(source).toContain("exitCodes");
     expect(source).toContain("--accessibility-capture");
     expect(source).toContain("--defer-channel-proof");
     expect(source).toContain("defer_channel_proof=\"${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}\"");
@@ -88,5 +92,15 @@ describe("friday-uiux-real-use-proof-driver contract", () => {
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
+  });
+
+  it("records partial desktop AX and shortlist exits instead of dropping the driver summary", () => {
+    const source = readFileSync(script, "utf8");
+
+    expect(source).toContain("desktop_ax_exit_code=$?");
+    expect(source).toContain("shortlist_exit_code=$?");
+    expect(source).toContain("keeping partial artifact summary instead of dropping prior evidence");
+    expect(source).toContain("writing partial driver summary with blockers");
+    expect(source).toContain("partial_ready");
   });
 });

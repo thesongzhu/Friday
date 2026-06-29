@@ -338,6 +338,8 @@ desktop_ax_dir="${out_dir}/desktop-ax-accessibility"
 desktop_ax_capture_out="${desktop_ax_dir}/desktop-ax-accessibility-capture.json"
 shortlist_dir="${out_dir}/ui-device-shortlist"
 driver_summary="${out_dir}/uiux-real-use-proof-driver-summary.json"
+desktop_ax_exit_code=0
+shortlist_exit_code=0
 
 echo "Friday UI/UX real-use proof driver starting."
 echo "out_dir=${out_dir}"
@@ -403,8 +405,16 @@ case "${run_desktop_ax_capture}" in
     if [ -n "${desktop_ax_workbench_mission_id}" ]; then
       desktop_ax_args+=("--workbench-mission-id=${desktop_ax_workbench_mission_id}")
     fi
+    set +e
     node "${desktop_ax_args[@]}"
-    accessibility_captures+=("${desktop_ax_capture_out}")
+    desktop_ax_exit_code=$?
+    set -e
+    if [ -s "${desktop_ax_capture_out}" ]; then
+      accessibility_captures+=("${desktop_ax_capture_out}")
+    fi
+    if [ "${desktop_ax_exit_code}" -ne 0 ]; then
+      echo "WARN: desktop AX capture exited ${desktop_ax_exit_code}; keeping partial artifact summary instead of dropping prior evidence." >&2
+    fi
     ;;
 esac
 
@@ -462,11 +472,25 @@ for path in "${extra_action_runtime_evidence[@]}"; do
 done
 set -u
 
+set +e
 bash "${shortlist_args[@]}"
+shortlist_exit_code=$?
+set -e
+if [ "${shortlist_exit_code}" -ne 0 ]; then
+  echo "WARN: UI device shortlist exited ${shortlist_exit_code}; writing partial driver summary with blockers." >&2
+fi
 
-node - "${driver_summary}" "${native_linkage_out}" "${shortlist_dir}/ui-device-shortlist-summary.json" "${action_bundle_dir}/action-runtime-evidence-bundle-index.json" "${desktop_ax_capture_out}" <<'NODE'
+node - "${driver_summary}" "${native_linkage_out}" "${shortlist_dir}/ui-device-shortlist-summary.json" "${action_bundle_dir}/action-runtime-evidence-bundle-index.json" "${desktop_ax_capture_out}" "${desktop_ax_exit_code}" "${shortlist_exit_code}" <<'NODE'
 const fs = require("node:fs");
-const [summaryPath, nativePath, shortlistPath, actionBundlePath, desktopAxCapturePath] = process.argv.slice(2);
+const [
+  summaryPath,
+  nativePath,
+  shortlistPath,
+  actionBundlePath,
+  desktopAxCapturePath,
+  desktopAxExitCodeRaw,
+  shortlistExitCodeRaw,
+] = process.argv.slice(2);
 function readJson(path) {
   try {
     return JSON.parse(fs.readFileSync(path, "utf8"));
@@ -477,15 +501,39 @@ function readJson(path) {
 const native = readJson(nativePath);
 const shortlist = readJson(shortlistPath);
 const actionBundle = readJson(actionBundlePath);
+const desktopAxCapture = readJson(desktopAxCapturePath);
+const desktopAxExitCode = Number(desktopAxExitCodeRaw || 0);
+const shortlistExitCode = Number(shortlistExitCodeRaw || 0);
 const strictReady = shortlist?.status === "strict_ui_device_ready";
+const partialBlockers = [
+  ...(Array.isArray(shortlist?.readinessBlockers) ? shortlist.readinessBlockers : []),
+  ...(Array.isArray(shortlist?.blockers) ? shortlist.blockers : []),
+];
+if (desktopAxExitCode !== 0) {
+  partialBlockers.push({
+    code: "desktop_ax_capture_failed_or_partial",
+    detail: `exit=${desktopAxExitCode}`,
+  });
+}
+if (shortlistExitCode !== 0) {
+  partialBlockers.push({
+    code: "ui_device_shortlist_failed_or_partial",
+    detail: `exit=${shortlistExitCode}`,
+  });
+}
 const summary = {
   truth: "uiux_real_use_proof_driver_summary_not_endbar_not_adoption",
   status: strictReady ? "strict_uiux_real_use_ready" : "partial_ready",
+  exitCodes: {
+    desktopAx: desktopAxExitCode,
+    uiDeviceShortlist: shortlistExitCode,
+  },
   nativeLinkageStatus: native?.status || "unknown",
   actionRuntimeBundleStatus: actionBundle?.status || "skipped_or_unavailable",
+  desktopAccessibilityCaptureStatus: desktopAxCapture?.status || "skipped_or_unavailable",
   missionId: shortlist?.missionId || null,
   uiDeviceShortlistStatus: shortlist?.status || "unknown",
-  readinessBlockers: shortlist?.readinessBlockers || [],
+  readinessBlockers: partialBlockers,
   outputs: {
     nativeLinkage: nativePath,
     actionRuntimeBundle: fs.existsSync(actionBundlePath) ? actionBundlePath : null,
@@ -499,3 +547,6 @@ console.log(JSON.stringify(summary, null, 2));
 NODE
 
 echo "summary=${driver_summary}"
+if [ "${desktop_ax_exit_code}" -ne 0 ] || [ "${shortlist_exit_code}" -ne 0 ]; then
+  exit 2
+fi
