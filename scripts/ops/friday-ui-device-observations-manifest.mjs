@@ -126,7 +126,7 @@ function usage() {
     --channel=/abs/channel-capture \\
     --timeline=/abs/timeline-capture \\
     [--extra-evidence-ref=/abs/real-evidence ...] \\
-    [--negative-control-events=/abs/negative-events.jsonl] \\
+    [--negative-control-events=/abs/negative-events.jsonl ...] \\
     [--negative-control-segment-id=segment-id] [--negative-control-mission-id=mission_negative_...] \\
     --events=/abs/same-run-events.jsonl \\
     --out=/abs/observations-manifest.json [--defer-channel-proof] [--require-ready]
@@ -167,7 +167,7 @@ const deferChannelProof = args.includes("--defer-channel-proof")
 const missionId = arg("mission-id");
 const out = arg("out");
 const eventsPath = arg("events");
-const negativeControlEventsPath = arg("negative-control-events");
+const negativeControlEventPaths = argsAll("negative-control-events");
 const negativeControlSegmentId = arg("negative-control-segment-id") || "negative-control-status-error-stress";
 let negativeControlMissionId = arg("negative-control-mission-id");
 const extraEvidenceRefs = argsAll("extra-evidence-ref");
@@ -262,9 +262,9 @@ function normalizedEvents(rawEvents, evidenceRefs) {
   });
 }
 
-function normalizedNegativeControlEvents(rawEvents, evidenceRefs, segmentMissionId) {
+function normalizedNegativeControlEvents(rawEvents, evidenceRefs, segmentMissionId, segmentLabel) {
   return rawEvents.map((raw, index) => {
-    const label = `negative_event_${index + 1}`;
+    const label = `${segmentLabel}:negative_event_${index + 1}`;
     const surface = stringField(raw, "surface", label);
     const event = stringField(raw, "event", label);
     const eventMissionId = stringField(raw, "mission_id", label);
@@ -317,28 +317,51 @@ if (!out) block("missing_arg", "out");
 const evidenceRefs = new Set([...Object.values(evidence).filter(Boolean), ...extraEvidence].map(evidenceKey));
 const primaryRawEvents = parseJsonl(eventFile);
 const observations = normalizedEvents(primaryRawEvents, evidenceRefs);
-const negativeRawEvents = parseJsonl(negativeControlEventsPath ? requireFile("negative-control-events", negativeControlEventsPath) : "");
-if (negativeRawEvents.length > 0 && !negativeControlMissionId) {
-  negativeControlMissionId = [...new Set(negativeRawEvents.map((event) => typeof event.mission_id === "string" ? event.mission_id.trim() : "").filter(Boolean))][0] || "";
+const negativeEventInputs = negativeControlEventPaths
+  .map((path, index) => ({
+    path: requireFile(`negative-control-events:${index + 1}`, path),
+    index,
+  }))
+  .filter((input) => input.path);
+const negativeInputs = negativeEventInputs.map((input) => ({
+  ...input,
+  rawEvents: parseJsonl(input.path),
+}));
+const negativeMissionIds = [
+  ...new Set(negativeInputs.flatMap((input) => input.rawEvents)
+    .map((event) => typeof event.mission_id === "string" ? event.mission_id.trim() : "")
+    .filter(Boolean)),
+];
+if (negativeControlMissionId && negativeMissionIds.some((id) => id !== negativeControlMissionId)) {
+  block("negative_control_mission_id_mismatch", `${negativeControlMissionId}:${negativeMissionIds.join(",")}`);
 }
-if (negativeRawEvents.length > 0 && (!negativeControlMissionId || negativeControlMissionId === missionId)) {
-  block("negative_control_mission_id_invalid", negativeControlMissionId || "<missing>");
+if (!negativeControlMissionId && negativeMissionIds.length === 1) {
+  negativeControlMissionId = negativeMissionIds[0];
 }
-const negativeControlObservations = negativeRawEvents.length > 0
-  ? normalizedNegativeControlEvents(negativeRawEvents, evidenceRefs, negativeControlMissionId)
-  : [];
-const negativeControlEvidenceRefs = [...new Set(negativeControlObservations.map((observation) => observation.evidence_ref).filter(Boolean))];
-const negativeControlSegments = negativeControlObservations.length > 0 ? [{
-  segment_id: negativeControlSegmentId,
-  mission_id: negativeControlMissionId,
-  truth_label: "real_ui_negative_control_segment_not_happy_path",
-  happy_path: false,
-  evidence_refs: negativeControlEvidenceRefs,
-  event_order: [
-    ...new Set(negativeControlObservations.map((observation) => observation.event).filter(Boolean)),
-  ],
-  observations: negativeControlObservations,
-}] : [];
+for (const id of negativeMissionIds) {
+  if (!id || id === missionId) block("negative_control_mission_id_invalid", id || "<missing>");
+}
+
+const negativeControlSegments = [];
+for (const id of negativeMissionIds) {
+  const rawEvents = negativeInputs.flatMap((input) => input.rawEvents.filter((event) => event?.mission_id === id));
+  const segmentLabel = `negative_segment_${negativeControlSegments.length + 1}`;
+  const segmentEvents = normalizedNegativeControlEvents(rawEvents, evidenceRefs, id, segmentLabel);
+  if (segmentEvents.length === 0) continue;
+  const evidenceRefsForSegment = [...new Set(segmentEvents.map((observation) => observation.evidence_ref).filter(Boolean))];
+  negativeControlSegments.push({
+    segment_id: negativeMissionIds.length === 1 ? negativeControlSegmentId : `${negativeControlSegmentId}-${negativeControlSegments.length + 1}`,
+    mission_id: id,
+    truth_label: "real_ui_negative_control_segment_not_happy_path",
+    happy_path: false,
+    evidence_refs: evidenceRefsForSegment,
+    event_order: [
+      ...new Set(segmentEvents.map((observation) => observation.event).filter(Boolean)),
+    ],
+    observations: segmentEvents,
+  });
+}
+const negativeControlObservations = negativeControlSegments.flatMap((segment) => segment.observations);
 const activeRequiredObservations = deferChannelProof
   ? requiredObservations.filter(([surface, event]) => surface !== "channel" && !event.includes("channel"))
   : requiredObservations;

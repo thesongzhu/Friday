@@ -228,6 +228,109 @@ describe("friday-ui-device-observations-manifest", () => {
     }
   });
 
+  it("keeps multiple negative-control missions as separate fail-closed segments", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-observations-multi-negative-"));
+    try {
+      const refs = writeEvidence(tempDir);
+      const events = join(tempDir, "same-run-events.jsonl");
+      const out = join(tempDir, "observations-manifest.json");
+      const negativeStatus = join(tempDir, "negative-status.jsonl");
+      const negativeStress = join(tempDir, "negative-stress.jsonl");
+      const statusEvidence = join(tempDir, "desktop-status.raw.txt");
+      const stressEvidence = join(tempDir, "real-stress-source-report.json");
+      writeFileSync(statusEvidence, "real desktop status negative-control evidence\n");
+      writeFileSync(stressEvidence, "real stress negative-control evidence\n");
+      writeJsonl(events, nonChannelEvents(refs).filter((row) => {
+        const eventRow = row as { event?: string };
+        return ![
+          "provider_ack_not_done_visible",
+          "pressure_20_50_consecutive_asks_visible",
+          "invalid_key_error_visible",
+          "quota_error_visible",
+          "network_error_visible",
+          "reconnect_stale_verified",
+          "stale_label_visible",
+          "offline_label_visible",
+          "error_label_visible",
+          "no_hidden_fallback_verified",
+        ].includes(String(eventRow.event || ""));
+      }));
+      writeJsonl(negativeStatus, [
+        event("desktop", "stale_label_visible", statusEvidence, "mission_negative_status"),
+        event("desktop", "offline_label_visible", statusEvidence, "mission_negative_status"),
+        event("desktop", "error_label_visible", statusEvidence, "mission_negative_status"),
+      ]);
+      writeJsonl(negativeStress, [
+        event("desktop", "provider_ack_not_done_visible", stressEvidence, "mission_negative_stress"),
+        event("desktop", "invalid_key_error_visible", stressEvidence, "mission_negative_stress"),
+        event("desktop", "quota_error_visible", stressEvidence, "mission_negative_stress"),
+        event("desktop", "network_error_visible", stressEvidence, "mission_negative_stress"),
+        event("desktop", "reconnect_stale_verified", stressEvidence, "mission_negative_stress"),
+        event("timeline", "no_hidden_fallback_verified", stressEvidence, "mission_negative_stress"),
+        ...Array.from({ length: 20 }, () => event("desktop", "pressure_20_50_consecutive_asks_visible", stressEvidence, "mission_negative_stress")),
+      ]);
+
+      const result = spawnSync("node", [
+        "scripts/ops/friday-ui-device-observations-manifest.mjs",
+        `--mission-id=${missionId}`,
+        `--mobile=${refs.mobile}`,
+        `--desktop=${refs.desktop}`,
+        `--timeline=${refs.timeline}`,
+        `--events=${events}`,
+        `--negative-control-events=${negativeStatus}`,
+        `--negative-control-events=${negativeStress}`,
+        `--extra-evidence-ref=${statusEvidence}`,
+        `--extra-evidence-ref=${stressEvidence}`,
+        `--out=${out}`,
+        "--defer-channel-proof",
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as { status?: string; blockers?: unknown[] };
+      expect(output.status).toBe("ready");
+      expect(output.blockers).toEqual([]);
+
+      const manifest = JSON.parse(readFileSync(out, "utf8")) as {
+        negative_control_segments?: Array<{ mission_id?: string; observations?: unknown[] }>;
+        stress?: { mission_bound_ask_count?: number };
+        event_order?: string[];
+      };
+      expect(manifest.negative_control_segments).toHaveLength(2);
+      expect(manifest.negative_control_segments?.map((segment) => segment.mission_id).sort()).toEqual([
+        "mission_negative_status",
+        "mission_negative_stress",
+      ]);
+      expect(manifest.stress?.mission_bound_ask_count).toBe(20);
+      expect(manifest.event_order).not.toContain("stale_offline_error_labels_verified");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks an explicit single negative-control mission when rows contain another mission", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-observations-negative-mismatch-"));
+    try {
+      const refs = writeEvidence(tempDir);
+      const negative = join(tempDir, "negative.jsonl");
+      writeJsonl(negative, [
+        event("desktop", "stale_label_visible", refs.desktop, "mission_negative_one"),
+        event("desktop", "offline_label_visible", refs.desktop, "mission_negative_two"),
+      ]);
+      const { result } = runManifest(tempDir, refs, completeEvents(refs), [
+        `--negative-control-events=${negative}`,
+        "--negative-control-mission-id=mission_negative_one",
+        "--require-ready",
+      ]);
+
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string }> };
+      expect(output.blockers?.map((blocker) => blocker.code)).toContain("negative_control_mission_id_mismatch");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("blocks and does not write a manifest when required observations are missing", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-observations-missing-"));
     try {
