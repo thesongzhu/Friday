@@ -49,4 +49,12 @@ describe("friday-uiux-product-closure-readiness contract", () => {
     expect(source).toContain("evidence set only lists inputs; each referenced artifact is still revalidated");
     expect(source).toContain("evidenceSets,");
   });
+
+  it("discovers nested runtime action evidence instead of requiring hand-built flat lists", () => {
+    const source = readFileSync("scripts/ops/friday-uiux-product-closure-readiness.mjs", "utf8");
+
+    expect(source).toContain("function recursiveRuntimeEvidenceFromDir");
+    expect(source).toContain('["action-runtime-evidence.json", "design-action-runtime-evidence.json"].includes(entry.name)');
+    expect(source).toContain("...recursiveRuntimeEvidenceFromDir(resolved)");
+  });
 });

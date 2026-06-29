@@ -22,6 +22,10 @@ WORKBENCH_DB="${FRIDAY_WORKBENCH_DB_PATH:-}"
 DESIGN_ACTION_CONTRACT="${FRIDAY_DESIGN_ACTION_CONTRACT:-}"
 DESIGN_ACTION_RUNTIME_EVIDENCE="${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE:-}"
 DEFER_CHANNEL_PROOF="${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}"
+DESIGN_ACTION_RUNTIME_EVIDENCE_PATHS=()
+if [ -n "${DESIGN_ACTION_RUNTIME_EVIDENCE:-}" ]; then
+  IFS=':' read -r -a DESIGN_ACTION_RUNTIME_EVIDENCE_PATHS <<<"${DESIGN_ACTION_RUNTIME_EVIDENCE}"
+fi
 DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS=()
 if [ -n "${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS:-}" ]; then
   IFS=':' read -r -a DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS <<<"${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS}"
@@ -159,7 +163,7 @@ while [ "$#" -gt 0 ]; do
         usage >&2
         exit 64
       fi
-      DESIGN_ACTION_RUNTIME_EVIDENCE="$2"
+      DESIGN_ACTION_RUNTIME_EVIDENCE_PATHS+=("$2")
       shift
       ;;
     --design-action-runtime-evidence-dir)
@@ -206,6 +210,22 @@ first_existing() {
     fi
   done
   return 1
+}
+
+sync_design_action_runtime_evidence_env() {
+  local joined=""
+  local candidate
+  set +u
+  for candidate in "${DESIGN_ACTION_RUNTIME_EVIDENCE_PATHS[@]}"; do
+    [ -n "$candidate" ] || continue
+    if [ -z "$joined" ]; then
+      joined="$candidate"
+    else
+      joined="${joined}:$candidate"
+    fi
+  done
+  set -u
+  DESIGN_ACTION_RUNTIME_EVIDENCE="$joined"
 }
 
 discover_action_runtime_evidence_paths() {
@@ -261,6 +281,34 @@ function pathsFromIndex(indexPath) {
     .map((candidate) => path.isAbsolute(candidate) ? candidate : path.resolve(indexDir, candidate));
 }
 
+function walkRuntimeEvidence(root) {
+  const found = [];
+  const seen = new Set();
+  const stack = [{ dir: root, depth: 0 }];
+  const maxDepth = 8;
+  const ignored = new Set([".git", "node_modules", "target", ".build", "DerivedData"]);
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (!item || seen.has(item.dir) || item.depth > maxDepth) continue;
+    seen.add(item.dir);
+    let entries = [];
+    try {
+      entries = fs.readdirSync(item.dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const candidate = path.join(item.dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!ignored.has(entry.name)) stack.push({ dir: candidate, depth: item.depth + 1 });
+      } else if (entry.isFile() && ["action-runtime-evidence.json", "design-action-runtime-evidence.json"].includes(entry.name)) {
+        found.push(candidate);
+      }
+    }
+  }
+  return found;
+}
+
 const found = [];
 for (const rawDir of process.argv.slice(2)) {
   if (!rawDir) continue;
@@ -278,6 +326,7 @@ for (const rawDir of process.argv.slice(2)) {
     ...pathsFromIndex(path.join(dir, "capture-index.json")),
     ...pathsFromIndex(path.join(dir, "desktop", "capture-index.json")),
     ...pathsFromIndex(path.join(dir, "mobile", "capture-index.json")),
+    ...walkRuntimeEvidence(dir),
   );
 }
 
@@ -433,12 +482,19 @@ discover_evidence_dir() {
       "$dir/mission-spine-objective-coverage.json" \
       "$dir/mission-spine-objective-coverage-gate.json" || true)"
   fi
-  if [ -z "${DESIGN_ACTION_RUNTIME_EVIDENCE:-}" ]; then
-    DESIGN_ACTION_RUNTIME_EVIDENCE="$(first_existing \
+  set +u
+  local runtime_evidence_path_count="${#DESIGN_ACTION_RUNTIME_EVIDENCE_PATHS[@]}"
+  set -u
+  if [ "$runtime_evidence_path_count" -eq 0 ]; then
+    local discovered_runtime_evidence
+    discovered_runtime_evidence="$(first_existing \
       "$dir/action-runtime-evidence.json" \
       "$dir/design-action-runtime-evidence.json" \
       "$dir/bundle/action-runtime-evidence.json" \
       "$dir/bundle/design-action-runtime-evidence.json" || true)"
+    if [ -n "${discovered_runtime_evidence:-}" ]; then
+      DESIGN_ACTION_RUNTIME_EVIDENCE_PATHS+=("$discovered_runtime_evidence")
+    fi
   fi
 }
 
@@ -468,6 +524,7 @@ emit_blocked_report() {
 }
 
 discover_evidence_dir "$EVIDENCE_DIR"
+sync_design_action_runtime_evidence_env
 export MISSION_ID="${MISSION_ID:-}"
 export MOBILE_EVIDENCE="${MOBILE_EVIDENCE:-}"
 export DESKTOP_EVIDENCE="${DESKTOP_EVIDENCE:-}"
@@ -789,9 +846,9 @@ run_design_action_gap_if_possible() {
   if [ -n "${EVIDENCE_DIR:-}" ]; then
     args+=("--evidence-dir=$(abs_path "$EVIDENCE_DIR")")
   fi
-  if [ -n "${DESIGN_ACTION_RUNTIME_EVIDENCE:-}" ]; then
-    IFS=':' read -r -a runtime_evidence_paths <<<"${DESIGN_ACTION_RUNTIME_EVIDENCE}"
-  fi
+  set +u
+  runtime_evidence_paths+=("${DESIGN_ACTION_RUNTIME_EVIDENCE_PATHS[@]}")
+  set -u
   set +u
   local -a discovery_dirs=()
   if [ -n "${EVIDENCE_DIR:-}" ]; then
