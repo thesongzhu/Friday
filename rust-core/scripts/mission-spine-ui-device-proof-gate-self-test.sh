@@ -414,7 +414,10 @@ mobile="$tmpdir/mobile.trace"
 desktop="$tmpdir/desktop.trace"
 channel="$tmpdir/channel.trace"
 timeline="$tmpdir/timeline.trace"
+negative="$tmpdir/negative-control.trace"
 valid="$tmpdir/valid.json"
+segmented_valid="$tmpdir/segmented-valid.json"
+segmented_missing_main="$tmpdir/segmented-missing-main.json"
 assembled="$tmpdir/assembled.json"
 observations_manifest="$tmpdir/observations-manifest.json"
 template_manifest="$tmpdir/template-observations-manifest.json"
@@ -437,6 +440,7 @@ write_evidence "$mobile" mobile
 write_evidence "$desktop" desktop
 write_evidence "$channel" channel
 write_evidence "$timeline" timeline
+write_evidence "$negative" negative-control
 write_evidence "$secret_mobile" mobile
 
 echo "[mission-spine-ui-self-test] fixture/sample proof is rejected"
@@ -514,6 +518,93 @@ echo "[mission-spine-ui-self-test] valid real-consumption-shaped proof passes"
 write_proof "$valid" "$mobile" "$desktop" "$channel" "$timeline"
 env MISSION_SPINE_UI_DEVICE_PROOF="$valid" "$gate" >"$selftest_out"
 
+echo "[mission-spine-ui-self-test] negative-control segment proof passes without polluting happy path"
+negative_sha="$(file_sha256 "$negative")"
+negative_bytes="$(file_bytes "$negative")"
+jq \
+  --arg negative "$negative" \
+  --arg negative_sha "$negative_sha" \
+  --argjson negative_bytes "$negative_bytes" \
+  --arg negative_mission "mission_ui_gate_negative_self_test" \
+  --arg captured_at "2026-06-04T21:00:00Z" \
+  '
+    def negative_event:
+      . == "provider_ack_not_done_visible"
+      or . == "pressure_20_50_consecutive_asks_visible"
+      or . == "invalid_key_error_visible"
+      or . == "quota_error_visible"
+      or . == "network_error_visible"
+      or . == "channel_replay_blocked_visible"
+      or . == "reconnect_stale_verified"
+      or . == "stale_label_visible"
+      or . == "offline_label_visible"
+      or . == "error_label_visible"
+      or . == "no_hidden_fallback_verified";
+    . as $proof
+    | .evidence_files += [{
+        role: "negative_control",
+        path: $negative,
+        kind: "trace",
+        sha256: $negative_sha,
+        bytes: $negative_bytes,
+        real_consumption: true,
+        capture_method: "self_test_real_negative_control_trace",
+        captured_at_utc: $captured_at,
+        observed_mission_id: $negative_mission
+      }]
+    | .negative_control_segments = [{
+        segment_id: "negative-status-error-stress-self-test",
+        mission_id: $negative_mission,
+        truth_label: "real_ui_negative_control_segment_not_happy_path",
+        happy_path: false,
+        evidence_refs: [$negative],
+        event_order: ["provider_ack_not_done_visible", "invalid_key_error_visible", "quota_error_visible", "network_error_visible", "stale_offline_error_labels_verified", "no_hidden_fallback_verified"],
+        observations: ($proof.observations
+          | map(select(.event | negative_event))
+          | map(.mission_id = $negative_mission | .evidence_ref = $negative | .surface = "desktop"))
+      }]
+    | .observations = (
+        .observations
+        | map(select((.event | negative_event) | not))
+        + [{
+            surface: "timeline",
+            event: "bounded_page_2_visible",
+            mission_id: "mission_ui_gate_self_test",
+            evidence_ref: $proof.timeline.evidence_ref
+          }]
+      )
+    | .event_order = [
+        "mission_intake_submitted",
+        "mission_resolve_or_create",
+        "duplicate_preflight",
+        "mission_bound_provider_action",
+        "real_provider_execution",
+        "proof_receipt",
+        "timeline_page_1",
+        "timeline_page_2",
+        "same_mission_mobile_desktop_channel",
+        "memory_candidate_review_only"
+      ]
+    | .stress.evidence_ref = $negative
+    | .mission_workbench.provider_ack_not_done_visible = false
+  ' "$valid" >"$segmented_valid"
+env MISSION_SPINE_UI_DEVICE_PROOF="$segmented_valid" "$gate" >"$selftest_out"
+
+echo "[mission-spine-ui-self-test] happy-path events cannot be satisfied by negative-control segments"
+jq \
+  --arg negative "$negative" \
+  --arg negative_mission "mission_ui_gate_negative_self_test" \
+  '
+    .negative_control_segments[0].observations += [{
+      surface: "desktop",
+      event: "mission_intake_submitted",
+      mission_id: $negative_mission,
+      evidence_ref: $negative
+    }]
+    | .observations = (.observations | map(select(.event != "mission_intake_submitted")))
+  ' "$segmented_valid" >"$segmented_missing_main"
+expect_exit 6 env MISSION_SPINE_UI_DEVICE_PROOF="$segmented_missing_main" "$gate"
+
 echo "[mission-spine-ui-self-test] assembler output passes current gate"
 jq '{checks, stress, timeline, mission_workbench, transcript_browser, status_labels, memory_candidates, event_order, observations}' "$valid" >"$observations_manifest"
 MISSION_ID="mission_ui_gate_self_test" \
@@ -553,7 +644,7 @@ expect_exit 64 env \
   OUT="$assembled" \
   scripts/mission-spine-ui-device-proof-assemble.sh
 
-rm -f "$valid" "$assembled" "$observations_manifest" "$template_manifest" "$fixture" "$organic" "$placeholder" "$pending_marker" "$missing_evidence" "$missing_metadata" "$missing_observations" "$missing_stress" "$missing_workbench" "$hash_mismatch" "$bytes_mismatch" "$secret_evidence" "$template_assembled" "$mobile" "$desktop" "$channel" "$timeline" "$secret_mobile" "$selftest_out" "$selftest_err" "$tmpdir/assembler.out" "$tmpdir/template.out"
+rm -f "$valid" "$segmented_valid" "$segmented_missing_main" "$assembled" "$observations_manifest" "$template_manifest" "$fixture" "$organic" "$placeholder" "$pending_marker" "$missing_evidence" "$missing_metadata" "$missing_observations" "$missing_stress" "$missing_workbench" "$hash_mismatch" "$bytes_mismatch" "$secret_evidence" "$template_assembled" "$mobile" "$desktop" "$channel" "$timeline" "$negative" "$secret_mobile" "$selftest_out" "$selftest_err" "$tmpdir/assembler.out" "$tmpdir/template.out"
 rmdir "$tmpdir"
 
 echo "[mission-spine-ui-self-test] PASS"

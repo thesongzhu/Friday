@@ -12,6 +12,7 @@ usage:
   DESKTOP_EVIDENCE=/abs/desktop.trace \
   CHANNEL_EVIDENCE=/abs/channel.trace \
   TIMELINE_EVIDENCE=/abs/timeline.trace \
+  NEGATIVE_CONTROL_EVIDENCE_FILES=/abs/negative.trace[:/abs/another-negative.trace] \
   OBSERVATIONS_MANIFEST=/abs/ui-observations-manifest.json \
   OUT=/tmp/mission-spine-ui-device-proof.json \
   scripts/mission-spine-ui-device-proof-assemble.sh
@@ -108,7 +109,6 @@ if ! jq -e '
   and (.mission_workbench | type == "object")
   and (.mission_workbench.visible == true)
   and (.mission_workbench.same_mission_projection_visible == true)
-  and (.mission_workbench.provider_ack_not_done_visible == true)
   and (.mission_workbench.memory_candidate_review_only_visible == true)
   and (.mission_workbench.evidence_ref | type == "string" and length > 0)
   and (.transcript_browser | type == "object")
@@ -144,6 +144,56 @@ desktop_bytes="$(file_bytes "$desktop")"
 channel_bytes="$(file_bytes "$channel")"
 timeline_bytes="$(file_bytes "$timeline")"
 
+negative_evidence_json="$(mktemp "${TMPDIR:-/tmp}/friday-ui-negative-evidence.XXXXXX.json")"
+printf '[]\n' >"$negative_evidence_json"
+cleanup_negative_evidence_json() {
+  rm -f "$negative_evidence_json"
+}
+trap cleanup_negative_evidence_json EXIT
+
+if [[ -n "${NEGATIVE_CONTROL_EVIDENCE_FILES:-}" ]]; then
+  IFS=':' read -r -a negative_control_evidence_files <<<"${NEGATIVE_CONTROL_EVIDENCE_FILES}"
+  for negative_input in "${negative_control_evidence_files[@]}"; do
+    if [[ -z "$negative_input" ]]; then
+      continue
+    fi
+    negative_path="$(abs_path "$negative_input")"
+    require_file "$negative_path" negative_control
+    negative_mission_id="$(jq -r --arg path "$negative_path" '
+      (.negative_control_segments // [])
+      | map(select((.evidence_refs // []) | index($path)))
+      | .[0].mission_id // empty
+    ' "$observations_manifest")"
+    if [[ -z "$negative_mission_id" ]]; then
+      echo "BLOCKER: negative-control evidence is not referenced by any manifest negative_control_segments entry: $negative_path" >&2
+      exit 6
+    fi
+    negative_sha="$(file_sha256 "$negative_path")"
+    negative_bytes="$(file_bytes "$negative_path")"
+    tmp_negative_evidence_json="${negative_evidence_json}.tmp"
+    jq \
+      --arg path "$negative_path" \
+      --arg kind "${NEGATIVE_CONTROL_KIND:-trace}" \
+      --arg sha "$negative_sha" \
+      --argjson bytes "$negative_bytes" \
+      --arg capture_method "${NEGATIVE_CONTROL_CAPTURE_METHOD:-negative_control_ui_capture}" \
+      --arg captured_at "$captured_at" \
+      --arg observed_mission_id "$negative_mission_id" \
+      '. + [{
+        role: "negative_control",
+        path: $path,
+        kind: $kind,
+        sha256: $sha,
+        bytes: $bytes,
+        real_consumption: true,
+        capture_method: $capture_method,
+        captured_at_utc: $captured_at,
+        observed_mission_id: $observed_mission_id
+      }]' "$negative_evidence_json" >"$tmp_negative_evidence_json"
+    mv "$tmp_negative_evidence_json" "$negative_evidence_json"
+  done
+fi
+
 mkdir -p "$(dirname "$out")"
 
 jq -n \
@@ -173,6 +223,7 @@ jq -n \
   --arg channel_capture_method "$channel_capture_method" \
   --arg timeline_capture_method "$timeline_capture_method" \
   --slurpfile manifest "$observations_manifest" \
+  --slurpfile negative_evidence "$negative_evidence_json" \
   '($manifest[0]) as $manifest |
     {
       proof: $proof,
@@ -197,7 +248,7 @@ jq -n \
           evidence_ref: $channel
         }
       },
-      evidence_files: [
+      evidence_files: ([
         {
           role: "mobile",
           path: $mobile,
@@ -242,9 +293,10 @@ jq -n \
           captured_at_utc: $captured_at,
           observed_mission_id: $mission_id
         }
-      ],
+      ] + ($negative_evidence[0] // [])),
       event_order: $manifest.event_order,
       observations: $manifest.observations,
+      negative_control_segments: ($manifest.negative_control_segments // []),
       checks: $manifest.checks,
       stress: $manifest.stress,
       timeline: {
