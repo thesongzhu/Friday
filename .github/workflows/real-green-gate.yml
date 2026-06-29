@@ -421,6 +421,8 @@ jobs:
       FRIDAY_TELEGRAM_MODE: ${{ secrets.FRIDAY_TELEGRAM_MODE || vars.FRIDAY_TELEGRAM_MODE }}
       PHASE24E_TELEGRAM_LISTENER_TIMEOUT_MS: "1800000"
       PHASE24E_TELEGRAM_POLLING_TIMEOUT_SEC: "5"
+      PHASE24E_TELEGRAM_REJECT_CANDIDATE_ID: phase24e-reject-run-${{ github.run_id }}
+      PHASE24E_TELEGRAM_APPROVE_CANDIDATE_ID: phase24e-approve-run-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5
         with:
