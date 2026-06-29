@@ -15,23 +15,29 @@ describe("selected shell structure", () => {
     expect(topBarSource).toContain("Open command sheet");
   });
 
-  it("keeps the selected desktop Hub strip and bottom proof dock in the shell", () => {
+  it("keeps the selected desktop Hub strip and right-docked proof inspector in the shell", () => {
     const shellSource = readFileSync("ui/src/components/console/shell/console-shell.tsx", "utf8");
+    const rightRailSource = readFileSync("ui/src/components/console/shell/right-rail.tsx", "utf8");
 
     expect(shellSource).toContain("function DesktopHubStrip");
-    expect(shellSource).toContain("Rust Hub / Core");
-    expect(shellSource).toContain("function DesktopProofDock");
-    expect(shellSource).toContain("Proof inspector");
-    expect(shellSource).toContain("Hub-projected");
+    expect(shellSource).toContain("data-testid=\"desktop-subtle-status-pet\"");
+    expect(shellSource).toContain("Friday Hub");
+    expect(shellSource).toContain("source-of-truth projection");
+    expect(shellSource).toContain("<RightRail />");
+    expect(shellSource).not.toContain("function DesktopProofDock");
+    expect(rightRailSource).toContain("data-testid=\"desktop-proof-inspector\"");
+    expect(rightRailSource).toContain("data-dock=\"right\"");
+    expect(rightRailSource).toContain("Right-docked ProofInspector");
   });
 
-  it("keeps Friday Home on the selected hero pet plus Chat/Status baseline", () => {
+  it("keeps Friday Home on the selected Chat/Status baseline without the old debug hero stage", () => {
     const homeSource = readFileSync("ui/src/routes/home-page.tsx", "utf8");
 
-    expect(homeSource).toContain("function HeroPetStage");
-    expect(homeSource).toContain("/source/pet/g-sit.png");
     expect(homeSource).toContain("Friday Home");
     expect(homeSource).toContain("Chat + Status");
-    expect(homeSource).toContain("providerLabel");
+    expect(homeSource).toContain("Status first, chat always one tap away");
+    expect(homeSource).toContain("ProviderTruthCard");
+    expect(homeSource).toContain("ProviderTruthCompact");
+    expect(homeSource).not.toContain("function HeroPetStage");
   });
 });

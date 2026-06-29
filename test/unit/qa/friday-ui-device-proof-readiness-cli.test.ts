@@ -1168,7 +1168,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("keeps harvesting workbench happy-path rows when negative-control status labels are absent", () => {
+  it("blocks workbench-derived rows when negative-control status labels are absent", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-partial-workbench-"));
     try {
       writePartialEvidenceDir(tempDir);
@@ -1196,29 +1196,32 @@ describe("friday-ui-device-proof-readiness", () => {
         blockers?: string[];
       };
 
-      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_bridge:ready"))).toBe(true);
-      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_merge:ready"))).toBe(true);
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_bridge:ready"))).not.toBe(true);
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_merge:ready"))).not.toBe(true);
       expect(result.notes?.some((note) => note.includes("ui_device_gap_report:gaps_present"))).toBe(true);
       expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
 
-      const rows = readFileSync(join(tempDir, "same-run-events.merged.jsonl"), "utf8")
+      expect(existsSync(join(tempDir, "same-run-events.merged.jsonl"))).toBe(false);
+      const rows = readFileSync(join(tempDir, "same-run-events.jsonl"), "utf8")
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line) as { surface?: string; event?: string });
       expect(rows).toContainEqual(expect.objectContaining({
+        surface: "mobile",
+        event: "mission_intake_submitted",
+      }));
+      expect(rows).toContainEqual(expect.objectContaining({
         surface: "desktop",
-        event: "mission_workbench_visible",
-      }));
-      expect(rows).toContainEqual(expect.objectContaining({
-        surface: "timeline",
-        event: "bounded_page_2_visible",
-      }));
-      expect(rows).toContainEqual(expect.objectContaining({
-        surface: "timeline",
-        event: "memory_candidate_review_only",
+        event: "same_mission_projection_visible",
       }));
       expect(rows).not.toContainEqual(expect.objectContaining({
         event: "stale_label_visible",
+      }));
+      expect(rows).not.toContainEqual(expect.objectContaining({
+        event: "mission_workbench_visible",
+      }));
+      expect(rows).not.toContainEqual(expect.objectContaining({
+        surface: "timeline",
       }));
       expect(rows).not.toContainEqual(expect.objectContaining({
         surface: "channel",
