@@ -12,8 +12,7 @@ import type {
 import { isFridayAnthropicBearerAuthMode } from "#providers";
 
 import {
-  FRIDAY_ANTHROPIC_OAUTH_HEADERS,
-  FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
+  FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
 } from "../../../providers/oauth/friday-anthropic-oauth.js";
 
 import type {
@@ -184,21 +183,6 @@ function buildRequestBody(
   }
 }
 
-// ─── OAuth system prompt ───
-
-/**
- * Prepends the required Claude Code identity prefix to the system prompt
- * when using OAuth authentication. Required for Anthropic OAuth tokens.
- */
-function withOAuthSystemPrefix(
-  systemPrompt: string,
-  api: FridayProviderApi,
-  authMode?: FridayProviderAuthMode,
-): string {
-  if (api !== "anthropic-messages" || !isFridayAnthropicBearerAuthMode(authMode)) return systemPrompt;
-  return `${FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX}\n\n${systemPrompt}`;
-}
-
 // ─── Build URL ───
 
 function buildUrl(api: FridayProviderApi, baseUrl: string, model: string): string {
@@ -237,9 +221,11 @@ function buildHeaders(
     switch (api) {
       case "anthropic-messages":
         if (isBearerAuth) {
-          headers["Authorization"] = `Bearer ${credential}`;
-          // OAuth tokens require Claude Code identity headers + beta flags
-          Object.assign(headers, FRIDAY_ANTHROPIC_OAUTH_HEADERS);
+          throw new FridayDomainError(
+            "PROVIDER_AUTH_UNSUPPORTED",
+            FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
+            { httpStatus: 400 },
+          );
         } else {
           headers["x-api-key"] = credential;
         }
@@ -425,7 +411,7 @@ export function createFridayProviderInferenceClient(
                 const authMode = route.provider.config.authMode;
                 const headers = buildHeaders(api, credential, route.provider.config.headers, authMode);
                 const body = buildRequestBody(api, model, [
-                  { role: "system", content: withOAuthSystemPrefix(prompt.system, api, authMode) },
+                  { role: "system", content: prompt.system },
                   { role: "user", content: prompt.user },
                 ], resolvedTaskProfile.temperature);
                 const resp = await fetch(url, {
@@ -518,10 +504,8 @@ export function createFridayProviderInferenceClient(
               openaiSystemCache: { enabled: false },
             };
 
-            // Use the OAuth-prefixed system prompt so cache blocks preserve the required prefix
-            const effectiveSystemPrompt = withOAuthSystemPrefix(request.prompt.system, api, authMode);
             const cacheResult = cacheAdapter.applyAnthropicCacheHints({
-              systemPrompt: effectiveSystemPrompt,
+              systemPrompt: request.prompt.system,
               userPrompt: request.prompt.user,
               hints: cacheHints,
             });

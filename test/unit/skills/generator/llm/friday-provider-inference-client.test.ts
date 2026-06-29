@@ -12,10 +12,7 @@ import type {
   FridayInferenceSessionContext,
   FridayProviderContextMessage,
 } from "#providers";
-import {
-  FRIDAY_ANTHROPIC_OAUTH_HEADERS,
-  FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
-} from "#providers";
+import { FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE } from "#providers";
 
 // ─── parseJsonFromText tests ───
 
@@ -270,7 +267,7 @@ describe("createFridayProviderInferenceClient", () => {
     }
   });
 
-  it("infer sends OAuth identity headers and system prefix for OAuth providers", async () => {
+  it("infer fails closed for Anthropic OAuth providers without issuing a request", async () => {
     const oauthProfile: FridayProviderProfile = {
       id: "oauth-provider",
       kind: "anthropic",
@@ -312,52 +309,23 @@ describe("createFridayProviderInferenceClient", () => {
       }),
     } as unknown as FridayProviderService;
 
-    let capturedHeaders: Record<string, string> = {};
-    let capturedBody: Record<string, unknown> = {};
-
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
-      capturedHeaders = init.headers as Record<string, string>;
-      capturedBody = JSON.parse(init.body as string) as Record<string, unknown>;
-      return {
-        ok: true,
-        json: async () => ({
-          content: [{ type: "text", text: '{"state":"ready"}' }],
-          usage: { input_tokens: 10, output_tokens: 5 },
-        }),
-      };
-    });
+    globalThis.fetch = vi.fn();
 
     try {
       const client = createFridayProviderInferenceClient({
         providerService: mockProvider,
       });
 
-      await client.infer<{ state: string }>({
-        prompt: {
-          system: "You are a test assistant",
-          user: "Test input",
-        },
-      });
-
-      // Verify OAuth headers are present
-      expect(capturedHeaders["Authorization"]).toBe("Bearer sk-ant-oat01-test-token");
-      expect(capturedHeaders["anthropic-beta"]).toContain("oauth-2025-04-20");
-      expect(capturedHeaders["anthropic-beta"]).toContain("claude-code-20250219");
-      expect(capturedHeaders["x-app"]).toBe("cli");
-      expect(capturedHeaders["user-agent"]).toContain("claude-cli");
-
-      // Verify system prompt includes OAuth prefix
-      // System may be a string or array of content blocks (prompt caching converts to blocks)
-      const systemContent = capturedBody["system"];
-      const systemText = typeof systemContent === "string"
-        ? systemContent
-        : JSON.stringify(systemContent);
-      expect(systemText).toContain(FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX);
-      expect(systemText).toContain("You are a test assistant");
-
-      // Verify anthropic-beta also includes prompt-caching flag (merged, not replaced)
-      expect(capturedHeaders["anthropic-beta"]).toContain("prompt-caching-2024-07-31");
+      await expect(
+        client.infer<{ state: string }>({
+          prompt: {
+            system: "You are a test assistant",
+            user: "Test input",
+          },
+        }),
+      ).rejects.toThrow(FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -492,7 +460,7 @@ describe("createFridayProviderInferenceClient", () => {
     }
   });
 
-  it("infer with sessionContext sends OAuth headers in compaction summarize calls", async () => {
+  it("infer with sessionContext fails closed before Anthropic OAuth compaction calls", async () => {
     const oauthProfile: FridayProviderProfile = {
       id: "oauth-provider-session",
       kind: "anthropic",
@@ -534,22 +502,8 @@ describe("createFridayProviderInferenceClient", () => {
       }),
     } as unknown as FridayProviderService; // SAFETY: mock service for testing
 
-    // Collect ALL fetch calls (compaction summarize + main inference)
-    const allFetchCalls: Array<{ url: string; headers: Record<string, string>; body: Record<string, unknown> }> = [];
-
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init: RequestInit) => {
-      const headers = init.headers as Record<string, string>;
-      const body = JSON.parse(init.body as string) as Record<string, unknown>;
-      allFetchCalls.push({ url, headers, body });
-      return {
-        ok: true,
-        json: async () => ({
-          content: [{ type: "text", text: '{"state":"ready","summaryText":"summary","decisions":[],"todos":[],"openQuestions":[],"toolFailures":[],"fileOperations":[]}' }],
-          usage: { input_tokens: 10, output_tokens: 5 },
-        }),
-      };
-    });
+    globalThis.fetch = vi.fn();
 
     try {
       // Generate enough messages to trigger compaction (>70% of 128k tokens = ~89,600 tokens).
@@ -576,32 +530,16 @@ describe("createFridayProviderInferenceClient", () => {
         providerService: mockProvider,
       });
 
-      await client.infer<{ state: string }>({
-        prompt: {
-          system: "You are a test assistant",
-          user: "Generate the output",
-        },
-        sessionContext,
-      });
-
-      // Block compaction can now preserve enough relevant context to avoid a separate
-      // summarization round-trip, but every provider fetch must still carry OAuth headers.
-      expect(allFetchCalls.length).toBeGreaterThanOrEqual(1);
-
-      // Verify EVERY fetch call has OAuth headers and system prefix
-      for (const call of allFetchCalls) {
-        expect(call.headers["Authorization"]).toBe("Bearer sk-ant-oat01-session-token");
-        expect(call.headers["anthropic-beta"]).toContain("oauth-2025-04-20");
-        expect(call.headers["x-app"]).toBe("cli");
-        expect(call.headers["user-agent"]).toContain("claude-cli");
-
-        // System content should include the OAuth prefix
-        const systemContent = call.body["system"];
-        const systemText = typeof systemContent === "string"
-          ? systemContent
-          : JSON.stringify(systemContent);
-        expect(systemText).toContain(FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX);
-      }
+      await expect(
+        client.infer<{ state: string }>({
+          prompt: {
+            system: "You are a test assistant",
+            user: "Generate the output",
+          },
+          sessionContext,
+        }),
+      ).rejects.toThrow(FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -697,13 +635,13 @@ describe("createFridayProviderInferenceClient", () => {
       const systemText = typeof systemContent === "string"
         ? systemContent
         : JSON.stringify(systemContent);
-      expect(systemText).not.toContain(FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX);
+      expect(systemText).not.toContain("Claude Code");
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  it("infer adds Claude-compatible Bearer headers for Anthropic token auth mode", async () => {
+  it("infer fails closed for Anthropic token auth mode without issuing a request", async () => {
     const anthropicTokenProfile: FridayProviderProfile = {
       id: "anthropic-token-provider",
       kind: "anthropic",
@@ -744,43 +682,23 @@ describe("createFridayProviderInferenceClient", () => {
       }),
     } as unknown as FridayProviderService;
 
-    let capturedHeaders: Record<string, string> = {};
-    let capturedBody: Record<string, unknown> = {};
-
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
-      capturedHeaders = init.headers as Record<string, string>;
-      capturedBody = JSON.parse(init.body as string) as Record<string, unknown>;
-      return {
-        ok: true,
-        json: async () => ({
-          content: [{ type: "text", text: '{"state":"ready"}' }],
-          usage: { input_tokens: 10, output_tokens: 5 },
-        }),
-      };
-    });
+    globalThis.fetch = vi.fn();
 
     try {
       const client = createFridayProviderInferenceClient({
         providerService: mockProvider,
       });
 
-      await client.infer<{ state: string }>({
-        prompt: {
-          system: "You are a test assistant",
-          user: "Test input",
-        },
-      });
-
-      expect(capturedHeaders["Authorization"]).toBe("Bearer sk-ant-token-live");
-      expect(capturedHeaders["x-api-key"]).toBeUndefined();
-      expect(capturedHeaders["anthropic-beta"]).toContain("oauth-2025-04-20");
-
-      const systemContent = capturedBody["system"];
-      const systemText = typeof systemContent === "string"
-        ? systemContent
-        : JSON.stringify(systemContent);
-      expect(systemText).toContain(FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX);
+      await expect(
+        client.infer<{ state: string }>({
+          prompt: {
+            system: "You are a test assistant",
+            user: "Test input",
+          },
+        }),
+      ).rejects.toThrow(FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
     } finally {
       globalThis.fetch = originalFetch;
     }

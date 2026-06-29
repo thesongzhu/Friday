@@ -2,13 +2,8 @@
 
 export type { FridayPkcePair, FridayAnthropicAuthorizationCodeParts, FridayOAuthProviderAdapter, CreateFridayAnthropicOAuthDeps } from "./friday-anthropic-oauth.js";
 export {
-  FRIDAY_ANTHROPIC_OAUTH_CLIENT_ID,
-  FRIDAY_ANTHROPIC_OAUTH_AUTHORIZE_URL,
-  FRIDAY_ANTHROPIC_OAUTH_TOKEN_URL,
-  FRIDAY_ANTHROPIC_OAUTH_REDIRECT_URI,
-  FRIDAY_ANTHROPIC_OAUTH_SCOPES,
-  FRIDAY_ANTHROPIC_OAUTH_HEADERS,
-  FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
+  FRIDAY_ANTHROPIC_OAUTH_DISABLED_CODE,
+  FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
   generateFridayPkce,
   parseFridayAnthropicAuthorizationCode,
   createFridayAnthropicOAuthProvider,

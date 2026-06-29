@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { FridaySqliteLayer } from "#state";
-import { createFridayProviderService } from "#providers";
+import {
+  createFridayProviderService,
+  FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
+} from "#providers";
 import { resetMasterKeyCache } from "#providers";
 import { createFridayPreferenceFactRepository } from "#learning";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
@@ -516,15 +519,16 @@ describe("FridayProviderService", () => {
       });
 
       await service.updateProvider("test-id-0001", {
-        authMode: "token",
-        apiKey: "test-ant-token-switch", // pragma: allowlist secret
+        authMode: "api-key",
+        apiKey: "test-ant-api-key-switch", // pragma: allowlist secret
+        validateOnSave: false,
       });
 
       expect(listAuthProfiles()).toEqual([
         expect.objectContaining({
           provider_profile_id: "test-id-0001",
           profile_key: "default",
-          auth_mode: "token",
+          auth_mode: "api-key",
           oauth_provider: null,
           is_active: 1,
         }),
@@ -3027,23 +3031,8 @@ describe("FridayProviderService", () => {
       expect(result).toBeNull();
     });
 
-    it("surfaces failed post-login OAuth validation instead of reporting runtime connected", async () => {
-      const oauthFetch = vi.fn(async (url: string | URL | Request) => {
-        const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
-        if (href.includes("/v1/oauth/token")) {
-          return new Response(JSON.stringify({
-            access_token: "oauth-access-token",
-            refresh_token: "oauth-refresh-token",
-            expires_in: 3600,
-            token_type: "Bearer",
-            scope: "org:create_api_key user:profile user:inference",
-          }), { status: 200 });
-        }
-        if (href.endsWith("/v1/messages")) {
-          return new Response(JSON.stringify({ error: { message: "invalid token" } }), { status: 401 });
-        }
-        return new Response("{}", { status: 200 });
-      }) as typeof fetch;
+    it("fails closed when starting Anthropic OAuth instead of reporting runtime connected", async () => {
+      const oauthFetch = vi.fn(async () => new Response("{}", { status: 200 })) as typeof fetch;
       globalThis.fetch = oauthFetch;
       const oauthService = createFridayProviderService({
         db,
@@ -3062,29 +3051,12 @@ describe("FridayProviderService", () => {
         supportedModels: ["claude-sonnet-4-20250514"],
         defaultModel: "claude-sonnet-4-20250514",
       });
-      const initiation = await oauthService.initiateOAuthLogin({ providerId: profile.id });
-
-      const result = await oauthService.completeOAuthLogin({
-        providerId: profile.id,
-        authorizationCode: `auth-code#${initiation.state}`,
-        state: initiation.state,
-      });
-
-      expect(result.connected).toBe(false);
-      expect(result.runtimeReady).toBe(false);
-      expect(result.validation).toMatchObject({
-        status: "failed",
-        errorCode: "PROVIDER_AUTH_INVALID",
-      });
-
-      const stored = await oauthService.getProvider(profile.id);
-      expect(stored?.config.validation).toMatchObject({
-        status: "failed",
-        errorCode: "PROVIDER_AUTH_INVALID",
-      });
+      await expect(oauthService.initiateOAuthLogin({ providerId: profile.id }))
+        .rejects.toThrow(FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE);
+      expect(oauthFetch).not.toHaveBeenCalled();
     });
 
-    it("switches from oauth to token and validates with Bearer auth", async () => {
+    it("rejects switching from oauth to token because Anthropic bearer auth is disabled", async () => {
       let capturedHeaders: Record<string, string> = {};
       globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
         capturedHeaders = (init?.headers ?? {}) as Record<string, string>;
@@ -3100,16 +3072,13 @@ describe("FridayProviderService", () => {
         supportedModels: ["claude-sonnet-4-20250514"],
       });
 
-      const updated = await service.updateProvider("test-id-0001", {
-        authMode: "token",
-        apiKey: "test-ant-token-switch", // pragma: allowlist secret
-      });
-
-      expect(updated.config.authMode).toBe("token");
-      expect(updated.config.oauthProvider).toBeUndefined();
-      expect(updated.config.validation?.status).toBe("ok");
-      expect(capturedHeaders["Authorization"]).toBe("Bearer test-ant-token-switch");
-      expect(capturedHeaders["x-api-key"]).toBeUndefined();
+      await expect(
+        service.updateProvider("test-id-0001", {
+          authMode: "token",
+          apiKey: "test-ant-token-switch", // pragma: allowlist secret
+        }),
+      ).rejects.toThrow(FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE);
+      expect(capturedHeaders).toEqual({});
     });
 
     it("validates file-ref credentials during provider revalidation", async () => {

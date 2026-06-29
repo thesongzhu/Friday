@@ -7,8 +7,7 @@ import type {
   FridayResolvedProviderRoute,
 } from "#providers";
 import {
-  FRIDAY_ANTHROPIC_OAUTH_HEADERS,
-  FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX,
+  FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
   isFridayAnthropicBearerAuthMode,
 } from "#providers";
 import { resolveFridayAgentTaskProfile } from "../../agent/runtime/friday-agent-task-profile.js";
@@ -95,11 +94,8 @@ function buildRequestBody(
   temperature: number,
   authMode?: FridayProviderAuthMode,
 ): Record<string, unknown> {
-  const effectiveSystemPrompt = api === "anthropic-messages" && isFridayAnthropicBearerAuthMode(authMode)
-    ? `${FRIDAY_ANTHROPIC_OAUTH_SYSTEM_PREFIX}\n\n${systemPrompt}`
-    : systemPrompt;
   const messages = [
-    { role: "system" as const, content: effectiveSystemPrompt },
+    { role: "system" as const, content: systemPrompt },
     { role: "user" as const, content: userPrompt },
   ];
 
@@ -140,7 +136,7 @@ function buildRequestBody(
     case "anthropic-messages":
       return {
         model,
-        system: effectiveSystemPrompt,
+        system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
         max_tokens: 4096,
         temperature,
@@ -196,8 +192,11 @@ function buildHeaders(
     switch (api) {
       case "anthropic-messages":
         if (isFridayAnthropicBearerAuthMode(authMode)) {
-          headers["Authorization"] = `Bearer ${credential}`;
-          Object.assign(headers, FRIDAY_ANTHROPIC_OAUTH_HEADERS);
+          throw new FridayDomainError(
+            FRIDAY_SESSION_MEMORY_EXTRACTION_ERROR_CODES.PROVIDER_ERROR,
+            FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
+            { httpStatus: 400 },
+          );
         } else {
           headers["x-api-key"] = credential;
         }

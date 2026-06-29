@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createFridayAgentLlmClient } from "#agent";
 import type { FridayAgentLlmStreamEvent } from "#agent";
+import { FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE } from "#providers";
 import {
   buildRealOpenAIResponsesTextSSE,
   buildRealOpenAIResponsesToolSSE,
@@ -247,13 +248,8 @@ describe("FridayAgentLlmClient", () => {
     });
   });
 
-  it("uses Bearer auth and Claude OAuth headers for Anthropic OAuth", async () => {
-    const sseEvents = [
-      JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
-      JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } }),
-    ];
-
-    const fetchImpl = createMockFetch(200, createSSEStream(sseEvents));
+  it("fails closed for Anthropic OAuth without issuing a request", async () => {
+    const fetchImpl = vi.fn();
     const client = createFridayAgentLlmClient({
       baseUrl: "https://api.anthropic.com",
       apiKey: "oauth-access-token", // pragma: allowlist secret
@@ -262,30 +258,18 @@ describe("FridayAgentLlmClient", () => {
       fetchImpl,
     });
 
-    const stream = client.stream({
-      model: "claude-sonnet-4-20250514",
-      systemPrompt: "System prompt here",
-      messages: [{ role: "user", content: "Hello" }],
-      tools: [],
-      signal: new AbortController().signal,
-    });
-
-    for await (const _event of stream) {
-      // drain
-    }
-
-    const [, options] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
-    const headers = options.headers as Record<string, string>;
-    expect(headers["Authorization"]).toBe("Bearer oauth-access-token");
-    expect(headers["x-api-key"]).toBeUndefined();
-    expect(headers["anthropic-beta"]).toContain("oauth-2025-04-20");
-    expect(headers["anthropic-beta"]).toContain("claude-code-20250219");
-
-    const body = JSON.parse(options.body as string) as Record<string, unknown>;
-    expect(body.system).toEqual([
-      { type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." },
-      { type: "text", text: "System prompt here" },
-    ]);
+    await expect(async () => {
+      for await (const _event of client.stream({
+        model: "claude-sonnet-4-20250514",
+        systemPrompt: "System prompt here",
+        messages: [{ role: "user", content: "Hello" }],
+        tools: [],
+        signal: new AbortController().signal,
+      })) {
+        // drain
+      }
+    }).rejects.toThrow(FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   // ─── Anthropic model extraction ───
