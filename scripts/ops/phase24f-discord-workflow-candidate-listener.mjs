@@ -396,6 +396,11 @@ async function main() {
       skillDirs: [],
       port: 0,
       logRequests: false,
+      // Phase24F verifies candidate acks via the current-runner session mirror.
+      // Production/default hubs keep TS session execution fail-closed; this
+      // disposable proof harness opts in to the same test-oracle path used by
+      // live channel E2E coverage.
+      allowTestOnlySessionExecution: true,
       channels: { enabled: false, instances: [] },
     });
 
