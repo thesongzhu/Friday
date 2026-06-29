@@ -34,7 +34,7 @@ struct FridayNewSessionScreen: View {
             .foregroundStyle(MobileTheme.textSecondary)
         }
         Spacer()
-        StatusChip(text: "action gated", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
+        FridayChip(text: "action gated", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
       }
     }
   }
@@ -58,7 +58,7 @@ struct FridayNewSessionScreen: View {
           Label("Launch", systemImage: "play.fill")
             .frame(maxWidth: .infinity, minHeight: 38)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(FridayButtonStyle(variant: .primary))
         .tint(MobileTheme.cyan)
         .disabled(intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || launchInFlight)
         .accessibilityIdentifier("friday.new-session.launch-button")
@@ -98,10 +98,10 @@ struct FridayNewSessionScreen: View {
           Text(summary)
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
-          RefPill(label: "mission_id", ref: missionId)
-          RefPill(label: "work_item_id", ref: workItemId)
-          RefPill(label: "surface", ref: surfaceThreadId)
-          StatusChip(
+          FridayProofLine(label: "mission_id", ref: missionId)
+          FridayProofLine(label: "work_item_id", ref: workItemId)
+          FridayProofLine(label: "surface", ref: surfaceThreadId)
+          FridayChip(
             text: createdOrReady ? "created_or_ready" : status,
             bg: MobileTheme.chipDoneBG,
             fg: MobileTheme.chipDoneFG)
@@ -122,8 +122,8 @@ struct FridayNewSessionScreen: View {
                 .font(.caption2)
                 .foregroundStyle(MobileTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-              RefPill(label: "handoff", ref: context.evidenceRef)
-              RefPill(label: "action", ref: "mobile/newSession/open-chat-loop")
+              FridayProofLine(label: "handoff", ref: context.evidenceRef)
+              FridayProofLine(label: "action", ref: "mobile/newSession/open-chat-loop")
             }
           }
           Button {
@@ -132,7 +132,7 @@ struct FridayNewSessionScreen: View {
             Label("Continue in Friday Chat", systemImage: "bubble.left.and.bubble.right")
               .frame(maxWidth: .infinity)
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(FridayButtonStyle(variant: .primary))
           .tint(MobileTheme.cyan)
           .accessibilityIdentifier("friday.new-session.open-chat-loop")
         }
@@ -162,7 +162,7 @@ struct FridayNewSessionScreen: View {
         .font(.headline)
         .foregroundStyle(MobileTheme.textPrimary)
       if let count {
-        StatusChip(text: "\(count)", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+        FridayChip(text: "\(count)", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
       }
     }
   }

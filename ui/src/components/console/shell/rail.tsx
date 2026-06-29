@@ -126,7 +126,7 @@ export function Rail({ collapsed, onToggleCollapse }: RailProps) {
             onClick={onToggleCollapse}
             aria-label={localize(locale, collapsed ? "展开导航" : "收起导航", collapsed ? "Expand rail" : "Collapse rail")}
             aria-pressed={collapsed}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] transition-colors hover:bg-[color:var(--amber-100)]"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] transition-colors hover:bg-[color:var(--accent-soft)]"
             style={{ color: "var(--ink-500)" }}
           >
             {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
@@ -204,7 +204,7 @@ function RailNavItem(props: {
       )}
       style={({ isActive }) => ({
         color: isActive ? "var(--ink-900)" : "var(--ink-700)",
-        background: isActive ? "var(--amber-100)" : "transparent",
+        background: isActive ? "var(--accent-soft)" : "transparent",
       })}
     >
       <Icon className="h-4 w-4 shrink-0" />
@@ -242,7 +242,7 @@ export function MobileNav(props: { onOpenMore: () => void }) {
             className="flex flex-col items-center justify-center rounded-[var(--radius-md)] text-[11px] font-medium transition-colors"
             style={({ isActive }) => ({
               color: isActive ? "var(--ink-900)" : "var(--ink-500)",
-              background: isActive ? "var(--amber-100)" : "transparent",
+              background: isActive ? "var(--accent-soft)" : "transparent",
             })}
           >
             <item.Icon className="mb-1 h-4 w-4" />

@@ -1,41 +1,47 @@
 /**
- * Console v2.0 brand + shell tokens.
+ * Friday selected-design shell tokens.
  *
- * Surfaces, ink, amber/jade/rust, radius, and shell-layout variables used by
- * the Console shell. Legacy --color-* tokens remain in globals.css so existing
- * pages keep rendering; pages will migrate to these new tokens in later batches.
+ * Derived from the operator-confirmed 2026-06-02 design handoff:
+ * cyan/coral, warm off-white, glassNative, comfort density.
  *
- * Fonts (Noto Serif SC + JetBrains Mono) ship via @fontsource packages imported
- * at the top of main.tsx so the app works offline and avoids first-paint FOUT.
+ * Legacy --color-* tokens remain in globals.css so existing pages keep rendering.
  */
 
 :root {
   /* ── Surfaces ── */
-  --surface-0: #f4eee2; /* page background */
-  --surface-1: #fbf7ee; /* chrome / elevated panel */
-  --surface-2: #ffffff; /* cards / floating */
+  --surface-0: #f7f6f2; /* page background */
+  --surface-1: rgba(255, 255, 255, 0.68); /* chrome / elevated panel */
+  --surface-2: rgba(255, 255, 255, 0.78); /* cards / floating */
+  --surface-glass: rgba(255, 255, 255, 0.54);
+  --surface-glass-strong: rgba(255, 255, 255, 0.76);
+  --surface-border: rgba(18, 40, 45, 0.10);
 
   /* ── Ink (text) ── */
-  --ink-900: #2b2118;
-  --ink-700: #4a3e32;
-  --ink-500: #7a6a58;
-  --ink-300: #b3a794;
+  --ink-900: #1f2426;
+  --ink-700: #3f4a4d;
+  --ink-500: #6d777a;
+  --ink-300: #9ca5a7;
 
-  /* ── Amber (accent) ── */
-  --amber-100: #f4e3c9;
-  --amber-500: #c77d2e;
-  --amber-600: #a86620;
+  /* ── Locked cyan/coral action system ── */
+  --accent: #0f7d8c;
+  --accent-soft: rgba(15, 125, 140, 0.12);
+  --accent-muted: rgba(15, 125, 140, 0.07);
+  --coral: #d8634d;
+  --coral-soft: rgba(216, 99, 77, 0.14);
 
-  /* ── Jade (healthy) ── */
-  --jade-500: #4f7a5c;
+  /* ── Truth colors ── */
+  --ok: #277a5d;
+  --warn: #a86a1d;
+  --danger: #c2493f;
 
-  /* ── Rust (degraded / danger) ── */
-  --rust-500: #b0503a;
+  /* Compatibility status aliases. */
+  --rust-500: var(--danger);
 
   /* ── Radius ── */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-sm: 11px;
+  --radius-md: 15px;
+  --radius-lg: 22px;
+  --radius-xl: 30px;
 
   /* ── Shell layout ── */
   --shell-rail-w: 240px;

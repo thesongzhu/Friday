@@ -14,7 +14,7 @@ export function ChatCollapsedRightRailSlot() {
       <span
         aria-hidden="true"
         className="flex h-9 w-9 items-center justify-center rounded-full"
-        style={{ background: "var(--amber-100)", color: "var(--amber-600)" }}
+        style={{ background: "var(--accent-soft)", color: "var(--accent)" }}
       >
         <MessageSquare className="h-4 w-4" />
       </span>

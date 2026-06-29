@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { Activity, FileText, ShieldCheck } from "lucide-react";
 import { ProviderTruthCompact } from "@/components/console/shell/provider-truth";
 import { CommandPalette } from "@/components/core/command-palette";
 import { useCustomPacks } from "@/hooks/use-custom-packs";
@@ -228,7 +227,7 @@ export function ConsoleShell() {
             </div>
           ) : null}
 
-          <DesktopHubStrip locale={locale} />
+          <DesktopHubStrip locale={locale} onOpenPalette={() => setPaletteOpen(true)} />
 
           <main
             className={cn(
@@ -246,7 +245,6 @@ export function ConsoleShell() {
             </div>
           </main>
 
-          {!isOnChatPage ? <DesktopProofDock locale={locale} /> : null}
         </div>
 
         <RightRail />
@@ -259,8 +257,8 @@ export function ConsoleShell() {
   );
 }
 
-function DesktopHubStrip(props: { locale: "zh" | "en" }) {
-  const { locale } = props;
+function DesktopHubStrip(props: { locale: "zh" | "en"; onOpenPalette: () => void }) {
+  const { locale, onOpenPalette } = props;
   const { data: health } = useSystemHealthQuery();
   const providerTruthQuery = useProviderTruthQuery();
   const hubOnline = health?.status !== "offline";
@@ -269,18 +267,40 @@ function DesktopHubStrip(props: { locale: "zh" | "en" }) {
     <div
       className="hidden items-center gap-2 border-b px-4 py-2 text-xs lg:flex"
       style={{
-        background: "var(--amber-100)",
-        borderColor: "rgba(122, 106, 88, 0.18)",
+        background: "var(--surface-glass)",
+        borderColor: "var(--surface-border)",
         color: "var(--ink-700)",
+        backdropFilter: "blur(16px) saturate(1.35)",
       }}
     >
       <span
+        data-testid="desktop-subtle-status-pet"
         aria-hidden="true"
-        className="h-2 w-2 shrink-0 rounded-full"
-        style={{ background: hubOnline ? "var(--jade-500)" : "var(--rust-500)" }}
-      />
-      <strong style={{ color: "var(--ink-900)" }}>Rust Hub / Core</strong>
-      <span>{localize(locale, "真相源投影", "source-of-truth projection")}</span>
+        className="grid h-6 w-6 shrink-0 place-items-center rounded-[var(--radius-sm)] border"
+        style={{
+          borderColor: "rgba(15, 125, 140, 0.16)",
+          background: "rgba(15, 125, 140, 0.08)",
+          color: hubOnline ? "var(--ok)" : "var(--danger)",
+        }}
+      >
+        <span className="h-2 w-2 rounded-full" style={{ background: hubOnline ? "var(--ok)" : "var(--danger)" }} />
+      </span>
+      <strong style={{ color: "var(--ink-900)" }}>Friday Hub</strong>
+      <span data-friday-ui="chip" className="rounded-full px-2 py-1" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+        {localize(locale, "真相源投影", "source-of-truth projection")}
+      </span>
+      <span data-friday-ui="filter" className="rounded-full border px-2 py-1" style={{ borderColor: "rgba(15, 125, 140, 0.22)", color: "var(--ink-500)" }}>
+        {localize(locale, "证据优先", "Proof first")}
+      </span>
+      <button
+        type="button"
+        data-friday-ui="button-primary"
+        className="rounded-full px-3 py-1 font-semibold"
+        style={{ background: "var(--accent)", color: "white" }}
+        onClick={onOpenPalette}
+      >
+        {localize(locale, "命令", "Command")}
+      </button>
       <ProviderTruthCompact
         locale={locale}
         truth={providerTruthQuery.data}
@@ -288,46 +308,5 @@ function DesktopHubStrip(props: { locale: "zh" | "en" }) {
         className="ml-auto min-h-0 px-2 py-1"
       />
     </div>
-  );
-}
-
-function DesktopProofDock(props: { locale: "zh" | "en" }) {
-  const { locale } = props;
-  const { data: health } = useSystemHealthQuery();
-  const status = health?.status ?? "healthy";
-
-  return (
-    <section
-      className="hidden border-t px-4 py-3 lg:block"
-      aria-label={localize(locale, "证据时间线", "Proof timeline")}
-      style={{
-        background: "var(--surface-2)",
-        borderColor: "rgba(122, 106, 88, 0.18)",
-      }}
-    >
-      <div
-        className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.06em]"
-        style={{ color: "var(--ink-700)" }}
-      >
-        <ShieldCheck className="h-3.5 w-3.5" />
-        <span>{localize(locale, "证据检查器 · 底部时间线", "Proof inspector · bottom timeline")}</span>
-        <span className="ml-auto text-[10.5px] normal-case tracking-normal" style={{ color: "var(--ink-300)" }}>
-          {localize(locale, "Hub 投影 · 非独立真相源", "Hub-projected · not an independent source of truth")}
-        </span>
-      </div>
-      <div className="mt-2 grid gap-2 text-[11.5px] md:grid-cols-3" style={{ color: "var(--ink-500)" }}>
-        <span className="inline-flex items-center gap-1.5">
-          <Activity className="h-3 w-3" />
-          {localize(locale, `runtime: ${status}`, `runtime: ${status}`)}
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <FileText className="h-3 w-3" />
-          {localize(locale, "动作必须绑定 receipt / audit", "actions bind receipt / audit")}
-        </span>
-        <span className="inline-flex items-center gap-1.5 font-mono">
-          {localize(locale, "source: Rust Hub/Core", "source: Rust Hub/Core")}
-        </span>
-      </div>
-    </section>
   );
 }

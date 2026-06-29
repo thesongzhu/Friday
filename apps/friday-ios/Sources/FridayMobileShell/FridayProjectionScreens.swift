@@ -184,7 +184,7 @@ struct FridayProjectionScreen: View {
             .foregroundStyle(MobileTheme.textSecondary)
         }
         Spacer()
-        StatusChip(
+        FridayChip(
           text: viewModel.isOnline ? "online" : "connect",
           bg: viewModel.isOnline ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
           fg: viewModel.isOnline ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -247,7 +247,7 @@ struct FridayProjectionScreen: View {
   private func detailActionsCard(_ projection: HomeProjection) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("Read Arms", count: nil)
+        cardHeader("Live controls", count: nil)
         HStack(spacing: 8) {
           Button {
             Task { await viewModel.loadDetail(.providersDoctor(probe: nil)) }
@@ -336,12 +336,12 @@ struct FridayProjectionScreen: View {
           Text(detail.summary)
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
-          RefPill(label: "generated", ref: generatedText(detail.generatedAtMs))
+          FridayProofLine(label: "generated", ref: generatedText(detail.generatedAtMs))
           if let providerReadiness = detail.providerReadiness {
             ProviderReadinessPanel(detail: providerReadiness)
           }
           ForEach(detail.refs, id: \.self) { ref in
-            RefPill(label: nil, ref: ref)
+            FridayProofLine(label: nil, ref: ref)
           }
         }
       }
@@ -361,15 +361,15 @@ struct FridayProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Mission", count: nil)
-        RefPill(label: "mission_id", ref: projection.missionId)
-        RefPill(label: "conversation_id", ref: projection.fridayConversationId)
+        FridayProofLine(label: "mission_id", ref: projection.missionId)
+        FridayProofLine(label: "conversation_id", ref: projection.fridayConversationId)
         if let route = projection.routeDecisionSummary {
           Text(route)
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
         if let selected = projection.routeSelected {
-          RefPill(label: "selectedRoute", ref: selected)
+          FridayProofLine(label: "selectedRoute", ref: selected)
         }
       }
     }
@@ -398,7 +398,7 @@ struct FridayProjectionScreen: View {
           Label("Dispatch Mission", systemImage: "play.fill")
             .frame(maxWidth: .infinity, minHeight: 38)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(FridayButtonStyle(variant: .primary))
         .tint(MobileTheme.cyan)
         .disabled(missionDispatchIntent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || missionDispatchInFlight)
         .accessibilityIdentifier("friday.missions.dispatch-button")
@@ -432,16 +432,16 @@ struct FridayProjectionScreen: View {
         Text(summary)
           .font(.caption)
           .foregroundStyle(MobileTheme.textPrimary)
-        RefPill(label: "mission_id", ref: missionId)
-        RefPill(label: "work_item_id", ref: workItemId)
-        RefPill(label: "action", ref: "mobile/missions/dispatch")
+        FridayProofLine(label: "mission_id", ref: missionId)
+        FridayProofLine(label: "work_item_id", ref: workItemId)
+        FridayProofLine(label: "action", ref: "mobile/missions/dispatch")
         Button {
           onOpenFridayChat(context)
         } label: {
           Label("Continue in Friday Chat", systemImage: "bubble.left.and.bubble.right")
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(FridayButtonStyle(variant: .secondary))
         .tint(MobileTheme.cyan)
         .accessibilityIdentifier("friday.missions.open-chat-loop")
       }
@@ -541,8 +541,8 @@ struct FridayProjectionScreen: View {
             .foregroundStyle(MobileTheme.textPrimary)
           Spacer()
         }
-        RefPill(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
-        RefPill(label: "generated", ref: generatedText(projection.generatedAtMs))
+        FridayProofLine(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
+        FridayProofLine(label: "generated", ref: generatedText(projection.generatedAtMs))
       }
     }
   }
@@ -572,7 +572,7 @@ struct FridayProjectionScreen: View {
                 statusChip(capability.truthLabel)
               }
               if !capability.proofRef.isEmpty {
-                RefPill(label: "proofRef", ref: capability.proofRef)
+                FridayProofLine(label: "proofRef", ref: capability.proofRef)
               }
             }
             .padding(.vertical, 4)
@@ -604,7 +604,7 @@ struct FridayProjectionScreen: View {
                 .font(.caption)
                 .foregroundStyle(MobileTheme.textSecondary)
               HStack(spacing: 8) {
-                RefPill(label: "activity_id", ref: event.id)
+                FridayProofLine(label: "activity_id", ref: event.id)
                 Spacer()
                 Button {
                   Task { await viewModel.markActivityDone(activityId: event.id) }
@@ -612,14 +612,14 @@ struct FridayProjectionScreen: View {
                   Image(systemName: "checkmark.circle")
                     .frame(width: 26, height: 26)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(FridayButtonStyle(variant: .secondary))
                 .disabled(candidateDecisionControlsDisabled(doneState))
                 .accessibilityLabel("Mark activity done")
                 .accessibilityIdentifier("friday.activity.mark-done")
               }
               candidateDecisionStateView(doneState, pendingText: "Marking activity done...")
               if let proofRef = event.proofRef {
-                RefPill(label: "proofRef", ref: proofRef)
+                FridayProofLine(label: "proofRef", ref: proofRef)
               }
             }
             .padding(.vertical, 4)
@@ -638,7 +638,7 @@ struct FridayProjectionScreen: View {
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         if let selected = projection.routeSelected {
-          RefPill(label: "selectedRoute", ref: selected)
+          FridayProofLine(label: "selectedRoute", ref: selected)
         }
         if !projection.routeAlternatives.isEmpty {
           VStack(alignment: .leading, spacing: 6) {
@@ -646,13 +646,13 @@ struct FridayProjectionScreen: View {
               .font(.caption.weight(.semibold))
               .foregroundStyle(MobileTheme.textSecondary)
             ForEach(projection.routeAlternatives, id: \.self) { alternative in
-              RefPill(label: "alternative", ref: alternative)
+              FridayProofLine(label: "alternative", ref: alternative)
             }
           }
         }
         HStack(spacing: 6) {
-          RefPill(label: "action", ref: "mobile/workflow/retry")
-          RefPill(label: "action", ref: "mobile/workflow/cancel")
+          FridayProofLine(label: "action", ref: "mobile/workflow/retry")
+          FridayProofLine(label: "action", ref: "mobile/workflow/cancel")
         }
         if projection.workItems.isEmpty {
           emptyText("No workflow work-item refs.")
@@ -679,10 +679,10 @@ struct FridayProjectionScreen: View {
           emptyText("No receipt refs in this projection.")
         } else {
           ForEach(projection.providerReceiptRefs, id: \.self) {
-            RefPill(label: "provider", ref: $0)
+            FridayProofLine(label: "provider", ref: $0)
           }
           ForEach(projection.channelReceiptRefs, id: \.self) {
-            RefPill(label: "channel", ref: $0)
+            FridayProofLine(label: "channel", ref: $0)
           }
         }
       }
@@ -715,10 +715,10 @@ struct FridayProjectionScreen: View {
         } label: {
           Label("Open Device Pairing", systemImage: "qrcode.viewfinder")
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(FridayButtonStyle(variant: .primary))
         .tint(MobileTheme.cyan)
         .accessibilityIdentifier("friday.onboarding.open-device-pairing")
-        RefPill(label: "action", ref: "mobile/onboarding/open-device-pairing")
+        FridayProofLine(label: "action", ref: "mobile/onboarding/open-device-pairing")
         readinessRow(
           title: "Provider auth",
           value: "read-only doctor; never stores provider secrets",
@@ -729,7 +729,7 @@ struct FridayProjectionScreen: View {
           Label("Check Provider Auth", systemImage: "stethoscope")
         }
         .disabled(viewModel.detailState.isLoading)
-        RefPill(label: "mission_id", ref: projection.missionId)
+        FridayProofLine(label: "mission_id", ref: projection.missionId)
       }
     }
   }
@@ -746,10 +746,10 @@ struct FridayProjectionScreen: View {
         value: status.contextPassportCount > 0 ? "\(status.contextPassportCount) passport(s)" : "not minted",
         healthy: status.contextPassportCount > 0 && status.contextPassportItemCount > 0)
       if let device = status.latestDevice {
-        RefPill(label: "trusted_device", ref: device.deviceId)
-        RefPill(label: "device_fingerprint", ref: device.pubkeyFingerprint)
+        FridayProofLine(label: "trusted_device", ref: device.deviceId)
+        FridayProofLine(label: "device_fingerprint", ref: device.pubkeyFingerprint)
       }
-      RefPill(label: "truth", ref: status.truthLabel)
+      FridayProofLine(label: "truth", ref: status.truthLabel)
     } else {
       readinessRow(
         title: "Trust grant",
@@ -767,10 +767,10 @@ struct FridayProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Settings", count: nil)
-        RefPill(label: "mode", ref: "live-read projection")
-        RefPill(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
-        RefPill(label: "feed", ref: projection.runtimeFeedStatus)
-        RefPill(label: "generated", ref: generatedText(projection.generatedAtMs))
+        FridayProofLine(label: "mode", ref: "live-read projection")
+        FridayProofLine(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
+        FridayProofLine(label: "feed", ref: projection.runtimeFeedStatus)
+        FridayProofLine(label: "generated", ref: generatedText(projection.generatedAtMs))
         Button {
           Task { await viewModel.loadDetail(.providersDoctor(probe: nil)) }
         } label: {
@@ -810,8 +810,8 @@ struct FridayProjectionScreen: View {
           title: "Live state mapping",
           value: projection.runtimeFeedStatus.isEmpty ? "not in projection" : projection.runtimeFeedStatus,
           healthy: false)
-        RefPill(label: "action", ref: "mobile/pet/state-mapping")
-        RefPill(label: "mission_id", ref: projection.missionId)
+        FridayProofLine(label: "action", ref: "mobile/pet/state-mapping")
+        FridayProofLine(label: "mission_id", ref: projection.missionId)
       }
     }
     .accessibilityIdentifier("friday.pet-editor.readiness")
@@ -831,13 +831,13 @@ struct FridayProjectionScreen: View {
           emptyText("No proof receipt refs in this projection.")
         } else {
           ForEach(projection.providerReceiptRefs, id: \.self) {
-            RefPill(label: "provider", ref: $0)
+            FridayProofLine(label: "provider", ref: $0)
           }
           ForEach(projection.channelReceiptRefs, id: \.self) {
-            RefPill(label: "channel", ref: $0)
+            FridayProofLine(label: "channel", ref: $0)
           }
         }
-        RefPill(label: "action", ref: "mobile/proof/viewer-open")
+        FridayProofLine(label: "action", ref: "mobile/proof/viewer-open")
       }
     }
     .accessibilityIdentifier("friday.proof-viewer.receipts")
@@ -855,8 +855,8 @@ struct FridayProjectionScreen: View {
         readinessRow(title: "Command sheet", value: "top-left launcher routes selected surfaces", healthy: true)
         readinessRow(title: "Push entry", value: "local permission surface wired; APNs delivery still unproven", healthy: false)
         readinessRow(title: "Widget/control", value: "native launcher proof still required", healthy: false)
-        RefPill(label: "action", ref: "mobile/entrypoints/readiness")
-        RefPill(label: "conversation", ref: projection.fridayConversationId)
+        FridayProofLine(label: "action", ref: "mobile/entrypoints/readiness")
+        FridayProofLine(label: "conversation", ref: projection.fridayConversationId)
       }
     }
     .accessibilityIdentifier("friday.entrypoints.readiness")
@@ -912,7 +912,7 @@ struct FridayProjectionScreen: View {
             } label: {
               Label("Allow", systemImage: "bell.badge")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(FridayButtonStyle(variant: .primary))
             .tint(MobileTheme.cyan)
             .disabled(pushNotifications.state == .loading)
             .accessibilityIdentifier("friday.settings.push-permission")
@@ -936,7 +936,7 @@ struct FridayProjectionScreen: View {
           .font(.system(size: 13, weight: .medium))
           .foregroundStyle(MobileTheme.textPrimary)
         Spacer()
-        StatusChip(
+        FridayChip(
           text: item.done ? "done" : "not done",
           bg: item.done ? MobileTheme.chipDoneBG : MobileTheme.chipNeutralBG,
           fg: item.done ? MobileTheme.chipDoneFG : MobileTheme.chipNeutralFG)
@@ -961,7 +961,7 @@ struct FridayProjectionScreen: View {
               Image(systemName: "arrow.clockwise")
                 .frame(width: 26, height: 26)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(FridayButtonStyle(variant: .secondary))
             .disabled(candidateDecisionControlsDisabled(recoveryState))
             .accessibilityLabel("Retry WorkItem")
             .accessibilityIdentifier("friday.workflow.retry-work-item")
@@ -973,7 +973,7 @@ struct FridayProjectionScreen: View {
               Image(systemName: "stop.circle")
                 .frame(width: 26, height: 26)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(FridayButtonStyle(variant: .secondary))
             .disabled(candidateDecisionControlsDisabled(recoveryState))
             .accessibilityLabel("Cancel WorkItem")
             .accessibilityIdentifier("friday.workflow.cancel-work-item")
@@ -982,7 +982,7 @@ struct FridayProjectionScreen: View {
         candidateDecisionStateView(recoveryState, pendingText: "Updating WorkItem...")
       }
       if let proofRef = item.proofRef {
-        RefPill(label: "proofRef", ref: proofRef)
+        FridayProofLine(label: "proofRef", ref: proofRef)
       }
     }
     .padding(.vertical, 4)
@@ -1003,7 +1003,7 @@ struct FridayProjectionScreen: View {
             Image(systemName: "checkmark")
               .frame(width: 26, height: 26)
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(FridayButtonStyle(variant: .primary))
           .tint(MobileTheme.cyan)
           .disabled(candidateDecisionControlsDisabled(decisionState))
           .accessibilityLabel("Confirm memory candidate")
@@ -1015,7 +1015,7 @@ struct FridayProjectionScreen: View {
             Image(systemName: "xmark")
               .frame(width: 26, height: 26)
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(FridayButtonStyle(variant: .secondary))
           .disabled(candidateDecisionControlsDisabled(decisionState))
           .accessibilityLabel("Reject memory candidate")
           .accessibilityIdentifier("friday.memory.reject-candidate")
@@ -1027,7 +1027,7 @@ struct FridayProjectionScreen: View {
       }
       candidateDecisionStateView(decisionState, pendingText: "Applying memory decision...")
       if !candidate.evidenceRef.isEmpty {
-        RefPill(label: "evidenceRef", ref: candidate.evidenceRef)
+        FridayProofLine(label: "evidenceRef", ref: candidate.evidenceRef)
       }
     }
     .padding(.vertical, 4)
@@ -1048,7 +1048,7 @@ struct FridayProjectionScreen: View {
             Image(systemName: "checkmark")
               .frame(width: 26, height: 26)
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(FridayButtonStyle(variant: .primary))
           .tint(MobileTheme.cyan)
           .disabled(learningDecisionControlsDisabled(decisionState))
           .accessibilityLabel("Confirm run outcome learning candidate")
@@ -1059,7 +1059,7 @@ struct FridayProjectionScreen: View {
             Image(systemName: "xmark")
               .frame(width: 26, height: 26)
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(FridayButtonStyle(variant: .secondary))
           .disabled(learningDecisionControlsDisabled(decisionState))
           .accessibilityLabel("Reject run outcome learning candidate")
         }
@@ -1070,13 +1070,13 @@ struct FridayProjectionScreen: View {
       }
       learningDecisionStateView(decisionState)
       if !candidate.runId.isEmpty {
-        RefPill(label: "runId", ref: candidate.runId)
+        FridayProofLine(label: "runId", ref: candidate.runId)
       }
       if !candidate.workItemId.isEmpty {
-        RefPill(label: "workItemId", ref: candidate.workItemId)
+        FridayProofLine(label: "workItemId", ref: candidate.workItemId)
       }
       if !candidate.evidenceRef.isEmpty {
-        RefPill(label: "evidenceRef", ref: candidate.evidenceRef)
+        FridayProofLine(label: "evidenceRef", ref: candidate.evidenceRef)
       }
     }
     .padding(.vertical, 4)
@@ -1139,7 +1139,7 @@ struct FridayProjectionScreen: View {
         .foregroundStyle(MobileTheme.textPrimary)
       Spacer()
       if let count {
-        StatusChip(text: "\(count)", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+        FridayChip(text: "\(count)", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
       }
     }
   }
@@ -1151,7 +1151,7 @@ struct FridayProjectionScreen: View {
   }
 
   private func statusChip(_ text: String) -> some View {
-    StatusChip(text: text, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+    FridayChip(text: text, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
   }
 
   private func generatedText(_ generatedAtMs: Int64) -> String {

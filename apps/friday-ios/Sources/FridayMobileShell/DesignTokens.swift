@@ -69,8 +69,74 @@ struct GlassPanel<Content: View>: View {
   }
 }
 
-/// A small status chip. Color renders truth HONESTLY and is never upgraded.
-struct StatusChip: View {
+enum FridayButtonVariant {
+  case primary
+  case secondary
+  case quiet
+}
+
+struct FridayButtonStyle: ButtonStyle {
+  let variant: FridayButtonVariant
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .font(.system(size: 14, weight: .semibold))
+      .padding(.horizontal, 14)
+      .padding(.vertical, 9)
+      .frame(minHeight: 40)
+      .foregroundStyle(foreground)
+      .background(background(for: configuration.isPressed), in: Capsule())
+      .overlay(Capsule().strokeBorder(border, lineWidth: 1))
+      .scaleEffect(configuration.isPressed ? 0.985 : 1)
+  }
+
+  private var foreground: Color {
+    switch variant {
+    case .primary: return .white
+    case .secondary: return MobileTheme.cyan
+    case .quiet: return MobileTheme.textSecondary
+    }
+  }
+
+  private var border: Color {
+    switch variant {
+    case .primary: return MobileTheme.cyan.opacity(0.10)
+    case .secondary: return MobileTheme.cyan.opacity(0.24)
+    case .quiet: return MobileTheme.glassPanelBorder
+    }
+  }
+
+  private func background(for pressed: Bool) -> Color {
+    let opacity = pressed ? 0.82 : 1.0
+    switch variant {
+    case .primary: return MobileTheme.cyan.opacity(opacity)
+    case .secondary: return MobileTheme.cyanSoft.opacity(pressed ? 0.72 : 1)
+    case .quiet: return Color.white.opacity(pressed ? 0.38 : 0.54)
+    }
+  }
+}
+
+struct FridayButton<Label: View>: View {
+  let variant: FridayButtonVariant
+  let action: () -> Void
+  let label: Label
+
+  init(variant: FridayButtonVariant = .primary, action: @escaping () -> Void, @ViewBuilder label: () -> Label) {
+    self.variant = variant
+    self.action = action
+    self.label = label()
+  }
+
+  var body: some View {
+    Button(action: action) {
+      label
+    }
+    .buttonStyle(FridayButtonStyle(variant: variant))
+  }
+}
+
+/// A selected-design status chip. Color renders truth HONESTLY and is never upgraded.
+struct FridayChip: View {
   let text: String
   let bg: Color
   let fg: Color
@@ -78,16 +144,54 @@ struct StatusChip: View {
   var body: some View {
     Text(text)
       .font(.system(size: 11, weight: .medium))
-      .padding(.horizontal, 8)
-      .padding(.vertical, 3)
+      .padding(.horizontal, 9)
+      .padding(.vertical, 4)
       .background(Capsule().fill(bg))
+      .overlay(Capsule().strokeBorder(Color.white.opacity(0.45), lineWidth: 0.5))
       .foregroundStyle(fg)
       .accessibilityLabel(text)
   }
 }
 
-/// A monospaced redacted-ref pill. Refs only — there is no expand/load affordance.
-struct RefPill: View {
+struct FridayFilter: View {
+  let label: String
+  let selected: Bool
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Text(label)
+        .font(.system(size: 12, weight: .semibold))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .foregroundStyle(selected ? .white : MobileTheme.cyan)
+        .background(selected ? MobileTheme.cyan : MobileTheme.cyanSoft, in: Capsule())
+        .overlay(Capsule().strokeBorder(MobileTheme.cyan.opacity(0.20), lineWidth: 1))
+    }
+    .buttonStyle(.plain)
+  }
+}
+
+struct FridaySegmentedControl: View {
+  let options: [String]
+  @Binding var selection: String
+
+  var body: some View {
+    HStack(spacing: 4) {
+      ForEach(options, id: \.self) { option in
+        FridayFilter(label: option, selected: option == selection) {
+          selection = option
+        }
+      }
+    }
+    .padding(4)
+    .background(.ultraThinMaterial, in: Capsule())
+    .overlay(Capsule().strokeBorder(MobileTheme.glassPanelBorder, lineWidth: 1))
+  }
+}
+
+/// A monospaced redacted-ref proof line. Refs only — there is no expand/load affordance.
+struct FridayProofLine: View {
   let label: String?
   let ref: String
 
@@ -105,11 +209,15 @@ struct RefPill: View {
         .minimumScaleFactor(0.75)
         .truncationMode(.middle)
     }
-    .padding(.horizontal, 8)
-    .padding(.vertical, 4)
-    .background(
-      RoundedRectangle(cornerRadius: 7, style: .continuous)
-        .fill(Color.black.opacity(0.04))
+      .padding(.horizontal, 9)
+      .padding(.vertical, 5)
+      .background(
+      RoundedRectangle(cornerRadius: 11, style: .continuous)
+        .fill(Color.white.opacity(0.52))
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 11, style: .continuous)
+        .strokeBorder(MobileTheme.glassPanelBorder, lineWidth: 1)
     )
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(accessibilityText)

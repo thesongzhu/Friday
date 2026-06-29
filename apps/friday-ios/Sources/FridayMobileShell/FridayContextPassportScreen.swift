@@ -72,7 +72,7 @@ struct FridayContextPassportScreen: View {
             .foregroundStyle(MobileTheme.textSecondary)
         }
         Spacer()
-        StatusChip(
+        FridayChip(
           text: status,
           bg: ready ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
           fg: ready ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -108,7 +108,7 @@ struct FridayContextPassportScreen: View {
                   .font(.caption.weight(.semibold))
                   .foregroundStyle(MobileTheme.textPrimary)
                 Spacer()
-                StatusChip(
+                FridayChip(
                   text: row.statusText,
                   bg: row.satisfied ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
                   fg: row.satisfied ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -130,9 +130,9 @@ struct FridayContextPassportScreen: View {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Device", count: nil)
         if let device = status.latestDevice {
-          RefPill(label: "device_id", ref: device.deviceId)
-          RefPill(label: "label", ref: device.label)
-          RefPill(label: "fingerprint", ref: device.pubkeyFingerprint)
+          FridayProofLine(label: "device_id", ref: device.deviceId)
+          FridayProofLine(label: "label", ref: device.label)
+          FridayProofLine(label: "fingerprint", ref: device.pubkeyFingerprint)
         } else {
           Text("No trusted device ref is present in this projection.")
             .font(.caption)
@@ -182,7 +182,7 @@ struct FridayContextPassportScreen: View {
             .font(.caption.weight(.semibold))
             .foregroundStyle(MobileTheme.textPrimary)
           Spacer()
-          StatusChip(
+          FridayChip(
             text: value,
             bg: satisfied ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
             fg: satisfied ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -208,7 +208,7 @@ struct FridayContextPassportScreen: View {
           Label("Send with 3 items", systemImage: "checkmark.seal")
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(FridayButtonStyle(variant: .primary))
         .tint(MobileTheme.cyan)
         .disabled(!isReady || viewModel.contextPassportTransferState?.isSent == true)
         .accessibilityIdentifier("friday.context-passport.send")
@@ -228,7 +228,7 @@ struct FridayContextPassportScreen: View {
   @ViewBuilder private func candidateDecisionStateView(_ state: HomeLearningDecisionState) -> some View {
     switch state {
     case .sent:
-      StatusChip(text: "sending", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+      FridayChip(text: "sending", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
     case .confirmed(let summary):
       Text(summary)
         .font(.caption2)
@@ -250,9 +250,9 @@ struct FridayContextPassportScreen: View {
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
-        RefPill(label: "truth", ref: status.truthLabel)
+        FridayProofLine(label: "truth", ref: status.truthLabel)
         if !status.missingOperatorSteps.isEmpty {
-          RefPill(label: "missing", ref: status.missingOperatorSteps.joined(separator: ", "))
+          FridayProofLine(label: "missing", ref: status.missingOperatorSteps.joined(separator: ", "))
         }
       }
     }
@@ -265,7 +265,7 @@ struct FridayContextPassportScreen: View {
         .foregroundStyle(MobileTheme.textPrimary)
       Spacer()
       if let count {
-        StatusChip(text: "\(count)/4", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+        FridayChip(text: "\(count)/4", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
       }
     }
   }

@@ -150,8 +150,10 @@ function runPreflight() {
   } catch {
     block("preflight_output_invalid_json", result.stderr || "no stdout");
   }
-  const ready = parsed?.readyForLiveCaptureInput === true
-    || (deferChannelProof && parsed?.readyForDiagnosticTimelineInput === true);
+  const ready = requireReady
+    ? parsed?.readyForLiveCaptureInput === true
+    : parsed?.readyForLiveCaptureInput === true
+      || (deferChannelProof && parsed?.readyForDiagnosticTimelineInput === true);
   if (result.status !== 0 || ready !== true) {
     block("snapshot_preflight_not_ready", JSON.stringify(parsed?.failures || []));
   }
@@ -285,18 +287,18 @@ const rowTruthLabel = preflight?.readyForLiveCaptureInput === true
   ? "derived_from_preflighted_workbench_snapshot_not_final_proof"
   : "derived_from_diagnostic_workbench_snapshot_not_final_proof";
 const canAttemptRows = blockers.length === 0
-  || (allowPartialEvents && payload && Object.values(evidence).every((value) => typeof value === "string"));
+  || (!requireReady && allowPartialEvents && payload && Object.values(evidence).every((value) => typeof value === "string"));
 const rows = canAttemptRows ? makeRows(snapshot, evidence, rowTruthLabel) : [];
-if (rows.length === 0 && (blockers.length === 0 || allowPartialEvents)) {
+if (rows.length === 0 && (blockers.length === 0 || (!requireReady && allowPartialEvents))) {
   block("no_derivable_events", "snapshot produced no diagnostic rows");
 }
 
-if (blockers.length === 0 || (allowPartialEvents && rows.length > 0)) {
+if (blockers.length === 0 || (!requireReady && allowPartialEvents && rows.length > 0)) {
   const out = abs(outPath);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
 }
-const partialReady = blockers.length > 0 && allowPartialEvents && rows.length > 0;
+const partialReady = blockers.length > 0 && !requireReady && allowPartialEvents && rows.length > 0;
 
 const output = {
   truth: "workbench_snapshot_events_bridge_diagnostic_not_proof",

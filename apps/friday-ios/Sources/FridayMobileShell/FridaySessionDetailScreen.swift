@@ -71,19 +71,19 @@ struct FridaySessionDetailScreen: View {
               .foregroundStyle(MobileTheme.textSecondary)
           }
           Spacer()
-          StatusChip(
+          FridayChip(
             text: projection.agentSessionId == nil ? "no session ref" : "read-only",
             bg: projection.agentSessionId == nil ? MobileTheme.chipWarnBG : MobileTheme.chipPendingBG,
             fg: projection.agentSessionId == nil ? MobileTheme.chipWarnFG : MobileTheme.chipPendingFG)
         }
-        RefPill(label: "mission_id", ref: projection.missionId)
+        FridayProofLine(label: "mission_id", ref: projection.missionId)
         if let agentSessionId = projection.agentSessionId {
-          RefPill(label: "agent_session_id", ref: agentSessionId)
+          FridayProofLine(label: "agent_session_id", ref: agentSessionId)
         }
         if let runId = firstRunId(projection) {
-          RefPill(label: "run_id", ref: runId)
+          FridayProofLine(label: "run_id", ref: runId)
         }
-        RefPill(label: "generated", ref: generatedText(projection.generatedAtMs))
+        FridayProofLine(label: "generated", ref: generatedText(projection.generatedAtMs))
       }
     }
   }
@@ -148,7 +148,7 @@ struct FridaySessionDetailScreen: View {
                 .foregroundStyle(MobileTheme.textSecondary)
             }
             Spacer()
-            StatusChip(
+            FridayChip(
               text: resume?.truthLabel ?? "NO-GO",
               bg: resume?.isEnabled == true ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
               fg: resume?.isEnabled == true ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -160,9 +160,9 @@ struct FridaySessionDetailScreen: View {
               .foregroundStyle(MobileTheme.textPrimary)
               .fixedSize(horizontal: false, vertical: true)
           }
-          RefPill(label: "run_id", ref: approval.runId)
-          RefPill(label: "approval_id", ref: approval.approvalId)
-          RefPill(label: "action_digest", ref: short(approval.actionDigest))
+          FridayProofLine(label: "run_id", ref: approval.runId)
+          FridayProofLine(label: "approval_id", ref: approval.approvalId)
+          FridayProofLine(label: "action_digest", ref: short(approval.actionDigest))
 
           VStack(alignment: .leading, spacing: 5) {
             approvalCapabilityRow("Resume", control: resume)
@@ -191,7 +191,7 @@ struct FridaySessionDetailScreen: View {
         .font(.caption.weight(.semibold))
         .foregroundStyle(MobileTheme.textPrimary)
       Spacer()
-      StatusChip(
+      FridayChip(
         text: control?.truthLabel ?? "NO-GO",
         bg: control?.isEnabled == true ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
         fg: control?.isEnabled == true ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -240,7 +240,7 @@ struct FridaySessionDetailScreen: View {
               .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
               .padding(10)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(FridayButtonStyle(variant: .secondary))
             .disabled(!control.isEnabled || controlStateDisablesButton(controlState))
             .accessibilityLabel("\(control.title) \(control.truthLabel). \(control.reason)")
             .accessibilityIdentifier("friday.session.control.\(control.id)")
@@ -259,12 +259,12 @@ struct FridaySessionDetailScreen: View {
         Text("Friday Sidecar - private analysis")
           .font(.system(size: 13, weight: .semibold))
         Spacer()
-        StatusChip(text: "private", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
+        FridayChip(text: "private", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
       }
       .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
       .padding(.horizontal, 12)
     }
-    .buttonStyle(.bordered)
+    .buttonStyle(FridayButtonStyle(variant: .secondary))
     .accessibilityLabel("Open Friday Sidecar private analysis")
     .accessibilityIdentifier("friday.session.sidecar-open")
   }
@@ -292,7 +292,7 @@ struct FridaySessionDetailScreen: View {
             Image(systemName: "xmark")
               .frame(width: 26, height: 26)
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(FridayButtonStyle(variant: .secondary))
           .accessibilityLabel("Close Friday Sidecar")
           .accessibilityIdentifier("friday.session.sidecar-close")
         }
@@ -344,14 +344,14 @@ struct FridaySessionDetailScreen: View {
           .font(.caption.weight(.semibold))
           .foregroundStyle(MobileTheme.textPrimary)
         Spacer()
-        StatusChip(
+        FridayChip(
           text: truth,
           bg: truth == "NO-GO" ? MobileTheme.chipWarnBG : MobileTheme.chipPendingBG,
           fg: truth == "NO-GO" ? MobileTheme.chipWarnFG : MobileTheme.chipPendingFG)
       }
       .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
     }
-    .buttonStyle(.bordered)
+    .buttonStyle(FridayButtonStyle(variant: .secondary))
     .accessibilityLabel("\(title) \(truth)")
   }
 
@@ -393,7 +393,7 @@ struct FridaySessionDetailScreen: View {
           Image(systemName: control.systemImage)
             .frame(width: 28, height: 28)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(FridayButtonStyle(variant: .primary))
         .tint(MobileTheme.cyan)
         .disabled(!control.isEnabled
           || sessionSendText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -471,10 +471,10 @@ struct FridaySessionDetailScreen: View {
             }
           }
           if let generatedAtMs = section.generatedAtMs {
-            RefPill(label: "generated", ref: generatedText(generatedAtMs))
+            FridayProofLine(label: "generated", ref: generatedText(generatedAtMs))
           }
           ForEach(section.refs, id: \.self) { ref in
-            RefPill(label: nil, ref: ref)
+            FridayProofLine(label: nil, ref: ref)
           }
         case .unavailable(let reason), .notRequested(let reason):
           Text(reason)
@@ -496,7 +496,7 @@ struct FridaySessionDetailScreen: View {
             .foregroundStyle(MobileTheme.textSecondary)
         } else {
           ForEach(refs, id: \.self) { ref in
-            RefPill(label: "proof", ref: ref)
+            FridayProofLine(label: "proof", ref: ref)
           }
         }
       }
@@ -535,7 +535,7 @@ struct FridaySessionDetailScreen: View {
             Image(systemName: "checkmark")
               .frame(width: 26, height: 26)
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(FridayButtonStyle(variant: .primary))
           .tint(MobileTheme.cyan)
           .disabled(learningDecisionControlsDisabled(decisionState))
           .accessibilityLabel("Confirm run outcome learning candidate")
@@ -546,7 +546,7 @@ struct FridaySessionDetailScreen: View {
             Image(systemName: "xmark")
               .frame(width: 26, height: 26)
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(FridayButtonStyle(variant: .secondary))
           .disabled(learningDecisionControlsDisabled(decisionState))
           .accessibilityLabel("Reject run outcome learning candidate")
         }
@@ -557,13 +557,13 @@ struct FridaySessionDetailScreen: View {
       }
       learningDecisionStateView(decisionState)
       if !candidate.runId.isEmpty {
-        RefPill(label: "runId", ref: candidate.runId)
+        FridayProofLine(label: "runId", ref: candidate.runId)
       }
       if !candidate.workItemId.isEmpty {
-        RefPill(label: "workItemId", ref: candidate.workItemId)
+        FridayProofLine(label: "workItemId", ref: candidate.workItemId)
       }
       if !candidate.evidenceRef.isEmpty {
-        RefPill(label: "evidenceRef", ref: candidate.evidenceRef)
+        FridayProofLine(label: "evidenceRef", ref: candidate.evidenceRef)
       }
     }
     .padding(.vertical, 4)
@@ -572,11 +572,11 @@ struct FridaySessionDetailScreen: View {
   private func sectionStatusChip(_ status: SessionContinuationSectionStatus) -> some View {
     switch status {
     case .loaded:
-      return StatusChip(text: "loaded", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
+      return FridayChip(text: "loaded", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
     case .unavailable:
-      return StatusChip(text: "needs connection", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+      return FridayChip(text: "needs connection", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
     case .notRequested:
-      return StatusChip(text: "no ref", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+      return FridayChip(text: "no ref", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
     }
   }
 
@@ -619,23 +619,23 @@ struct FridaySessionDetailScreen: View {
         .font(.headline)
         .foregroundStyle(MobileTheme.textPrimary)
       if let count {
-        StatusChip(text: "\(count)", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+        FridayChip(text: "\(count)", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
       }
     }
   }
 
   private func statusChip(_ text: String) -> some View {
-    StatusChip(text: text, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+    FridayChip(text: text, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
   }
 
   private func controlTruthChip(_ control: SessionContinuationControl) -> some View {
     if control.isEnabled {
-      return StatusChip(text: control.truthLabel, bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
+      return FridayChip(text: control.truthLabel, bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
     }
     if control.truthLabel == "read arm" {
-      return StatusChip(text: control.truthLabel, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+      return FridayChip(text: control.truthLabel, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
     }
-    return StatusChip(text: control.truthLabel, bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+    return FridayChip(text: control.truthLabel, bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
   }
 
   private func short(_ s: String) -> String {

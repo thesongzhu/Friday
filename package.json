@@ -122,6 +122,7 @@
     "check:client-design-contract": "node scripts/ops/check-friday-client-design-contract.mjs",
     "check:uiux-native-linkage": "node scripts/ops/check-friday-uiux-native-linkage.mjs",
     "check:uiux-selected-visual-proof": "node scripts/ops/check-friday-uiux-selected-visual-proof.mjs",
+    "check:served-ui-design-fidelity": "node scripts/ops/check-friday-served-ui-design-fidelity.mjs",
     "check:uiux-action-traceability": "node scripts/ops/check-friday-uiux-action-traceability.mjs",
     "check:uiux-product-happy-path": "node scripts/ops/check-friday-uiux-product-happy-path.mjs",
     "check:uiux-product-closure": "node scripts/ops/friday-uiux-product-closure-readiness.mjs",

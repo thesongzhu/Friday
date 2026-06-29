@@ -9,7 +9,7 @@ struct ProviderReadinessPanel: View {
       HStack(spacing: 6) {
         statusChip(detail.truthLabel)
         statusChip(detail.proofOnly ? "proof only" : "not proof only")
-        StatusChip(
+        FridayChip(
           text: detail.ok ? "doctor ok" : "doctor not ok",
           bg: detail.ok ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
           fg: detail.ok ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -60,7 +60,7 @@ struct ProviderReadinessPanel: View {
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(MobileTheme.textPrimary)
           Spacer()
-          StatusChip(
+          FridayChip(
             text: provider.authenticated ? "authenticated" : "not authenticated",
             bg: provider.authenticated ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
             fg: provider.authenticated ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -86,7 +86,7 @@ struct ProviderReadinessPanel: View {
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(MobileTheme.textPrimary)
           Spacer()
-          StatusChip(
+          FridayChip(
             text: route.dispatchable ? "dispatchable" : "blocked",
             bg: route.dispatchable ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
             fg: route.dispatchable ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -114,7 +114,7 @@ struct ProviderReadinessPanel: View {
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(MobileTheme.textPrimary)
           Spacer()
-          StatusChip(
+          FridayChip(
             text: failover.flagEnabled ? "armed" : "off",
             bg: failover.flagEnabled ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
             fg: failover.flagEnabled ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
@@ -137,7 +137,7 @@ struct ProviderReadinessPanel: View {
           .font(.system(size: 13, weight: .medium))
           .foregroundStyle(MobileTheme.textPrimary)
         Spacer()
-        StatusChip(
+        FridayChip(
           text: key.label,
           bg: key.isConfirmedValid ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
           fg: key.isConfirmedValid ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
@@ -147,6 +147,6 @@ struct ProviderReadinessPanel: View {
   }
 
   private func statusChip(_ text: String) -> some View {
-    StatusChip(text: text, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+    FridayChip(text: text, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
   }
 }

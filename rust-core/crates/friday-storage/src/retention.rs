@@ -2,8 +2,9 @@
 //!
 //! The session-lifecycle [`crate::session_lifecycle::sweep_lifecycle`] reaper prunes ONLY
 //! `agent_session` (+ its child messages). The other artifact tables — `token_ledger`,
-//! `surface_event`, terminal `mission`/`work_item`, and rejected/expired memory CANDIDATES —
-//! grow UNBOUNDED (memory-extraction + surface_event are written per-run). This module adds an
+//! `surface_event`, `provider_session_event`, terminal `mission`/`work_item`, and
+//! rejected/expired memory CANDIDATES — grow UNBOUNDED (memory-extraction + surface_event/provider
+//! session observation rows are written per-run). This module adds an
 //! age-AND-state-bounded sweep for them, driven from the EXISTING reaper tick behind its OWN
 //! default-off flag (`FRIDAY_RETENTION_SWEEP`) so deploying the new binary deletes NOTHING until
 //! the operator explicitly flips it. The flag read lives in the hub bin; this module is a pure
@@ -12,6 +13,8 @@
 //! ## Operator-approved default windows (the named constants below)
 //!   * `token_ledger`  — 90d  (billing/observability history; keyed on `created_at`).
 //!   * `surface_event` — 90d  (timeline observability; keyed on `created_at_ms`).
+//!   * `provider_session_event` — 90d (provider app-server observation firehose; keyed on
+//!     `observed_at`).
 //!   * terminal `mission` / `work_item` — 365d (keyed on `updated_at_ms`).
 //!   * `memory_item` — confirmed kept INDEFINITELY; rejected/expired CANDIDATES pruned at 30d
 //!     (keyed on `created_at`).
@@ -66,6 +69,8 @@ use rusqlite::Transaction;
 pub const TOKEN_LEDGER_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 /// `surface_event` rows older than 90 days are pruned (keyed on `created_at_ms`).
 pub const SURFACE_EVENT_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+/// `provider_session_event` rows older than 90 days are pruned (keyed on `observed_at`).
+pub const PROVIDER_SESSION_EVENT_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 /// Terminal `mission` rows older than 365 days are pruned (keyed on `updated_at_ms`).
 pub const MISSION_MAX_AGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
 /// Terminal `work_item` rows older than 365 days are pruned (keyed on `updated_at_ms`).
@@ -86,6 +91,7 @@ pub const DEFAULT_BATCH_LIMIT: i64 = 5_000;
 pub struct RetentionWindows {
     pub token_ledger_max_age_ms: i64,
     pub surface_event_max_age_ms: i64,
+    pub provider_session_event_max_age_ms: i64,
     pub mission_max_age_ms: i64,
     pub work_item_max_age_ms: i64,
     pub memory_candidate_max_age_ms: i64,
@@ -99,6 +105,7 @@ impl Default for RetentionWindows {
         RetentionWindows {
             token_ledger_max_age_ms: TOKEN_LEDGER_MAX_AGE_MS,
             surface_event_max_age_ms: SURFACE_EVENT_MAX_AGE_MS,
+            provider_session_event_max_age_ms: PROVIDER_SESSION_EVENT_MAX_AGE_MS,
             mission_max_age_ms: MISSION_MAX_AGE_MS,
             work_item_max_age_ms: WORK_ITEM_MAX_AGE_MS,
             memory_candidate_max_age_ms: MEMORY_CANDIDATE_MAX_AGE_MS,
@@ -114,6 +121,7 @@ impl Default for RetentionWindows {
 pub struct RetentionOutcome {
     pub token_ledger_deleted: usize,
     pub surface_event_deleted: usize,
+    pub provider_session_event_deleted: usize,
     pub mission_deleted: usize,
     pub work_item_deleted: usize,
     pub memory_item_deleted: usize,
@@ -126,6 +134,7 @@ impl RetentionOutcome {
     pub fn is_empty(&self) -> bool {
         self.token_ledger_deleted == 0
             && self.surface_event_deleted == 0
+            && self.provider_session_event_deleted == 0
             && self.mission_deleted == 0
             && self.work_item_deleted == 0
             && self.memory_item_deleted == 0
@@ -185,7 +194,25 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 3. memory_item — rejected/expired CANDIDATES only, by created_at. CONFIRMED is excluded by
+    // 3. provider_session_event — pure age on observed_at. This is the provider app-server
+    //    observation firehose (metadata/delta receipts), not the token ledger. It is a leaf w.r.t.
+    //    Friday's core mission/work_item FKs, so a bounded age sweep cannot orphan mission state.
+    let provider_session_cutoff = now_ms - windows.provider_session_event_max_age_ms;
+    match delete_bounded(
+        conn,
+        "DELETE FROM provider_session_event
+          WHERE rowid IN (
+              SELECT rowid FROM provider_session_event WHERE observed_at < ?1
+               ORDER BY observed_at LIMIT ?2
+          )",
+        provider_session_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.provider_session_event_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 4. memory_item — rejected/expired CANDIDATES only, by created_at. CONFIRMED is excluded by
     //    state, so durable memory is NEVER deleted regardless of age. Leaf (no FK refs into it).
     let memory_cutoff = now_ms - windows.memory_candidate_max_age_ms;
     match delete_bounded(
@@ -204,7 +231,7 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 4. work_item — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child
+    // 5. work_item — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child
     //    in any table that RESTRICT-references work_item). A non-terminal work_item can never
     //    match the status set. Deleted BEFORE mission so an aged-out work_item frees its mission.
     let work_item_cutoff = now_ms - windows.work_item_max_age_ms;
@@ -231,7 +258,7 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 5. mission — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child in
+    // 6. mission — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child in
     //    ANY table that RESTRICT-references mission). A non-terminal (active/waiting/blocked/
     //    paused) mission can never match the status set.
     let mission_cutoff = now_ms - windows.mission_max_age_ms;
@@ -274,14 +301,16 @@ pub fn sweep_retention(
     // a receipt-write failure is SWALLOWED here, exactly as the session reaper swallows its own.
     let deleted = out.token_ledger_deleted
         + out.surface_event_deleted
+        + out.provider_session_event_deleted
         + out.memory_item_deleted
         + out.work_item_deleted
         + out.mission_deleted;
     if deleted > 0 {
         let summary = format!(
-            "retention.sweep:token_ledger={} surface_event={} memory_item={} work_item={} mission={} errors={}",
+            "retention.sweep:token_ledger={} surface_event={} provider_session_event={} memory_item={} work_item={} mission={} errors={}",
             out.token_ledger_deleted,
             out.surface_event_deleted,
+            out.provider_session_event_deleted,
             out.memory_item_deleted,
             out.work_item_deleted,
             out.mission_deleted,
@@ -509,6 +538,35 @@ mod tests {
             .unwrap();
     }
 
+    fn seed_provider_session_link(db: &Db, id: &str, last_seen: i64) {
+        db.conn()
+            .execute(
+                "INSERT INTO provider_session_link
+                    (friday_session_id, provider, account_key_hash, workspace_id, cwd,
+                     external_session_id, external_thread_id, external_url, sync_mode,
+                     capability_snapshot, last_provider_seen_at, last_friday_event_id, truth_label)
+                 VALUES (?1, 'codex', 'hash', 'workspace', NULL, 'external-session',
+                         'external-thread', NULL, 'provider_app_server_local', '{}', ?2, NULL,
+                         'retention_test_provider_session_link')",
+                params![id, last_seen],
+            )
+            .unwrap();
+    }
+
+    fn seed_provider_session_event(db: &Db, session_id: &str, event_id: &str, observed_at: i64) {
+        db.conn()
+            .execute(
+                "INSERT INTO provider_session_event
+                    (friday_session_id, provider_event_id, provider, event_kind,
+                     transcript_item_kind, body_ref, redaction_level, token_ledger_ref,
+                     approval_ref, audit_receipt_ref, observed_at)
+                 VALUES (?1, ?2, 'codex', 'turn_completed', 'turn', '', 'metadata_only',
+                         NULL, NULL, NULL, ?3)",
+                params![session_id, event_id, observed_at],
+            )
+            .unwrap();
+    }
+
     fn seed_audit(db: &Db, id: &str) {
         let tx = db.conn().unchecked_transaction().unwrap();
         crate::audit::append_audit(&tx, id, "owner", "test.action", None, 1).unwrap();
@@ -616,6 +674,17 @@ mod tests {
             now - 1,
         );
 
+        // provider_session_event: old provider firehose row pruned; recent kept. The parent
+        // provider_session_link remains because this sweep bounds events, not session links.
+        seed_provider_session_link(&db, "ps_1", now);
+        seed_provider_session_event(
+            &db,
+            "ps_1",
+            "pse_old",
+            now - PROVIDER_SESSION_EVENT_MAX_AGE_MS - 1,
+        );
+        seed_provider_session_event(&db, "ps_1", "pse_recent", now - 1);
+
         // audit chain — UNTOUCHED across the sweep.
         seed_audit(&db, "audit_1");
         seed_audit(&db, "audit_2");
@@ -652,6 +721,27 @@ mod tests {
             "surface_event",
             "surface_event_id",
             "se_recent"
+        ));
+
+        // provider_session_event: old leaf gone; recent kept; provider_session_link survives.
+        assert_eq!(out.provider_session_event_deleted, 1);
+        assert!(!exists(
+            &db,
+            "provider_session_event",
+            "provider_event_id",
+            "pse_old"
+        ));
+        assert!(exists(
+            &db,
+            "provider_session_event",
+            "provider_event_id",
+            "pse_recent"
+        ));
+        assert!(exists(
+            &db,
+            "provider_session_link",
+            "friday_session_id",
+            "ps_1"
         ));
 
         // work_item: terminal-old leaf gone; non-terminal-old survives.
@@ -706,7 +796,7 @@ mod tests {
         assert_eq!(tick_kind, "retention.sweep");
         assert_eq!(
             summary,
-            "retention.sweep:token_ledger=1 surface_event=1 memory_item=1 work_item=1 mission=2 errors=0",
+            "retention.sweep:token_ledger=1 surface_event=1 provider_session_event=1 memory_item=1 work_item=1 mission=2 errors=0",
             "summary records the real per-table counts + the concurrent error count"
         );
     }
@@ -880,12 +970,29 @@ mod tests {
 
         // Exactly-at-boundary rows do NOT prune (strict `<`).
         seed_token_ledger(&db, "tl_at", now - TOKEN_LEDGER_MAX_AGE_MS); // == cutoff, not < cutoff
+        seed_provider_session_link(&db, "ps_at", now);
+        seed_provider_session_event(
+            &db,
+            "ps_at",
+            "pse_at",
+            now - PROVIDER_SESSION_EVENT_MAX_AGE_MS,
+        ); // == cutoff, not < cutoff
         let out = sweep_retention(db.conn(), now, w);
         assert_eq!(
             out.token_ledger_deleted, 0,
             "at-exactly-threshold does not fire (strict <)"
         );
+        assert_eq!(
+            out.provider_session_event_deleted, 0,
+            "provider_session_event at threshold does not fire (strict <)"
+        );
         assert!(exists(&db, "token_ledger", "ledger_id", "tl_at"));
+        assert!(exists(
+            &db,
+            "provider_session_event",
+            "provider_event_id",
+            "pse_at"
+        ));
     }
 
     // --- idempotency: a second back-to-back sweep is a no-op ---
@@ -897,6 +1004,13 @@ mod tests {
         let w = RetentionWindows::default();
         seed_conversation(&db, "fconv_1");
         seed_token_ledger(&db, "tl_old", now - TOKEN_LEDGER_MAX_AGE_MS - 1);
+        seed_provider_session_link(&db, "ps_idem", now);
+        seed_provider_session_event(
+            &db,
+            "ps_idem",
+            "pse_old",
+            now - PROVIDER_SESSION_EVENT_MAX_AGE_MS - 1,
+        );
         seed_memory(
             &db,
             "mem_rej",
@@ -915,6 +1029,7 @@ mod tests {
         let first = sweep_retention(db.conn(), now, w);
         assert_eq!(first.table_errors, 0);
         assert_eq!(first.token_ledger_deleted, 1);
+        assert_eq!(first.provider_session_event_deleted, 1);
         assert_eq!(first.memory_item_deleted, 1);
         assert_eq!(first.mission_deleted, 1);
 
@@ -985,12 +1100,30 @@ mod tests {
         for i in 0..5 {
             seed_token_ledger(&db, &format!("tl{i}"), now - TOKEN_LEDGER_MAX_AGE_MS - 1);
         }
+        seed_provider_session_link(&db, "ps_batch", now);
+        for i in 0..5 {
+            seed_provider_session_event(
+                &db,
+                "ps_batch",
+                &format!("pse{i}"),
+                now - PROVIDER_SESSION_EVENT_MAX_AGE_MS - 1,
+            );
+        }
         // Each sweep deletes at most 2; the backlog (5) drains over 3 ticks (2+2+1).
-        assert_eq!(sweep_retention(db.conn(), now, w).token_ledger_deleted, 2);
-        assert_eq!(sweep_retention(db.conn(), now, w).token_ledger_deleted, 2);
-        assert_eq!(sweep_retention(db.conn(), now, w).token_ledger_deleted, 1);
-        assert_eq!(sweep_retention(db.conn(), now, w).token_ledger_deleted, 0);
+        let first = sweep_retention(db.conn(), now, w);
+        assert_eq!(first.token_ledger_deleted, 2);
+        assert_eq!(first.provider_session_event_deleted, 2);
+        let second = sweep_retention(db.conn(), now, w);
+        assert_eq!(second.token_ledger_deleted, 2);
+        assert_eq!(second.provider_session_event_deleted, 2);
+        let third = sweep_retention(db.conn(), now, w);
+        assert_eq!(third.token_ledger_deleted, 1);
+        assert_eq!(third.provider_session_event_deleted, 1);
+        let fourth = sweep_retention(db.conn(), now, w);
+        assert_eq!(fourth.token_ledger_deleted, 0);
+        assert_eq!(fourth.provider_session_event_deleted, 0);
         assert_eq!(count(&db, "token_ledger"), 0);
+        assert_eq!(count(&db, "provider_session_event"), 0);
     }
 
     // --- the default windows ARE the operator-approved constants ---
@@ -1000,6 +1133,10 @@ mod tests {
         let w = RetentionWindows::default();
         assert_eq!(w.token_ledger_max_age_ms, 90 * 24 * 60 * 60 * 1000);
         assert_eq!(w.surface_event_max_age_ms, 90 * 24 * 60 * 60 * 1000);
+        assert_eq!(
+            w.provider_session_event_max_age_ms,
+            90 * 24 * 60 * 60 * 1000
+        );
         assert_eq!(w.mission_max_age_ms, 365 * 24 * 60 * 60 * 1000);
         assert_eq!(w.work_item_max_age_ms, 365 * 24 * 60 * 60 * 1000);
         assert_eq!(w.memory_candidate_max_age_ms, 30 * 24 * 60 * 60 * 1000);

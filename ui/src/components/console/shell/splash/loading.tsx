@@ -15,7 +15,7 @@ export function LoadingSplash(props: Omit<SplashShellProps, "visual"> & { eyebro
         <span
           aria-hidden="true"
           className="inline-flex h-10 w-10 items-center justify-center rounded-full"
-          style={{ background: "var(--amber-100)", color: "var(--amber-600)" }}
+          style={{ background: "var(--accent-soft)", color: "var(--accent)" }}
         >
           <Loader2 className="h-5 w-5 animate-spin" />
         </span>

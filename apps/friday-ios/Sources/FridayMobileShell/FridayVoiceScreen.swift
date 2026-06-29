@@ -80,7 +80,7 @@ struct FridayVoiceScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         HStack(spacing: 8) {
-          StatusChip(
+          FridayChip(
             text: readiness.voiceLoopReady ? "voice ready" : "not ready",
             bg: readiness.voiceLoopReady ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
             fg: readiness.voiceLoopReady ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -100,7 +100,7 @@ struct FridayVoiceScreen: View {
           } label: {
             Label("Allow Voice", systemImage: "mic.badge.plus")
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(FridayButtonStyle(variant: .primary))
           .tint(MobileTheme.cyan)
           .disabled(viewModel.state == .loading)
           .accessibilityIdentifier("friday.voice.permission")
@@ -145,7 +145,7 @@ struct FridayVoiceScreen: View {
               } label: {
                 Text("Allow")
               }
-              .buttonStyle(.bordered)
+              .buttonStyle(FridayButtonStyle(variant: .secondary))
               .disabled(!row.enabled || viewModel.state == .loading)
               .accessibilityIdentifier("friday.voice.permission")
             } else if row.id == "open-chat-loop" {
@@ -154,7 +154,7 @@ struct FridayVoiceScreen: View {
               } label: {
                 Text("Open")
               }
-              .buttonStyle(.bordered)
+              .buttonStyle(FridayButtonStyle(variant: .secondary))
               .disabled(!row.enabled || viewModel.state == .loading)
               .accessibilityLabel("Open Friday Chat voice loop")
               .accessibilityIdentifier("friday.voice.open-chat-loop")
@@ -198,7 +198,7 @@ struct FridayVoiceScreen: View {
         .foregroundStyle(MobileTheme.textPrimary)
       Spacer()
       if let count {
-        StatusChip(text: "\(count)", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+        FridayChip(text: "\(count)", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
       }
     }
   }
@@ -221,7 +221,7 @@ struct FridayVoiceScreen: View {
   }
 
   private func truthChip(_ truthLabel: String, enabled: Bool) -> some View {
-    StatusChip(
+    FridayChip(
       text: voiceTruthDisplayLabel(truthLabel),
       bg: enabled ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
       fg: enabled ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)

@@ -5,9 +5,9 @@ import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 
 const STATUS_COLOR: Record<string, string> = {
-  healthy: "var(--jade-500)",
-  degraded: "var(--amber-600)",
-  unavailable: "var(--amber-600)",
+  healthy: "var(--ok)",
+  degraded: "var(--accent)",
+  unavailable: "var(--accent)",
   offline: "var(--rust-500)",
 };
 
@@ -43,7 +43,7 @@ export function SettingsProvidersRightRailSlot() {
         <NavLink
           to="/observability"
           className="inline-flex items-center gap-1 text-xs"
-          style={{ color: "var(--amber-600)" }}
+          style={{ color: "var(--accent)" }}
         >
           {localize(locale, "详情", "Details")}
           <ChevronRight className="h-3.5 w-3.5" />
