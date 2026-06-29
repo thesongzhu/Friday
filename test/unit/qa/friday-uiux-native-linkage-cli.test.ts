@@ -48,7 +48,7 @@ function writeCompleteRepo(root: string) {
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridayApp.swift", "FridayHomeScreen FridayChatScreen");
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridayHomeScreen.swift", "friday.home.status-card markActivityDone");
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridayChatScreen.swift", "friday.chat.composer .accessibilityIdentifier(\"friday.chat.send\") approvalCard action_digest friday.chat.approval-card .accessibilityIdentifier(\"friday.chat.voice-input\") .accessibilityIdentifier(\"friday.chat.voice-output\")");
-  writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift", "Command Sheet friday.command-sheet.readiness-footer MobileProductDestinationID.allCases");
+  writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift", "Command Sheet friday.command-sheet.destination MobileProductDestinationID.allCases");
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridayProviderAuthScreen.swift", "Provider Workspace friday.provider-workspace.overview friday.provider-workspace.open-ledger");
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridaySessionDetailScreen.swift", "friday.session.sidecar-open friday.session.sidecar-close friday.session.send-button");
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridayVoiceScreen.swift", "Readiness plus local voice-loop truth friday.voice.readiness-card .accessibilityIdentifier(\"friday.voice.open-chat-loop\")");
