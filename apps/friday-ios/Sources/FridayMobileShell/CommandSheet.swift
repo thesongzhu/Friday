@@ -72,7 +72,7 @@ struct CommandSheet: View {
     ("Command", [.home, .newSession, .voice, .shareIntake]),
     ("Work", [.missions, .needsMe, .activity, .workflows]),
     ("Providers", [.platform, .providerAuth, .session]),
-    ("Trust", [.contextPassport, .memory, .tokenLedger, .proofViewer]),
+    ("Trust", [.contextPassport, .memory, .tokenLedger]),
     ("Setup", [.pairing, .onboarding, .settings, .petEditor]),
   ]
 

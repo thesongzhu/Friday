@@ -278,8 +278,9 @@ function assertIosDesignFidelity(tokens) {
   }
 
   const commandSheet = readText(join(iosSourceRoot, "CommandSheet.swift"));
-  if (/\("Setup",\s*\[[^\]]*\.entrypoints[^\]]*\]\)/s.test(commandSheet)) {
-    checks.push(fail("iOS Command Sheet still exposes entrypoints/debug destination in the user launcher"));
+  const commandSheetSections = commandSheet.match(/private let sections:[\s\S]*?var body:/)?.[0] ?? "";
+  if (/\.(proofViewer|entrypoints)\b/.test(commandSheetSections)) {
+    checks.push(fail("iOS Command Sheet still exposes proof/debug destinations in the user launcher"));
   }
   if (/readinessFooter/.test(commandSheet)) {
     checks.push(fail("iOS Command Sheet still exposes readiness footer in the user launcher"));
