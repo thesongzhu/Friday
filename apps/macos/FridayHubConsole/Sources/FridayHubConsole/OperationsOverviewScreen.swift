@@ -534,28 +534,42 @@ struct UnavailableView: View {
       Image(systemName: "exclamationmark.triangle")
         .font(.system(size: 28))
         .foregroundStyle(HubTheme.coral)
-      Text("Hub projection unavailable")
+      Text("Connect Friday Hub")
         .font(.system(size: 15, weight: .semibold))
         .foregroundStyle(HubTheme.textPrimary)
-      Text(reason)
+      Text(userFacingReason)
         .font(.system(size: 12))
         .foregroundStyle(HubTheme.textSecondary)
         .multilineTextAlignment(.center)
       HStack(spacing: 6) {
         ForEach(labels, id: \.rawValue) { label in
-          label.chip
+          StatusChip(text: label.userFacingText, bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
             .accessibilityIdentifier("friday.desktop.status-label.\(label.rawValue)")
         }
       }
-      Text("Showing this as truth — no cached or fabricated status is presented.")
+      Text("Friday is showing a live-only safe view until the Hub refreshes.")
         .font(.system(size: 10))
         .foregroundStyle(HubTheme.textSecondary)
     }
     .padding(28)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .accessibilityElement(children: .contain)
-    .accessibilityLabel("Hub projection unavailable. \(reason)")
+    .accessibilityLabel("Connect Friday Hub. \(userFacingReason)")
     .accessibilityIdentifier("friday.desktop.unavailable")
+  }
+
+  private var userFacingReason: String {
+    let normalized = reason.lowercased()
+    if normalized.contains("offline") || normalized.contains("connection") || normalized.contains("transport") {
+      return "Friday cannot reach the live Hub from this window. Check the Hub connection, then refresh."
+    }
+    if normalized.contains("503") || normalized.contains("service") {
+      return "The Hub is starting or busy. Refresh once it is ready."
+    }
+    if normalized.contains("projection") {
+      return "Friday needs a fresh Hub projection before this screen can show current work."
+    }
+    return "Friday needs a fresh live Hub view before this screen can show current work."
   }
 }
 
@@ -568,14 +582,14 @@ struct StatusBanner: View {
       Image(systemName: "exclamationmark.circle")
         .foregroundStyle(HubTheme.chipWarnFG)
       ForEach(snapshot.statusLabels, id: \.rawValue) { label in
-        StatusChip(text: label.displayText, bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+        StatusChip(text: label.userFacingText, bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
       }
       if !snapshot.runtimeFeedStatus.isHealthy {
         StatusChip(
           text: snapshot.runtimeFeedStatus.displayText, bg: HubTheme.chipWarnBG,
           fg: HubTheme.chipWarnFG)
       }
-      Text("This projection is flagged — rendered as-is, not upgraded.")
+      Text("This Hub view needs attention before acting.")
         .font(.system(size: 11))
         .foregroundStyle(HubTheme.textSecondary)
       Spacer()
@@ -641,7 +655,7 @@ struct WriteActionStateView: View {
       }
     case let .error(reason):
       HStack(spacing: 8) {
-        StatusChip(text: "unavailable", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+        StatusChip(text: "needs attention", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
         Text(reason)
           .font(.system(size: 11))
           .foregroundStyle(HubTheme.textSecondary)

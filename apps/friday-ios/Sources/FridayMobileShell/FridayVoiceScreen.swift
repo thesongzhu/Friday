@@ -65,8 +65,8 @@ struct FridayVoiceScreen: View {
     case let .unavailable(reason):
       UnavailableView(
         reason: reason,
-        title: "Voice readiness unavailable",
-        detail: "Microphone, speech, and playback gates stay local until the live voice readiness arm is available.",
+        title: "Set Up Voice",
+        detail: "Friday needs microphone, speech, and playback readiness before voice can start.",
         systemImage: "waveform",
         identifier: "friday.voice.unavailable")
     case let .loaded(readiness):

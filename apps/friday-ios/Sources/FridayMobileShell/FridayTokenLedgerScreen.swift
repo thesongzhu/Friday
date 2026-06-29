@@ -12,11 +12,11 @@ struct FridayTokenLedgerScreen: View {
           header(status: "loading", ready: false)
           loadingView
         case .unavailable(let reason):
-          header(status: "unavailable", ready: false)
+          header(status: "connect", ready: false)
           UnavailableView(
             reason: reason,
-            title: "Token ledger unavailable",
-            detail: "Cost and provider usage stay hidden until a run reference is projected by the Hub.",
+            title: "Connect Token Ledger",
+            detail: "Friday needs a live run reference before it can show provider usage on this device.",
             systemImage: "chart.bar.doc.horizontal",
             identifier: "friday.token-ledger.unavailable")
         case .loaded(let projection):
@@ -84,7 +84,7 @@ struct FridayTokenLedgerScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Selected Run", count: nil)
-        Text("Friday will read the run readback arm for this run. No cost data is fabricated when the read arm is empty or unavailable.")
+        Text("Friday reads provider usage from the run reference projected by the Hub.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -108,7 +108,7 @@ struct FridayTokenLedgerScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("No Run Ref", count: nil)
-        Text("The Home projection does not include a completed run ref yet, so Friday cannot show per-run token totals from this app surface.")
+        Text("Token totals will appear after the current work produces a completed run reference.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)

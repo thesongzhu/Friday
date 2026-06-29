@@ -222,7 +222,7 @@ const checks = [
       "Add shared text or a URL before submitting.",
       "Share Intake is unavailable",
       "Readiness plus local voice-loop truth",
-      "No cost data is fabricated",
+      "Friday reads provider usage from the run reference projected by the Hub.",
     ]),
   ),
   check(

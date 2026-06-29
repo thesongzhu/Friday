@@ -33,7 +33,7 @@ extension MissionLifecycleState {
     case .completedWithProof: return "completed · proof"
     case .blocked: return "blocked"
     case .error: return "error"
-    case .unknown: return "unavailable"
+    case .unknown: return "unknown"
     }
   }
 
@@ -86,7 +86,7 @@ extension MissionWorkbenchApprovalState {
     case .required: return "approval required"
     case .approved: return "approved"
     case .blocked: return "blocked"
-    case .unknown: return "unavailable"
+    case .unknown: return "pending status"
     }
   }
 }
@@ -98,6 +98,15 @@ extension MissionWorkbenchStatusLabel {
     case .offline: return "OFFLINE"
     case .error: return "ERROR"
     case .unknown: return "UNAVAILABLE"
+    }
+  }
+
+  var userFacingText: String {
+    switch self {
+    case .stale: return "refresh"
+    case .offline: return "connect"
+    case .error: return "attention"
+    case .unknown: return "checking"
     }
   }
 
@@ -116,7 +125,7 @@ extension MissionWorkbenchRuntimeFeedStatus {
     switch self {
     case .liveRustHubProjection: return "live rust hub projection"
     case .pendingRustHubProjection: return "pending rust hub projection"
-    case .unknown: return "feed unavailable"
+    case .unknown: return "feed waiting"
     }
   }
 

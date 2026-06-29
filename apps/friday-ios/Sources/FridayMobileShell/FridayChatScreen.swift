@@ -263,18 +263,32 @@ struct FridayChatScreen: View {
         VStack(alignment: .leading, spacing: 8) {
           HStack {
             Image(systemName: "wifi.slash").foregroundStyle(MobileTheme.coral)
-            Text("Unavailable").font(.headline).foregroundStyle(MobileTheme.textPrimary)
+            Text("Connect Friday").font(.headline).foregroundStyle(MobileTheme.textPrimary)
           }
-          Text(reason).font(.caption2).foregroundStyle(MobileTheme.textSecondary)
+          Text(userFacingChatReason(reason)).font(.caption2).foregroundStyle(MobileTheme.textSecondary)
           Button("Start over") { viewModel.newTurn() }
             .font(.caption).foregroundStyle(MobileTheme.cyan)
             .accessibilityLabel("Start a new Friday chat turn")
         }
       }
       .accessibilityElement(children: .combine)
-      .accessibilityLabel("Friday unavailable. \(reason)")
+      .accessibilityLabel("Connect Friday. \(userFacingChatReason(reason))")
       .accessibilityIdentifier("friday.chat.unavailable")
     }
+  }
+
+  private func userFacingChatReason(_ reason: String) -> String {
+    let normalized = reason.lowercased()
+    if normalized.contains("approval") {
+      return "Friday needs approval before this action can continue."
+    }
+    if normalized.contains("offline") || normalized.contains("transport") || normalized.contains("connection") {
+      return "Friday cannot reach the live Hub from this device. Check the connection, then try again."
+    }
+    if normalized.contains("paused") {
+      return "Friday paused safely and needs your review before continuing."
+    }
+    return "Friday needs a fresh live connection before this turn can continue."
   }
 
   // MARK: - Composer (Compose → Send)
@@ -534,7 +548,7 @@ private final class MobileVoiceController: ObservableObject {
 
   func startRecording(onTranscript: @escaping @Sendable (String) -> Void) {
     guard let recognizer, recognizer.isAvailable else {
-      status = "Voice input is unavailable on this device."
+      status = "Voice input needs microphone and speech recognition support on this device."
       return
     }
     SFSpeechRecognizer.requestAuthorization { [weak self] speechStatus in
@@ -591,7 +605,7 @@ private final class MobileVoiceController: ObservableObject {
     onTranscript: @escaping @Sendable (String) -> Void
   ) {
     guard let recognizer else {
-      status = "Voice input is unavailable on this device."
+      status = "Voice input needs microphone and speech recognition support on this device."
       return
     }
     stopRecording()

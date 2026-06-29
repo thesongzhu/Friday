@@ -161,8 +161,8 @@ struct FridayProjectionScreen: View {
     case .unavailable(let reason):
       UnavailableView(
         reason: reason,
-        title: "\(surface.title) unavailable",
-        detail: "This destination renders only live Hub projection state and will not invent cached readiness.",
+        title: "Connect \(surface.title)",
+        detail: "Friday needs the live Hub projection before this destination can show current state.",
         systemImage: surface.icon,
         identifier: "friday.\(surface.identifierSlug).unavailable")
     }
@@ -185,7 +185,7 @@ struct FridayProjectionScreen: View {
         }
         Spacer()
         StatusChip(
-          text: viewModel.isOnline ? "online" : "offline",
+          text: viewModel.isOnline ? "online" : "connect",
           bg: viewModel.isOnline ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
           fg: viewModel.isOnline ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
       }
@@ -695,7 +695,7 @@ struct FridayProjectionScreen: View {
         cardHeader("Readiness", count: nil)
         readinessRow(
           title: "Read seam",
-          value: viewModel.isOnline ? "connected" : "unavailable",
+          value: viewModel.isOnline ? "connected" : "needs connection",
           healthy: viewModel.isOnline)
         readinessRow(
           title: "Write seam",

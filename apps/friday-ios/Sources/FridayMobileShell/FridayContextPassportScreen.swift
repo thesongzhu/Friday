@@ -12,11 +12,11 @@ struct FridayContextPassportScreen: View {
           header(status: "loading", ready: false)
           loadingView
         case .unavailable(let reason):
-          header(status: "unavailable", ready: false)
+          header(status: "connect", ready: false)
           UnavailableView(
             reason: reason,
-            title: "Context Passport unavailable",
-            detail: "PairAck, trust grant, and context passport truth are read from the Hub projection.",
+            title: "Connect Context Passport",
+            detail: "Friday needs the live Hub projection to show PairAck, trust grant, and passport readiness.",
             systemImage: "checklist.checked",
             identifier: "friday.context-passport.unavailable")
         case .loaded(let projection):
@@ -32,7 +32,7 @@ struct FridayContextPassportScreen: View {
   private func loadedContent(_ projection: HomeProjection) -> some View {
     let status = projection.t3ProvisioningStatus
     header(
-      status: status?.homeStatusLabel ?? "not loaded",
+      status: status?.homeStatusLabel ?? "waiting",
       ready: status?.isFullyProvisioned == true)
 
     if let status {
@@ -44,10 +44,10 @@ struct FridayContextPassportScreen: View {
     } else {
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-          Text("No T3 projection")
+          Text("Waiting for provisioning")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
-          Text("Friday did not return PairAck, trust grant, or context passport status in this Home projection.")
+          Text("PairAck, trust grant, and context passport status will appear after the Hub projection refreshes.")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -213,7 +213,7 @@ struct FridayContextPassportScreen: View {
         .disabled(!isReady || viewModel.contextPassportTransferState?.isSent == true)
         .accessibilityIdentifier("friday.context-passport.send")
         if !isReady {
-          Text("Send remains unavailable until \(missing) is visible in the Hub projection.")
+          Text("Send will be ready after \(missing) is visible in the Hub projection.")
             .font(.caption2)
             .foregroundStyle(MobileTheme.chipWarnFG)
             .fixedSize(horizontal: false, vertical: true)

@@ -137,7 +137,7 @@ const checks = checkSourceSet(repoRoot, [
       "settings",
     ],
     requiredStrings: [
-      "NO-GO visible",
+      "needs data",
       "never estimates spend",
       "Signing-key custody is never held by the app",
       "this screen does not execute tools",

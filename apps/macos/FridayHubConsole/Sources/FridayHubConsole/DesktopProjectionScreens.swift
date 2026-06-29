@@ -948,11 +948,11 @@ struct DesktopProjectionScreen: View {
               bg: snapshot.isLoadedEmpty ? HubTheme.chipNeutralBG : HubTheme.chipPendingBG,
               fg: snapshot.isLoadedEmpty ? HubTheme.chipNeutralFG : HubTheme.chipPendingFG)
           }
-          Text("Diagnostics render typed Hub projection state only. Unknown values stay honest-unavailable and never become ready.")
+          Text("Diagnostics render typed Hub projection state only. Unknown values stay in a safe review state.")
             .font(.system(size: 11))
             .foregroundStyle(HubTheme.textSecondary)
           ForEach(snapshot.statusLabels, id: \.rawValue) { label in
-            label.chip
+            StatusChip(text: label.userFacingText, bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
           }
         }
       }
@@ -1060,7 +1060,7 @@ struct DesktopProjectionScreen: View {
       } else {
         unavailableFactCard(
           title: "Token Ledger",
-          reason: "No run ref is present in the current projection, so spend details stay unavailable.")
+          reason: "Token details will appear after the current projection includes a run ref.")
       }
       refsCard(title: "Provider Receipt Refs", refs: snapshot.providerReceiptRefs)
     }
@@ -1145,7 +1145,7 @@ struct DesktopProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
         cardTitle(title)
-        StatusChip(text: "NO-GO visible", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+        StatusChip(text: "needs data", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
         Text(reason)
           .font(.system(size: 12))
           .foregroundStyle(HubTheme.textSecondary)

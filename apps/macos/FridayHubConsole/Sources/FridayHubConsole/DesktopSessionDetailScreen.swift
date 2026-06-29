@@ -174,7 +174,7 @@ struct DesktopSessionDetailScreen: View {
       GlassPanel {
         VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
           cardTitle(title)
-          Text(reason)
+          Text(userFacingReason(reason))
             .font(.system(size: 12))
             .foregroundStyle(HubTheme.textSecondary)
         }
@@ -261,6 +261,14 @@ struct DesktopSessionDetailScreen: View {
     Text(text)
       .font(.system(size: 14, weight: .semibold))
       .foregroundStyle(HubTheme.textPrimary)
+  }
+
+  private func userFacingReason(_ reason: String) -> String {
+    let normalized = reason.lowercased()
+    if normalized.contains("offline") || normalized.contains("transport") || normalized.contains("connection") {
+      return "Friday cannot reach the live Hub from this window. Check the connection, then refresh."
+    }
+    return "Friday needs a fresh live session view before this screen can continue."
   }
 }
 
