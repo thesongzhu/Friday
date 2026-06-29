@@ -188,6 +188,21 @@ describe("run-real-green-gate-self-hosted", () => {
     expect(c45JobSection).not.toContain("OPENAI_API_KEY");
   });
 
+  it("makes Phase24E Telegram workflow candidate ids deterministic for manual proof prompts", () => {
+    const workflow = readFileSync(join(process.cwd(), ".github/workflows/real-green-gate.yml"), "utf8");
+    const phase24eSection = workflow.slice(
+      workflow.indexOf("phase24e-telegram-workflow-candidate:"),
+      workflow.indexOf("phase24f-discord-workflow-candidate:"),
+    );
+
+    expect(phase24eSection).toContain(
+      "PHASE24E_TELEGRAM_REJECT_CANDIDATE_ID: phase24e-reject-run-${{ github.run_id }}",
+    );
+    expect(phase24eSection).toContain(
+      "PHASE24E_TELEGRAM_APPROVE_CANDIDATE_ID: phase24e-approve-run-${{ github.run_id }}",
+    );
+  });
+
   it("passes an explicit workspace root while keeping runtime state isolated", () => {
     const paths = {
       stateDir: "/tmp/friday-rgg-runtime/state",

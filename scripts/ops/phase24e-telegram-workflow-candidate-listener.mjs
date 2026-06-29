@@ -97,6 +97,12 @@ function buildNonce(kind, explicitEnvVar) {
   return `phase24e-${kind}-run-${runId}-${sha}`;
 }
 
+function buildCandidateId(kind, explicitEnvVar) {
+  const explicit = process.env[explicitEnvVar]?.trim();
+  if (explicit) return sanitizeNoncePart(explicit, `phase24e-${kind}-explicit`);
+  return `phase24e-${kind}-${Date.now()}`;
+}
+
 function tail(value) {
   const text = typeof value === "number" ? String(value) : typeof value === "string" ? value : "";
   if (text.length === 0) return null;
@@ -198,6 +204,8 @@ function readEnvConfig() {
     githubSha: process.env.GITHUB_SHA?.trim() || null,
     rejectNonce,
     approveNonce,
+    rejectCandidateId: buildCandidateId("reject", "PHASE24E_TELEGRAM_REJECT_CANDIDATE_ID"),
+    approveCandidateId: buildCandidateId("approve", "PHASE24E_TELEGRAM_APPROVE_CANDIDATE_ID"),
   };
 }
 
@@ -414,8 +422,8 @@ async function writeReport(report, token) {
 
 function seedWorkflowCandidates(stateDir, config) {
   const candidateRepo = createFridayReflexCandidateRepository();
-  const rejectCandidateId = `phase24e-reject-${Date.now()}`;
-  const approveCandidateId = `phase24e-approve-${Date.now()}`;
+  const rejectCandidateId = config.rejectCandidateId;
+  const approveCandidateId = config.approveCandidateId;
   const generatorSessionId = `phase24e-approve-session-${Date.now()}`;
   const db = new Database(path.join(stateDir, "friday.db"));
   try {
