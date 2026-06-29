@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -244,7 +244,37 @@ function runtimeEvidenceFromDir(dir) {
     ...runtimeEvidenceFromIndex(`${resolved}/live-write-read-bundle-index.json`),
     ...runtimeEvidenceFromIndex(`${resolved}/bundle/live-write-read-bundle-index.json`),
     ...runtimeEvidenceFromIndex(`${resolved}/capture-index.json`),
+    ...recursiveRuntimeEvidenceFromDir(resolved),
   ].filter((candidate, index, values) => existsSync(candidate) && values.indexOf(candidate) === index);
+}
+
+function recursiveRuntimeEvidenceFromDir(root) {
+  if (!root || !existsSync(root)) return [];
+  const found = [];
+  const stack = [{ dir: root, depth: 0 }];
+  const seen = new Set();
+  const ignored = new Set([".git", "node_modules", "target", ".build", "DerivedData"]);
+  const maxDepth = 8;
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (!item || seen.has(item.dir) || item.depth > maxDepth) continue;
+    seen.add(item.dir);
+    let entries = [];
+    try {
+      entries = readdirSync(item.dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const candidate = resolve(item.dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!ignored.has(entry.name)) stack.push({ dir: candidate, depth: item.depth + 1 });
+      } else if (entry.isFile() && ["action-runtime-evidence.json", "design-action-runtime-evidence.json"].includes(entry.name)) {
+        found.push(candidate);
+      }
+    }
+  }
+  return found;
 }
 
 function unique(values) {

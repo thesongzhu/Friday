@@ -888,6 +888,59 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
+  it("accumulates repeated explicit design action runtime evidence paths", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-action-explicit-"));
+    try {
+      writePartialEvidenceDir(tempDir);
+      const contract = writeDesignActionContract(tempDir);
+      const bundle = writeDesignActionRuntimeBundleDir(tempDir);
+
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+        "--design-action-contract",
+        contract,
+        "--design-action-runtime-evidence",
+        bundle.mobileRuntime,
+        "--design-action-runtime-evidence",
+        bundle.desktopRuntime,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        truth?: string;
+        status?: string;
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(result.truth).toBe("report_only_not_ui_device_proof");
+      expect(result.status).toBe("blocked");
+      expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+      expect(result.notes?.some((note) => note.includes("design_action_runtime_gap:runtime_actions_covered"))).toBe(true);
+
+      const actionReport = JSON.parse(readFileSync(join(tempDir, "design-action-runtime-gap.json"), "utf8")) as {
+        status?: string;
+        runtimeEvidenceInputs?: string[];
+        counts?: {
+          missingRuntimeEvidence?: number;
+          missingUniqueRuntimeEvidence?: number;
+        };
+      };
+      expect(actionReport.status).toBe("runtime_actions_covered");
+      expect(actionReport.runtimeEvidenceInputs).toEqual(expect.arrayContaining([
+        bundle.mobileRuntime,
+        bundle.desktopRuntime,
+      ]));
+      expect(actionReport.counts?.missingRuntimeEvidence).toBe(0);
+      expect(actionReport.counts?.missingUniqueRuntimeEvidence).toBe(0);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("passes supporting proofs into the gap report without satisfying UI device proof", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-supporting-"));
     try {
