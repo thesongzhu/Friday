@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -185,5 +186,24 @@ describe("phase24f Discord workflow-candidate listener exports", () => {
     expect(report.schemaVersion).toBe("friday.phase24f.discord_workflow_candidate_approval_rejection_proof.v1");
     expect((report.criteria as { artifactHasNoToken: boolean }).artifactHasNoToken).toBe(false);
     expect(report.status).toBe("running");
+  });
+
+  it("treats TS session mirror as diagnostic after real outbound ack evidence", () => {
+    const source = readFileSync(path.resolve(__dirname, "../../../../scripts/ops/phase24f-discord-workflow-candidate-listener.mjs"), "utf8");
+    expect(source).not.toContain("PHASE24F_REJECT_ACK_SESSION_MIRROR_MISSING");
+    expect(source).not.toContain("PHASE24F_APPROVE_ACK_SESSION_MIRROR_MISSING");
+    expect(source).toContain("sessionMirrorWarnings");
+
+    const requiredCriteria = source.slice(
+      source.indexOf("const requiredCriteria = ["),
+      source.indexOf("report.failures = requiredCriteria"),
+    );
+    expect(requiredCriteria).toContain("\"rejectOutboundAckDelivered\"");
+    expect(requiredCriteria).toContain("\"approveOutboundAckDelivered\"");
+    expect(requiredCriteria).toContain("\"rejectCandidateStatusRejected\"");
+    expect(requiredCriteria).toContain("\"approveCandidateStatusApproved\"");
+    expect(requiredCriteria).toContain("\"workflowVisibleInCrud\"");
+    expect(requiredCriteria).not.toContain("\"rejectAckDelivered\"");
+    expect(requiredCriteria).not.toContain("\"approveAckDelivered\"");
   });
 });
