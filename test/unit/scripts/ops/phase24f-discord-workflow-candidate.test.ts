@@ -193,6 +193,9 @@ describe("phase24f Discord workflow-candidate listener exports", () => {
     expect(source).not.toContain("PHASE24F_REJECT_ACK_SESSION_MIRROR_MISSING");
     expect(source).not.toContain("PHASE24F_APPROVE_ACK_SESSION_MIRROR_MISSING");
     expect(source).toContain("sessionMirrorWarnings");
+    expect(source.indexOf("const workflowsAfterReject = listWorkflowsByTag")).toBeLessThan(
+      source.indexOf("const rejectAck = await waitForCandidateAck"),
+    );
 
     const requiredCriteria = source.slice(
       source.indexOf("const requiredCriteria = ["),

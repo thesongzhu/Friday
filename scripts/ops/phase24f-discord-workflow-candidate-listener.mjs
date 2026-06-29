@@ -511,19 +511,6 @@ async function main() {
     report.rejectFlow.outboundAckDelivered = true;
     report.rejectFlow.outboundAckMessageIdTail = rejectOutboundAck.messageIdTail;
 
-    const rejectAck = await waitForCandidateAck(baseUrl, "discord", config.channelId, rejectCandidateId, "rejected", Math.min(60_000, perFlowTimeout));
-    if (rejectAck) {
-      report.criteria.rejectAckDelivered = true;
-      report.rejectFlow.ackDelivered = true;
-    } else {
-      report.rejectFlow.ackDelivered = false;
-      report.diagnostics.sessionMirrorWarnings = [
-        ...(report.diagnostics.sessionMirrorWarnings ?? []),
-        `Reject ack for candidate ${tail(rejectCandidateId)} reached real Discord outbound but was not mirrored into the session oracle`,
-      ];
-      await persistReport("reject_ack_session_mirror_missing_non_blocking");
-    }
-
     const rejectCandidate = await waitForCandidateStatus(stateDir, rejectCandidateId, "rejected", 30_000);
     report.rejectFlow.candidateStatusReached = rejectCandidate?.status ?? null;
     report.criteria.rejectCandidateStatusRejected = rejectCandidate?.status === "rejected";
@@ -536,7 +523,7 @@ async function main() {
     report.criteria.requireMentionSatisfied = !config.requireMention || Boolean(
       [...observedEventsByMessageId.values()].find((entry) => entry?.inspection?.mentionMatched),
     );
-    await persistReport("reject_flow_verified");
+    await persistReport("reject_flow_invariants_snapshotted");
 
     if (!report.criteria.rejectCandidateStatusRejected || !report.criteria.rejectDidNotSaveWorkflow) {
       report.status = "failed";
@@ -545,6 +532,19 @@ async function main() {
       await writeReport(report, config.botToken);
       process.exitCode = 1;
       return;
+    }
+
+    const rejectAck = await waitForCandidateAck(baseUrl, "discord", config.channelId, rejectCandidateId, "rejected", Math.min(60_000, perFlowTimeout));
+    if (rejectAck) {
+      report.criteria.rejectAckDelivered = true;
+      report.rejectFlow.ackDelivered = true;
+    } else {
+      report.rejectFlow.ackDelivered = false;
+      report.diagnostics.sessionMirrorWarnings = [
+        ...(report.diagnostics.sessionMirrorWarnings ?? []),
+        `Reject ack for candidate ${tail(rejectCandidateId)} reached real Discord outbound but was not mirrored into the session oracle`,
+      ];
+      await persistReport("reject_ack_session_mirror_missing_non_blocking");
     }
 
     const approveOutboundAck = await waitForObservedChannelAck(channelSendObserver, approveCandidateId, "approved", perFlowTimeout);

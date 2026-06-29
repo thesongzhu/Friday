@@ -543,6 +543,26 @@ async function main() {
     report.rejectFlow.outboundAckDelivered = true;
     report.rejectFlow.outboundAckMessageIdTail = rejectOutboundAck.messageIdTail;
 
+    const rejectCandidate = await waitForCandidateStatus(stateDir, rejectCandidateId, "rejected", 30_000);
+    report.rejectFlow.candidateStatusReached = rejectCandidate?.status ?? null;
+    report.criteria.rejectCandidateStatusRejected = rejectCandidate?.status === "rejected";
+    const workflowsAfterReject = listWorkflowsByTag(hub, WORKFLOW_TAG);
+    report.criteria.rejectDidNotSaveWorkflow = workflowsAfterReject.length === 0;
+    report.rejectFlow.workflowSavedAfter = workflowsAfterReject.length > 0;
+    report.criteria.rejectInboundObserved = Boolean(
+      [...observedEventsByMessageId.values()].find((entry) => entry?.inspection?.containsRejectCommand),
+    );
+    await persistReport("reject_flow_invariants_snapshotted");
+
+    if (!report.criteria.rejectCandidateStatusRejected || !report.criteria.rejectDidNotSaveWorkflow) {
+      report.status = "failed";
+      report.blocker = "PHASE24G_REJECT_PATH_INVARIANTS_BROKEN";
+      report.failures.push("Reject path did not satisfy invariants (status=rejected AND no workflow saved)");
+      await writeReport(report, config.appSecret);
+      process.exitCode = 1;
+      return;
+    }
+
     const rejectAck = await waitForCandidateAck(baseUrl, config.platformBrand, config.chatId, rejectCandidateId, "rejected", Math.min(60_000, perFlowTimeout));
     if (rejectAck) {
       report.criteria.rejectAckDelivered = true;
@@ -554,25 +574,6 @@ async function main() {
         `Reject ack for candidate ${tail(rejectCandidateId)} reached real ${config.platformDisplayName} outbound but was not mirrored into the session oracle`,
       ];
       await persistReport("reject_ack_session_mirror_missing_non_blocking");
-    }
-
-    const rejectCandidate = await waitForCandidateStatus(stateDir, rejectCandidateId, "rejected", 30_000);
-    report.rejectFlow.candidateStatusReached = rejectCandidate?.status ?? null;
-    report.criteria.rejectCandidateStatusRejected = rejectCandidate?.status === "rejected";
-    const workflowsAfterReject = listWorkflowsByTag(hub, WORKFLOW_TAG);
-    report.criteria.rejectDidNotSaveWorkflow = workflowsAfterReject.length === 0;
-    report.rejectFlow.workflowSavedAfter = workflowsAfterReject.length > 0;
-    report.criteria.rejectInboundObserved = Boolean(
-      [...observedEventsByMessageId.values()].find((entry) => entry?.inspection?.containsRejectCommand),
-    );
-
-    if (!report.criteria.rejectCandidateStatusRejected || !report.criteria.rejectDidNotSaveWorkflow) {
-      report.status = "failed";
-      report.blocker = "PHASE24G_REJECT_PATH_INVARIANTS_BROKEN";
-      report.failures.push("Reject path did not satisfy invariants (status=rejected AND no workflow saved)");
-      await writeReport(report, config.appSecret);
-      process.exitCode = 1;
-      return;
     }
 
     const approveOutboundAck = await waitForObservedChannelAck(channelSendObserver, approveCandidateId, "approved", perFlowTimeout);
