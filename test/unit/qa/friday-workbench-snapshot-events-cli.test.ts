@@ -335,4 +335,77 @@ describe("friday-workbench-snapshot-events CLI", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("does not return exit 0 for partial events even when explicitly allowed", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-workbench-events-partial-ready-"));
+    try {
+      const missionId = "mission_workbench_events_bridge";
+      const snapshotPath = join(tempDir, "snapshot.json");
+      const out = join(tempDir, "workbench-derived-events.jsonl");
+      const files = writeEvidence(tempDir);
+      const partial = makeSnapshot({
+        runtimeFeedStatus: "prep_contract_fallback",
+        providerReceiptRefs: [],
+        channelReceiptRefs: [],
+        memoryCandidates: [],
+        workItems: [
+          {
+            id: "work_timeline",
+            title: "Bounded timeline read",
+            state: "timeline_read",
+            owner: "friday_owned",
+            proofRef: "proof://timeline/page-2/cursor",
+            done: false,
+            blockingReason: "bounded timeline read only; no WorkItem recovery action applies",
+            recoveryKind: "none",
+            canRetry: false,
+            canCancel: false,
+          },
+        ],
+        timelinePages: [
+          { page: 1, cursor: "cursor_1", nextCursor: "cursor_2", eventRefs: ["event_mobile_intake", "event_desktop_projection"] },
+          { page: 2, cursor: "cursor_2", eventRefs: ["event_timeline_read"] },
+        ],
+        transcriptSections: [
+          {
+            id: "section_workbench_events_bridge",
+            title: "Mission projection",
+            groupKind: "mission",
+            missionId,
+            truthLabel: "friday_owned",
+            status: "waiting",
+            events: [
+              transcriptEvent("event_mobile_intake", "mobile", "ready", { surfaceThreadRef: "surface://mobile/thread", workflowRef: "workflow://mission/intake", timelineRef: "timeline://mission/page-1/event-mobile-intake" }),
+              transcriptEvent("event_desktop_projection", "desktop", "waiting", { surfaceThreadRef: "surface://desktop/thread", timelineRef: "timeline://mission/page-1/event-desktop-projection" }),
+              transcriptEvent("event_timeline_read", "timeline", "timeline_read", { workflowRef: "workflow://mission/timeline", timelineRef: "timeline://mission/page-2/cursor" }, "work_timeline"),
+            ],
+          },
+        ],
+      });
+      writeFileSync(snapshotPath, JSON.stringify({ snapshot: partial }, null, 2));
+
+      const result = spawnSync(process.execPath, [
+        "scripts/ops/friday-workbench-snapshot-events.mjs",
+        "--mission-id=mission_workbench_events_bridge",
+        `--file=${snapshotPath}`,
+        `--mobile=${files.mobile}`,
+        `--desktop=${files.desktop}`,
+        `--timeline=${files.timeline}`,
+        `--out=${out}`,
+        "--defer-channel-proof",
+        "--allow-partial-events",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const parsed = JSON.parse(result.stdout) as { status?: string; derivedEvents?: number };
+
+      expect(result.status).toBe(2);
+      expect(parsed.status).toBe("partial_ready");
+      expect(parsed.derivedEvents).toBeGreaterThan(0);
+      expect(readFileSync(out, "utf8")).toContain("mission_workbench_visible");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });

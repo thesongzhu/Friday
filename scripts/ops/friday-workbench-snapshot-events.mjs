@@ -319,4 +319,4 @@ const output = {
 };
 
 console.log(JSON.stringify(output, null, 2));
-process.exit(blockers.length === 0 || partialReady || !requireReady ? 0 : 2);
+process.exit(blockers.length === 0 || (!requireReady && !allowPartialEvents) ? 0 : 2);

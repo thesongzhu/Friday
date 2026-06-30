@@ -1258,9 +1258,10 @@ describe("friday-ui-device-proof-readiness", () => {
         blockers?: string[];
       };
 
-      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_bridge:no_derived_events"))).toBe(true);
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_bridge:blocked"))).toBe(true);
       expect(result.notes?.some((note) => note.includes(`resolved_SAME_RUN_EVENTS:${files.events}`))).toBe(true);
       expect(result.blockers).toContain("ui_device_proof_evidence:missing_required_real_evidence_env");
+      expect(result.blockers ?? []).not.toContain("workbench_snapshot_events_bridge:exit_2");
       expect(result.blockers ?? []).not.toContain("ui_device_gap_report:exit_2");
       expect(existsSync(join(tempDir, "same-run-events.merged.jsonl"))).toBe(false);
 
