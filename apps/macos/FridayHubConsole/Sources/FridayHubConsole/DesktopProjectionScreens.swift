@@ -991,6 +991,7 @@ struct DesktopProjectionScreen: View {
                 }
                 if item.canCancel {
                   StatusChip(text: "cancel available", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+                    .accessibilityIdentifier("friday.desktop.recovery.cancel-available")
                 }
               }
               if let proofRef = item.proofRef {
