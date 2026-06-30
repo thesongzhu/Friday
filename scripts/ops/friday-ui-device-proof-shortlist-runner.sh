@@ -17,6 +17,7 @@ usage:
     [--stress-capture /abs/real-same-run-stress-capture.json ...]
     [--harvest-dir /abs/artifact-dir ...]
     [--same-run-events /abs/events.jsonl ...]
+    [--selected-visual-evidence-dir /abs/served-or-visual-evidence ...]
     [--runtime-evidence-dir /abs/evidence-dir ...]
     [--extra-action-runtime-evidence /abs/action-runtime-evidence.json ...]
     [--defer-channel-proof]
@@ -55,6 +56,7 @@ stress_captures=()
 harvest_dirs=()
 same_run_events=()
 runtime_evidence_dirs=()
+selected_visual_evidence_dirs=()
 extra_action_runtime_evidence=()
 shared_extra_evidence=()
 
@@ -193,6 +195,15 @@ while [ "$#" -gt 0 ]; do
       runtime_evidence_dirs+=("${1#--runtime-evidence-dir=}")
       shift
       ;;
+    --selected-visual-evidence-dir)
+      [ "$#" -ge 2 ] || die "--selected-visual-evidence-dir requires a value"
+      selected_visual_evidence_dirs+=("$2")
+      shift 2
+      ;;
+    --selected-visual-evidence-dir=*)
+      selected_visual_evidence_dirs+=("${1#--selected-visual-evidence-dir=}")
+      shift
+      ;;
     --extra-action-runtime-evidence)
       [ "$#" -ge 2 ] || die "--extra-action-runtime-evidence requires a value"
       extra_action_runtime_evidence+=("$2")
@@ -251,7 +262,7 @@ require_file_if_set() {
 }
 
 set +u
-for path in "${accessibility_captures[@]}" "${stress_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
+for path in "${accessibility_captures[@]}" "${stress_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
   require_abs_if_set "input path" "${path}"
 done
 set -u
@@ -530,6 +541,10 @@ for dir in "${runtime_evidence_dirs[@]}"; do
   [ -n "${dir}" ] || continue
   closure_args+=("--runtime-evidence-dir=${dir}")
 done
+for dir in "${selected_visual_evidence_dirs[@]}"; do
+  [ -n "${dir}" ] || continue
+  closure_args+=("--selected-visual-evidence-dir=${dir}")
+done
 for path in "${extra_action_runtime_evidence[@]}"; do
   [ -n "${path}" ] || continue
   closure_args+=("--runtime-evidence=${path}")
@@ -764,6 +779,7 @@ const summary = {
   stressCaptureStatus,
   workbenchTimelineStatus,
   productClosureStatus: closure.status,
+  selectedVisualProofStatus: closure.stages?.selectedVisualProof?.status || null,
   uiDeviceProofReadiness: closure.stages?.uiDeviceProofReadiness || null,
   readinessStatus: readiness.status,
   readinessBlockers: readiness.blockers || [],

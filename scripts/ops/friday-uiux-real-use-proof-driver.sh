@@ -13,6 +13,7 @@ usage:
     [--desktop-ax-app-dir /abs/FridayHubConsole.app]
     [--desktop-ax-workbench-mission-id mission_...]
     [--desktop-ax-timeout-seconds 20]
+    [--skip-ios-design-capture]
     [--backend-live-proof /abs/backend-proof.json]
     [--objective-coverage /abs/objective-coverage.json]
     [--channel-live-proof /abs/channel-live-proof.json]
@@ -21,6 +22,7 @@ usage:
     [--workbench-db /abs/rust-hub.sqlite]
     [--harvest-dir /abs/artifact-dir ...]
     [--same-run-events /abs/events.jsonl ...]
+    [--selected-visual-evidence-dir /abs/served-or-visual-evidence ...]
     [--runtime-evidence-dir /abs/evidence-dir ...]
     [--extra-action-runtime-evidence /abs/action-runtime-evidence.json ...]
     [--defer-channel-proof]
@@ -57,6 +59,7 @@ timeline_capture="${FRIDAY_UI_DEVICE_TIMELINE_CAPTURE:-}"
 workbench_db="${FRIDAY_WORKBENCH_DB_PATH:-}"
 defer_channel_proof="${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}"
 run_desktop_ax_capture="${FRIDAY_UIUX_RUN_DESKTOP_AX_CAPTURE:-0}"
+run_ios_design_capture="${FRIDAY_UIUX_RUN_IOS_DESIGN_CAPTURE:-1}"
 desktop_ax_destinations="${FRIDAY_DESKTOP_AX_CAPTURE_DESTINATIONS:-}"
 desktop_ax_app_dir="${FRIDAY_DESKTOP_AX_APP_DIR:-}"
 desktop_ax_workbench_mission_id="${FRIDAY_DESKTOP_AX_WORKBENCH_MISSION_ID:-}"
@@ -67,6 +70,7 @@ accessibility_captures=()
 harvest_dirs=()
 same_run_events=()
 runtime_evidence_dirs=()
+selected_visual_evidence_dirs=()
 extra_action_runtime_evidence=()
 
 if [ -n "${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS:-}" ]; then
@@ -151,6 +155,10 @@ while [ "$#" -gt 0 ]; do
       desktop_ax_timeout_seconds="${1#--desktop-ax-timeout-seconds=}"
       shift
       ;;
+    --skip-ios-design-capture)
+      run_ios_design_capture=0
+      shift
+      ;;
     --backend-live-proof)
       [ "$#" -ge 2 ] || die "--backend-live-proof requires a value"
       backend_live_proof="$2"
@@ -232,6 +240,15 @@ while [ "$#" -gt 0 ]; do
       runtime_evidence_dirs+=("${1#--runtime-evidence-dir=}")
       shift
       ;;
+    --selected-visual-evidence-dir)
+      [ "$#" -ge 2 ] || die "--selected-visual-evidence-dir requires a value"
+      selected_visual_evidence_dirs+=("$2")
+      shift 2
+      ;;
+    --selected-visual-evidence-dir=*)
+      selected_visual_evidence_dirs+=("${1#--selected-visual-evidence-dir=}")
+      shift
+      ;;
     --extra-action-runtime-evidence)
       [ "$#" -ge 2 ] || die "--extra-action-runtime-evidence requires a value"
       extra_action_runtime_evidence+=("$2")
@@ -280,6 +297,10 @@ case "${run_desktop_ax_capture}" in
   0|1|false|true) ;;
   *) die "FRIDAY_UIUX_RUN_DESKTOP_AX_CAPTURE must be 0/1/false/true" ;;
 esac
+case "${run_ios_design_capture}" in
+  0|1|false|true) ;;
+  *) die "FRIDAY_UIUX_RUN_IOS_DESIGN_CAPTURE must be 0/1/false/true" ;;
+esac
 if ! [[ "${desktop_ax_timeout_seconds}" =~ ^[0-9]+$ ]] || [[ "${desktop_ax_timeout_seconds}" -lt 5 ]]; then
   die "--desktop-ax-timeout-seconds must be an integer >= 5"
 fi
@@ -305,7 +326,7 @@ require_file_if_set() {
 }
 
 set +u
-for path in "${accessibility_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
+for path in "${accessibility_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
   require_abs_if_set "input path" "${path}"
 done
 set -u
@@ -333,6 +354,10 @@ fi
 
 mkdir -p "${out_dir}"
 native_linkage_out="${out_dir}/uiux-native-linkage.json"
+served_ui_dir="${out_dir}/served-ui"
+served_ui_fidelity_out="${served_ui_dir}/served-ui-design-fidelity.json"
+ios_design_capture_dir="${out_dir}/ios-design-destination-capture"
+ios_design_manifest_out="${ios_design_capture_dir}/ios-design-destination-capture-manifest.json"
 action_bundle_dir="${out_dir}/action-runtime-bundle"
 desktop_ax_dir="${out_dir}/desktop-ax-accessibility"
 desktop_ax_capture_out="${desktop_ax_dir}/desktop-ax-accessibility-capture.json"
@@ -345,20 +370,15 @@ echo "Friday UI/UX real-use proof driver starting."
 echo "out_dir=${out_dir}"
 echo "truth=uiux_real_use_proof_driver_not_endbar_not_adoption"
 
-node "${repo_root}/scripts/ops/check-friday-uiux-native-linkage.mjs" \
-  "--repo-root=${repo_root}" \
-  "--out=${native_linkage_out}" \
-  --require-complete >/dev/null
-
 if [ "${plan_only}" -eq 1 ]; then
-  node - "${driver_summary}" "${native_linkage_out}" <<'NODE'
+  node - "${driver_summary}" <<'NODE'
 const fs = require("node:fs");
-const [summaryPath, nativePath] = process.argv.slice(2);
-const native = JSON.parse(fs.readFileSync(nativePath, "utf8"));
+const [summaryPath] = process.argv.slice(2);
 const summary = {
   truth: "uiux_real_use_proof_driver_plan_only_not_runtime_proof",
   status: "plan_ready",
-  nativeLinkageStatus: native.status,
+  nativeLinkageStatus: "not_run_plan_only",
+  servedUiDesignFidelityStatus: "not_run_plan_only",
   nextCommand: "rerun without --plan-only and supply real accessibility/channel/timeline evidence when available",
   caveat: "Plan-only mode performs no live UI/device capture and is not END-BAR.",
 };
@@ -367,6 +387,30 @@ console.log(JSON.stringify(summary, null, 2));
 NODE
   exit 0
 fi
+
+node "${repo_root}/scripts/ops/check-friday-uiux-native-linkage.mjs" \
+  "--repo-root=${repo_root}" \
+  "--out=${native_linkage_out}" \
+  --require-complete >/dev/null
+
+node "${repo_root}/scripts/ops/check-friday-served-ui-design-fidelity.mjs" \
+  "--out=${served_ui_fidelity_out}" >/dev/null
+selected_visual_evidence_dirs+=("${served_ui_dir}")
+
+case "${run_ios_design_capture}" in
+  1|true)
+    ios_design_capture_args=(
+      "${repo_root}/scripts/ops/friday-ios-design-destination-capture.sh"
+      "--out-dir" "${ios_design_capture_dir}"
+      "--mode" "live-loopback"
+    )
+    if [ -n "${canonical_mission_id}" ]; then
+      ios_design_capture_args+=("--mission-id" "${canonical_mission_id}")
+    fi
+    bash "${ios_design_capture_args[@]}"
+    selected_visual_evidence_dirs+=("${ios_design_capture_dir}")
+    ;;
+esac
 
 if [ "${skip_action_bundle}" -eq 0 ]; then
   action_bundle_args=(
@@ -466,6 +510,10 @@ for dir in "${runtime_evidence_dirs[@]}"; do
   [ -n "${dir}" ] || continue
   shortlist_args+=("--runtime-evidence-dir" "${dir}")
 done
+for dir in "${selected_visual_evidence_dirs[@]}"; do
+  [ -n "${dir}" ] || continue
+  shortlist_args+=("--selected-visual-evidence-dir" "${dir}")
+done
 for path in "${extra_action_runtime_evidence[@]}"; do
   [ -n "${path}" ] || continue
   shortlist_args+=("--extra-action-runtime-evidence" "${path}")
@@ -480,11 +528,13 @@ if [ "${shortlist_exit_code}" -ne 0 ]; then
   echo "WARN: UI device shortlist exited ${shortlist_exit_code}; writing partial driver summary with blockers." >&2
 fi
 
-node - "${driver_summary}" "${native_linkage_out}" "${shortlist_dir}/ui-device-shortlist-summary.json" "${action_bundle_dir}/action-runtime-evidence-bundle-index.json" "${desktop_ax_capture_out}" "${desktop_ax_exit_code}" "${shortlist_exit_code}" <<'NODE'
+node - "${driver_summary}" "${native_linkage_out}" "${served_ui_fidelity_out}" "${ios_design_manifest_out}" "${shortlist_dir}/ui-device-shortlist-summary.json" "${action_bundle_dir}/action-runtime-evidence-bundle-index.json" "${desktop_ax_capture_out}" "${desktop_ax_exit_code}" "${shortlist_exit_code}" <<'NODE'
 const fs = require("node:fs");
 const [
   summaryPath,
   nativePath,
+  servedUiFidelityPath,
+  iosDesignManifestPath,
   shortlistPath,
   actionBundlePath,
   desktopAxCapturePath,
@@ -499,6 +549,8 @@ function readJson(path) {
   }
 }
 const native = readJson(nativePath);
+const servedUiFidelity = readJson(servedUiFidelityPath);
+const iosDesignManifest = readJson(iosDesignManifestPath);
 const shortlist = readJson(shortlistPath);
 const actionBundle = readJson(actionBundlePath);
 const desktopAxCapture = readJson(desktopAxCapturePath);
@@ -529,6 +581,8 @@ const summary = {
     uiDeviceShortlist: shortlistExitCode,
   },
   nativeLinkageStatus: native?.status || "unknown",
+  servedUiDesignFidelityStatus: servedUiFidelity?.status || "unknown",
+  iosDesignDestinationCaptureStatus: iosDesignManifest?.status || "skipped_or_unavailable",
   actionRuntimeBundleStatus: actionBundle?.status || "skipped_or_unavailable",
   desktopAccessibilityCaptureStatus: desktopAxCapture?.status || "skipped_or_unavailable",
   missionId: shortlist?.missionId || null,
@@ -536,6 +590,8 @@ const summary = {
   readinessBlockers: partialBlockers,
   outputs: {
     nativeLinkage: nativePath,
+    servedUiDesignFidelity: fs.existsSync(servedUiFidelityPath) ? servedUiFidelityPath : null,
+    iosDesignDestinationCapture: fs.existsSync(iosDesignManifestPath) ? iosDesignManifestPath : null,
     actionRuntimeBundle: fs.existsSync(actionBundlePath) ? actionBundlePath : null,
     desktopAccessibilityCapture: fs.existsSync(desktopAxCapturePath) ? desktopAxCapturePath : null,
     uiDeviceShortlist: shortlistPath,

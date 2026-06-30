@@ -40,6 +40,7 @@ describe("friday-uiux-real-use-proof-driver contract", () => {
     const source = readFileSync(script, "utf8");
 
     expect(source).toContain("check-friday-uiux-native-linkage.mjs");
+    expect(source).toContain("check-friday-served-ui-design-fidelity.mjs");
     expect(source).toContain("friday-action-runtime-evidence-bundle.sh");
     expect(source).toContain("friday-desktop-ax-accessibility-capture.mjs");
     expect(source).toContain("friday-ui-device-proof-shortlist-runner.sh");
@@ -47,10 +48,23 @@ describe("friday-uiux-real-use-proof-driver contract", () => {
     expect(source).toContain("FRIDAY_UIUX_RUN_DESKTOP_AX_CAPTURE:-0");
     expect(source).toContain("workbench_db=\"${FRIDAY_WORKBENCH_DB_PATH:-}\"");
     expect(source).toContain("shortlist_args+=(\"--workbench-db\" \"${workbench_db}\")");
+    expect(source).toContain("served_ui_fidelity_out=\"${served_ui_dir}/served-ui-design-fidelity.json\"");
+    expect(source).toContain("ios_design_manifest_out=\"${ios_design_capture_dir}/ios-design-destination-capture-manifest.json\"");
+    expect(source).toContain("selected_visual_evidence_dirs+=(\"${served_ui_dir}\")");
+    expect(source).toContain("FRIDAY_UIUX_RUN_IOS_DESIGN_CAPTURE:-1");
+    expect(source).toContain("--skip-ios-design-capture");
+    expect(source).toContain("friday-ios-design-destination-capture.sh");
+    expect(source).toContain("ios_design_capture_args+=(\"--mission-id\" \"${canonical_mission_id}\")");
+    expect(source).toContain("selected_visual_evidence_dirs+=(\"${ios_design_capture_dir}\")");
+    expect(source).toContain("shortlist_args+=(\"--selected-visual-evidence-dir\" \"${dir}\")");
     expect(source).toContain("--mission-id=${canonical_mission_id}");
     expect(source).toContain("desktop_ax_capture_out=\"${desktop_ax_dir}/desktop-ax-accessibility-capture.json\"");
     expect(source).toContain("accessibility_captures+=(\"${desktop_ax_capture_out}\")");
     expect(source).toContain("desktopAccessibilityCapture");
+    expect(source).toContain("servedUiDesignFidelityStatus");
+    expect(source).toContain("iosDesignDestinationCaptureStatus");
+    expect(source).toContain("servedUiDesignFidelity: fs.existsSync(servedUiFidelityPath) ? servedUiFidelityPath : null");
+    expect(source).toContain("iosDesignDestinationCapture: fs.existsSync(iosDesignManifestPath) ? iosDesignManifestPath : null");
     expect(source).toContain("desktopAccessibilityCaptureStatus");
     expect(source).toContain("desktop_ax_capture_failed_or_partial");
     expect(source).toContain("ui_device_shortlist_failed_or_partial");

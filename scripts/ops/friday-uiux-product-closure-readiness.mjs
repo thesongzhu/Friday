@@ -12,6 +12,7 @@ function usage() {
     [--repo-root=/abs/repo] \\
     [--design-root=/abs/friday-design-handoff-20260602] \\
     [--evidence-dir=/abs/ui-device-evidence ...] \\
+    [--selected-visual-evidence-dir=/abs/served-or-visual-evidence ...] \\
     [--evidence-set=/abs/uiux-closure-evidence-set.json ...] \\
     [--runtime-evidence=/abs/action-runtime-evidence.json ...] \\
     [--runtime-evidence-dir=/abs/evidence-dir ...] \\
@@ -298,6 +299,12 @@ const evidenceDirs = unique([
     ? process.env.FRIDAY_UI_DEVICE_PROOF_EVIDENCE_DIRS.split(/[:\n]/).filter(Boolean)
     : []),
 ]);
+const selectedVisualEvidenceDirs = unique([
+  ...argsAll("selected-visual-evidence-dir"),
+  ...(process.env.FRIDAY_UIUX_SELECTED_VISUAL_EVIDENCE_DIRS
+    ? process.env.FRIDAY_UIUX_SELECTED_VISUAL_EVIDENCE_DIRS.split(/[:\n]/).filter(Boolean)
+    : []),
+]);
 const runtimeEvidence = unique([
   ...argsAll("runtime-evidence"),
   ...evidenceSets.flatMap((set) => set.runtimeEvidence),
@@ -359,6 +366,9 @@ const selectedVisualProofArgs = [
   `--design-root=${designRoot}`,
 ];
 for (const dir of evidenceDirs) {
+  selectedVisualProofArgs.push(`--evidence-dir=${abs(dir)}`);
+}
+for (const dir of selectedVisualEvidenceDirs) {
   selectedVisualProofArgs.push(`--evidence-dir=${abs(dir)}`);
 }
 if (requireUiDeviceProof) selectedVisualProofArgs.push("--require-complete");
@@ -532,6 +542,7 @@ const report = {
   repoRoot,
   designRoot,
   evidenceSets,
+  selectedVisualEvidenceDirs,
   design: {
     contract: designContractPath,
     selections: [
