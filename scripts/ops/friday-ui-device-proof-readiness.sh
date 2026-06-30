@@ -626,6 +626,9 @@ derive_workbench_events_if_possible() {
     bridge_status="$(jq -r '.status // "unknown"' "$stdout_out" 2>/dev/null || printf 'unknown')"
     if [ "$bridge_status" != "ready" ]; then
       notes+=("workbench_snapshot_events_bridge:${bridge_status}:${stdout_out}")
+      if [ "${MODE}" = "require-proof" ]; then
+        blockers+=("workbench_snapshot_events_bridge:${bridge_status}")
+      fi
       return 0
     fi
     if [ -s "$derived_out" ] && [ -n "$existing_events" ]; then
@@ -646,6 +649,9 @@ derive_workbench_events_if_possible() {
     bridge_status="$(jq -r '.status // "unknown"' "$stdout_out" 2>/dev/null || printf 'unknown')"
     if [ "$bridge_status" != "unknown" ]; then
       notes+=("workbench_snapshot_events_bridge:${bridge_status}:${stdout_out}")
+      if [ "${MODE}" = "require-proof" ]; then
+        blockers+=("workbench_snapshot_events_bridge:${bridge_status}")
+      fi
       return 0
     fi
     blockers+=("workbench_snapshot_events_bridge:exit_${rc}")

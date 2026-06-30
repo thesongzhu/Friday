@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1226,6 +1226,45 @@ describe("friday-ui-device-proof-readiness", () => {
       expect(rows).not.toContainEqual(expect.objectContaining({
         surface: "channel",
       }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats non-ready workbench bridge status as a hard blocker in final proof mode", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-workbench-proof-blocker-"));
+    try {
+      writePartialEvidenceDir(tempDir);
+      const partial = makeWorkbenchSnapshot();
+      partial.statusLabels = [];
+      partial.channelReceiptRefs = [];
+      partial.workItems = partial.workItems.filter((item) => item.state !== "provider_ack");
+      partial.transcriptSections = partial.transcriptSections.map((section) => ({
+        ...section,
+        events: section.events.filter((event) => event.surface !== "telegram" && event.status !== "provider_ack"),
+      }));
+      writeFileSync(join(tempDir, "workbench-snapshot.json"), JSON.stringify({ snapshot: partial }, null, 2));
+
+      const resultRun = spawnSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+        "--defer-channel-proof",
+        "--require-proof",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      });
+      const result = JSON.parse(resultRun.stdout.slice(resultRun.stdout.indexOf("{"))) as {
+        notes?: string[];
+        blockers?: string[];
+      };
+
+      expect(resultRun.status).toBe(2);
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_bridge:blocked"))).toBe(true);
+      expect(result.blockers).toContain("workbench_snapshot_events_bridge:blocked");
+      expect(result.notes?.some((note) => note.includes("workbench_snapshot_events_merge:ready"))).not.toBe(true);
+      expect(existsSync(join(tempDir, "same-run-events.merged.jsonl"))).toBe(false);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
