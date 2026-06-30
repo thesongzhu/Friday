@@ -3000,12 +3000,6 @@ export function SetupPage() {
 
   return (
     <div className="relative min-h-screen bg-[color:var(--color-bg-base)] text-[color:var(--color-text-primary)]">
-      {/* Subtle background orbs */}
-      <div className="pointer-events-none absolute inset-0">
-        <div className="agent-orb agent-orb-left" />
-        <div className="agent-orb agent-orb-right" />
-      </div>
-
       <div className="relative">
         {currentStep === 0 && renderStep0()}
         {currentStep === 1 && renderStep1()}

@@ -397,11 +397,11 @@ struct FridayHomeScreen: View {
           Image(systemName: "antenna.radiowaves.left.and.right")
             .foregroundStyle(MobileTheme.textSecondary).frame(width: 22)
           // The runtime feed status TRUTH label rides AS-IS — never upgraded.
-          Text("feed: \(projection.runtimeFeedStatus)")
+          Text("Live connection: \(projection.runtimeFeedStatus)")
             .font(.subheadline).foregroundStyle(MobileTheme.textPrimary)
           Spacer()
         }
-        FridayProofLine(label: "mission_id", ref: projection.missionId)
+        FridayProofLine(label: "mission", ref: projection.missionId)
         if !projection.statusLabels.isEmpty {
           HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("notes")
@@ -428,7 +428,7 @@ struct FridayHomeScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         HStack(alignment: .firstTextBaseline) {
-          Text("Evidence flow")
+          Text("Activity flow")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
           Spacer()
@@ -482,8 +482,8 @@ struct FridayHomeScreen: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
       projection.timelinePages.isEmpty
-        ? "Evidence flow waiting for bounded mission timeline pages"
-        : "Evidence flow shows \(projection.timelinePages.count) bounded mission timeline pages")
+        ? "Activity flow waiting for bounded mission timeline pages"
+        : "Activity flow shows \(projection.timelinePages.count) bounded mission timeline pages")
     .accessibilityIdentifier("friday.home.evidence-flow")
   }
 
@@ -802,7 +802,7 @@ struct FridayHomeScreen: View {
           Text("refs only — open the Mission Workbench for detail")
             .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
           ForEach(projection.workItemIds, id: \.self) { id in
-            FridayProofLine(label: "workItemId", ref: id)
+            FridayProofLine(label: "work item", ref: id)
           }
         }
       }

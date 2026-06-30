@@ -38,10 +38,10 @@
   --rust-500: var(--danger);
 
   /* ── Radius ── */
-  --radius-sm: 11px;
-  --radius-md: 15px;
-  --radius-lg: 22px;
-  --radius-xl: 30px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
 
   /* ── Shell layout ── */
   --shell-rail-w: 240px;

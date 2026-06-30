@@ -132,7 +132,7 @@ export function ProviderTruthCompact(props: {
         className,
       )}
       style={{
-        borderColor: "rgba(122, 106, 88, 0.22)",
+        borderColor: "rgba(15, 125, 140, 0.22)",
         background: "var(--surface-2)",
         color: "var(--ink-700)",
       }}
@@ -147,7 +147,7 @@ export function ProviderTruthCompact(props: {
         <span
           className="shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px]"
           style={{
-            borderColor: "rgba(122, 106, 88, 0.2)",
+            borderColor: "rgba(15, 125, 140, 0.20)",
             color: "var(--ink-300)",
             fontFamily: "var(--font-mono-jb)",
           }}

@@ -343,7 +343,7 @@ export function RightRail() {
         >
           <span
             className="h-20 w-[3px] rounded-full opacity-55 transition-opacity group-hover/right-rail:opacity-100"
-            style={{ background: "rgba(122, 106, 88, 0.28)" }}
+            style={{ background: "rgba(15, 125, 140, 0.20)" }}
           />
         </button>
       ) : null}

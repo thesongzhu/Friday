@@ -192,10 +192,21 @@ function assertBuiltCss(tokens) {
       checks.push(fail("built css still carries old amber/jade token", { banned: value }));
     }
   }
+  const bannedDetailPatterns = [
+    ["decorative radial-gradient background", /radial-gradient/i],
+    ["legacy decorative orb class", /agent-orb/i],
+    ["old warm-brown detail stroke", /rgba\(\s*122,\s*106,\s*88/i],
+    ["old espresso grid stroke", /rgba\(\s*51,\s*41,\s*34/i],
+  ];
+  for (const [name, pattern] of bannedDetailPatterns) {
+    if (pattern.test(css)) {
+      checks.push(fail(`built css still carries ${name}`));
+    }
+  }
 
   return checks.length > 0
     ? checks
-    : [pass("built css applies cyan/coral tokens and excludes amber/jade tokens", { cssFiles: cssFiles.length })];
+    : [pass("built css applies cyan/coral tokens and excludes stale decorative palette remnants", { cssFiles: cssFiles.length })];
 }
 
 function swiftFiles() {

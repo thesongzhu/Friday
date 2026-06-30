@@ -111,4 +111,36 @@ describe("Friday product-facing unavailable copy", () => {
 
     expect(failures).toEqual([]);
   });
+
+  it("keeps raw receipt field names out of visible iOS product labels", () => {
+    const rawLabelPatterns = [
+      /FridayProofLine\(label:\s*"mission_id"/,
+      /FridayProofLine\(label:\s*"work_item_id"/,
+      /FridayProofLine\(label:\s*"conversation_id"/,
+      /FridayProofLine\(label:\s*"selectedRoute"/,
+      /FridayProofLine\(label:\s*"provider_receipt"/,
+      /FridayProofLine\(label:\s*"channel_receipt"/,
+      /FridayProofLine\(label:\s*"proofRef"/,
+      /FridayProofLine\(label:\s*"evidenceRef"/,
+      /FridayProofLine\(label:\s*"runId"/,
+      /FridayProofLine\(label:\s*"workItemId"/,
+      /FridayProofLine\(label:\s*"activity_id"/,
+      /Text\("feed:/,
+      /"Refs-only receipt/,
+      /"created_or_ready"/,
+    ];
+    const failures: string[] = [];
+    for (const relativePath of productSurfaceFiles) {
+      const source = readFileSync(join(repoRoot, relativePath), "utf8");
+      source.split("\n").forEach((line, index) => {
+        for (const pattern of rawLabelPatterns) {
+          if (pattern.test(line)) {
+            failures.push(`${relativePath}:${index + 1}: ${pattern}`);
+          }
+        }
+      });
+    }
+
+    expect(failures).toEqual([]);
+  });
 });

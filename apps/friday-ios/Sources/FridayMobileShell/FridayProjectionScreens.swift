@@ -297,7 +297,7 @@ struct FridayProjectionScreen: View {
             .disabled(viewModel.detailState.isLoading)
           }
         } else {
-          Text("Session detail arms require an agent session ref in the projection.")
+          Text("Session details appear after Friday receives a live session link.")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
@@ -361,15 +361,15 @@ struct FridayProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Mission", count: nil)
-        FridayProofLine(label: "mission_id", ref: projection.missionId)
-        FridayProofLine(label: "conversation_id", ref: projection.fridayConversationId)
+        FridayProofLine(label: "mission", ref: projection.missionId)
+        FridayProofLine(label: "conversation", ref: projection.fridayConversationId)
         if let route = projection.routeDecisionSummary {
           Text(route)
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
         if let selected = projection.routeSelected {
-          FridayProofLine(label: "selectedRoute", ref: selected)
+          FridayProofLine(label: "selected route", ref: selected)
         }
       }
     }
@@ -433,8 +433,8 @@ struct FridayProjectionScreen: View {
           .font(.caption)
           .foregroundStyle(MobileTheme.textPrimary)
           .accessibilityIdentifier("friday.missions.dispatch-ready")
-        FridayProofLine(label: "mission_id", ref: missionId)
-        FridayProofLine(label: "work_item_id", ref: workItemId)
+        FridayProofLine(label: "mission", ref: missionId)
+        FridayProofLine(label: "work item", ref: workItemId)
         FridayProofLine(label: "action", ref: "mobile/missions/dispatch")
         Button {
           onOpenFridayChat(context)
@@ -536,7 +536,7 @@ struct FridayProjectionScreen: View {
           Image(systemName: "antenna.radiowaves.left.and.right")
             .foregroundStyle(MobileTheme.textSecondary)
             .frame(width: 22)
-          Text("feed: \(projection.runtimeFeedStatus)")
+          Text("Live connection: \(projection.runtimeFeedStatus)")
             .font(.subheadline)
             .foregroundStyle(MobileTheme.textPrimary)
           Spacer()
@@ -572,7 +572,7 @@ struct FridayProjectionScreen: View {
                 statusChip(capability.truthLabel)
               }
               if !capability.proofRef.isEmpty {
-                FridayProofLine(label: "proofRef", ref: capability.proofRef)
+                FridayProofLine(label: "receipt", ref: capability.proofRef)
               }
             }
             .padding(.vertical, 4)
@@ -604,7 +604,7 @@ struct FridayProjectionScreen: View {
                 .font(.caption)
                 .foregroundStyle(MobileTheme.textSecondary)
               HStack(spacing: 8) {
-                FridayProofLine(label: "activity_id", ref: event.id)
+                FridayProofLine(label: "activity", ref: event.id)
                 Spacer()
                 Button {
                   Task { await viewModel.markActivityDone(activityId: event.id) }
@@ -619,7 +619,7 @@ struct FridayProjectionScreen: View {
               }
               candidateDecisionStateView(doneState, pendingText: "Marking activity done...")
               if let proofRef = event.proofRef {
-                FridayProofLine(label: "proofRef", ref: proofRef)
+                FridayProofLine(label: "receipt", ref: proofRef)
               }
             }
             .padding(.vertical, 4)
@@ -639,7 +639,7 @@ struct FridayProjectionScreen: View {
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         if let selected = projection.routeSelected {
-          FridayProofLine(label: "selectedRoute", ref: selected)
+          FridayProofLine(label: "selected route", ref: selected)
         }
         if !projection.routeAlternatives.isEmpty {
           VStack(alignment: .leading, spacing: 6) {
@@ -728,7 +728,7 @@ struct FridayProjectionScreen: View {
           Label("Check Provider Auth", systemImage: "stethoscope")
         }
         .disabled(viewModel.detailState.isLoading)
-        FridayProofLine(label: "mission_id", ref: projection.missionId)
+        FridayProofLine(label: "mission", ref: projection.missionId)
       }
     }
   }
@@ -810,7 +810,7 @@ struct FridayProjectionScreen: View {
           value: projection.runtimeFeedStatus.isEmpty ? "not in projection" : projection.runtimeFeedStatus,
           healthy: false)
         FridayProofLine(label: "action", ref: "mobile/pet/state-mapping")
-        FridayProofLine(label: "mission_id", ref: projection.missionId)
+        FridayProofLine(label: "mission", ref: projection.missionId)
       }
     }
     .accessibilityIdentifier("friday.pet-editor.readiness")
@@ -982,7 +982,7 @@ struct FridayProjectionScreen: View {
         candidateDecisionStateView(recoveryState, pendingText: "Updating WorkItem...")
       }
       if let proofRef = item.proofRef {
-        FridayProofLine(label: "proofRef", ref: proofRef)
+        FridayProofLine(label: "receipt", ref: proofRef)
       }
     }
     .padding(.vertical, 4)
@@ -1027,7 +1027,7 @@ struct FridayProjectionScreen: View {
       }
       candidateDecisionStateView(decisionState, pendingText: "Applying memory decision...")
       if !candidate.evidenceRef.isEmpty {
-        FridayProofLine(label: "evidenceRef", ref: candidate.evidenceRef)
+        FridayProofLine(label: "evidence", ref: candidate.evidenceRef)
       }
     }
     .padding(.vertical, 4)
@@ -1070,13 +1070,13 @@ struct FridayProjectionScreen: View {
       }
       learningDecisionStateView(decisionState)
       if !candidate.runId.isEmpty {
-        FridayProofLine(label: "runId", ref: candidate.runId)
+        FridayProofLine(label: "run", ref: candidate.runId)
       }
       if !candidate.workItemId.isEmpty {
-        FridayProofLine(label: "workItemId", ref: candidate.workItemId)
+        FridayProofLine(label: "work item", ref: candidate.workItemId)
       }
       if !candidate.evidenceRef.isEmpty {
-        FridayProofLine(label: "evidenceRef", ref: candidate.evidenceRef)
+        FridayProofLine(label: "evidence", ref: candidate.evidenceRef)
       }
     }
     .padding(.vertical, 4)
