@@ -263,7 +263,7 @@ This document is the current architecture reference for steady-state Friday runt
 - Public auth failures use the current runtime taxonomy: `UNAUTHORIZED`, `FORBIDDEN`, `RATE_LIMITED`, and related canonical codes from `src/api/model/friday-api-error-codes.ts`.
 - Scope taxonomy is defined by the current auth model, including `security.read` / `security.write`, `fleet.read`, `diagnosis.read` / `diagnosis.write`, and the workflow, skill, plugin, and session scopes present in `src/api/model/friday-api-auth.types.ts`.
 - Provider kind and routing semantics are defined by the current provider model and cost-routing types. `openai-compatible` and `google` are canonical provider kinds; historical SSD wording around `"custom"` providers is not the active contract.
-- Anthropic provider auth now has three real runtime modes: `api-key`, `oauth`, and `token`. The `token` mode is a compatibility path for pasted/setup subscription tokens and does not imply refresh semantics.
+- Anthropic provider auth is API-key only. Anthropic OAuth/bearer/token paths remain fail-closed compatibility surfaces and must not be advertised as supported provider auth modes.
 - OpenAI subscription/Codex account sign-in is **not** a current steady-state auth surface for Friday's `api.openai.com` provider path. The active OpenAI provider contract remains API-scoped `api-key` / `bearer-token` credentials. Subscription-based Codex access should be treated as a future Codex client/backend integration rather than a drop-in OAuth mode for the current HTTP provider path.
 
 ## Deep link protocol

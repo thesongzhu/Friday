@@ -418,7 +418,7 @@ describe("Setup Wizard E2E", () => {
       expect(json.error?.message ?? "").toContain("not supported");
     });
 
-    it("A4c: detect allows anthropic oauth onboarding without apiKey", async () => {
+    it("A4c: detect rejects Anthropic OAuth onboarding; Anthropic is API-key only", async () => {
       const res = await fetch(`${baseUrl}/v1/providers/detect`, {
         method: "POST",
         headers: authHeaders(accessToken),
@@ -427,23 +427,14 @@ describe("Setup Wizard E2E", () => {
           authMode: "oauth",
         }),
       });
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(400);
       const json = (await res.json()) as {
         ok: boolean;
-        data: {
-          kind: string;
-          authMode: string;
-          validated: boolean;
-          availableModels: string[];
-          warnings: string[];
-        };
+        error?: { message?: string };
       };
-      expect(json.ok).toBe(true);
-      expect(json.data.kind).toBe("anthropic");
-      expect(json.data.authMode).toBe("oauth");
-      expect(json.data.validated).toBe(false);
-      expect(json.data.availableModels.length).toBeGreaterThan(0);
-      expect(json.data.warnings.some((w) => w.includes("OAuth"))).toBe(true);
+      expect(json.ok).toBe(false);
+      expect(json.error?.message ?? "").toContain("not supported");
+      expect(json.error?.message ?? "").toContain("api-key");
     });
 
     it("A5: get network config should return defaults", async () => {
