@@ -411,6 +411,36 @@ final class HomeViewModelTests: XCTestCase {
       evidenceRef: "proof://mobile/home-refresh/\(p.missionId)")
   }
 
+  func testLiveRuntimeStatusLabelsStayAsProofNotesNotBlockingBanner() throws {
+    let projection = HomeProjection(try sampleSnapshot())
+    XCTAssertEqual(projection.runtimeFeedStatus, "live_rust_hub_projection")
+    XCTAssertEqual(projection.statusLabels, ["stale"])
+    XCTAssertTrue(projection.hasLiveRuntimeFeed)
+    XCTAssertFalse(projection.shouldPromoteStatusLabelsToBlockingBanner)
+  }
+
+  func testNonLiveRuntimeStatusLabelsStillBlockTheProductPath() throws {
+    let json = """
+    {
+      "missionId": "mission-offline",
+      "fridayConversationId": "conv-offline",
+      "runtimeFeedStatus": "offline_projection_cache",
+      "statusLabels": ["offline"],
+      "workItems": [],
+      "providerReceiptRefs": [],
+      "channelReceiptRefs": [],
+      "memoryCandidates": [],
+      "runOutcomeLearningCandidates": [],
+      "capabilityStates": [],
+      "transcriptSections": []
+    }
+    """
+    let snapshot = try WorkbenchSnapshot(projectionJSON: Data(json.utf8), generatedAtMs: 1_780_640_000_000)
+    let projection = HomeProjection(snapshot)
+    XCTAssertFalse(projection.hasLiveRuntimeFeed)
+    XCTAssertTrue(projection.shouldPromoteStatusLabelsToBlockingBanner)
+  }
+
   func testPreviewReadClientMatchesSelectedMobileDesignSample() async throws {
     let projection = HomeProjection(try await PreviewReadClient().fetchWorkbench())
     XCTAssertEqual(projection.runtimeFeedStatus, "preview_sample")

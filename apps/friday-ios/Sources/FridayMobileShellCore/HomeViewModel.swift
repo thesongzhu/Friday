@@ -58,6 +58,17 @@ public struct HomeProjection: Sendable, Equatable {
   /// The Hub epoch-millis the snapshot was generated (lets the UI flag staleness).
   public let generatedAtMs: Int64
 
+  public var hasLiveRuntimeFeed: Bool {
+    let normalized = runtimeFeedStatus.lowercased()
+    return normalized.contains("live")
+      || normalized.contains("connected")
+      || normalized.contains("online")
+  }
+
+  public var shouldPromoteStatusLabelsToBlockingBanner: Bool {
+    !statusLabels.isEmpty && !hasLiveRuntimeFeed
+  }
+
   public init(_ snapshot: WorkbenchSnapshot) {
     let raw = snapshot.raw
     let route = raw["routeDecision"] as? [String: Any]
