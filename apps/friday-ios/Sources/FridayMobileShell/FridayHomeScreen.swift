@@ -483,6 +483,7 @@ struct FridayHomeScreen: View {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         HStack {
           Text("Device pairing").font(.headline).foregroundStyle(MobileTheme.textPrimary)
+            .accessibilityIdentifier("friday.home.device-pairing-card")
           Spacer()
           FridayChip(
             text: pairingReadinessLabel(readiness),
@@ -516,10 +517,8 @@ struct FridayHomeScreen: View {
           .fixedSize(horizontal: false, vertical: true)
       }
     }
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel(
+    .accessibilityHint(
       "Device pairing \(pairingReadinessLabel(readiness)). \(readiness.reason). \(t3Status?.homeSummary ?? "Hub provisioning status is waiting for a live projection.")")
-    .accessibilityIdentifier("friday.home.device-pairing-card")
   }
 
   private func pairingReadinessLabel(_ readiness: DevicePairingReadiness) -> String {

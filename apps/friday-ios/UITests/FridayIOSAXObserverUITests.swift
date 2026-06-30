@@ -103,6 +103,14 @@ final class FridayIOSAXObserverUITests: XCTestCase {
     case "settings-push-permission":
       try tap(app, identifier: "friday.settings.push-permission")
       try waitFor(app, identifier: "friday.settings.push-notifications-card", timeout: 10)
+    case "pairing-retry":
+      try type(text, into: app, identifier: "friday.home.pairing-qr-input")
+      try tap(app, identifier: "friday.home.pair-button")
+      try waitFor(app, identifier: "friday.home.pairing-retry-button", timeout: 10)
+    case "pairing-cancel":
+      try type(text, into: app, identifier: "friday.home.pairing-qr-input")
+      try tap(app, identifier: "friday.home.pair-button")
+      try waitFor(app, identifier: "friday.home.pairing-cancel-button", timeout: 10)
     default:
       XCTFail("Unsupported Friday iOS AX interaction scenario: \(scenario)")
     }
