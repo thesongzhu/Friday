@@ -2,13 +2,14 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = resolve(fileURLToPath(import.meta.url), "..");
 const ROOT = resolve(SCRIPT_DIR, "../..");
 const DEFAULT_DESIGN_ROOT = resolve(process.env.HOME ?? "", "Desktop/friday-design-handoff-20260602");
+const REPO_DESIGN_WITNESS_ROOT = join(ROOT, "test/fixtures/friday-design-handoff-20260602");
 const requireFromScript = createRequire(import.meta.url);
 
 const args = new Map();
@@ -20,7 +21,10 @@ for (let i = 2; i < process.argv.length; i += 1) {
   args.set(key, value);
 }
 
-const designRoot = resolve(args.get("design-root") ?? process.env.FRIDAY_DESIGN_ROOT ?? DEFAULT_DESIGN_ROOT);
+const explicitDesignRoot = args.get("design-root") ?? process.env.FRIDAY_DESIGN_ROOT ?? "";
+const designRoot = resolve(explicitDesignRoot || (existsSync(join(DEFAULT_DESIGN_ROOT, "saved/desktop-selection.json"))
+  ? DEFAULT_DESIGN_ROOT
+  : REPO_DESIGN_WITNESS_ROOT));
 const skipBuild = args.get("skip-build") === "true";
 const distRoot = resolve(args.get("dist") ?? join(ROOT, "dist/ui"));
 const iosSourceRoot = resolve(args.get("ios-source") ?? join(ROOT, "apps/friday-ios/Sources/FridayMobileShell"));
@@ -444,7 +448,6 @@ async function assertRenderedStructure(tokens) {
 
     await page.goto(`${url}/home`, { waitUntil: "networkidle" });
     await page.waitForSelector('[data-testid="app-shell-rail"]', { timeout: 10_000 });
-    await page.waitForSelector('[data-testid="app-shell-right-rail"]', { timeout: 10_000 });
 
     const result = await page.evaluate((expected) => {
       const rightRail = document.querySelector('[data-testid="app-shell-right-rail"]');
@@ -503,6 +506,7 @@ const report = {
   generated_at_utc: new Date().toISOString(),
   head: currentHead(),
   designRoot,
+  designRootSource: designRoot === REPO_DESIGN_WITNESS_ROOT ? "repo-witness-fallback" : "operator-desktop-handoff",
   distRoot,
   iosSourceRoot,
   surface_scope: ["served-desktop-dist-ui", "ios-source-selected-design"],

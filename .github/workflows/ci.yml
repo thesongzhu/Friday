@@ -63,6 +63,9 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Selected served UI design fidelity
+        run: npm run check:served-ui-design-fidelity
+
       - name: Unit/Integration + Core E2E tests
         env:
           FRIDAY_E2E_CORE: "1"

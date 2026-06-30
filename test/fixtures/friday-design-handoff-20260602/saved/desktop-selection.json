@@ -1,0 +1,49 @@
+{
+  "surface": "desktop",
+  "title": "Friday Desktop Hub Gallery",
+  "savedAt": "2026-06-03T10:56:41.435Z",
+  "version": "friday-design-handoff-20260602",
+  "selectionKind": "desktop-final (operator-confirmed 2026-06-09)",
+  "operatorConfirmed": true,
+  "state": {
+    "variant": "claudeCalm",
+    "palette": "cyanCoral",
+    "theme": "light",
+    "background": "warmOffWhite",
+    "language": "mixed",
+    "density": "comfort",
+    "form": "glassNative",
+    "motion": "richRestrained",
+    "petStyle": "retroLcd",
+    "redaction": "strict",
+    "tokenVisibility": "anomalyFirst",
+    "truthLabel": "designProofOnly",
+    "runState": "needs",
+    "screen": "operations",
+    "desktopRole": "hubConsole",
+    "layout": "threePane",
+    "visualAlignment": "lightAlignment",
+    "proofInspector": "rightDocked",
+    "providerNativeAdmin": "authAndSessionControl",
+    "providerParityView": "capabilityMatrixAndQueues",
+    "workflowBuilder": "canvasInspector",
+    "channelConfig": "dedicatedPanel",
+    "desktopPet": "subtleStatus",
+    "evidenceDensity": "balanced"
+  },
+  "locked": [
+    "Desktop localhost remains Hub Console",
+    "Preserve setup/evidence/debug power",
+    "Align visually with mobile without competing with it",
+    "Full desktop redesign is design-only until explicitly approved"
+  ],
+  "guardrails": [
+    "design proof only",
+    "no runtime PASS",
+    "same-origin local save only",
+    "no provider/model API calls",
+    "do not change locked product decisions"
+  ],
+  "savedBy": "save-desktop-final (operator-confirmed)",
+  "savedFile": "saved/desktop-selection.json"
+}
