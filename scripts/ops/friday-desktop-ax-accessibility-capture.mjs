@@ -157,10 +157,50 @@ const defaultActionMap = new Map([
   ["desktop/workflow/cancel", { destination: "workflow", screen: "workflow", accessibility_id: "friday.desktop.workflow.canvas", event: "mission_workbench_visible", interaction: "visible" }],
   ["desktop/channels/receipts", { destination: "channels", screen: "channels", accessibility_id: "friday.desktop.channels.admin", event: "same_mission_mobile_desktop_channel_visible", interaction: "visible" }],
   ["desktop/channels/surface-events", { destination: "channels", screen: "channels", accessibility_id: "friday.desktop.channels.surface-events", event: "same_mission_mobile_desktop_channel_visible", interaction: "visible" }],
+  ["desktop/providerAdmin/check", {
+    destination: "providerAdmin",
+    screen: "providerAdmin",
+    accessibility_id: "friday.desktop.provider-readiness-detail",
+    accessibility_ids: [
+      "friday.desktop.provider-readiness-detail",
+      "friday.desktop.provider-route-decision-card",
+      "friday.desktop.provider-work-items-card",
+    ],
+    event: "real_provider_execution_visible",
+    interaction: "read",
+  }],
+  ["desktop/parity/route-readiness", {
+    destination: "parity",
+    screen: "parity",
+    accessibility_id: "friday.desktop.provider-route-decision-card",
+    accessibility_ids: [
+      "friday.desktop.provider-route-decision-card",
+      "friday.desktop.provider-readiness-detail",
+    ],
+    visible_text: "Route Decision",
+    event: "real_provider_execution_visible",
+    interaction: "read",
+  }],
+  ["desktop/diagnostics/proof-refs", { destination: "diagnostics", screen: "diagnostics", accessibility_id: "friday.desktop.evidence.timeline-pages", visible_text: "Runtime Diagnostics", event: "proof_receipt_visible_before_done", interaction: "read" }],
   ["desktop/recovery/retry", { destination: "recovery", screen: "recovery", accessibility_id: "friday.desktop.recovery.retry-available", visible_text: "retry available", event: "reconnect_stale_verified", interaction: "visible" }],
   ["desktop/recovery/cancel", { destination: "recovery", screen: "recovery", accessibility_id: "friday.desktop.recovery.cancel-available", visible_text: "cancel available", event: "reconnect_stale_verified", interaction: "visible" }],
   ["desktop/memory/act", { destination: "memory", screen: "memory", accessibility_id: "friday.desktop.evidence.memory-candidate", visible_text: "Review-only memory candidate attached to this Mission.", event: "same_mission_projection_visible", interaction: "visible" }],
   ["desktop/memory/check", { destination: "memory", screen: "memory", accessibility_id: "friday.desktop.evidence.memory-candidate", visible_text: "Review-only memory candidate attached to this Mission.", event: "same_mission_projection_visible", interaction: "visible" }],
+  ["desktop/tokenLedger/run-readback", { destination: "tokenLedger", screen: "tokenLedger", accessibility_id: "friday.desktop.evidence.transcript-browser", visible_text: "Token Ledger", event: "transcript_browser_visible", interaction: "read" }],
+  ["desktop/skills/capability-matrix", { destination: "skills", screen: "skills", accessibility_id: "friday.desktop.evidence.memory-review", visible_text: "Skills / Tools Truth Matrix", event: "same_mission_projection_visible", interaction: "read" }],
+  ["desktop/media/evidence-refs", { destination: "media", screen: "media", accessibility_id: "friday.desktop.evidence.timeline-pages", visible_text: "Media / Link", event: "same_mission_projection_visible", interaction: "read" }],
+  ["desktop/settings/hub-posture", { destination: "settings", screen: "settings", accessibility_id: "friday.desktop.evidence.timeline-pages", visible_text: "Hub Settings", event: "mission_workbench_visible", interaction: "read" }],
+  ["desktop/evidence/index-read", {
+    destination: "evidence",
+    screen: "evidence",
+    accessibility_id: "friday.desktop.evidence.timeline-pages",
+    accessibility_ids: [
+      "friday.desktop.evidence.timeline-pages",
+      "friday.desktop.evidence.transcript-browser",
+    ],
+    event: "transcript_browser_visible",
+    interaction: "read",
+  }],
 ]);
 
 function actionPlan() {
