@@ -555,13 +555,13 @@ Create a minimal local skill template with manifest, entrypoint, and SKILL.md.
 
   if (command === "auth") {
     console.log(`
-friday auth login anthropic [--provider-id <id>] [--code <code#state>] [--no-browser]
+friday auth login anthropic [legacy disabled; use setup-token or API-key provider]
 friday auth setup-token anthropic [--provider-id <id>] [--token <token>]
 friday auth paste-token anthropic [--provider-id <id>] [--token <token>]
 friday auth attach-cli codex|claude --provider-id <id> [--binary-path <path>]
 friday auth status [--provider-id <id>]
 
-Authenticate providers through OAuth, setup-token, or CLI-managed external sessions.
+Authenticate providers through supported OAuth, setup-token, or CLI-managed external sessions.
     `.trim());
     return;
   }
@@ -2088,7 +2088,7 @@ async function cmdAuth(parsed: ParsedArgs): Promise<void> {
       && (parsed.authTarget === "codex" || parsed.authTarget === "claude"))
     || (parsed.authSubcommand === "status" && parsed.authTarget === undefined);
   if (!validAuthCommand) {
-    console.error("Usage: friday auth login anthropic [--provider-id <id>] [--code <code#state>] [--no-browser]");
+    console.error("Usage: friday auth login anthropic [legacy disabled; use setup-token or API-key provider]");
     console.error("   or: friday auth setup-token anthropic [--provider-id <id>] [--token <token>]");
     console.error("   or: friday auth paste-token anthropic [--provider-id <id>] [--token <token>]");
     console.error("   or: friday auth attach-cli codex|claude --provider-id <id> [--binary-path <path>]");

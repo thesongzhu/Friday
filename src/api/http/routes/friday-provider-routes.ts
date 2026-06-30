@@ -62,6 +62,7 @@ import {
   resolveExistingOAuthProvider,
   resolveOrProvisionOAuthProvider,
 } from "../../../providers/services/friday-provider-oauth-selection.js";
+import { FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE } from "../../../providers/oauth/friday-anthropic-oauth.js";
 import {
   type FridayCanonicalApprovalResolution,
   type FridayMutatingActionActor,
@@ -1337,31 +1338,12 @@ export function createFridayProviderRoutes(
       auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayInitiateAnthropicOAuthResponse> {
-        const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
-        const raw = ctx.body as Record<string, unknown> | null;
-        const body = raw && typeof raw === "object"
-          ? stripProviderMutationControlFields(raw)
-          : raw;
-        const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.oauth.anthropic.initiate",
-          ctx,
-          body: raw,
-          resourceId: typeof body?.providerId === "string" ? body.providerId : "anthropic",
-          parameters: {
-            ownerUserId,
-            selection: readOAuthSelectionInput(body, "anthropic"),
-          },
-          surface: "api:/v1/auth/oauth/anthropic/initiate",
-        });
-        const selection = await resolveOrProvisionOAuthProvider(
-          deps.providerService,
-          readOAuthSelectionInput(body, "anthropic"),
+        requireOAuthOwnerUserId(ctx.principal);
+        throw new FridayDomainError(
+          "ANTHROPIC_OAUTH_DISABLED",
+          FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
+          { httpStatus: 400 },
         );
-        const oauth = await deps.providerService.initiateOAuthLogin({
-          providerId: selection.provider.id,
-          ownerUserId,
-        });
-        return withCanonicalGate({ oauth }, ticket);
       },
     },
 
@@ -1373,53 +1355,12 @@ export function createFridayProviderRoutes(
       auth: { public: true },
       rateLimitPolicyId: "provider.write",
       async handler(ctx): Promise<FridayCompleteAnthropicOAuthCallbackResponse> {
-        const ownerUserId = requireOAuthOwnerUserId(ctx.principal);
-        const raw = ctx.body as Record<string, unknown> | null;
-        const body = raw && typeof raw === "object"
-          ? stripProviderMutationControlFields(raw)
-          : raw;
-        if (!body || typeof body !== "object") {
-          throw new FridayDomainError(
-            "VALIDATION_ERROR",
-            "Request body is required",
-            { httpStatus: 400 },
-          );
-        }
-        if (typeof body.authorizationCode !== "string" || body.authorizationCode.trim() === "") {
-          throw new FridayDomainError(
-            "VALIDATION_ERROR",
-            "authorizationCode is required and must be a non-empty string",
-            { httpStatus: 400 },
-          );
-        }
-        const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.oauth.anthropic.complete",
-          ctx,
-          body: raw,
-          resourceId: typeof body.providerId === "string" ? body.providerId : "anthropic",
-          parameters: {
-            ownerUserId,
-            selection: readOAuthSelectionInput(body, "anthropic"),
-            authorizationCodePresent: true,
-            statePresent: typeof body.state === "string",
-          },
-          surface: "api:/v1/auth/oauth/anthropic/callback",
-        });
-        const selection = await resolveExistingOAuthProvider(
-          deps.providerService,
-          readOAuthSelectionInput(body, "anthropic"),
-          "oauth_complete",
+        requireOAuthOwnerUserId(ctx.principal);
+        throw new FridayDomainError(
+          "ANTHROPIC_OAUTH_DISABLED",
+          FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
+          { httpStatus: 400 },
         );
-        const providerId = selection.provider.id;
-        const authorizationCode = body.authorizationCode;
-        const state = typeof body.state === "string" ? body.state : undefined;
-        const oauth = await deps.providerService.completeOAuthLogin({
-          providerId,
-          authorizationCode,
-          state,
-          ownerUserId,
-        });
-        return withCanonicalGate({ oauth }, ticket);
       },
     },
     {

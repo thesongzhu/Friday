@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { parseArgs } from "#cli";
 import {
   buildOpenAuthorizationUrlCommand,
+  runFridayCliAuthLoginAnthropic,
   runFridayCliAuthAttachCli,
 } from "../../../src/cli/friday-cli-auth.js";
 
@@ -91,6 +92,32 @@ describe("CLI auth argument parsing", () => {
     expect(() =>
       buildOpenAuthorizationUrlCommand("javascript:alert(1)", "linux"),
     ).toThrow("Browser URL must use http or https");
+  });
+});
+
+describe("CLI auth Anthropic OAuth login", () => {
+  it("fails closed without looking up or initiating Anthropic OAuth", async () => {
+    const providerService = {
+      listProviders: vi.fn(),
+      initiateOAuthLogin: vi.fn(),
+      completeOAuthLogin: vi.fn(),
+    };
+    const stderr = vi.fn();
+
+    await runFridayCliAuthLoginAnthropic(
+      { authTarget: "anthropic", providerId: "anth-001", code: "code#state" },
+      {
+        providerService: providerService as never,
+        stdout: vi.fn(),
+        stderr,
+      },
+    );
+
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("Anthropic OAuth/bearer authentication is disabled"));
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("setup-token anthropic"));
+    expect(providerService.listProviders).not.toHaveBeenCalled();
+    expect(providerService.initiateOAuthLogin).not.toHaveBeenCalled();
+    expect(providerService.completeOAuthLogin).not.toHaveBeenCalled();
   });
 });
 

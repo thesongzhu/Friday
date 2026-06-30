@@ -1096,7 +1096,7 @@ describe("FridayProviderRoutes", () => {
       expect(mockService.setRoutingConfig).not.toHaveBeenCalled();
     });
 
-    it("auth.oauth.anthropic.initiate delegates to service", async () => {
+    it("auth.oauth.anthropic.initiate fails closed before calling service", async () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
         providerService: mockService,
@@ -1105,18 +1105,15 @@ describe("FridayProviderRoutes", () => {
         (r) => r.operationId === "auth.oauth.anthropic.initiate",
       )!;
 
-      const result = await initiateRoute.handler(
+      await expect(initiateRoute.handler(
         makeCtx({ principal: { userId: "user-1" } as never, body: { providerId: "anth-001" } }),
-      );
+      )).rejects.toThrow("Anthropic OAuth/bearer authentication is disabled");
 
-      expect(mockService.initiateOAuthLogin).toHaveBeenCalledWith({
-        providerId: "anth-001",
-        ownerUserId: "user-1",
-      });
-      expect(result).toHaveProperty("oauth");
+      expect(mockService.initiateOAuthLogin).not.toHaveBeenCalled();
+      expect(mockService.createProvider).not.toHaveBeenCalled();
     });
 
-    it("auth.oauth.anthropic.initiate auto-selects the routed anthropic oauth provider when providerId is omitted", async () => {
+    it("auth.oauth.anthropic.initiate fails closed when providerId is omitted", async () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
         providerService: mockService,
@@ -1125,16 +1122,15 @@ describe("FridayProviderRoutes", () => {
         (r) => r.operationId === "auth.oauth.anthropic.initiate",
       )!;
 
-      const result = await initiateRoute.handler(makeCtx({ principal: { userId: "user-1" } as never, body: {} }));
+      await expect(
+        initiateRoute.handler(makeCtx({ principal: { userId: "user-1" } as never, body: {} })),
+      ).rejects.toThrow("Anthropic OAuth/bearer authentication is disabled");
 
-      expect(mockService.initiateOAuthLogin).toHaveBeenCalledWith({
-        providerId: "anth-001",
-        ownerUserId: "user-1",
-      });
-      expect(result).toHaveProperty("oauth");
+      expect(mockService.initiateOAuthLogin).not.toHaveBeenCalled();
+      expect(mockService.createProvider).not.toHaveBeenCalled();
     });
 
-    it("auth.oauth.anthropic.callback delegates to service", async () => {
+    it("auth.oauth.anthropic.callback fails closed before calling service", async () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
         providerService: mockService,
@@ -1143,7 +1139,7 @@ describe("FridayProviderRoutes", () => {
         (r) => r.operationId === "auth.oauth.anthropic.callback",
       )!;
 
-      const result = await callbackRoute.handler(
+      await expect(callbackRoute.handler(
         makeCtx({
           body: {
             providerId: "anth-001",
@@ -1151,18 +1147,12 @@ describe("FridayProviderRoutes", () => {
           },
           principal: { userId: "user-1" } as never,
         }),
-      );
+      )).rejects.toThrow("Anthropic OAuth/bearer authentication is disabled");
 
-      expect(mockService.completeOAuthLogin).toHaveBeenCalledWith({
-        providerId: "anth-001",
-        authorizationCode: "code#state",
-        state: undefined,
-        ownerUserId: "user-1",
-      });
-      expect(result).toHaveProperty("oauth");
+      expect(mockService.completeOAuthLogin).not.toHaveBeenCalled();
     });
 
-    it("auth.oauth.anthropic.callback auto-selects the routed anthropic oauth provider when providerId is omitted", async () => {
+    it("auth.oauth.anthropic.callback fails closed when providerId is omitted", async () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
         providerService: mockService,
@@ -1171,25 +1161,19 @@ describe("FridayProviderRoutes", () => {
         (r) => r.operationId === "auth.oauth.anthropic.callback",
       )!;
 
-      const result = await callbackRoute.handler(
+      await expect(callbackRoute.handler(
         makeCtx({
           body: {
             authorizationCode: "code#state",
           },
           principal: { userId: "user-1" } as never,
         }),
-      );
+      )).rejects.toThrow("Anthropic OAuth/bearer authentication is disabled");
 
-      expect(mockService.completeOAuthLogin).toHaveBeenCalledWith({
-        providerId: "anth-001",
-        authorizationCode: "code#state",
-        state: undefined,
-        ownerUserId: "user-1",
-      });
-      expect(result).toHaveProperty("oauth");
+      expect(mockService.completeOAuthLogin).not.toHaveBeenCalled();
     });
 
-    it("auth.oauth.anthropic.initiate returns a clear ambiguity error when multiple oauth providers match", async () => {
+    it("auth.oauth.anthropic.initiate does not leak provider-selection ambiguity", async () => {
       const mockService = makeMockService();
       mockService.listProviders = vi.fn(async () => [
         anthropicOauthProfile,
@@ -1208,7 +1192,8 @@ describe("FridayProviderRoutes", () => {
 
       await expect(
         initiateRoute.handler(makeCtx({ principal: { userId: "user-1" } as never, body: {} })),
-      ).rejects.toThrow("Multiple anthropic OAuth providers are available. Specify providerId.");
+      ).rejects.toThrow("Anthropic OAuth/bearer authentication is disabled");
+      expect(mockService.listProviders).not.toHaveBeenCalled();
     });
 
     it("auth.oauth.openai.codex.device.initiate delegates to device-code service with owner user", async () => {

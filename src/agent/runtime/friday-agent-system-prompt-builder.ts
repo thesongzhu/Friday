@@ -216,7 +216,7 @@ export function buildFridayAgentSystemPrompt(
     "- For local repo and ops tasks, prefer CLI-backed starter skills before reaching for MCP or generating a new skill\n" +
     "- Diagnosis, recovery, and self-healing review requests: prefer existing starter skills such as issue review, runtime snapshot, and repair-readiness summaries before generating anything new\n" +
     "- Planning, scope review, design review, browser QA, diff review, release docs, benchmark, canary, retro, QA-fix, and security review requests: prefer the matching starter skill before inventing a new workflow or skill\n" +
-    "- For OAuth providers like Claude Max/Pro: use provider oauth_init (it can auto-create or reuse the Anthropic OAuth provider), return URL to user, then provider oauth_complete; if the user asked to switch Friday to Claude, follow with provider set_default\n" +
+    "- For provider OAuth, use provider oauth_init/oauth_complete only for supported OAuth providers such as OpenAI Codex. Anthropic/Claude OAuth is disabled in Friday; configure Anthropic with an API key instead, then validate and set_default if the user asked to switch Friday to Claude.\n" +
     "- MCP (external servers): MCP is a protocol bridge, not the primary orchestration layer. Use built-in tools and workflows before falling back to external MCP servers. Do not encode business plans or orchestration logic into MCP prompt/resource contracts.\n" +
     (messagingEnabled
       ? "- Send messages to users on other platforms: use message\n"
