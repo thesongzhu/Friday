@@ -30,6 +30,41 @@ function writeChannelProof(path: string, overrides: Record<string, unknown> = {}
   }, null, 2));
 }
 
+function writePhase24DiscordProof(path: string, overrides: Record<string, unknown> = {}) {
+  writeFileSync(path, JSON.stringify({
+    schemaVersion: "friday.phase24b.discord_trusted_inbound_proof.v1",
+    phase: "phase24b",
+    scope: "Discord live trusted user inbound proof",
+    status: "passed",
+    startedAt: "2026-06-30T11:20:00.000Z",
+    completedAt: "2026-06-30T11:21:00.000Z",
+    reportPath: "/tmp/phase24b-discord-trusted-inbound-proof.json",
+    environment: {
+      commit_sha: "095811ada740d342e181f91ac38b5d8fac2ee768", // pragma: allowlist secret
+    },
+    criteria: {
+      artifactHasNoToken: true,
+      channelBoundaryConsumable: true,
+      channelBoundaryNoLiveClaim: true,
+      fullEvidenceSurfaceExported: true,
+    },
+    diagnostics: {},
+    evidenceSurface: {
+      runEndpoint: "/v1/agent/runs/example",
+      auditEndpoint: "/v1/agent/runs/example/audit",
+    },
+    observedDiscordEvent: {
+      type: "MESSAGE_CREATE",
+      authorBotFalse: true,
+      senderMatched: true,
+      channelMatched: true,
+      nonceMatched: true,
+    },
+    failures: [],
+    ...overrides,
+  }, null, 2));
+}
+
 describe("friday-channel-proof-events", () => {
   it("emits conservative channel projection and replay-blocked events from a passed wrapper", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-channel-proof-events-"));
@@ -86,6 +121,50 @@ describe("friday-channel-proof-events", () => {
           captured_at: "2026-06-24T23:59:00.000Z",
         },
       ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("emits only channel projection for a passed Phase24 trusted-inbound artifact", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-channel-proof-events-phase24-"));
+    try {
+      const proof = join(tempDir, "phase24b-discord-trusted-inbound-proof.json");
+      const channelCapture = join(tempDir, "channel-capture.json");
+      const out = join(tempDir, "channel-events.jsonl");
+      writePhase24DiscordProof(proof);
+      writeFileSync(channelCapture, JSON.stringify({ truth: "redacted_channel_capture" }));
+
+      const stdout = execFileSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--channel-live-proof=${proof}`,
+        `--channel-capture=${channelCapture}`,
+        `--out=${out}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      const result = JSON.parse(stdout) as {
+        status?: string;
+        outputRows?: number;
+        emittedEvents?: string[];
+        caveat?: string;
+      };
+      const rows = readFileSync(out, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+
+      expect(result.status).toBe("ready");
+      expect(result.outputRows).toBe(1);
+      expect(result.emittedEvents).toEqual(["channel:same_mission_projection_visible"]);
+      expect(result.caveat).toContain("do not emit replay-blocked");
+      expect(rows[0]).toMatchObject({
+        surface: "channel",
+        event: "same_mission_projection_visible",
+        mission_id: missionId,
+        evidence_ref: channelCapture,
+        truth_label: "derived_from_phase24_trusted_inbound_channel_proof_not_final_ui_device_proof",
+        source: "friday.phase24b.discord_trusted_inbound_proof.v1",
+        captured_at: "2026-06-30T11:21:00.000Z",
+      });
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -155,6 +234,40 @@ describe("friday-channel-proof-events", () => {
       const output = JSON.parse(result.stdout) as { status?: string; blockers?: Array<{ code?: string }> };
       expect(output.status).toBe("blocked");
       expect(output.blockers?.map((blocker) => blocker.code)).toContain("channel_live_proof_replay_controls_missing");
+      expect(() => readFileSync(out, "utf8")).toThrow();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when a Phase24 channel artifact is not passed", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-channel-proof-events-phase24-blocked-"));
+    try {
+      const proof = join(tempDir, "phase24b-discord-trusted-inbound-proof.json");
+      const channelCapture = join(tempDir, "channel-capture.json");
+      const out = join(tempDir, "channel-events.jsonl");
+      writePhase24DiscordProof(proof, {
+        status: "blocked",
+        failures: ["No trusted user-origin message arrived"],
+      });
+      writeFileSync(channelCapture, JSON.stringify({ truth: "redacted_channel_capture" }));
+
+      const result = spawnSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--channel-live-proof=${proof}`,
+        `--channel-capture=${channelCapture}`,
+        `--out=${out}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { status?: string; blockers?: Array<{ code?: string }> };
+      expect(output.status).toBe("blocked");
+      expect(output.blockers?.map((blocker) => blocker.code)).toEqual(expect.arrayContaining([
+        "phase24_channel_status_not_passed",
+        "phase24_channel_failures_present",
+      ]));
       expect(() => readFileSync(out, "utf8")).toThrow();
     } finally {
       rmSync(tempDir, { recursive: true, force: true });

@@ -113,6 +113,40 @@ function writeSupportingProofs(tempDir: string) {
   return { backend, channel };
 }
 
+function writePhase24ChannelProof(path: string) {
+  writeFileSync(path, JSON.stringify({
+    schemaVersion: "friday.phase24b.discord_trusted_inbound_proof.v1",
+    phase: "phase24b",
+    scope: "Discord live trusted user inbound proof",
+    status: "passed",
+    startedAt: "2026-06-30T11:20:00.000Z",
+    completedAt: "2026-06-30T11:21:00.000Z",
+    reportPath: "/tmp/phase24b-discord-trusted-inbound-proof.json",
+    environment: {
+      commit_sha: "095811ada740d342e181f91ac38b5d8fac2ee768", // pragma: allowlist secret
+    },
+    criteria: {
+      artifactHasNoToken: true,
+      channelBoundaryConsumable: true,
+      channelBoundaryNoLiveClaim: true,
+      fullEvidenceSurfaceExported: true,
+    },
+    diagnostics: {},
+    evidenceSurface: {
+      runEndpoint: "/v1/agent/runs/example",
+      auditEndpoint: "/v1/agent/runs/example/audit",
+    },
+    observedDiscordEvent: {
+      type: "MESSAGE_CREATE",
+      authorBotFalse: true,
+      senderMatched: true,
+      channelMatched: true,
+      nonceMatched: true,
+    },
+    failures: [],
+  }, null, 2));
+}
+
 function run(tempDir: string, files: ReturnType<typeof evidenceFiles>, rows: unknown[], extraArgs: string[] = []) {
   const events = join(tempDir, "events.jsonl");
   writeJsonl(events, rows);
@@ -223,6 +257,39 @@ describe("friday-ui-device-proof-gap-report", () => {
     }
   });
 
+  it("accepts Phase24 trusted-inbound channel proof as a supporting precondition only", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-gap-report-phase24-supporting-"));
+    try {
+      const files = evidenceFiles(tempDir);
+      const phase24 = join(tempDir, "phase24b-discord-trusted-inbound-proof.json");
+      writePhase24ChannelProof(phase24);
+      const result = run(tempDir, files, partialRows(files), [
+        `--channel-live-proof=${phase24}`,
+      ]);
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as {
+        status?: string;
+        supportingProofs?: Array<{
+          role?: string;
+          status?: string;
+          countsTowardUiDeviceProof?: boolean;
+          failures?: string[];
+        }>;
+        gaps?: { missingObservations?: unknown[] };
+      };
+      expect(output.status).toBe("gaps_present");
+      expect(output.gaps?.missingObservations?.length).toBeGreaterThan(0);
+      expect(output.supportingProofs).toContainEqual(expect.objectContaining({
+        role: "channelLiveProof",
+        status: "usable_precondition_not_ui_device_evidence",
+        countsTowardUiDeviceProof: false,
+        failures: [],
+      }));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("moves channel gaps into deferred buckets when channel proof is deferred", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-gap-report-defer-channel-"));
     try {
@@ -308,6 +375,38 @@ describe("friday-ui-device-proof-gap-report", () => {
       const rows = completeRows({ ...files, desktop: alias });
       const manifest = join(tempDir, "manifest.json");
       writeFileSync(manifest, JSON.stringify(completeManifest(), null, 2));
+
+      const result = run(tempDir, files, rows, [
+        `--manifest=${manifest}`,
+        "--require-complete",
+      ]);
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as { status?: string; blockers?: unknown[] };
+      expect(output.status).toBe("complete_inputs_observed");
+      expect(output.blockers).toEqual([]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts manifest-declared extra evidence refs as strict inputs", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-gap-report-manifest-extra-"));
+    try {
+      const files = evidenceFiles(tempDir);
+      const extraTrace = join(tempDir, "desktop-accessibility.trace");
+      writeFileSync(extraTrace, "real desktop accessibility trace captured during the same run\n");
+      const rows = completeRows(files).map((row) => {
+        const typed = row as { event?: string };
+        if (typed.event === "mission_workbench_visible") {
+          return { ...row, evidence_ref: extraTrace };
+        }
+        return row;
+      });
+      const manifest = join(tempDir, "manifest.json");
+      writeFileSync(manifest, JSON.stringify({
+        ...completeManifest(),
+        extra_evidence_refs: [extraTrace],
+      }, null, 2));
 
       const result = run(tempDir, files, rows, [
         `--manifest=${manifest}`,
