@@ -411,6 +411,19 @@ final class HomeViewModelTests: XCTestCase {
       evidenceRef: "proof://mobile/home-refresh/\(p.missionId)")
   }
 
+  func testPreviewReadClientMatchesSelectedMobileDesignSample() async throws {
+    let projection = HomeProjection(try await PreviewReadClient().fetchWorkbench())
+    XCTAssertEqual(projection.runtimeFeedStatus, "preview_sample")
+    XCTAssertEqual(projection.statusLabels, [])
+    XCTAssertEqual(
+      projection.workItems.map(\.title),
+      ["Approve high-risk file change", "Confirm focused Rust tests", "Claude reviewing docs"])
+    XCTAssertEqual(projection.workItems.filter(\.needsAttention).map(\.id), ["wi-preview-1", "wi-preview-2"])
+    XCTAssertEqual(projection.providerWorkItems.map(\.id), ["wi-preview-1", "wi-preview-2", "wi-preview-3"])
+    XCTAssertEqual(projection.memoryCandidates.first?.preview, "never written without consent")
+    XCTAssertEqual(projection.runOutcomeLearningCandidates, [])
+  }
+
   func testHomeViewModelCarriesInjectedDevicePairingReadiness() async throws {
     let readiness = DevicePairingReadiness(
       mode: .ready,
