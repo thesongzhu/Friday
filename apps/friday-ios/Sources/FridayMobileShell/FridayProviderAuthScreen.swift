@@ -303,9 +303,9 @@ struct FridayProviderAuthScreen: View {
         FridayProofLine(label: "selected_route", ref: route)
       }
       ForEach(projection.providerReceiptRefs.prefix(3), id: \.self) { ref in
-        FridayProofLine(label: "provider_receipt", ref: ref)
+        FridayProofLine(label: "provider receipt", ref: ref)
       }
-      FridayProofLine(label: "mission_id", ref: projection.missionId)
+      FridayProofLine(label: "mission", ref: projection.missionId)
     }
   }
 

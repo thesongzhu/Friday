@@ -130,7 +130,9 @@ function writeBadDist(root: string) {
   const distRoot = join(root, "dist");
   writeFile(distRoot, "assets/app.css", `
     :root { --amber-500: #c77d2e; --jade-500: #4f7a5c; }
-    body { background: #fff8ef; color: #2f2115; }
+    body { background: radial-gradient(circle, #fff8ef, #ffffff); color: #2f2115; }
+    .agent-orb { background: rgba(122, 106, 88, 0.18); }
+    .canvas { background-image: linear-gradient(to right, rgba(51, 41, 34, 0.05), transparent); }
   `);
   writeFile(distRoot, "index.html", `
     <!doctype html>
@@ -188,6 +190,10 @@ describe("check-friday-served-ui-design-fidelity", () => {
       const failures = report.checks?.filter((check) => check.ok === false).map((check) => check.message) ?? [];
       expect(failures).toEqual(expect.arrayContaining([
         "built css still carries old amber/jade token",
+        "built css still carries decorative radial-gradient background",
+        "built css still carries legacy decorative orb class",
+        "built css still carries old warm-brown detail stroke",
+        "built css still carries old espresso grid stroke",
         "iOS user path still contains stock borderedProminent button",
         "iOS user path still contains stock segmented picker",
         "iOS user path still contains generic StatusChip primitive",

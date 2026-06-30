@@ -82,13 +82,13 @@ struct FridayShareIntakeScreen: View {
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
             .accessibilityIdentifier("friday.share.ready")
-          FridayProofLine(label: "mission_id", ref: receipt.missionId)
+          FridayProofLine(label: "mission", ref: receipt.missionId)
           if let workItemId = receipt.workItemId {
-            FridayProofLine(label: "work_item_id", ref: workItemId)
+            FridayProofLine(label: "work item", ref: workItemId)
           }
           FridayProofLine(label: "surface", ref: receipt.surfaceThreadId)
           FridayChip(
-            text: receipt.createdOrReady ? "created_or_ready" : receipt.status,
+            text: receipt.createdOrReady ? "ready" : receipt.status,
             bg: MobileTheme.chipDoneBG,
             fg: MobileTheme.chipDoneFG)
           Divider().opacity(0.5)

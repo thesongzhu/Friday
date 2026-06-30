@@ -2589,8 +2589,8 @@ function WorkflowBuilderEditor() {
                 className="pointer-events-none absolute inset-0 opacity-70"
                 style={{
                   backgroundImage: `
-                    linear-gradient(to right, rgba(51, 41, 34, 0.05) 1px, transparent 1px),
-                    linear-gradient(to bottom, rgba(51, 41, 34, 0.05) 1px, transparent 1px)
+                    linear-gradient(to right, rgba(15, 125, 140, 0.045) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(15, 125, 140, 0.045) 1px, transparent 1px)
                   `,
                   backgroundSize: `${CANVAS_GRID_SIZE}px ${CANVAS_GRID_SIZE}px`,
                 }}

@@ -33,7 +33,7 @@ export function StatusPill(props: {
   return (
     <span
       className={cn(
-        "inline-flex min-h-[32px] items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] transition-colors",
+        "inline-flex min-h-[30px] items-center rounded-[var(--radius-sm)] border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] transition-colors",
         props.tone === "success" && "border-[color:var(--color-border-success)] bg-[color:var(--color-bg-success-subtle)] text-[color:var(--color-text-success)]",
         props.tone === "warning" && "border-[color:var(--color-border-warning)] bg-[color:var(--color-bg-warning-subtle)] text-[color:var(--color-text-warning)]",
         props.tone === "danger" && "border-[color:var(--color-border-danger)] bg-[color:var(--color-bg-danger-subtle)] text-[color:var(--color-text-danger)]",
@@ -58,7 +58,7 @@ export function ActionButton(
     <button
       type={type ?? "button"}
       className={cn(
-        "inline-flex min-h-[44px] items-center justify-center rounded-2xl border px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex min-h-[40px] items-center justify-center rounded-[var(--radius-md)] border px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
         tone === "danger" && "border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-contrast)] text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent-muted)]",
         tone === "secondary" && "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] text-[color:var(--color-text-secondary)] hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-surface-strong)] hover:text-[color:var(--color-text-primary)]",
         (!tone || tone === "primary") && "border-[color:var(--color-accent)] bg-[color:var(--color-accent)] text-[color:var(--color-bg-base)] hover:opacity-90",

@@ -573,7 +573,7 @@ export function HomePage() {
                 <span
                   className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 py-1.5 text-xs"
                   style={{
-                    borderColor: "rgba(122, 106, 88, 0.22)",
+                    borderColor: "rgba(15, 125, 140, 0.22)",
                     background: "var(--surface-2)",
                     color: "var(--ink-700)",
                   }}
@@ -598,7 +598,7 @@ export function HomePage() {
                   onClick={() => requestCommandPaletteOpen()}
                   className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 text-xs transition-colors hover:bg-[color:var(--accent-soft)]"
                   style={{
-                    borderColor: "rgba(122, 106, 88, 0.22)",
+                    borderColor: "rgba(15, 125, 140, 0.22)",
                     background: "var(--surface-2)",
                     color: "var(--ink-500)",
                   }}
@@ -608,7 +608,7 @@ export function HomePage() {
                   <kbd
                     className="rounded border px-1 py-0.5 font-mono text-[10px]"
                     style={{
-                      borderColor: "rgba(122, 106, 88, 0.2)",
+                      borderColor: "rgba(15, 125, 140, 0.20)",
                       color: "var(--ink-300)",
                       fontFamily: "var(--font-mono-jb)",
                     }}

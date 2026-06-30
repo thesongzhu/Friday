@@ -59,7 +59,7 @@ function Row(props: { to: string; Icon: typeof Workflow; title: string; hint: st
         to={props.to}
         className="group flex items-start gap-3 rounded-[var(--radius-md)] border px-3 py-3 transition-colors hover:bg-[color:var(--accent-soft)]"
         style={{
-          borderColor: "rgba(122, 106, 88, 0.18)",
+          borderColor: "var(--surface-border)",
           background: "var(--surface-2)",
         }}
       >

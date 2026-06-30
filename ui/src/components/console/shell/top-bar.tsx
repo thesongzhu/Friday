@@ -52,7 +52,7 @@ export function TopBar(props: {
       style={{
         height: "var(--shell-topbar-h)",
         background: "var(--surface-1)",
-        borderColor: "rgba(122, 106, 88, 0.18)",
+        borderColor: "var(--surface-border)",
       }}
     >
       <div className="flex min-w-0 items-center">
@@ -78,7 +78,7 @@ export function TopBar(props: {
           aria-label={localize(locale, "打开命令面板", "Open command palette")}
           className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 text-xs transition-colors hover:bg-[color:var(--accent-soft)]"
           style={{
-            borderColor: "rgba(122, 106, 88, 0.22)",
+            borderColor: "rgba(15, 125, 140, 0.22)",
             background: "var(--surface-2)",
             color: "var(--ink-500)",
           }}
@@ -88,7 +88,7 @@ export function TopBar(props: {
           <kbd
             className="rounded border px-1 py-0.5 font-mono text-[10px]"
             style={{
-              borderColor: "rgba(122, 106, 88, 0.2)",
+              borderColor: "rgba(15, 125, 140, 0.20)",
               color: "var(--ink-300)",
               fontFamily: "var(--font-mono-jb)",
             }}
@@ -109,7 +109,7 @@ function LiveIndicator(props: { color: string; label: string }) {
       style={{
         background: "var(--surface-2)",
         color: "var(--ink-700)",
-        border: "1px solid rgba(122, 106, 88, 0.18)",
+        border: "1px solid var(--surface-border)",
       }}
     >
       <span
@@ -141,7 +141,7 @@ export function MobileTopBar(props: {
       style={{
         height: "var(--shell-mobile-topbar-h)",
         background: "var(--surface-1)",
-        borderColor: "rgba(122, 106, 88, 0.18)",
+        borderColor: "var(--surface-border)",
       }}
     >
       <div className="flex min-w-0 items-center gap-3">
@@ -150,7 +150,7 @@ export function MobileTopBar(props: {
           onClick={onToggleMobileMore}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] border"
           style={{
-            borderColor: "rgba(122, 106, 88, 0.22)",
+            borderColor: "rgba(15, 125, 140, 0.22)",
             background: "var(--surface-2)",
             color: "var(--ink-700)",
           }}
@@ -189,7 +189,7 @@ export function MobileTopBar(props: {
           onClick={onToggleLocale}
           className="flex h-9 items-center gap-1.5 rounded-[var(--radius-md)] border px-2 text-xs"
           style={{
-            borderColor: "rgba(122, 106, 88, 0.22)",
+            borderColor: "rgba(15, 125, 140, 0.22)",
             background: "var(--surface-2)",
             color: "var(--ink-700)",
           }}

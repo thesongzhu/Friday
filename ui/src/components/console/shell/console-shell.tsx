@@ -179,16 +179,16 @@ export function ConsoleShell() {
               <div
                 className="absolute inset-x-0 bottom-0 max-h-[82vh] overflow-y-auto rounded-t-[22px] border px-4 pb-5 pt-2 shadow-[0_-12px_44px_rgba(0,0,0,0.22)]"
                 style={{
-                  borderColor: "rgba(122, 106, 88, 0.18)",
+                  borderColor: "var(--surface-border)",
                   background: "var(--surface-2)",
                 }}
               >
                 <div
                   aria-hidden="true"
                   className="mx-auto mb-3 h-1.5 w-11 rounded-full"
-                  style={{ background: "rgba(122, 106, 88, 0.22)" }}
+                  style={{ background: "rgba(15, 125, 140, 0.22)" }}
                 />
-              <div className="flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: "rgba(122, 106, 88, 0.18)" }}>
+              <div className="flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: "var(--surface-border)" }}>
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--ink-300)" }}>
                     {localize(locale, "命令面板", "Command Sheet")}
@@ -210,7 +210,7 @@ export function ConsoleShell() {
                     onClick={() => setShowMobileMore(false)}
                     className="min-h-[88px] rounded-[var(--radius-md)] border px-3 py-3"
                     style={{
-                      borderColor: "rgba(122, 106, 88, 0.18)",
+                      borderColor: "var(--surface-border)",
                       background: "var(--surface-2)",
                     }}
                   >

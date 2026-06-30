@@ -54,7 +54,7 @@ struct FridayTokenLedgerScreen: View {
           Text("Token Ledger")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
-          Text("refs-only provider usage readback")
+          Text("provider usage readback")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
@@ -89,7 +89,7 @@ struct FridayTokenLedgerScreen: View {
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         FridayProofLine(label: "run_id", ref: runId)
-        FridayProofLine(label: "mission_id", ref: projection.missionId)
+        FridayProofLine(label: "mission", ref: projection.missionId)
         Button {
           Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
         } label: {
@@ -112,7 +112,7 @@ struct FridayTokenLedgerScreen: View {
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
-        FridayProofLine(label: "mission_id", ref: projection.missionId)
+        FridayProofLine(label: "mission", ref: projection.missionId)
         FridayProofLine(label: "feed", ref: projection.runtimeFeedStatus)
       }
     }
@@ -131,10 +131,10 @@ struct FridayTokenLedgerScreen: View {
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
           ForEach(projection.providerReceiptRefs.prefix(5), id: \.self) { ref in
-            FridayProofLine(label: "provider_receipt", ref: ref)
+            FridayProofLine(label: "provider receipt", ref: ref)
           }
           ForEach(projection.channelReceiptRefs.prefix(5), id: \.self) { ref in
-            FridayProofLine(label: "channel_receipt", ref: ref)
+            FridayProofLine(label: "channel receipt", ref: ref)
           }
         }
       }

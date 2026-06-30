@@ -96,7 +96,7 @@ export function Rail({ collapsed, onToggleCollapse }: RailProps) {
         style={{
           background: "var(--surface-1)",
           borderColor: "var(--ink-300)",
-          borderRightColor: "rgba(122, 106, 88, 0.15)",
+          borderRightColor: "rgba(18, 40, 45, 0.10)",
         }}
       >
         <div className={cn("flex items-center gap-2 px-1 pb-3", collapsed ? "justify-center" : "justify-between")}>
@@ -141,7 +141,7 @@ export function Rail({ collapsed, onToggleCollapse }: RailProps) {
 
         <div
           className="mt-4 border-t pt-3"
-          style={{ borderColor: "rgba(122, 106, 88, 0.18)" }}
+          style={{ borderColor: "var(--surface-border)" }}
           aria-label="Advanced surfaces"
         >
           <nav className="space-y-1">
@@ -153,7 +153,7 @@ export function Rail({ collapsed, onToggleCollapse }: RailProps) {
 
         <div
           className="mt-auto border-t pt-3"
-          style={{ borderColor: "rgba(122, 106, 88, 0.18)" }}
+          style={{ borderColor: "var(--surface-border)" }}
         >
           <RailNavItem
             item={{
@@ -230,7 +230,7 @@ export function MobileNav(props: { onOpenMore: () => void }) {
       className="fixed inset-x-0 bottom-0 z-30 border-t lg:hidden"
       style={{
         background: "var(--surface-1)",
-        borderColor: "rgba(122, 106, 88, 0.18)",
+        borderColor: "var(--surface-border)",
         height: "var(--shell-mobile-nav-h)",
       }}
     >

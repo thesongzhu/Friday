@@ -119,7 +119,7 @@ export function SplashShell(props: SplashShellProps) {
                 : {
                     background: "transparent",
                     color: "var(--ink-700)",
-                    border: "1px solid rgba(122, 106, 88, 0.22)",
+                    border: "1px solid rgba(15, 125, 140, 0.22)",
                   };
               const className = "inline-flex min-h-[40px] items-center gap-2 rounded-[var(--radius-md)] px-4 text-sm font-medium transition-opacity hover:opacity-90";
               if (action.href) {

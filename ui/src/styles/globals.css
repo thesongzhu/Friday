@@ -61,7 +61,7 @@
   --font-mono: "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", ui-monospace, monospace;
 
   --density-card-padding: 1.35rem;
-  --density-card-radius: 28px;
+  --density-card-radius: 16px;
   --density-section-gap: 1.25rem;
   --density-grid-gap: 1rem;
 
@@ -111,7 +111,7 @@
   --color-bg-chrome-strong: rgba(255, 255, 255, 0.78);
 
   --density-card-padding: 1.15rem;
-  --density-card-radius: 22px;
+  --density-card-radius: 14px;
   --density-section-gap: 1rem;
   --density-grid-gap: 0.85rem;
 
@@ -119,10 +119,7 @@
 }
 
 [data-locale="zh"] body {
-  background:
-    radial-gradient(circle at top left, rgba(15, 125, 140, 0.06), transparent 28%),
-    radial-gradient(circle at bottom right, rgba(216, 99, 77, 0.04), transparent 24%),
-    linear-gradient(180deg, #f7f6f2 0%, #ffffff 100%);
+  background: #f7f6f2;
 }
 
 [data-locale="zh"] .agent-eyebrow {
@@ -151,10 +148,7 @@
   body {
     min-height: 100vh;
     margin: 0;
-    background:
-      radial-gradient(circle at top left, var(--color-accent-muted), transparent 28%),
-      radial-gradient(circle at bottom right, rgba(51, 41, 34, 0.05), transparent 24%),
-      linear-gradient(180deg, var(--color-bg-base) 0%, var(--color-bg-elevated) 100%);
+    background: var(--color-bg-base);
     color: var(--color-text-primary);
     font-family: var(--font-display);
     font-feature-settings: "rlig" 1, "calt" 1;
@@ -179,31 +173,9 @@
 
 .agent-grid {
   background-image:
-    linear-gradient(rgba(51, 41, 34, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(51, 41, 34, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(15, 125, 140, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 125, 140, 0.04) 1px, transparent 1px);
   background-size: 36px 36px;
-  mask-image: radial-gradient(circle at center, black 34%, transparent 84%);
-}
-
-.agent-orb {
-  position: absolute;
-  width: 30rem;
-  height: 30rem;
-  border-radius: 9999px;
-  filter: blur(72px);
-  opacity: 0.22;
-}
-
-.agent-orb-left {
-  left: -9rem;
-  top: -8rem;
-  background: var(--color-accent-strong);
-}
-
-.agent-orb-right {
-  right: -12rem;
-  bottom: -9rem;
-  background: rgba(51, 41, 34, 0.08);
 }
 
 .agent-card {
@@ -247,7 +219,7 @@
   font-family: var(--font-display);
   font-size: 1.25rem;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   color: var(--color-text-primary);
 }
 
@@ -506,10 +478,10 @@
   transition: background 0.3s;
 }
 .scrollbar-autohide.is-scrolling {
-  scrollbar-color: rgba(51, 41, 34, 0.15) transparent;
+  scrollbar-color: rgba(15, 125, 140, 0.18) transparent;
 }
 .scrollbar-autohide.is-scrolling::-webkit-scrollbar-thumb {
-  background: rgba(51, 41, 34, 0.15);
+  background: rgba(15, 125, 140, 0.18);
 }
 
 /* ── Mobile refinements ── */

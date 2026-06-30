@@ -77,7 +77,7 @@ struct FridaySessionDetailScreen: View {
             bg: MobileTheme.chipPendingBG,
             fg: MobileTheme.chipPendingFG)
         }
-        FridayProofLine(label: "mission_id", ref: projection.missionId)
+        FridayProofLine(label: "mission", ref: projection.missionId)
         if let agentSessionId = projection.agentSessionId {
           FridayProofLine(label: "agent_session_id", ref: agentSessionId)
         }
@@ -557,13 +557,13 @@ struct FridaySessionDetailScreen: View {
       }
       learningDecisionStateView(decisionState)
       if !candidate.runId.isEmpty {
-        FridayProofLine(label: "runId", ref: candidate.runId)
+        FridayProofLine(label: "run", ref: candidate.runId)
       }
       if !candidate.workItemId.isEmpty {
-        FridayProofLine(label: "workItemId", ref: candidate.workItemId)
+        FridayProofLine(label: "work item", ref: candidate.workItemId)
       }
       if !candidate.evidenceRef.isEmpty {
-        FridayProofLine(label: "evidenceRef", ref: candidate.evidenceRef)
+        FridayProofLine(label: "evidence", ref: candidate.evidenceRef)
       }
     }
     .padding(.vertical, 4)
