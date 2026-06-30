@@ -126,6 +126,12 @@ function hasEvent(events, surface, name) {
   });
 }
 
+const negativeStatusLabelEvents = new Set([
+  "stale_label_visible",
+  "offline_label_visible",
+  "error_label_visible",
+]);
+
 function validateEvents(events) {
   if (events.length === 0) {
     block("events_empty", eventsPath || "<missing>");
@@ -137,6 +143,9 @@ function validateEvents(events) {
     const truth = String(event.truth_label || "");
     if (truth && forbiddenTruth.test(truth)) block("event_truth_label_forbidden", `${label}:${truth}`);
     if (typeof event.evidence_ref !== "string" || !event.evidence_ref.trim()) block("event_missing_evidence_ref", label);
+    if (negativeStatusLabelEvents.has(String(event.event || ""))) {
+      block("negative_status_label_in_happy_path_events", `${label}:${String(event.event || "")}`);
+    }
   }
 
   const requiredVisibleEvents = [
@@ -146,9 +155,6 @@ function validateEvents(events) {
     ["timeline", "bounded_page_1_visible"],
     ["timeline", "bounded_page_2_visible"],
     ["timeline", "memory_candidate_review_only"],
-    ["desktop", "stale_label_visible"],
-    ["desktop", "offline_label_visible"],
-    ["desktop", "error_label_visible"],
   ];
   for (const [surface, event] of requiredVisibleEvents) {
     if (!hasEvent(events, surface, event)) block("required_visible_event_missing", `${surface}:${event}`);
@@ -249,6 +255,7 @@ if (blockers.length === 0 && outDir) {
       memory_candidate_review_only: hasEvent(events, "timeline", "memory_candidate_review_only"),
     },
     caveat: "This report binds real backend pressure/negative proof to same-mission UI/workbench events. It is not strict UI/device proof and does not satisfy channel proof.",
+    status_label_negative_controls: "stale/offline/error label observations are required by friday-ui-device-observations-manifest.mjs as separate negative-control segments, not in the connected happy-path mission events.",
   };
   writeFileSync(rawReportPath, `${JSON.stringify(rawReport, null, 2)}\n`);
   const stressCapture = {
@@ -265,6 +272,7 @@ if (blockers.length === 0 && outDir) {
     reconnect_stale_verified: true,
     no_secret_leak: true,
     no_hidden_fallback: true,
+    status_label_negative_controls: "stale/offline/error label observations are required by friday-ui-device-observations-manifest.mjs as separate negative-control segments, not in the connected happy-path mission events.",
     captured_at: generatedAt,
     caveat: "Stress capture input only; generated from real backend pressure proof plus same-mission UI/workbench events, not from synthetic rows.",
   };
