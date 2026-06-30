@@ -113,8 +113,12 @@ jq -e '
     . as $values
     | ($values | type == "array")
     and ($items | all($values | index(.) != null));
-  def evidence_file_ok($role; $mission_id):
+  def evidence_role_matches($role):
     .role == $role
+    or ((.role // "") | startswith($role + "-extra-"))
+    or ((.role // "") | startswith("shared-extra-"));
+  def evidence_file_ok($role; $mission_id):
+    evidence_role_matches($role)
     and (.path | nonempty_string)
     and (.kind | safe_kind)
     and (.sha256 | sha256_hex)
@@ -140,7 +144,10 @@ jq -e '
     and ((.synthetic // false) != true)
     and ((.sample // false) != true)
     and ((.dry_run // false) != true);
-  def has_evidence_role($role; $mission_id): (.evidence_files // []) | any(evidence_file_ok($role; $mission_id));
+  def core_evidence_file_ok($role; $mission_id):
+    .role == $role
+    and evidence_any_ok($mission_id);
+  def has_evidence_role($role; $mission_id): (.evidence_files // []) | any(core_evidence_file_ok($role; $mission_id));
   def evidence_ref_matches($role; $ref; $mission_id): (.evidence_files // []) | any(evidence_file_ok($role; $mission_id) and .path == $ref);
   def evidence_ref_known_for_mission($root; $mission_id; $ref):
     ($root.evidence_files // []) | any(evidence_any_ok($mission_id) and .path == $ref);

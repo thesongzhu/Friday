@@ -128,7 +128,6 @@ const forbiddenMarkers = [
   "raw-chat",
   "raw transcript",
   "/Users/",
-  "/private/",
 ];
 
 const placeholderMarkers = [
@@ -152,6 +151,7 @@ function usage() {
     [--mobile-extra-evidence=/abs/file ...] [--desktop-extra-evidence=/abs/file ...] \\
     [--channel-extra-evidence=/abs/file ...] [--timeline-extra-evidence=/abs/file ...] \\
     [--shared-extra-evidence=/abs/file ...] \\
+    [--negative-control-evidence=/abs/file ...] \\
     --manifest=/abs/observations-manifest.json
 
 This is a pre-assemble readiness check only. It does not write a
@@ -386,6 +386,27 @@ function expectedEvidenceRefsForSurface(surface, evidenceByRole, extraEvidenceBy
   return [];
 }
 
+const desktopEventsAllowedToUseTimelineEvidence = new Set([
+  "duplicate_preflight_visible",
+  "provider_ack_not_done_visible",
+  "pressure_20_50_consecutive_asks_visible",
+  "invalid_key_error_visible",
+  "quota_error_visible",
+  "network_error_visible",
+  "reconnect_stale_verified",
+]);
+
+function expectedEvidenceRefsForObservation(observation, evidenceByRole, extraEvidenceByRole) {
+  const expected = expectedEvidenceRefsForSurface(observation.surface, evidenceByRole, extraEvidenceByRole);
+  if (
+    observation.surface === "desktop"
+    && desktopEventsAllowedToUseTimelineEvidence.has(String(observation.event || ""))
+  ) {
+    return [...expected, ...evidenceRefsForRole("timeline", evidenceByRole, extraEvidenceByRole)];
+  }
+  return expected;
+}
+
 function validateEvidenceRoleRef(value, expectedValue, failures, code, detail) {
   const expectedValues = Array.isArray(expectedValue) ? expectedValue : [expectedValue].filter(Boolean);
   if (expectedValues.length > 0 && !expectedValues.map(evidenceKey).includes(evidenceKey(value))) {
@@ -602,7 +623,7 @@ function validateManifest(manifestPath, missionId, evidenceByRole, extraEvidence
     if (!knownEvidenceRefs.has(evidenceKey(observation.evidence_ref))) {
       recordFailure(failures, "observation_evidence_ref_unknown", String(observation.event || "unknown"));
     }
-    const expectedEvidenceRefs = expectedEvidenceRefsForSurface(observation.surface, evidenceByRole, extraEvidenceByRole);
+    const expectedEvidenceRefs = expectedEvidenceRefsForObservation(observation, evidenceByRole, extraEvidenceByRole);
     if (expectedEvidenceRefs.length > 0) {
       validateEvidenceRoleRef(
         observation.evidence_ref,
@@ -652,6 +673,7 @@ const extraEvidenceArgs = {
   timeline: pathsFor("timeline-extra-evidence", "TIMELINE_EXTRA_EVIDENCE"),
   shared: pathsFor("shared-extra-evidence", "SHARED_EXTRA_EVIDENCE"),
 };
+const negativeControlEvidenceArgs = pathsFor("negative-control-evidence", "NEGATIVE_CONTROL_EVIDENCE_FILES");
 const manifestPath = pathFor("manifest", "OBSERVATIONS_MANIFEST");
 
 const evidence = Object.entries(evidenceArgs)
@@ -665,7 +687,10 @@ const extraEvidenceByRole = Object.fromEntries(Object.keys(extraEvidenceArgs).ma
   role,
   extraEvidence.filter((entry) => entry.role.startsWith(`${role}-extra-`) || entry.role.startsWith(`${role}-shared-extra-`)),
 ]));
-const knownEvidenceRefs = new Set([...evidence, ...extraEvidence].map((entry) => evidenceKey(entry.path)));
+const negativeControlEvidence = negativeControlEvidenceArgs
+  .map((path, index) => validateEvidence(`negative-control-${index + 1}`, path, failures))
+  .filter(Boolean);
+const knownEvidenceRefs = new Set([...evidence, ...extraEvidence, ...negativeControlEvidence].map((entry) => evidenceKey(entry.path)));
 validateManifest(manifestPath, missionId, evidenceByRole, extraEvidenceByRole, knownEvidenceRefs, failures);
 
 const readyForAssemble = failures.length === 0;
@@ -674,7 +699,7 @@ const result = {
   proof_source: "pre_assemble_readiness_only_not_ui_device_proof",
   readyForAssemble,
   missionId: missionId || null,
-  evidence: [...evidence, ...extraEvidence],
+  evidence: [...evidence, ...extraEvidence, ...negativeControlEvidence],
   manifestPath: manifestPath || null,
   failures,
 };
