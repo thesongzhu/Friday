@@ -20,7 +20,8 @@ function createFixtureRepo(extraScriptSource = "") {
     },
   }, null, 2));
   writeFileWithParents(root, "scripts/ops/friday-ios-design-destination-capture.sh", `#!/usr/bin/env bash
-destinations_csv="home,missions,session,contextPassport,tokenLedger,shareIntake,voice,pairing,needsMe,memory,platform,providerAuth,activity,workflows,onboarding,settings,petEditor,proofViewer,entrypoints"
+destinations_csv="home,missions,session,contextPassport,tokenLedger,shareIntake,voice,pairing,needsMe,memory,platform,providerAuth,activity,workflows,onboarding,settings,petEditor"
+internal_debug_destinations_csv="proofViewer,entrypoints"
 truth_label="ios_selected_design_destination_capture_not_live_closure"
 design_source="friday-design-handoff-20260602/saved/mobile-selection.json"
 repo_head="$(git -C "$repo_root" rev-parse HEAD)"
@@ -43,14 +44,16 @@ describe("friday-ios-design-destination-capture-contract", () => {
       const report = JSON.parse(stdout) as {
         status?: string;
         truthLabel?: string;
-        requiredDestinations?: string[];
+        requiredProductDestinations?: string[];
+        internalDebugDestinations?: string[];
       };
       expect(report.status).toBe("passed");
       expect(report.truthLabel).toBe("ios_design_destination_capture_contract_static_guard_not_runtime_pass");
-      expect(report.requiredDestinations).toContain("providerAuth");
-      expect(report.requiredDestinations).toContain("petEditor");
-      expect(report.requiredDestinations).toContain("proofViewer");
-      expect(report.requiredDestinations).toContain("entrypoints");
+      expect(report.requiredProductDestinations).toContain("providerAuth");
+      expect(report.requiredProductDestinations).toContain("petEditor");
+      expect(report.requiredProductDestinations).not.toContain("proofViewer");
+      expect(report.requiredProductDestinations).not.toContain("entrypoints");
+      expect(report.internalDebugDestinations).toEqual(["proofViewer", "entrypoints"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

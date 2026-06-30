@@ -9,6 +9,7 @@ public enum MobileProductLoopTier: String, CaseIterable, Sendable, Equatable {
   case readinessOnly
   case statusProjection
   case navigationShell
+  case internalDebug
 
   public var label: String {
     switch self {
@@ -20,6 +21,7 @@ public enum MobileProductLoopTier: String, CaseIterable, Sendable, Equatable {
     case .readinessOnly: return "readiness"
     case .statusProjection: return "projection"
     case .navigationShell: return "shell"
+    case .internalDebug: return "internal"
     }
   }
 
@@ -41,6 +43,8 @@ public enum MobileProductLoopTier: String, CaseIterable, Sendable, Equatable {
       return "Shows current status from projection refs; no product action is completed here."
     case .navigationShell:
       return "Route exists for selected UI coverage, but closed-loop product behavior is still pending."
+    case .internalDebug:
+      return "Internal proof/debug surface; it is not part of the user product END-BAR."
     }
   }
 }
@@ -314,16 +318,16 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
       return contract(
         title: "Proof Viewer",
         systemImage: "doc.text.magnifyingglass",
-        tier: .liveReadProjection,
+        tier: .internalDebug,
         runtimeActionIds: ["mobile/proof/viewer-open"],
-        blockers: [.init(.needsRuntimeEvidence, label: "proof receipt open proof")])
+        blockers: [])
     case .entrypoints:
       return contract(
         title: "iOS Entrypoints",
         systemImage: "rectangle.stack.badge.plus",
-        tier: .readinessOnly,
+        tier: .internalDebug,
         runtimeActionIds: ["mobile/entrypoints/readiness"],
-        blockers: [.init(.needsRuntimeEvidence, label: "widget/control/app-intent proof")])
+        blockers: [])
     }
   }
 

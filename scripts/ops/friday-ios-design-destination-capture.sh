@@ -31,7 +31,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out_dir=""
 mode="live-loopback"
 skip_initial_build=0
-destinations_csv="home,missions,session,contextPassport,tokenLedger,shareIntake,voice,pairing,needsMe,memory,platform,providerAuth,activity,workflows,onboarding,settings,petEditor,proofViewer,entrypoints"
+destinations_csv="home,missions,session,contextPassport,tokenLedger,shareIntake,voice,pairing,needsMe,memory,platform,providerAuth,activity,workflows,onboarding,settings,petEditor"
+internal_debug_destinations_csv="proofViewer,entrypoints"
 settle_seconds="${FRIDAY_IOS_DESIGN_CAPTURE_SETTLE_SECONDS:-6}"
 mission_id="${FRIDAY_MOBILE_MISSION_ID:-}"
 
