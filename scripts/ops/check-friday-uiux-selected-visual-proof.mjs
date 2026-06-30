@@ -317,8 +317,12 @@ function evaluateServedUiReport(path) {
   const checkMessages = checks
     .filter((check) => check?.ok === true && typeof check.message === "string")
     .map((check) => check.message);
+  const hasCheckMessage = (predicate) => checkMessages.some(predicate);
   const hasRenderedDesktop = checkMessages.includes("served desktop rendered structure matches selected design");
-  const hasBuiltCss = checkMessages.includes("built css applies cyan/coral tokens and excludes amber/jade tokens");
+  const hasBuiltCss = hasCheckMessage((message) =>
+    message === "built css applies cyan/coral tokens and excludes amber/jade tokens"
+    || message === "built css applies cyan/coral tokens and excludes stale decorative palette remnants"
+  );
   const hasIosDesignSystem = checkMessages.includes("iOS source applies selected mobile design system and keeps debug/readiness surfaces out of the user path");
   const truthOk = report.truth_label === "served_desktop_and_ios_design_fidelity_reads_real_selection_and_live_sources";
   const statusOk = report.status === "pass" && Number(report.failureCount || 0) === 0;
