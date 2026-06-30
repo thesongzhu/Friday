@@ -457,12 +457,13 @@ if [ -n "${timeline_capture}" ] && [ "${workbench_timeline_status}" != "snapshot
   if [ "${defer_channel_proof}" = "1" ]; then
     workbench_events_args+=("--defer-channel-proof")
   fi
-  if node "${workbench_events_args[@]}" --require-ready >"${workbench_events}.stdout"; then
+  if node "${workbench_events_args[@]}" --allow-partial-events >"${workbench_events}.stdout"; then
     same_run_events+=("${workbench_events}")
+    workbench_events_status="$(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(j.status || "unknown");' "${workbench_events}.stdout")"
     if [ "${workbench_timeline_status}" = "skipped" ]; then
-      workbench_timeline_status="events_ready"
+      workbench_timeline_status="events_${workbench_events_status}"
     else
-      workbench_timeline_status="${workbench_timeline_status}_events_ready"
+      workbench_timeline_status="${workbench_timeline_status}_events_${workbench_events_status}"
     fi
   else
     if [ "${workbench_timeline_status}" = "skipped" ]; then

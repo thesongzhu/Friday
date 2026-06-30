@@ -53,6 +53,12 @@ describe("friday-desktop-ax-accessibility-capture contract", () => {
         interaction: "read",
       }));
       expect(summary.targets).toContainEqual(expect.objectContaining({
+        runtimeActionId: "desktop/diagnostics/proof-refs",
+        accessibility_id: "friday.desktop.evidence.timeline-pages",
+        event: "real_provider_execution_receipt_visible",
+        interaction: "read",
+      }));
+      expect(summary.targets).toContainEqual(expect.objectContaining({
         runtimeActionId: "desktop/tokenLedger/run-readback",
         accessibility_id: "friday.desktop.evidence.transcript-browser",
         event: "transcript_browser_visible",

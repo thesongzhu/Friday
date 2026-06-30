@@ -181,7 +181,7 @@ const defaultActionMap = new Map([
     event: "real_provider_execution_visible",
     interaction: "read",
   }],
-  ["desktop/diagnostics/proof-refs", { destination: "diagnostics", screen: "diagnostics", accessibility_id: "friday.desktop.evidence.timeline-pages", visible_text: "Runtime Diagnostics", event: "proof_receipt_visible_before_done", interaction: "read" }],
+  ["desktop/diagnostics/proof-refs", { destination: "diagnostics", screen: "diagnostics", accessibility_id: "friday.desktop.evidence.timeline-pages", visible_text: "Runtime Diagnostics", event: "real_provider_execution_receipt_visible", interaction: "read" }],
   ["desktop/recovery/retry", { destination: "recovery", screen: "recovery", accessibility_id: "friday.desktop.recovery.retry-available", visible_text: "retry available", event: "reconnect_stale_verified", interaction: "visible" }],
   ["desktop/recovery/cancel", { destination: "recovery", screen: "recovery", accessibility_id: "friday.desktop.recovery.cancel-available", visible_text: "cancel available", event: "reconnect_stale_verified", interaction: "visible" }],
   ["desktop/memory/act", { destination: "memory", screen: "memory", accessibility_id: "friday.desktop.evidence.memory-candidate", visible_text: "Review-only memory candidate attached to this Mission.", event: "same_mission_projection_visible", interaction: "visible" }],
