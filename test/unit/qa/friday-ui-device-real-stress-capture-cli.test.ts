@@ -33,11 +33,13 @@ function writeEvents(path: string, evidenceRef: string, overrides: { mission?: s
     event("timeline", "memory_candidate_review_only", evidenceRef, overrides.truth),
     event("desktop", "duplicate_preflight_visible", evidenceRef, overrides.truth),
     event("mobile", "duplicate_preflight_visible", evidenceRef, overrides.truth),
-    event("desktop", "stale_label_visible", evidenceRef, overrides.truth),
-    event("desktop", "offline_label_visible", evidenceRef, overrides.truth),
-    event("desktop", "error_label_visible", evidenceRef, overrides.truth),
   ].map((row) => overrides.mission ? { ...row, mission_id: overrides.mission } : row);
   writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+}
+
+function appendEvents(path: string, rows: Array<Record<string, unknown>>) {
+  const existing = readFileSync(path, "utf8").trim();
+  writeFileSync(path, `${existing}${existing ? "\n" : ""}${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
 }
 
 function writeBackend(path: string, overrides: Record<string, unknown> = {}) {
@@ -115,10 +117,12 @@ describe("friday-ui-device-real-stress-capture", () => {
         truth_label?: string;
         mission_bound_ask_count?: number;
         evidence_ref?: string;
+        status_label_negative_controls?: string;
       };
       expect(stress.truth_label).toBe("ui_device_stress_capture_real_same_run_not_endbar");
       expect(stress.mission_bound_ask_count).toBe(20);
       expect(stress.evidence_ref).toBe(result.rawReport);
+      expect(stress.status_label_negative_controls).toContain("negative-control segments");
 
       const bridgeOut = join(root, "stress-events.jsonl");
       const bridgeStdout = execFileSync("node", [
@@ -132,6 +136,32 @@ describe("friday-ui-device-real-stress-capture", () => {
       const rows = readFileSync(bridgeOut, "utf8").trim().split("\n").map((line) => JSON.parse(line));
       expect(rows.filter((row) => row.event === "pressure_20_50_consecutive_asks_visible")).toHaveLength(20);
       expect(rows).toContainEqual(expect.objectContaining({ event: "network_error_visible" }));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects stale/offline/error labels in the connected happy-path mission events", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-real-stress-capture-negative-labels-"));
+    try {
+      const inputs = writeInputs(root);
+      appendEvents(inputs.events, [
+        event("desktop", "stale_label_visible", inputs.evidence),
+        event("desktop", "offline_label_visible", inputs.evidence),
+        event("desktop", "error_label_visible", inputs.evidence),
+      ]);
+      const result = spawnSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--backend-live-proof=${inputs.backend}`,
+        `--objective-coverage=${inputs.objective}`,
+        `--events=${inputs.events}`,
+        `--out-dir=${join(root, "out")}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string; detail?: string }> };
+      expect(output.blockers?.map((blocker) => blocker.code)).toContain("negative_status_label_in_happy_path_events");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
