@@ -94,8 +94,8 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("cargo run -p friday-hub --bin mission_workbench_projection");
     expect(source).toContain("workbench-timeline-capture.json");
     expect(source).toContain("friday-workbench-snapshot-events.mjs");
-    expect(source).toContain("--allow-partial-events");
     expect(source).toContain("workbench_events_status=");
+    expect(source).toContain("if [ \"${workbench_events_status}\" = \"ready\" ]; then");
     expect(source).toContain("same_run_events+=(\"${workbench_events}\")");
     expect(source).toContain("readiness_args+=(\"--workbench-db\" \"${workbench_db}\")");
     expect(source).toContain("MISSION_ID=\"${mission_id}\" FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS");
