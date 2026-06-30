@@ -557,7 +557,7 @@ describe("friday-ui-device-proof-readiness", () => {
         encoding: "utf8",
       });
 
-      expect(stdout).toContain('"truth":"assembled_real_ui_device_proof"');
+      expect(JSON.parse(stdout)).toEqual({ truth: "assembled_real_ui_device_proof", status: "pass" });
       const proof = JSON.parse(readFileSync(files.out, "utf8")) as {
         proof?: string;
         mission_id?: string;

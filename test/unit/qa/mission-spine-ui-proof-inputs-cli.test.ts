@@ -316,6 +316,65 @@ describe("check-mission-spine-ui-proof-inputs CLI", () => {
     }
   });
 
+  it("accepts timeline extra evidence for desktop stress rows and separate negative-control evidence", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-proof-inputs-timeline-extra-negative-"));
+    try {
+      const files = writeEvidenceFiles(tempDir);
+      const stressReport = join(tempDir, "real-stress-source-report.json");
+      const negativeEvidence = join(tempDir, "negative-status-labels.txt");
+      writeFileSync(stressReport, "real same-run timeline stress report bytes\n");
+      writeFileSync(negativeEvidence, "real negative-control status-label bytes\n");
+      const negativeMissionId = "mission_negative_status_labels";
+      const baseManifest = makeManifest(files);
+      const manifest = makeManifest(files, {
+        stress: {
+          ...baseManifest.stress,
+          evidence_ref: stressReport,
+        },
+        observations: baseManifest.observations.map((observation) => {
+          if (
+            observation.event === "duplicate_preflight_visible"
+            || observation.event === "provider_ack_not_done_visible"
+            || observation.event === "pressure_20_50_consecutive_asks_visible"
+            || observation.event === "invalid_key_error_visible"
+            || observation.event === "quota_error_visible"
+            || observation.event === "network_error_visible"
+            || observation.event === "reconnect_stale_verified"
+          ) {
+            return { ...observation, evidence_ref: stressReport };
+          }
+          return observation;
+        }),
+        negative_control_segments: [{
+          segment_id: "negative-control-status-error-stress",
+          mission_id: negativeMissionId,
+          truth_label: "real_ui_negative_control_segment_not_happy_path",
+          happy_path: false,
+          evidence_refs: [negativeEvidence],
+          observations: [
+            makeObservation("desktop", "stale_label_visible", negativeEvidence, negativeMissionId),
+            makeObservation("desktop", "offline_label_visible", negativeEvidence, negativeMissionId),
+            makeObservation("desktop", "error_label_visible", negativeEvidence, negativeMissionId),
+          ],
+        }],
+      });
+      const manifestPath = join(tempDir, "observations-manifest-timeline-extra-negative.json");
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+      const result = runInputsCli(files, manifestPath, [
+        `--timeline-extra-evidence=${stressReport}`,
+        `--negative-control-evidence=${negativeEvidence}`,
+      ]);
+
+      expect(result.readyForAssemble).toBe(true);
+      expect(result.failures).toEqual([]);
+      expect(result.evidence.map((entry) => entry.role)).toContain("timeline-extra-1");
+      expect(result.evidence.map((entry) => entry.role)).toContain("negative-control-1");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed for template or weak manifest inputs in expect-not-ready mode", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-proof-inputs-invalid-"));
     try {
