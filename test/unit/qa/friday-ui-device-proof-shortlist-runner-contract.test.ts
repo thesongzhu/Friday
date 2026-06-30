@@ -62,6 +62,19 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("stressCaptureStatus");
   });
 
+  it("auto-packages real backend pressure proof into stress evidence when same-run events are present", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("stress_capture_status=\"auto_ready\"");
+    expect(source).toContain("stress_capture_status=\"auto_blocked\"");
+    expect(source).toContain("friday-ui-device-real-stress-capture.mjs");
+    expect(source).toContain("--backend-live-proof=${backend_live_proof}");
+    expect(source).toContain("--objective-coverage=${objective_coverage}");
+    expect(source).toContain("--events=${auto_stress_events}");
+    expect(source).toContain("event_inputs+=(\"${auto_stress_bridge}\")");
+    expect(source).toContain("same_run_events+=(\"${auto_stress_bridge}\")");
+  });
+
   it("can derive non-channel workbench timeline inputs from the Rust Hub DB", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
 

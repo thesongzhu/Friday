@@ -170,6 +170,17 @@ function evidenceRefFor(capturePath, capture, action, label) {
   return resolved || ref;
 }
 
+function normalizedEventFor(surface, actionId, event) {
+  if (
+    surface === "desktop"
+    && actionId === "desktop/diagnostics/proof-refs"
+    && event === "proof_receipt_visible_before_done"
+  ) {
+    return "real_provider_execution_receipt_visible";
+  }
+  return event;
+}
+
 function normalizeCapture(capturePath, raw) {
   const captures = Array.isArray(raw?.captures) ? raw.captures : [raw];
   const rows = [];
@@ -208,7 +219,8 @@ function normalizeCapture(capturePath, raw) {
       const accessibilityId = String(action.accessibility_id || action.accessibilityId || "").trim();
       const interaction = String(action.interaction || action.action || "").trim();
       const status = String(action.status || "").trim();
-      const event = String(action.event || "").trim();
+      const rawEvent = String(action.event || "").trim();
+      const event = normalizedEventFor(actionSurface, actionId, rawEvent);
       const evidenceRef = evidenceRefFor(capturePath, capture, action, actionLabel);
 
       if (actionSurface !== surface) block("ui_action_surface_mismatch", `${actionLabel}:${actionSurface || "<missing>"}`);

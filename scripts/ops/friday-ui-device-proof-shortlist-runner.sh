@@ -30,7 +30,8 @@ observations.
 Truth:
   - mobile+desktop live write/read capture is real same-mission runtime evidence.
   - channel/timeline/stress proof is only counted when explicit real artifacts
-    are supplied.
+    are supplied or derived from already-existing real backend/objective/same-run
+    event evidence.
   - without the full evidence set, output remains partial and not END-BAR.
 EOF
 }
@@ -492,6 +493,51 @@ for path in "${same_run_events[@]}"; do
   event_inputs+=("${path}")
 done
 set -u
+
+if [ "${stress_capture_status}" = "skipped" ] && [ "${#stress_captures[@]}" -eq 0 ] \
+  && [ -n "${backend_live_proof}" ] && [ -n "${objective_coverage}" ] && [ "${#event_inputs[@]}" -gt 0 ]; then
+  auto_stress_dir="${out_dir}/auto-stress-capture"
+  mkdir -p "${auto_stress_dir}"
+  auto_stress_events="${auto_stress_dir}/same-run-events.jsonl"
+  auto_stress_events_stdout="${auto_stress_events}.stdout"
+  auto_stress_capture_stdout="${auto_stress_dir}/real-stress-capture.stdout.json"
+  auto_stress_bridge_stdout="${auto_stress_dir}/stress-events.stdout.json"
+  auto_stress_merge_args=(
+    "${repo_root}/scripts/ops/friday-ui-device-events-merge.mjs"
+    "--mission-id=${mission_id}"
+    "--out=${auto_stress_events}"
+    "--require-ready"
+  )
+  for path in "${event_inputs[@]}"; do
+    auto_stress_merge_args+=("--events=${path}")
+  done
+  if node "${auto_stress_merge_args[@]}" >"${auto_stress_events_stdout}" \
+    && node "${repo_root}/scripts/ops/friday-ui-device-real-stress-capture.mjs" \
+      "--mission-id=${mission_id}" \
+      "--backend-live-proof=${backend_live_proof}" \
+      "--objective-coverage=${objective_coverage}" \
+      "--events=${auto_stress_events}" \
+      "--out-dir=${auto_stress_dir}" \
+      --require-ready >"${auto_stress_capture_stdout}"; then
+    auto_stress_capture="${auto_stress_dir}/stress-capture.json"
+    auto_stress_bridge="${auto_stress_dir}/stress-events.jsonl"
+    node "${repo_root}/scripts/ops/friday-ui-device-stress-events.mjs" \
+      "--mission-id=${mission_id}" \
+      "--stress-capture=${auto_stress_capture}" \
+      "--out=${auto_stress_bridge}" \
+      --require-ready >"${auto_stress_bridge_stdout}"
+    event_inputs+=("${auto_stress_bridge}")
+    same_run_events+=("${auto_stress_bridge}")
+    stress_evidence_ref="$(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const value=j.evidence_ref || j.evidenceRef || ""; if (typeof value === "string" && value.trim()) console.log(value.trim());' "${auto_stress_capture}")"
+    if [ -n "${stress_evidence_ref}" ]; then
+      require_file_if_set "stress evidence_ref" "${stress_evidence_ref}"
+      shared_extra_evidence+=("${stress_evidence_ref}")
+    fi
+    stress_capture_status="auto_ready"
+  else
+    stress_capture_status="auto_blocked"
+  fi
+fi
 
 capture_dir_status="skipped_missing_channel_or_timeline"
 if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_channel_proof}" = "1" ]; }; then
