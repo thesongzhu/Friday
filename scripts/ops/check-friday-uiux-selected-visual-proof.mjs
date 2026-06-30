@@ -17,7 +17,8 @@ function usage() {
   node scripts/ops/check-friday-uiux-selected-visual-proof.mjs \\
     [--repo-root=/abs/repo] [--design-root=/abs/friday-design-handoff-20260602] \\
     [--evidence-dir=/abs/evidence] [--ios-manifest=/abs/ios-design-destination-capture-manifest.json] \\
-    [--desktop-capture=/abs/desktop-ax-accessibility-capture.json] [--out=/abs/report.json] \\
+    [--desktop-capture=/abs/desktop-ax-accessibility-capture.json] \\
+    [--served-ui-report=/abs/served-ui-design-fidelity.json] [--out=/abs/report.json] \\
     [--require-complete]
 
 Truth: checks whether the operator-selected mobile+desktop visual baseline has
@@ -72,6 +73,12 @@ const desktopCaptures = [
   ...argsAll("desktop-capture"),
   ...(process.env.FRIDAY_UIUX_DESKTOP_VISUAL_CAPTURE
     ? process.env.FRIDAY_UIUX_DESKTOP_VISUAL_CAPTURE.split(/[:\n]/).filter(Boolean)
+    : []),
+].map(abs);
+const servedUiReports = [
+  ...argsAll("served-ui-report"),
+  ...(process.env.FRIDAY_UIUX_SERVED_UI_DESIGN_FIDELITY_REPORT
+    ? process.env.FRIDAY_UIUX_SERVED_UI_DESIGN_FIDELITY_REPORT.split(/[:\n]/).filter(Boolean)
     : []),
 ].map(abs);
 const outPath = arg("out") || process.env.FRIDAY_UIUX_SELECTED_VISUAL_PROOF_REPORT || "";
@@ -171,11 +178,17 @@ function addEvidenceDir(dir) {
   const desktop = resolve(dir, "desktop-ax-accessibility-capture.json");
   const desktopNested = resolve(dir, "desktop-ax", "desktop-ax-accessibility-capture.json");
   const desktopAccessibilityNested = resolve(dir, "desktop-ax-accessibility", "desktop-ax-accessibility-capture.json");
+  const servedUi = resolve(dir, "served-ui-design-fidelity.json");
+  const servedUiReport = resolve(dir, "served-ui-design-fidelity-report.json");
+  const servedUiNested = resolve(dir, "served-ui", "served-ui-design-fidelity.json");
   if (existsSync(ios)) iosManifests.push(ios);
   if (existsSync(iosNested)) iosManifests.push(iosNested);
   if (existsSync(desktop)) desktopCaptures.push(desktop);
   if (existsSync(desktopNested)) desktopCaptures.push(desktopNested);
   if (existsSync(desktopAccessibilityNested)) desktopCaptures.push(desktopAccessibilityNested);
+  if (existsSync(servedUi)) servedUiReports.push(servedUi);
+  if (existsSync(servedUiReport)) servedUiReports.push(servedUiReport);
+  if (existsSync(servedUiNested)) servedUiReports.push(servedUiNested);
 }
 
 for (const dir of evidenceDirs) addEvidenceDir(dir);
@@ -296,6 +309,45 @@ function evaluateDesktopCapture(path) {
   };
 }
 
+function evaluateServedUiReport(path) {
+  if (!existsSync(path)) return { path, status: "missing" };
+  const report = readJson(path, "served-ui-report");
+  if (!report) return { path, status: "invalid" };
+  const checks = Array.isArray(report.checks) ? report.checks : [];
+  const checkMessages = checks
+    .filter((check) => check?.ok === true && typeof check.message === "string")
+    .map((check) => check.message);
+  const hasRenderedDesktop = checkMessages.includes("served desktop rendered structure matches selected design");
+  const hasBuiltCss = checkMessages.includes("built css applies cyan/coral tokens and excludes amber/jade tokens");
+  const hasIosDesignSystem = checkMessages.includes("iOS source applies selected mobile design system and keeps debug/readiness surfaces out of the user path");
+  const truthOk = report.truth_label === "served_desktop_and_ios_design_fidelity_reads_real_selection_and_live_sources";
+  const statusOk = report.status === "pass" && Number(report.failureCount || 0) === 0;
+  const headOk = !head ? true : report.head === head;
+  const distRoot = typeof report.distRoot === "string" ? report.distRoot : null;
+  const iosSourceRoot = typeof report.iosSourceRoot === "string" ? report.iosSourceRoot : null;
+  const sourceOk = distRoot?.endsWith("/dist/ui") === true && iosSourceRoot?.includes("/apps/friday-ios/") === true;
+  const ready = truthOk && statusOk && headOk && sourceOk && hasRenderedDesktop && hasBuiltCss && hasIosDesignSystem;
+  return {
+    path,
+    status: ready ? "ready" : "gap",
+    truth_label: report.truth_label || null,
+    report_status: report.status || null,
+    generated_at_utc: report.generated_at_utc || null,
+    head: report.head || null,
+    expectedHead: head,
+    headStatus: headOk ? "current_or_unavailable" : "stale_or_wrong_head",
+    distRoot,
+    iosSourceRoot,
+    sourceStatus: sourceOk ? "served_desktop_dist_ui_and_ios_source" : "unexpected_source_scope",
+    checks: {
+      renderedDesktop: hasRenderedDesktop,
+      builtCss: hasBuiltCss,
+      iosDesignSystem: hasIosDesignSystem,
+    },
+    caveat: "Served UI fidelity proves current-HEAD selected desktop visual/structure/component fidelity for dist/ui plus iOS source design-system guards; it is not runtime action closure, release, adoption, or END-BAR.",
+  };
+}
+
 function aggregateDesktopCaptures(items) {
   const groups = new Map();
   for (const item of items) {
@@ -349,9 +401,11 @@ if (staleRepoProof.length > 0) {
 const iosVisualEvidence = unique(iosManifests).map(evaluateIosManifest);
 const desktopVisualEvidence = unique(desktopCaptures).map(evaluateDesktopCapture);
 const desktopAggregateEvidence = aggregateDesktopCaptures(desktopVisualEvidence);
+const servedUiVisualEvidence = unique(servedUiReports).map(evaluateServedUiReport);
 const iosReady = iosVisualEvidence.some((item) => item.status === "ready");
 const desktopReady = desktopVisualEvidence.some((item) => item.status === "ready")
-  || desktopAggregateEvidence.some((item) => item.status === "ready");
+  || desktopAggregateEvidence.some((item) => item.status === "ready")
+  || servedUiVisualEvidence.some((item) => item.status === "ready");
 
 if (!iosReady) {
   block(
@@ -362,7 +416,7 @@ if (!iosReady) {
 if (!desktopReady) {
   block(
     "desktop_selected_visual_proof_missing",
-    "Run desktop GUI/AX capture on current HEAD with selected desktop destinations and pass desktop-ax-accessibility-capture.json",
+    "Run served UI design fidelity on current HEAD and pass served-ui-design-fidelity.json, or run desktop GUI/AX capture with selected desktop destinations and pass desktop-ax-accessibility-capture.json",
   );
 }
 
@@ -384,11 +438,13 @@ const report = {
     evidenceDirs: unique(evidenceDirs),
     iosManifests: unique(iosManifests),
     desktopCaptures: unique(desktopCaptures),
+    servedUiReports: unique(servedUiReports),
   },
   evidence: {
     ios: iosVisualEvidence,
     desktop: desktopVisualEvidence,
     desktopAggregates: desktopAggregateEvidence,
+    servedUi: servedUiVisualEvidence,
     committedProofFreshness: repoProofFreshness,
   },
   notes,

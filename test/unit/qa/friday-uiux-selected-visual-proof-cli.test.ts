@@ -113,6 +113,28 @@ function writeDesktopCapture(root: string, relative: string, screens: string[], 
   return evidence;
 }
 
+function writeServedUiReport(root: string, relative = "evidence", overrides: Record<string, unknown> = {}) {
+  const evidence = join(root, relative);
+  writeFile(evidence, "served-ui-design-fidelity.json", JSON.stringify({
+    status: "pass",
+    truth_label: "served_desktop_and_ios_design_fidelity_reads_real_selection_and_live_sources",
+    generated_at_utc: "2026-06-30T00:00:00.000Z",
+    head: "fixture-head",
+    distRoot: `${root}/dist/ui`,
+    iosSourceRoot: `${root}/apps/friday-ios/Sources/FridayMobileShell`,
+    failureCount: 0,
+    checks: [
+      { ok: true, message: "operator-confirmed selections loaded", details: {} },
+      { ok: true, message: "iOS source applies selected mobile design system and keeps debug/readiness surfaces out of the user path", details: {} },
+      { ok: true, message: "served ui build completed", details: {} },
+      { ok: true, message: "built css applies cyan/coral tokens and excludes amber/jade tokens", details: {} },
+      { ok: true, message: "served desktop rendered structure matches selected design", details: {} },
+    ],
+    ...overrides,
+  }, null, 2));
+  return evidence;
+}
+
 describe("check-friday-uiux-selected-visual-proof", () => {
   it("reports missing selected visual proof without failing default mode", () => {
     const { root, designRoot } = fixture();
@@ -183,6 +205,116 @@ describe("check-friday-uiux-selected-visual-proof", () => {
       const report = JSON.parse(output) as { status?: string; blockers?: unknown[] };
       expect(report.status).toBe("selected_visual_proof_ready");
       expect(report.blockers).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes when selected desktop visual evidence comes from current served ui fidelity", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeReadyEvidence(root);
+      writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
+        truth_label: "bad_truth",
+        status: "partial_capture_ready",
+        ui_actions: [],
+      }, null, 2));
+      writeServedUiReport(root, "served-ui");
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        `--evidence-dir=${join(root, "served-ui")}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        evidence?: { servedUi?: Array<{ status?: string; sourceStatus?: string }> };
+      };
+      expect(report.status).toBe("selected_visual_proof_ready");
+      expect(report.evidence?.servedUi?.[0]).toMatchObject({
+        status: "ready",
+        sourceStatus: "served_desktop_dist_ui_and_ios_source",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept served ui fidelity when the source scope is not the served desktop ui", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeReadyEvidence(root);
+      writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
+        truth_label: "bad_truth",
+        status: "partial_capture_ready",
+        ui_actions: [],
+      }, null, 2));
+      writeServedUiReport(root, "served-ui", {
+        distRoot: `${root}/apps/macos/FridayHubConsole`,
+      });
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        `--evidence-dir=${join(root, "served-ui")}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        status?: string;
+        evidence?: { servedUi?: Array<{ status?: string; sourceStatus?: string }> };
+        blockers?: Array<{ code?: string }>;
+      };
+      expect(report.status).toBe("selected_visual_proof_gaps_present");
+      expect(report.evidence?.servedUi?.[0]).toMatchObject({
+        status: "gap",
+        sourceStatus: "unexpected_source_scope",
+      });
+      expect(report.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "desktop_selected_visual_proof_missing" }),
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept stale served ui fidelity when the repo head is known", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeReadyEvidence(root);
+      writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
+        truth_label: "bad_truth",
+        status: "partial_capture_ready",
+        ui_actions: [],
+      }, null, 2));
+      writeServedUiReport(root, "served-ui", {
+        head: "0000000000000000000000000000000000000000",
+        distRoot: `${process.cwd()}/dist/ui`,
+        iosSourceRoot: `${process.cwd()}/apps/friday-ios/Sources/FridayMobileShell`,
+      });
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${process.cwd()}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        `--evidence-dir=${join(root, "served-ui")}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        evidence?: { servedUi?: Array<{ status?: string; headStatus?: string }> };
+        blockers?: Array<{ code?: string }>;
+      };
+      expect(report.evidence?.servedUi?.[0]).toMatchObject({
+        status: "gap",
+        headStatus: "stale_or_wrong_head",
+      });
+      expect(report.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "desktop_selected_visual_proof_missing" }),
+      ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

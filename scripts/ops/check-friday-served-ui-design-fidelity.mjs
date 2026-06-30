@@ -2,8 +2,8 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { extname, join, relative, resolve } from "node:path";
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = resolve(fileURLToPath(import.meta.url), "..");
@@ -24,6 +24,7 @@ const designRoot = resolve(args.get("design-root") ?? process.env.FRIDAY_DESIGN_
 const skipBuild = args.get("skip-build") === "true";
 const distRoot = resolve(args.get("dist") ?? join(ROOT, "dist/ui"));
 const iosSourceRoot = resolve(args.get("ios-source") ?? join(ROOT, "apps/friday-ios/Sources/FridayMobileShell"));
+const outPath = args.get("out") ?? process.env.FRIDAY_SERVED_UI_DESIGN_FIDELITY_REPORT ?? "";
 
 async function loadPlaywrightChromium() {
   try {
@@ -57,6 +58,14 @@ function fail(message, details = {}) {
 
 function pass(message, details = {}) {
   return { ok: true, message, details };
+}
+
+function currentHead() {
+  const result = spawnSync("git", ["-C", ROOT, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
 }
 
 function extractCssVariable(css, name) {
@@ -492,6 +501,7 @@ const report = {
   status: "unknown",
   truth_label: "served_desktop_and_ios_design_fidelity_reads_real_selection_and_live_sources",
   generated_at_utc: new Date().toISOString(),
+  head: currentHead(),
   designRoot,
   distRoot,
   iosSourceRoot,
@@ -517,5 +527,10 @@ try {
 const failures = report.checks.filter((check) => !check.ok);
 report.status = failures.length === 0 ? "pass" : "fail";
 report.failureCount = failures.length;
+if (outPath) {
+  const resolvedOut = resolve(outPath);
+  mkdirSync(dirname(resolvedOut), { recursive: true });
+  writeFileSync(resolvedOut, `${JSON.stringify(report, null, 2)}\n`);
+}
 console.log(JSON.stringify(report, null, 2));
 process.exit(failures.length === 0 ? 0 : 1);
