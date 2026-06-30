@@ -444,7 +444,6 @@ async function assertRenderedStructure(tokens) {
 
     await page.goto(`${url}/home`, { waitUntil: "networkidle" });
     await page.waitForSelector('[data-testid="app-shell-rail"]', { timeout: 10_000 });
-    await page.waitForSelector('[data-testid="app-shell-right-rail"]', { timeout: 10_000 });
 
     const result = await page.evaluate((expected) => {
       const rightRail = document.querySelector('[data-testid="app-shell-right-rail"]');
