@@ -39,8 +39,8 @@ describe("friday-provider-capabilities", () => {
 
   it("allows oauth only where implemented", () => {
     expect(isFridayProviderAuthModeSupportedForKind("anthropic", "api-key")).toBe(true);
-    expect(isFridayProviderAuthModeSupportedForKind("anthropic", "oauth")).toBe(true);
-    expect(isFridayProviderAuthModeSupportedForKind("anthropic", "token")).toBe(true);
+    expect(isFridayProviderAuthModeSupportedForKind("anthropic", "oauth")).toBe(false);
+    expect(isFridayProviderAuthModeSupportedForKind("anthropic", "token")).toBe(false);
     expect(isFridayProviderAuthModeSupportedForKind("openai", "oauth")).toBe(false);
     expect(isFridayProviderAuthModeSupportedForKind("openai", "token")).toBe(false);
     expect(isFridayProviderAuthModeSupportedForKind("google", "oauth")).toBe(false);
@@ -60,9 +60,7 @@ describe("friday-provider-capabilities", () => {
   });
 
   it("surfaces backend-specific auth modes", () => {
-    expect(getFridayProviderAuthModesForBackend("anthropic", "http")).toEqual(
-      expect.arrayContaining(["api-key", "oauth", "token"]),
-    );
+    expect(getFridayProviderAuthModesForBackend("anthropic", "http")).toEqual(["api-key"]);
     expect(getFridayProviderAuthModesForBackend("anthropic", "cli")).toEqual([]);
     expect(getFridayProviderAuthModesForBackend("ollama", "http")).toEqual(
       expect.arrayContaining(["none"]),

@@ -3,10 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { FridaySqliteLayer } from "#state";
-import {
-  createFridayProviderService,
-  FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE,
-} from "#providers";
+import { createFridayProviderService } from "#providers";
 import { resetMasterKeyCache } from "#providers";
 import { createFridayPreferenceFactRepository } from "#learning";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
@@ -296,31 +293,31 @@ describe("FridayProviderService", () => {
       ).rejects.toThrow("does not support api");
     });
 
-    it("creates an anthropic token provider with encrypted token storage", async () => {
+    it("creates a bearer-token provider with encrypted token storage", async () => {
       const profile = await service.createProvider({
-        kind: "anthropic",
-        name: "Claude Setup Token",
-        baseUrl: "https://api.anthropic.com",
-        authMode: "token",
-        api: "anthropic-messages",
-        apiKey: "test-ant-token-real", // pragma: allowlist secret
-        supportedModels: ["claude-sonnet-4-20250514"],
+        kind: "openai",
+        name: "OpenAI Bearer Token",
+        baseUrl: "https://api.openai.com",
+        authMode: "bearer-token",
+        api: "openai-responses",
+        apiKey: "test-openai-bearer-token", // pragma: allowlist secret
+        supportedModels: ["gpt-4o"],
         validateOnSave: false,
       });
 
-      expect(profile.config.authMode).toBe("token");
+      expect(profile.config.authMode).toBe("bearer-token");
       expect(profile.config.keySource.kind).toBe("secret-ref");
     });
 
     it("syncs a default auth profile row on create", async () => {
       const hosted = await service.createProvider({
-        kind: "anthropic",
-        name: "Claude Setup Token",
-        baseUrl: "https://api.anthropic.com",
-        authMode: "token",
-        api: "anthropic-messages",
-        apiKey: "test-ant-token-real", // pragma: allowlist secret
-        supportedModels: ["claude-sonnet-4-20250514"],
+        kind: "openai",
+        name: "OpenAI Bearer Token",
+        baseUrl: "https://api.openai.com",
+        authMode: "bearer-token",
+        api: "openai-responses",
+        apiKey: "test-openai-bearer-token", // pragma: allowlist secret
+        supportedModels: ["gpt-4o"],
         validateOnSave: false,
       });
 
@@ -328,8 +325,8 @@ describe("FridayProviderService", () => {
         expect.objectContaining({
           provider_profile_id: "test-id-0001",
           profile_key: "default",
-          display_label: "Claude Setup Token Default",
-          auth_mode: "token",
+          display_label: "OpenAI Bearer Token Default",
+          auth_mode: "bearer-token",
           oauth_provider: null,
           is_active: 1,
         }),
@@ -510,17 +507,19 @@ describe("FridayProviderService", () => {
 
     it("syncs the default auth profile when auth mode changes", async () => {
       await service.createProvider({
-        kind: "anthropic",
-        name: "Anthropic OAuth",
-        baseUrl: "https://api.anthropic.com",
-        authMode: "oauth",
-        api: "anthropic-messages",
-        supportedModels: ["claude-sonnet-4-20250514"],
+        kind: "openai",
+        name: "OpenAI",
+        baseUrl: "https://api.openai.com",
+        authMode: "api-key",
+        api: "openai-responses",
+        apiKey: "test-openai-api-key", // pragma: allowlist secret
+        supportedModels: ["gpt-4o"],
+        validateOnSave: false,
       });
 
       await service.updateProvider("test-id-0001", {
-        authMode: "api-key",
-        apiKey: "test-ant-api-key-switch", // pragma: allowlist secret
+        authMode: "bearer-token",
+        apiKey: "test-openai-bearer-token", // pragma: allowlist secret
         validateOnSave: false,
       });
 
@@ -528,7 +527,7 @@ describe("FridayProviderService", () => {
         expect.objectContaining({
           provider_profile_id: "test-id-0001",
           profile_key: "default",
-          auth_mode: "api-key",
+          auth_mode: "bearer-token",
           oauth_provider: null,
           is_active: 1,
         }),
@@ -641,13 +640,13 @@ describe("FridayProviderService", () => {
   describe("auth profile management", () => {
     it("lists auth profiles for a provider", async () => {
       await service.createProvider({
-        kind: "anthropic",
-        name: "Claude Setup Token",
-        baseUrl: "https://api.anthropic.com",
-        authMode: "token",
-        api: "anthropic-messages",
-        apiKey: "test-ant-token-real", // pragma: allowlist secret
-        supportedModels: ["claude-sonnet-4-20250514"],
+        kind: "openai",
+        name: "OpenAI Bearer Token",
+        baseUrl: "https://api.openai.com",
+        authMode: "bearer-token",
+        api: "openai-responses",
+        apiKey: "test-openai-bearer-token", // pragma: allowlist secret
+        supportedModels: ["gpt-4o"],
         validateOnSave: false,
       });
 
@@ -655,7 +654,7 @@ describe("FridayProviderService", () => {
       expect(profiles).toEqual([
         expect.objectContaining({
           profileKey: "default",
-          authMode: "token",
+          authMode: "bearer-token",
           isActive: true,
         }),
       ]);
@@ -663,13 +662,13 @@ describe("FridayProviderService", () => {
 
     it("activates a secondary auth profile", async () => {
       await service.createProvider({
-        kind: "anthropic",
-        name: "Claude Setup Token",
-        baseUrl: "https://api.anthropic.com",
-        authMode: "token",
-        api: "anthropic-messages",
-        apiKey: "test-ant-token-real", // pragma: allowlist secret
-        supportedModels: ["claude-sonnet-4-20250514"],
+        kind: "openai",
+        name: "OpenAI Bearer Token",
+        baseUrl: "https://api.openai.com",
+        authMode: "bearer-token",
+        api: "openai-responses",
+        apiKey: "test-openai-bearer-token", // pragma: allowlist secret
+        supportedModels: ["gpt-4o"],
         validateOnSave: false,
       });
 
@@ -683,7 +682,7 @@ describe("FridayProviderService", () => {
         ).run(
           "auth-2",
           "test-id-0001",
-          "anthropic",
+          "openai",
           "cli-session",
           "Codex CLI",
           "external-session",
@@ -935,10 +934,11 @@ describe("FridayProviderService", () => {
     it("rejects a defaultModel not supported by the target provider", async () => {
       await service.createProvider({
         kind: "anthropic",
-        name: "Claude OAuth",
+        name: "Anthropic API Key",
         baseUrl: "https://api.anthropic.com",
-        authMode: "oauth",
+        authMode: "api-key",
         api: "anthropic-messages",
+        apiKey: "$ANTHROPIC_API_KEY",
         supportedModels: ["claude-sonnet-4-20250514"],
         defaultModel: "claude-sonnet-4-20250514",
         validateOnSave: false,
@@ -2155,13 +2155,13 @@ describe("FridayProviderService", () => {
           validateOnSave: false,
         });
         await service.createProvider({
-          kind: "anthropic",
-          name: "Anthropic OAuth",
-          baseUrl: "https://api.anthropic.com",
+          kind: "openai-codex",
+          name: "OpenAI Codex OAuth",
+          baseUrl: "https://chatgpt.com/backend-api/codex",
           authMode: "oauth",
-          api: "anthropic-messages",
-          supportedModels: ["claude-sonnet-4-20250514"],
-          defaultModel: "claude-sonnet-4-20250514",
+          api: "openai-codex-responses",
+          supportedModels: ["gpt-5.4-mini"],
+          defaultModel: "gpt-5.4-mini",
           validateOnSave: false,
         });
 
@@ -2911,8 +2911,8 @@ describe("FridayProviderService", () => {
   });
 
   describe("OAuth provider lifecycle", () => {
-    it("creates an OAuth provider with validation skipped", async () => {
-      const profile = await service.createProvider({
+    it("rejects Anthropic OAuth provider creation; Anthropic is API-key only", async () => {
+      await expect(service.createProvider({
         kind: "anthropic",
         name: "Anthropic OAuth",
         baseUrl: "https://api.anthropic.com",
@@ -2920,14 +2920,8 @@ describe("FridayProviderService", () => {
         api: "anthropic-messages",
         supportedModels: ["claude-sonnet-4-20250514"],
         defaultModel: "claude-sonnet-4-20250514",
-      });
+      })).rejects.toThrow("does not support authMode 'oauth'");
 
-      expect(profile.config.authMode).toBe("oauth");
-      expect(profile.config.oauthProvider).toBe("anthropic");
-      expect(profile.config.keySource).toEqual({ kind: "none" });
-      expect(profile.config.validation?.status).toBe("never");
-      expect(profile.config.validation?.errorMessage).toBe("OAuth login required");
-      // Validation fetch should NOT have been called for OAuth creation
       expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
@@ -2950,49 +2944,28 @@ describe("FridayProviderService", () => {
       expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
-    it("preserves oauthProvider when updating an OAuth provider", async () => {
-      await service.createProvider({
-        kind: "anthropic",
-        name: "Anthropic OAuth",
-        baseUrl: "https://api.anthropic.com",
+    it("preserves oauthProvider when updating an OpenAI Codex OAuth provider", async () => {
+      const profile = await service.createProvider({
+        kind: "openai-codex",
+        name: "OpenAI Codex OAuth",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
         authMode: "oauth",
-        api: "anthropic-messages",
-        supportedModels: ["claude-sonnet-4-20250514"],
+        api: "openai-codex-responses",
+        supportedModels: ["gpt-5.4-mini"],
       });
 
-      const updated = await service.updateProvider("test-id-0001", {
-        name: "Anthropic OAuth Updated",
+      const updated = await service.updateProvider(profile.id, {
+        name: "OpenAI Codex OAuth Updated",
         validateOnSave: false,
       });
 
-      expect(updated.name).toBe("Anthropic OAuth Updated");
+      expect(updated.name).toBe("OpenAI Codex OAuth Updated");
       expect(updated.config.authMode).toBe("oauth");
-      expect(updated.config.oauthProvider).toBe("anthropic");
+      expect(updated.config.oauthProvider).toBe("openai-codex");
       expect(updated.config.keySource).toEqual({ kind: "none" });
     });
 
-    it("clears OAuth when switching authMode from oauth to api-key", async () => {
-      await service.createProvider({
-        kind: "anthropic",
-        name: "Anthropic OAuth",
-        baseUrl: "https://api.anthropic.com",
-        authMode: "oauth",
-        api: "anthropic-messages",
-        supportedModels: ["claude-sonnet-4-20250514"],
-      });
-
-      const updated = await service.updateProvider("test-id-0001", {
-        authMode: "api-key",
-        apiKey: "$ANTHROPIC_API_KEY",
-        validateOnSave: false,
-      });
-
-      expect(updated.config.authMode).toBe("api-key");
-      expect(updated.config.oauthProvider).toBeUndefined();
-      expect(updated.config.keySource.kind).toBe("env-ref");
-    });
-
-    it("forces keySource to none when switching to oauth via update", async () => {
+    it("rejects switching Anthropic API-key providers to OAuth", async () => {
       await service.createProvider({
         kind: "anthropic",
         name: "Anthropic API Key",
@@ -3004,34 +2977,47 @@ describe("FridayProviderService", () => {
         validateOnSave: false,
       });
 
-      const updated = await service.updateProvider("test-id-0001", {
+      await expect(service.updateProvider("test-id-0001", {
         authMode: "oauth",
+        validateOnSave: false,
+      })).rejects.toThrow("does not support authMode 'oauth'");
+    });
+
+    it("rejects switching Anthropic API-key providers to token auth", async () => {
+      await service.createProvider({
+        kind: "anthropic",
+        name: "Anthropic API Key",
+        baseUrl: "https://api.anthropic.com",
+        authMode: "api-key",
+        api: "anthropic-messages",
+        apiKey: "$ANTHROPIC_API_KEY",
+        supportedModels: ["claude-sonnet-4-20250514"],
         validateOnSave: false,
       });
 
-      expect(updated.config.authMode).toBe("oauth");
-      expect(updated.config.oauthProvider).toBe("anthropic");
-      expect(updated.config.keySource).toEqual({ kind: "none" });
-      expect(updated.config.validation?.status).toBe("never");
+      await expect(service.updateProvider("test-id-0001", {
+        authMode: "token",
+        validateOnSave: false,
+      })).rejects.toThrow("does not support authMode 'token'");
     });
 
-    it("deletes OAuth provider and clears credentials", async () => {
-      await service.createProvider({
-        kind: "anthropic",
-        name: "Anthropic OAuth",
-        baseUrl: "https://api.anthropic.com",
+    it("deletes OpenAI Codex OAuth provider and clears credentials", async () => {
+      const profile = await service.createProvider({
+        kind: "openai-codex",
+        name: "OpenAI Codex OAuth",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
         authMode: "oauth",
-        api: "anthropic-messages",
-        supportedModels: ["claude-sonnet-4-20250514"],
+        api: "openai-codex-responses",
+        supportedModels: ["gpt-5.4-mini"],
       });
 
-      await service.deleteProvider("test-id-0001");
+      await service.deleteProvider(profile.id);
 
-      const result = await service.getProvider("test-id-0001");
+      const result = await service.getProvider(profile.id);
       expect(result).toBeNull();
     });
 
-    it("fails closed when starting Anthropic OAuth instead of reporting runtime connected", async () => {
+    it("keeps Anthropic OAuth start fail-closed for any legacy caller", async () => {
       const oauthFetch = vi.fn(async () => new Response("{}", { status: 200 })) as typeof fetch;
       globalThis.fetch = oauthFetch;
       const oauthService = createFridayProviderService({
@@ -3042,7 +3028,7 @@ describe("FridayProviderService", () => {
         nowMs: () => NOW_MS,
       });
 
-      const profile = await oauthService.createProvider({
+      await expect(oauthService.createProvider({
         kind: "anthropic",
         name: "Anthropic OAuth",
         baseUrl: "https://api.anthropic.com",
@@ -3050,34 +3036,26 @@ describe("FridayProviderService", () => {
         api: "anthropic-messages",
         supportedModels: ["claude-sonnet-4-20250514"],
         defaultModel: "claude-sonnet-4-20250514",
-      });
-      await expect(oauthService.initiateOAuthLogin({ providerId: profile.id }))
-        .rejects.toThrow(FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE);
+      })).rejects.toThrow("does not support authMode 'oauth'");
       expect(oauthFetch).not.toHaveBeenCalled();
     });
 
-    it("rejects switching from oauth to token because Anthropic bearer auth is disabled", async () => {
+    it("rejects creating Anthropic token providers", async () => {
       let capturedHeaders: Record<string, string> = {};
       globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
         capturedHeaders = (init?.headers ?? {}) as Record<string, string>;
         return new Response("{}", { status: 200 });
       }) as typeof fetch;
 
-      await service.createProvider({
+      await expect(service.createProvider({
         kind: "anthropic",
-        name: "Anthropic OAuth",
+        name: "Anthropic Token",
         baseUrl: "https://api.anthropic.com",
-        authMode: "oauth",
+        authMode: "token",
         api: "anthropic-messages",
+        apiKey: "test-ant-token-switch", // pragma: allowlist secret
         supportedModels: ["claude-sonnet-4-20250514"],
-      });
-
-      await expect(
-        service.updateProvider("test-id-0001", {
-          authMode: "token",
-          apiKey: "test-ant-token-switch", // pragma: allowlist secret
-        }),
-      ).rejects.toThrow(FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE);
+      })).rejects.toThrow("does not support authMode 'token'");
       expect(capturedHeaders).toEqual({});
     });
 
