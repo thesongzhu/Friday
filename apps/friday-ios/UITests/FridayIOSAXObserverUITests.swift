@@ -111,6 +111,9 @@ final class FridayIOSAXObserverUITests: XCTestCase {
       try type(text, into: app, identifier: "friday.home.pairing-qr-input")
       try tap(app, identifier: "friday.home.pair-button")
       try waitFor(app, identifier: "friday.home.pairing-cancel-button", timeout: 10)
+    case "session-sidecar-open":
+      try tap(app, identifier: "friday.session.sidecar-open")
+      try waitFor(app, identifier: "friday.session.sidecar-close", timeout: 10)
     default:
       XCTFail("Unsupported Friday iOS AX interaction scenario: \(scenario)")
     }
