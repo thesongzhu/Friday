@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+const PROBE_BODY_TEXT = "help me clean up old files in my workspace; ask me before doing anything";
+
 const PHASES = Object.freeze([
   {
     id: "phase24b",
@@ -52,9 +54,11 @@ function usage() {
   return `Usage:
   node scripts/ops/phase24-release-proof-prompts.mjs --run-id <id> [--repo owner/name] [--json] [--require-all]
   node scripts/ops/phase24-release-proof-prompts.mjs --logs-dir <dir> [--json] [--require-all]
+  node scripts/ops/phase24-release-proof-prompts.mjs --derive --run-id <id> --sha <sha> [--json] [--require-all]
 
 Optional:
   --discord-bot-user-id <id>   Replaces GitHub-masked <@***> Discord mentions.
+  --derive                     Derives B-G prompts from deterministic workflow ids without reading live logs.
 
 Reads Real Green Gate logs and extracts the exact trusted-user Phase24 B-G
 messages printed by the listener jobs. This helper is read-only: it does not
@@ -66,6 +70,8 @@ function parseArgs(argv) {
     runId: null,
     repo: null,
     logsDir: null,
+    sha: null,
+    derive: false,
     json: false,
     requireAll: false,
     discordBotUserId: process.env.FRIDAY_DISCORD_BOT_USER_ID?.trim() || null,
@@ -83,6 +89,12 @@ function parseArgs(argv) {
         break;
       case "--logs-dir":
         args.logsDir = argv[++index] ?? null;
+        break;
+      case "--sha":
+        args.sha = argv[++index] ?? null;
+        break;
+      case "--derive":
+        args.derive = true;
         break;
       case "--json":
         args.json = true;
@@ -103,6 +115,12 @@ function parseArgs(argv) {
   }
 
   return args;
+}
+
+function sanitizePromptPart(value, fallback) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const cleaned = raw.replace(/[^A-Za-z0-9_.-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  return cleaned.length > 0 ? cleaned.slice(0, 64) : fallback;
 }
 
 function stripAnsi(value) {
@@ -243,21 +261,90 @@ function extractPrompts(logText, args) {
   return results;
 }
 
+function derivePhase24Prompts(args) {
+  const runId = sanitizePromptPart(args.runId, "missing-run-id");
+  const sha8 = sanitizePromptPart(String(args.sha ?? "").slice(0, 8), "missing-sha");
+  const discordMention = args.discordBotUserId
+    ? `<@${sanitizePromptPart(args.discordBotUserId, "missing-discord-bot-user-id")}>`
+    : "<@***>";
+
+  const singleMessage = (phase) => `${PROBE_BODY_TEXT} ${phase}-run-${runId}-${sha8}`;
+  const workflowCandidateId = (phase, kind) => `${phase}-${kind}-run-${runId}`;
+  const workflowNonce = (phase, kind) => `${phase}-${kind}-run-${runId}-${sha8}`;
+
+  return [
+    {
+      ...PHASES[0],
+      found: true,
+      messages: { message: `${discordMention} ${singleMessage("phase24b")}` },
+      status: "ready",
+    },
+    {
+      ...PHASES[1],
+      found: true,
+      messages: { message: singleMessage("phase24c") },
+      status: "ready",
+    },
+    {
+      ...PHASES[2],
+      found: true,
+      messages: { message: singleMessage("phase24d") },
+      status: "ready",
+    },
+    {
+      ...PHASES[3],
+      found: true,
+      messages: {
+        reject: `reject reflex ${workflowCandidateId("phase24e", "reject")} ${workflowNonce("phase24e", "reject")}`,
+        approve: `approve reflex ${workflowCandidateId("phase24e", "approve")}`,
+      },
+      status: "ready",
+    },
+    {
+      ...PHASES[4],
+      found: true,
+      messages: {
+        reject: `reject reflex ${workflowCandidateId("phase24f", "reject")} ${workflowNonce("phase24f", "reject")} ${discordMention}`,
+        approve: `approve reflex ${workflowCandidateId("phase24f", "approve")} ${discordMention}`,
+      },
+      status: "ready",
+    },
+    {
+      ...PHASES[5],
+      found: true,
+      messages: {
+        reject: `reject reflex ${workflowCandidateId("phase24g", "reject")} ${workflowNonce("phase24g", "reject")}`,
+        approve: `approve reflex ${workflowCandidateId("phase24g", "approve")}`,
+      },
+      status: "ready",
+    },
+  ];
+}
+
 function buildReport(args, prompts) {
-  return {
-    truth_label: "phase24_release_proof_prompt_extraction_read_only_no_channel_send_no_proof_mint",
-    generated_at_utc: new Date().toISOString(),
-    source: args.logsDir
+  const source = args.derive
+    ? { kind: "derived-deterministic-workflow-ids", run_id: args.runId, sha: args.sha }
+    : args.logsDir
       ? { kind: "logs-dir", path: path.resolve(args.logsDir) }
-      : { kind: "gh-run-log", run_id: args.runId, repo: args.repo },
+      : { kind: "gh-run-log", run_id: args.runId, repo: args.repo };
+
+  return {
+    truth_label: args.derive
+      ? "phase24_release_proof_prompt_derivation_read_only_no_channel_send_no_proof_mint"
+      : "phase24_release_proof_prompt_extraction_read_only_no_channel_send_no_proof_mint",
+    generated_at_utc: new Date().toISOString(),
+    source,
     phases: prompts,
     complete: prompts.every((phase) => phase.status === "ready"),
-    caveat: "Messages are only valid for the exact Real Green Gate run that printed them. Fresh runs generate fresh nonces/candidate ids.",
+    caveat: args.derive
+      ? "Derived messages are valid only for workflow jobs that use the committed deterministic Phase24 B-G run-id/sha formulas. Use extraction for nonstandard env overrides."
+      : "Messages are only valid for the exact Real Green Gate run that printed them. Fresh runs generate fresh nonces/candidate ids.",
   };
 }
 
 function printText(report) {
-  console.log("Phase24 release-proof prompt extraction");
+  const action = report.source.kind === "derived-deterministic-workflow-ids" ? "derivation" : "extraction";
+  console.log(`Phase24 release-proof prompt ${action}`);
   console.log(`truth_label=${report.truth_label}`);
   console.log(`source=${report.source.kind}${report.source.run_id ? `:${report.source.run_id}` : `:${report.source.path}`}`);
   console.log("");
@@ -290,14 +377,22 @@ function main() {
     return;
   }
   if (args.logsDir && args.runId) {
-    throw new Error("Use either --logs-dir or --run-id, not both");
+    if (!args.derive) throw new Error("Use either --logs-dir or --run-id, not both");
+  }
+  if (args.derive && args.logsDir) {
+    throw new Error("Use --derive with --run-id and --sha, not --logs-dir");
+  }
+  if (args.derive && (!args.runId || !args.sha)) {
+    throw new Error("Derivation requires --run-id and --sha");
   }
   if (!args.logsDir && !args.runId) {
     throw new Error("Missing required --logs-dir or --run-id");
   }
 
-  const logText = args.logsDir ? readLogsDir(args.logsDir) : readGhRunLog(args.runId, args.repo);
-  const report = buildReport(args, extractPrompts(logText, args));
+  const prompts = args.derive
+    ? derivePhase24Prompts(args)
+    : extractPrompts(args.logsDir ? readLogsDir(args.logsDir) : readGhRunLog(args.runId, args.repo), args);
+  const report = buildReport(args, prompts);
 
   if (args.json) {
     console.log(`${JSON.stringify(report, null, 2)}\n`);
