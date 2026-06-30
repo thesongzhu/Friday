@@ -93,7 +93,7 @@ struct FridayVoiceScreen: View {
           .foregroundStyle(MobileTheme.textPrimary)
           .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("friday.voice.readiness-card")
-        Text("Readiness plus local voice-loop truth: capture and speech output run from Friday Chat when these gates are ready.")
+        Text("Capture and speech output run from Friday Chat when these gates are ready.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -227,7 +227,7 @@ struct FridayVoiceScreen: View {
       text: voiceTruthDisplayLabel(truthLabel),
       bg: enabled ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
       fg: enabled ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
-    .accessibilityLabel("Truth label \(truthLabel)")
+    .accessibilityLabel("Voice status \(voiceTruthDisplayLabel(truthLabel))")
   }
 
   private func voiceTruthDisplayLabel(_ truthLabel: String) -> String {

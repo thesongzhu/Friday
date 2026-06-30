@@ -31,7 +31,7 @@ struct FridayTokenLedgerScreen: View {
   @ViewBuilder
   private func loadedContent(_ projection: HomeProjection) -> some View {
     let runId = projection.tokenLedgerRunId
-    header(status: runId == nil ? "no run ref" : "readable", ready: runId != nil)
+    header(status: runId == nil ? "waiting" : "ready", ready: runId != nil)
 
     if let runId {
       runRefCard(runId: runId, projection: projection)
@@ -54,7 +54,7 @@ struct FridayTokenLedgerScreen: View {
           Text("Token Ledger")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
-          Text("provider usage readback")
+          Text("Usage and cost history")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
@@ -72,7 +72,7 @@ struct FridayTokenLedgerScreen: View {
     GlassPanel {
       HStack(spacing: 12) {
         ProgressView()
-        Text("Reading token ledger truth")
+        Text("Reading usage ledger")
           .font(.footnote)
           .foregroundStyle(MobileTheme.textSecondary)
       }
@@ -83,12 +83,12 @@ struct FridayTokenLedgerScreen: View {
   private func runRefCard(runId: String, projection: HomeProjection) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("Selected Run", count: nil)
-        Text("Friday reads provider usage from the run reference projected by the Hub.")
+        cardHeader("Usage Source", count: nil)
+        Text("Friday reads provider usage from the live work item selected by the Hub.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
-        FridayProofLine(label: "run_id", ref: runId)
+        FridayProofLine(label: "run", ref: runId)
         FridayProofLine(label: "mission", ref: projection.missionId)
         Button {
           Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
@@ -107,13 +107,13 @@ struct FridayTokenLedgerScreen: View {
   private func noRunRefCard(_ projection: HomeProjection) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("No Run Ref", count: nil)
+        cardHeader("Waiting for Usage", count: nil)
         Text("Token totals will appear after the current work produces a completed run reference.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         FridayProofLine(label: "mission", ref: projection.missionId)
-        FridayProofLine(label: "feed", ref: projection.runtimeFeedStatus)
+        FridayProofLine(label: "live state", ref: projection.runtimeFeedStatus)
       }
     }
     .accessibilityIdentifier("friday.token-ledger.no-run-ref")
@@ -126,15 +126,15 @@ struct FridayTokenLedgerScreen: View {
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
           cardHeader("Projected Receipts", count: count)
-          Text("These are refs already projected by the Hub. They are evidence links only; Friday still needs a run ref before showing per-run token totals.")
+          Text("These receipts are already available from the Hub. Per-run token totals appear after a live run is selected.")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
           ForEach(projection.providerReceiptRefs.prefix(5), id: \.self) { ref in
-            FridayProofLine(label: "provider receipt", ref: ref)
+            FridayProofLine(label: "provider", ref: ref)
           }
           ForEach(projection.channelReceiptRefs.prefix(5), id: \.self) { ref in
-            FridayProofLine(label: "channel receipt", ref: ref)
+            FridayProofLine(label: "channel", ref: ref)
           }
         }
       }
@@ -164,7 +164,7 @@ struct FridayTokenLedgerScreen: View {
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
             .fixedSize(horizontal: false, vertical: true)
-          FridayProofLine(label: "generated", ref: generatedText(detail.generatedAtMs))
+          FridayProofLine(label: "updated", ref: generatedText(detail.generatedAtMs))
           if !detail.facts.isEmpty {
             VStack(spacing: 8) {
               ForEach(detail.facts) { fact in

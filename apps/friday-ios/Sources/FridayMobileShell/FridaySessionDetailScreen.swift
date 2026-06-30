@@ -66,7 +66,7 @@ struct FridaySessionDetailScreen: View {
             Text("Session")
               .font(.headline)
               .foregroundStyle(MobileTheme.textPrimary)
-            Text("continuation truth")
+            Text("Transcript and controls")
               .font(.caption)
               .foregroundStyle(MobileTheme.textSecondary)
           }
@@ -79,12 +79,12 @@ struct FridaySessionDetailScreen: View {
         }
         FridayProofLine(label: "mission", ref: projection.missionId)
         if let agentSessionId = projection.agentSessionId {
-          FridayProofLine(label: "agent_session_id", ref: agentSessionId)
+          FridayProofLine(label: "session", ref: agentSessionId)
         }
         if let runId = firstRunId(projection) {
-          FridayProofLine(label: "run_id", ref: runId)
+          FridayProofLine(label: "run", ref: runId)
         }
-        FridayProofLine(label: "generated", ref: generatedText(projection.generatedAtMs))
+        FridayProofLine(label: "updated", ref: generatedText(projection.generatedAtMs))
       }
     }
   }
@@ -144,7 +144,7 @@ struct FridaySessionDetailScreen: View {
               Text("Approval Required")
                 .font(.headline)
                 .foregroundStyle(MobileTheme.textPrimary)
-              Text("operator-signed relay only")
+              Text("Approval relay")
                 .font(.caption)
                 .foregroundStyle(MobileTheme.textSecondary)
             }
@@ -161,9 +161,9 @@ struct FridaySessionDetailScreen: View {
               .foregroundStyle(MobileTheme.textPrimary)
               .fixedSize(horizontal: false, vertical: true)
           }
-          FridayProofLine(label: "run_id", ref: approval.runId)
-          FridayProofLine(label: "approval_id", ref: approval.approvalId)
-          FridayProofLine(label: "action_digest", ref: short(approval.actionDigest))
+          FridayProofLine(label: "run", ref: approval.runId)
+          FridayProofLine(label: "approval", ref: approval.approvalId)
+          FridayProofLine(label: "digest", ref: short(approval.actionDigest))
 
           VStack(alignment: .leading, spacing: 5) {
             approvalCapabilityRow("Resume", control: resume)
@@ -471,7 +471,7 @@ struct FridaySessionDetailScreen: View {
             }
           }
           if let generatedAtMs = section.generatedAtMs {
-            FridayProofLine(label: "generated", ref: generatedText(generatedAtMs))
+            FridayProofLine(label: "updated", ref: generatedText(generatedAtMs))
           }
           ForEach(section.refs, id: \.self) { ref in
             FridayProofLine(label: nil, ref: ref)
@@ -489,14 +489,14 @@ struct FridaySessionDetailScreen: View {
   private func proofRefsCard(_ refs: [String]) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("Proof Refs", count: refs.count)
+        cardHeader("Receipts", count: refs.count)
         if refs.isEmpty {
-          Text("No proof refs were returned by the session read arms.")
+          Text("No receipts are attached to this session yet.")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         } else {
           ForEach(refs, id: \.self) { ref in
-            FridayProofLine(label: "proof", ref: ref)
+            FridayProofLine(label: "receipt", ref: ref)
           }
         }
       }
@@ -508,7 +508,7 @@ struct FridaySessionDetailScreen: View {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Learning", count: projection.runOutcomeLearningCandidates.count)
         if projection.runOutcomeLearningCandidates.isEmpty {
-          Text("No run-outcome learning candidates in this projection.")
+          Text("No learning suggestions need review right now.")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         } else {
@@ -632,10 +632,21 @@ struct FridaySessionDetailScreen: View {
     if control.isEnabled {
       return FridayChip(text: control.truthLabel, bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
     }
-    if control.truthLabel == "read arm" {
-      return FridayChip(text: control.truthLabel, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+    if isReadOnlyControlTruth(control.truthLabel) {
+      return FridayChip(text: "read only", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
     }
-    return FridayChip(text: control.truthLabel, bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+    return FridayChip(text: displayControlTruthLabel(control.truthLabel), bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+  }
+
+  private func isReadOnlyControlTruth(_ raw: String) -> Bool {
+    raw == "read arm"
+  }
+
+  private func displayControlTruthLabel(_ raw: String) -> String {
+    raw
+      .replacingOccurrences(of: "_", with: " ")
+      .replacingOccurrences(of: "-", with: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   private func short(_ s: String) -> String {
