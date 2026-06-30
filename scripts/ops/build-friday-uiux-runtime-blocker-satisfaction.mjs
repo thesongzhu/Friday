@@ -101,7 +101,6 @@ function requireEvidenceDir(path) {
   const expected = [
     "gap-report.json",
     "observations-manifest.json",
-    "same-run-events.with-channel.jsonl",
     "mobile.json",
     "desktop.json",
     "timeline.json",
@@ -115,16 +114,33 @@ function requireEvidenceDir(path) {
     }
     refs.push(file);
   }
+  const eventFile = ["same-run-events.with-channel.jsonl", "same-run-events.normalized.jsonl"]
+    .map((relative) => resolve(dir, relative))
+    .find((file) => existsSync(file));
+  if (!eventFile) {
+    block("evidence_file_missing", `${resolve(dir, "same-run-events.with-channel.jsonl")} or ${resolve(dir, "same-run-events.normalized.jsonl")}`);
+  } else {
+    refs.push(eventFile);
+  }
   const gapReportPath = resolve(dir, "gap-report.json");
   if (existsSync(gapReportPath)) {
     const gapReport = readJson("ui-device-gap-report", gapReportPath);
     const gapBlockers = Array.isArray(gapReport?.blockers) ? gapReport.blockers : [];
     if (gapBlockers.length > 0) block("ui_device_gap_report_has_blockers", JSON.stringify(gapBlockers.slice(0, 10)));
-    if (gapReport?.status && !["pass", "ready", "gaps_present"].includes(String(gapReport.status))) {
+    if (gapReport?.status && !["pass", "ready", "gaps_present", "complete_inputs_observed"].includes(String(gapReport.status))) {
       block("ui_device_gap_report_status_unexpected", String(gapReport.status));
     }
   }
   return { dir, refs };
+}
+
+function hasStrictUiDeviceProof(value) {
+  if (value?.truth === "assembled_real_ui_device_proof" && value?.status === "pass") return true;
+  if (value?.proof !== "mission_spine_ui_device_consumption") return false;
+  if (!String(value?.mission_id || "").toLowerCase().includes("mission")) return false;
+  if (!Array.isArray(value?.observations) || value.observations.length < 1) return false;
+  if (!Array.isArray(value?.negative_control_segments) || value.negative_control_segments.length < 1) return false;
+  return true;
 }
 
 function arrayAt(value, path) {
@@ -217,8 +233,8 @@ if ((trace?.counts?.productActionsMissingRuntimeEvidence ?? 0) !== 0) {
 if ((trace?.counts?.runtimeEvidenceInputs ?? 0) <= 0) {
   block("runtime_evidence_inputs_missing", String(trace?.counts?.runtimeEvidenceInputs ?? 0));
 }
-if (uiDeviceProof?.truth !== "assembled_real_ui_device_proof" || uiDeviceProof?.status !== "pass") {
-  block("ui_device_proof_not_strict_pass", `${String(uiDeviceProof?.truth || "missing")}:${String(uiDeviceProof?.status || "missing")}`);
+if (!hasStrictUiDeviceProof(uiDeviceProof)) {
+  block("ui_device_proof_not_strict_pass", `${String(uiDeviceProof?.truth || uiDeviceProof?.proof || "missing")}:${String(uiDeviceProof?.status || "missing")}`);
 }
 
 const proofRef = uiDeviceProofPath ? abs(uiDeviceProofPath) : "";

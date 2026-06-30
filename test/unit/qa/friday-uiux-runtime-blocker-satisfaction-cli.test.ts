@@ -44,6 +44,27 @@ function writeEvidenceDir(root: string) {
   return dir;
 }
 
+function writeCompleteEvidenceDir(root: string) {
+  const dir = writeEvidenceDir(root);
+  writeJson(dir, "gap-report.json", {
+    status: "complete_inputs_observed",
+    blockers: [],
+    checks: {
+      pressureAskCountOk: true,
+      duplicateSurfaceCountOk: true,
+      timelinePageCountOk: true,
+    },
+  });
+  return dir;
+}
+
+function writeNormalizedOnlyEvidenceDir(root: string) {
+  const dir = writeCompleteEvidenceDir(root);
+  rmSync(join(dir, "same-run-events.with-channel.jsonl"), { force: true });
+  writeText(dir, "same-run-events.normalized.jsonl", "{\"event\":\"mission_workbench_visible\"}\n");
+  return dir;
+}
+
 function trace(overrides: Record<string, unknown> = {}) {
   return {
     truth: "uiux_action_traceability_not_endbar_not_adoption_not_gui_proof",
@@ -319,6 +340,75 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
       expect(report.counts?.satisfactions).toBe(1);
       expect(report.satisfactions?.[0]?.id).toBe("tokenLedger");
       expect(report.satisfactions?.[0]?.evidenceRefs).toContain("proof://desktop-ax/token-ledger");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts the canonical assembled UI/device proof artifact shape", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-runtime-satisfaction-canonical-proof-"));
+    try {
+      const tracePath = writeJson(root, "trace.json", trace());
+      const proofPath = writeJson(root, "ui-device-proof.json", {
+        proof: "mission_spine_ui_device_consumption",
+        mission_id: "mission_ui_device_contract",
+        observations: [{ surface: "mobile" }, { surface: "desktop" }, { surface: "channel" }],
+        negative_control_segments: [{
+          mission_id: "mission_negative_status",
+          observations: [
+            { surface: "*", event: "stale_label_visible" },
+            { surface: "*", event: "offline_label_visible" },
+            { surface: "*", event: "error_label_visible" },
+          ],
+        }],
+      });
+      const evidenceDir = writeCompleteEvidenceDir(root);
+      const output = execFileSync("node", [
+        script,
+        `--head=${head}`,
+        `--action-traceability-report=${tracePath}`,
+        `--ui-device-proof=${proofPath}`,
+        `--ui-device-evidence-dir=${evidenceDir}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        blockers?: unknown[];
+        counts?: { satisfactions?: number };
+      };
+      expect(report.status).toBe("ready");
+      expect(report.blockers).toEqual([]);
+      expect(report.counts?.satisfactions).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts capture-dir evidence that uses the normalized same-run event filename", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-runtime-satisfaction-normalized-events-"));
+    try {
+      const tracePath = writeJson(root, "trace.json", trace());
+      const proofPath = writeJson(root, "ui-device-proof.json", {
+        truth: "assembled_real_ui_device_proof",
+        status: "pass",
+      });
+      const evidenceDir = writeNormalizedOnlyEvidenceDir(root);
+      const output = execFileSync("node", [
+        script,
+        `--head=${head}`,
+        `--action-traceability-report=${tracePath}`,
+        `--ui-device-proof=${proofPath}`,
+        `--ui-device-evidence-dir=${evidenceDir}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        blockers?: unknown[];
+        counts?: { satisfactions?: number };
+      };
+      expect(report.status).toBe("ready");
+      expect(report.blockers).toEqual([]);
+      expect(report.counts?.satisfactions).toBe(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
