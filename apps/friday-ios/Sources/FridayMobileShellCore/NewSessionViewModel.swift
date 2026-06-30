@@ -24,7 +24,7 @@ public final class NewSessionViewModel: ObservableObject {
 
   public init(
     client: (any FridayMissionSpineWriteClient)?,
-    owner: String = "principal:owner-device",
+    owner: String = liveAgentRunOwnerPrincipal,
     idFactory: @escaping () -> String = { UUID().uuidString.lowercased() }
   ) {
     self.client = client

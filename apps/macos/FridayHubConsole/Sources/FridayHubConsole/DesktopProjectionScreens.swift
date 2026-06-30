@@ -580,6 +580,7 @@ struct DesktopProjectionScreen: View {
           }
         }
       }
+      .accessibilityIdentifier("friday.desktop.provider-route-decision-card")
       refsCard(
         title: "Receipt Parity",
         refs: snapshot.providerReceiptRefs + snapshot.channelReceiptRefs)

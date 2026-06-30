@@ -340,7 +340,7 @@ final class FridaySession: ObservableObject {
   ) -> FridayRustWriteClient {
     let writeKeypair = FridayCrypto.DeviceKeypair()
     let endpoint = FridayClientFactory.Endpoint(
-      forwardedPrincipal: "principal:owner-device",
+      forwardedPrincipal: liveAgentRunOwnerPrincipal,
       sessionId: sessionId,
       agentRunControlViaRust: runControlEnabled)
     return FridayClientFactory.makeWriteClient(keypair: writeKeypair, endpoint: endpoint)

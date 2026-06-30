@@ -67,6 +67,22 @@ final class NewSessionViewModelTests: XCTestCase {
     XCTAssertEqual(vm.launchState, .blocked(reason: "Write seam not configured."))
   }
 
+  func testDefaultOwnerMatchesLiveWritePrincipal() async throws {
+    let client = FakeMissionClient(result: MissionIntakeResultWire(
+      fridayConversationId: "fconv_mobile_new_session_fixed",
+      missionId: "mission-mobile-new-session-fixed",
+      workItemId: "work-mobile-new-session-fixed",
+      surfaceThreadId: "surface-mobile-new-session-fixed",
+      status: "ready",
+      createdOrReady: true))
+    let vm = NewSessionViewModel(client: client, idFactory: { "fixed" })
+
+    await vm.launch(intent: "Dispatch through the live mobile owner gate.")
+
+    let request = try XCTUnwrap(client.requests.first)
+    XCTAssertEqual(request.ownerPrincipal, liveAgentRunOwnerPrincipal)
+  }
+
   func testLaunchSubmitsGovernedMissionIntake() async throws {
     let client = FakeMissionClient(result: MissionIntakeResultWire(
       fridayConversationId: "fconv_mobile_new_session_fixed",

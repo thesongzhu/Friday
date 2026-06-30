@@ -45,7 +45,13 @@ exit 64
   writeFileSync(xcodebuild, `#!/usr/bin/env bash
 set -euo pipefail
 echo "Test Suite 'FridayIOSAXObserverUITests' started"
-${tree ? `echo "FRIDAY_AX_DESC_BEGIN"\nprintf '%b\\n' "${tree.replace(/"/g, "\\\"")}"\necho "FRIDAY_AX_DESC_END"` : "echo 'no tree emitted'"}
+if [ "\${FRIDAY_IOS_AX_INTERACTION_SCENARIO:-}" = "missions-dispatch" ]; then
+  echo "FRIDAY_AX_DESC_BEGIN"
+  printf '%b\\n' "Application, 0x1, identifier: 'com.friday.shell'\\n  TextField, 0x2, identifier: 'friday.missions.dispatch-input', label: 'What should Friday do next?'\\n  Button, 0x3, identifier: 'friday.missions.open-chat-loop', label: 'Continue in Friday Chat'"
+  echo "FRIDAY_AX_DESC_END"
+else
+  ${tree ? `echo "FRIDAY_AX_DESC_BEGIN"\nprintf '%b\\n' "${tree.replace(/"/g, "\\\"")}"\necho "FRIDAY_AX_DESC_END"` : "echo 'no tree emitted'"}
+fi
 echo "Test Suite 'FridayIOSAXObserverUITests' passed"
 `);
   chmodSync(xcodebuild, 0o755);
@@ -145,6 +151,47 @@ describe("friday-ios-sim-xcui-observation", () => {
       expect(result.status).toBe(2);
       const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string }> };
       expect(output.blockers?.map((blocker) => blocker.code)).toContain("planned_actions_missing");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes explicit interaction scenario env through and captures the resulting receipt identifier", async () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-ios-xcui-observation-interaction-"));
+    try {
+      const binDir = join(root, "bin");
+      const outDir = join(root, "out");
+      await writeFakeTools(binDir);
+      const stdout = execFileSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        "--destinations=missions",
+        "--interaction-scenarios=missions=missions-dispatch",
+        "--interaction-text=prove mission dispatch",
+        "--live-loopback",
+        "--normalize",
+        "--require-observed",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      });
+      const output = JSON.parse(stdout) as {
+        live_loopback_requested?: boolean;
+        xcode_runs?: Array<{ interaction_scenario?: string | null }>;
+        outputs?: { observation?: string; normalized?: string };
+      };
+      expect(output.live_loopback_requested).toBe(true);
+      expect(output.xcode_runs?.[0]?.interaction_scenario).toBe("missions-dispatch");
+
+      const observation = JSON.parse(readFileSync(output.outputs?.observation || "", "utf8")) as {
+        observations?: Array<{ runtimeActionId?: string; accessibility_id?: string }>;
+      };
+      expect(observation.observations).toContainEqual(expect.objectContaining({
+        runtimeActionId: "mobile/missions/open-chat-loop",
+        accessibility_id: "friday.missions.open-chat-loop",
+      }));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

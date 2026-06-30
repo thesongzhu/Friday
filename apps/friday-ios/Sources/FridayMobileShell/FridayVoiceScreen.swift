@@ -90,6 +90,7 @@ struct FridayVoiceScreen: View {
           .font(.callout.weight(.medium))
           .foregroundStyle(MobileTheme.textPrimary)
           .fixedSize(horizontal: false, vertical: true)
+          .accessibilityIdentifier("friday.voice.readiness-card")
         Text("Readiness plus local voice-loop truth: capture and speech output run from Friday Chat when these gates are ready.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
@@ -114,13 +115,13 @@ struct FridayVoiceScreen: View {
         }
       }
     }
-    .accessibilityIdentifier("friday.voice.readiness-card")
   }
 
   private func actionsCard(_ readiness: MobileVoiceReadiness) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Voice I/O Actions", count: VoiceReadinessViewModel.actionRows(for: readiness).count)
+          .accessibilityIdentifier("friday.voice.actions-card")
         ForEach(VoiceReadinessViewModel.actionRows(for: readiness)) { row in
           HStack(alignment: .top, spacing: 10) {
             Image(systemName: row.enabled ? "checkmark.circle" : "lock.circle")
@@ -164,7 +165,6 @@ struct FridayVoiceScreen: View {
         }
       }
     }
-    .accessibilityIdentifier("friday.voice.actions-card")
   }
 
   private func gatesCard(_ readiness: MobileVoiceReadiness) -> some View {
