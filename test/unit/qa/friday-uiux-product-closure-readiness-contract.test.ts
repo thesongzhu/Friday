@@ -57,4 +57,15 @@ describe("friday-uiux-product-closure-readiness contract", () => {
     expect(source).toContain('["action-runtime-evidence.json", "design-action-runtime-evidence.json"].includes(entry.name)');
     expect(source).toContain("...recursiveRuntimeEvidenceFromDir(resolved)");
   });
+
+  it("accepts selected-visual-only evidence without feeding it into runtime evidence lists", () => {
+    const source = readFileSync("scripts/ops/friday-uiux-product-closure-readiness.mjs", "utf8");
+
+    expect(source).toContain("--selected-visual-evidence-dir=/abs/served-or-visual-evidence");
+    expect(source).toContain("FRIDAY_UIUX_SELECTED_VISUAL_EVIDENCE_DIRS");
+    expect(source).toContain("const selectedVisualEvidenceDirs = unique");
+    expect(source).toContain("for (const dir of selectedVisualEvidenceDirs)");
+    expect(source).toContain("selectedVisualProofArgs.push(`--evidence-dir=${abs(dir)}`)");
+    expect(source).toContain("selectedVisualEvidenceDirs,");
+  });
 });

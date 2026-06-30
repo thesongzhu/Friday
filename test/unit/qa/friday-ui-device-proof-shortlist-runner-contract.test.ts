@@ -84,6 +84,15 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("readiness_args+=(\"--design-action-runtime-evidence\" \"${path}\")");
   });
 
+  it("threads selected visual evidence into product closure without treating it as runtime evidence", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("--selected-visual-evidence-dir");
+    expect(source).toContain("selected_visual_evidence_dirs=()");
+    expect(source).toContain("closure_args+=(\"--selected-visual-evidence-dir=${dir}\")");
+    expect(source).toContain("selectedVisualProofStatus");
+  });
+
   it("keeps the readiness report file parseable JSON while preserving wrapper logs", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
 
