@@ -229,6 +229,31 @@ function supportingProof(label, path, validate) {
 }
 
 function supportingProofs() {
+  function channelProofFailures(value) {
+    const failures = [];
+    if (value.proof === "mission_spine_channel_live_proof") {
+      if (value.status !== "passed") failures.push("status_not_passed");
+      if (!String(value.remaining_requirement || "").includes("UI/device consumption")) failures.push("remaining_requirement_missing");
+      return failures;
+    }
+    const observedEventKeyBySchema = {
+      "friday.phase24b.discord_trusted_inbound_proof.v1": "observedDiscordEvent",
+      "friday.phase24c.telegram_trusted_inbound_proof.v1": "observedTelegramEvent",
+      "friday.phase24d.lark_feishu_trusted_inbound_proof.v1": "observedLarkFeishuEvent",
+    };
+    const observedEventKey = observedEventKeyBySchema[value.schemaVersion];
+    if (!observedEventKey) failures.push("proof_mismatch");
+    if (value.status !== "passed") failures.push("status_not_passed");
+    if (!Array.isArray(value.failures) || value.failures.length !== 0) failures.push("phase24_failures_present");
+    if (value.criteria?.artifactHasNoToken !== true) failures.push("phase24_artifact_token_check_missing");
+    if (value.criteria?.channelBoundaryConsumable !== true) failures.push("phase24_channel_boundary_not_consumable");
+    if (value.criteria?.channelBoundaryNoLiveClaim !== true) failures.push("phase24_channel_boundary_live_claim_missing");
+    if (value.criteria?.fullEvidenceSurfaceExported !== true) failures.push("phase24_evidence_surface_not_exported");
+    if (observedEventKey && (typeof value[observedEventKey] !== "object" || value[observedEventKey] === null)) {
+      failures.push(`phase24_observed_event_missing:${observedEventKey}`);
+    }
+    return failures;
+  }
   return [
     supportingProof("backendLiveProof", supportingProofArgs.backendLiveProof, (value) => {
       const failures = [];
@@ -238,11 +263,7 @@ function supportingProofs() {
       return failures;
     }),
     supportingProof("channelLiveProof", supportingProofArgs.channelLiveProof, (value) => {
-      const failures = [];
-      if (value.proof !== "mission_spine_channel_live_proof") failures.push("proof_mismatch");
-      if (value.status !== "passed") failures.push("status_not_passed");
-      if (!String(value.remaining_requirement || "").includes("UI/device consumption")) failures.push("remaining_requirement_missing");
-      return failures;
+      return channelProofFailures(value);
     }),
     supportingProof("objectiveCoverage", supportingProofArgs.objectiveCoverage, (value) => {
       const failures = [];
