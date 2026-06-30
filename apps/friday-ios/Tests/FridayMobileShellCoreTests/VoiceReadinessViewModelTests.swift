@@ -105,6 +105,25 @@ final class VoiceReadinessViewModelTests: XCTestCase {
     XCTAssertEqual(initialRows.first { $0.id == "open-chat-loop" }?.truthLabel, "blocked")
     XCTAssertEqual(initialRows.first { $0.id == "open-chat-loop" }?.enabled, false)
 
+    let routeOnly = MobileVoiceReadiness(
+      microphone: .notDetermined,
+      speechRecognition: .notDetermined,
+      ttsProviderConfigured: true,
+      truthLabel: "voice_readiness_timeout_chat_route")
+    let routeRows = VoiceReadinessViewModel.actionRows(for: routeOnly)
+    XCTAssertEqual(routeRows.first { $0.id == "realtime-loop" }?.truthLabel, "blocked")
+    XCTAssertEqual(routeRows.first { $0.id == "realtime-loop" }?.enabled, false)
+    XCTAssertEqual(routeRows.first { $0.id == "open-chat-loop" }?.truthLabel, "native_voice_chat_route_available")
+    XCTAssertEqual(routeRows.first { $0.id == "open-chat-loop" }?.enabled, true)
+
+    let disabledRoute = MobileVoiceReadiness(
+      microphone: .notDetermined,
+      speechRecognition: .notDetermined,
+      ttsProviderConfigured: false)
+    let disabledRouteRows = VoiceReadinessViewModel.actionRows(for: disabledRoute)
+    XCTAssertEqual(disabledRouteRows.first { $0.id == "open-chat-loop" }?.truthLabel, "blocked")
+    XCTAssertEqual(disabledRouteRows.first { $0.id == "open-chat-loop" }?.enabled, false)
+
     let captureOnly = MobileVoiceReadiness(
       microphone: .authorized,
       speechRecognition: .authorized,

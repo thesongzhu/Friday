@@ -420,7 +420,7 @@ struct RootView: View {
           }
         case .voice:
           FridayVoiceScreen(viewModel: voiceVM) {
-            pendingChatLaunchContext = nil
+            pendingChatLaunchContext = Self.voiceChatLaunchContext(from: homeVM.state.projection)
             chatOpen = true
           }
         case .pairing:
@@ -553,6 +553,17 @@ struct RootView: View {
     }
 
     return .home
+  }
+
+  private static func voiceChatLaunchContext(from projection: HomeProjection?) -> ChatLaunchContext {
+    let trimmedMissionId = projection?.missionId.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return ChatLaunchContext(
+      source: "voice",
+      missionId: trimmedMissionId.isEmpty ? "mobile-voice-route" : trimmedMissionId,
+      workItemId: projection?.workItemIds.first,
+      surfaceThreadId: "mobile-voice-chat-route",
+      status: "voice_route_ready",
+      createdOrReady: true)
   }
 
   private func applyShareURL(_ url: URL) {

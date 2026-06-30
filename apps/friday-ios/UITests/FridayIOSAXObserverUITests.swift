@@ -99,7 +99,9 @@ final class FridayIOSAXObserverUITests: XCTestCase {
       if permission.exists {
         permission.tap()
       }
-      try waitFor(app, identifier: "friday.voice.open-chat-loop", timeout: 10)
+      try tap(app, identifier: "friday.voice.open-chat-loop")
+      try waitFor(app, identifier: "friday.chat.voice-input", timeout: 10)
+      try tap(app, identifier: "friday.chat.voice-output")
     case "settings-push-permission":
       try tap(app, identifier: "friday.settings.push-permission")
       try waitFor(app, identifier: "friday.settings.push-notifications-card", timeout: 10)

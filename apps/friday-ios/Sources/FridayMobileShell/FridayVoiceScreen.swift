@@ -24,7 +24,9 @@ struct FridayVoiceScreen: View {
     .background(MobileTheme.backgroundWarmOffWhite.ignoresSafeArea())
     .task {
       if case .idle = viewModel.state {
-        await viewModel.refresh()
+        Task { await viewModel.refresh() }
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        viewModel.useChatRouteFallbackAfterReadinessTimeout()
       }
     }
   }
@@ -240,6 +242,10 @@ struct FridayVoiceScreen: View {
       return "configured"
     case "native_voice_route_ready":
       return "chat route"
+    case "native_voice_chat_route_available":
+      return "chat route"
+    case "voice_readiness_timeout_chat_route":
+      return "check in chat"
     default:
       return truthLabel.replacingOccurrences(of: "_", with: " ")
     }
