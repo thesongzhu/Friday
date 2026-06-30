@@ -356,6 +356,77 @@ infer_capture_index_path() {
   jq -r "$query // empty" "$index" 2>/dev/null || true
 }
 
+append_colon_list() {
+  local current="$1"
+  shift
+  local candidate
+  for candidate in "$@"; do
+    [ -n "$candidate" ] || continue
+    if [ -s "$candidate" ]; then
+      candidate="$(abs_path "$candidate")"
+      case ":${current}:" in
+        *":${candidate}:"*) ;;
+        *)
+          if [ -z "$current" ]; then
+            current="$candidate"
+          else
+            current="${current}:$candidate"
+          fi
+          ;;
+      esac
+    fi
+  done
+  printf '%s\n' "$current"
+}
+
+remove_colon_list_entries() {
+  local current="$1"
+  local remove="$2"
+  local result=""
+  local entry
+  [ -n "$current" ] || return 0
+  IFS=':' read -r -a entries <<<"$current"
+  for entry in "${entries[@]}"; do
+    [ -n "$entry" ] || continue
+    case ":${remove}:" in
+      *":${entry}:"*) ;;
+      *)
+        if [ -z "$result" ]; then
+          result="$entry"
+        else
+          result="${result}:$entry"
+        fi
+        ;;
+    esac
+  done
+  printf '%s\n' "$result"
+}
+
+infer_capture_index_extra_paths() {
+  local index="$1"
+  local surface="$2"
+  [ -n "$index" ] && [ -s "$index" ] || return 0
+  jq -r --arg surface "$surface" '
+    def path_value:
+      .target // .proof // .capture // .path // .file // empty;
+    (.extraCaptures // [])
+    | map(select((.role // "") | startswith($surface + "-extra-")))
+    | .[]
+    | path_value
+  ' "$index" 2>/dev/null || true
+}
+
+infer_negative_control_evidence_paths() {
+  local manifest="$1"
+  [ -n "$manifest" ] && [ -s "$manifest" ] || return 0
+  jq -r '
+    (.negative_control_segments // [])
+    | .[]
+    | (.evidence_refs // [])
+    | .[]
+  ' "$manifest" 2>/dev/null || true
+}
+
 discover_evidence_dir() {
   local dir="$1"
   local manifest
@@ -445,6 +516,23 @@ discover_evidence_dir() {
       "$(infer_capture_index_path "$capture_index" '.timeline.proof')" \
       "$(infer_capture_index_path "$capture_index" '.timeline.capture')" || true)"
   fi
+  if [ -n "$capture_index" ]; then
+    MOBILE_EXTRA_EVIDENCE="$(append_colon_list "${MOBILE_EXTRA_EVIDENCE:-}" $(infer_capture_index_extra_paths "$capture_index" mobile))"
+    DESKTOP_EXTRA_EVIDENCE="$(append_colon_list "${DESKTOP_EXTRA_EVIDENCE:-}" $(infer_capture_index_extra_paths "$capture_index" desktop))"
+    CHANNEL_EXTRA_EVIDENCE="$(append_colon_list "${CHANNEL_EXTRA_EVIDENCE:-}" $(infer_capture_index_extra_paths "$capture_index" channel))"
+    TIMELINE_EXTRA_EVIDENCE="$(append_colon_list "${TIMELINE_EXTRA_EVIDENCE:-}" $(infer_capture_index_extra_paths "$capture_index" timeline))"
+    SHARED_EXTRA_EVIDENCE="$(append_colon_list "${SHARED_EXTRA_EVIDENCE:-}" $(infer_capture_index_extra_paths "$capture_index" shared))"
+  fi
+  if [ -n "$manifest" ] && [ -z "${NEGATIVE_CONTROL_EVIDENCE_FILES:-}" ]; then
+    NEGATIVE_CONTROL_EVIDENCE_FILES="$(append_colon_list "" $(infer_negative_control_evidence_paths "$manifest"))"
+  fi
+  if [ -n "${NEGATIVE_CONTROL_EVIDENCE_FILES:-}" ]; then
+    MOBILE_EXTRA_EVIDENCE="$(remove_colon_list_entries "${MOBILE_EXTRA_EVIDENCE:-}" "$NEGATIVE_CONTROL_EVIDENCE_FILES")"
+    DESKTOP_EXTRA_EVIDENCE="$(remove_colon_list_entries "${DESKTOP_EXTRA_EVIDENCE:-}" "$NEGATIVE_CONTROL_EVIDENCE_FILES")"
+    CHANNEL_EXTRA_EVIDENCE="$(remove_colon_list_entries "${CHANNEL_EXTRA_EVIDENCE:-}" "$NEGATIVE_CONTROL_EVIDENCE_FILES")"
+    TIMELINE_EXTRA_EVIDENCE="$(remove_colon_list_entries "${TIMELINE_EXTRA_EVIDENCE:-}" "$NEGATIVE_CONTROL_EVIDENCE_FILES")"
+    SHARED_EXTRA_EVIDENCE="$(remove_colon_list_entries "${SHARED_EXTRA_EVIDENCE:-}" "$NEGATIVE_CONTROL_EVIDENCE_FILES")"
+  fi
   if [ -z "${SAME_RUN_EVENTS:-}" ]; then
     SAME_RUN_EVENTS="$(first_existing \
       "$dir/same-run-events.normalized.jsonl" \
@@ -531,6 +619,12 @@ export DESKTOP_EVIDENCE="${DESKTOP_EVIDENCE:-}"
 export CHANNEL_EVIDENCE="${CHANNEL_EVIDENCE:-}"
 export TIMELINE_EVIDENCE="${TIMELINE_EVIDENCE:-}"
 export OBSERVATIONS_MANIFEST="${OBSERVATIONS_MANIFEST:-}"
+export MOBILE_EXTRA_EVIDENCE="${MOBILE_EXTRA_EVIDENCE:-}"
+export DESKTOP_EXTRA_EVIDENCE="${DESKTOP_EXTRA_EVIDENCE:-}"
+export CHANNEL_EXTRA_EVIDENCE="${CHANNEL_EXTRA_EVIDENCE:-}"
+export TIMELINE_EXTRA_EVIDENCE="${TIMELINE_EXTRA_EVIDENCE:-}"
+export SHARED_EXTRA_EVIDENCE="${SHARED_EXTRA_EVIDENCE:-}"
+export NEGATIVE_CONTROL_EVIDENCE_FILES="${NEGATIVE_CONTROL_EVIDENCE_FILES:-}"
 export SAME_RUN_EVENTS="${SAME_RUN_EVENTS:-}"
 export FRIDAY_WORKBENCH_SNAPSHOT_FILE="${FRIDAY_WORKBENCH_SNAPSHOT_FILE:-}"
 export WORKBENCH_DB="${WORKBENCH_DB:-}"
@@ -723,6 +817,11 @@ for name in MISSION_ID MOBILE_EVIDENCE DESKTOP_EVIDENCE CHANNEL_EVIDENCE TIMELIN
     notes+=("resolved_${name}:${!name}")
   fi
 done
+for name in MOBILE_EXTRA_EVIDENCE DESKTOP_EXTRA_EVIDENCE CHANNEL_EXTRA_EVIDENCE TIMELINE_EXTRA_EVIDENCE SHARED_EXTRA_EVIDENCE NEGATIVE_CONTROL_EVIDENCE_FILES; do
+  if [ -n "${!name:-}" ]; then
+    notes+=("resolved_${name}:${!name}")
+  fi
+done
 if [ -n "${SAME_RUN_EVENTS:-}" ]; then
   notes+=("resolved_SAME_RUN_EVENTS:${SAME_RUN_EVENTS}")
 fi
@@ -736,7 +835,7 @@ fi
 run_step() {
   local label="$1"
   shift
-  if "$@"; then
+  if "$@" >&2; then
     notes+=("${label}:pass")
   else
     local rc=$?
@@ -748,7 +847,7 @@ run_step() {
 run_note_step() {
   local label="$1"
   shift
-  if "$@"; then
+  if "$@" >&2; then
     notes+=("${label}:pass")
   else
     local rc=$?
@@ -945,7 +1044,7 @@ if [ "${have_all_evidence}" = "1" ]; then
       "--timeline=${TIMELINE_EVIDENCE}" \
       "--manifest=${OBSERVATIONS_MANIFEST}"
   if [ "${#blockers[@]}" -eq 0 ]; then
-    (cd "${REPO_ROOT}/rust-core" && scripts/mission-spine-ui-device-proof-assemble.sh)
+    (cd "${REPO_ROOT}/rust-core" && scripts/mission-spine-ui-device-proof-assemble.sh) >&2
     echo '{"truth":"assembled_real_ui_device_proof","status":"pass"}'
     exit 0
   fi

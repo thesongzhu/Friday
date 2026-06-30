@@ -12,6 +12,11 @@ usage:
   DESKTOP_EVIDENCE=/abs/desktop.trace \
   CHANNEL_EVIDENCE=/abs/channel.trace \
   TIMELINE_EVIDENCE=/abs/timeline.trace \
+  MOBILE_EXTRA_EVIDENCE=/abs/mobile-extra.trace[:/abs/another-mobile-extra.trace] \
+  DESKTOP_EXTRA_EVIDENCE=/abs/desktop-extra.trace[:/abs/another-desktop-extra.trace] \
+  CHANNEL_EXTRA_EVIDENCE=/abs/channel-extra.trace[:/abs/another-channel-extra.trace] \
+  TIMELINE_EXTRA_EVIDENCE=/abs/timeline-extra.trace[:/abs/another-timeline-extra.trace] \
+  SHARED_EXTRA_EVIDENCE=/abs/shared-extra.trace[:/abs/another-shared-extra.trace] \
   NEGATIVE_CONTROL_EVIDENCE_FILES=/abs/negative.trace[:/abs/another-negative.trace] \
   OBSERVATIONS_MANIFEST=/abs/ui-observations-manifest.json \
   OUT=/tmp/mission-spine-ui-device-proof.json \
@@ -145,11 +150,62 @@ channel_bytes="$(file_bytes "$channel")"
 timeline_bytes="$(file_bytes "$timeline")"
 
 negative_evidence_json="$(mktemp "${TMPDIR:-/tmp}/friday-ui-negative-evidence.XXXXXX.json")"
+extra_evidence_json="$(mktemp "${TMPDIR:-/tmp}/friday-ui-extra-evidence.XXXXXX.json")"
 printf '[]\n' >"$negative_evidence_json"
-cleanup_negative_evidence_json() {
-  rm -f "$negative_evidence_json"
+printf '[]\n' >"$extra_evidence_json"
+cleanup_evidence_json() {
+  rm -f "$negative_evidence_json" "$extra_evidence_json"
 }
-trap cleanup_negative_evidence_json EXIT
+trap cleanup_evidence_json EXIT
+
+append_extra_evidence_files() {
+  local surface="$1"
+  local colon_list="$2"
+  local kind="${3:-trace}"
+  local capture_method="${4:-${surface}_extra_ui_capture}"
+  local index=0
+  local extra_input
+  [ -n "$colon_list" ] || return 0
+  IFS=':' read -r -a extra_inputs <<<"$colon_list"
+  for extra_input in "${extra_inputs[@]}"; do
+    if [[ -z "$extra_input" ]]; then
+      continue
+    fi
+    index=$((index + 1))
+    extra_path="$(abs_path "$extra_input")"
+    require_file "$extra_path" "${surface}_extra"
+    extra_sha="$(file_sha256 "$extra_path")"
+    extra_bytes="$(file_bytes "$extra_path")"
+    tmp_extra_evidence_json="${extra_evidence_json}.tmp"
+    jq \
+      --arg role "${surface}-extra-${index}" \
+      --arg path "$extra_path" \
+      --arg kind "$kind" \
+      --arg sha "$extra_sha" \
+      --argjson bytes "$extra_bytes" \
+      --arg capture_method "$capture_method" \
+      --arg captured_at "$captured_at" \
+      --arg observed_mission_id "$MISSION_ID" \
+      '. + [{
+        role: $role,
+        path: $path,
+        kind: $kind,
+        sha256: $sha,
+        bytes: $bytes,
+        real_consumption: true,
+        capture_method: $capture_method,
+        captured_at_utc: $captured_at,
+        observed_mission_id: $observed_mission_id
+      }]' "$extra_evidence_json" >"$tmp_extra_evidence_json"
+    mv "$tmp_extra_evidence_json" "$extra_evidence_json"
+  done
+}
+
+append_extra_evidence_files "mobile" "${MOBILE_EXTRA_EVIDENCE:-}" "${MOBILE_EXTRA_KIND:-trace}" "${MOBILE_EXTRA_CAPTURE_METHOD:-mobile_extra_ui_capture}"
+append_extra_evidence_files "desktop" "${DESKTOP_EXTRA_EVIDENCE:-}" "${DESKTOP_EXTRA_KIND:-trace}" "${DESKTOP_EXTRA_CAPTURE_METHOD:-desktop_extra_ui_capture}"
+append_extra_evidence_files "channel" "${CHANNEL_EXTRA_EVIDENCE:-}" "${CHANNEL_EXTRA_KIND:-trace}" "${CHANNEL_EXTRA_CAPTURE_METHOD:-channel_extra_ui_capture}"
+append_extra_evidence_files "timeline" "${TIMELINE_EXTRA_EVIDENCE:-}" "${TIMELINE_EXTRA_KIND:-trace}" "${TIMELINE_EXTRA_CAPTURE_METHOD:-timeline_extra_ui_capture}"
+append_extra_evidence_files "shared" "${SHARED_EXTRA_EVIDENCE:-}" "${SHARED_EXTRA_KIND:-trace}" "${SHARED_EXTRA_CAPTURE_METHOD:-shared_extra_ui_capture}"
 
 if [[ -n "${NEGATIVE_CONTROL_EVIDENCE_FILES:-}" ]]; then
   IFS=':' read -r -a negative_control_evidence_files <<<"${NEGATIVE_CONTROL_EVIDENCE_FILES}"
@@ -224,6 +280,7 @@ jq -n \
   --arg timeline_capture_method "$timeline_capture_method" \
   --slurpfile manifest "$observations_manifest" \
   --slurpfile negative_evidence "$negative_evidence_json" \
+  --slurpfile extra_evidence "$extra_evidence_json" \
   '($manifest[0]) as $manifest |
     {
       proof: $proof,
@@ -293,7 +350,7 @@ jq -n \
           captured_at_utc: $captured_at,
           observed_mission_id: $mission_id
         }
-      ] + ($negative_evidence[0] // [])),
+      ] + ($extra_evidence[0] // []) + ($negative_evidence[0] // [])),
       event_order: $manifest.event_order,
       observations: $manifest.observations,
       negative_control_segments: ($manifest.negative_control_segments // []),
