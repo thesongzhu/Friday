@@ -143,4 +143,32 @@ describe("Friday product-facing unavailable copy", () => {
 
     expect(failures).toEqual([]);
   });
+
+  it("keeps raw projection fields out of the iOS Home queue cards", () => {
+    const source = readFileSync(
+      join(repoRoot, "apps/friday-ios/Sources/FridayMobileShell/FridayHomeScreen.swift"),
+      "utf8",
+    );
+    const rawQueuePatterns = [
+      /title:\s*item\.title/,
+      /subtitle:\s*"state:\s*\\\([^)]*item\.state/,
+      /chip:\s*item\.state/,
+      /title:\s*event\.summary/,
+      /subtitle:\s*"\\\([^)]*event\.sectionTitle[^"]*event\.truthLabel/,
+      /chip:\s*event\.status/,
+      /title:\s*"\\\([^)]*route\.capitalized\)\s*route"/,
+      /subtitle:\s*projection\.routeAlternatives\.joined/,
+      /No bounded mission timeline page is projected yet\./,
+      /bounded mission timeline pages/,
+      /current projection/,
+      /work-item refs/,
+      /refs only — open the Mission Workbench for detail/,
+    ];
+
+    const failures = rawQueuePatterns
+      .filter((pattern) => pattern.test(source))
+      .map((pattern) => String(pattern));
+
+    expect(failures).toEqual([]);
+  });
 });

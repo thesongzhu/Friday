@@ -162,9 +162,9 @@ struct FridayHomeScreen: View {
           id: "work-\(item.id)",
           icon: item.canRetry ? "arrow.clockwise" : "checkmark.shield",
           iconBg: item.canRetry ? MobileTheme.coralSoft : MobileTheme.cyanSoft,
-          title: item.title,
-          subtitle: item.blockingReason.isEmpty ? "state: \(item.state)" : item.blockingReason,
-          chip: item.canRetry ? "needs" : item.state,
+          title: productWorkItemTitle(item),
+          subtitle: productWorkItemSubtitle(item),
+          chip: productChipLabel(item.canRetry ? "needs" : item.state),
           urgent: item.canRetry || ["stale", "blocked", "high_risk", "high risk", "needs"].contains(item.state),
           workItem: item)
       }
@@ -184,8 +184,8 @@ struct FridayHomeScreen: View {
         id: "learning-\(candidate.id)",
         icon: "brain.head.profile",
         iconBg: MobileTheme.cyanSoft,
-        title: candidate.summary,
-        subtitle: "candidate: \(candidate.kind) · \(candidate.state)",
+        title: productLearningTitle(candidate.summary),
+        subtitle: productLearningSubtitle(kind: candidate.kind, state: candidate.state),
         chip: "confirm",
         urgent: false,
         workItem: nil)
@@ -202,9 +202,9 @@ struct FridayHomeScreen: View {
           id: "running-\(item.id)",
           icon: "sparkles",
           iconBg: MobileTheme.cyanSoft,
-          title: item.title,
-          subtitle: "owner: \(item.owner)",
-          chip: item.state,
+          title: productWorkItemTitle(item),
+          subtitle: productOwnerSubtitle(item.owner),
+          chip: productChipLabel(item.state),
           urgent: false,
           workItem: nil)
       }
@@ -213,10 +213,10 @@ struct FridayHomeScreen: View {
         id: "route-\(route)",
         icon: "arrow.triangle.branch",
         iconBg: MobileTheme.cyanSoft,
-        title: "\(route.capitalized) route",
+        title: productRouteTitle(route),
         subtitle: projection.routeAlternatives.isEmpty
-          ? "selected by route advisor"
-          : "alternatives: \(projection.routeAlternatives.joined(separator: ", "))",
+          ? "Selected by Friday routing."
+          : "Other safe routes: \(projection.routeAlternatives.map(productRouteLabel).joined(separator: ", ")).",
         chip: "ok",
         urgent: false,
         workItem: nil))
@@ -226,13 +226,146 @@ struct FridayHomeScreen: View {
         id: "event-\(event.id)",
         icon: "waveform.path.ecg",
         iconBg: MobileTheme.chipNeutralBG,
-        title: event.summary,
-        subtitle: "\(event.sectionTitle) · \(event.truthLabel)",
-        chip: event.status,
+        title: productEventTitle(event.summary),
+        subtitle: productEventSubtitle(section: event.sectionTitle, truth: event.truthLabel),
+        chip: productChipLabel(event.status),
         urgent: false,
         workItem: nil)
     })
     return Array(rows.prefix(6))
+  }
+
+  private func productWorkItemTitle(_ item: HomeWorkItem) -> String {
+    let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = title.lowercased()
+    if normalized.contains("refs-only") && normalized.contains("round-trip") {
+      return "Review live device round-trip"
+    }
+    if normalized.contains("bounded mission timeline") {
+      return "Mission timeline updated"
+    }
+    if normalized.contains("desktop surface") {
+      return "Desktop surface linked"
+    }
+    if normalized.hasPrefix("proof://") || normalized.hasPrefix("proof:/") {
+      return productRouteTitle(title)
+    }
+    return productReadableTitle(title.isEmpty ? item.id : title)
+  }
+
+  private func productWorkItemSubtitle(_ item: HomeWorkItem) -> String {
+    let reason = item.blockingReason.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = reason.lowercased()
+    if normalized.contains("ready for dispatch") {
+      return item.canCancel ? "Ready to continue; you can stop it if needed." : "Ready for Friday to continue."
+    }
+    if !reason.isEmpty {
+      return productReadableSentence(reason)
+    }
+    return "Current state: \(productChipLabel(item.state))."
+  }
+
+  private func productOwnerSubtitle(_ owner: String) -> String {
+    let normalized = owner.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if normalized == "friday_owned" || normalized == "friday-owned" {
+      return "Friday-owned work."
+    }
+    if normalized.isEmpty || normalized == "unknown" {
+      return "Owned by Friday."
+    }
+    return "Owner: \(productReadableSentence(owner))."
+  }
+
+  private func productLearningTitle(_ summary: String) -> String {
+    productReadableTitle(summary.isEmpty ? "Review learning candidate" : summary)
+  }
+
+  private func productLearningSubtitle(kind: String, state: String) -> String {
+    "Candidate: \(productChipLabel(kind)) · \(productChipLabel(state))."
+  }
+
+  private func productRouteTitle(_ rawRoute: String) -> String {
+    let label = productRouteLabel(rawRoute)
+    if label.lowercased().contains("route decision") {
+      return "Route decision"
+    }
+    return "\(label) route"
+  }
+
+  private func productRouteLabel(_ rawRoute: String) -> String {
+    let trimmed = rawRoute.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = trimmed.lowercased()
+    if normalized.hasPrefix("proof://route-decision") || normalized.hasPrefix("proof:/route-decision") {
+      return "Route decision"
+    }
+    if normalized == "surface-local chat" || normalized == "surface_local_chat" {
+      return "local chat"
+    }
+    if normalized == "mission spine" || normalized == "mission_spine" {
+      return "Mission Spine"
+    }
+    return productReadableTitle(trimmed)
+  }
+
+  private func productEventTitle(_ summary: String) -> String {
+    let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = trimmed.lowercased()
+    if normalized.hasPrefix("proof://") || normalized.hasPrefix("proof:/") {
+      return "Route decision receipt"
+    }
+    if normalized.contains("bounded mission timeline") {
+      return "Mission timeline updated"
+    }
+    if normalized.contains("desktop surface") {
+      return "Desktop surface linked"
+    }
+    return productReadableTitle(trimmed.isEmpty ? "Activity update" : trimmed)
+  }
+
+  private func productEventSubtitle(section: String, truth: String) -> String {
+    let cleanSection = productReadableSentence(section)
+    let normalizedTruth = truth.lowercased()
+    if normalizedTruth.contains("live") {
+      return "\(cleanSection) · live receipt."
+    }
+    if normalizedTruth.contains("synthetic") || normalizedTruth.contains("proof") {
+      return "\(cleanSection) · receipt captured."
+    }
+    return cleanSection
+  }
+
+  private func productChipLabel(_ raw: String) -> String {
+    let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    switch normalized {
+    case "ready_to_dispatch", "ready for dispatch":
+      return "ready"
+    case "timeline_read":
+      return "timeline"
+    case "completed_with_proof":
+      return "complete"
+    case "friday_owned":
+      return "Friday"
+    case "":
+      return "status"
+    default:
+      return productReadableSentence(raw)
+    }
+  }
+
+  private func productReadableTitle(_ raw: String) -> String {
+    let clean = productReadableSentence(raw)
+    guard let first = clean.first else { return "Friday update" }
+    return first.uppercased() + clean.dropFirst()
+  }
+
+  private func productReadableSentence(_ raw: String) -> String {
+    raw
+      .replacingOccurrences(of: "refs-only", with: "receipt")
+      .replacingOccurrences(of: "Proof://", with: "")
+      .replacingOccurrences(of: "proof://", with: "")
+      .replacingOccurrences(of: "_", with: " ")
+      .replacingOccurrences(of: "-", with: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   private func commandQueueSection(title: String, rows: [QueueRow], emptyText: String) -> some View {
@@ -439,7 +572,7 @@ struct FridayHomeScreen: View {
         }
 
         if projection.timelinePages.isEmpty {
-          Text("No bounded mission timeline page is projected yet.")
+          Text("No activity pages are ready yet.")
             .font(.footnote)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -482,8 +615,8 @@ struct FridayHomeScreen: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
       projection.timelinePages.isEmpty
-        ? "Activity flow waiting for bounded mission timeline pages"
-        : "Activity flow shows \(projection.timelinePages.count) bounded mission timeline pages")
+        ? "Activity flow waiting for activity pages"
+        : "Activity flow shows \(projection.timelinePages.count) activity pages")
     .accessibilityIdentifier("friday.home.evidence-flow")
   }
 
@@ -771,7 +904,7 @@ struct FridayHomeScreen: View {
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
         }
-        Text("Connected to \(projection.runtimeFeedStatus); this owner has no visible missions, work items, or learning candidates in the current projection.")
+        Text("Friday is connected. No active missions, work items, or learning suggestions are visible for this owner yet.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -792,14 +925,14 @@ struct FridayHomeScreen: View {
           Text("Work items").font(.headline).foregroundStyle(MobileTheme.textPrimary)
           Spacer()
           FridayChip(
-            text: "\(projection.workItemIds.count) ref\(projection.workItemIds.count == 1 ? "" : "s")",
+            text: "\(projection.workItemIds.count) item\(projection.workItemIds.count == 1 ? "" : "s")",
             bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
         }
         if projection.workItemIds.isEmpty {
-          Text("No work-item refs in this projection.")
+          Text("No active work items are visible right now.")
             .font(.caption).foregroundStyle(MobileTheme.textSecondary)
         } else {
-          Text("refs only — open the Mission Workbench for detail")
+          Text("Open Mission Workbench for details.")
             .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
           ForEach(projection.workItemIds, id: \.self) { id in
             FridayProofLine(label: "work item", ref: id)
