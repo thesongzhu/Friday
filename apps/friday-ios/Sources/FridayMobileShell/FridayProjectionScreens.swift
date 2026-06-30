@@ -633,6 +633,7 @@ struct FridayProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Workflow Control", count: projection.workItems.count)
+          .accessibilityIdentifier("friday.workflow.control-surface")
         Text("Route refs and WorkItem lifecycle controls are rendered from the live Hub projection. Retry/cancel use the governed write seam; this surface still needs real app proof before END-BAR.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
@@ -660,13 +661,11 @@ struct FridayProjectionScreen: View {
           VStack(alignment: .leading, spacing: 8) {
             ForEach(projection.workItems) { item in
               workItemRow(item)
-                .accessibilityIdentifier("friday.workflow.work-item.\(item.id)")
             }
           }
         }
       }
     }
-    .accessibilityIdentifier("friday.workflow.control-surface")
   }
 
   private func receiptRefsCard(_ projection: HomeProjection) -> some View {
@@ -935,6 +934,7 @@ struct FridayProjectionScreen: View {
         Text(item.title)
           .font(.system(size: 13, weight: .medium))
           .foregroundStyle(MobileTheme.textPrimary)
+          .accessibilityIdentifier("friday.workflow.work-item.\(item.id)")
         Spacer()
         FridayChip(
           text: item.done ? "done" : "not done",
