@@ -31,15 +31,19 @@ describe("Friday mobile command sheet product path", () => {
     expect(product).toContain(".contextPassport");
   });
 
-  it("keeps advanced diagnostics reachable through an explicit disclosure", () => {
+  it("keeps device setup reachable without exposing proof-harness destinations in the launcher", () => {
     const diagnostics = arrayBody("diagnosticsSections");
     const text = source();
 
-    for (const diagnostic of [".pairing", ".onboarding", ".settings", ".petEditor", ".proofViewer", ".entrypoints"]) {
+    for (const diagnostic of [".pairing", ".onboarding", ".settings", ".petEditor"]) {
       expect(diagnostics).toContain(diagnostic);
     }
+    for (const diagnostic of [".proofViewer", ".entrypoints"]) {
+      expect(diagnostics).not.toContain(diagnostic);
+    }
     expect(text).toContain("friday.command-sheet.advanced-setup-disclosure");
-    expect(text).toContain("Connection, device, and developer tools live here");
+    expect(text).toContain("Connection, pairing, and companion settings live here");
+    expect(text).not.toContain("Connection, device, and developer tools live here");
     expect(text).not.toContain("Pairing, readiness, proof, and entrypoint tools live here");
   });
 

@@ -72,7 +72,8 @@ function writeGoodIos(root: string) {
   writeFile(iosRoot, "CommandSheet.swift", `
     struct CommandSheet: View {
       private let sections: [String] = ["home", "platform", "chat"]
-      var body: some View {}
+      private let diagnosticsSections: [String] = ["pairing", "settings"]
+      var body: some View { FridaySegmentedControl(options: ["Auto", "Codex"], selection: .constant("Auto")) }
     }
   `);
   return iosRoot;
@@ -90,7 +91,8 @@ function writeBadIos(root: string) {
   writeFile(iosRoot, "CommandSheet.swift", `
     struct CommandSheet: View {
       private let sections: [Destination] = [.home, .proofViewer, .entrypoints]
-      var body: some View { readinessFooter }
+      private let diagnosticsSections: [Destination] = [.pairing, .proofViewer, .entrypoints]
+      var body: some View { readinessFooter.pickerStyle(.segmented) }
     }
   `);
   return iosRoot;
@@ -102,7 +104,7 @@ function writeGoodDist(root: string) {
     :root { --accent: #0f7d8c; --coral: #d8634d; --app-bg: #f7f6f2; }
     body { background: #f7f6f2; color: #242424; }
   `);
-  writeFile(distRoot, "index.html", `
+  const html = `
     <!doctype html>
     <html>
       <head><link rel="stylesheet" href="/assets/app.css"></head>
@@ -117,7 +119,10 @@ function writeGoodDist(root: string) {
         </aside>
       </body>
     </html>
-  `);
+  `;
+  writeFile(distRoot, "index.html", html);
+  writeFile(distRoot, "home/index.html", html);
+  writeFile(distRoot, "chat/index.html", html);
   return distRoot;
 }
 
@@ -135,6 +140,15 @@ function writeBadDist(root: string) {
         <main data-testid="app-shell-rail">Console v2.0</main>
         <img alt="Friday status pet" />
         <section>Proof inspector - bottom timeline</section>
+      </body>
+    </html>
+  `);
+  writeFile(distRoot, "chat/index.html", `
+    <!doctype html>
+    <html>
+      <head><link rel="stylesheet" href="/assets/app.css"></head>
+      <body>
+        <main data-testid="app-shell-rail">Chat without proof rail</main>
       </body>
     </html>
   `);
@@ -175,9 +189,11 @@ describe("check-friday-served-ui-design-fidelity", () => {
       expect(failures).toEqual(expect.arrayContaining([
         "built css still carries old amber/jade token",
         "iOS user path still contains stock borderedProminent button",
+        "iOS user path still contains stock segmented picker",
         "iOS user path still contains generic StatusChip primitive",
         "iOS user path still contains raw Read Arms debug card in user source",
         "iOS Command Sheet still exposes proof/debug destinations in the user launcher",
+        "iOS Command Sheet still exposes proof-harness destinations in the user launcher diagnostics drawer",
         "iOS Command Sheet still exposes internal proof/readiness language in the user launcher",
         "served desktop shell does not render a right rail",
         "served desktop shell does not expose right-docked ProofInspector",

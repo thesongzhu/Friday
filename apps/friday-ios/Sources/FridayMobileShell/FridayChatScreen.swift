@@ -24,6 +24,20 @@ struct FridayChatScreen: View {
   @State private var routePreference: MissionRoutePreference = .auto
   @State private var draft: String
 
+  private var routePreferenceTitles: [String] {
+    MissionRoutePreference.allCases.map(\.title)
+  }
+
+  private var routePreferenceTitle: Binding<String> {
+    Binding(
+      get: { routePreference.title },
+      set: { selectedTitle in
+        if let selected = MissionRoutePreference.allCases.first(where: { $0.title == selectedTitle }) {
+          routePreference = selected
+        }
+      })
+  }
+
   init(session: FridaySession, launchContext: ChatLaunchContext? = nil) {
     self.runControlEnabled = session.runControlEnabled
     _draft = State(initialValue: launchContext?.composerPrefill ?? "")
@@ -206,8 +220,7 @@ struct FridayChatScreen: View {
               .foregroundStyle(MobileTheme.textPrimary)
             Spacer()
             Button("Clear") { viewModel.clearHistory() }
-              .font(.caption)
-              .foregroundStyle(MobileTheme.cyan)
+              .buttonStyle(FridayButtonStyle(variant: .quiet))
               .accessibilityLabel("Clear Friday chat history")
           }
           ForEach(viewModel.history.suffix(8)) { item in
@@ -281,7 +294,7 @@ struct FridayChatScreen: View {
           }
           Text(userFacingChatReason(reason)).font(.caption2).foregroundStyle(MobileTheme.textSecondary)
           Button("Start over") { viewModel.newTurn() }
-            .font(.caption).foregroundStyle(MobileTheme.cyan)
+            .buttonStyle(FridayButtonStyle(variant: .secondary))
             .accessibilityLabel("Start a new Friday chat turn")
         }
       }
@@ -309,12 +322,7 @@ struct FridayChatScreen: View {
 
   private var composer: some View {
     VStack(alignment: .leading, spacing: 6) {
-      Picker("Route", selection: $routePreference) {
-        ForEach(MissionRoutePreference.allCases) { preference in
-          Text(preference.title).tag(preference)
-        }
-      }
-      .pickerStyle(.segmented)
+      FridaySegmentedControl(options: routePreferenceTitles, selection: routePreferenceTitle)
       .disabled(viewModel.phase.isBusy || viewModel.phase.isAwaitingApproval)
       .accessibilityLabel("Route preference")
       .accessibilityIdentifier("friday.chat.route-preference")
@@ -398,7 +406,8 @@ struct FridayChatScreen: View {
         HStack {
           FridayChip(text: r.status.uppercased(), bg: MobileTheme.chipDoneBG, fg: MobileTheme.chipDoneFG)
           Spacer()
-          Button("New") { viewModel.newTurn() }.font(.caption).foregroundStyle(MobileTheme.cyan)
+          Button("New") { viewModel.newTurn() }
+            .buttonStyle(FridayButtonStyle(variant: .quiet))
         }
         Text("Friday answered").font(.headline).foregroundStyle(MobileTheme.textPrimary)
         if let answer = readableAnswer(r.answerBody) {
@@ -498,7 +507,8 @@ struct FridayChatScreen: View {
             bg: r.accepted ? MobileTheme.chipDoneBG : MobileTheme.chipWarnBG,
             fg: r.accepted ? MobileTheme.chipDoneFG : MobileTheme.chipWarnFG)
           Spacer()
-          Button("New") { viewModel.newTurn() }.font(.caption).foregroundStyle(MobileTheme.cyan)
+          Button("New") { viewModel.newTurn() }
+            .buttonStyle(FridayButtonStyle(variant: .quiet))
         }
         Text(r.title)
           .font(.headline).foregroundStyle(MobileTheme.textPrimary)
