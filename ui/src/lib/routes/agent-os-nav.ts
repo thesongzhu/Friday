@@ -89,7 +89,7 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
   {
     label: localizedText("云端 Worker", "Cloud Workers"),
     path: "/cloud-workers",
-    description: localizedText("用户自有云 Worker 的设置目录、部署包、DNS 校验、体检和拆机回执（17A fixture，17B blocked_by_env）。", "User-owned cloud worker setup catalog, deployment package, DNS validation, doctor, and teardown receipts (17A fixture, 17B blocked_by_env)."),
+    description: localizedText("用户自有云 Worker 的设置目录、部署包、DNS 校验、体检和拆机回执。", "User-owned cloud worker setup catalog, deployment package, DNS validation, doctor, and teardown receipts."),
   },
   {
     label: localizedText("可观测性", "Observability"),

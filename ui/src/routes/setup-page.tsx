@@ -1450,7 +1450,7 @@ export function SetupPage() {
           setDiscoveryError(
             error instanceof Error
               ? error.message
-              : localize(locale, "程序扫描当前不可用。", "Program discovery is unavailable right now."),
+              : localize(locale, "程序扫描正在等待本机授权或服务连接。", "Program discovery is waiting for local permission or service connection."),
           );
         }
       } finally {
@@ -2943,13 +2943,12 @@ export function SetupPage() {
           className="mt-8 w-full max-w-3xl text-left"
         />
 
-        {/* Phase 17A — optional advanced entrypoint: user-owned cloud worker setup.
-            17A surfaces fixture-only proof. 17B live cloud certification is
-            blocked_by_env until protected GitHub environments, dedicated DNS,
-            and budget/teardown controls are configured. Friday does not host
-            user data; ordinary users never paste FRIDAY_MASTER_KEY or
-            FRIDAY_TOKEN_SECRET; HTTPS is required and only dedicated
-            subdomains are accepted. */}
+        {/* Optional advanced entrypoint: user-owned cloud worker setup.
+            Live cloud certification stays in safe preparation until protected
+            GitHub environments, dedicated DNS, and budget/teardown controls
+            are configured. Friday does not host user data; ordinary users
+            never paste FRIDAY_MASTER_KEY or FRIDAY_TOKEN_SECRET; HTTPS is
+            required and only dedicated subdomains are accepted. */}
         <section
           data-testid="setup-cloud-worker-advanced"
           className="mt-8 w-full max-w-3xl rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-5 text-left"
@@ -2970,8 +2969,8 @@ export function SetupPage() {
           <p className="mt-2 text-xs text-[color:var(--color-text-tertiary)]">
             {localize(
               locale,
-              "17A 为 fixture 证明；17B 阿里云 ECS / 腾讯云 CVM / 火山云 ECS 实证目前为 blocked_by_env。",
-              "17A is fixture proof; 17B Alibaba ECS / Tencent CVM / Volcengine ECS live certification is currently blocked_by_env.",
+              "真实云端认证需要受保护的 GitHub Environment、专用 DNS 凭证和预算/拆机控制；连接前此处只用于安全准备。",
+              "Live cloud certification requires protected GitHub Environment Secrets, dedicated DNS credentials, and budget/teardown controls; until then, this area is for safe preparation.",
             )}
           </p>
           <button

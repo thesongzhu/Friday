@@ -8,7 +8,7 @@ struct ProviderReadinessPanel: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 6) {
         statusChip(detail.truthLabel)
-        statusChip(detail.proofOnly ? "proof only" : "not proof only")
+        statusChip(detail.proofOnly ? "verification view" : "work route view")
         FridayChip(
           text: detail.ok ? "doctor ok" : "doctor not ok",
           bg: detail.ok ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
