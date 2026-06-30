@@ -370,24 +370,15 @@ echo "Friday UI/UX real-use proof driver starting."
 echo "out_dir=${out_dir}"
 echo "truth=uiux_real_use_proof_driver_not_endbar_not_adoption"
 
-node "${repo_root}/scripts/ops/check-friday-uiux-native-linkage.mjs" \
-  "--repo-root=${repo_root}" \
-  "--out=${native_linkage_out}" \
-  --require-complete >/dev/null
-
-node "${repo_root}/scripts/ops/check-friday-served-ui-design-fidelity.mjs" \
-  "--out=${served_ui_fidelity_out}" >/dev/null
-selected_visual_evidence_dirs+=("${served_ui_dir}")
-
 if [ "${plan_only}" -eq 1 ]; then
-  node - "${driver_summary}" "${native_linkage_out}" <<'NODE'
+  node - "${driver_summary}" <<'NODE'
 const fs = require("node:fs");
-const [summaryPath, nativePath] = process.argv.slice(2);
-const native = JSON.parse(fs.readFileSync(nativePath, "utf8"));
+const [summaryPath] = process.argv.slice(2);
 const summary = {
   truth: "uiux_real_use_proof_driver_plan_only_not_runtime_proof",
   status: "plan_ready",
-  nativeLinkageStatus: native.status,
+  nativeLinkageStatus: "not_run_plan_only",
+  servedUiDesignFidelityStatus: "not_run_plan_only",
   nextCommand: "rerun without --plan-only and supply real accessibility/channel/timeline evidence when available",
   caveat: "Plan-only mode performs no live UI/device capture and is not END-BAR.",
 };
@@ -396,6 +387,15 @@ console.log(JSON.stringify(summary, null, 2));
 NODE
   exit 0
 fi
+
+node "${repo_root}/scripts/ops/check-friday-uiux-native-linkage.mjs" \
+  "--repo-root=${repo_root}" \
+  "--out=${native_linkage_out}" \
+  --require-complete >/dev/null
+
+node "${repo_root}/scripts/ops/check-friday-served-ui-design-fidelity.mjs" \
+  "--out=${served_ui_fidelity_out}" >/dev/null
+selected_visual_evidence_dirs+=("${served_ui_dir}")
 
 case "${run_ios_design_capture}" in
   1|true)
