@@ -102,6 +102,7 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
       const proofPath = writeJson(root, "ui-device-proof.json", {
         truth: "assembled_real_ui_device_proof",
         status: "pass",
+        head,
       });
       const evidenceDir = writeEvidenceDir(root);
       const output = execFileSync("node", [
@@ -163,6 +164,7 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
       const proofPath = writeJson(root, "ui-device-proof.json", {
         truth: "assembled_real_ui_device_proof",
         status: "pass",
+        head,
       });
       const evidenceDir = writeEvidenceDir(root);
       const result = spawnSync("node", [
@@ -211,6 +213,7 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
       const proofPath = writeJson(root, "ui-device-proof.json", {
         truth: "assembled_real_ui_device_proof",
         status: "pass",
+        head,
       });
       const evidenceDir = writeEvidenceDir(root);
       const result = spawnSync("node", [
@@ -258,6 +261,7 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
       const proofPath = writeJson(root, "ui-device-proof.json", {
         truth: "assembled_real_ui_device_proof",
         status: "pass",
+        head,
       });
       const evidenceDir = writeEvidenceDir(root);
       const result = spawnSync("node", [
@@ -321,6 +325,7 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
       const proofPath = writeJson(root, "ui-device-proof.json", {
         truth: "assembled_real_ui_device_proof",
         status: "pass",
+        head,
       });
       const evidenceDir = writeEvidenceDir(root);
       const output = execFileSync("node", [
@@ -351,6 +356,7 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
       const tracePath = writeJson(root, "trace.json", trace());
       const proofPath = writeJson(root, "ui-device-proof.json", {
         proof: "mission_spine_ui_device_consumption",
+        head,
         mission_id: "mission_ui_device_contract",
         observations: [{ surface: "mobile" }, { surface: "desktop" }, { surface: "channel" }],
         negative_control_segments: [{
@@ -391,6 +397,7 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
       const proofPath = writeJson(root, "ui-device-proof.json", {
         truth: "assembled_real_ui_device_proof",
         status: "pass",
+        head,
       });
       const evidenceDir = writeNormalizedOnlyEvidenceDir(root);
       const output = execFileSync("node", [
@@ -409,6 +416,41 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
       expect(report.status).toBe("ready");
       expect(report.blockers).toEqual([]);
       expect(report.counts?.satisfactions).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects stale strict UI/device proof from another head", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-runtime-satisfaction-stale-head-"));
+    try {
+      const tracePath = writeJson(root, "trace.json", trace());
+      const proofPath = writeJson(root, "ui-device-proof.json", {
+        truth: "assembled_real_ui_device_proof",
+        status: "pass",
+        head: "stale123",
+      });
+      const evidenceDir = writeEvidenceDir(root);
+      const result = spawnSync("node", [
+        script,
+        `--head=${head}`,
+        `--action-traceability-report=${tracePath}`,
+        `--ui-device-proof=${proofPath}`,
+        `--ui-device-evidence-dir=${evidenceDir}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        status?: string;
+        blockers?: Array<{ code?: string; detail?: string }>;
+      };
+      expect(report.status).toBe("not_ready");
+      expect(report.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          code: "ui_device_proof_head_mismatch",
+          detail: expect.stringContaining(head),
+        }),
+      ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

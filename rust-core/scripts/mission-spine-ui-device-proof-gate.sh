@@ -231,6 +231,7 @@ jq -e '
     and evidence_ref_known_any($root; .stress.evidence_ref);
   .proof == "mission_spine_ui_device_consumption"
   and .proof_source == "real_ui_device_consumption"
+  and (.head | nonempty_string)
   and (.captured_at_utc | nonempty_string)
   and (.capture_run_id | nonempty_string)
   and (.mission_id | nonempty_string)
