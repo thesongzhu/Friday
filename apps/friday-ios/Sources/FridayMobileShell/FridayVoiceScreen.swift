@@ -24,7 +24,9 @@ struct FridayVoiceScreen: View {
     .background(MobileTheme.backgroundWarmOffWhite.ignoresSafeArea())
     .task {
       if case .idle = viewModel.state {
-        await viewModel.refresh()
+        Task { await viewModel.refresh() }
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        viewModel.useChatRouteFallbackAfterReadinessTimeout()
       }
     }
   }
@@ -90,6 +92,7 @@ struct FridayVoiceScreen: View {
           .font(.callout.weight(.medium))
           .foregroundStyle(MobileTheme.textPrimary)
           .fixedSize(horizontal: false, vertical: true)
+          .accessibilityIdentifier("friday.voice.readiness-card")
         Text("Readiness plus local voice-loop truth: capture and speech output run from Friday Chat when these gates are ready.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
@@ -114,13 +117,13 @@ struct FridayVoiceScreen: View {
         }
       }
     }
-    .accessibilityIdentifier("friday.voice.readiness-card")
   }
 
   private func actionsCard(_ readiness: MobileVoiceReadiness) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Voice I/O Actions", count: VoiceReadinessViewModel.actionRows(for: readiness).count)
+          .accessibilityIdentifier("friday.voice.actions-card")
         ForEach(VoiceReadinessViewModel.actionRows(for: readiness)) { row in
           HStack(alignment: .top, spacing: 10) {
             Image(systemName: row.enabled ? "checkmark.circle" : "lock.circle")
@@ -164,7 +167,6 @@ struct FridayVoiceScreen: View {
         }
       }
     }
-    .accessibilityIdentifier("friday.voice.actions-card")
   }
 
   private func gatesCard(_ readiness: MobileVoiceReadiness) -> some View {
@@ -240,6 +242,10 @@ struct FridayVoiceScreen: View {
       return "configured"
     case "native_voice_route_ready":
       return "chat route"
+    case "native_voice_chat_route_available":
+      return "chat route"
+    case "voice_readiness_timeout_chat_route":
+      return "check in chat"
     default:
       return truthLabel.replacingOccurrences(of: "_", with: " ")
     }

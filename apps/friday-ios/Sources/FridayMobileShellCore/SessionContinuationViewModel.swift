@@ -51,7 +51,7 @@ public struct SessionContinuationControl: Sendable, Identifiable, Equatable {
 }
 
 public struct SessionContinuationSnapshot: Sendable, Equatable {
-  public let agentSessionId: String
+  public let agentSessionId: String?
   public let runId: String?
   public let sections: [SessionContinuationSection]
   public let controls: [SessionContinuationControl]
@@ -87,7 +87,7 @@ public enum SessionContinuationControlState: Sendable, Equatable {
 
 public enum SessionContinuationLoadState: Sendable, Equatable {
   case idle
-  case loading(agentSessionId: String)
+  case loading(agentSessionId: String?)
   case loaded(SessionContinuationSnapshot)
   case unavailable(reason: String)
 
@@ -161,20 +161,35 @@ public final class SessionContinuationViewModel: ObservableObject {
 
   public func refresh(agentSessionId: String?, runId: String?) async {
     let sessionId = agentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    guard !sessionId.isEmpty else {
-      state = .unavailable(reason: "Session detail requires an owner-gated agent session ref.")
+    let trimmedRunId = runId?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let resolvedRunId = (trimmedRunId?.isEmpty == false) ? trimmedRunId : nil
+    guard !sessionId.isEmpty || resolvedRunId != nil else {
+      state = .unavailable(reason: "Continuation requires an owner-gated agent session ref or a run ref.")
       return
     }
 
-    let trimmedRunId = runId?.trimmingCharacters(in: .whitespacesAndNewlines)
-    let resolvedRunId = (trimmedRunId?.isEmpty == false) ? trimmedRunId : nil
     controlStates = [:]
-    state = .loading(agentSessionId: sessionId)
+    state = .loading(agentSessionId: sessionId.isEmpty ? nil : sessionId)
 
-    async let open = Self.fetchSessionOpen(client: client, agentSessionId: sessionId)
-    async let link = Self.fetchSessionLinkState(client: client, agentSessionId: sessionId)
-
-    var sections = await [open, link]
+    var sections: [SessionContinuationSection]
+    if sessionId.isEmpty {
+      sections = [
+        SessionContinuationSection(
+          id: "mission-run",
+          title: "Mission Run",
+          status: .loaded,
+          summary: "mission-bound run continuity",
+          generatedAtMs: nil,
+          refs: resolvedRunId.map { ["friday://agent-run/\($0)"] } ?? [],
+          facts: resolvedRunId.map {
+            [SessionContinuationFact(id: "run-id", label: "run", value: $0)]
+          } ?? []),
+      ]
+    } else {
+      async let open = Self.fetchSessionOpen(client: client, agentSessionId: sessionId)
+      async let link = Self.fetchSessionLinkState(client: client, agentSessionId: sessionId)
+      sections = await [open, link]
+    }
     var pendingApproval: SessionContinuationApproval?
     if let resolvedRunId {
       async let files = Self.fetchRunFileView(client: client, runId: resolvedRunId)
@@ -208,14 +223,14 @@ public final class SessionContinuationViewModel: ObservableObject {
     }
 
     state = .loaded(SessionContinuationSnapshot(
-      agentSessionId: sessionId,
+      agentSessionId: sessionId.isEmpty ? nil : sessionId,
       runId: resolvedRunId,
       sections: sections,
       controls: Self.controls(
         runId: resolvedRunId,
         hasPendingApproval: pendingApproval != nil,
         hasWriteClient: writeClient != nil,
-        hasSessionWriteClient: makeSessionWriteClient != nil,
+        hasSessionWriteClient: !sessionId.isEmpty && makeSessionWriteClient != nil,
         hasSigner: signer != nil,
         runControlEnabled: runControlEnabled),
       pendingApproval: pendingApproval))
@@ -229,9 +244,14 @@ public final class SessionContinuationViewModel: ObservableObject {
       controlStates["send"] = .error(reason: "Send requires the session-bound write seam.")
       return
     }
+    guard let agentSessionId = snapshot.agentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !agentSessionId.isEmpty else {
+      controlStates["send"] = .error(reason: "Send requires an owner-gated agent session ref.")
+      return
+    }
 
     controlStates["send"] = .sending
-    let sessionClient = makeSessionWriteClient(snapshot.agentSessionId)
+    let sessionClient = makeSessionWriteClient(agentSessionId)
     do {
       let outcome = try await sessionClient.dispatchAgentRun(
         task: trimmed,
@@ -239,7 +259,7 @@ public final class SessionContinuationViewModel: ObservableObject {
       switch outcome {
       case .result(let result):
         controlStates["send"] = .succeeded(summary: Self.dispatchSummary(for: result))
-        await refresh(agentSessionId: snapshot.agentSessionId, runId: result.runId)
+        await refresh(agentSessionId: agentSessionId, runId: result.runId)
         controlStates["send"] = .succeeded(summary: Self.dispatchSummary(for: result))
       case .paused(let pause):
         controlStates["send"] = .error(

@@ -760,16 +760,37 @@ final class SessionContinuationViewModelTests: XCTestCase {
     })
   }
 
-  func testRefreshWithoutSessionRefFailsClosedWithoutReading() async {
+  func testRefreshWithRunOnlyLoadsMissionRunContinuationWithoutSessionReads() async {
     let client = FakeSessionReadClient()
     let vm = SessionContinuationViewModel(client: client)
 
     await vm.refresh(agentSessionId: nil, runId: "run-1")
 
+    guard case .loaded(let snapshot) = vm.state else {
+      return XCTFail("expected loaded run-only continuation, got \(vm.state)")
+    }
+    XCTAssertNil(snapshot.agentSessionId)
+    XCTAssertEqual(snapshot.runId, "run-1")
+    XCTAssertEqual(Set(client.requests), [
+      "run-readback:run-1",
+      "run-files:run-1",
+      "needs-me:run-1",
+    ])
+    XCTAssertEqual(snapshot.sections.map(\.id), ["mission-run", "run-files", "run-readback", "needs-me"])
+    XCTAssertEqual(snapshot.sections.first?.refs, ["friday://agent-run/run-1"])
+    XCTAssertEqual(snapshot.controls.first { $0.id == "send" }?.truthLabel, "NO-GO")
+  }
+
+  func testRefreshWithoutSessionOrRunRefFailsClosedWithoutReading() async {
+    let client = FakeSessionReadClient()
+    let vm = SessionContinuationViewModel(client: client)
+
+    await vm.refresh(agentSessionId: nil, runId: nil)
+
     guard case .unavailable(let reason) = vm.state else {
       return XCTFail("expected unavailable, got \(vm.state)")
     }
-    XCTAssertTrue(reason.contains("agent session ref"))
+    XCTAssertTrue(reason.contains("session ref or a run ref"))
     XCTAssertTrue(client.requests.isEmpty)
   }
 

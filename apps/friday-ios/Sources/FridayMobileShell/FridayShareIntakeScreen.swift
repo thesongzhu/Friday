@@ -81,6 +81,7 @@ struct FridayShareIntakeScreen: View {
           Label("Ready", systemImage: "checkmark.seal.fill")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
+            .accessibilityIdentifier("friday.share.ready")
           FridayProofLine(label: "mission_id", ref: receipt.missionId)
           if let workItemId = receipt.workItemId {
             FridayProofLine(label: "work_item_id", ref: workItemId)
@@ -121,7 +122,6 @@ struct FridayShareIntakeScreen: View {
             .foregroundStyle(MobileTheme.cyan)
         }
       }
-      .accessibilityIdentifier("friday.share.ready")
     case .blocked(let reason):
       messageCard(
         title: "Needs Details",

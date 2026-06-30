@@ -39,6 +39,10 @@ public struct MobileVoiceReadiness: Sendable, Equatable {
     speechCaptureReady && ttsProviderConfigured
   }
 
+  public var voiceChatRouteAvailable: Bool {
+    ttsProviderConfigured
+  }
+
   public var summary: String {
     if voiceLoopReady {
       return "Voice capture and local speech output provider readiness are both present."
@@ -120,6 +124,15 @@ public final class VoiceReadinessViewModel: ObservableObject {
     }
   }
 
+  public func useChatRouteFallbackAfterReadinessTimeout() {
+    guard case .loading = state else { return }
+    state = .loaded(MobileVoiceReadiness(
+      microphone: .notDetermined,
+      speechRecognition: .notDetermined,
+      ttsProviderConfigured: true,
+      truthLabel: "voice_readiness_timeout_chat_route"))
+  }
+
   public static func actionRows(for readiness: MobileVoiceReadiness) -> [MobileVoiceActionRow] {
     [
       MobileVoiceActionRow(
@@ -157,11 +170,13 @@ public final class VoiceReadinessViewModel: ObservableObject {
       MobileVoiceActionRow(
         id: "open-chat-loop",
         title: "Open Friday Chat voice loop",
-        detail: readiness.voiceLoopReady
-          ? "Routes to Friday Chat, where mic input and speech output are wired to the live governed turn."
-          : "Blocked until voice capture and speech output are both ready.",
-        truthLabel: readiness.voiceLoopReady ? "native_voice_route_ready" : "blocked",
-        enabled: readiness.voiceLoopReady),
+        detail: readiness.voiceChatRouteAvailable
+          ? "Routes to Friday Chat, where mic input requests OS permission and speech output uses the local provider."
+          : "Blocked until the speech output provider is configured.",
+        truthLabel: readiness.voiceLoopReady
+          ? "native_voice_route_ready"
+          : (readiness.voiceChatRouteAvailable ? "native_voice_chat_route_available" : "blocked"),
+        enabled: readiness.voiceChatRouteAvailable),
     ]
   }
 }

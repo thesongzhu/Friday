@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -14,15 +14,20 @@ function usage() {
     [--repo-root=/abs/repo] [--bundle-id=com.friday.shell]
     [--xcode-destination='platform=iOS Simulator,name=iPhone 17 Pro']
     [--destinations=home,fridayChat,...] [--timeout-seconds=90]
+    [--live-loopback] [--live-device-peer]
+    [--interaction-scenarios=missions=missions-dispatch,shareIntake=share-submit]
+    [--interaction-text='...'] [--interaction-url='https://...']
     [--normalize] [--require-observed] [--require-all-planned]
 
 Truth:
   Runs the checked-in Xcode UI-test bundle against an installed real iOS
   Simulator Friday app, captures XCUIApplication.debugDescription, and converts
   only observed accessibility identifiers into the real observation JSON consumed
-  by friday-ios-sim-accessibility-capture.mjs. It does not infer truth from
-  screenshots or static Swift source, does not click governed actions, and is
-  not END-BAR/adoption proof.`);
+  by friday-ios-sim-accessibility-capture.mjs. By default it only observes. When
+  --interaction-scenarios is supplied, it performs only the named explicit UI
+  interactions and waits for the resulting receipt identifiers. It does not infer
+  truth from screenshots or static Swift source, does not click unknown governed
+  actions, and is not END-BAR/adoption proof.`);
 }
 
 function arg(name) {
@@ -50,6 +55,15 @@ const destinations = (arg("destinations") || process.env.FRIDAY_IOS_XCUI_OBSERVA
   .map((value) => value.trim())
   .filter(Boolean);
 const timeoutSeconds = Number(arg("timeout-seconds") || process.env.FRIDAY_IOS_XCUI_OBSERVATION_TIMEOUT_SECONDS || "90");
+const liveLoopback = args.includes("--live-loopback") || process.env.FRIDAY_IOS_XCUI_LIVE_LOOPBACK === "1";
+const liveDevicePeer = args.includes("--live-device-peer") || process.env.FRIDAY_IOS_XCUI_LIVE_DEVICE_PEER === "1";
+const interactionScenarioCsv = arg("interaction-scenarios") || process.env.FRIDAY_IOS_XCUI_INTERACTION_SCENARIOS || "";
+const interactionText = arg("interaction-text") || process.env.FRIDAY_IOS_XCUI_INTERACTION_TEXT || "Friday UI live interaction proof";
+const interactionUrl = arg("interaction-url") || process.env.FRIDAY_IOS_XCUI_INTERACTION_URL || "https://example.com/friday-ui-proof";
+const interactionFilePath = arg("interaction-file")
+  || process.env.FRIDAY_IOS_AX_INTERACTION_FILE
+  || (outDir ? resolve(outDir, "ios-xcui-interaction-request.json") : "/tmp/friday-ios-ax-interaction-current.json");
+const attachRunning = args.includes("--attach-running") || process.env.FRIDAY_IOS_XCUI_ATTACH_RUNNING_APP === "1";
 const normalize = args.includes("--normalize");
 const requireObserved = args.includes("--require-observed");
 const requireAllPlanned = args.includes("--require-all-planned");
@@ -66,6 +80,29 @@ function run(command, commandArgs, options = {}) {
     encoding: "utf8",
     ...options,
   });
+}
+
+function parseInteractionScenarios(value) {
+  const map = new Map();
+  for (const raw of String(value || "").split(",")) {
+    const item = raw.trim();
+    if (!item) continue;
+    const [destination, scenario] = item.split("=").map((part) => part?.trim() || "");
+    if (!destination || !scenario) {
+      block("interaction_scenario_invalid", item);
+      continue;
+    }
+    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(destination)) {
+      block("interaction_destination_invalid", destination);
+      continue;
+    }
+    if (!/^[a-z][a-z0-9-]*$/.test(scenario)) {
+      block("interaction_scenario_name_invalid", scenario);
+      continue;
+    }
+    map.set(destination, scenario);
+  }
+  return map;
 }
 
 function jsonOut(path, value) {
@@ -165,15 +202,109 @@ function readPlan(destination) {
   return Array.isArray(summary?.targets) ? summary.targets : [];
 }
 
+function mobileLaunchEnv() {
+  const env = {};
+  if (!liveLoopback) return env;
+  env.SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ = "1";
+  env.SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE = "1";
+  env.SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_PAIRING = "1";
+  if (!liveDevicePeer) {
+    env.SIMCTL_CHILD_FRIDAY_MOBILE_DISABLE_PRODUCT_LIVE_LOOPBACK = "1";
+  }
+  if (liveDevicePeer) {
+    env.SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR = "1";
+    env.SIMCTL_CHILD_FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR = "1";
+  }
+  if (process.env.FRIDAY_MOBILE_LIVE_READ_HOST) env.SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ_HOST = process.env.FRIDAY_MOBILE_LIVE_READ_HOST;
+  if (process.env.FRIDAY_MOBILE_LIVE_READ_PORT) env.SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_READ_PORT = process.env.FRIDAY_MOBILE_LIVE_READ_PORT;
+  if (process.env.FRIDAY_MOBILE_LIVE_WRITE_HOST) env.SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_HOST = process.env.FRIDAY_MOBILE_LIVE_WRITE_HOST;
+  if (process.env.FRIDAY_MOBILE_LIVE_WRITE_PORT) env.SIMCTL_CHILD_FRIDAY_MOBILE_LIVE_WRITE_PORT = process.env.FRIDAY_MOBILE_LIVE_WRITE_PORT;
+  if (process.env.FRIDAY_MASTER_KEY) env.SIMCTL_CHILD_FRIDAY_MASTER_KEY = process.env.FRIDAY_MASTER_KEY;
+  if (missionId) env.SIMCTL_CHILD_FRIDAY_MOBILE_MISSION_ID = missionId;
+  return env;
+}
+
+function appLaunchEnv() {
+  const env = {};
+  if (!liveLoopback) return env;
+  env.FRIDAY_MOBILE_LIVE_READ = "1";
+  env.FRIDAY_MOBILE_LIVE_WRITE = "1";
+  env.FRIDAY_MOBILE_LIVE_PAIRING = "1";
+  if (!liveDevicePeer) {
+    env.FRIDAY_MOBILE_DISABLE_PRODUCT_LIVE_LOOPBACK = "1";
+  }
+  if (liveDevicePeer) {
+    env.FRIDAY_MOBILE_LIVE_DEVICE_KEYPAIR = "1";
+    env.FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR = "1";
+  }
+  if (process.env.FRIDAY_MOBILE_LIVE_READ_HOST) env.FRIDAY_MOBILE_LIVE_READ_HOST = process.env.FRIDAY_MOBILE_LIVE_READ_HOST;
+  if (process.env.FRIDAY_MOBILE_LIVE_READ_PORT) env.FRIDAY_MOBILE_LIVE_READ_PORT = process.env.FRIDAY_MOBILE_LIVE_READ_PORT;
+  if (process.env.FRIDAY_MOBILE_LIVE_WRITE_HOST) env.FRIDAY_MOBILE_LIVE_WRITE_HOST = process.env.FRIDAY_MOBILE_LIVE_WRITE_HOST;
+  if (process.env.FRIDAY_MOBILE_LIVE_WRITE_PORT) env.FRIDAY_MOBILE_LIVE_WRITE_PORT = process.env.FRIDAY_MOBILE_LIVE_WRITE_PORT;
+  if (process.env.FRIDAY_MASTER_KEY) env.FRIDAY_MASTER_KEY = process.env.FRIDAY_MASTER_KEY;
+  if (missionId) env.FRIDAY_MOBILE_MISSION_ID = missionId;
+  return env;
+}
+
+function appLaunchEnvForRequestFile() {
+  const env = appLaunchEnv();
+  delete env.FRIDAY_MASTER_KEY;
+  return env;
+}
+
+function appLaunchArgs(destination) {
+  const launchArgs = [];
+  if (liveLoopback) {
+    launchArgs.push(
+      "--live-read",
+      "--live-write",
+      "--live-pairing",
+      `--mission-id=${missionId}`,
+    );
+    if (!liveDevicePeer) {
+      launchArgs.push("--disable-product-live-loopback");
+    }
+    if (liveDevicePeer) {
+      launchArgs.push("--live-device-keypair", "--simulator-file-device-keypair");
+    }
+    if (process.env.FRIDAY_MOBILE_LIVE_READ_HOST) launchArgs.push("--live-read-host", process.env.FRIDAY_MOBILE_LIVE_READ_HOST);
+    if (process.env.FRIDAY_MOBILE_LIVE_READ_PORT) launchArgs.push("--live-read-port", process.env.FRIDAY_MOBILE_LIVE_READ_PORT);
+    if (process.env.FRIDAY_MOBILE_LIVE_WRITE_HOST) launchArgs.push("--live-write-host", process.env.FRIDAY_MOBILE_LIVE_WRITE_HOST);
+    if (process.env.FRIDAY_MOBILE_LIVE_WRITE_PORT) launchArgs.push("--live-write-port", process.env.FRIDAY_MOBILE_LIVE_WRITE_PORT);
+  }
+  launchArgs.push(`--initial-destination=${destination}`);
+  return launchArgs;
+}
+
+function writeMasterKeyFile() {
+  const value = process.env.FRIDAY_MASTER_KEY || "";
+  if (!liveLoopback || !value.trim() || !outDir) return null;
+  const file = resolve(outDir, "ios-xcui-master-key.env");
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${value.trim()}\n`, { encoding: "utf8", mode: 0o600 });
+  chmodSync(file, 0o600);
+  return file;
+}
+
 function launchDestination(simulator, destination) {
+  if (!attachRunning) {
+    run("xcrun", ["simctl", "terminate", simulator.udid, bundleId]);
+    return `xctest-launch:${destination}`;
+  }
   const launch = run("xcrun", [
     "simctl",
     "launch",
     "--terminate-running-process",
     simulator.udid,
     bundleId,
-    `--initial-destination=${destination}`,
-  ]);
+    ...appLaunchArgs(destination),
+  ], {
+    env: {
+      ...process.env,
+      ...mobileLaunchEnv(),
+      SIMCTL_CHILD_FRIDAY_MOBILE_INITIAL_DESTINATION: destination,
+    },
+  });
   if (launch.status !== 0) {
     block("app_launch_failed", launch.stderr.trim() || launch.stdout.trim() || `${bundleId}:${destination}`);
     return null;
@@ -186,7 +317,33 @@ function extractAxTree(log) {
   return match?.[1] || "";
 }
 
-function runXcui(destination) {
+function writeInteractionFile(destination, scenario) {
+  const path = interactionFilePath;
+  if (!scenario && !liveLoopback) {
+    rmSync(path, { force: true });
+    return "";
+  }
+  const payload = {
+    destination,
+    scenario: scenario || null,
+    text: interactionText,
+    url: interactionUrl,
+    appLaunchArgs: appLaunchArgs(destination),
+    appLaunchEnv: appLaunchEnvForRequestFile(),
+    masterKeyFile: writeMasterKeyFile(),
+    generated_at_utc: new Date().toISOString(),
+    truth: "ios_xcui_explicit_interaction_request_not_proof",
+  };
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`);
+  if (path !== "/tmp/friday-ios-ax-interaction-current.json") {
+    writeFileSync("/tmp/friday-ios-ax-interaction-current.json", `${JSON.stringify(payload, null, 2)}\n`);
+  }
+  return path;
+}
+
+function runXcui(destination, scenario) {
+  const interactionFile = writeInteractionFile(destination, scenario);
   const project = resolve(repoRoot, "apps/friday-ios/UITests/FridayIOSAXObserver.xcodeproj");
   const result = run("xcodebuild", [
     "-project",
@@ -199,6 +356,19 @@ function runXcui(destination) {
     "-skipMacroValidation",
     "test",
   ], {
+    env: {
+      ...process.env,
+      ...(scenario ? {
+        FRIDAY_IOS_AX_INTERACTION_SCENARIO: scenario,
+        FRIDAY_IOS_AX_INTERACTION_TEXT: interactionText,
+        FRIDAY_IOS_AX_INTERACTION_URL: interactionUrl,
+        FRIDAY_IOS_AX_INTERACTION_FILE: interactionFile || interactionFilePath,
+      } : {}),
+      FRIDAY_IOS_AX_APP_LAUNCH_ARGS_JSON: JSON.stringify(appLaunchArgs(destination)),
+      FRIDAY_IOS_AX_APP_ENV_JSON: JSON.stringify(appLaunchEnv()),
+      FRIDAY_IOS_AX_INTERACTION_FILE: interactionFile || interactionFilePath,
+      ...(attachRunning ? { FRIDAY_IOS_AX_ATTACH_RUNNING_APP: "1" } : {}),
+    },
     timeout: Math.max(timeoutSeconds * 1000, 30_000),
   });
   const log = `${result.stdout || ""}${result.stderr || ""}`;
@@ -209,7 +379,7 @@ function runXcui(destination) {
   if (result.status !== 0) block("xcodebuild_ui_test_failed", `${destination}:${result.status}:${logPath}`);
   if (!tree.trim()) block("accessibility_tree_missing", `${destination}:${logPath}`);
   if (tree.trim()) writeFileSync(treePath, `${tree}\n`);
-  return { logPath, treePath, tree, status: result.status };
+  return { logPath, treePath, tree, status: result.status, interactionFile };
 }
 
 function observedRows(destination, targets, tree, treePath) {
@@ -252,6 +422,7 @@ const allTargets = [];
 const observations = [];
 const missingByDestination = {};
 const xcodeRuns = [];
+const interactionScenarios = parseInteractionScenarios(interactionScenarioCsv);
 
 if (blockers.length === 0) {
   mkdirSync(outDir, { recursive: true });
@@ -270,9 +441,12 @@ if (blockers.length === 0 && simulator) {
     if (blockers.length > 0) break;
     const launchStdout = launchDestination(simulator, destination);
     if (blockers.length > 0) break;
-    const runResult = runXcui(destination);
+    const scenario = interactionScenarios.get(destination) || "";
+    const runResult = runXcui(destination, scenario);
     xcodeRuns.push({
       destination,
+      interaction_scenario: scenario || null,
+      interaction_file: runResult.interactionFile || null,
       launch_stdout: launchStdout,
       status: runResult.status,
       log_path: runResult.logPath,
@@ -356,6 +530,8 @@ const summary = {
   missionId: missionId || null,
   simulator,
   bundle_id: bundleId,
+  live_loopback_requested: liveLoopback,
+  live_device_peer_requested: liveDevicePeer,
   data_container: dataContainer,
   target_count: allTargets.length,
   observed_count: observations.length,
@@ -371,8 +547,9 @@ const summary = {
   blockers,
   caveats: [
     "This is real XCUITest accessibility observation against an installed Simulator app, not a screenshot or static source proof.",
+    "When interaction_scenario is non-null, the checked-in UI test typed/tapped only that explicit scenario and waited for the resulting receipt identifier.",
     "It only proves identifiers visible on the launched destinations; product END-BAR still needs the broader same-run mobile+desktop proof bundle.",
-    "The UI test does not click governed actions or provide operator signatures.",
+    "The UI test never provides operator signatures.",
   ],
 };
 if (outDir && isAbsolute(outDir)) jsonOut(resolve(outDir, "ios-xcui-observation-summary.json"), summary);

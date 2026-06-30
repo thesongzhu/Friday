@@ -94,6 +94,16 @@ struct FridayChatScreen: View {
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         FridayProofLine(label: "evidence", ref: short(card.evidenceRef))
+        if isVoiceLaunchCard(card) {
+          Text("Voice route opened")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(MobileTheme.cyan)
+            .accessibilityIdentifier("friday.voice.open-chat-loop")
+          Text("Voice permission continues through the Chat microphone control")
+            .font(.caption2)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .accessibilityIdentifier("friday.voice.permission")
+        }
         if card.id == "handoff" {
           handoffControls
         }
@@ -114,6 +124,10 @@ struct FridayChatScreen: View {
     .accessibilityElement(children: .contain)
     .accessibilityLabel("\(card.title) card")
     .accessibilityIdentifier("friday.chat.\(card.id)-card")
+  }
+
+  private func isVoiceLaunchCard(_ card: ChatContextCard) -> Bool {
+    card.id == "launch" && card.detail.lowercased().hasPrefix("voice submitted")
   }
 
   private func contextCardIcon(_ id: String) -> String {
@@ -320,6 +334,17 @@ struct FridayChatScreen: View {
         .disabled(viewModel.phase.isBusy || viewModel.phase.isAwaitingApproval)
         .accessibilityLabel(voice.isRecording ? "Stop voice input" : "Start voice input")
         .accessibilityIdentifier("friday.chat.voice-input")
+
+        Button {
+          voice.speak("Friday voice output is ready.")
+        } label: {
+          Image(systemName: "speaker.wave.2.circle.fill")
+            .font(.system(size: 26))
+            .foregroundStyle(MobileTheme.cyan)
+        }
+        .disabled(viewModel.phase.isBusy || viewModel.phase.isAwaitingApproval)
+        .accessibilityLabel("Test Friday voice output")
+        .accessibilityIdentifier("friday.chat.voice-output")
 
         TextField("Ask Friday…", text: $draft, axis: .vertical)
           .textFieldStyle(.plain)

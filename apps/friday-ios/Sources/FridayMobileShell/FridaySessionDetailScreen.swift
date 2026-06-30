@@ -71,10 +71,11 @@ struct FridaySessionDetailScreen: View {
               .foregroundStyle(MobileTheme.textSecondary)
           }
           Spacer()
+          let runId = firstRunId(projection)
           FridayChip(
-            text: projection.agentSessionId == nil ? "no session ref" : "read-only",
-            bg: projection.agentSessionId == nil ? MobileTheme.chipWarnBG : MobileTheme.chipPendingBG,
-            fg: projection.agentSessionId == nil ? MobileTheme.chipWarnFG : MobileTheme.chipPendingFG)
+            text: projection.agentSessionId == nil && runId != nil ? "mission run" : "read-only",
+            bg: MobileTheme.chipPendingBG,
+            fg: MobileTheme.chipPendingFG)
         }
         FridayProofLine(label: "mission_id", ref: projection.missionId)
         if let agentSessionId = projection.agentSessionId {
@@ -327,7 +328,6 @@ struct FridaySessionDetailScreen: View {
         sidecarStateView(viewModel.sidecarState.actionState)
       }
     }
-    .accessibilityIdentifier("friday.session.sidecar-sheet")
   }
 
   private func sidecarActionButton(
@@ -643,7 +643,8 @@ struct FridaySessionDetailScreen: View {
   }
 
   private func firstRunId(_ projection: HomeProjection) -> String? {
-    projection.runOutcomeLearningCandidates.first { !$0.runId.isEmpty }?.runId
+    projection.tokenLedgerRunId
+      ?? projection.runOutcomeLearningCandidates.first { !$0.runId.isEmpty }?.runId
   }
 
   private func generatedText(_ generatedAtMs: Int64) -> String {
