@@ -70,7 +70,9 @@ describe("friday-desktop-ax-accessibility-capture contract", () => {
     expect(source).toContain("initial_destination_ready");
     expect(source).toContain("matched_by: \"initial_destination\"");
     expect(source).toContain("perform action \"AXPress\" of e");
+    expect(navSource).toContain(".accessibilityElement(children: .contain)");
     expect(navSource).toContain(".accessibilityIdentifier(\"friday.desktop.nav.\\(destination.rawValue)\")");
+    expect(navSource).toContain(".accessibilityIdentifier(\"friday.desktop.destination.\\(destination.rawValue)\")");
   });
 
   it("applies the configured AX tree depth to navigation and targeted probes", () => {
