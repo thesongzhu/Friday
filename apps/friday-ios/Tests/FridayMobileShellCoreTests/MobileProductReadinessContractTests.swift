@@ -202,3 +202,23 @@ func mobileProductContractTracksSelectedDesignCompanionProofAndEntrypoints() {
   #expect(!proofViewer.isEndBarReady)
   #expect(!entrypoints.isEndBarReady)
 }
+
+@Test
+func mobileProductContractKeepsDiagnosticsOutOfDefaultCommandSurface() {
+  let diagnostics: Set<MobileProductDestinationID> = [
+    .pairing,
+    .onboarding,
+    .settings,
+    .petEditor,
+    .proofViewer,
+    .entrypoints,
+  ]
+
+  #expect(diagnostics.allSatisfy { $0.commandSurfaceLane == .diagnostics })
+  #expect(MobileProductDestinationID.allCases
+    .filter { !diagnostics.contains($0) }
+    .allSatisfy { $0.commandSurfaceLane == .product })
+  #expect(MobileProductDestinationID.home.commandSurfaceLane == .product)
+  #expect(MobileProductDestinationID.newSession.commandSurfaceLane == .product)
+  #expect(MobileProductDestinationID.providerAuth.commandSurfaceLane == .product)
+}
