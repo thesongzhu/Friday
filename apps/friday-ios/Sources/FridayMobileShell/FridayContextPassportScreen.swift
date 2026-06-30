@@ -15,8 +15,8 @@ struct FridayContextPassportScreen: View {
           header(status: "connect", ready: false)
           UnavailableView(
             reason: reason,
-            title: "Connect Context Passport",
-            detail: "Friday needs the live Hub projection to show PairAck, trust grant, and passport readiness.",
+            title: "Connect Shared Context",
+            detail: "Friday needs the live Hub projection to show paired-device setup, approval grant, and shared-context readiness.",
             systemImage: "checklist.checked",
             identifier: "friday.context-passport.unavailable")
         case .loaded(let projection):
@@ -39,15 +39,15 @@ struct FridayContextPassportScreen: View {
       checklistCard(status)
       governedCeremoniesCard(status)
       sendCard(projection)
-      refsCard(status)
-      truthCard(status)
+      deviceCard(status)
+      setupDetailsCard(status)
     } else {
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
           Text("Waiting for provisioning")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
-          Text("PairAck, trust grant, and context passport status will appear after the Hub projection refreshes.")
+          Text("Device pairing, approval grant, and shared-context status will appear after the Hub projection refreshes.")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -64,10 +64,10 @@ struct FridayContextPassportScreen: View {
           .foregroundStyle(ready ? MobileTheme.cyan : MobileTheme.coral)
           .frame(width: 34, height: 34)
         VStack(alignment: .leading, spacing: 4) {
-          Text("Context Passport")
+          Text("Shared Context")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
-          Text("governed device and shared-context readiness")
+          Text("paired device and shared-context readiness")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
@@ -85,7 +85,7 @@ struct FridayContextPassportScreen: View {
     GlassPanel {
       HStack(spacing: 12) {
         ProgressView()
-        Text("Reading provisioning truth")
+          Text("Checking shared-context status")
           .font(.footnote)
           .foregroundStyle(MobileTheme.textSecondary)
       }
@@ -125,16 +125,16 @@ struct FridayContextPassportScreen: View {
     .accessibilityIdentifier("friday.context-passport.checklist")
   }
 
-  private func refsCard(_ status: HomeT3ProvisioningStatus) -> some View {
+  private func deviceCard(_ status: HomeT3ProvisioningStatus) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Device", count: nil)
         if let device = status.latestDevice {
-          FridayProofLine(label: "device_id", ref: device.deviceId)
+          FridayProofLine(label: "device", ref: device.deviceId)
           FridayProofLine(label: "label", ref: device.label)
-          FridayProofLine(label: "fingerprint", ref: device.pubkeyFingerprint)
+          FridayProofLine(label: "device key", ref: device.pubkeyFingerprint)
         } else {
-          Text("No trusted device ref is present in this projection.")
+          Text("No paired device is visible yet.")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -146,15 +146,15 @@ struct FridayContextPassportScreen: View {
   private func governedCeremoniesCard(_ status: HomeT3ProvisioningStatus) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("Governed Ceremonies", count: nil)
+        cardHeader("Operator Setup", count: nil)
         ceremonyRow(
-          title: "Trust grant",
+          title: "Approval grant",
           value: "\(status.activeTrustGrantCount) active / \(status.trustGrantCount) total",
           satisfied: status.activeTrustGrantCount > 0,
           detail: "Authorizes scoped Friday work; mobile only reads the Hub projection.")
         ceremonyRow(
-          title: "Context passport",
-          value: "\(status.contextPassportCount) minted",
+          title: "Shared context",
+          value: status.contextPassportCount > 0 ? "\(status.contextPassportCount) ready" : "waiting",
           satisfied: status.contextPassportCount > 0,
           detail: "Shares non-sensitive mission context to the governed destination lane.")
         ceremonyRow(
@@ -162,7 +162,7 @@ struct FridayContextPassportScreen: View {
           value: "\(status.contextPassportItemCount) item(s)",
           satisfied: status.contextPassportItemCount > 0,
           detail: "Shares only scoped references created by the operator ceremony.")
-        Text("This screen never mints grants, passports, or signatures. It only renders operator-created Hub rows.")
+        Text("This screen only shows setup completed by the operator. It never creates approvals or signatures.")
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -198,7 +198,7 @@ struct FridayContextPassportScreen: View {
   private func sendCard(_ projection: HomeProjection) -> some View {
     let status = projection.t3ProvisioningStatus
     let isReady = status?.isFullyProvisioned == true
-    let missing = status?.missingOperatorSteps.joined(separator: ", ") ?? "T3 projection"
+    let missing = userFacingProvisioningMissing(status?.missingOperatorSteps ?? [])
     return GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Send", count: 3)
@@ -242,20 +242,37 @@ struct FridayContextPassportScreen: View {
     }
   }
 
-  private func truthCard(_ status: HomeT3ProvisioningStatus) -> some View {
+  private func setupDetailsCard(_ status: HomeT3ProvisioningStatus) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("Truth", count: nil)
+        cardHeader("Setup Details", count: nil)
         Text(status.homeSummary)
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
-        FridayProofLine(label: "truth", ref: status.truthLabel)
+        FridayProofLine(label: "status", ref: status.truthLabel)
         if !status.missingOperatorSteps.isEmpty {
-          FridayProofLine(label: "missing", ref: status.missingOperatorSteps.joined(separator: ", "))
+          FridayProofLine(label: "needed", ref: userFacingProvisioningMissing(status.missingOperatorSteps))
         }
       }
     }
+  }
+
+  private func userFacingProvisioningMissing(_ steps: [String]) -> String {
+    guard !steps.isEmpty else { return "setup" }
+    return steps.map { step in
+      switch step {
+      case "trusted_device", "device_identity", "active_trusted_device":
+        return "paired device"
+      case "trust_grant", "active_trust_grant":
+        return "approval grant"
+      case "context_passport", "context_passport_item":
+        return "shared context"
+      default:
+        return step.replacingOccurrences(of: "_", with: " ")
+      }
+    }
+    .joined(separator: ", ")
   }
 
   private func cardHeader(_ title: String, count: Int?) -> some View {

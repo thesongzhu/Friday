@@ -100,7 +100,7 @@ struct FridayShareIntakeScreen: View {
               Text("Friday Chat handoff is armed")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(MobileTheme.textPrimary)
-              Text("The next tap carries these share refs into Chat as a prefilled governed turn. Provider results will appear when the live loop returns them.")
+              Text("The next tap carries this shared context into Chat as a prefilled governed turn. Provider results will appear when the live loop returns them.")
                 .font(.caption2)
                 .foregroundStyle(MobileTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)

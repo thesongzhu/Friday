@@ -72,8 +72,8 @@ private enum ProjectionSurface {
     case .onboarding: return "Onboarding"
     case .settings: return "Settings"
     case .petEditor: return "Pet Editor"
-    case .proofViewer: return "Proof Viewer"
-    case .entrypoints: return "iOS Entrypoints"
+    case .proofViewer: return "Receipts"
+    case .entrypoints: return "Launch Tools"
     }
   }
 
@@ -95,7 +95,7 @@ private enum ProjectionSurface {
 
   var statusLabel: String {
     switch self {
-    case .missions: return "mission truth"
+    case .missions: return "mission status"
     case .needsMe: return "operator attention"
     case .memory: return "candidate review"
     case .platform: return "runtime"
@@ -104,8 +104,8 @@ private enum ProjectionSurface {
     case .onboarding: return "local readiness"
     case .settings: return "read seam"
     case .petEditor: return "companion state"
-    case .proofViewer: return "receipt truth"
-    case .entrypoints: return "native launchers"
+    case .proofViewer: return "receipt review"
+    case .entrypoints: return "mobile launch tools"
     }
   }
 }
@@ -336,7 +336,7 @@ struct FridayProjectionScreen: View {
           Text(detail.summary)
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
-          FridayProofLine(label: "generated", ref: generatedText(detail.generatedAtMs))
+          FridayProofLine(label: "updated", ref: generatedText(detail.generatedAtMs))
           if let providerReadiness = detail.providerReadiness {
             ProviderReadinessPanel(detail: providerReadiness)
           }
@@ -362,14 +362,14 @@ struct FridayProjectionScreen: View {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Mission", count: nil)
         FridayProofLine(label: "mission", ref: projection.missionId)
-        FridayProofLine(label: "conversation", ref: projection.fridayConversationId)
+        FridayProofLine(label: "thread", ref: projection.fridayConversationId)
         if let route = projection.routeDecisionSummary {
           Text(route)
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
         if let selected = projection.routeSelected {
-          FridayProofLine(label: "selected route", ref: selected)
+          FridayProofLine(label: "route", ref: selected)
         }
       }
     }
@@ -465,7 +465,7 @@ struct FridayProjectionScreen: View {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Work Items", count: projection.workItems.count)
         if projection.workItems.isEmpty {
-          emptyText("No work-item refs in this projection.")
+          emptyText("No active work items are visible right now.")
         } else {
           ForEach(projection.workItems) { item in
             workItemRow(item)
@@ -483,7 +483,7 @@ struct FridayProjectionScreen: View {
         if attentionItems.isEmpty && projection.memoryCandidates.isEmpty
           && projection.runOutcomeLearningCandidates.isEmpty
         {
-          emptyText("No projected operator-attention refs.")
+          emptyText("No approvals, memory reviews, or recovery items need your attention.")
         } else {
           ForEach(attentionItems) { item in
             workItemRow(item)
@@ -542,7 +542,7 @@ struct FridayProjectionScreen: View {
           Spacer()
         }
         FridayProofLine(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
-        FridayProofLine(label: "generated", ref: generatedText(projection.generatedAtMs))
+        FridayProofLine(label: "updated", ref: generatedText(projection.generatedAtMs))
       }
     }
   }
@@ -552,7 +552,7 @@ struct FridayProjectionScreen: View {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Capabilities", count: projection.capabilityStates.count)
         if projection.capabilityStates.isEmpty {
-          emptyText("No capability refs in this projection.")
+          emptyText("No capability updates are visible right now.")
         } else {
           ForEach(projection.capabilityStates) { capability in
             VStack(alignment: .leading, spacing: 6) {
@@ -588,19 +588,19 @@ struct FridayProjectionScreen: View {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Activity", count: projection.transcriptEvents.count)
         if projection.transcriptEvents.isEmpty {
-          emptyText("No transcript events in this projection.")
+          emptyText("No recent activity is visible right now.")
         } else {
           ForEach(projection.transcriptEvents.prefix(12)) { event in
             let doneState = viewModel.activityMarkDoneStates[event.id]
             VStack(alignment: .leading, spacing: 5) {
               HStack {
-                Text(event.sectionTitle)
+                Text(displayEventSection(event.sectionTitle))
                   .font(.system(size: 12, weight: .semibold))
                   .foregroundStyle(MobileTheme.textPrimary)
                 Spacer()
-                statusChip(event.status)
+                statusChip(displayStatus(event.status))
               }
-              Text(event.summary)
+              Text(displayEventSummary(event.summary))
                 .font(.caption)
                 .foregroundStyle(MobileTheme.textSecondary)
               HStack(spacing: 8) {
@@ -639,7 +639,7 @@ struct FridayProjectionScreen: View {
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         if let selected = projection.routeSelected {
-          FridayProofLine(label: "selected route", ref: selected)
+          FridayProofLine(label: "route", ref: selected)
         }
         if !projection.routeAlternatives.isEmpty {
           VStack(alignment: .leading, spacing: 6) {
@@ -647,7 +647,7 @@ struct FridayProjectionScreen: View {
               .font(.caption.weight(.semibold))
               .foregroundStyle(MobileTheme.textSecondary)
             ForEach(projection.routeAlternatives, id: \.self) { alternative in
-              FridayProofLine(label: "alternative", ref: alternative)
+              FridayProofLine(label: "option", ref: alternative)
             }
           }
         }
@@ -656,7 +656,7 @@ struct FridayProjectionScreen: View {
           FridayProofLine(label: "action", ref: "mobile/workflow/cancel")
         }
         if projection.workItems.isEmpty {
-          emptyText("No workflow work-item refs.")
+          emptyText("No workflow work items are visible right now.")
         } else {
           VStack(alignment: .leading, spacing: 8) {
             ForEach(projection.workItems) { item in
@@ -672,10 +672,10 @@ struct FridayProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader(
-          "Receipt Refs",
+          "Receipts",
           count: projection.providerReceiptRefs.count + projection.channelReceiptRefs.count)
         if projection.providerReceiptRefs.isEmpty && projection.channelReceiptRefs.isEmpty {
-          emptyText("No receipt refs in this projection.")
+          emptyText("No receipts are visible right now.")
         } else {
           ForEach(projection.providerReceiptRefs, id: \.self) {
             FridayProofLine(label: "provider", ref: $0)
@@ -737,26 +737,26 @@ struct FridayProjectionScreen: View {
   private func t3ProvisioningRows(_ status: HomeT3ProvisioningStatus?) -> some View {
     if let status {
       readinessRow(
-        title: "Trust grant",
-        value: status.activeTrustGrantCount > 0 ? "active grant present" : "operator grant not present",
+        title: "Approval grant",
+        value: status.activeTrustGrantCount > 0 ? "active" : "waiting for operator",
         healthy: status.activeTrustGrantCount > 0)
       readinessRow(
-        title: "Context passport",
-        value: status.contextPassportCount > 0 ? "\(status.contextPassportCount) passport(s)" : "not minted",
+        title: "Shared context",
+        value: status.contextPassportCount > 0 ? "\(status.contextPassportCount) ready" : "waiting for setup",
         healthy: status.contextPassportCount > 0 && status.contextPassportItemCount > 0)
       if let device = status.latestDevice {
-        FridayProofLine(label: "trusted_device", ref: device.deviceId)
-        FridayProofLine(label: "device_fingerprint", ref: device.pubkeyFingerprint)
+        FridayProofLine(label: "device", ref: device.deviceId)
+        FridayProofLine(label: "device key", ref: device.pubkeyFingerprint)
       }
-      FridayProofLine(label: "truth", ref: status.truthLabel)
+      FridayProofLine(label: "setup status", ref: status.truthLabel)
     } else {
       readinessRow(
-        title: "Trust grant",
-        value: "not in projection",
+        title: "Approval grant",
+        value: "waiting for Hub projection",
         healthy: false)
       readinessRow(
-        title: "Context passport",
-        value: "not in projection",
+        title: "Shared context",
+        value: "waiting for Hub projection",
         healthy: false)
     }
   }
@@ -769,7 +769,7 @@ struct FridayProjectionScreen: View {
         FridayProofLine(label: "mode", ref: "live-read projection")
         FridayProofLine(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
         FridayProofLine(label: "feed", ref: projection.runtimeFeedStatus)
-        FridayProofLine(label: "generated", ref: generatedText(projection.generatedAtMs))
+        FridayProofLine(label: "updated", ref: generatedText(projection.generatedAtMs))
         Button {
           Task { await viewModel.loadDetail(.providersDoctor(probe: nil)) }
         } label: {
@@ -807,7 +807,7 @@ struct FridayProjectionScreen: View {
           healthy: true)
         readinessRow(
           title: "Live state mapping",
-          value: projection.runtimeFeedStatus.isEmpty ? "not in projection" : projection.runtimeFeedStatus,
+          value: projection.runtimeFeedStatus.isEmpty ? "waiting for Hub projection" : projection.runtimeFeedStatus,
           healthy: false)
         FridayProofLine(label: "action", ref: "mobile/pet/state-mapping")
         FridayProofLine(label: "mission", ref: projection.missionId)
@@ -820,14 +820,14 @@ struct FridayProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader(
-          "Proof Receipts",
+          "Receipts",
           count: projection.providerReceiptRefs.count + projection.channelReceiptRefs.count)
-        Text("Receipt refs appear here only after the live Hub reports them. Friday keeps the details private until a trusted session can open them.")
+        Text("Receipts appear here only after the live Hub reports them. Friday keeps details private until a trusted session can open them.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         if projection.providerReceiptRefs.isEmpty && projection.channelReceiptRefs.isEmpty {
-          emptyText("No proof receipt refs in this projection.")
+          emptyText("No receipts are visible right now.")
         } else {
           ForEach(projection.providerReceiptRefs, id: \.self) {
             FridayProofLine(label: "provider", ref: $0)
@@ -845,8 +845,8 @@ struct FridayProjectionScreen: View {
   private func entrypointsCard(_ projection: HomeProjection) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("Native Entrypoints", count: nil)
-        Text("Widgets, controls, push entry, share intake, and deep links stay grouped here as internal launch diagnostics for the mobile app.")
+        cardHeader("Launch Tools", count: nil)
+        Text("Widgets, controls, push entry, share intake, and deep links stay grouped here for internal mobile diagnostics.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -855,7 +855,7 @@ struct FridayProjectionScreen: View {
         readinessRow(title: "Push entry", value: "local permission surface wired; APNs delivery still unproven", healthy: false)
         readinessRow(title: "Widget/control", value: "native launcher proof still required", healthy: false)
         FridayProofLine(label: "action", ref: "mobile/entrypoints/readiness")
-        FridayProofLine(label: "conversation", ref: projection.fridayConversationId)
+        FridayProofLine(label: "thread", ref: projection.fridayConversationId)
       }
     }
     .accessibilityIdentifier("friday.entrypoints.readiness")
@@ -931,7 +931,7 @@ struct FridayProjectionScreen: View {
     let recoveryState = viewModel.workItemStatusStates[item.id]
     return VStack(alignment: .leading, spacing: 6) {
       HStack {
-        Text(item.title)
+        Text(displayWorkItemTitle(item.title, fallback: item.id))
           .font(.system(size: 13, weight: .medium))
           .foregroundStyle(MobileTheme.textPrimary)
           .accessibilityIdentifier("friday.workflow.work-item.\(item.id)")
@@ -942,12 +942,12 @@ struct FridayProjectionScreen: View {
           fg: item.done ? MobileTheme.chipDoneFG : MobileTheme.chipNeutralFG)
       }
       HStack(spacing: 6) {
-        statusChip(item.state)
-        statusChip(item.owner)
-        statusChip(item.recoveryKind)
+        statusChip(displayStatus(item.state))
+        statusChip(displayOwner(item.owner))
+        statusChip(displayStatus(item.recoveryKind))
       }
       if !item.blockingReason.isEmpty {
-        Text(item.blockingReason)
+        Text(displaySentence(item.blockingReason))
           .font(.system(size: 11))
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -1158,5 +1158,86 @@ struct FridayProjectionScreen: View {
     guard generatedAtMs > 0 else { return "unknown" }
     let date = Date(timeIntervalSince1970: Double(generatedAtMs) / 1000.0)
     return date.formatted(date: .abbreviated, time: .shortened)
+  }
+
+  private func displayWorkItemTitle(_ raw: String, fallback: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = trimmed.lowercased()
+    if normalized.contains("refs-only") && normalized.contains("round-trip") {
+      return "Review live device round-trip"
+    }
+    if normalized.contains("bounded mission timeline") {
+      return "Mission timeline updated"
+    }
+    if normalized.contains("desktop surface") {
+      return "Desktop surface linked"
+    }
+    if normalized.hasPrefix("proof://") || normalized.hasPrefix("proof:/") {
+      return "Route decision"
+    }
+    return displayTitle(trimmed.isEmpty ? fallback : trimmed)
+  }
+
+  private func displayEventSection(_ raw: String) -> String {
+    let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if normalized.contains("transcript") {
+      return "Activity"
+    }
+    return displayTitle(raw)
+  }
+
+  private func displayEventSummary(_ raw: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = trimmed.lowercased()
+    if normalized.contains("bounded mission timeline") {
+      return "Mission timeline updated"
+    }
+    if normalized.contains("desktop surface") {
+      return "Desktop surface linked"
+    }
+    if normalized.hasPrefix("proof://") || normalized.hasPrefix("proof:/") {
+      return "Route decision receipt"
+    }
+    return displayTitle(trimmed.isEmpty ? "Activity update" : trimmed)
+  }
+
+  private func displayOwner(_ raw: String) -> String {
+    let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if normalized == "friday_owned" || normalized == "friday-owned" {
+      return "Friday"
+    }
+    return displayStatus(raw)
+  }
+
+  private func displayStatus(_ raw: String) -> String {
+    let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    switch normalized {
+    case "ready_to_dispatch", "ready for dispatch":
+      return "ready"
+    case "timeline_read":
+      return "timeline"
+    case "completed_with_proof":
+      return "complete"
+    case "":
+      return "status"
+    default:
+      return displaySentence(raw)
+    }
+  }
+
+  private func displayTitle(_ raw: String) -> String {
+    let clean = displaySentence(raw)
+    guard let first = clean.first else { return "Friday update" }
+    return first.uppercased() + clean.dropFirst()
+  }
+
+  private func displaySentence(_ raw: String) -> String {
+    raw
+      .replacingOccurrences(of: "refs-only", with: "receipt")
+      .replacingOccurrences(of: "Proof://", with: "")
+      .replacingOccurrences(of: "proof://", with: "")
+      .replacingOccurrences(of: "_", with: " ")
+      .replacingOccurrences(of: "-", with: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }

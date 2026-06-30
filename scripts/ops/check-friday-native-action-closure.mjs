@@ -221,8 +221,8 @@ const checks = [
       "requires a pending approval ref",
       "Add shared text or a URL before submitting.",
       "Share Intake is unavailable",
-      "Readiness plus local voice-loop truth",
-      "Friday reads provider usage from the run reference projected by the Hub.",
+      "Capture and speech output run from Friday Chat when these gates are ready.",
+      "Friday reads provider usage from the live work item selected by the Hub.",
     ]),
   ),
   check(

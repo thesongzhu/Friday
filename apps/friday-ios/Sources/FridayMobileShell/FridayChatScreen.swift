@@ -233,7 +233,7 @@ struct FridayChatScreen: View {
                 .foregroundStyle(MobileTheme.textPrimary)
                 .lineLimit(4)
               if item.receiptRefs.isEmpty, let runId = item.runId {
-                FridayProofLine(label: "run_id", ref: short(runId))
+                FridayProofLine(label: "run", ref: short(runId))
               } else if !item.receiptRefs.isEmpty {
                 receiptRefs(item.receiptRefs, limit: 4)
               }
@@ -252,7 +252,7 @@ struct FridayChatScreen: View {
     case .composing:
       placeholder(
         "Ask Friday anything.",
-        "Answers are refs-only (a fingerprint + counts). "
+        "Answers include receipts and readable content when the owner-gated readback grants it. "
           + (runControlEnabled
             ? "A mutating action pauses for your approval."
             : "Read-only — approvals are not available yet."))
@@ -436,10 +436,10 @@ struct FridayChatScreen: View {
             .fixedSize(horizontal: false, vertical: true)
             .textSelection(.enabled)
           if let runId = r.answerBodyRunId {
-            FridayProofLine(label: "answer_body_run_id", ref: runId)
+            FridayProofLine(label: "answer run", ref: runId)
           }
         } else {
-          Text("Answer body is not available from the owner-gated readback yet.")
+          Text("Friday saved the answer receipt; readable text will appear after the owner-gated readback grants it.")
             .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
         }
         receiptRefs(r.receiptRefs)
@@ -467,10 +467,10 @@ struct FridayChatScreen: View {
           Text(summary).font(.callout).foregroundStyle(MobileTheme.textPrimary)
         }
         // PROOF (the digest the operator signs over) — never a body.
-        FridayProofLine(label: "action_digest", ref: short(card.actionDigest))
-        FridayProofLine(label: "approval_id", ref: card.approvalId)
+        FridayProofLine(label: "action seal", ref: short(card.actionDigest))
+        FridayProofLine(label: "approval", ref: card.approvalId)
         Text("Friday paused this mutating action. Approving asks the operator signer for a "
-          + "signature; the phone relays it but never signs (INV-1).")
+          + "signature; the phone relays it but never signs.")
           .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
         HStack(spacing: 12) {
           Button {
@@ -549,7 +549,7 @@ struct FridayChatScreen: View {
         FridayProofLine(label: ref.label, ref: short(ref.ref))
       }
       if let limit, refs.count > limit {
-        FridayProofLine(label: "more_refs", ref: "+\(refs.count - limit)")
+        FridayProofLine(label: "more receipts", ref: "+\(refs.count - limit)")
       }
     }
     .accessibilityIdentifier("friday.chat.receipt-refs")

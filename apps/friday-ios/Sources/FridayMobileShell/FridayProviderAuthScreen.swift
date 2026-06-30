@@ -33,7 +33,7 @@ struct FridayProviderAuthScreen: View {
           Text("Provider Workspace")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
-          Text("provider readiness, queues, sessions, and native-control truth")
+          Text("provider connections, queues, sessions, and controls")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
@@ -49,7 +49,7 @@ struct FridayProviderAuthScreen: View {
         Text("Provider Doctor")
           .font(.headline)
           .foregroundStyle(MobileTheme.textPrimary)
-        Text("Checks provider CLI/auth/route readiness through the Hub read arm. This surface never asks for, stores, or displays provider secrets.")
+        Text("Checks provider login, route, and session readiness from the live Hub. This surface never asks for, stores, or displays provider secrets.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -74,7 +74,7 @@ struct FridayProviderAuthScreen: View {
       GlassPanel {
         HStack(spacing: 12) {
           ProgressView()
-          Text("Reading Provider Workspace projection")
+          Text("Checking Provider Workspace")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
@@ -127,13 +127,13 @@ struct FridayProviderAuthScreen: View {
         metricPill("Running", "\(projection.workItems.filter { !$0.done }.count)")
         metricPill("Capabilities", "\(projection.capabilityStates.count)")
       }
-      Text("Provider Workspace Home: route, queue, session controls, and cost refs are surfaced from the live Hub projection.")
+      Text("Provider workspace shows route, queue, session controls, and cost receipts from the live Hub.")
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
       let providerItems = projection.providerWorkItems
       if providerItems.isEmpty {
-        Text("No provider-linked WorkItem refs in the current projection.")
+        Text("No provider-linked work items are visible right now.")
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)
       } else {
@@ -155,11 +155,11 @@ struct FridayProviderAuthScreen: View {
           .foregroundStyle(item.needsAttention ? MobileTheme.coral : MobileTheme.textSecondary)
           .frame(width: 18)
         VStack(alignment: .leading, spacing: 2) {
-          Text(item.title)
+          Text(displayWorkItemTitle(item.title, fallback: item.id))
             .font(.caption.weight(.semibold))
             .foregroundStyle(MobileTheme.textPrimary)
             .lineLimit(1)
-          Text("\(item.owner) · \(item.state)")
+          Text("\(displayOwner(item.owner)) · \(displayStatus(item.state))")
             .font(.caption2)
             .foregroundStyle(MobileTheme.textSecondary)
             .lineLimit(1)
@@ -171,13 +171,13 @@ struct FridayProviderAuthScreen: View {
           fg: item.done ? MobileTheme.chipDoneFG : (item.needsAttention ? MobileTheme.chipWarnFG : MobileTheme.chipNeutralFG))
       }
       if !item.blockingReason.isEmpty {
-        Text(item.blockingReason)
+        Text(displaySentence(item.blockingReason))
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
       }
       if let proofRef = item.proofRef, !proofRef.isEmpty {
-        FridayProofLine(label: "work_item_proof", ref: proofRef)
+        FridayProofLine(label: "work receipt", ref: proofRef)
       }
       if item.canRetry || item.canCancel {
         HStack(spacing: 8) {
@@ -211,7 +211,7 @@ struct FridayProviderAuthScreen: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       if !projection.routeAlternatives.isEmpty {
-        Text("alternates: \(projection.routeAlternatives.joined(separator: ", "))")
+        Text("Other safe routes: \(projection.routeAlternatives.map(displayRoute).joined(separator: ", ")).")
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -227,15 +227,15 @@ struct FridayProviderAuthScreen: View {
         .foregroundStyle(MobileTheme.textPrimary)
       controlRow(
         "Token ledger",
-        state: projection.tokenLedgerRunId == nil ? "needs run ref" : "run readback ready",
+        state: projection.tokenLedgerRunId == nil ? "waiting for usage" : "usage ready",
         healthy: projection.tokenLedgerRunId != nil)
       controlRow(
         "Provider receipts",
-        state: projection.providerReceiptRefs.isEmpty ? "none projected" : "\(projection.providerReceiptRefs.count) refs",
+        state: projection.providerReceiptRefs.isEmpty ? "waiting" : "\(projection.providerReceiptRefs.count) receipt(s)",
         healthy: !projection.providerReceiptRefs.isEmpty)
       controlRow(
         "Channel receipts",
-        state: projection.channelReceiptRefs.isEmpty ? "none projected" : "\(projection.channelReceiptRefs.count) refs",
+        state: projection.channelReceiptRefs.isEmpty ? "waiting" : "\(projection.channelReceiptRefs.count) receipt(s)",
         healthy: !projection.channelReceiptRefs.isEmpty)
       if let runId = projection.tokenLedgerRunId {
         Button {
@@ -260,7 +260,7 @@ struct FridayProviderAuthScreen: View {
       controlRow("Session list", state: "live read", healthy: true)
       controlRow(
         "Session open/link",
-        state: projection.agentSessionId == nil ? "needs session ref" : "live read",
+        state: projection.agentSessionId == nil ? "waiting for session" : "live read",
         healthy: projection.agentSessionId != nil)
       controlRow("Send / stop / steer / resume", state: "governed action gated", healthy: false)
       controlRow("Secrets / login custody", state: "never stored here", healthy: false)
@@ -300,7 +300,7 @@ struct FridayProviderAuthScreen: View {
   private func providerRefs(_ projection: HomeProjection) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       if let route = projection.routeSelected {
-        FridayProofLine(label: "selected_route", ref: route)
+          FridayProofLine(label: "route", ref: route)
       }
       ForEach(projection.providerReceiptRefs.prefix(3), id: \.self) { ref in
         FridayProofLine(label: "provider receipt", ref: ref)
@@ -370,7 +370,7 @@ struct FridayProviderAuthScreen: View {
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
             .fixedSize(horizontal: false, vertical: true)
-          FridayProofLine(label: "generated", ref: generatedText(detail.generatedAtMs))
+          FridayProofLine(label: "updated", ref: generatedText(detail.generatedAtMs))
           if let providerReadiness = detail.providerReadiness {
             ProviderReadinessPanel(detail: providerReadiness)
           } else {
@@ -406,13 +406,13 @@ struct FridayProviderAuthScreen: View {
   @ViewBuilder
   private func genericReadbackFacts(_ detail: HomeReadDetail) -> some View {
     if detail.facts.isEmpty {
-      Text("The latest read result returned no typed facts; refs below remain the only evidence.")
+          Text("The latest provider check returned receipts but no extra details yet.")
         .font(.caption)
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
     } else {
       VStack(alignment: .leading, spacing: 8) {
-        Text("Readback Facts")
+        Text("Provider Details")
           .font(.caption.weight(.semibold))
           .foregroundStyle(MobileTheme.textPrimary)
         ForEach(detail.facts) { fact in
@@ -427,11 +427,11 @@ struct FridayProviderAuthScreen: View {
   private func detailRefs(_ refs: [String]) -> some View {
     if !refs.isEmpty {
       VStack(alignment: .leading, spacing: 8) {
-        Text("Evidence Refs")
+        Text("Receipts")
           .font(.caption.weight(.semibold))
           .foregroundStyle(MobileTheme.textPrimary)
         ForEach(refs, id: \.self) { ref in
-          FridayProofLine(label: "proof", ref: ref)
+          FridayProofLine(label: "receipt", ref: ref)
         }
       }
     }
@@ -459,5 +459,75 @@ struct FridayProviderAuthScreen: View {
     guard generatedAtMs > 0 else { return "unknown" }
     let date = Date(timeIntervalSince1970: Double(generatedAtMs) / 1000.0)
     return date.formatted(date: .abbreviated, time: .shortened)
+  }
+
+  private func displayWorkItemTitle(_ raw: String, fallback: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = trimmed.lowercased()
+    if normalized.contains("refs-only") && normalized.contains("round-trip") {
+      return "Review live device round-trip"
+    }
+    if normalized.contains("bounded mission timeline") {
+      return "Mission timeline updated"
+    }
+    if normalized.contains("desktop surface") {
+      return "Desktop surface linked"
+    }
+    if normalized.hasPrefix("proof://") || normalized.hasPrefix("proof:/") {
+      return "Route decision"
+    }
+    return displayTitle(trimmed.isEmpty ? fallback : trimmed)
+  }
+
+  private func displayRoute(_ raw: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = trimmed.lowercased()
+    if normalized == "surface-local chat" || normalized == "surface_local_chat" {
+      return "local chat"
+    }
+    if normalized == "mission spine" || normalized == "mission_spine" {
+      return "Mission Spine"
+    }
+    return displayTitle(trimmed)
+  }
+
+  private func displayOwner(_ raw: String) -> String {
+    let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if normalized == "friday_owned" || normalized == "friday-owned" {
+      return "Friday"
+    }
+    return displayStatus(raw)
+  }
+
+  private func displayStatus(_ raw: String) -> String {
+    let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    switch normalized {
+    case "ready_to_dispatch", "ready for dispatch":
+      return "ready"
+    case "timeline_read":
+      return "timeline"
+    case "completed_with_proof":
+      return "complete"
+    case "":
+      return "status"
+    default:
+      return displaySentence(raw)
+    }
+  }
+
+  private func displayTitle(_ raw: String) -> String {
+    let clean = displaySentence(raw)
+    guard let first = clean.first else { return "Friday update" }
+    return first.uppercased() + clean.dropFirst()
+  }
+
+  private func displaySentence(_ raw: String) -> String {
+    raw
+      .replacingOccurrences(of: "refs-only", with: "receipt")
+      .replacingOccurrences(of: "Proof://", with: "")
+      .replacingOccurrences(of: "proof://", with: "")
+      .replacingOccurrences(of: "_", with: " ")
+      .replacingOccurrences(of: "-", with: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }

@@ -823,7 +823,7 @@ struct FridayHomeScreen: View {
     if attempt.mode != .idle {
       Divider().opacity(0.35)
       HStack {
-        Text("PairAck").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
+        Text("Pairing receipt").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
         Spacer()
         FridayChip(
           text: attempt.mode.rawValue,
@@ -835,16 +835,16 @@ struct FridayHomeScreen: View {
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
       if let hubId = attempt.hubId {
-        FridayProofLine(label: "ack_hub_id", ref: hubId)
+        FridayProofLine(label: "hub", ref: hubId)
       }
       if let pairingId = attempt.pairingId {
-        FridayProofLine(label: "ack_pairing_id", ref: pairingId)
+        FridayProofLine(label: "pairing", ref: pairingId)
       }
       if let deviceId = attempt.deviceId {
-        FridayProofLine(label: "ack_device_id", ref: deviceId)
+        FridayProofLine(label: "device", ref: deviceId)
       }
       if let errorCode = attempt.errorCode {
-        FridayProofLine(label: "ack_error", ref: errorCode)
+        FridayProofLine(label: "issue", ref: errorCode)
       }
     }
   }
@@ -853,7 +853,7 @@ struct FridayHomeScreen: View {
   private func hubProvisioningRows(_ status: HomeT3ProvisioningStatus?) -> some View {
     Divider().opacity(0.35)
     HStack {
-      Text("Hub provisioning").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
+      Text("Hub setup").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
       Spacer()
       if let status {
         FridayChip(
@@ -870,22 +870,22 @@ struct FridayHomeScreen: View {
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
       if !status.missingOperatorSteps.isEmpty {
-        FridayProofLine(label: "missing", ref: status.missingOperatorSteps.joined(separator: ", "))
+        FridayProofLine(label: "needed", ref: userFacingProvisioningMissing(status.missingOperatorSteps))
       }
       if let device = status.latestDevice {
-        FridayProofLine(label: "latest_device", ref: device.deviceId)
-        FridayProofLine(label: "device_fingerprint", ref: device.pubkeyFingerprint)
+        FridayProofLine(label: "device", ref: device.deviceId)
+        FridayProofLine(label: "device key", ref: device.pubkeyFingerprint)
       }
-      FridayProofLine(label: "device_identity_count", ref: String(status.deviceIdentityCount))
-      FridayProofLine(label: "trusted_device_count", ref: String(status.trustedDeviceCount))
-      FridayProofLine(label: "active_trusted_device_count", ref: String(status.activeTrustedDeviceCount))
-      FridayProofLine(label: "trust_grant_count", ref: String(status.trustGrantCount))
-      FridayProofLine(label: "active_trust_grant_count", ref: String(status.activeTrustGrantCount))
-      FridayProofLine(label: "context_passport_count", ref: String(status.contextPassportCount))
-      FridayProofLine(label: "context_passport_item_count", ref: String(status.contextPassportItemCount))
-      FridayProofLine(label: "truth", ref: status.truthLabel)
+      FridayProofLine(label: "device records", ref: String(status.deviceIdentityCount))
+      FridayProofLine(label: "trusted devices", ref: String(status.trustedDeviceCount))
+      FridayProofLine(label: "active devices", ref: String(status.activeTrustedDeviceCount))
+      FridayProofLine(label: "approval grants", ref: String(status.trustGrantCount))
+      FridayProofLine(label: "active grants", ref: String(status.activeTrustGrantCount))
+      FridayProofLine(label: "shared contexts", ref: String(status.contextPassportCount))
+      FridayProofLine(label: "shared items", ref: String(status.contextPassportItemCount))
+      FridayProofLine(label: "setup status", ref: status.truthLabel)
     } else {
-        Text("Connect to the live Hub to see PairAck, trust grant, and context passport status.")
+        Text("Connect to the live Hub to see pairing, approval grant, and shared-context status.")
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -943,6 +943,23 @@ struct FridayHomeScreen: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel("Work items, \(projection.workItemIds.count) references")
     .accessibilityIdentifier("friday.home.work-items-card")
+  }
+
+  private func userFacingProvisioningMissing(_ steps: [String]) -> String {
+    guard !steps.isEmpty else { return "setup" }
+    return steps.map { step in
+      switch step {
+      case "trusted_device", "device_identity", "active_trusted_device":
+        return "paired device"
+      case "trust_grant", "active_trust_grant":
+        return "approval grant"
+      case "context_passport", "context_passport_item":
+        return "shared context"
+      default:
+        return step.replacingOccurrences(of: "_", with: " ")
+      }
+    }
+    .joined(separator: ", ")
   }
 }
 
