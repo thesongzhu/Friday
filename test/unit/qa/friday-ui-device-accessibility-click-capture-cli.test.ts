@@ -120,6 +120,51 @@ describe("friday-ui-device-accessibility-click-capture", () => {
     }
   });
 
+  it("maps legacy desktop diagnostics proof receipt labels to the strict provider receipt event", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-ui-accessibility-click-legacy-desktop-"));
+    try {
+      const evidence = writeEvidence(root, "desktop-diagnostics.log");
+      const desktop = join(root, "desktop-capture.json");
+      writeFileSync(desktop, JSON.stringify({
+        truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
+        mission_id: missionId,
+        surface: "desktop",
+        capture_method: "macos_accessibility",
+        evidence_ref: evidence,
+        ui_actions: [
+          {
+            screen: "diagnostics",
+            runtimeActionId: "desktop/diagnostics/proof-refs",
+            accessibility_id: "friday.desktop.evidence.timeline-pages",
+            interaction: "read",
+            status: "pass",
+            event: "proof_receipt_visible_before_done",
+          },
+        ],
+      }, null, 2));
+      const outDir = join(root, "out");
+      const stdout = execFileSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        `--capture=${desktop}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const result = JSON.parse(stdout) as { outputs?: { events?: string } };
+      const events = readFileSync(result.outputs?.events || "", "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      expect(events).toContainEqual(expect.objectContaining({
+        surface: "desktop",
+        event: "real_provider_execution_receipt_visible",
+      }));
+      expect(events).not.toContainEqual(expect.objectContaining({
+        surface: "desktop",
+        event: "proof_receipt_visible_before_done",
+      }));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed on synthetic or screenshot-only truth labels without writing outputs", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-ui-accessibility-click-blocked-"));
     try {

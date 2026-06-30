@@ -23,6 +23,10 @@ function observation(surface: string, event: string, evidenceRef: string) {
   return { surface, event, mission_id: missionId, evidence_ref: evidenceRef };
 }
 
+function observationForMission(mission: string, surface: string, event: string, evidenceRef: string) {
+  return { surface, event, mission_id: mission, evidence_ref: evidenceRef };
+}
+
 function writeManifest(path: string, evidenceDir: string) {
   const refs = {
     mobile: join(evidenceDir, "mobile.png"),
@@ -180,6 +184,19 @@ function writeEvents(path: string, refs: ReturnType<typeof writeEvidence>) {
   writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
 }
 
+function writeEventsWithStatusLabelsSplit(path: string, negativePath: string, refs: ReturnType<typeof writeEvidence>, negativeEvidence: string) {
+  const rows = completeEventRows(refs).filter((row) =>
+    !["stale_label_visible", "offline_label_visible", "error_label_visible"].includes(String(row.event || "")));
+  const negativeMission = "mission_negative_status_labels";
+  const negativeRows = [
+    observationForMission(negativeMission, "desktop", "stale_label_visible", negativeEvidence),
+    observationForMission(negativeMission, "desktop", "offline_label_visible", negativeEvidence),
+    observationForMission(negativeMission, "desktop", "error_label_visible", negativeEvidence),
+  ];
+  writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+  writeFileSync(negativePath, `${negativeRows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+}
+
 function writeNonChannelEvents(path: string, refs: ReturnType<typeof writeEvidence>) {
   const rows = nonChannelEventRows(refs);
   writeFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
@@ -278,6 +295,57 @@ describe("friday-ui-device-capture-dir", () => {
       };
       expect(manifest.observations?.some((row) => row.evidence_ref === captures.mobile)).toBe(false);
       expect(manifest.observations?.some((row) => row.evidence_ref === join(outDir, "mobile.png"))).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("derives status-label negative-control segments without polluting the happy path", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-capture-dir-negative-controls-"));
+    try {
+      const captures = writeEvidence(tempDir);
+      const negativeEvidence = join(tempDir, "negative-status-labels.log");
+      writeFileSync(negativeEvidence, "real negative-control status-label accessibility evidence\n");
+      const events = join(tempDir, "same-run-events.jsonl");
+      const negativeEvents = join(tempDir, "negative-events.jsonl");
+      const outDir = join(tempDir, "evidence");
+      writeEventsWithStatusLabelsSplit(events, negativeEvents, captures, negativeEvidence);
+
+      const stdout = execFileSync("node", [
+        "scripts/ops/friday-ui-device-capture-dir.mjs",
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        `--mobile=${captures.mobile}`,
+        `--desktop=${captures.desktop}`,
+        `--channel=${captures.channel}`,
+        `--timeline=${captures.timeline}`,
+        `--events=${events}`,
+        `--negative-control-events=${negativeEvents}`,
+        `--shared-extra-evidence=${negativeEvidence}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      const result = JSON.parse(stdout) as {
+        status?: string;
+        normalizedNegativeEvents?: string[];
+        preflight?: { status?: number };
+      };
+      expect(result.status).toBe("ready");
+      expect(result.preflight?.status).toBe(0);
+      expect(result.normalizedNegativeEvents).toEqual([join(outDir, "negative-control-events-1.normalized.jsonl")]);
+
+      const manifest = JSON.parse(readFileSync(join(outDir, "observations-manifest.json"), "utf8")) as {
+        observations?: Array<{ event?: string }>;
+        negative_control_segments?: Array<{ observations?: Array<{ event?: string; evidence_ref?: string }> }>;
+      };
+      expect(manifest.observations?.some((row) => String(row.event || "").includes("_label_visible"))).toBe(false);
+      expect(manifest.negative_control_segments?.[0]?.observations?.map((row) => row.event)).toEqual([
+        "stale_label_visible",
+        "offline_label_visible",
+        "error_label_visible",
+      ]);
+      expect(manifest.negative_control_segments?.[0]?.observations?.every((row) =>
+        row.evidence_ref === join(outDir, "shared-extra-1.log"))).toBe(true);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

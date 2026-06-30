@@ -15,6 +15,7 @@ usage:
     [--workbench-db /abs/rust-hub.sqlite]
     [--accessibility-capture /abs/real-accessibility-capture.json ...]
     [--stress-capture /abs/real-same-run-stress-capture.json ...]
+    [--negative-control-events /abs/negative-events.jsonl ...]
     [--harvest-dir /abs/artifact-dir ...]
     [--same-run-events /abs/events.jsonl ...]
     [--selected-visual-evidence-dir /abs/served-or-visual-evidence ...]
@@ -30,7 +31,8 @@ observations.
 Truth:
   - mobile+desktop live write/read capture is real same-mission runtime evidence.
   - channel/timeline/stress proof is only counted when explicit real artifacts
-    are supplied.
+    are supplied or derived from already-existing real backend/objective/same-run
+    event evidence.
   - without the full evidence set, output remains partial and not END-BAR.
 EOF
 }
@@ -53,6 +55,7 @@ workbench_db="${FRIDAY_WORKBENCH_DB_PATH:-}"
 defer_channel_proof="${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}"
 accessibility_captures=()
 stress_captures=()
+negative_control_events=()
 harvest_dirs=()
 same_run_events=()
 runtime_evidence_dirs=()
@@ -168,6 +171,15 @@ while [ "$#" -gt 0 ]; do
       stress_captures+=("${1#--stress-capture=}")
       shift
       ;;
+    --negative-control-events)
+      [ "$#" -ge 2 ] || die "--negative-control-events requires a value"
+      negative_control_events+=("$2")
+      shift 2
+      ;;
+    --negative-control-events=*)
+      negative_control_events+=("${1#--negative-control-events=}")
+      shift
+      ;;
     --harvest-dir)
       [ "$#" -ge 2 ] || die "--harvest-dir requires a value"
       harvest_dirs+=("$2")
@@ -262,7 +274,7 @@ require_file_if_set() {
 }
 
 set +u
-for path in "${accessibility_captures[@]}" "${stress_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
+for path in "${accessibility_captures[@]}" "${stress_captures[@]}" "${negative_control_events[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
   require_abs_if_set "input path" "${path}"
 done
 set -u
@@ -457,12 +469,13 @@ if [ -n "${timeline_capture}" ] && [ "${workbench_timeline_status}" != "snapshot
   if [ "${defer_channel_proof}" = "1" ]; then
     workbench_events_args+=("--defer-channel-proof")
   fi
-  if node "${workbench_events_args[@]}" --require-ready >"${workbench_events}.stdout"; then
+  if node "${workbench_events_args[@]}" --allow-partial-events >"${workbench_events}.stdout"; then
     same_run_events+=("${workbench_events}")
+    workbench_events_status="$(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(j.status || "unknown");' "${workbench_events}.stdout")"
     if [ "${workbench_timeline_status}" = "skipped" ]; then
-      workbench_timeline_status="events_ready"
+      workbench_timeline_status="events_${workbench_events_status}"
     else
-      workbench_timeline_status="${workbench_timeline_status}_events_ready"
+      workbench_timeline_status="${workbench_timeline_status}_events_${workbench_events_status}"
     fi
   else
     if [ "${workbench_timeline_status}" = "skipped" ]; then
@@ -486,11 +499,64 @@ if [ -n "${channel_live_proof}" ] || [ -n "${channel_capture}" ]; then
   event_inputs+=("${channel_events}")
 fi
 set +u
+for path in "${negative_control_events[@]}"; do
+  [ -n "${path}" ] || continue
+  while IFS= read -r negative_evidence_ref; do
+    [ -n "${negative_evidence_ref}" ] || continue
+    require_file_if_set "negative-control evidence_ref" "${negative_evidence_ref}"
+    shared_extra_evidence+=("${negative_evidence_ref}")
+  done < <(node -e 'const fs=require("fs"); const seen=new Set(); const text=fs.readFileSync(process.argv[1],"utf8"); for (const line of text.split(/\r?\n/)) { if (!line.trim()) continue; const row=JSON.parse(line); const ref=typeof row.evidence_ref==="string" ? row.evidence_ref : ""; if (ref && !seen.has(ref)) { seen.add(ref); console.log(ref); } }' "${path}")
+done
 for path in "${same_run_events[@]}"; do
   [ -n "${path}" ] || continue
   event_inputs+=("${path}")
 done
 set -u
+
+if [ "${stress_capture_status}" = "skipped" ] && [ "${#stress_captures[@]}" -eq 0 ] \
+  && [ -n "${backend_live_proof}" ] && [ -n "${objective_coverage}" ] && [ "${#event_inputs[@]}" -gt 0 ]; then
+  auto_stress_dir="${out_dir}/auto-stress-capture"
+  mkdir -p "${auto_stress_dir}"
+  auto_stress_events="${auto_stress_dir}/same-run-events.jsonl"
+  auto_stress_events_stdout="${auto_stress_events}.stdout"
+  auto_stress_capture_stdout="${auto_stress_dir}/real-stress-capture.stdout.json"
+  auto_stress_bridge_stdout="${auto_stress_dir}/stress-events.stdout.json"
+  auto_stress_merge_args=(
+    "${repo_root}/scripts/ops/friday-ui-device-events-merge.mjs"
+    "--mission-id=${mission_id}"
+    "--out=${auto_stress_events}"
+    "--require-ready"
+  )
+  for path in "${event_inputs[@]}"; do
+    auto_stress_merge_args+=("--events=${path}")
+  done
+  if node "${auto_stress_merge_args[@]}" >"${auto_stress_events_stdout}" \
+    && node "${repo_root}/scripts/ops/friday-ui-device-real-stress-capture.mjs" \
+      "--mission-id=${mission_id}" \
+      "--backend-live-proof=${backend_live_proof}" \
+      "--objective-coverage=${objective_coverage}" \
+      "--events=${auto_stress_events}" \
+      "--out-dir=${auto_stress_dir}" \
+      --require-ready >"${auto_stress_capture_stdout}"; then
+    auto_stress_capture="${auto_stress_dir}/stress-capture.json"
+    auto_stress_bridge="${auto_stress_dir}/stress-events.jsonl"
+    node "${repo_root}/scripts/ops/friday-ui-device-stress-events.mjs" \
+      "--mission-id=${mission_id}" \
+      "--stress-capture=${auto_stress_capture}" \
+      "--out=${auto_stress_bridge}" \
+      --require-ready >"${auto_stress_bridge_stdout}"
+    event_inputs+=("${auto_stress_bridge}")
+    same_run_events+=("${auto_stress_bridge}")
+    stress_evidence_ref="$(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const value=j.evidence_ref || j.evidenceRef || ""; if (typeof value === "string" && value.trim()) console.log(value.trim());' "${auto_stress_capture}")"
+    if [ -n "${stress_evidence_ref}" ]; then
+      require_file_if_set "stress evidence_ref" "${stress_evidence_ref}"
+      shared_extra_evidence+=("${stress_evidence_ref}")
+    fi
+    stress_capture_status="auto_ready"
+  else
+    stress_capture_status="auto_blocked"
+  fi
+fi
 
 capture_dir_status="skipped_missing_channel_or_timeline"
 if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_channel_proof}" = "1" ]; }; then
@@ -511,6 +577,9 @@ if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_c
   fi
   for path in "${event_inputs[@]}"; do
     capture_dir_args+=("--events=${path}")
+  done
+  for path in "${negative_control_events[@]}"; do
+    capture_dir_args+=("--negative-control-events=${path}")
   done
   set +u
   for path in "${shared_extra_evidence[@]}"; do

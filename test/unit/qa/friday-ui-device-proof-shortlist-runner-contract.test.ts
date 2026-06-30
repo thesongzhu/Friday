@@ -62,6 +62,30 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("stressCaptureStatus");
   });
 
+  it("auto-packages real backend pressure proof into stress evidence when same-run events are present", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("stress_capture_status=\"auto_ready\"");
+    expect(source).toContain("stress_capture_status=\"auto_blocked\"");
+    expect(source).toContain("friday-ui-device-real-stress-capture.mjs");
+    expect(source).toContain("--backend-live-proof=${backend_live_proof}");
+    expect(source).toContain("--objective-coverage=${objective_coverage}");
+    expect(source).toContain("--events=${auto_stress_events}");
+    expect(source).toContain("event_inputs+=(\"${auto_stress_bridge}\")");
+    expect(source).toContain("same_run_events+=(\"${auto_stress_bridge}\")");
+  });
+
+  it("threads negative-control status events into strict capture-dir assembly", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("--negative-control-events");
+    expect(source).toContain("negative_control_events=()");
+    expect(source).toContain("negative_control_events+=(\"$2\")");
+    expect(source).toContain("require_file_if_set \"negative-control evidence_ref\" \"${negative_evidence_ref}\"");
+    expect(source).toContain("shared_extra_evidence+=(\"${negative_evidence_ref}\")");
+    expect(source).toContain("capture_dir_args+=(\"--negative-control-events=${path}\")");
+  });
+
   it("can derive non-channel workbench timeline inputs from the Rust Hub DB", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
 
@@ -70,6 +94,8 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("cargo run -p friday-hub --bin mission_workbench_projection");
     expect(source).toContain("workbench-timeline-capture.json");
     expect(source).toContain("friday-workbench-snapshot-events.mjs");
+    expect(source).toContain("--allow-partial-events");
+    expect(source).toContain("workbench_events_status=");
     expect(source).toContain("same_run_events+=(\"${workbench_events}\")");
     expect(source).toContain("readiness_args+=(\"--workbench-db\" \"${workbench_db}\")");
     expect(source).toContain("MISSION_ID=\"${mission_id}\" FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS");

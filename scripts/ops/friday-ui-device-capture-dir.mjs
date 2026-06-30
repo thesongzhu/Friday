@@ -23,6 +23,7 @@ function usage() {
     [--channel-extra-evidence=/abs/file ...] [--timeline-extra-evidence=/abs/file ...] \\
     [--shared-extra-evidence=/abs/file ...] \\
     [--observations-manifest=/abs/observations-manifest.json] \\
+    [--negative-control-events=/abs/negative-events.jsonl ...] \\
     [--events=/abs/same-run-events.jsonl ...] [--events-dir=/abs/events-dir ...] \\
     [--defer-channel-proof] [--require-ready]
 
@@ -65,6 +66,7 @@ const outDir = arg("out-dir");
 const manifest = arg("observations-manifest");
 const eventInputs = argsAll("events");
 const eventDirs = argsAll("events-dir");
+const negativeControlEventInputs = argsAll("negative-control-events");
 const inputByRole = {
   mobile: arg("mobile"),
   desktop: arg("desktop"),
@@ -177,6 +179,7 @@ let writtenExtra = [];
 let copiedManifest = "";
 let derivedEvents = "";
 let mergedEvents = "";
+let normalizedNegativeEvents = [];
 let reuseSummary = null;
 let derivedManifestProbe = null;
 let mergeProbe = null;
@@ -249,6 +252,11 @@ if (readyToWrite) {
       copiedManifest = "";
       block("events_merge_failed", `exit_${mergeResult.status}`);
     } else if (normalizeEvents(mergedEvents, sourceToTarget, derivedEvents)) {
+      normalizedNegativeEvents = negativeControlEventInputs.map((source, index) => {
+        const target = join(dir, `negative-control-events-${index + 1}.normalized.jsonl`);
+        if (normalizeEvents(source, sourceToTarget, target)) return target;
+        return "";
+      }).filter(Boolean);
       derivedManifestProbe = {
         status: null,
         stdoutPath: join(dir, "observations-manifest.stdout.json"),
@@ -265,6 +273,7 @@ if (readyToWrite) {
         `--out=${copiedManifest}`,
         ...(byRole.channel ? [`--channel=${byRole.channel}`] : []),
         ...(deferChannelProof ? ["--defer-channel-proof"] : []),
+        ...normalizedNegativeEvents.map((path) => `--negative-control-events=${path}`),
         ...writtenExtra.map((capture) => `--extra-evidence-ref=${capture.target}`),
         "--require-ready",
       ], derivedManifestProbe.stdoutPath, derivedManifestProbe.stderrPath);
@@ -324,6 +333,7 @@ if (readyToWrite) {
         },
     mergedEvents: mergedEvents || null,
     normalizedEvents: derivedEvents || null,
+    normalizedNegativeEvents,
     deferredInputs: deferChannelProof ? [{
       role: "channel",
       status: "deferred_by_operator",
@@ -344,6 +354,7 @@ if (readyToWrite) {
     observationsManifest: copiedManifest || null,
     mergedEvents: mergedEvents || null,
     normalizedEvents: derivedEvents || null,
+    normalizedNegativeEvents,
     mergeProbe,
     derivedManifestProbe,
     reuseSummary,
@@ -404,6 +415,7 @@ const output = {
   observationsManifest: copiedManifest || null,
   mergedEvents: mergedEvents || null,
   normalizedEvents: derivedEvents || null,
+  normalizedNegativeEvents,
   mergeProbe,
   derivedManifestProbe,
   reuseSummary,

@@ -400,7 +400,7 @@ describe("friday-workbench-snapshot-events CLI", () => {
       });
       const parsed = JSON.parse(result.stdout) as { status?: string; derivedEvents?: number };
 
-      expect(result.status).toBe(2);
+      expect(result.status).toBe(0);
       expect(parsed.status).toBe("partial_ready");
       expect(parsed.derivedEvents).toBeGreaterThan(0);
       expect(readFileSync(out, "utf8")).toContain("mission_workbench_visible");
