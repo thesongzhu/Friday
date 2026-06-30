@@ -40,6 +40,30 @@ describe("friday-desktop-ax-accessibility-capture contract", () => {
         event: "mission_resolve_or_create_visible",
         interaction: "visible",
       }));
+      expect(summary.targets).toContainEqual(expect.objectContaining({
+        runtimeActionId: "desktop/providerAdmin/check",
+        accessibility_id: "friday.desktop.provider-readiness-detail",
+        event: "real_provider_execution_visible",
+        interaction: "read",
+      }));
+      expect(summary.targets).toContainEqual(expect.objectContaining({
+        runtimeActionId: "desktop/parity/route-readiness",
+        accessibility_id: "friday.desktop.provider-route-decision-card",
+        event: "real_provider_execution_visible",
+        interaction: "read",
+      }));
+      expect(summary.targets).toContainEqual(expect.objectContaining({
+        runtimeActionId: "desktop/tokenLedger/run-readback",
+        accessibility_id: "friday.desktop.evidence.transcript-browser",
+        event: "transcript_browser_visible",
+        interaction: "read",
+      }));
+      expect(summary.targets).toContainEqual(expect.objectContaining({
+        runtimeActionId: "desktop/evidence/index-read",
+        accessibility_id: "friday.desktop.evidence.timeline-pages",
+        event: "transcript_browser_visible",
+        interaction: "read",
+      }));
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
