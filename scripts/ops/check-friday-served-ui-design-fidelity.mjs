@@ -291,12 +291,17 @@ function assertIosDesignFidelity(tokens) {
   }
 
   const commandSheet = readText(join(iosSourceRoot, "CommandSheet.swift"));
-  const commandSheetSections = commandSheet.match(/private let sections:[\s\S]*?var body:/)?.[0] ?? "";
-  if (/\.(proofViewer|entrypoints)\b/.test(commandSheetSections)) {
+  const commandProductSections =
+    commandSheet.match(/private let productSections:[\s\S]*?\n  \]/)?.[0]
+    ?? commandSheet.match(/private let sections:[\s\S]*?var body:/)?.[0]
+    ?? "";
+  const commandBody = commandSheet.match(/var body:[\s\S]*?\n  private func sectionView/)?.[0] ?? "";
+  const userLauncherText = `${commandProductSections}\n${commandBody}`;
+  if (/\.(pairing|onboarding|settings|petEditor|proofViewer|entrypoints)\b/.test(commandProductSections)) {
     checks.push(fail("iOS Command Sheet still exposes proof/debug destinations in the user launcher"));
   }
-  if (/readinessFooter/.test(commandSheet)) {
-    checks.push(fail("iOS Command Sheet still exposes readiness footer in the user launcher"));
+  if (/\breadinessFooter\b/.test(commandSheet) || /\b(readiness|proof|END-BAR|entrypoint)\b/i.test(userLauncherText)) {
+    checks.push(fail("iOS Command Sheet still exposes internal proof/readiness language in the user launcher"));
   }
 
   return checks.length > 0

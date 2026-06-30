@@ -39,7 +39,8 @@ describe("Friday mobile command sheet product path", () => {
       expect(diagnostics).toContain(diagnostic);
     }
     expect(text).toContain("friday.command-sheet.advanced-setup-disclosure");
-    expect(text).toContain("Pairing, readiness, proof, and entrypoint tools live here");
+    expect(text).toContain("Connection, device, and developer tools live here");
+    expect(text).not.toContain("Pairing, readiness, proof, and entrypoint tools live here");
   });
 
   it("keeps the selected top-left command sheet affordance as a grid launcher", () => {
@@ -55,5 +56,14 @@ describe("Friday mobile command sheet product path", () => {
 
     expect(text).toContain("var commandSheetLane: MobileProductCommandSurfaceLane");
     expect(text).toContain("?.commandSurfaceLane ?? .diagnostics");
+  });
+
+  it("keeps internal proof/readiness copy out of the user launcher body", () => {
+    const text = source();
+    const product = arrayBody("productSections");
+    const body = text.match(/var body:[\s\S]*?\n  private func sectionView/)?.[0] ?? "";
+    const userLauncher = `${product}\n${body}`;
+
+    expect(userLauncher).not.toMatch(/\b(readiness|proof|END-BAR|entrypoint)\b/i);
   });
 });
