@@ -44,6 +44,27 @@ function makeProvider(
   };
 }
 
+function makeCodexOAuthProvider(
+  overrides: Partial<FridayProviderProfile> = {},
+): FridayProviderProfile {
+  return makeProvider({
+    id: "openai-codex-oauth-1",
+    kind: "openai-codex",
+    name: "OpenAI Codex OAuth",
+    baseUrl: "https://chatgpt.com/backend-api/codex",
+    defaultModel: "gpt-5.4-mini",
+    config: {
+      api: "openai-codex-responses",
+      authMode: "oauth",
+      oauthProvider: "openai-codex",
+      keySource: { kind: "none" },
+      supportedModels: ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
+      validation: { status: "never" },
+    },
+    ...overrides,
+  });
+}
+
 function createMockProviderService(
   overrides: Partial<FridayProviderService> = {},
 ): FridayProviderService {
@@ -75,17 +96,17 @@ function createMockProviderService(
 }
 
 describe("createFridayAgentProviderTool", () => {
-  it("auto-creates an anthropic oauth provider for oauth_init when providerId is omitted", async () => {
-    const provider = makeProvider({ id: "anthropic-oauth-1" });
+  it("auto-creates an OpenAI Codex oauth provider for oauth_init when providerId is omitted", async () => {
+    const provider = makeCodexOAuthProvider({ id: "openai-codex-oauth-1" });
     const providerService = createMockProviderService({
       createProvider: vi.fn().mockResolvedValue(provider),
       initiateOAuthLogin: vi.fn().mockResolvedValue({
-        authorizationUrl: "https://console.anthropic.com/oauth/authorize",
+        authorizationUrl: "https://chatgpt.com/backend-api/codex/oauth/authorize",
         state: "oauth-state-1",
         codeVerifier: "pkce",
-        scopes: ["org:create_api_key", "user:profile"],
+        scopes: ["codex:run"],
         providerId: provider.id,
-        oauthProvider: "anthropic",
+        oauthProvider: "openai-codex",
       }),
     });
     const tool = createFridayAgentProviderTool({ providerService });
@@ -96,40 +117,40 @@ describe("createFridayAgentProviderTool", () => {
     expect(result.isError).toBeUndefined();
     expect(providerService.createProvider).toHaveBeenCalledWith(
       expect.objectContaining({
-        kind: "anthropic",
-        name: "Claude OAuth",
+        kind: "openai-codex",
+        name: "OpenAI Codex OAuth",
         authMode: "oauth",
-        api: "anthropic-messages",
-        baseUrl: "https://api.anthropic.com",
-        defaultModel: "claude-sonnet-4-6",
-        supportedModels: ["claude-sonnet-4-6", "claude-opus-4-8"],
+        api: "openai-codex-responses",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        defaultModel: "gpt-5.4-mini",
+        supportedModels: ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
         validateOnSave: false,
       }),
     );
     expect(providerService.initiateOAuthLogin).toHaveBeenCalledWith({
-      providerId: "anthropic-oauth-1",
+      providerId: "openai-codex-oauth-1",
     });
     expect(parsed.providerResolution).toBe("auto-created");
-    expect(parsed.providerId).toBe("anthropic-oauth-1");
+    expect(parsed.providerId).toBe("openai-codex-oauth-1");
   });
 
-  it("reuses the routed default anthropic oauth provider for oauth_init", async () => {
-    const providerOne = makeProvider({ id: "anthropic-oauth-1", name: "Claude OAuth A" });
-    const providerTwo = makeProvider({ id: "anthropic-oauth-2", name: "Claude OAuth B" });
+  it("reuses the routed default OpenAI Codex oauth provider for oauth_init", async () => {
+    const providerOne = makeCodexOAuthProvider({ id: "openai-codex-oauth-1", name: "Codex OAuth A" });
+    const providerTwo = makeCodexOAuthProvider({ id: "openai-codex-oauth-2", name: "Codex OAuth B" });
     const providerService = createMockProviderService({
       listProviders: vi.fn().mockResolvedValue([providerOne, providerTwo]),
       getRoutingConfig: vi.fn().mockResolvedValue({
-        defaultProviderId: "anthropic-oauth-2",
-        defaultModel: "claude-sonnet-4-20250514",
+        defaultProviderId: "openai-codex-oauth-2",
+        defaultModel: "gpt-5.4-mini",
         fallbackProviderIds: [],
       }),
       initiateOAuthLogin: vi.fn().mockResolvedValue({
-        authorizationUrl: "https://console.anthropic.com/oauth/authorize",
+        authorizationUrl: "https://chatgpt.com/backend-api/codex/oauth/authorize",
         state: "oauth-state-2",
         codeVerifier: "pkce",
-        scopes: ["org:create_api_key", "user:profile"],
+        scopes: ["codex:run"],
         providerId: providerTwo.id,
-        oauthProvider: "anthropic",
+        oauthProvider: "openai-codex",
       }),
     });
     const tool = createFridayAgentProviderTool({ providerService });
@@ -140,16 +161,16 @@ describe("createFridayAgentProviderTool", () => {
     expect(result.isError).toBeUndefined();
     expect(providerService.createProvider).not.toHaveBeenCalled();
     expect(providerService.initiateOAuthLogin).toHaveBeenCalledWith({
-      providerId: "anthropic-oauth-2",
+      providerId: "openai-codex-oauth-2",
     });
     expect(parsed.providerResolution).toBe("reused-routing-default");
   });
 
-  it("returns a clear error when oauth_init cannot disambiguate multiple anthropic oauth providers", async () => {
+  it("returns a clear error when oauth_init cannot disambiguate multiple OpenAI Codex oauth providers", async () => {
     const providerService = createMockProviderService({
       listProviders: vi.fn().mockResolvedValue([
-        makeProvider({ id: "anthropic-oauth-1", name: "Claude OAuth A" }),
-        makeProvider({ id: "anthropic-oauth-2", name: "Claude OAuth B" }),
+        makeCodexOAuthProvider({ id: "openai-codex-oauth-1", name: "Codex OAuth A" }),
+        makeCodexOAuthProvider({ id: "openai-codex-oauth-2", name: "Codex OAuth B" }),
       ]),
     });
     const tool = createFridayAgentProviderTool({ providerService });
@@ -157,16 +178,29 @@ describe("createFridayAgentProviderTool", () => {
     const result = await tool.execute({ action: "oauth_init" }, signal());
 
     expect(result.isError).toBe(true);
-    expect(result.content).toContain("Multiple anthropic OAuth providers are available");
+    expect(result.content).toContain("Multiple openai-codex OAuth providers are available");
     expect(result.content).toContain("Specify providerId");
     expect(providerService.createProvider).not.toHaveBeenCalled();
     expect(providerService.initiateOAuthLogin).not.toHaveBeenCalled();
   });
 
-  it("auto-selects the single anthropic oauth provider for oauth_complete when providerId is omitted", async () => {
-    const provider = makeProvider({ id: "anthropic-oauth-1" });
-    const updatedProvider = makeProvider({
-      id: "anthropic-oauth-1",
+  it("fails closed when oauth_init targets Anthropic OAuth", async () => {
+    const providerService = createMockProviderService();
+    const tool = createFridayAgentProviderTool({ providerService });
+
+    const result = await tool.execute({ action: "oauth_init", kind: "anthropic" }, signal());
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("Anthropic OAuth/bearer authentication is disabled");
+    expect(result.content).toContain("Configure Anthropic with an API key");
+    expect(providerService.createProvider).not.toHaveBeenCalled();
+    expect(providerService.initiateOAuthLogin).not.toHaveBeenCalled();
+  });
+
+  it("auto-selects the single OpenAI Codex oauth provider for oauth_complete when providerId is omitted", async () => {
+    const provider = makeCodexOAuthProvider({ id: "openai-codex-oauth-1" });
+    const updatedProvider = makeCodexOAuthProvider({
+      id: "openai-codex-oauth-1",
       config: {
         ...provider.config,
         validation: { status: "ok", checkedAt: "2026-03-13T00:05:00.000Z" },
@@ -177,11 +211,11 @@ describe("createFridayAgentProviderTool", () => {
       getProvider: vi.fn().mockResolvedValue(updatedProvider),
       completeOAuthLogin: vi.fn().mockResolvedValue({
         providerId: provider.id,
-        oauthProvider: "anthropic",
+        oauthProvider: "openai-codex",
         connected: true as const,
         expiresAt: "2026-04-13T00:00:00.000Z",
         tokenType: "Bearer",
-        scope: "org:create_api_key user:profile",
+        scope: "codex:run",
       }),
     });
     const tool = createFridayAgentProviderTool({ providerService });
@@ -194,15 +228,15 @@ describe("createFridayAgentProviderTool", () => {
 
     expect(result.isError).toBeUndefined();
     expect(providerService.completeOAuthLogin).toHaveBeenCalledWith({
-      providerId: "anthropic-oauth-1",
+      providerId: "openai-codex-oauth-1",
       authorizationCode: "test-code#oauth-state-1",
       state: undefined,
     });
     expect(parsed.providerResolution).toBe("reused-existing");
     expect(parsed.nextRecommendedAction).toEqual({
       action: "set_default",
-      providerId: "anthropic-oauth-1",
-      defaultModel: "claude-sonnet-4-20250514",
+      providerId: "openai-codex-oauth-1",
+      defaultModel: "gpt-5.4-mini",
     });
   });
 

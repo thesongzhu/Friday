@@ -1,10 +1,10 @@
 import { FridayDomainError } from "#errors";
 import type { FridayProviderApi, FridayProviderKind, FridayProviderProfile } from "../model/friday-provider.types.js";
+import { FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE } from "../oauth/friday-anthropic-oauth.js";
 import type { FridayProviderService } from "./friday-provider-service.types.js";
 
-const DEFAULT_OAUTH_PROVIDER_KIND: FridayProviderKind = "anthropic";
+const DEFAULT_OAUTH_PROVIDER_KIND: FridayProviderKind = "openai-codex";
 const SUPPORTED_OAUTH_PROVIDER_KINDS = new Set<FridayProviderKind>([
-  "anthropic",
   "openai-codex",
 ]);
 
@@ -178,10 +178,10 @@ function assertOAuthReadyProvider(
       { httpStatus: 400 },
     );
   }
-  if (provider.kind !== DEFAULT_OAUTH_PROVIDER_KIND) {
-    if (SUPPORTED_OAUTH_PROVIDER_KINDS.has(provider.kind)) {
-      return;
-    }
+  if (provider.kind === "anthropic") {
+    throw new FridayDomainError("UNSUPPORTED_OPERATION", FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE, { httpStatus: 400 });
+  }
+  if (!SUPPORTED_OAUTH_PROVIDER_KINDS.has(provider.kind)) {
     throw new FridayDomainError("UNSUPPORTED_OPERATION",
       `OAuth automation currently supports ${[...SUPPORTED_OAUTH_PROVIDER_KINDS].join(", ")} providers only. Provider "${provider.id}" is kind "${provider.kind}".`,
       { httpStatus: 400 },
@@ -191,6 +191,9 @@ function assertOAuthReadyProvider(
 
 function readOAuthProviderKind(kind: FridayProviderKind | undefined): FridayProviderKind {
   const resolved = kind ?? DEFAULT_OAUTH_PROVIDER_KIND;
+  if (resolved === "anthropic") {
+    throw new FridayDomainError("UNSUPPORTED_OPERATION", FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE, { httpStatus: 400 });
+  }
   if (!SUPPORTED_OAUTH_PROVIDER_KINDS.has(resolved)) {
     throw new FridayDomainError("UNSUPPORTED_OPERATION",
       `OAuth automation currently supports ${[...SUPPORTED_OAUTH_PROVIDER_KINDS].join(", ")} providers only.`,

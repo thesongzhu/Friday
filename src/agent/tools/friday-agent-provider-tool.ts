@@ -1,8 +1,9 @@
 /**
  * Agent Provider Tool — Manage LLM providers from within the agent runtime.
  *
- * Allows the agent to list, create, update, delete providers, and handle OAuth
- * flows for providers like Anthropic (Claude Max/Pro).
+ * Allows the agent to list, create, update, delete providers, and handle
+ * supported OAuth flows. Anthropic/Claude OAuth is intentionally disabled;
+ * configure Anthropic with an API key instead.
  *
  * @module agent/tools/friday-agent-provider-tool
  */
@@ -125,7 +126,7 @@ export function createFridayAgentProviderTool(
       "Actions: list (show all providers), get (single provider by ID), " +
       "create (add new provider), update (modify provider), delete (remove provider), " +
       "doctor (provider/backend health report), auth_profiles (list auth profiles), activate_profile (switch active auth profile), " +
-      "oauth_init (start OAuth flow for Claude Max/Pro - returns authorization URL), " +
+      "oauth_init (start a supported OAuth flow such as OpenAI Codex - returns authorization URL), " +
       "oauth_complete (finish OAuth with authorization code), " +
       "set_default (set default provider and model), " +
       "validate (test provider connection), " +
@@ -416,11 +417,11 @@ export function createFridayAgentProviderTool(
       providerResolution: selection.resolution,
       instructions:
         "1. Open the authorizationUrl in your browser\n" +
-        "2. Log in with your Claude Max/Pro account\n" +
+        "2. Log in with the selected OAuth provider account\n" +
         "3. Click 'Allow' to authorize\n" +
         "4. Copy the code shown (format: code#state)\n" +
         "5. Call oauth_complete with the code\n" +
-        "6. If your goal is to switch Friday to Claude, call set_default after oauth_complete",
+        "6. If your goal is to switch Friday to this provider, call set_default after oauth_complete",
     });
   }
 
