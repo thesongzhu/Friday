@@ -139,18 +139,20 @@ function classifyForGroup(groupId, report, path) {
   }
 
   if (groupId === "selected_uiux_conformance") {
-    const accepted = new Set([
-      "uiux_product_closure_evidence_ready",
+    const partialStatuses = new Set([
       "selected_visual_proof_ready",
       "product_runtime_actions_traceable",
       "runtime_actions_covered",
       "passed",
     ]);
-    if (accepted.has(status) && !hasBlockers(report)) {
-      return { classification: "satisfied", score: status === "uiux_product_closure_evidence_ready" ? 95 : 85, reason: `selected UI/UX accepted status ${status}` };
+    if (status === "uiux_product_closure_evidence_ready" && !hasBlockers(report)) {
+      return { classification: "satisfied", score: 95, reason: "selected UI/UX product closure evidence is ready" };
     }
-    if (accepted.has(status)) {
-      return { classification: "candidate_with_blockers", score: 45, reason: `accepted status ${status} but blockers are present` };
+    if (status === "uiux_product_closure_evidence_ready") {
+      return { classification: "candidate_with_blockers", score: 45, reason: "product closure status is present but blockers remain" };
+    }
+    if (partialStatuses.has(status)) {
+      return { classification: "partial", score: 45, reason: `selected UI/UX partial status ${status} is not final product closure` };
     }
     return { classification: "candidate", score: 20, reason: `status=${status || "<missing>"}` };
   }

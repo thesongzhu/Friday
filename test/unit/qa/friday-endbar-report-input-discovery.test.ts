@@ -78,7 +78,7 @@ describe("Friday END-BAR report input discovery", () => {
       status: "passed",
     });
     const ui = writeJson(second, "ui-real-use.json", { status: "strict_uiux_real_use_ready" });
-    const selected = writeJson(first, "selected-uiux.json", { status: "selected_visual_proof_ready" });
+    const selected = writeJson(first, "selected-uiux.json", { status: "uiux_product_closure_evidence_ready" });
     const provider = writeJson(second, "provider-entitlement.json", { status: "passed" });
     const integrated = writeJson(first, "integrated-tape.json", { status: "integrated_end_to_end_tape_ready" });
 
@@ -125,6 +125,28 @@ describe("Friday END-BAR report input discovery", () => {
       detail: "ui_real_use_mobile_desktop:deferred",
     });
     expect(report.command).toBeNull();
+  });
+
+  it("keeps partial selected UIUX reports out of strict candidate sets", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-endbar-inputs-"));
+    const partial = writeJson(dir, "selected-uiux-partial.json", {
+      truth: "selected_uiux_conformance_report",
+      status: "selected_visual_proof_ready",
+    });
+
+    const report = run([`--search-root=${dir}`], true);
+    const group = report.groups.find((row: { id: string }) => row.id === "selected_uiux_conformance");
+
+    expect(group.selectedCandidate).toEqual(expect.objectContaining({
+      path: partial,
+      classification: "partial",
+    }));
+    expect(report.status).toBe("partial_candidate_set");
+    expect(report.command).toBeNull();
+    expect(report.blockers).toContainEqual({
+      code: "report_candidate_not_satisfied",
+      detail: "selected_uiux_conformance:partial",
+    });
   });
 
   it("discovers mechanism multiangle stress reports by truth label", () => {

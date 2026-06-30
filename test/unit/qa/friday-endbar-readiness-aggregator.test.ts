@@ -6,12 +6,18 @@ import { describe, expect, it } from "vitest";
 
 const script = "scripts/ops/check-friday-endbar-readiness.mjs";
 
-function run(args: string[] = []) {
-  const stdout = execFileSync(process.execPath, [script, ...args], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-  });
-  return JSON.parse(stdout);
+function run(args: string[] = [], expectFailure = false) {
+  try {
+    const stdout = execFileSync(process.execPath, [script, ...args], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+    return JSON.parse(stdout);
+  } catch (error) {
+    if (!expectFailure) throw error;
+    const stdout = (error as { stdout?: Buffer | string }).stdout?.toString() || "";
+    return JSON.parse(stdout);
+  }
 }
 
 function writeJson(dir: string, name: string, value: unknown) {
@@ -45,7 +51,7 @@ describe("Friday END-BAR readiness aggregator", () => {
       truth: "provider_entitlement_readiness_report",
       status: "passed",
     });
-    const selected = writeJson(dir, "selected-uiux.json", { status: "product_runtime_actions_traceable" });
+    const selected = writeJson(dir, "selected-uiux.json", { status: "uiux_product_closure_evidence_ready" });
     const integrated = writeJson(dir, "integrated-tape.json", { status: "integrated_end_to_end_tape_ready" });
     const deferred = writeJson(dir, "deferred.json", {
       status: "blocked",
@@ -77,7 +83,7 @@ describe("Friday END-BAR readiness aggregator", () => {
       truth: "provider_entitlement_readiness_report",
       status: "passed",
     });
-    const selected = writeJson(dir, "selected-uiux.json", { status: "selected_visual_proof_ready" });
+    const selected = writeJson(dir, "selected-uiux.json", { status: "uiux_product_closure_evidence_ready" });
     const ui = writeJson(dir, "ui-real-use.json", {
       truth: "ui_real_use_mobile_desktop_report",
       status: "deferred",
@@ -134,12 +140,44 @@ describe("Friday END-BAR readiness aggregator", () => {
       `--provider-entitlement-report=${provider}`,
       `--integrated-tape-report=${integrated}`,
       "--require-complete",
-    ]);
+    ], true);
 
     expect(report.status).toBe("strict_endbar_inputs_satisfied");
     expect(report.strictEndBarReady).toBe(true);
     expect(report.counts.satisfied).toBe(5);
     expect(report.blockers).toEqual([]);
+  });
+
+  it("does not count partial selected UIUX reports as final END-BAR product closure", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-endbar-readiness-"));
+    const mechanism = writeJson(dir, "mechanism-multiangle.json", {
+      truth: "mechanism_multiangle_stress_report",
+      status: "complete_inputs_observed",
+    });
+    const ui = writeJson(dir, "ui-real-use.json", { status: "strict_uiux_real_use_ready" });
+    const provider = writeJson(dir, "provider-entitlement.json", {
+      truth: "provider_entitlement_readiness_report",
+      status: "passed",
+    });
+    const selected = writeJson(dir, "selected.json", { status: "selected_visual_proof_ready" });
+    const integrated = writeJson(dir, "integrated.json", { status: "integrated_end_to_end_tape_ready" });
+
+    const report = run([
+      `--mechanism-report=${mechanism}`,
+      `--ui-real-use-report=${ui}`,
+      `--selected-uiux-report=${selected}`,
+      `--provider-entitlement-report=${provider}`,
+      `--integrated-tape-report=${integrated}`,
+      "--require-complete",
+    ], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.strictEndBarReady).toBe(false);
+    expect(report.groups.find((group: { id: string }) => group.id === "selected_uiux_conformance").status).toBe("blocked");
+    expect(report.blockers).toContainEqual({
+      code: "acceptance_group_not_satisfied",
+      detail: "selected_uiux_conformance:blocked",
+    });
   });
 
   it("does not count unrelated pass-like reports as group-level mechanism or tape proof", () => {
