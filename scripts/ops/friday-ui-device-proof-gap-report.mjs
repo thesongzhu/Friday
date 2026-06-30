@@ -385,10 +385,22 @@ if (!missionId || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId) || !missionId
 const evidence = Object.fromEntries(
   Object.entries(evidenceArgs).map(([role, path]) => [role, requireFile(role, path)]),
 );
-const knownEvidenceRefs = new Set(Object.values(evidence).filter(Boolean).map(evidenceKey));
 const eventFile = requireFile("events", eventsPath);
-const observations = parseJsonl(eventFile).map((raw, index) => normalizeEvent(raw, index, knownEvidenceRefs));
 const manifest = parseManifest(manifestPath);
+const manifestExtraEvidenceRefs = manifest && Array.isArray(manifest.extra_evidence_refs)
+  ? manifest.extra_evidence_refs.filter((ref) => typeof ref === "string" && ref.trim())
+  : [];
+const manifestNegativeEvidenceRefs = manifest && Array.isArray(manifest.negative_control_segments)
+  ? manifest.negative_control_segments.flatMap((segment) => Array.isArray(segment?.evidence_refs)
+      ? segment.evidence_refs.filter((ref) => typeof ref === "string" && ref.trim())
+      : [])
+  : [];
+const knownEvidenceRefs = new Set([
+  ...Object.values(evidence).filter(Boolean),
+  ...manifestExtraEvidenceRefs,
+  ...manifestNegativeEvidenceRefs,
+].map(evidenceKey));
+const observations = parseJsonl(eventFile).map((raw, index) => normalizeEvent(raw, index, knownEvidenceRefs));
 const negativeControlObservations = negativeControlObservationsFromManifest(manifest);
 const supportingProofRows = supportingProofs();
 

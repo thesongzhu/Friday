@@ -123,7 +123,7 @@ function writePhase24ChannelProof(path: string) {
     completedAt: "2026-06-30T11:21:00.000Z",
     reportPath: "/tmp/phase24b-discord-trusted-inbound-proof.json",
     environment: {
-      commit_sha: "095811ada740d342e181f91ac38b5d8fac2ee768",
+      commit_sha: "095811ada740d342e181f91ac38b5d8fac2ee768", // pragma: allowlist secret
     },
     criteria: {
       artifactHasNoToken: true,
@@ -375,6 +375,38 @@ describe("friday-ui-device-proof-gap-report", () => {
       const rows = completeRows({ ...files, desktop: alias });
       const manifest = join(tempDir, "manifest.json");
       writeFileSync(manifest, JSON.stringify(completeManifest(), null, 2));
+
+      const result = run(tempDir, files, rows, [
+        `--manifest=${manifest}`,
+        "--require-complete",
+      ]);
+      expect(result.status).toBe(0);
+      const output = JSON.parse(result.stdout) as { status?: string; blockers?: unknown[] };
+      expect(output.status).toBe("complete_inputs_observed");
+      expect(output.blockers).toEqual([]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts manifest-declared extra evidence refs as strict inputs", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-gap-report-manifest-extra-"));
+    try {
+      const files = evidenceFiles(tempDir);
+      const extraTrace = join(tempDir, "desktop-accessibility.trace");
+      writeFileSync(extraTrace, "real desktop accessibility trace captured during the same run\n");
+      const rows = completeRows(files).map((row) => {
+        const typed = row as { event?: string };
+        if (typed.event === "mission_workbench_visible") {
+          return { ...row, evidence_ref: extraTrace };
+        }
+        return row;
+      });
+      const manifest = join(tempDir, "manifest.json");
+      writeFileSync(manifest, JSON.stringify({
+        ...completeManifest(),
+        extra_evidence_refs: [extraTrace],
+      }, null, 2));
 
       const result = run(tempDir, files, rows, [
         `--manifest=${manifest}`,

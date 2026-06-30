@@ -40,7 +40,7 @@ function writePhase24DiscordProof(path: string, overrides: Record<string, unknow
     completedAt: "2026-06-30T11:21:00.000Z",
     reportPath: "/tmp/phase24b-discord-trusted-inbound-proof.json",
     environment: {
-      commit_sha: "095811ada740d342e181f91ac38b5d8fac2ee768",
+      commit_sha: "095811ada740d342e181f91ac38b5d8fac2ee768", // pragma: allowlist secret
     },
     criteria: {
       artifactHasNoToken: true,
