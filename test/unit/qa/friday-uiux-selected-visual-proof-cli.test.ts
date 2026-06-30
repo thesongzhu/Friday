@@ -127,7 +127,7 @@ function writeServedUiReport(root: string, relative = "evidence", overrides: Rec
       { ok: true, message: "operator-confirmed selections loaded", details: {} },
       { ok: true, message: "iOS source applies selected mobile design system and keeps debug/readiness surfaces out of the user path", details: {} },
       { ok: true, message: "served ui build completed", details: {} },
-      { ok: true, message: "built css applies cyan/coral tokens and excludes amber/jade tokens", details: {} },
+      { ok: true, message: "built css applies cyan/coral tokens and excludes stale decorative palette remnants", details: {} },
       { ok: true, message: "served desktop rendered structure matches selected design", details: {} },
     ],
     ...overrides,
