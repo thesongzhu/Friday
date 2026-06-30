@@ -60,46 +60,45 @@ enum MobileDestination: String, CaseIterable, Identifiable {
 
   /// Route coverage only. This must not be used as a closed-loop product-completion signal.
   var isBuilt: Bool { contract.routeBuilt }
+
+  /// The operator-selected mobile product keeps ordinary users in the Friday-first
+  /// command surface. Setup/readiness/proof routes stay available, but they must not
+  /// be the default path a user falls into from Home.
+  var commandSheetLane: MobileProductCommandSurfaceLane {
+    MobileProductDestinationID(rawValue: rawValue)?.commandSurfaceLane ?? .diagnostics
+  }
 }
 
 /// The Command Sheet: a full-screen 2-column grid launcher.
 struct CommandSheet: View {
   @Binding var destination: MobileDestination
   @Binding var isOpen: Bool
+  @State private var showDiagnostics = false
 
   private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
-  private let sections: [(String, [MobileDestination])] = [
+  private let productSections: [(String, [MobileDestination])] = [
     ("Command", [.home, .newSession, .voice, .shareIntake]),
     ("Work", [.missions, .needsMe, .activity, .workflows]),
     ("Providers", [.platform, .providerAuth, .session]),
     ("Trust", [.contextPassport, .memory, .tokenLedger]),
-    ("Setup", [.pairing, .onboarding, .settings, .petEditor]),
+  ]
+  private let diagnosticsSections: [(String, [MobileDestination])] = [
+    ("Advanced", [.pairing, .onboarding, .settings, .petEditor, .proofViewer, .entrypoints]),
   ]
 
   var body: some View {
     NavigationStack {
       ScrollView {
         VStack(alignment: .leading, spacing: 18) {
-          ForEach(sections, id: \.0) { section in
-            VStack(alignment: .leading, spacing: 10) {
-              Text(section.0.uppercased())
-                .font(.caption.weight(.bold))
-                .foregroundStyle(MobileTheme.textSecondary)
-                .tracking(3)
-                .accessibilityHidden(true)
-              LazyVGrid(columns: columns, spacing: 14) {
-                ForEach(section.1) { dest in
-                  Button {
-                    if dest.isBuilt { destination = dest }
-                    isOpen = false
-                  } label: {
-                    tile(dest)
-                  }
-                  .buttonStyle(.plain)
-                  .disabled(!dest.isBuilt)
-                  .accessibilityIdentifier("friday.command-sheet.destination.\(dest.rawValue)")
-                }
-              }
+          ForEach(productSections, id: \.0) { section in
+            sectionView(section)
+          }
+
+          diagnosticsDisclosure
+
+          if showDiagnostics {
+            ForEach(diagnosticsSections, id: \.0) { section in
+              sectionView(section)
             }
           }
         }
@@ -116,6 +115,58 @@ struct CommandSheet: View {
         }
       }
     }
+  }
+
+  private func sectionView(_ section: (String, [MobileDestination])) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text(section.0.uppercased())
+        .font(.caption.weight(.bold))
+        .foregroundStyle(MobileTheme.textSecondary)
+        .tracking(3)
+        .accessibilityHidden(true)
+      LazyVGrid(columns: columns, spacing: 14) {
+        ForEach(section.1) { dest in
+          Button {
+            if dest.isBuilt { destination = dest }
+            isOpen = false
+          } label: {
+            tile(dest)
+          }
+          .buttonStyle(.plain)
+          .disabled(!dest.isBuilt)
+          .accessibilityIdentifier("friday.command-sheet.destination.\(dest.rawValue)")
+        }
+      }
+    }
+  }
+
+  private var diagnosticsDisclosure: some View {
+    Button {
+      showDiagnostics.toggle()
+    } label: {
+      HStack(spacing: 10) {
+        Image(systemName: showDiagnostics ? "chevron.down.circle" : "chevron.right.circle")
+          .font(.system(size: 18, weight: .semibold))
+          .foregroundStyle(MobileTheme.cyan)
+        VStack(alignment: .leading, spacing: 3) {
+          Text("Advanced setup")
+            .font(.headline)
+            .foregroundStyle(MobileTheme.textPrimary)
+          Text("Pairing, readiness, proof, and entrypoint tools live here so the main Friday path stays product-first.")
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        Spacer()
+      }
+      .padding(14)
+      .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: MobileTheme.cornerRadius, style: .continuous))
+      .overlay(
+        RoundedRectangle(cornerRadius: MobileTheme.cornerRadius, style: .continuous)
+          .strokeBorder(MobileTheme.glassPanelBorder, lineWidth: 1))
+    }
+    .buttonStyle(.plain)
+    .accessibilityIdentifier("friday.command-sheet.advanced-setup-disclosure")
   }
 
   private func tile(_ dest: MobileDestination) -> some View {

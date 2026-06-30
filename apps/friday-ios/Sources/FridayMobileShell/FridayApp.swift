@@ -459,7 +459,7 @@ struct RootView: View {
           Button {
             commandOpen = true
           } label: {
-            Image(systemName: "line.3.horizontal")
+            Image(systemName: "square.grid.2x2")
               .font(.system(size: 15, weight: .semibold))
               .foregroundStyle(MobileTheme.textSecondary)
           }

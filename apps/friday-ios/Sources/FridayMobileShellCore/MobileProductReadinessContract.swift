@@ -45,6 +45,11 @@ public enum MobileProductLoopTier: String, CaseIterable, Sendable, Equatable {
   }
 }
 
+public enum MobileProductCommandSurfaceLane: String, CaseIterable, Sendable, Equatable {
+  case product
+  case diagnostics
+}
+
 public enum MobileProductBlockerKind: String, CaseIterable, Sendable, Equatable {
   case needsLiveWrite
   case needsLiveRead
@@ -136,6 +141,17 @@ public enum MobileProductDestinationID: String, CaseIterable, Sendable, Equatabl
   case entrypoints
 
   public var id: String { rawValue }
+
+  public var commandSurfaceLane: MobileProductCommandSurfaceLane {
+    switch self {
+    case .home, .missions, .session, .contextPassport, .tokenLedger, .shareIntake,
+         .voice, .newSession, .needsMe, .memory, .platform, .providerAuth,
+         .activity, .workflows:
+      return .product
+    case .pairing, .onboarding, .settings, .petEditor, .proofViewer, .entrypoints:
+      return .diagnostics
+    }
+  }
 
   public var contract: MobileProductDestinationContract {
     switch self {
