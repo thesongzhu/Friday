@@ -55,9 +55,9 @@ export const FRIDAY_PROVIDER_CAPABILITIES: Record<FridayProviderKind, FridayProv
   }, { defaultCliBackendId: "codex-cli" }),
   anthropic: capability("anthropic", "anthropic-compatible", ANTHROPIC_APIS, {
     http: ANTHROPIC_AUTH,
-    cli: CLI_EXTERNAL_SESSION_AUTH,
+    cli: [],
     sdk: [],
-  }, { defaultCliBackendId: "claude-cli" }),
+  }),
   google: capability("google", "google-compatible", GOOGLE_APIS, {
     http: ["api-key"],
     cli: [],

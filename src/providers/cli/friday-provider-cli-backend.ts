@@ -30,12 +30,6 @@ const CLI_BACKEND_SPECS: Record<FridayProviderCliBackendId, FridayCliBackendSpec
     versionArgs: ["--version"],
     statusArgs: ["login", "status"],
   },
-  "claude-cli": {
-    id: "claude-cli",
-    binaryNames: ["claude"],
-    versionArgs: ["--version"],
-    statusArgs: ["auth", "status"],
-  },
 };
 
 function sanitizeEnv(extraAllowlist?: readonly string[]): NodeJS.ProcessEnv {
@@ -221,33 +215,6 @@ function resolveBinaryPath(cliConfig: FridayProviderCliConfig): string {
   return spec.binaryNames[0]!;
 }
 
-function parseClaudeStatus(stdout: string): Pick<FridayCliSessionStatus, "loggedIn" | "account" | "message"> {
-  try {
-    const parsed = JSON.parse(stdout) as {
-      loggedIn?: boolean;
-      email?: string;
-      orgId?: string;
-      orgName?: string | null;
-      subscriptionType?: string;
-      authMethod?: string;
-    };
-    return {
-      loggedIn: parsed.loggedIn === true,
-      account: {
-        email: parsed.email,
-        orgId: parsed.orgId,
-        orgName: parsed.orgName ?? undefined,
-        subscriptionType: parsed.subscriptionType,
-        authMethod: parsed.authMethod,
-      },
-    };
-  } catch {
-    return {
-      message: "Claude CLI auth status output could not be parsed",
-    };
-  }
-}
-
 // Exported for focused unit testing of the negative-auth-status parse boundary
 // (Phase 18B CLAW-003). The negative substrings overlap the positive ones
 // ("not logged in" contains "logged in"; negative authenticated forms contain
@@ -314,24 +281,6 @@ export async function probeFridayCliSession(input: {
       input.cliConfig.envAllowlist,
     );
 
-    if (spec.id === "claude-cli") {
-      const parsed = parseClaudeStatus(statusResult.stdout);
-      return {
-        backendId: spec.id,
-        binaryPath,
-        status: parsed.loggedIn === true
-          ? "healthy"
-          : parsed.loggedIn === false
-            ? "missing"
-            : "status_unknown",
-        version,
-        loggedIn: parsed.loggedIn,
-        checkedAt,
-        message: parsed.message,
-        account: parsed.account,
-      };
-    }
-
     if (spec.id === "codex-cli") {
       const parsed = parseCodexStatus(statusResult.stdout, statusResult.stderr);
       return {
@@ -392,27 +341,6 @@ export async function runFridayCliBackendTextCompletion(input: {
   const prompt = buildCliPrompt(input.systemPrompt, input.conversation);
 
   switch (input.cliConfig.backendId) {
-    case "claude-cli": {
-      const args = [
-        "-p",
-        "--output-format",
-        "text",
-        "--permission-mode",
-        "default",
-        "--tools",
-        "",
-        ...(input.model ? ["--model", input.model] : []),
-      ];
-      const result = await runSpawned(binaryPath, args, prompt, input.cliConfig.envAllowlist);
-      if (result.exitCode !== 0) {
-        throw new FridayDomainError(
-          "LLM_ERROR",
-          `Claude CLI backend failed: ${result.stderr.trim() || `exit ${String(result.exitCode)}`}`,
-          { httpStatus: 502 },
-        );
-      }
-      return result.stdout.trim();
-    }
     case "codex-cli": {
       const tempDir = await mkdtemp(join(tmpdir(), "friday-codex-cli-"));
       const outputPath = join(tempDir, "last-message.txt");

@@ -5,7 +5,7 @@
  * - `friday auth login anthropic` (legacy command; Anthropic OAuth is disabled)
  * - `friday auth setup-token anthropic`
  * - `friday auth paste-token anthropic`
- * - `friday auth attach-cli codex|claude`
+ * - `friday auth attach-cli codex`
  * - `friday auth status [--provider-id <id>]`
  */
 
@@ -55,13 +55,6 @@ const CLI_AUTH_TARGETS = {
     name: "Codex CLI",
     supportedModels: ["gpt-5.4"],
     defaultModel: "gpt-5.4",
-  },
-  claude: {
-    kind: "anthropic" as FridayProviderKind,
-    backendId: "claude-cli" as FridayProviderCliBackendId,
-    name: "Claude CLI",
-    supportedModels: DEFAULT_ANTHROPIC_MODELS,
-    defaultModel: DEFAULT_ANTHROPIC_MODELS[0]!,
   },
 } as const;
 
@@ -205,7 +198,7 @@ export async function runFridayCliAuthAttachCli(
   if (!spec) {
     throw new FridayDomainError(
       "VALIDATION_ERROR",
-      "attach-cli currently supports: codex, claude",
+      "attach-cli currently supports: codex",
       { httpStatus: 400 },
     );
   }

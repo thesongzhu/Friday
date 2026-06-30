@@ -519,7 +519,7 @@ export interface FridayTaskWorkflowSubmitVerifierVerdictInput {
  */
 
 /** Backend identifier the adapter speaks to. Matches provider CLI IDs. */
-export type FridayTaskWorkflowCliBackendId = "codex-cli" | "claude-cli";
+export type FridayTaskWorkflowCliBackendId = "codex-cli";
 
 /** Normalized terminal state of a single CLI invocation. */
 export type FridayTaskWorkflowCliHandoffStatus =

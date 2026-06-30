@@ -108,7 +108,6 @@ export type FridayRuntimeCapabilityId =
 
 export const FRIDAY_PROVIDER_CLI_BACKEND_IDS = [
   "codex-cli",
-  "claude-cli",
 ] as const;
 
 export type FridayProviderCliBackendId =

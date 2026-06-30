@@ -358,7 +358,7 @@ describe("createFridayAgentProviderTool", () => {
         reasons: [],
         activeProfileKey: "default",
         cliSession: {
-          backendId: "claude-cli",
+          backendId: "codex-cli",
           status: "healthy",
           checkedAt: "2026-03-31T00:00:00.000Z",
         },
@@ -372,7 +372,7 @@ describe("createFridayAgentProviderTool", () => {
     expect(result.isError).toBeUndefined();
     expect(providerService.doctorProvider).toHaveBeenCalledWith("anthropic-oauth-1");
     expect(parsed.report.backendKind).toBe("cli");
-    expect(parsed.report.cliSession.backendId).toBe("claude-cli");
+    expect(parsed.report.cliSession.backendId).toBe("codex-cli");
   });
 
   it("list returns ready=true with empty blockers for a fully ready provider", async () => {
@@ -672,7 +672,7 @@ describe("createFridayAgentProviderTool", () => {
         providerProfileId: "anthropic-oauth-1",
         providerKind: "anthropic",
         profileKey: "cli-session",
-        label: "Claude CLI",
+        label: "Codex CLI",
         authMode: "external-session",
         keySource: { kind: "none" },
         isActive: true,

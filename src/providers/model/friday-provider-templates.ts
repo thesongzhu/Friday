@@ -64,7 +64,7 @@ const TEMPLATE_META: Partial<Record<FridayProviderKind, FridayProviderTemplateMe
       examples: ["claude-sonnet-4-6", "claude-opus-4-8"],
     },
     reasoningHints: [
-      "Prefer HTTP for tool-capable runs; attach Claude CLI later only for text-only workflows.",
+      "Use Anthropic HTTP/API-key for Claude routes; CLI external-session is not supported.",
     ],
   },
   google: {

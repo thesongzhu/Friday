@@ -38,6 +38,7 @@ describe("friday-provider-capabilities", () => {
   });
 
   it("allows oauth only where implemented", () => {
+    expect(isFridayProviderAuthModeSupportedForKind("anthropic", "api-key")).toBe(true);
     expect(isFridayProviderAuthModeSupportedForKind("anthropic", "oauth")).toBe(true);
     expect(isFridayProviderAuthModeSupportedForKind("anthropic", "token")).toBe(true);
     expect(isFridayProviderAuthModeSupportedForKind("openai", "oauth")).toBe(false);
@@ -50,11 +51,11 @@ describe("friday-provider-capabilities", () => {
     expect(isFridayProviderAuthModeSupportedForKind("openai", "none")).toBe(false);
   });
 
-  it("treats codex and claude CLI as first-class backends", () => {
+  it("treats Codex CLI as the only first-class CLI backend", () => {
     expect(isFridayProviderBackendKindSupportedForKind("openai", "cli")).toBe(true);
-    expect(isFridayProviderBackendKindSupportedForKind("anthropic", "cli")).toBe(true);
+    expect(isFridayProviderBackendKindSupportedForKind("anthropic", "cli")).toBe(false);
     expect(isFridayProviderAuthModeSupportedForKindAndBackend("openai", "cli", "external-session")).toBe(true);
-    expect(isFridayProviderAuthModeSupportedForKindAndBackend("anthropic", "cli", "external-session")).toBe(true);
+    expect(isFridayProviderAuthModeSupportedForKindAndBackend("anthropic", "cli", "external-session")).toBe(false);
     expect(isFridayProviderAuthModeSupportedForKindAndBackend("openai", "cli", "oauth")).toBe(false);
   });
 
@@ -62,7 +63,7 @@ describe("friday-provider-capabilities", () => {
     expect(getFridayProviderAuthModesForBackend("anthropic", "http")).toEqual(
       expect.arrayContaining(["api-key", "oauth", "token"]),
     );
-    expect(getFridayProviderAuthModesForBackend("anthropic", "cli")).toEqual(["external-session"]);
+    expect(getFridayProviderAuthModesForBackend("anthropic", "cli")).toEqual([]);
     expect(getFridayProviderAuthModesForBackend("ollama", "http")).toEqual(
       expect.arrayContaining(["none"]),
     );

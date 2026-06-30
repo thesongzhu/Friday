@@ -110,7 +110,7 @@ const FAKE_HANDOFF: FridayTaskWorkflowCliHandoffRecord = {
   id: "handoff-1",
   workflowId: "w-1",
   laneId: "lane-1",
-  backendId: "claude-cli",
+  backendId: "codex-cli",
   status: "handoff_ready",
   summaryDraft: "cli draft summary",
   capabilityLabel: {
@@ -197,7 +197,7 @@ describe("Phase 13.5C CLI handoff record route behavior", () => {
       makeCtx({
         params: { workflowId: "w-1", laneId: "lane-1" },
         body: {
-          backendId: "claude-cli",
+          backendId: "codex-cli",
           systemPrompt: "system",
           conversation: "summarize",
         },
@@ -206,7 +206,7 @@ describe("Phase 13.5C CLI handoff record route behavior", () => {
     expect(received).toEqual({
       workflowId: "w-1",
       laneId: "lane-1",
-      backendId: "claude-cli",
+      backendId: "codex-cli",
     });
     expect(response.handoff.id).toBe(FAKE_HANDOFF.id);
     expect(response.handoff.capabilityLabel.nativeToolProof).toBe(false);
@@ -235,7 +235,7 @@ describe("Phase 13.5C CLI handoff record route behavior", () => {
       expect(error).toBeInstanceOf(FridayDomainError);
       expect((error as FridayDomainError).code).toBe("VALIDATION_ERROR");
       expect((error as FridayDomainError).message).toMatch(
-        /backendId must be one of codex-cli, claude-cli/i,
+        /backendId must be one of codex-cli/i,
       );
     }
   });
@@ -251,7 +251,7 @@ describe("Phase 13.5C CLI handoff record route behavior", () => {
         makeCtx({
           params: { workflowId: "w-1", laneId: "lane-1" },
           body: {
-            backendId: "claude-cli",
+            backendId: "codex-cli",
             conversation: "summarize",
           },
         }) as never,
@@ -274,7 +274,7 @@ describe("Phase 13.5C CLI handoff record route behavior", () => {
         makeCtx({
           params: { workflowId: "w-1", laneId: "lane-1" },
           body: {
-            backendId: "claude-cli",
+            backendId: "codex-cli",
             systemPrompt: "sys",
             conversation: "msg",
             timeoutMs: 0,
@@ -300,7 +300,7 @@ describe("Phase 13.5C CLI handoff record route behavior", () => {
         makeCtx({
           params: { workflowId: "w-1", laneId: "lane-1" },
           body: {
-            backendId: "claude-cli",
+            backendId: "codex-cli",
             systemPrompt: "sys",
             conversation: "msg",
           },

@@ -118,7 +118,6 @@ const VALID_LANE_ROLES: ReadonlySet<FridayTaskWorkflowLaneRole> = new Set([
 
 const VALID_CLI_BACKEND_IDS: ReadonlySet<FridayTaskWorkflowCliBackendId> = new Set([
   "codex-cli",
-  "claude-cli",
 ]);
 
 const VALID_INDEPENDENCE_CLAIMS: ReadonlySet<FridayTaskWorkflowLaneIndependence> = new Set([

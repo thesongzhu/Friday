@@ -603,7 +603,7 @@ describe("Phase 14.5A WP-001: task-workflow public mutating routes require bound
       operationId: "task.workflows.lanes.cli.handoff.record",
       params: { workflowId: "w-1", laneId: "lane-1" },
       body: {
-        backendId: "claude-cli",
+        backendId: "codex-cli",
         systemPrompt: "system",
         conversation: "summarize",
       },
@@ -756,7 +756,7 @@ describe("TS runtime retirement — task-workflow mutations fail-close by defaul
       operationId: "task.workflows.lanes.cli.handoff.record",
       params: { workflowId: "w-1", laneId: "lane-1" },
       body: {
-        backendId: "claude-cli",
+        backendId: "codex-cli",
         systemPrompt: "system",
         conversation: "summarize",
       },
