@@ -5,8 +5,7 @@ import SwiftUI
 /// top-left of Home.
 ///
 /// The launcher surfaces all selected mobile destinations. `isBuilt` only means the route is
-/// present and openable; `closureTier` is the product truth used to avoid counting a projection
-/// or readiness shell as an END-BAR closed loop.
+/// present and openable; deeper evidence and diagnostics stay behind the Advanced section.
 enum MobileDestination: String, CaseIterable, Identifiable {
   case home
   case missions
@@ -58,12 +57,36 @@ enum MobileDestination: String, CaseIterable, Identifiable {
 
   var productReadinessSummary: String { contract.productReadinessSummary }
 
+  var commandTileSummary: String {
+    if !isBuilt {
+      return "Planned surface"
+    }
+    switch contract.tier {
+    case .liveWriteRead:
+      return "Ready for live work"
+    case .liveReadProjection:
+      return "Live status view"
+    case .nativeDeviceLoop:
+      return "Device action"
+    case .providerWorkspace:
+      return "Provider workspace"
+    case .governedActionGated:
+      return "Approval guided"
+    case .readinessOnly:
+      return "Setup tool"
+    case .statusProjection:
+      return "Status view"
+    case .navigationShell:
+      return "Open surface"
+    }
+  }
+
   /// Route coverage only. This must not be used as a closed-loop product-completion signal.
   var isBuilt: Bool { contract.routeBuilt }
 
   /// The operator-selected mobile product keeps ordinary users in the Friday-first
-  /// command surface. Setup/readiness/proof routes stay available, but they must not
-  /// be the default path a user falls into from Home.
+  /// command surface. Internal setup and verification routes stay reachable, but they
+  /// must not be the default path a user falls into from Home.
   var commandSheetLane: MobileProductCommandSurfaceLane {
     MobileProductDestinationID(rawValue: rawValue)?.commandSurfaceLane ?? .diagnostics
   }
@@ -152,7 +175,7 @@ struct CommandSheet: View {
           Text("Advanced setup")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
-          Text("Pairing, readiness, proof, and entrypoint tools live here so the main Friday path stays product-first.")
+          Text("Connection, device, and developer tools live here so the main Friday path stays product-first.")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -188,7 +211,7 @@ struct CommandSheet: View {
         text: contract.tier.label,
         bg: contract.isEndBarReady ? MobileTheme.chipDoneBG : MobileTheme.chipNeutralBG,
         fg: contract.isEndBarReady ? MobileTheme.chipDoneFG : MobileTheme.chipNeutralFG)
-      Text(contract.productReadinessSummary)
+      Text(dest.commandTileSummary)
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
         .lineLimit(3)

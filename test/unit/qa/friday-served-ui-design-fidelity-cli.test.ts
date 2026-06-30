@@ -178,7 +178,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
         "iOS user path still contains generic StatusChip primitive",
         "iOS user path still contains raw Read Arms debug card in user source",
         "iOS Command Sheet still exposes proof/debug destinations in the user launcher",
-        "iOS Command Sheet still exposes readiness footer in the user launcher",
+        "iOS Command Sheet still exposes internal proof/readiness language in the user launcher",
         "served desktop shell does not render a right rail",
         "served desktop shell does not expose right-docked ProofInspector",
         "served desktop still exposes bottom ProofInspector timeline",
