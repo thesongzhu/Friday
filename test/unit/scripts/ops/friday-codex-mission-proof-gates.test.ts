@@ -22,6 +22,10 @@ const routedProofScript = resolve(
   repoRoot,
   "scripts/ops/friday-proof-of-life.sh",
 );
+const routedProofKeychainWrapper = resolve(
+  repoRoot,
+  "scripts/ops/friday-proof-of-life-keychain.sh",
+);
 const proofMacosWrapper = resolve(
   repoRoot,
   "scripts/ops/friday-codex-mission-proof-of-life-macos-prompt.sh",
@@ -922,6 +926,10 @@ describe("Codex mission proof gates", () => {
   it("single proof and D8 soak keep partial evidence out of strong success by default", () => {
     const proofSource = readFileSync(proofScript, "utf8");
     const routedProofSource = readFileSync(routedProofScript, "utf8");
+    const routedProofKeychainWrapperSource = readFileSync(
+      routedProofKeychainWrapper,
+      "utf8",
+    );
     const proofMacosWrapperSource = readFileSync(proofMacosWrapper, "utf8");
     const proofKeychainWrapperSource = readFileSync(
       proofKeychainWrapper,
@@ -1004,6 +1012,55 @@ describe("Codex mission proof gates", () => {
       expect(source).not.toContain("-H 'Authorization: Bearer");
       expect(source).not.toContain("Authorization: Bearer ${TOKEN}");
     }
+    expect(
+      spawnSync("bash", ["-n", routedProofKeychainWrapper], {
+        cwd: repoRoot,
+        encoding: "utf8",
+      }).status,
+    ).toBe(0);
+    expect(routedProofSource).toContain(
+      'readonly PASSPHRASE_STDIN="${FRIDAY_DEEPSEEK_PROOF_PASSPHRASE_STDIN:-0}"',
+    );
+    expect(routedProofSource).toContain(
+      'readonly PREFLIGHT_ONLY="${FRIDAY_DEEPSEEK_PROOF_PREFLIGHT_ONLY:-0}"',
+    );
+    expect(routedProofSource).toContain("DeepSeek route proof preflight OK.");
+    expect(
+      routedProofSource.indexOf('if [ "${PREFLIGHT_ONLY}" = "1" ]; then'),
+    ).toBeLessThan(
+      routedProofSource.indexOf('if [ "${PASSPHRASE_STDIN}" = "1" ]; then'),
+    );
+    expect(routedProofKeychainWrapperSource).toContain(
+      'readonly KEYCHAIN_SERVICE="${FRIDAY_DEEPSEEK_PROOF_KEYCHAIN_SERVICE:-${FRIDAY_CODEX_MISSION_PROOF_KEYCHAIN_SERVICE:-friday-proof-passphrase}}"',
+    );
+    expect(routedProofKeychainWrapperSource).toContain(
+      'readonly PASSPHRASE_FILE="${FRIDAY_DEEPSEEK_PROOF_PASSPHRASE_FILE:-${FRIDAY_CODEX_MISSION_PROOF_PASSPHRASE_FILE:-${HOME}/.friday/friday-proof-passphrase}}"',
+    );
+    expect(routedProofKeychainWrapperSource).toContain("passphrase_file_ok()");
+    expect(routedProofKeychainWrapperSource).toContain(
+      "read_provisioned_passphrase()",
+    );
+    expect(routedProofKeychainWrapperSource).toContain("stat -f '%Lp'");
+    expect(routedProofKeychainWrapperSource).toContain("stat -f '%u'");
+    expect(routedProofKeychainWrapperSource).toContain("400|600) ;;");
+    expect(routedProofKeychainWrapperSource).toContain(
+      "FRIDAY_DEEPSEEK_PROOF_PREFLIGHT_ONLY=1",
+    );
+    expect(
+      routedProofKeychainWrapperSource.indexOf(
+        "FRIDAY_DEEPSEEK_PROOF_PREFLIGHT_ONLY=1",
+      ),
+    ).toBeLessThan(
+      routedProofKeychainWrapperSource.indexOf(
+        'PASSPHRASE="$(read_provisioned_passphrase)"',
+      ),
+    );
+    expect(routedProofKeychainWrapperSource).toContain(
+      "trap 'unset PASSPHRASE' EXIT",
+    );
+    expect(routedProofKeychainWrapperSource).toContain(
+      'FRIDAY_DEEPSEEK_PROOF_PASSPHRASE_STDIN=1 "${PROOF_SCRIPT}"',
+    );
     expect(proofSource).toContain(
       'readonly EXPECTED_CODEX_CLI_VERSION="${FRIDAY_CODEX_MISSION_PROOF_CODEX_VERSION:-codex-cli 0.140.0}"',
     );
