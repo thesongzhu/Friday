@@ -31,7 +31,7 @@ export function AssistantRightRailSlot() {
         <NavLink
           to="/assistant"
           className="inline-flex items-center gap-1 text-xs"
-          style={{ color: "var(--amber-600)" }}
+          style={{ color: "var(--accent)" }}
         >
           {localize(locale, "全部", "View all")}
           <ChevronRight className="h-3.5 w-3.5" />
@@ -75,7 +75,7 @@ function ApprovalRow(props: {
         background: "var(--surface-2)",
       }}
     >
-      <props.Icon className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--amber-600)" }} />
+      <props.Icon className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--accent)" }} />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium" style={{ color: "var(--ink-900)" }}>
           {props.title}

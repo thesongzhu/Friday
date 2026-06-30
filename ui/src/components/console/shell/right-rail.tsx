@@ -120,6 +120,8 @@ export function RightRail() {
   return (
     <aside
       data-testid="app-shell-right-rail"
+      data-friday-ui="proof-inspector"
+      data-dock="right"
       aria-label="Friday rail"
       className="group/right-rail relative hidden shrink-0 overflow-y-auto border-l lg:block"
       style={{
@@ -129,6 +131,15 @@ export function RightRail() {
         transition: "width var(--motion-swift)",
       }}
     >
+      {!collapsed && !forceCollapsed ? (
+        <div
+          data-testid="desktop-proof-inspector"
+          className="sr-only"
+        >
+          Right-docked ProofInspector
+        </div>
+      ) : null}
+
       {!collapsed && !forceCollapsed ? (
         <button
           type="button"

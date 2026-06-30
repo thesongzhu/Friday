@@ -439,7 +439,6 @@ if [ -n "${timeline_capture}" ] && [ "${workbench_timeline_status}" != "snapshot
     "--desktop=${desktop_capture}"
     "--timeline=${timeline_capture}"
     "--out=${workbench_events}"
-    "--allow-partial-events"
   )
   if [ -n "${channel_capture}" ]; then
     workbench_events_args+=("--channel=${channel_capture}")

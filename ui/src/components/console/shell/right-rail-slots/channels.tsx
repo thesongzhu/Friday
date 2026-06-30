@@ -82,12 +82,12 @@ function buildBadge(
     return { label: localize(locale, "总线离线", "Bus offline"), color: "var(--rust-500)" };
   }
   if (status === "unavailable") {
-    return { label: localize(locale, "总线暂不可用", "Bus unavailable"), color: "var(--amber-600)" };
+    return { label: localize(locale, "总线暂不可用", "Bus unavailable"), color: "var(--accent)" };
   }
   if (status === "degraded") {
-    return { label: localize(locale, "部分降级", "Partially degraded"), color: "var(--amber-600)" };
+    return { label: localize(locale, "部分降级", "Partially degraded"), color: "var(--accent)" };
   }
-  return { label: localize(locale, "渠道健康", "Channels healthy"), color: "var(--jade-500)" };
+  return { label: localize(locale, "渠道健康", "Channels healthy"), color: "var(--ok)" };
 }
 
 function Row(props: { to: string; Icon: typeof Radio; title: string; hint: string }) {
@@ -95,13 +95,13 @@ function Row(props: { to: string; Icon: typeof Radio; title: string; hint: strin
     <li>
       <NavLink
         to={props.to}
-        className="group flex items-start gap-3 rounded-[var(--radius-md)] border px-3 py-3 transition-colors hover:bg-[color:var(--amber-100)]"
+        className="group flex items-start gap-3 rounded-[var(--radius-md)] border px-3 py-3 transition-colors hover:bg-[color:var(--accent-soft)]"
         style={{
           borderColor: "rgba(122, 106, 88, 0.18)",
           background: "var(--surface-2)",
         }}
       >
-        <props.Icon className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--amber-600)" }} />
+        <props.Icon className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--accent)" }} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium" style={{ color: "var(--ink-900)" }}>
             {props.title}

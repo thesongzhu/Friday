@@ -87,13 +87,13 @@ struct FridayChatScreen: View {
             .font(.caption.weight(.semibold))
             .foregroundStyle(MobileTheme.textPrimary)
           Spacer()
-          StatusChip(text: card.truthLabel, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+          FridayChip(text: card.truthLabel, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
         }
         Text(card.detail)
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
-        RefPill(label: "evidence", ref: short(card.evidenceRef))
+        FridayProofLine(label: "evidence", ref: short(card.evidenceRef))
         if card.id == "handoff" {
           handoffControls
         }
@@ -131,7 +131,7 @@ struct FridayChatScreen: View {
       Label("Create handoff", systemImage: "arrowshape.turn.up.right")
         .font(.caption.weight(.semibold))
     }
-    .buttonStyle(.bordered)
+    .buttonStyle(FridayButtonStyle(variant: .secondary))
     .disabled(viewModel.contextPassportTransferState?.isSent == true)
     .accessibilityIdentifier("friday.chat.handoff-card.share")
   }
@@ -144,7 +144,7 @@ struct FridayChatScreen: View {
         Image(systemName: "checkmark")
           .frame(width: 26, height: 26)
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(FridayButtonStyle(variant: .primary))
       .tint(MobileTheme.cyan)
       .disabled(viewModel.contextMemoryDecisionState?.isSent == true)
       .accessibilityLabel("Keep memory candidate")
@@ -156,7 +156,7 @@ struct FridayChatScreen: View {
         Image(systemName: "xmark")
           .frame(width: 26, height: 26)
       }
-      .buttonStyle(.bordered)
+      .buttonStyle(FridayButtonStyle(variant: .secondary))
       .disabled(viewModel.contextMemoryDecisionState?.isSent == true)
       .accessibilityLabel("Reject memory candidate")
       .accessibilityIdentifier("friday.chat.memory-card.reject")
@@ -166,7 +166,7 @@ struct FridayChatScreen: View {
   @ViewBuilder private func candidateDecisionStateView(_ state: HomeLearningDecisionState) -> some View {
     switch state {
     case .sent:
-      StatusChip(text: "sending", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+      FridayChip(text: "sending", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
     case .confirmed(let summary):
       Text(summary)
         .font(.caption2)
@@ -206,7 +206,7 @@ struct FridayChatScreen: View {
                 .foregroundStyle(MobileTheme.textPrimary)
                 .lineLimit(4)
               if item.receiptRefs.isEmpty, let runId = item.runId {
-                RefPill(label: "run_id", ref: short(runId))
+                FridayProofLine(label: "run_id", ref: short(runId))
               } else if !item.receiptRefs.isEmpty {
                 receiptRefs(item.receiptRefs, limit: 4)
               }
@@ -371,7 +371,7 @@ struct FridayChatScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: 10) {
         HStack {
-          StatusChip(text: r.status.uppercased(), bg: MobileTheme.chipDoneBG, fg: MobileTheme.chipDoneFG)
+          FridayChip(text: r.status.uppercased(), bg: MobileTheme.chipDoneBG, fg: MobileTheme.chipDoneFG)
           Spacer()
           Button("New") { viewModel.newTurn() }.font(.caption).foregroundStyle(MobileTheme.cyan)
         }
@@ -383,7 +383,7 @@ struct FridayChatScreen: View {
             } label: {
               Label("Speak", systemImage: "speaker.wave.2.fill")
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(FridayButtonStyle(variant: .secondary))
             .tint(MobileTheme.cyan)
             .accessibilityLabel("Speak Friday answer")
             .accessibilityIdentifier("friday.chat.voice-output")
@@ -393,7 +393,7 @@ struct FridayChatScreen: View {
             } label: {
               Image(systemName: "speaker.slash.fill")
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(FridayButtonStyle(variant: .secondary))
             .accessibilityLabel("Stop speaking Friday answer")
           }
           Text(answer)
@@ -402,7 +402,7 @@ struct FridayChatScreen: View {
             .fixedSize(horizontal: false, vertical: true)
             .textSelection(.enabled)
           if let runId = r.answerBodyRunId {
-            RefPill(label: "answer_body_run_id", ref: runId)
+            FridayProofLine(label: "answer_body_run_id", ref: runId)
           }
         } else {
           Text("Answer body is not available from the owner-gated readback yet.")
@@ -425,7 +425,7 @@ struct FridayChatScreen: View {
           Image(systemName: "hand.raised.fill").foregroundStyle(MobileTheme.coral)
           Text("Approval required").font(.headline).foregroundStyle(MobileTheme.textPrimary)
           Spacer()
-          StatusChip(text: card.truthLabel, bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+          FridayChip(text: card.truthLabel, bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
         }
         // SUMMARY (what paused) — a coarse verb + the owner-sealed summary.
         Text(card.actionVerb).font(.title3).bold().foregroundStyle(MobileTheme.textPrimary)
@@ -433,8 +433,8 @@ struct FridayChatScreen: View {
           Text(summary).font(.callout).foregroundStyle(MobileTheme.textPrimary)
         }
         // PROOF (the digest the operator signs over) — never a body.
-        RefPill(label: "action_digest", ref: short(card.actionDigest))
-        RefPill(label: "approval_id", ref: card.approvalId)
+        FridayProofLine(label: "action_digest", ref: short(card.actionDigest))
+        FridayProofLine(label: "approval_id", ref: card.approvalId)
         Text("Friday paused this mutating action. Approving asks the operator signer for a "
           + "signature; the phone relays it but never signs (INV-1).")
           .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
@@ -444,7 +444,7 @@ struct FridayChatScreen: View {
           } label: {
             Label("Approve", systemImage: "checkmark.seal").bold()
           }
-          .buttonStyle(.borderedProminent).tint(MobileTheme.cyan)
+          .buttonStyle(FridayButtonStyle(variant: .primary))
           .accessibilityLabel("Approve Friday action")
           .accessibilityIdentifier("friday.chat.approval.approve")
           Button(role: .destructive) {
@@ -452,7 +452,7 @@ struct FridayChatScreen: View {
           } label: {
             Label("Reject", systemImage: "xmark").foregroundStyle(MobileTheme.coral)
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(FridayButtonStyle(variant: .secondary))
           .accessibilityLabel("Reject Friday action")
           .accessibilityIdentifier("friday.chat.approval.reject")
         }
@@ -468,7 +468,7 @@ struct FridayChatScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: 8) {
         HStack {
-          StatusChip(
+          FridayChip(
             text: r.statusLabel,
             bg: r.accepted ? MobileTheme.chipDoneBG : MobileTheme.chipWarnBG,
             fg: r.accepted ? MobileTheme.chipDoneFG : MobileTheme.chipWarnFG)
@@ -511,10 +511,10 @@ struct FridayChatScreen: View {
     let visibleRefs = limit.map { Array(refs.prefix($0)) } ?? refs
     return VStack(alignment: .leading, spacing: 4) {
       ForEach(visibleRefs) { ref in
-        RefPill(label: ref.label, ref: short(ref.ref))
+        FridayProofLine(label: ref.label, ref: short(ref.ref))
       }
       if let limit, refs.count > limit {
-        RefPill(label: "more_refs", ref: "+\(refs.count - limit)")
+        FridayProofLine(label: "more_refs", ref: "+\(refs.count - limit)")
       }
     }
     .accessibilityIdentifier("friday.chat.receipt-refs")

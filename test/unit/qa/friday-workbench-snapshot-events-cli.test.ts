@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -262,7 +262,7 @@ describe("friday-workbench-snapshot-events CLI", () => {
     }
   });
 
-  it("can derive diagnostic timeline rows from a partial non-channel snapshot", () => {
+  it("fails closed in strict mode for a partial non-channel snapshot", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-workbench-events-diagnostic-timeline-"));
     try {
       const missionId = "mission_workbench_events_bridge";
@@ -309,7 +309,7 @@ describe("friday-workbench-snapshot-events CLI", () => {
       });
       writeFileSync(snapshotPath, JSON.stringify({ snapshot: partial }, null, 2));
 
-      const stdout = execFileSync(process.execPath, [
+      const result = spawnSync(process.execPath, [
         "scripts/ops/friday-workbench-snapshot-events.mjs",
         "--mission-id=mission_workbench_events_bridge",
         `--file=${snapshotPath}`,
@@ -323,20 +323,14 @@ describe("friday-workbench-snapshot-events CLI", () => {
         cwd: process.cwd(),
         encoding: "utf8",
       });
-      const result = JSON.parse(stdout) as { status?: string; preflightReady?: boolean; diagnosticTimelineReady?: boolean };
-      const rows = readFileSync(out, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-      const keys = rows.map((row) => `${row.surface}:${row.event}`);
+      const stdout = result.stdout.toString();
+      const parsed = JSON.parse(stdout) as { status?: string; preflightReady?: boolean; diagnosticTimelineReady?: boolean };
 
-      expect(result.status).toBe("ready");
-      expect(result.preflightReady).toBe(false);
-      expect(result.diagnosticTimelineReady).toBe(true);
-      expect(keys).toContain("desktop:mission_resolve_or_create_visible");
-      expect(keys).toContain("timeline:bounded_page_1_visible");
-      expect(keys).toContain("timeline:bounded_page_2_visible");
-      expect(keys).not.toContain("channel:same_mission_projection_visible");
-      expect(new Set(rows.map((row) => row.truth_label))).toEqual(new Set([
-        "derived_from_diagnostic_workbench_snapshot_not_final_proof",
-      ]));
+      expect(result.status).toBe(2);
+      expect(parsed.status).toBe("blocked");
+      expect(parsed.preflightReady).toBe(false);
+      expect(parsed.diagnosticTimelineReady).toBe(true);
+      expect(() => readFileSync(out, "utf8")).toThrow();
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

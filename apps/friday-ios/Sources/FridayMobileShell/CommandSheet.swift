@@ -68,13 +68,12 @@ struct CommandSheet: View {
   @Binding var isOpen: Bool
 
   private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
-  private let endBarSnapshot = MobileProductEndBarSnapshot()
   private let sections: [(String, [MobileDestination])] = [
     ("Command", [.home, .newSession, .voice, .shareIntake]),
     ("Work", [.missions, .needsMe, .activity, .workflows]),
     ("Providers", [.platform, .providerAuth, .session]),
-    ("Trust", [.contextPassport, .memory, .tokenLedger, .proofViewer]),
-    ("Setup", [.pairing, .onboarding, .settings, .petEditor, .entrypoints]),
+    ("Trust", [.contextPassport, .memory, .tokenLedger]),
+    ("Setup", [.pairing, .onboarding, .settings, .petEditor]),
   ]
 
   var body: some View {
@@ -103,7 +102,6 @@ struct CommandSheet: View {
               }
             }
           }
-          readinessFooter
         }
         .padding(16)
       }
@@ -129,13 +127,13 @@ struct CommandSheet: View {
           .foregroundStyle(dest.isBuilt ? MobileTheme.cyan : MobileTheme.textSecondary)
         Spacer()
         if dest == destination {
-          StatusChip(text: "open", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
+          FridayChip(text: "open", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
         }
       }
       Text(contract.title)
         .font(.headline)
         .foregroundStyle(dest.isBuilt ? MobileTheme.textPrimary : MobileTheme.textSecondary)
-      StatusChip(
+      FridayChip(
         text: contract.tier.label,
         bg: contract.isEndBarReady ? MobileTheme.chipDoneBG : MobileTheme.chipNeutralBG,
         fg: contract.isEndBarReady ? MobileTheme.chipDoneFG : MobileTheme.chipNeutralFG)
@@ -151,23 +149,5 @@ struct CommandSheet: View {
     .overlay(
       RoundedRectangle(cornerRadius: MobileTheme.cornerRadius, style: .continuous)
         .strokeBorder(MobileTheme.glassPanelBorder, lineWidth: 1))
-  }
-
-  private var readinessFooter: some View {
-    VStack(spacing: 6) {
-      StatusChip(
-        text: "\(endBarSnapshot.routeCoverageCount)/\(endBarSnapshot.totalCount) routes",
-        bg: MobileTheme.chipPendingBG,
-        fg: MobileTheme.chipPendingFG)
-      StatusChip(
-        text: "\(endBarSnapshot.endBarReadyCount)/\(endBarSnapshot.totalCount) END-BAR",
-        bg: endBarSnapshot.hasAnyEndBarClaim ? MobileTheme.chipDoneBG : MobileTheme.chipWarnBG,
-        fg: endBarSnapshot.hasAnyEndBarClaim ? MobileTheme.chipDoneFG : MobileTheme.chipWarnFG)
-    }
-    .frame(maxWidth: .infinity)
-    .padding(.top, 8)
-    .accessibilityIdentifier("friday.command-sheet.readiness-footer")
-    .accessibilityLabel(
-      "Route coverage is not END-BAR. Selected mobile surfaces: \(MobileDestination.allCases.map(\.title).joined(separator: ", ")).")
   }
 }

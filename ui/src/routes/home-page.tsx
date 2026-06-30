@@ -229,57 +229,20 @@ function runtimeChipParts(status: SystemHealthStatus, locale: "zh" | "en") {
   }
   if (status === "unavailable") {
     return {
-      color: "var(--amber-600)",
+      color: "var(--accent)",
       label: localize(locale, "能力暂不可用", "Unavailable"),
     };
   }
   if (status === "degraded") {
     return {
-      color: "var(--amber-600)",
+      color: "var(--accent)",
       label: localize(locale, "部分降级", "Degraded"),
     };
   }
   return {
-    color: "var(--jade-500)",
+    color: "var(--ok)",
     label: localize(locale, "运行正常", "Healthy"),
   };
-}
-
-function HeroPetStage(props: {
-  runtimeLabel: string;
-  providerLabel: string;
-  locale: "zh" | "en";
-}) {
-  const { runtimeLabel, providerLabel, locale } = props;
-
-  return (
-    <div
-      className="overflow-hidden rounded-[22px] border px-4 py-4"
-      style={{
-        borderColor: "rgba(26, 40, 35, 0.12)",
-        background: "linear-gradient(180deg, rgba(15, 125, 140, 0.10), rgba(255, 255, 255, 0.72))",
-      }}
-    >
-      <div className="flex min-h-[180px] items-center justify-center rounded-[18px]" style={{ background: "rgba(255, 255, 255, 0.42)" }}>
-        <img
-          alt={localize(locale, "Friday 状态宠物", "Friday status pet")}
-          src="/source/pet/g-sit.png"
-          className="h-[138px] w-[138px] object-contain"
-          draggable={false}
-        />
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-[var(--radius-md)] border px-3 py-2" style={{ borderColor: "rgba(122, 106, 88, 0.18)", background: "var(--surface-2)" }}>
-          <p className="font-semibold" style={{ color: "var(--ink-900)" }}>{localize(locale, "状态", "Status")}</p>
-          <p className="mt-0.5 truncate" style={{ color: "var(--ink-500)" }}>{runtimeLabel}</p>
-        </div>
-        <div className="rounded-[var(--radius-md)] border px-3 py-2" style={{ borderColor: "rgba(122, 106, 88, 0.18)", background: "var(--surface-2)" }}>
-          <p className="font-semibold" style={{ color: "var(--ink-900)" }}>{localize(locale, "Provider", "Provider")}</p>
-          <p className="mt-0.5 truncate" style={{ color: "var(--ink-500)" }}>{providerLabel}</p>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export function HomePage() {
@@ -606,12 +569,6 @@ export function HomePage() {
 
           <div className="w-full xl:justify-self-end">
             <div className="space-y-3 xl:ml-auto xl:max-w-[430px]">
-              <HeroPetStage
-                locale={locale}
-                runtimeLabel={runtimeChip.label}
-                providerLabel={providerTruthQuery.data?.current?.providerName ?? localize(locale, "读取中", "Reading")}
-              />
-
               <div className="flex flex-wrap items-center gap-2 xl:justify-end">
                 <span
                   className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 py-1.5 text-xs"
@@ -639,7 +596,7 @@ export function HomePage() {
                 <button
                   type="button"
                   onClick={() => requestCommandPaletteOpen()}
-                  className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 text-xs transition-colors hover:bg-[color:var(--amber-100)]"
+                  className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 text-xs transition-colors hover:bg-[color:var(--accent-soft)]"
                   style={{
                     borderColor: "rgba(122, 106, 88, 0.22)",
                     background: "var(--surface-2)",

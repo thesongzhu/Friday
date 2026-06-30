@@ -271,7 +271,7 @@ struct FridayHomeScreen: View {
           .tracking(2)
           .foregroundStyle(MobileTheme.textSecondary.opacity(0.72))
         Spacer()
-        StatusChip(text: "connect", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+        FridayChip(text: "connect", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
       }
       GlassPanel {
         Text(emptyText)
@@ -308,7 +308,7 @@ struct FridayHomeScreen: View {
               .lineLimit(2)
           }
           Spacer(minLength: 8)
-          StatusChip(
+          FridayChip(
             text: row.chip,
             bg: row.urgent ? MobileTheme.chipWarnBG : MobileTheme.chipNeutralBG,
             fg: row.urgent ? MobileTheme.chipWarnFG : MobileTheme.chipNeutralFG)
@@ -335,7 +335,7 @@ struct FridayHomeScreen: View {
           Image(systemName: "arrow.clockwise")
             .frame(width: 26, height: 26)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(FridayButtonStyle(variant: .secondary))
         .disabled(candidateDecisionControlsDisabled(state))
         .accessibilityLabel("Retry WorkItem")
         .accessibilityIdentifier("friday.home.retry-work-item")
@@ -347,7 +347,7 @@ struct FridayHomeScreen: View {
           Image(systemName: "stop.circle")
             .frame(width: 26, height: 26)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(FridayButtonStyle(variant: .secondary))
         .disabled(candidateDecisionControlsDisabled(state))
         .accessibilityLabel("Cancel WorkItem")
         .accessibilityIdentifier("friday.home.cancel-work-item")
@@ -387,7 +387,7 @@ struct FridayHomeScreen: View {
         HStack {
           Text("Status").font(.headline).foregroundStyle(MobileTheme.textPrimary)
           Spacer()
-          StatusChip(
+          FridayChip(
             text: viewModel.isOnline ? "online" : "refresh",
             bg: viewModel.isOnline ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
             fg: viewModel.isOnline ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -400,11 +400,11 @@ struct FridayHomeScreen: View {
             .font(.subheadline).foregroundStyle(MobileTheme.textPrimary)
           Spacer()
         }
-        RefPill(label: "mission_id", ref: projection.missionId)
+        FridayProofLine(label: "mission_id", ref: projection.missionId)
         if let summary = projection.routeDecisionSummary {
-          RefPill(label: "route", ref: summary)
+          FridayProofLine(label: "route", ref: summary)
         }
-        RefPill(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
+        FridayProofLine(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
       }
     }
     .accessibilityElement(children: .combine)
@@ -420,7 +420,7 @@ struct FridayHomeScreen: View {
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
           Spacer()
-          StatusChip(
+          FridayChip(
             text: projection.timelinePages.isEmpty ? "waiting" : "\(projection.timelinePages.count) pages",
             bg: projection.timelinePages.isEmpty ? MobileTheme.chipNeutralBG : MobileTheme.chipPendingBG,
             fg: projection.timelinePages.isEmpty ? MobileTheme.chipNeutralFG : MobileTheme.chipPendingFG)
@@ -444,7 +444,7 @@ struct FridayHomeScreen: View {
                   .foregroundStyle(MobileTheme.textPrimary)
                   .lineLimit(1)
                 Spacer(minLength: 8)
-                StatusChip(text: page.statusText, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+                FridayChip(text: page.statusText, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
               }
               if !page.summary.isEmpty {
                 Text(page.summary)
@@ -453,12 +453,12 @@ struct FridayHomeScreen: View {
                   .lineLimit(2)
               }
               HStack(spacing: 8) {
-                RefPill(label: "cursor", ref: page.cursor ?? "start")
+                FridayProofLine(label: "cursor", ref: page.cursor ?? "start")
                 if let next = page.nextCursor {
-                  RefPill(label: "next", ref: next)
+                  FridayProofLine(label: "next", ref: next)
                 }
                 if page.refsCount > 0 {
-                  RefPill(label: "refs", ref: "\(page.refsCount)")
+                  FridayProofLine(label: "refs", ref: "\(page.refsCount)")
                 }
               }
             }
@@ -484,7 +484,7 @@ struct FridayHomeScreen: View {
         HStack {
           Text("Device pairing").font(.headline).foregroundStyle(MobileTheme.textPrimary)
           Spacer()
-          StatusChip(
+          FridayChip(
             text: pairingReadinessLabel(readiness),
             bg: pairingReadinessBackground(readiness),
             fg: pairingReadinessForeground(readiness))
@@ -494,18 +494,18 @@ struct FridayHomeScreen: View {
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         if let publicKeyHex = readiness.publicKeyHex {
-          RefPill(label: "device_pubkey", ref: publicKeyHex)
+          FridayProofLine(label: "device_pubkey", ref: publicKeyHex)
         }
         pairingEntry
         pairingPreflightRows(viewModel.pairingPreflight)
         pairingAttemptRows(viewModel.pairingAttempt)
         hubProvisioningRows(t3Status)
         HStack(spacing: 8) {
-          StatusChip(
+          FridayChip(
             text: readiness.readLiveRequested ? "read link ready" : "read link pending",
             bg: readiness.readLiveRequested ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
             fg: readiness.readLiveRequested ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
-          StatusChip(
+          FridayChip(
             text: readiness.writeLiveRequested ? "write link ready" : "write link pending",
             bg: readiness.writeLiveRequested ? MobileTheme.chipWarnBG : MobileTheme.chipNeutralBG,
             fg: readiness.writeLiveRequested ? MobileTheme.chipWarnFG : MobileTheme.chipNeutralFG)
@@ -571,7 +571,7 @@ struct FridayHomeScreen: View {
         } label: {
           Label("Check", systemImage: "checkmark.shield")
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(FridayButtonStyle(variant: .secondary))
         .disabled(pairingQRPayload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         .accessibilityIdentifier("friday.home.pairing-preflight-button")
 
@@ -580,7 +580,7 @@ struct FridayHomeScreen: View {
         } label: {
           Label("Pair", systemImage: "link.badge.plus")
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(FridayButtonStyle(variant: .primary))
         .disabled(pairingQRPayload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
           || viewModel.pairingAttempt.mode == .sending)
         .accessibilityIdentifier("friday.home.pair-button")
@@ -591,7 +591,7 @@ struct FridayHomeScreen: View {
           } label: {
             Label("Retry", systemImage: "arrow.clockwise")
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(FridayButtonStyle(variant: .secondary))
           .disabled(pairingQRPayload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
           .accessibilityIdentifier("friday.home.pairing-retry-button")
         }
@@ -602,7 +602,7 @@ struct FridayHomeScreen: View {
           } label: {
             Label("Cancel", systemImage: "xmark")
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(FridayButtonStyle(variant: .secondary))
           .accessibilityIdentifier("friday.home.pairing-cancel-button")
         }
 
@@ -611,7 +611,7 @@ struct FridayHomeScreen: View {
         } label: {
           Label("Scan", systemImage: "qrcode.viewfinder")
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(FridayButtonStyle(variant: .secondary))
         .accessibilityIdentifier("friday.home.pairing-scan-button")
 
         Button {
@@ -620,7 +620,7 @@ struct FridayHomeScreen: View {
         } label: {
           Image(systemName: "xmark.circle")
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(FridayButtonStyle(variant: .secondary))
         .accessibilityLabel("Clear pairing QR")
         .accessibilityIdentifier("friday.home.pairing-clear-button")
       }
@@ -651,7 +651,7 @@ struct FridayHomeScreen: View {
       HStack {
         Text("QR preflight").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
         Spacer()
-        StatusChip(
+        FridayChip(
           text: preflight.mode.rawValue,
           bg: preflight.mode == .ready ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
           fg: preflight.mode == .ready ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -661,11 +661,11 @@ struct FridayHomeScreen: View {
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
       if let projection = preflight.projection {
-        RefPill(label: "hub_id", ref: projection.hubId)
-        RefPill(label: "pairing_id", ref: projection.pairingId)
+        FridayProofLine(label: "hub_id", ref: projection.hubId)
+        FridayProofLine(label: "pairing_id", ref: projection.pairingId)
       }
       if let publicKeyHex = preflight.devicePublicKeyHex {
-        RefPill(label: "pairing_device_pubkey", ref: publicKeyHex)
+        FridayProofLine(label: "pairing_device_pubkey", ref: publicKeyHex)
       }
       Text(preflight.nextStep)
         .font(.caption2)
@@ -681,7 +681,7 @@ struct FridayHomeScreen: View {
       HStack {
         Text("PairAck").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
         Spacer()
-        StatusChip(
+        FridayChip(
           text: attempt.mode.rawValue,
           bg: attempt.mode == .accepted ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
           fg: attempt.mode == .accepted ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
@@ -691,16 +691,16 @@ struct FridayHomeScreen: View {
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
       if let hubId = attempt.hubId {
-        RefPill(label: "ack_hub_id", ref: hubId)
+        FridayProofLine(label: "ack_hub_id", ref: hubId)
       }
       if let pairingId = attempt.pairingId {
-        RefPill(label: "ack_pairing_id", ref: pairingId)
+        FridayProofLine(label: "ack_pairing_id", ref: pairingId)
       }
       if let deviceId = attempt.deviceId {
-        RefPill(label: "ack_device_id", ref: deviceId)
+        FridayProofLine(label: "ack_device_id", ref: deviceId)
       }
       if let errorCode = attempt.errorCode {
-        RefPill(label: "ack_error", ref: errorCode)
+        FridayProofLine(label: "ack_error", ref: errorCode)
       }
     }
   }
@@ -712,12 +712,12 @@ struct FridayHomeScreen: View {
       Text("Hub provisioning").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
       Spacer()
       if let status {
-        StatusChip(
+        FridayChip(
           text: status.homeStatusLabel,
           bg: status.isFullyProvisioned ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
           fg: status.isFullyProvisioned ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
       } else {
-        StatusChip(text: "waiting", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+        FridayChip(text: "waiting", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
       }
     }
     if let status {
@@ -726,20 +726,20 @@ struct FridayHomeScreen: View {
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
       if !status.missingOperatorSteps.isEmpty {
-        RefPill(label: "missing", ref: status.missingOperatorSteps.joined(separator: ", "))
+        FridayProofLine(label: "missing", ref: status.missingOperatorSteps.joined(separator: ", "))
       }
       if let device = status.latestDevice {
-        RefPill(label: "latest_device", ref: device.deviceId)
-        RefPill(label: "device_fingerprint", ref: device.pubkeyFingerprint)
+        FridayProofLine(label: "latest_device", ref: device.deviceId)
+        FridayProofLine(label: "device_fingerprint", ref: device.pubkeyFingerprint)
       }
-      RefPill(label: "device_identity_count", ref: String(status.deviceIdentityCount))
-      RefPill(label: "trusted_device_count", ref: String(status.trustedDeviceCount))
-      RefPill(label: "active_trusted_device_count", ref: String(status.activeTrustedDeviceCount))
-      RefPill(label: "trust_grant_count", ref: String(status.trustGrantCount))
-      RefPill(label: "active_trust_grant_count", ref: String(status.activeTrustGrantCount))
-      RefPill(label: "context_passport_count", ref: String(status.contextPassportCount))
-      RefPill(label: "context_passport_item_count", ref: String(status.contextPassportItemCount))
-      RefPill(label: "truth", ref: status.truthLabel)
+      FridayProofLine(label: "device_identity_count", ref: String(status.deviceIdentityCount))
+      FridayProofLine(label: "trusted_device_count", ref: String(status.trustedDeviceCount))
+      FridayProofLine(label: "active_trusted_device_count", ref: String(status.activeTrustedDeviceCount))
+      FridayProofLine(label: "trust_grant_count", ref: String(status.trustGrantCount))
+      FridayProofLine(label: "active_trust_grant_count", ref: String(status.activeTrustGrantCount))
+      FridayProofLine(label: "context_passport_count", ref: String(status.contextPassportCount))
+      FridayProofLine(label: "context_passport_item_count", ref: String(status.contextPassportItemCount))
+      FridayProofLine(label: "truth", ref: status.truthLabel)
     } else {
         Text("Connect to the live Hub to see PairAck, trust grant, and context passport status.")
         .font(.caption2)
@@ -780,7 +780,7 @@ struct FridayHomeScreen: View {
         HStack {
           Text("Work items").font(.headline).foregroundStyle(MobileTheme.textPrimary)
           Spacer()
-          StatusChip(
+          FridayChip(
             text: "\(projection.workItemIds.count) ref\(projection.workItemIds.count == 1 ? "" : "s")",
             bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
         }
@@ -791,7 +791,7 @@ struct FridayHomeScreen: View {
           Text("refs only — open the Mission Workbench for detail")
             .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
           ForEach(projection.workItemIds, id: \.self) { id in
-            RefPill(label: "workItemId", ref: id)
+            FridayProofLine(label: "workItemId", ref: id)
           }
         }
       }
@@ -816,7 +816,7 @@ struct StatusBanner: View {
       VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 6) {
           ForEach(labels, id: \.self) { label in
-            StatusChip(text: displayLabel(for: label), bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+            FridayChip(text: displayLabel(for: label), bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
           }
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -891,15 +891,15 @@ struct UnavailableView: View {
               .fixedSize(horizontal: false, vertical: true)
           }
           Spacer()
-          StatusChip(text: "connect", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
+          FridayChip(text: "connect", bg: MobileTheme.chipWarnBG, fg: MobileTheme.chipWarnFG)
         }
         Text(userFacingReason)
           .font(.footnote)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         HStack(spacing: 8) {
-          StatusChip(text: "live only", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
-          StatusChip(text: "safe view", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+          FridayChip(text: "live only", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+          FridayChip(text: "safe view", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
         }
       }
     }

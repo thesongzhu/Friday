@@ -49,13 +49,13 @@ export function HomeRightRailSlot() {
           <li key={item.to}>
             <NavLink
               to={item.to}
-              className="group flex items-start gap-3 rounded-[var(--radius-md)] border px-3 py-3 transition-colors hover:bg-[color:var(--amber-100)]"
+              className="group flex items-start gap-3 rounded-[var(--radius-md)] border px-3 py-3 transition-colors hover:bg-[color:var(--accent-soft)]"
               style={{
                 borderColor: "rgba(122, 106, 88, 0.18)",
                 background: "var(--surface-2)",
               }}
             >
-              <item.icon className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--amber-600)" }} />
+              <item.icon className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--accent)" }} />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium" style={{ color: "var(--ink-900)" }}>
                   {item.label}

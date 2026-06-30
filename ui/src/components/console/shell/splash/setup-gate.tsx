@@ -9,12 +9,12 @@ import { SplashShell, type SplashShellProps } from "./shell";
 export function SetupGateSplash(props: Omit<SplashShellProps, "visual">) {
   return (
     <SplashShell
-      accentColor="var(--amber-600)"
+      accentColor="var(--accent)"
       visual={
         <span
           aria-hidden="true"
           className="inline-flex h-10 w-10 items-center justify-center rounded-full"
-          style={{ background: "var(--amber-100)", color: "var(--amber-600)" }}
+          style={{ background: "var(--accent-soft)", color: "var(--accent)" }}
         >
           <Wrench className="h-5 w-5" />
         </span>

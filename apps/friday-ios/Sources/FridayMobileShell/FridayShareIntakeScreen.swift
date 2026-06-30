@@ -41,7 +41,7 @@ struct FridayShareIntakeScreen: View {
               Label("Send to Friday", systemImage: "paperplane.fill")
                 .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(FridayButtonStyle(variant: .primary))
             .tint(MobileTheme.cyan)
             .disabled(!canSubmit)
             .accessibilityIdentifier("friday.share.submit")
@@ -81,12 +81,12 @@ struct FridayShareIntakeScreen: View {
           Label("Ready", systemImage: "checkmark.seal.fill")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
-          RefPill(label: "mission_id", ref: receipt.missionId)
+          FridayProofLine(label: "mission_id", ref: receipt.missionId)
           if let workItemId = receipt.workItemId {
-            RefPill(label: "work_item_id", ref: workItemId)
+            FridayProofLine(label: "work_item_id", ref: workItemId)
           }
-          RefPill(label: "surface", ref: receipt.surfaceThreadId)
-          StatusChip(
+          FridayProofLine(label: "surface", ref: receipt.surfaceThreadId)
+          FridayChip(
             text: receipt.createdOrReady ? "created_or_ready" : receipt.status,
             bg: MobileTheme.chipDoneBG,
             fg: MobileTheme.chipDoneFG)
@@ -103,8 +103,8 @@ struct FridayShareIntakeScreen: View {
                 .font(.caption2)
                 .foregroundStyle(MobileTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-              RefPill(label: "handoff", ref: receipt.chatLaunchContext.evidenceRef)
-              RefPill(label: "action", ref: "mobile/share/open-chat-loop")
+              FridayProofLine(label: "handoff", ref: receipt.chatLaunchContext.evidenceRef)
+              FridayProofLine(label: "action", ref: "mobile/share/open-chat-loop")
             }
           }
           Button {
@@ -113,7 +113,7 @@ struct FridayShareIntakeScreen: View {
             Label("Continue in Friday Chat", systemImage: "bubble.left.and.bubble.right")
               .frame(maxWidth: .infinity)
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(FridayButtonStyle(variant: .primary))
           .tint(MobileTheme.cyan)
           .accessibilityIdentifier("friday.share.open-chat-loop")
           Button("New share") { viewModel.reset() }

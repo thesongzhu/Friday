@@ -59,7 +59,7 @@ struct FridayProviderAuthScreen: View {
           Label("Check Provider Auth", systemImage: "stethoscope")
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(FridayButtonStyle(variant: .primary))
         .tint(MobileTheme.cyan)
         .disabled(viewModel.detailState.isLoading)
         .accessibilityIdentifier("friday.provider-auth.check")
@@ -113,7 +113,7 @@ struct FridayProviderAuthScreen: View {
         .font(.headline)
         .foregroundStyle(MobileTheme.textPrimary)
       Spacer()
-      StatusChip(
+      FridayChip(
         text: chip,
         bg: healthy ? MobileTheme.chipDoneBG : MobileTheme.chipWarnBG,
         fg: healthy ? MobileTheme.chipDoneFG : MobileTheme.chipWarnFG)
@@ -165,7 +165,7 @@ struct FridayProviderAuthScreen: View {
             .lineLimit(1)
         }
         Spacer()
-        StatusChip(
+        FridayChip(
           text: item.done ? "done" : (item.needsAttention ? "needs action" : "visible"),
           bg: item.done ? MobileTheme.chipDoneBG : (item.needsAttention ? MobileTheme.chipWarnBG : MobileTheme.chipNeutralBG),
           fg: item.done ? MobileTheme.chipDoneFG : (item.needsAttention ? MobileTheme.chipWarnFG : MobileTheme.chipNeutralFG))
@@ -177,15 +177,15 @@ struct FridayProviderAuthScreen: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       if let proofRef = item.proofRef, !proofRef.isEmpty {
-        RefPill(label: "work_item_proof", ref: proofRef)
+        FridayProofLine(label: "work_item_proof", ref: proofRef)
       }
       if item.canRetry || item.canCancel {
         HStack(spacing: 8) {
           if item.canRetry {
-            StatusChip(text: "retry exposed on Home", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
+            FridayChip(text: "retry exposed on Home", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
           }
           if item.canCancel {
-            StatusChip(text: "cancel exposed on Home", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
+            FridayChip(text: "cancel exposed on Home", bg: MobileTheme.chipPendingBG, fg: MobileTheme.chipPendingFG)
           }
         }
       }
@@ -243,7 +243,7 @@ struct FridayProviderAuthScreen: View {
         } label: {
           Label("Open Ledger", systemImage: "chart.bar.doc.horizontal")
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(FridayButtonStyle(variant: .secondary))
         .disabled(viewModel.detailState.isLoading)
         .accessibilityIdentifier("friday.provider-workspace.open-ledger")
       }
@@ -293,19 +293,19 @@ struct FridayProviderAuthScreen: View {
           .accessibilityIdentifier("friday.provider-workspace.session-link")
         }
       }
-      .buttonStyle(.bordered)
+      .buttonStyle(FridayButtonStyle(variant: .secondary))
     }
   }
 
   private func providerRefs(_ projection: HomeProjection) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       if let route = projection.routeSelected {
-        RefPill(label: "selected_route", ref: route)
+        FridayProofLine(label: "selected_route", ref: route)
       }
       ForEach(projection.providerReceiptRefs.prefix(3), id: \.self) { ref in
-        RefPill(label: "provider_receipt", ref: ref)
+        FridayProofLine(label: "provider_receipt", ref: ref)
       }
-      RefPill(label: "mission_id", ref: projection.missionId)
+      FridayProofLine(label: "mission_id", ref: projection.missionId)
     }
   }
 
@@ -332,7 +332,7 @@ struct FridayProviderAuthScreen: View {
         .font(.caption)
         .foregroundStyle(MobileTheme.textPrimary)
       Spacer()
-      StatusChip(
+      FridayChip(
         text: state,
         bg: healthy ? MobileTheme.chipDoneBG : MobileTheme.chipNeutralBG,
         fg: healthy ? MobileTheme.chipDoneFG : MobileTheme.chipNeutralFG)
@@ -361,7 +361,7 @@ struct FridayProviderAuthScreen: View {
               .font(.headline)
               .foregroundStyle(MobileTheme.textPrimary)
             Spacer()
-            StatusChip(
+            FridayChip(
               text: detail.providerReadiness == nil ? "readback" : "provider doctor",
               bg: MobileTheme.chipPendingBG,
               fg: MobileTheme.chipPendingFG)
@@ -370,7 +370,7 @@ struct FridayProviderAuthScreen: View {
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
             .fixedSize(horizontal: false, vertical: true)
-          RefPill(label: "generated", ref: generatedText(detail.generatedAtMs))
+          FridayProofLine(label: "generated", ref: generatedText(detail.generatedAtMs))
           if let providerReadiness = detail.providerReadiness {
             ProviderReadinessPanel(detail: providerReadiness)
           } else {
@@ -431,7 +431,7 @@ struct FridayProviderAuthScreen: View {
           .font(.caption.weight(.semibold))
           .foregroundStyle(MobileTheme.textPrimary)
         ForEach(refs, id: \.self) { ref in
-          RefPill(label: "proof", ref: ref)
+          FridayProofLine(label: "proof", ref: ref)
         }
       }
     }

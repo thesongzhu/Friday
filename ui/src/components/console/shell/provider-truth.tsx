@@ -32,9 +32,9 @@ function statusDot(status: ProviderTruthStatus): string {
     return "var(--rust-500)";
   }
   if (status === "degraded" || status === "unavailable") {
-    return "var(--amber-600)";
+    return "var(--accent)";
   }
-  return "var(--jade-500)";
+  return "var(--ok)";
 }
 
 function backendLabel(backendKind: string | undefined, locale: AppLocale): string {
@@ -159,8 +159,8 @@ export function ProviderTruthCompact(props: {
         <span
           className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
           style={{
-            background: "var(--amber-100)",
-            color: "var(--amber-600)",
+            background: "var(--accent-soft)",
+            color: "var(--accent)",
           }}
         >
           {localize(locale, `${truth.alertCount} 告警`, `${truth.alertCount} alerts`)}
@@ -239,11 +239,11 @@ export function ProviderTruthCard(props: {
           </p>
           <div className="mt-2 flex items-center gap-2">
             {currentProviderStatus === "healthy" ? (
-              <ShieldCheck className="h-4 w-4 shrink-0" style={{ color: "var(--jade-500)" }} />
+              <ShieldCheck className="h-4 w-4 shrink-0" style={{ color: "var(--ok)" }} />
             ) : (
               <ShieldAlert
                 className="h-4 w-4 shrink-0"
-                style={{ color: currentProviderStatus === "offline" ? "var(--rust-500)" : "var(--amber-600)" }}
+                style={{ color: currentProviderStatus === "offline" ? "var(--rust-500)" : "var(--accent)" }}
               />
             )}
             <p className="text-sm font-medium text-[color:var(--color-text-primary)]">

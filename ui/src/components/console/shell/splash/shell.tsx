@@ -32,14 +32,14 @@ export interface SplashShellProps {
 
 const PILL_STYLE: Record<NonNullable<SplashPill["tone"]>, { background: string; color: string }> = {
   neutral: { background: "var(--surface-2)", color: "var(--ink-700)" },
-  amber: { background: "var(--amber-100)", color: "var(--amber-600)" },
-  jade: { background: "rgba(79, 122, 92, 0.14)", color: "var(--jade-500)" },
+  amber: { background: "var(--accent-soft)", color: "var(--accent)" },
+  jade: { background: "rgba(79, 122, 92, 0.14)", color: "var(--ok)" },
   rust: { background: "rgba(176, 80, 58, 0.14)", color: "var(--rust-500)" },
 };
 
 const STEP_DOT: Record<NonNullable<SplashStep["status"]>, string> = {
-  done: "var(--jade-500)",
-  active: "var(--amber-500)",
+  done: "var(--ok)",
+  active: "var(--accent)",
   todo: "var(--ink-300)",
 };
 
@@ -57,7 +57,7 @@ export function SplashShell(props: SplashShellProps) {
         {eyebrow ? (
           <p
             className="text-[11px] font-semibold uppercase tracking-[0.18em]"
-            style={{ color: accentColor ?? "var(--amber-600)" }}
+            style={{ color: accentColor ?? "var(--accent)" }}
           >
             {eyebrow}
           </p>
@@ -115,7 +115,7 @@ export function SplashShell(props: SplashShellProps) {
             {actions.map((action) => {
               const isPrimary = action.tone !== "secondary";
               const style = isPrimary
-                ? { background: accentColor ?? "var(--amber-600)", color: "var(--surface-2)" }
+                ? { background: accentColor ?? "var(--accent)", color: "var(--surface-2)" }
                 : {
                     background: "transparent",
                     color: "var(--ink-700)",

@@ -147,7 +147,7 @@ const requirements = [
       mobileProductContract,
     ],
     productContractPath: mobileProductContract,
-    requiredStrings: ["Command Sheet", "friday.command-sheet.readiness-footer", "MobileProductDestinationID.allCases"],
+    requiredStrings: ["Command Sheet", "friday.command-sheet.destination", "MobileProductDestinationID.allCases"],
   },
   {
     id: "mobile-provider-workspace",

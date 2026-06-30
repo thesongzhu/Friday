@@ -18,18 +18,18 @@ function liveIndicatorParts(status: SystemHealthStatus, locale: AppLocale) {
   }
   if (status === "unavailable") {
     return {
-      color: "var(--amber-600)",
+      color: "var(--accent)",
       label: localize(locale, "能力暂不可用", "Unavailable"),
     };
   }
   if (status === "degraded") {
     return {
-      color: "var(--amber-600)",
+      color: "var(--accent)",
       label: localize(locale, "部分降级", "Degraded"),
     };
   }
   return {
-    color: "var(--jade-500)",
+    color: "var(--ok)",
     label: localize(locale, "Friday 运行中", "Friday online"),
   };
 }
@@ -76,7 +76,7 @@ export function TopBar(props: {
           type="button"
           onClick={onOpenPalette}
           aria-label={localize(locale, "打开命令面板", "Open command palette")}
-          className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 text-xs transition-colors hover:bg-[color:var(--amber-100)]"
+          className="inline-flex min-h-[36px] items-center gap-2 rounded-[var(--radius-md)] border px-3 text-xs transition-colors hover:bg-[color:var(--accent-soft)]"
           style={{
             borderColor: "rgba(122, 106, 88, 0.22)",
             background: "var(--surface-2)",
