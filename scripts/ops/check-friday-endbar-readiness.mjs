@@ -146,9 +146,6 @@ function isPassLike(value) {
     "complete",
     "complete_inputs_observed",
     "uiux_product_closure_evidence_ready",
-    "selected_visual_proof_ready",
-    "product_runtime_actions_traceable",
-    "runtime_actions_covered",
   ].includes(status);
 }
 
@@ -168,16 +165,9 @@ function expectedStatusForGroup(groupId, report, reportPath = "") {
       : { status: "blocked", blocker: statusText(report) || "provider entitlement report not passed or not group-level" };
   }
   if (groupId === "selected_uiux_conformance") {
-    const accepted = [
-      "uiux_product_closure_evidence_ready",
-      "selected_visual_proof_ready",
-      "product_runtime_actions_traceable",
-      "runtime_actions_covered",
-      "passed",
-    ];
-    return accepted.includes(statusText(report))
+    return statusText(report) === "uiux_product_closure_evidence_ready"
       ? { status: "satisfied" }
-      : { status: "blocked", blocker: statusText(report) || "selected UI/UX report not complete" };
+      : { status: "blocked", blocker: statusText(report) || "selected UI/UX product closure report not complete" };
   }
   if (groupId === "mechanism_multiangle_stress") {
     const haystack = haystackFor(report, reportPath);
