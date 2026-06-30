@@ -622,6 +622,12 @@ derive_workbench_events_if_possible() {
     args+=("--defer-channel-proof")
   fi
   if node "${args[@]}" >"$stdout_out"; then
+    local bridge_status
+    bridge_status="$(jq -r '.status // "unknown"' "$stdout_out" 2>/dev/null || printf 'unknown')"
+    if [ "$bridge_status" != "ready" ]; then
+      notes+=("workbench_snapshot_events_bridge:${bridge_status}:${stdout_out}")
+      return 0
+    fi
     if [ -s "$derived_out" ] && [ -n "$existing_events" ]; then
       awk '!seen[$0]++' "$existing_events" "$derived_out" >"$merged_out"
       SAME_RUN_EVENTS="$merged_out"
@@ -636,6 +642,12 @@ derive_workbench_events_if_possible() {
     export SAME_RUN_EVENTS
   else
     local rc=$?
+    local bridge_status
+    bridge_status="$(jq -r '.status // "unknown"' "$stdout_out" 2>/dev/null || printf 'unknown')"
+    if [ "$bridge_status" != "unknown" ]; then
+      notes+=("workbench_snapshot_events_bridge:${bridge_status}:${stdout_out}")
+      return 0
+    fi
     blockers+=("workbench_snapshot_events_bridge:exit_${rc}")
   fi
 }
