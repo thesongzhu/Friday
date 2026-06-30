@@ -109,7 +109,7 @@ private func writeMobileApprovalRejectProofIfRequested(
       [
         "surface": "mobile",
         "screen": "approval",
-        "action_id": "act",
+        "action_id": "mobile/approval/reject",
         "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
         "status": "pass",
         "evidence_ref": "proof://mobile/approval-reject/\(result.runId)",
@@ -246,7 +246,7 @@ private func appendMobileFridayChatRejectEvidenceIfRequested(
   actions.append([
     "surface": "mobile",
     "screen": "fridayChat",
-    "action_id": "act",
+    "action_id": "mobile/approval/reject",
     "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
     "status": "pass",
     "evidence_ref": "proof://mobile/fridaychat-approval-reject/\(result.runId)",

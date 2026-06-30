@@ -490,7 +490,7 @@ struct RootView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Refresh Hub status")
-            .accessibilityIdentifier("friday.mobile.toolbar.hub-status")
+            .accessibilityIdentifier("friday.mobile.toolbar.refresh")
             .disabled(homeVM.state.isLoading)
 
             // Top-BAR 💬: the Friday Chat entry (locked: the ONLY chat entry — no card).

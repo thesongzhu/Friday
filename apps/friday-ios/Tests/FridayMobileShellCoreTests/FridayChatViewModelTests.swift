@@ -721,7 +721,7 @@ final class FridayChatViewModelTests: XCTestCase {
         [
           "surface": "mobile",
           "screen": "fridayChat",
-          "action_id": "check",
+          "action_id": "mobile/approval/check",
           "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
           "status": "pass",
           "evidence_ref": "swift://mobile/fridayChat/approve/\(approveReceipt.runId)",
@@ -731,7 +731,7 @@ final class FridayChatViewModelTests: XCTestCase {
         [
           "surface": "mobile",
           "screen": "fridayChat",
-          "action_id": "act",
+          "action_id": "mobile/approval/reject",
           "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
           "status": "pass",
           "evidence_ref": "swift://mobile/fridayChat/reject/\(rejectReceipt.runId)",

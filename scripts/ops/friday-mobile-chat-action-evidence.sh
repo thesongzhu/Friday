@@ -64,8 +64,8 @@ const actions = Array.isArray(parsed.actions) ? parsed.actions : [];
 for (const expected of [
   ["mobile", "fridayChat", "chat:typing", "ask_friday_chat"],
   ["mobile", "fridayChat", "chat:approveCard", "ask_friday_chat"],
-  ["mobile", "fridayChat", "check", "security_approval_bound_principal_gate_cat10_netnew"],
-  ["mobile", "fridayChat", "act", "security_approval_bound_principal_gate_cat10_netnew"],
+  ["mobile", "fridayChat", "mobile/approval/check", "security_approval_bound_principal_gate_cat10_netnew"],
+  ["mobile", "fridayChat", "mobile/approval/reject", "security_approval_bound_principal_gate_cat10_netnew"],
   ["mobile", "fridayChat", "chat:handoffCard", "ask_friday_chat"],
   ["mobile", "fridayChat", "chat:memoryCard", "ask_friday_chat"],
   ["mobile", "fridayChat", "share", "context_passport_transfer_checklist"],
