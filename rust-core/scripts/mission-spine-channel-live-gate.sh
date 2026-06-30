@@ -28,6 +28,8 @@ EOF
 esac
 
 generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+git_head="$(git rev-parse HEAD 2>/dev/null || printf 'unknown')"
+git_head_short="${git_head:0:12}"
 channel_live_proof_out="${MISSION_SPINE_CHANNEL_LIVE_PROOF_OUT:-/tmp/friday-mission-spine-channel-live-proof.json}"
 
 export TELEGRAM_LISTEN_SECONDS="${TELEGRAM_LISTEN_SECONDS:-300}"
@@ -78,12 +80,24 @@ if jq -e '
   jq \
     --arg generated_at "$generated_at" \
     --arg worktree "$root" \
+    --arg git_head "$git_head" \
+    --arg git_head_short "$git_head_short" \
+    --arg github_sha "${GITHUB_SHA:-}" \
+    --arg github_run_id "${GITHUB_RUN_ID:-}" \
+    --arg github_ref_name "${GITHUB_REF_NAME:-}" \
     --arg raw_artifact "$TELEGRAM_PROOF_OUT" \
     --arg mode "$mode" \
     '{
     proof: "mission_spine_channel_live_proof",
     generated_at_utc: $generated_at,
     worktree: $worktree,
+    head: $git_head,
+    head_short: $git_head_short,
+    github: {
+      sha: (if ($github_sha | length) > 0 then $github_sha else null end),
+      run_id: (if ($github_run_id | length) > 0 then $github_run_id else null end),
+      ref_name: (if ($github_ref_name | length) > 0 then $github_ref_name else null end)
+    },
     status: "passed",
     capture_mode: $mode,
     scope: "real Telegram/channel inbound proof through Rust channel auth and redaction pipeline; not real UI/device consumption proof",
@@ -128,12 +142,24 @@ if jq -e '
   jq \
     --arg generated_at "$generated_at" \
     --arg worktree "$root" \
+    --arg git_head "$git_head" \
+    --arg git_head_short "$git_head_short" \
+    --arg github_sha "${GITHUB_SHA:-}" \
+    --arg github_run_id "${GITHUB_RUN_ID:-}" \
+    --arg github_ref_name "${GITHUB_REF_NAME:-}" \
     --arg raw_artifact "$TELEGRAM_PROOF_OUT" \
     --arg mode "$mode" \
     '{
       proof: "mission_spine_channel_live_proof",
       generated_at_utc: $generated_at,
       worktree: $worktree,
+      head: $git_head,
+      head_short: $git_head_short,
+      github: {
+        sha: (if ($github_sha | length) > 0 then $github_sha else null end),
+        run_id: (if ($github_run_id | length) > 0 then $github_run_id else null end),
+        ref_name: (if ($github_ref_name | length) > 0 then $github_ref_name else null end)
+      },
       status: "failed_timeout",
       capture_mode: $mode,
       scope: "diagnostic only: Telegram bot identity was verified but no trusted allowlisted text message arrived during the live proof window",

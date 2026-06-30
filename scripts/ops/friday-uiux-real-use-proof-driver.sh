@@ -22,6 +22,7 @@ usage:
     [--workbench-db /abs/rust-hub.sqlite]
     [--harvest-dir /abs/artifact-dir ...]
     [--same-run-events /abs/events.jsonl ...]
+    [--negative-control-events /abs/negative-events.jsonl ...]
     [--selected-visual-evidence-dir /abs/served-or-visual-evidence ...]
     [--runtime-evidence-dir /abs/evidence-dir ...]
     [--extra-action-runtime-evidence /abs/action-runtime-evidence.json ...]
@@ -69,6 +70,7 @@ skip_action_bundle=0
 accessibility_captures=()
 harvest_dirs=()
 same_run_events=()
+negative_control_events=()
 runtime_evidence_dirs=()
 selected_visual_evidence_dirs=()
 extra_action_runtime_evidence=()
@@ -231,6 +233,15 @@ while [ "$#" -gt 0 ]; do
       same_run_events+=("${1#--same-run-events=}")
       shift
       ;;
+    --negative-control-events)
+      [ "$#" -ge 2 ] || die "--negative-control-events requires a value"
+      negative_control_events+=("$2")
+      shift 2
+      ;;
+    --negative-control-events=*)
+      negative_control_events+=("${1#--negative-control-events=}")
+      shift
+      ;;
     --runtime-evidence-dir)
       [ "$#" -ge 2 ] || die "--runtime-evidence-dir requires a value"
       runtime_evidence_dirs+=("$2")
@@ -326,7 +337,7 @@ require_file_if_set() {
 }
 
 set +u
-for path in "${accessibility_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
+for path in "${accessibility_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${negative_control_events[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
   require_abs_if_set "input path" "${path}"
 done
 set -u
@@ -505,6 +516,10 @@ done
 for path in "${same_run_events[@]}"; do
   [ -n "${path}" ] || continue
   shortlist_args+=("--same-run-events" "${path}")
+done
+for path in "${negative_control_events[@]}"; do
+  [ -n "${path}" ] || continue
+  shortlist_args+=("--negative-control-events" "${path}")
 done
 for dir in "${runtime_evidence_dirs[@]}"; do
   [ -n "${dir}" ] || continue
