@@ -207,7 +207,7 @@ struct FridayProjectionScreen: View {
   @ViewBuilder
   private func loadedContent(_ surface: ProjectionSurface, _ projection: HomeProjection) -> some View {
     VStack(spacing: 16) {
-      if !projection.statusLabels.isEmpty {
+      if projection.shouldPromoteStatusLabelsToBlockingBanner {
         StatusBanner(labels: projection.statusLabels)
       }
       detailActionsCard(projection)

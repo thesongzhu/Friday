@@ -11,7 +11,9 @@ import SwiftUI
 ///
 /// Truth rules: the projection is refs-only (counts/labels/ids — never a body); the
 /// `runtimeFeedStatus` + `statusLabels` ride AS-IS (never upgraded); a 503 / offline / dark
-/// server renders AS truth (honest-unavailable), never a fabricated ready Home. Governed recovery
+/// server renders AS truth (honest-unavailable), never a fabricated ready Home. Status labels only
+/// become a blocking banner when the feed itself is not live; live-feed notes stay in the proof
+/// card so the product path does not claim the Hub is stale while showing Hub live. Governed recovery
 /// actions only appear when the live projection exposes WorkItem retry/cancel affordances.
 struct FridayHomeScreen: View {
   @ObservedObject var viewModel: HomeViewModel
@@ -94,8 +96,7 @@ struct FridayHomeScreen: View {
       subtitle: "Here is what Friday is watching for you.")
     selectedHomeHero
 
-    // Honest status banner — any stale/offline/error label rides AS truth.
-    if !projection.statusLabels.isEmpty {
+    if projection.shouldPromoteStatusLabelsToBlockingBanner {
       StatusBanner(labels: projection.statusLabels)
     }
 
@@ -401,6 +402,17 @@ struct FridayHomeScreen: View {
           Spacer()
         }
         FridayProofLine(label: "mission_id", ref: projection.missionId)
+        if !projection.statusLabels.isEmpty {
+          HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("notes")
+              .font(.caption2.weight(.semibold))
+              .foregroundStyle(MobileTheme.textSecondary)
+            ForEach(projection.statusLabels, id: \.self) { label in
+              FridayChip(text: label, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+            }
+            Spacer(minLength: 0)
+          }
+        }
         if let summary = projection.routeDecisionSummary {
           FridayProofLine(label: "route", ref: summary)
         }
