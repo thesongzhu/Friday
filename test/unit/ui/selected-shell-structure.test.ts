@@ -30,6 +30,16 @@ describe("selected shell structure", () => {
     expect(rightRailSource).toContain("Right-docked ProofInspector");
   });
 
+  it("keeps the right-docked proof inspector primary action wired to a real product route", () => {
+    const rightRailSource = readFileSync("ui/src/components/console/shell/right-rail.tsx", "utf8");
+
+    expect(rightRailSource).toContain("useNavigate");
+    expect(rightRailSource).toContain("data-testid=\"desktop-proof-inspector-open-workbench\"");
+    expect(rightRailSource).toContain("navigate(\"/mission-workbench\")");
+    expect(rightRailSource).toContain("Open Mission Workbench");
+    expect(rightRailSource).not.toContain("Review current proof");
+  });
+
   it("keeps Friday Home on the selected Chat/Status baseline without the old debug hero stage", () => {
     const homeSource = readFileSync("ui/src/routes/home-page.tsx", "utf8");
 

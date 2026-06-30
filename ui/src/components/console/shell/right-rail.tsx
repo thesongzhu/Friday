@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, CheckCircle2, ChevronRight, CircleAlert, FileCheck2, ShieldCheck } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 
@@ -113,6 +114,7 @@ function DesktopProofInspector(props: {
   onToggleCollapse: () => void;
 }) {
   const { locale } = useAppLocale();
+  const navigate = useNavigate();
 
   if (props.collapsed || props.forceCollapsed) {
     return (
@@ -173,10 +175,12 @@ function DesktopProofInspector(props: {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            data-testid="desktop-proof-inspector-open-workbench"
             data-friday-ui="button-primary"
+            onClick={() => navigate("/mission-workbench")}
             className="inline-flex min-h-[40px] items-center justify-center rounded-full border border-[color:var(--accent)] bg-[color:var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
           >
-            {localize(locale, "查看当前证明", "Review current proof")}
+            {localize(locale, "打开任务工作台", "Open Mission Workbench")}
           </button>
           <button
             type="button"

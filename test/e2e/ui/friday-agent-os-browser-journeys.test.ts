@@ -359,6 +359,31 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Agent OS browser incentive journeys
     expect(navigationCountAfter).toBe(navigationCountBefore);
   });
 
+  it("right-docked proof inspector primary action opens the Mission Workbench route", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
+    env = await createFridayMockBrowserE2eEnv();
+    pageHandle = await env.newPage();
+    await pageHandle.page.setViewportSize({ width: 1440, height: 980 });
+    await pageHandle.page.goto("/home");
+    await waitForSurfaceReady(pageHandle, "home");
+    await waitForTestId(pageHandle, "desktop-proof-inspector-open-workbench");
+
+    const navigationCountBefore = await pageHandle.page.evaluate(
+      () => performance.getEntriesByType("navigation").length,
+    );
+
+    await clickTestId(pageHandle, "desktop-proof-inspector-open-workbench");
+    await pageHandle.page.waitForURL("**/mission-workbench");
+    await pageHandle.page.waitForFunction(() =>
+      document.body.textContent?.includes("Mission Workbench")
+      || document.body.textContent?.includes("任务工作台")
+    );
+
+    const navigationCountAfter = await pageHandle.page.evaluate(
+      () => performance.getEntriesByType("navigation").length,
+    );
+    expect(navigationCountAfter).toBe(navigationCountBefore);
+  });
+
   it("main surfaces survive repeated navigation and quick-sheet cycles without white-screening", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
     env = await createFridayMockBrowserE2eEnv();
     const packId = await seedDefaultCustomPack(env);
