@@ -596,7 +596,7 @@ struct DesktopProjectionScreen: View {
             Spacer()
             snapshot.routeDecision.truthLabel.chip
           }
-          Text("Canvas + inspector view over the live mission route and WorkItem graph. Controls use the governed WorkItem lifecycle write seam; runtime tap proof is still required before END-BAR.")
+          Text("Canvas and inspector view over the live mission route and WorkItem graph. Controls stay governed and become available only when the desktop session can act safely.")
             .font(.system(size: 11))
             .foregroundStyle(HubTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)

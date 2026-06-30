@@ -161,7 +161,7 @@ struct FridayContextPassportScreen: View {
           title: "Shared context items",
           value: "\(status.contextPassportItemCount) item(s)",
           satisfied: status.contextPassportItemCount > 0,
-          detail: "Refs-only readiness evidence, not proof of END-BAR adoption.")
+          detail: "Shares only scoped references created by the operator ceremony.")
         Text("This screen never mints grants, passports, or signatures. It only renders operator-created Hub rows.")
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)

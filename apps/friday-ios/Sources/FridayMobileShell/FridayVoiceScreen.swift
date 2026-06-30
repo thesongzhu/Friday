@@ -183,11 +183,11 @@ struct FridayVoiceScreen: View {
           healthy: readiness.speechRecognition == .authorized)
         readinessRow(
           title: "Speech output provider",
-          value: readiness.ttsProviderConfigured ? "configured" : "not configured in this build",
+          value: readiness.ttsProviderConfigured ? "configured" : "waiting for speech output setup",
           healthy: readiness.ttsProviderConfigured)
         readinessRow(
           title: "Realtime loop",
-          value: readiness.voiceLoopReady ? "ready in Friday Chat" : "blocked until capture and speech output are ready",
+          value: readiness.voiceLoopReady ? "ready in Friday Chat" : "waiting for capture and speech output",
           healthy: readiness.voiceLoopReady)
       }
     }

@@ -219,7 +219,7 @@ function describeFridayProviderDoctorRemediation(
         hint: localize(
           locale,
           "所选模型不可用或可用模型列表为空。请检查 model 配置。",
-          "The selected model is unavailable, or the supported-model list is empty. Check the model configuration.",
+          "The selected model is not ready, or the supported-model list is empty. Check the model configuration.",
         ),
       };
     case "unverified_or_unknown":
@@ -1001,7 +1001,7 @@ export function SettingsPage() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <DiagnosticTile icon={<Cpu className="h-4 w-4" />} label={localize(locale, "API 状态", "API Status")} value={health.status} />
                 {HIDE_TRUSTED_DEVICE_UI ? null : (
-                  <DiagnosticTile icon={<Wifi className="h-4 w-4" />} label={localize(locale, "远程模式", "Remote Mode")} value={health.capabilities?.system?.remoteMode ?? localize(locale, "不可用", "unavailable")} />
+                  <DiagnosticTile icon={<Wifi className="h-4 w-4" />} label={localize(locale, "远程模式", "Remote Mode")} value={health.capabilities?.system?.remoteMode ?? localize(locale, "待连接", "waiting")} />
                 )}
                 <DiagnosticTile icon={<Shield className="h-4 w-4" />} label={localize(locale, "系统已启用", "System Enabled")} value={String(Boolean(health.capabilities?.system?.enabled))} />
                 <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label={localize(locale, "运行时间", "Uptime")} value={`${health.uptime}s`} />
@@ -1569,7 +1569,7 @@ export function SettingsPage() {
               </div>
               </>
             ) : (
-              <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "路由解释预览不可用。", "Routing explain preview unavailable.")}</p>
+              <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "路由解释预览待连接。", "Routing explain preview is waiting for data.")}</p>
             )}
           </div>
         </ShellCard>
@@ -1789,7 +1789,7 @@ export function SettingsPage() {
               ) : null}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "预算数据不可用。", "Budget data unavailable.")}</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "预算数据待连接。", "Budget data is waiting for data.")}</p>
           )}
         </ShellCard>
 
@@ -1908,7 +1908,7 @@ export function SettingsPage() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "学习控制不可用。", "Learning controls unavailable.")}</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "学习控制待连接。", "Learning controls are waiting for data.")}</p>
           )}
         </ShellCard>
 
@@ -1941,7 +1941,7 @@ export function SettingsPage() {
               )}
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "安全数据不可用。", "Security data unavailable.")}</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "安全数据待连接。", "Security data is waiting for data.")}</p>
           )}
         </ShellCard>
 
@@ -2204,7 +2204,7 @@ export function SettingsPage() {
               <DiagnosticRow label={localize(locale, "要求验收检查", "Require acceptance check")} value={agentLoopPolicy.requireAcceptanceCheck ? localize(locale, "是", "yes") : localize(locale, "否", "no")} />
             </div>
           ) : (
-            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "Agent 循环策略不可用。", "Agent loop policy unavailable.")}</p>
+            <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "Agent 循环策略待连接。", "Agent loop policy is waiting for data.")}</p>
           )}
           {expertMode ? (
             <div className="mt-4 space-y-2 border-t border-[color:var(--color-border-soft)] pt-4">
@@ -2253,8 +2253,8 @@ export function SettingsPage() {
             <p className="text-xs text-[color:var(--color-text-tertiary)]">
               {localize(
                 locale,
-                "17A 提供 fixture 证明：服务商目录、部署预览、部署包、DNS 校验、体检、拆机回执。17B 阿里云 ECS / 腾讯云 CVM / 火山云 ECS 实证为 blocked_by_env，需要受保护的 GitHub Environment Secrets、专用 DNS 凭证与 TTL/预算控制。",
-                "17A provides fixture proof: provider catalog, deployment preview, deployment package, DNS validation, doctor, and teardown receipts. 17B Alibaba ECS / Tencent CVM / Volcengine ECS live certification is blocked_by_env until protected GitHub Environment Secrets, dedicated DNS tokens, and TTL/budget controls are configured.",
+                "云端 Worker 设置会先准备服务商目录、部署预览、部署包、DNS 校验、体检和拆机回执。真实云端认证需要受保护的 GitHub Environment Secrets、专用 DNS 凭证与 TTL/预算控制。",
+                "Cloud worker setup prepares the provider catalog, deployment preview, deployment package, DNS validation, doctor, and teardown receipts first. Live cloud certification requires protected GitHub Environment Secrets, dedicated DNS tokens, and TTL/budget controls.",
               )}
             </p>
             <Link

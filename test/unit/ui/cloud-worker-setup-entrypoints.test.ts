@@ -44,8 +44,8 @@ const FORBIDDEN_PHASE_WORDING: ReadonlyArray<{
     pattern: /(Friday[- ]hosted|Friday 托管)\s*(user data|用户数据)/i,
   },
   {
-    description: "overclaim of 17B live cloud certification as passed",
-    pattern: /17B[^\n]{0,40}(passed|pass|完成|已通过)/i,
+    description: "overclaim of live cloud certification as passed",
+    pattern: /live cloud certification[^\n]{0,80}(passed|pass|完成|已通过)/i,
   },
 ];
 
@@ -66,10 +66,11 @@ describe("Phase 17A — cloud worker setup entrypoints", () => {
       expect(SETUP_PAGE_SRC).toMatch(/dedicated subdomain|专用子域/);
     });
 
-    it("labels 17A as fixture proof and 17B live certification as blocked_by_env", () => {
+    it("frames live cloud certification as safe preparation behind protected environment setup", () => {
       const step5Slice = SETUP_PAGE_SRC.slice(SETUP_PAGE_SRC.indexOf("data-testid=\"setup-cloud-worker-advanced\""));
-      expect(step5Slice).toMatch(/17A[^\n]{0,80}fixture/);
-      expect(step5Slice).toMatch(/17B[^\n]{0,200}blocked_by_env/);
+      expect(step5Slice).toMatch(/safe preparation|安全准备/);
+      expect(step5Slice).toMatch(/protected GitHub Environment|受保护的 GitHub Environment/);
+      expect(step5Slice).not.toMatch(/17A|17B|fixture|blocked_by_env/);
     });
 
     it("states ordinary users do not paste FRIDAY_MASTER_KEY or FRIDAY_TOKEN_SECRET", () => {
@@ -116,10 +117,11 @@ describe("Phase 17A — cloud worker setup entrypoints", () => {
       expect(slice).toMatch(/(dedicated subdomain|专用子域)/);
     });
 
-    it("labels 17A fixture proof and 17B live certification blocked_by_env honestly", () => {
+    it("frames cloud worker setup as preparation without surfacing internal proof labels", () => {
       const slice = SETTINGS_PAGE_SRC.slice(SETTINGS_PAGE_SRC.indexOf("data-testid=\"settings-cloud-worker-card\""));
-      expect(slice).toMatch(/17A[^\n]{0,80}fixture/);
-      expect(slice).toMatch(/17B[^\n]{0,400}blocked_by_env/);
+      expect(slice).toMatch(/provider catalog|服务商目录/);
+      expect(slice).toMatch(/protected GitHub Environment|受保护的 GitHub Environment/);
+      expect(slice).not.toMatch(/17A|17B|fixture|blocked_by_env/);
     });
 
     it("states FRIDAY_MASTER_KEY and FRIDAY_TOKEN_SECRET are internal runtime secrets, not user inputs", () => {
@@ -145,12 +147,13 @@ describe("Phase 17A — cloud worker setup entrypoints", () => {
   });
 
   describe("navigation surface", () => {
-    it("keeps the cloud-workers entry under Advanced with honest 17A/17B framing", () => {
+    it("keeps the cloud-workers entry under Advanced with product-safe framing", () => {
       const item = AGENT_OS_NAV_ADVANCED.find((nav) => nav.path === "/cloud-workers");
       expect(item).toBeDefined();
       expect(item?.label).toEqual({ zh: "云端 Worker", en: "Cloud Workers" });
-      expect(item?.description.en).toMatch(/17A fixture/);
-      expect(item?.description.en).toMatch(/17B blocked_by_env/);
+      expect(item?.description.en).toMatch(/User-owned cloud worker setup catalog/);
+      expect(item?.description.en).toMatch(/teardown receipts/);
+      expect(item?.description.en).not.toMatch(/17A|17B|fixture|blocked_by_env/);
     });
 
     it("resolves /cloud-workers to the Cloud Workers page title", () => {

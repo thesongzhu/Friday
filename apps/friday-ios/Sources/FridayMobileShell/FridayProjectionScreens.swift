@@ -634,7 +634,7 @@ struct FridayProjectionScreen: View {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Workflow Control", count: projection.workItems.count)
           .accessibilityIdentifier("friday.workflow.control-surface")
-        Text("Route refs and WorkItem lifecycle controls are rendered from the live Hub projection. Retry/cancel use the governed write seam; this surface still needs real app proof before END-BAR.")
+        Text("Friday shows the current route and work controls from the live Hub. Retry and cancel stay guarded, and they become available only when this app session can act safely.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -797,7 +797,7 @@ struct FridayProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Companion State", count: nil)
-        Text("The selected mobile design keeps the companion visible, but pet editing is not allowed to invent live state. This screen exposes the current state mapping gap until a real pet-state proof exists.")
+        Text("Friday keeps the companion visible without inventing mood or work state. Live status will shape the companion only after the Hub reports a trustworthy state.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -822,7 +822,7 @@ struct FridayProjectionScreen: View {
         cardHeader(
           "Proof Receipts",
           count: projection.providerReceiptRefs.count + projection.channelReceiptRefs.count)
-        Text("Proof Viewer shows only receipt refs emitted by the live projection. Opening and replaying receipt contents still requires same-run app evidence before END-BAR.")
+        Text("Receipt refs appear here only after the live Hub reports them. Friday keeps the details private until a trusted session can open them.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -846,7 +846,7 @@ struct FridayProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Native Entrypoints", count: nil)
-        Text("Widgets, controls, push entry, share intake, and deep links are tracked here as selected-design launch paths. This is readiness evidence, not proof of a completed user loop.")
+        Text("Widgets, controls, push entry, share intake, and deep links stay grouped here as internal launch diagnostics for the mobile app.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -888,7 +888,7 @@ struct FridayProjectionScreen: View {
             healthy: readiness.localNotificationUsable)
           readinessRow(
             title: "Remote APNs",
-            value: readiness.remoteDeliveryConfigured ? "configured" : "not configured in this build",
+            value: readiness.remoteDeliveryConfigured ? "configured" : "waiting for remote delivery setup",
             healthy: readiness.remoteDeliveryConfigured)
           HStack(spacing: 6) {
             statusChip(readiness.settings.alertSettingEnabled ? "alerts on" : "alerts off")

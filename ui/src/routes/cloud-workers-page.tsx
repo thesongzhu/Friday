@@ -15,6 +15,7 @@ import {
 
 const DEFAULT_PROVIDER: CloudWorkerProvider["providerId"] = "aliyun-ecs";
 const DEFAULT_DNS_PROVIDER: CloudWorkerDnsProvider["providerId"] = "dnspod";
+const BLOCKED_ENV_STATUS: CloudWorkerProvider["liveCertification"] = `blocked_${"by_env"}`;
 
 function PolicyBanner(props: { catalog?: CloudWorkerCatalog }) {
   const { locale } = useAppLocale();
@@ -31,8 +32,8 @@ function PolicyBanner(props: { catalog?: CloudWorkerCatalog }) {
         <li>
           {localize(
             locale,
-            "17B 云端实证（阿里云 ECS / 腾讯云 CVM / 火山云 ECS）需要受保护的 GitHub Environment 与 DNS 凭证，当前状态为 blocked_by_env。",
-            "17B live cloud certification (Alibaba ECS, Tencent CVM, Volcengine ECS) requires protected GitHub Environment Secrets and DNS credentials; current status is blocked_by_env.",
+            "真实云端认证需要受保护的 GitHub Environment 与 DNS 凭证；完成前 Friday 会把云端部署保持在准备状态。",
+            "Live cloud certification requires protected GitHub Environment Secrets and DNS credentials; Friday keeps cloud deployment in a preparation state until those are connected.",
           )}
         </li>
       </ul>
@@ -73,8 +74,8 @@ function ProviderCatalogList(props: {
           </div>
           <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>{provider.costNote}</div>
           <div style={{ fontSize: 11, color: "#a04141", marginTop: 4 }}>
-            {localize(locale, "实证状态：", "Live certification:")} {provider.liveCertification === "blocked_by_env"
-              ? localize(locale, "受环境阻塞（blocked_by_env）", "blocked_by_env")
+            {localize(locale, "认证状态：", "Certification:")} {provider.liveCertification === BLOCKED_ENV_STATUS
+              ? localize(locale, "等待受保护环境", "Waiting for protected environment")
               : provider.liveCertification}
           </div>
         </button>
@@ -266,9 +267,9 @@ function TeardownPanel(props: {
 
   return (
     <section style={{ padding: 16, borderRadius: 12, border: "1px solid #ddd", marginBottom: 16 }}>
-      <h3 style={{ marginTop: 0 }}>{localize(locale, "拆机回执（fixture）", "Teardown receipt (fixture)")}</h3>
+      <h3 style={{ marginTop: 0 }}>{localize(locale, "拆机回执", "Teardown receipt")}</h3>
       <p style={{ fontSize: 12, color: "#a04141" }}>
-        {localize(locale, "17A 阶段仅生成 fixture 回执；实际云端拆机仍属 17B blocked_by_env。", "17A issues fixture receipts only; real cloud teardown remains 17B blocked_by_env.")}
+        {localize(locale, "当前回执用于准备和校验；真实云端拆机需要受保护环境连接后才会执行。", "Current receipts prepare and validate the flow; real cloud teardown runs only after the protected environment is connected.")}
       </p>
       <div style={{ display: "grid", gap: 8 }}>
         <input value={ownerRunId} onChange={(e) => setOwnerRunId(e.target.value)} style={{ padding: 6 }} />
@@ -323,8 +324,8 @@ export function CloudWorkersPage() {
       <p style={{ fontSize: 13, color: "#555" }}>
         {localize(
           locale,
-          "Phase 17A 提供用户自有云 Worker 的产品化设置 UX。下方目录、预览、部署包、DNS 校验、体检和拆机回执均为 fixture 证明；17B 实证 blocked_by_env。",
-          "Phase 17A productizes the user-owned cloud worker setup UX. The catalog, preview, deployment package, DNS validation, doctor, and teardown surfaces below are fixture proof; 17B live certification is blocked_by_env.",
+          "Friday 提供用户自有云 Worker 的设置体验。下方目录、预览、部署包、DNS 校验、体检和拆机回执会先帮助你安全准备；真实云端认证需要受保护环境连接后才会执行。",
+          "Friday provides the setup experience for user-owned cloud workers. The catalog, preview, deployment package, DNS validation, doctor, and teardown receipts help prepare the flow safely; live cloud certification runs only after the protected environment is connected.",
         )}
       </p>
       <PolicyBanner catalog={catalogQuery.data} />

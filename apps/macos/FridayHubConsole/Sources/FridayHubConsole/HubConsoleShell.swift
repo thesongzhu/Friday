@@ -128,7 +128,7 @@ struct NavRail: View {
 
   private var readinessFooterText: String {
     let snapshot = DesktopProductEndBarSnapshot()
-    return "\(snapshot.routeCoverageCount)/\(snapshot.totalCount) routes · \(snapshot.endBarReadyCount)/\(snapshot.totalCount) END-BAR"
+    return "\(snapshot.routeCoverageCount)/\(snapshot.totalCount) routes · \(snapshot.endBarReadyCount)/\(snapshot.totalCount) ready"
   }
 }
 
