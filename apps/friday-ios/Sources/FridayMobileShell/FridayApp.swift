@@ -451,7 +451,7 @@ struct RootView: View {
             })
         }
       }
-      .navigationTitle(destination == .home ? "Friday" : destination.title)
+      .navigationTitle("")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         // Top-LEFT: the Command Sheet launcher (locked: commandSheet from top-left).
@@ -459,32 +459,52 @@ struct RootView: View {
           Button {
             commandOpen = true
           } label: {
-            Image(systemName: "square.grid.2x2").foregroundStyle(MobileTheme.cyan)
+            Image(systemName: "line.3.horizontal")
+              .font(.system(size: 15, weight: .semibold))
+              .foregroundStyle(MobileTheme.textSecondary)
           }
           .accessibilityLabel("Open Command Sheet")
           .accessibilityIdentifier("friday.mobile.toolbar.command-sheet")
         }
-        // Top-BAR 💬: the Friday Chat entry (locked: the ONLY chat entry — no card).
-        ToolbarItem(placement: .topBarTrailing) {
-          Button {
-            pendingChatLaunchContext = nil
-            chatOpen = true
-          } label: {
-            Image(systemName: "bubble.left.and.bubble.right").foregroundStyle(MobileTheme.cyan)
+        ToolbarItem(placement: .principal) {
+          VStack(spacing: 1) {
+            Text(destination == .home ? "Friday" : destination.title)
+              .font(.headline.weight(.semibold))
+              .foregroundStyle(MobileTheme.textPrimary)
+            Text(destination == .home ? "Private command center" : "Friday surface")
+              .font(.caption2)
+              .foregroundStyle(MobileTheme.textSecondary)
           }
-          .accessibilityLabel("Open Friday Chat")
-          .accessibilityIdentifier("friday.mobile.toolbar.chat")
+          .accessibilityElement(children: .combine)
+          .accessibilityLabel(destination == .home ? "Friday. Private command center." : "\(destination.title). Friday surface.")
         }
         ToolbarItem(placement: .topBarTrailing) {
-          // Small Mark for the app itself.
-          Button {
-            Task { await homeVM.refresh() }
-          } label: {
-            Image(systemName: "arrow.clockwise").foregroundStyle(MobileTheme.cyan)
+          HStack(spacing: 8) {
+            Button {
+              Task { await homeVM.refresh() }
+            } label: {
+              FridayChip(
+                text: homeVM.isOnline ? "Hub live" : "Hub",
+                bg: homeVM.isOnline ? MobileTheme.chipPendingBG : MobileTheme.chipNeutralBG,
+                fg: homeVM.isOnline ? MobileTheme.chipPendingFG : MobileTheme.chipNeutralFG)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Refresh Hub status")
+            .accessibilityIdentifier("friday.mobile.toolbar.hub-status")
+            .disabled(homeVM.state.isLoading)
+
+            // Top-BAR 💬: the Friday Chat entry (locked: the ONLY chat entry — no card).
+            Button {
+              pendingChatLaunchContext = nil
+              chatOpen = true
+            } label: {
+              Image(systemName: "bubble")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(MobileTheme.textSecondary)
+            }
+            .accessibilityLabel("Open Friday Chat")
+            .accessibilityIdentifier("friday.mobile.toolbar.chat")
           }
-          .accessibilityLabel("Refresh Status")
-          .accessibilityIdentifier("friday.mobile.toolbar.refresh")
-          .disabled(homeVM.state.isLoading)
         }
       }
       .navigationDestination(isPresented: $chatOpen) {

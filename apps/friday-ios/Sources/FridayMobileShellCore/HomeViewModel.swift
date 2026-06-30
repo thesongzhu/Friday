@@ -243,7 +243,7 @@ public struct HomeWorkItem: Sendable, Identifiable, Equatable {
   public let canCancel: Bool
 
   public var needsAttention: Bool {
-    !done && (["blocked", "waiting", "error", "stale"].contains(state) || canRetry || canCancel)
+    !done && (["blocked", "waiting", "error", "stale", "needs", "high_risk", "high risk", "review"].contains(state) || canRetry || canCancel)
   }
 
   public var isProviderLinked: Bool {
@@ -1310,40 +1310,41 @@ public struct PreviewReadClient: FridayRustReadClient {
       "workItems": [
         {
           "workItemId": "wi-preview-1",
-          "title": "Draft the Mission plan",
-          "state": "ready",
-          "owner": "friday_owned",
+          "title": "Approve high-risk file change",
+          "state": "high risk",
+          "owner": "codex",
+          "blockingReason": "Codex · write under project root",
           "done": false
         },
         {
           "workItemId": "wi-preview-2",
-          "title": "Waiting for governed approval",
-          "state": "waiting",
-          "owner": "linked_only",
+          "title": "Confirm focused Rust tests",
+          "state": "needs",
+          "owner": "provider/tests",
+          "blockingReason": "provider/tests · ~2 min",
           "proofRef": "proof://work-item/preview-2",
+          "done": false
+        },
+        {
+          "workItemId": "wi-preview-3",
+          "title": "Claude reviewing docs",
+          "state": "streaming",
+          "owner": "claude",
+          "blockingReason": "checking no-fallback rows",
+          "proofRef": "proof://work-item/preview-3",
           "done": false
         }
       ],
       "memoryCandidates": [
         {
           "id": "cand-preview-1",
-          "preview": "Remember the operator prefers concise status reports.",
+          "preview": "never written without consent",
           "state": "candidate_review_only",
           "grantsMemoryAuthority": false,
           "evidenceRef": "proof://memory/preview-1"
         }
       ],
-      "runOutcomeLearningCandidates": [
-        {
-          "id": "learn-preview-1",
-          "runId": "run-preview-1",
-          "workItemId": "wi-preview-2",
-          "kind": "preference",
-          "state": "candidate",
-          "summary": "DeepSeek handled the short planning leg well.",
-          "evidenceRef": "proof://learning/preview-1"
-        }
-      ],
+      "runOutcomeLearningCandidates": [],
       "capabilityStates": [
         {
           "id": "cap-route",

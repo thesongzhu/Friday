@@ -114,7 +114,7 @@ struct FridayHomeScreen: View {
   private func designIntro(title: String, subtitle: String) -> some View {
     VStack(alignment: .leading, spacing: 6) {
       Text(title)
-        .font(.system(size: 30, weight: .bold))
+        .font(.system(size: 25, weight: .bold))
         .foregroundStyle(MobileTheme.textPrimary)
       Text(subtitle)
         .font(.callout)
@@ -164,7 +164,7 @@ struct FridayHomeScreen: View {
           title: item.title,
           subtitle: item.blockingReason.isEmpty ? "state: \(item.state)" : item.blockingReason,
           chip: item.canRetry ? "needs" : item.state,
-          urgent: item.canRetry || item.state == "stale" || item.state == "blocked",
+          urgent: item.canRetry || ["stale", "blocked", "high_risk", "high risk", "needs"].contains(item.state),
           workItem: item)
       }
     rows.append(contentsOf: projection.memoryCandidates.prefix(2).map { candidate in
