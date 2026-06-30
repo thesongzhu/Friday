@@ -16,7 +16,7 @@ function readText(repoRoot, relativePath) {
 const repoRoot = resolveRepoRoot();
 const scriptPath = "scripts/ops/friday-ios-design-destination-capture.sh";
 const pkgPath = "package.json";
-const requiredDestinations = [
+const requiredProductDestinations = [
   "home",
   "missions",
   "session",
@@ -34,6 +34,8 @@ const requiredDestinations = [
   "onboarding",
   "settings",
   "petEditor",
+];
+const internalDebugDestinations = [
   "proofViewer",
   "entrypoints",
 ];
@@ -54,12 +56,28 @@ pushCheck("iOS selected destination capture runner exists", scriptPath, scriptEx
 
 if (scriptExists) {
   const source = readText(repoRoot, scriptPath);
-  const missingDestinations = requiredDestinations.filter((destination) => !source.includes(destination));
+  const defaultDestinations = source.match(/destinations_csv="([^"]+)"/)?.[1]?.split(",") ?? [];
+  const internalDestinations = source.match(/internal_debug_destinations_csv="([^"]+)"/)?.[1]?.split(",") ?? [];
+  const missingDestinations = requiredProductDestinations.filter((destination) => !defaultDestinations.includes(destination));
+  const leakedInternalDestinations = internalDebugDestinations.filter((destination) => defaultDestinations.includes(destination));
+  const missingInternalDestinations = internalDebugDestinations.filter((destination) => !internalDestinations.includes(destination));
   pushCheck(
-    "iOS capture runner enumerates selected mobile destinations",
+    "iOS capture runner enumerates selected user-product mobile destinations",
     scriptPath,
     missingDestinations.length === 0,
     missingDestinations,
+  );
+  pushCheck(
+    "iOS capture runner excludes internal proof/debug destinations from the default user-product capture",
+    scriptPath,
+    leakedInternalDestinations.length === 0,
+    leakedInternalDestinations,
+  );
+  pushCheck(
+    "iOS capture runner keeps internal proof/debug destinations available for explicit diagnostics",
+    scriptPath,
+    missingInternalDestinations.length === 0,
+    missingInternalDestinations,
   );
   const requiredTruthStrings = [
     "ios_selected_design_destination_capture_not_live_closure",
@@ -96,7 +114,8 @@ const report = {
   repoRoot,
   truthLabel: "ios_design_destination_capture_contract_static_guard_not_runtime_pass",
   status: failed.length === 0 ? "passed" : "failed",
-  requiredDestinations,
+  requiredProductDestinations,
+  internalDebugDestinations,
   checks,
   caveat: "This proves the selected-design capture runner and package hook remain present and that offline-truth is not the selected visual proof lane; it does not claim screenshots were captured, END-BAR, GO-LIVE, adoption, or live action closure.",
 };

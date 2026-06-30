@@ -379,7 +379,9 @@ const desktopDestinations = parseProductContract(
   resolve(repoRoot, "apps/macos/FridayHubConsole/Sources/FridayHubConsoleCore/DesktopProductReadinessContract.swift"),
   "desktop",
 );
-const productDestinations = [...mobileDestinations, ...desktopDestinations];
+const allDestinations = [...mobileDestinations, ...desktopDestinations];
+const internalDebugDestinations = allDestinations.filter((destination) => destination.tier === "internalDebug");
+const productDestinations = allDestinations.filter((destination) => destination.tier !== "internalDebug");
 const runtimeEvidencePaths = unique([
   ...runtimeEvidenceArgs.map((value) => resolve(value)),
   ...evidenceDirs.flatMap((dir) => runtimeEvidenceFromDir(dir)),
@@ -480,6 +482,7 @@ const report = {
     actionableContractRows: actionableContractRows.length,
     uniqueActionableContractRows: uniqueActionableIdentities.length,
     productDestinations: tracedDestinations.length,
+    internalDebugDestinations: internalDebugDestinations.length,
     productRuntimeActionIds: productActions.length,
     runtimeEvidenceInputs: runtimeEvidencePaths.length,
     runtimeEvidenceActionRows: evidenceActions.length,
@@ -498,6 +501,14 @@ const report = {
     counts: designActionRuntimeReport?.counts || null,
     runtimeEvidenceInputs: designActionRuntimeReport?.runtimeEvidenceInputs || runtimeEvidencePaths,
   },
+  internalDebugDestinations: internalDebugDestinations.map(({ surface, id, title, tier, runtimeActionIds }) => ({
+    surface,
+    id,
+    title,
+    tier,
+    runtimeActionIds,
+    caveat: "Internal proof/debug destination retained for diagnostics; excluded from user END-BAR product destination counts.",
+  })),
   bySurface: Object.fromEntries(["mobile", "desktop"].map((surface) => {
     const destinations = tracedDestinations.filter((destination) => destination.surface === surface);
     return [surface, {

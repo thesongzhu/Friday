@@ -70,4 +70,13 @@ describe("Friday mobile command sheet product path", () => {
 
     expect(userLauncher).not.toMatch(/\b(readiness|proof|END-BAR|entrypoint)\b/i);
   });
+
+  it("requires an explicit internal flag before initial launch can open proof harness routes", () => {
+    const text = readFileSync(appShell, "utf8");
+
+    expect(text).toContain("initialDestinationAllowed(destination, args: args, env: env)");
+    expect(text).toContain("destination.closureTier == .internalDebug");
+    expect(text).toContain('FRIDAY_MOBILE_ALLOW_INTERNAL_DESTINATION');
+    expect(text).toContain('--allow-internal-destination');
+  });
 });

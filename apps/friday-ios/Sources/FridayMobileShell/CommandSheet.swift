@@ -78,6 +78,8 @@ enum MobileDestination: String, CaseIterable, Identifiable {
       return "Status view"
     case .navigationShell:
       return "Open surface"
+    case .internalDebug:
+      return "Internal diagnostic"
     }
   }
 

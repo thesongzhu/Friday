@@ -534,25 +534,35 @@ struct RootView: View {
   ) -> MobileDestination {
     let envValue = env["FRIDAY_MOBILE_INITIAL_DESTINATION"]?.trimmingCharacters(in: .whitespacesAndNewlines)
     if let envValue, let destination = MobileDestination(rawValue: envValue) {
-      return destination
+      return initialDestinationAllowed(destination, args: args, env: env) ? destination : .home
     }
 
     for (index, arg) in args.enumerated() {
       if arg.hasPrefix("--initial-destination=") {
         let rawValue = String(arg.dropFirst("--initial-destination=".count))
         if let destination = MobileDestination(rawValue: rawValue) {
-          return destination
+          return initialDestinationAllowed(destination, args: args, env: env) ? destination : .home
         }
       }
       if arg == "--initial-destination", args.indices.contains(index + 1) {
         let rawValue = args[index + 1]
         if let destination = MobileDestination(rawValue: rawValue) {
-          return destination
+          return initialDestinationAllowed(destination, args: args, env: env) ? destination : .home
         }
       }
     }
 
     return .home
+  }
+
+  private static func initialDestinationAllowed(
+    _ destination: MobileDestination,
+    args: [String],
+    env: [String: String]
+  ) -> Bool {
+    guard destination.closureTier == .internalDebug else { return true }
+    return env["FRIDAY_MOBILE_ALLOW_INTERNAL_DESTINATION"] == "1"
+      || args.contains("--allow-internal-destination")
   }
 
   private static func voiceChatLaunchContext(from projection: HomeProjection?) -> ChatLaunchContext {

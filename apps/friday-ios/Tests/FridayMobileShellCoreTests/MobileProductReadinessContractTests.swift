@@ -32,6 +32,19 @@ func mobileProductContractCoversOperatorSelectedDestinations() {
 }
 
 @Test
+func mobileProductContractExcludesInternalProofHarnessFromUserEndBarScope() {
+  let snapshot = MobileProductEndBarSnapshot()
+  let userFacing = snapshot.contracts.filter { $0.tier != .internalDebug }
+  let internalOnly = snapshot.contracts.filter { $0.tier == .internalDebug }
+
+  #expect(snapshot.totalCount == 20)
+  #expect(userFacing.count == 18)
+  #expect(internalOnly.map(\.id).sorted() == ["entrypoints", "proofViewer"])
+  #expect(internalOnly.allSatisfy { $0.blockers.isEmpty })
+  #expect(!internalOnly.contains { $0.isEndBarReady })
+}
+
+@Test
 func mobileProductContractDoesNotTreatRouteCoverageAsEndBar() {
   let snapshot = MobileProductEndBarSnapshot()
 
@@ -189,14 +202,14 @@ func mobileProductContractTracksSelectedDesignCompanionProofAndEntrypoints() {
   #expect(petEditor.blockers.contains { $0.label == "pet state mapping proof" })
 
   #expect(proofViewer.title == "Proof Viewer")
-  #expect(proofViewer.tier == .liveReadProjection)
+  #expect(proofViewer.tier == .internalDebug)
   #expect(proofViewer.runtimeActionIds == ["mobile/proof/viewer-open"])
-  #expect(proofViewer.blockers.contains { $0.label == "proof receipt open proof" })
+  #expect(proofViewer.blockers.isEmpty)
 
   #expect(entrypoints.title == "iOS Entrypoints")
-  #expect(entrypoints.tier == .readinessOnly)
+  #expect(entrypoints.tier == .internalDebug)
   #expect(entrypoints.runtimeActionIds == ["mobile/entrypoints/readiness"])
-  #expect(entrypoints.blockers.contains { $0.label == "widget/control/app-intent proof" })
+  #expect(entrypoints.blockers.isEmpty)
 
   #expect(!petEditor.isEndBarReady)
   #expect(!proofViewer.isEndBarReady)
