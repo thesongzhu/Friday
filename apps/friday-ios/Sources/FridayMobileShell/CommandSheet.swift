@@ -106,7 +106,7 @@ struct CommandSheet: View {
     ("Trust", [.contextPassport, .memory, .tokenLedger]),
   ]
   private let diagnosticsSections: [(String, [MobileDestination])] = [
-    ("Advanced", [.pairing, .onboarding, .settings, .petEditor, .proofViewer, .entrypoints]),
+    ("Device & Setup", [.pairing, .onboarding, .settings, .petEditor]),
   ]
 
   var body: some View {
@@ -172,10 +172,10 @@ struct CommandSheet: View {
           .font(.system(size: 18, weight: .semibold))
           .foregroundStyle(MobileTheme.cyan)
         VStack(alignment: .leading, spacing: 3) {
-          Text("Advanced setup")
+          Text("Device & setup")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
-          Text("Connection, device, and developer tools live here so the main Friday path stays product-first.")
+          Text("Connection, pairing, and companion settings live here so the main Friday path stays product-first.")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)

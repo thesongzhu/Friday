@@ -271,6 +271,10 @@ function assertIosDesignFidelity(tokens) {
       pattern: /\.buttonStyle\(\.bordered\)/,
     },
     {
+      name: "stock segmented picker",
+      pattern: /\.pickerStyle\(\.segmented\)/,
+    },
+    {
       name: "generic StatusChip primitive",
       pattern: /\bstruct\s+StatusChip\b/,
     },
@@ -295,10 +299,15 @@ function assertIosDesignFidelity(tokens) {
     commandSheet.match(/private let productSections:[\s\S]*?\n  \]/)?.[0]
     ?? commandSheet.match(/private let sections:[\s\S]*?var body:/)?.[0]
     ?? "";
+  const commandDiagnosticsSections =
+    commandSheet.match(/private let diagnosticsSections:[\s\S]*?(?:\n\s*var body|\n\s*private func|$)/)?.[0] ?? "";
   const commandBody = commandSheet.match(/var body:[\s\S]*?\n  private func sectionView/)?.[0] ?? "";
   const userLauncherText = `${commandProductSections}\n${commandBody}`;
   if (/\.(pairing|onboarding|settings|petEditor|proofViewer|entrypoints)\b/.test(commandProductSections)) {
     checks.push(fail("iOS Command Sheet still exposes proof/debug destinations in the user launcher"));
+  }
+  if (/\.(proofViewer|entrypoints)\b/.test(commandDiagnosticsSections)) {
+    checks.push(fail("iOS Command Sheet still exposes proof-harness destinations in the user launcher diagnostics drawer"));
   }
   if (/\breadinessFooter\b/.test(commandSheet) || /\b(readiness|proof|END-BAR|entrypoint)\b/i.test(userLauncherText)) {
     checks.push(fail("iOS Command Sheet still exposes internal proof/readiness language in the user launcher"));
@@ -451,10 +460,10 @@ async function assertRenderedStructure(tokens) {
       window.localStorage.setItem("friday.shell.rail-collapsed", "0");
     });
 
-    await page.goto(`${url}/home`, { waitUntil: "networkidle" });
-    await page.waitForSelector('[data-testid="app-shell-rail"]', { timeout: 10_000 });
-
-    const result = await page.evaluate((expected) => {
+    async function inspectRoute(pathname) {
+      await page.goto(`${url}${pathname}`, { waitUntil: "networkidle" });
+      await page.waitForSelector('[data-testid="app-shell-rail"]', { timeout: 10_000 });
+      return page.evaluate((expected) => {
       const rightRail = document.querySelector('[data-testid="app-shell-right-rail"]');
       const bottomDockText = [...document.querySelectorAll("section, aside, div")]
         .some((node) => /Proof inspector\s*[·-]\s*bottom timeline/i.test(node.textContent ?? ""));
@@ -485,20 +494,26 @@ async function assertRenderedStructure(tokens) {
         hasAccentApplied,
         expected,
       };
-    }, tokens);
+      }, tokens);
+    }
 
     const checks = [];
-    if (!result.rightRailPresent) checks.push(fail("served desktop shell does not render a right rail"));
-    if (!result.inspectorPresent) checks.push(fail("served desktop shell does not expose right-docked ProofInspector"));
-    if (result.bottomDockText) checks.push(fail("served desktop still exposes bottom ProofInspector timeline"));
-    if (result.heroPet) checks.push(fail("served desktop home still exposes hero/static pet instead of subtle status pet"));
-    if (!result.subtlePetPresent) checks.push(fail("served desktop subtle-status pet is missing"));
-    if (!result.primaryActionPresent) checks.push(fail("served desktop does not expose design-system primary button marker"));
-    if (!result.chipPresent) checks.push(fail("served desktop does not expose design-system chip marker"));
-    if (!result.filterPresent) checks.push(fail("served desktop does not expose design-system filter marker"));
-    if (!result.hasAccentApplied) checks.push(fail("served desktop rendered controls do not apply cyan/coral accent"));
+    const routeResults = [];
+    for (const pathname of ["/home", "/chat"]) {
+      const result = await inspectRoute(pathname);
+      routeResults.push({ pathname, ...result });
+      if (!result.rightRailPresent) checks.push(fail("served desktop shell does not render a right rail", { pathname }));
+      if (!result.inspectorPresent) checks.push(fail("served desktop shell does not expose right-docked ProofInspector", { pathname }));
+      if (result.bottomDockText) checks.push(fail("served desktop still exposes bottom ProofInspector timeline", { pathname }));
+      if (result.heroPet) checks.push(fail("served desktop home still exposes hero/static pet instead of subtle status pet", { pathname }));
+      if (!result.subtlePetPresent) checks.push(fail("served desktop subtle-status pet is missing", { pathname }));
+      if (!result.primaryActionPresent) checks.push(fail("served desktop does not expose design-system primary button marker", { pathname }));
+      if (!result.chipPresent) checks.push(fail("served desktop does not expose design-system chip marker", { pathname }));
+      if (!result.filterPresent) checks.push(fail("served desktop does not expose design-system filter marker", { pathname }));
+      if (!result.hasAccentApplied) checks.push(fail("served desktop rendered controls do not apply cyan/coral accent", { pathname }));
+    }
 
-    return checks.length > 0 ? checks : [pass("served desktop rendered structure matches selected design", result)];
+    return checks.length > 0 ? checks : [pass("served desktop rendered structure matches selected design", { routes: routeResults })];
   } finally {
     if (browser) await browser.close();
     await new Promise((resolveClose) => server.close(resolveClose));

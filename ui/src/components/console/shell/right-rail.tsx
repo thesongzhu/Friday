@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, CheckCircle2, ChevronRight, CircleAlert, FileCheck2, ShieldCheck } from "lucide-react";
-import { useLocation } from "react-router-dom";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 
@@ -247,8 +246,6 @@ function DesktopProofInspector(props: {
 }
 
 export function RightRail() {
-  const location = useLocation();
-  const isChatPage = location.pathname === "/chat";
   const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsed());
   const [widthPx, setWidthPx] = useState<number>(() => readRailWidth());
   const forceCollapsed = false;
@@ -265,14 +262,14 @@ export function RightRail() {
   }, [widthPx]);
 
   useEffect(() => {
-    if (isChatPage || collapsed || forceCollapsed) {
+    if (collapsed || forceCollapsed) {
       return;
     }
     writeRailWidth(widthPx);
-  }, [collapsed, forceCollapsed, isChatPage, widthPx]);
+  }, [collapsed, forceCollapsed, widthPx]);
 
   useEffect(() => {
-    if (isChatPage || forceCollapsed) {
+    if (forceCollapsed) {
       return;
     }
 
@@ -305,11 +302,7 @@ export function RightRail() {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [forceCollapsed, isChatPage]);
-
-  if (isChatPage) {
-    return null;
-  }
+  }, [forceCollapsed]);
 
   return (
     <aside
