@@ -41,6 +41,7 @@ struct HubConsoleShell: View {
 
       mainPane
         .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("friday.desktop.destination.\(destination.rawValue)")
 
       Divider().opacity(0.4)
