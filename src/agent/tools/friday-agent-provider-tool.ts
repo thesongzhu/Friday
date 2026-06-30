@@ -739,8 +739,6 @@ export function createFridayAgentProviderTool(
       case "openai":
       case "openai-codex":
         return "codex-cli";
-      case "anthropic":
-        return "claude-cli";
       case "google":
         return undefined;
       default:

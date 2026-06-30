@@ -25,7 +25,7 @@ describe("friday-provider-cli-backend", () => {
 
     const result = await runFridayCliBackendTextCompletion({
       cliConfig: {
-        backendId: "claude-cli",
+        backendId: "codex-cli",
         binaryPath: cliPath,
       },
       systemPrompt: "system",
@@ -41,7 +41,7 @@ describe("friday-provider-cli-backend", () => {
 
     await expect(runFridayCliBackendTextCompletion({
       cliConfig: {
-        backendId: "claude-cli",
+        backendId: "codex-cli",
         binaryPath: missingPath,
       },
       systemPrompt: "system",

@@ -410,10 +410,10 @@ function clampPositive(value: number | undefined, fallback: number): number {
 }
 
 function validateBackend(backendId: unknown): asserts backendId is FridayTaskWorkflowCliBackendId {
-  if (backendId !== "codex-cli" && backendId !== "claude-cli") {
+  if (backendId !== "codex-cli") {
     throw new FridayDomainError(
       "TASK_WORKFLOW_INVALID",
-      "backendId must be one of 'codex-cli', 'claude-cli'.",
+      "backendId must be 'codex-cli'.",
       { httpStatus: 400 },
     );
   }

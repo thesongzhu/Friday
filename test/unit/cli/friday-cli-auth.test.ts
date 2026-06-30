@@ -219,7 +219,7 @@ describe("CLI auth attach-cli", () => {
       getProvider: vi.fn().mockResolvedValue({
         id: "anthropic-cli",
         kind: "anthropic",
-        name: "Claude CLI",
+        name: "Codex CLI",
         config: { backendKind: "cli" },
       }),
     });
@@ -236,7 +236,7 @@ describe("CLI auth attach-cli", () => {
     expect(providerService.updateProvider).not.toHaveBeenCalled();
   });
 
-  it("rejects a same-kind provider that is not already a CLI backend", async () => {
+  it("rejects removed Claude CLI attach targets before provider mutation", async () => {
     const providerService = makeProviderService({
       getProvider: vi.fn().mockResolvedValue({
         id: "anthropic-http",
@@ -256,7 +256,7 @@ describe("CLI auth attach-cli", () => {
         stdout: vi.fn(),
         stderr: vi.fn(),
       },
-    )).rejects.toThrow('Provider "anthropic-http" is backend "http", not cli');
+    )).rejects.toThrow("attach-cli currently supports: codex");
 
     expect(providerService.createProvider).not.toHaveBeenCalled();
     expect(providerService.updateProvider).not.toHaveBeenCalled();

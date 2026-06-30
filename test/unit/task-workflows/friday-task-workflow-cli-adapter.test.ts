@@ -32,7 +32,7 @@ function makeInput(
   overrides: Partial<FridayTaskWorkflowCliInvokeInput> = {},
 ): FridayTaskWorkflowCliInvokeInput {
   return {
-    backendId: "claude-cli",
+    backendId: "codex-cli",
     systemPrompt: "You are a bounded text reviewer.",
     conversation: "Review the linked spec.",
     contextPackage: {
@@ -158,7 +158,7 @@ describe("Phase 13.5C CLI adapter", () => {
     const cliTextCompletion: FridayTaskWorkflowCliTextCompletion = async () => {
       throw new FridayDomainError(
         "LLM_ERROR",
-        "Claude CLI auth required; please run claude auth",
+        "Codex CLI auth required; please run codex login",
         { httpStatus: 502 },
       );
     };
@@ -237,7 +237,7 @@ describe("Phase 13.5C CLI adapter", () => {
       await adapter.produceHandoff(
         makeInput({
           // Force-cast a known-invalid value through Partial to test runtime guard.
-          backendId: "openai-cli" as unknown as "claude-cli",
+          backendId: "openai-cli" as unknown as "codex-cli",
         }),
       );
       throw new Error("expected backend refusal");

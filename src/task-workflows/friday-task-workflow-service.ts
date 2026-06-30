@@ -1510,10 +1510,10 @@ export function createFridayTaskWorkflowService(
         { httpStatus: 400 },
       );
     }
-    if (input.backendId !== "codex-cli" && input.backendId !== "claude-cli") {
+    if (input.backendId !== "codex-cli") {
       throw new FridayDomainError(
         "TASK_WORKFLOW_INVALID",
-        "backendId must be one of 'codex-cli', 'claude-cli'.",
+        "backendId must be 'codex-cli'.",
         { httpStatus: 400 },
       );
     }

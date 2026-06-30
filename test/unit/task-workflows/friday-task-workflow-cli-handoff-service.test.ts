@@ -104,19 +104,19 @@ afterEach(async () => {
 describe("Phase 13.5C live CLI handoff binding (service.recordCliHandoff)", () => {
   it("persists a handoff_ready handoff with verified=false and capability label intact", async () => {
     const { service } = makeServiceWithAdapter(async () =>
-      "draft summary from claude-cli adapter shim",
+      "draft summary from codex-cli adapter shim",
     );
     const workflow = service.create(makeCreateInput({ risk: "medium" }));
     const lane = service.openExecutorLane(workflow.id, { laneRole: "cli" });
     const handoff = await service.recordCliHandoff(workflow.id, lane.id, {
-      backendId: "claude-cli",
+      backendId: "codex-cli",
       systemPrompt: "You are a bounded CLI reviewer.",
       conversation: "USER: summarize the diff under <50 words.",
     });
     expect(handoff.status).toBe("handoff_ready");
     expect(handoff.workflowId).toBe(workflow.id);
     expect(handoff.laneId).toBe(lane.id);
-    expect(handoff.backendId).toBe("claude-cli");
+    expect(handoff.backendId).toBe("codex-cli");
     expect(handoff.summaryDraft.startsWith("draft summary")).toBe(true);
     expect(handoff.capabilityLabel.nativeToolProof).toBe(false);
     expect(handoff.capabilityLabel.summaryStatus).toBe("draft_unverified");
@@ -214,7 +214,7 @@ describe("Phase 13.5C live CLI handoff binding (service.recordCliHandoff)", () =
     const handoffA = await authMissingRun.service.recordCliHandoff(
       workflowA.id,
       laneA.id,
-      { backendId: "claude-cli", systemPrompt: "sys", conversation: "msg" },
+      { backendId: "codex-cli", systemPrompt: "sys", conversation: "msg" },
     );
     expect(handoffA.status).toBe("auth_missing");
     expect(handoffA.failureReason).toMatch(/authentication required/i);
@@ -226,7 +226,7 @@ describe("Phase 13.5C live CLI handoff binding (service.recordCliHandoff)", () =
     const lane = service.openExecutorLane(workflow.id, { laneRole: "native" });
     try {
       await service.recordCliHandoff(workflow.id, lane.id, {
-        backendId: "claude-cli",
+        backendId: "codex-cli",
         systemPrompt: "sys",
         conversation: "msg",
       });
@@ -263,8 +263,8 @@ describe("Phase 13.5C live CLI handoff binding (service.recordCliHandoff)", () =
     const workflow = service.create(makeCreateInput({ risk: "medium" }));
     const lane = service.openExecutorLane(workflow.id, { laneRole: "cli" });
     for (const broken of [
-      { backendId: "claude-cli", systemPrompt: "  ", conversation: "msg" },
-      { backendId: "claude-cli", systemPrompt: "sys", conversation: "  " },
+      { backendId: "codex-cli", systemPrompt: "  ", conversation: "msg" },
+      { backendId: "codex-cli", systemPrompt: "sys", conversation: "  " },
       {
         backendId: "openai-cli" as never,
         systemPrompt: "sys",
@@ -287,7 +287,7 @@ describe("Phase 13.5C live CLI handoff binding (service.recordCliHandoff)", () =
     const lane = service.openExecutorLane(workflow.id, { laneRole: "cli" });
     try {
       await service.recordCliHandoff(workflow.id, lane.id, {
-        backendId: "claude-cli",
+        backendId: "codex-cli",
         systemPrompt: "sys",
         conversation: "msg",
       });
@@ -306,7 +306,7 @@ describe("Phase 13.5C live CLI handoff binding (service.recordCliHandoff)", () =
     const lane = service.openExecutorLane(workflow.id, { laneRole: "cli" });
     const handoff: FridayTaskWorkflowCliHandoffRecord =
       await service.recordCliHandoff(workflow.id, lane.id, {
-        backendId: "claude-cli",
+        backendId: "codex-cli",
         systemPrompt: "sys",
         conversation: "msg",
       });
