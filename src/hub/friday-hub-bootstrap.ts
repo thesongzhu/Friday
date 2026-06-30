@@ -7298,7 +7298,11 @@ export async function createFridayHub(
       agentLoop: agentLoopService,
       allowTestOnlyAutoFixExecution: config.allowTestOnlyAutoFixExecution,
     },
-    agentLoop: { service: agentLoopService },
+    agentLoop: {
+      service: agentLoopService,
+      allowTestOnlyAgentLoopRunControlExecution: config.allowTestOnlyAgentLoopRunControlExecution,
+      allowTestOnlyAgentLoopPolicyMutation: config.allowTestOnlyAgentLoopPolicyMutation,
+    },
     observability: observabilityService.routes,
     observabilityService,
     channels: {

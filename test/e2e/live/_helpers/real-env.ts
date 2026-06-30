@@ -317,6 +317,7 @@ async function startLocalRealHubEnv(
       port: 0,
       logRequests: false,
       allowTestOnlyWorkflowBuilderDraftExecution: true,
+      allowTestOnlyWorkflowRunExecution: true,
       allowTestOnlyAutonomyLifecycleExecution: true,
       allowTestOnlyStandingAgendaExecution: true,
       allowTestOnlyAutonomyPolicyMutation: true,
@@ -325,10 +326,15 @@ async function startLocalRealHubEnv(
       allowTestOnlySessionRunExecution: true,
       // Session-run reaches the agent loop executeRun method, now method-guarded.
       allowTestOnlyAgentRunExecution: true,
+      // Self-healing live proof exercises legacy agent-loop policy/run-control
+      // HTTP surfaces inside an isolated test hub; production leaves them unset.
+      allowTestOnlyAgentLoopPolicyMutation: true,
+      allowTestOnlyAgentLoopRunControlExecution: true,
       allowTestOnlySessionMemoryExtractionExecution: true,
       allowTestOnlyDiagnosisExecution: true,
       allowTestOnlyRealtimeExecution: true,
       allowTestOnlySkillConverterExecution: true,
+      allowTestOnlySkillVerifyExecution: true,
       allowTestOnlyPluginExecution: true,
       allowTestOnlyProviderDetectExecution: true,
       allowTestOnlyProviderProbeExecution: true,

@@ -4,6 +4,15 @@ import * as path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  createFridayProviderCostCalculator,
+  createFridayProviderPricingCatalog,
+  createFridayProviderUsageNormalizer,
+  type FridayProviderAttempt,
+  type FridayProviderNormalizedUsage,
+  type FridayResolvedProviderRoute,
+} from "#providers";
+
+import {
   apiFetch,
   createDeepSeekProvider,
   createOpenAiProvider,
@@ -25,6 +34,10 @@ const C3C4_GATED = process.env.FRIDAY_E2E_LIVE_DEEPSEEK === "1"
 const DEEPSEEK_MODEL = process.env.FRIDAY_C3C4_DEEPSEEK_MODEL ?? "deepseek-v4-pro";
 const OPENAI_MODEL = process.env.FRIDAY_C3C4_OPENAI_MODEL ?? "gpt-4o-mini";
 const REPORT_ROOT = process.env.FRIDAY_C3C4_PROVIDER_REPORT_ROOT;
+const usageNormalizer = createFridayProviderUsageNormalizer();
+const costCalculator = createFridayProviderCostCalculator({
+  pricingCatalog: createFridayProviderPricingCatalog(),
+});
 
 interface RoutingSnapshot {
   defaultProviderId: string;
@@ -32,32 +45,29 @@ interface RoutingSnapshot {
   fallbackProviderIds: string[];
 }
 
-interface AgentRun {
+interface ProviderTurn {
   id: string;
-  status: string;
-  responseText?: string;
-  actualExecution?: {
-    actualProviderId?: string;
-    actualProviderKind?: string;
-    actualModel?: string;
-    totalCostUsd?: number;
-    fallbackAttempts?: Array<{
-      providerId: string;
-      providerKind: string;
-      model: string;
-      reason?: string;
-      status?: string;
-      code?: string;
-      error?: string;
-    }>;
+  status: "completed";
+  responseText: string;
+  actualExecution: {
+    actualProviderId: string;
+    actualProviderKind: string;
+    actualModel: string;
+    totalCostUsd: number;
+    fallbackAttempts: FridayProviderAttempt[];
     turns: Array<{
-      providerId?: string;
-      model?: string;
+      providerId: string;
+      model: string;
       inputTokens: number;
       outputTokens: number;
-      costUsd?: number;
+      costUsd: number;
     }>;
   };
+}
+
+interface ProviderHttpResult {
+  text: string;
+  body: Record<string, unknown>;
 }
 
 interface ProofReport {
@@ -114,55 +124,219 @@ async function putRouting(
   return json.data.routing;
 }
 
-async function readAgentRun(env: RealHubEnv, runId: string): Promise<AgentRun> {
-  const get = await apiFetch<{
-    ok: boolean;
-    data: { run: AgentRun };
-  }>(env.baseUrl, env.accessToken, "GET", `/v1/agent/runs/${encodeURIComponent(runId)}`);
-  if (get.status !== 200 || !get.json.ok) {
-    throw new Error(`Failed to read agent run ${runId}: ${JSON.stringify(get.json)}`);
-  }
-  return get.json.data.run;
+function providerBaseUrl(route: FridayResolvedProviderRoute): string {
+  return route.provider.baseUrl.replace(/\/+$/, "");
 }
 
-async function startAgentRun(env: RealHubEnv, task: string): Promise<AgentRun> {
-  const start = await apiFetch<{
-    ok: boolean;
-    data?: { runId?: string };
-    runId?: string;
-    error?: { code?: string; message?: string };
-  }>(
-    env.baseUrl,
-    env.accessToken,
-    "POST",
-    "/v1/agent/runs",
-    {
-      task,
-      timeoutMs: 180_000,
-      constraints: { readOnly: true, operationalMode: "restricted" },
-      taskProfile: { id: "deterministic", temperature: 0 },
-      executionContext: { surface: "c3c4-provider-routing-live-proof" },
-    },
-    { timeoutMs: 240_000 },
-  );
-  if (start.status !== 200 || start.json.ok === false) {
-    throw new Error(`Agent run failed to start: ${JSON.stringify(start.json)}`);
+function providerHeaders(route: FridayResolvedProviderRoute, credential: string | null): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    ...(route.provider.config.headers ?? {}),
+    ...(credential ? { Authorization: `Bearer ${credential}` } : {}),
+  };
+}
+
+class ProviderHttpError extends Error {
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ProviderHttpError";
+    this.status = status;
+    this.code = code;
   }
-  const runId = start.json.data?.runId ?? start.json.runId;
-  if (!runId) {
-    throw new Error(`Agent run response did not include runId: ${JSON.stringify(start.json)}`);
+}
+
+function extractErrorCode(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") {
+    return undefined;
+  }
+  const record = body as Record<string, unknown>;
+  const error = record.error;
+  if (error && typeof error === "object") {
+    const code = (error as Record<string, unknown>).code;
+    return typeof code === "string" ? code : undefined;
+  }
+  const code = record.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+function redactProviderError(body: unknown): string {
+  const raw = typeof body === "string" ? body : JSON.stringify(body);
+  return raw
+    .replace(/\b(sk-|key-|pk-|rk-|xai-|gsk_|aip-|whsk-|sess-|ssm-)[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
+    .replace(/\b[A-Za-z0-9/+]{40,}={0,2}\b/g, "[REDACTED]");
+}
+
+function extractOpenAiResponsesText(body: Record<string, unknown>): string {
+  const outputText = body.output_text;
+  if (typeof outputText === "string" && outputText.length > 0) {
+    return outputText;
+  }
+  const output = body.output;
+  if (Array.isArray(output)) {
+    const parts: string[] = [];
+    for (const item of output) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const content = (item as Record<string, unknown>).content;
+      if (!Array.isArray(content)) {
+        continue;
+      }
+      for (const contentItem of content) {
+        if (!contentItem || typeof contentItem !== "object") {
+          continue;
+        }
+        const text = (contentItem as Record<string, unknown>).text;
+        if (typeof text === "string") {
+          parts.push(text);
+        }
+      }
+    }
+    return parts.join("");
+  }
+  return "";
+}
+
+function extractOpenAiCompletionsText(body: Record<string, unknown>): string {
+  const choices = body.choices;
+  if (!Array.isArray(choices)) {
+    return "";
+  }
+  const first = choices[0];
+  if (!first || typeof first !== "object") {
+    return "";
+  }
+  const message = (first as Record<string, unknown>).message;
+  if (message && typeof message === "object") {
+    const content = (message as Record<string, unknown>).content;
+    return typeof content === "string" ? content : "";
+  }
+  return "";
+}
+
+async function callOpenAiCompatibleRoute(input: {
+  route: FridayResolvedProviderRoute;
+  credential: string | null;
+  prompt: string;
+}): Promise<ProviderHttpResult> {
+  const { route, credential, prompt } = input;
+  const api = route.provider.config.api;
+  const baseUrl = providerBaseUrl(route);
+  const headers = providerHeaders(route, credential);
+  const endpoint = api === "openai-completions"
+    ? `${baseUrl}/v1/chat/completions`
+    : api === "openai-responses"
+      ? `${baseUrl}/v1/responses`
+      : null;
+  if (!endpoint) {
+    throw new Error(`Unsupported C3/C4 provider API for live routing proof: ${api}`);
   }
 
-  const terminal = new Set(["completed", "failed", "cancelled"]);
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 180_000) {
-    const run = await readAgentRun(env, runId);
-    if (terminal.has(run.status)) {
-      return run;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  const body = api === "openai-completions"
+    ? {
+        model: route.model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+        // Reasoning-first providers can spend most of a small cap before
+        // emitting user-visible text; match the production capability probe.
+        max_tokens: 256,
+      }
+    : {
+        model: route.model,
+        input: prompt,
+        temperature: 0,
+        max_output_tokens: 256,
+      };
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  const json = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    throw new ProviderHttpError(
+      `Provider ${route.provider.kind} ${route.model} returned HTTP ${response.status}: ${redactProviderError(json)}`,
+      response.status,
+      extractErrorCode(json),
+    );
   }
-  return readAgentRun(env, runId);
+
+  const text = api === "openai-completions"
+    ? extractOpenAiCompletionsText(json)
+    : extractOpenAiResponsesText(json);
+  if (!text.trim()) {
+    throw new Error(`Provider ${route.provider.kind} ${route.model} returned empty text`);
+  }
+  return { text, body: json };
+}
+
+async function runLiveProviderTurn(env: RealHubEnv, prompt: string): Promise<ProviderTurn> {
+  if (!env.hub?.providerService) {
+    throw new Error("C3/C4 provider-service live proof requires a local Friday hub instance.");
+  }
+  const complexity = "simple" as const;
+  const routed = await env.hub.providerService.runWithFallback<ProviderHttpResult>({
+    routingContext: {
+      estimatedInputTokens: 64,
+      complexity,
+      dataSensitivity: "public",
+      requiredCapabilities: ["text"],
+    },
+    run: (route, credential) => callOpenAiCompatibleRoute({ route, credential, prompt }),
+  });
+  const api = routed.route.provider.config.api;
+  const usage: FridayProviderNormalizedUsage = usageNormalizer.normalize(api, routed.result.body);
+  if (usage.total <= 0) {
+    throw new Error(`Provider ${routed.route.provider.kind} ${routed.route.model} did not report token usage`);
+  }
+  const costUsd = costCalculator.calculate({
+    providerKind: routed.route.provider.kind,
+    model: routed.route.model,
+    usage,
+  });
+  if (costUsd <= 0) {
+    throw new Error(`Friday pricing catalog returned non-positive cost for ${routed.route.provider.kind}/${routed.route.model}`);
+  }
+
+  await env.hub.providerService.recordUsage({
+    providerId: routed.route.provider.id,
+    providerApi: api,
+    model: routed.route.model,
+    routeStrategy: routed.routingDecision.strategy,
+    taskComplexity: complexity,
+    usage,
+    costUsd,
+    metadata: {
+      proof: "c3c4-provider-routing-live",
+      providerKind: routed.route.provider.kind,
+      fallbackAttemptCount: routed.attempts.length,
+      routeDecisionReasonCode: routed.routingDecision.reasonCode ?? null,
+    },
+  });
+
+  return {
+    id: `provider-service-live-${Date.now()}-${routed.route.provider.kind}`,
+    status: "completed",
+    responseText: routed.result.text,
+    actualExecution: {
+      actualProviderId: routed.route.provider.id,
+      actualProviderKind: routed.route.provider.kind,
+      actualModel: routed.route.model,
+      totalCostUsd: costUsd,
+      fallbackAttempts: routed.attempts,
+      turns: [{
+        providerId: routed.route.provider.id,
+        model: routed.route.model,
+        inputTokens: usage.input,
+        outputTokens: usage.output,
+        costUsd,
+      }],
+    },
+  };
 }
 
 async function getProvider(env: RealHubEnv, providerId: string): Promise<{
@@ -387,11 +561,12 @@ describe.skipIf(!C3C4_GATED)("C3/C4 live provider routing proof (DeepSeek primar
     expect(routing.defaultProviderId).toBe(deepseekProviderId);
     expect(routing.fallbackProviderIds).toEqual([openaiProviderId]);
 
-    const run = await startAgentRun(
+    const run = await runLiveProviderTurn(
       env,
-      "Reply with exactly this token and no other text: C3C4_DEEPSEEK_PRIMARY_OK",
+      "Reply with exactly this token and no other text: C3C4_DEEPSEEK_OK",
     );
     expect(run.status).toBe("completed");
+    expect(run.responseText).toContain("C3C4_DEEPSEEK_OK");
     expect(run.actualExecution?.actualProviderId).toBe(deepseekProviderId);
     expect(run.actualExecution?.actualProviderKind).toBe("deepseek");
     expect(run.actualExecution?.actualModel).toBe(DEEPSEEK_MODEL);
@@ -417,11 +592,12 @@ describe.skipIf(!C3C4_GATED)("C3/C4 live provider routing proof (DeepSeek primar
     expect(routing.defaultProviderId).toBe(brokenDeepseekProviderId);
     expect(routing.fallbackProviderIds).toEqual([openaiProviderId]);
 
-    const run = await startAgentRun(
+    const run = await runLiveProviderTurn(
       env,
       "Reply with exactly this token and no other text: C3C4_OPENAI_FALLBACK_OK",
     );
     expect(run.status).toBe("completed");
+    expect(run.responseText).toContain("C3C4_OPENAI_FALLBACK_OK");
     expect(run.actualExecution?.actualProviderId).toBe(openaiProviderId);
     expect(run.actualExecution?.actualProviderKind).toBe("openai");
     expect(run.actualExecution?.actualModel).toBe(OPENAI_MODEL);
