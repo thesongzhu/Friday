@@ -75,6 +75,17 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("same_run_events+=(\"${auto_stress_bridge}\")");
   });
 
+  it("threads negative-control status events into strict capture-dir assembly", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("--negative-control-events");
+    expect(source).toContain("negative_control_events=()");
+    expect(source).toContain("negative_control_events+=(\"$2\")");
+    expect(source).toContain("require_file_if_set \"negative-control evidence_ref\" \"${negative_evidence_ref}\"");
+    expect(source).toContain("shared_extra_evidence+=(\"${negative_evidence_ref}\")");
+    expect(source).toContain("capture_dir_args+=(\"--negative-control-events=${path}\")");
+  });
+
   it("can derive non-channel workbench timeline inputs from the Rust Hub DB", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
 

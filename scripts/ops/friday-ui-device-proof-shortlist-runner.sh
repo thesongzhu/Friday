@@ -15,6 +15,7 @@ usage:
     [--workbench-db /abs/rust-hub.sqlite]
     [--accessibility-capture /abs/real-accessibility-capture.json ...]
     [--stress-capture /abs/real-same-run-stress-capture.json ...]
+    [--negative-control-events /abs/negative-events.jsonl ...]
     [--harvest-dir /abs/artifact-dir ...]
     [--same-run-events /abs/events.jsonl ...]
     [--selected-visual-evidence-dir /abs/served-or-visual-evidence ...]
@@ -54,6 +55,7 @@ workbench_db="${FRIDAY_WORKBENCH_DB_PATH:-}"
 defer_channel_proof="${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}"
 accessibility_captures=()
 stress_captures=()
+negative_control_events=()
 harvest_dirs=()
 same_run_events=()
 runtime_evidence_dirs=()
@@ -169,6 +171,15 @@ while [ "$#" -gt 0 ]; do
       stress_captures+=("${1#--stress-capture=}")
       shift
       ;;
+    --negative-control-events)
+      [ "$#" -ge 2 ] || die "--negative-control-events requires a value"
+      negative_control_events+=("$2")
+      shift 2
+      ;;
+    --negative-control-events=*)
+      negative_control_events+=("${1#--negative-control-events=}")
+      shift
+      ;;
     --harvest-dir)
       [ "$#" -ge 2 ] || die "--harvest-dir requires a value"
       harvest_dirs+=("$2")
@@ -263,7 +274,7 @@ require_file_if_set() {
 }
 
 set +u
-for path in "${accessibility_captures[@]}" "${stress_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
+for path in "${accessibility_captures[@]}" "${stress_captures[@]}" "${negative_control_events[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
   require_abs_if_set "input path" "${path}"
 done
 set -u
@@ -488,6 +499,14 @@ if [ -n "${channel_live_proof}" ] || [ -n "${channel_capture}" ]; then
   event_inputs+=("${channel_events}")
 fi
 set +u
+for path in "${negative_control_events[@]}"; do
+  [ -n "${path}" ] || continue
+  while IFS= read -r negative_evidence_ref; do
+    [ -n "${negative_evidence_ref}" ] || continue
+    require_file_if_set "negative-control evidence_ref" "${negative_evidence_ref}"
+    shared_extra_evidence+=("${negative_evidence_ref}")
+  done < <(node -e 'const fs=require("fs"); const seen=new Set(); const text=fs.readFileSync(process.argv[1],"utf8"); for (const line of text.split(/\r?\n/)) { if (!line.trim()) continue; const row=JSON.parse(line); const ref=typeof row.evidence_ref==="string" ? row.evidence_ref : ""; if (ref && !seen.has(ref)) { seen.add(ref); console.log(ref); } }' "${path}")
+done
 for path in "${same_run_events[@]}"; do
   [ -n "${path}" ] || continue
   event_inputs+=("${path}")
@@ -558,6 +577,9 @@ if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_c
   fi
   for path in "${event_inputs[@]}"; do
     capture_dir_args+=("--events=${path}")
+  done
+  for path in "${negative_control_events[@]}"; do
+    capture_dir_args+=("--negative-control-events=${path}")
   done
   set +u
   for path in "${shared_extra_evidence[@]}"; do
