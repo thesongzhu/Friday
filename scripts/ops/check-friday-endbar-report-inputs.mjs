@@ -143,6 +143,7 @@ function classifyForGroup(groupId, report, path) {
       "selected_visual_proof_ready",
       "product_runtime_actions_traceable",
       "runtime_actions_covered",
+      "runtime_capture_required",
       "passed",
     ]);
     if (status === "uiux_product_closure_evidence_ready" && !hasBlockers(report)) {

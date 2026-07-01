@@ -133,7 +133,7 @@ if (summary && typeof summary === "object" && !Array.isArray(summary)) {
   check("workbench_timeline_ready", ["snapshot_ready_events_ready", "ready"].includes(string(summary.workbenchTimelineStatus)), string(summary.workbenchTimelineStatus));
   check("stress_capture_ready", ["ready", "passed"].includes(string(summary.stressCaptureStatus)), string(summary.stressCaptureStatus));
   check("accessibility_capture_ready", ["ready", "passed"].includes(string(summary.accessibilityCaptureStatus)), string(summary.accessibilityCaptureStatus));
-  check("product_closure_runtime_capture_ready", ["ready_for_runtime_capture", "ready", "passed"].includes(string(summary.productClosureStatus)), string(summary.productClosureStatus));
+  check("product_closure_evidence_ready", ["uiux_product_closure_evidence_ready", "ready", "passed"].includes(string(summary.productClosureStatus)), string(summary.productClosureStatus));
   check("readiness_report_present", uiReadiness && typeof uiReadiness === "object" && !Array.isArray(uiReadiness), "uiDeviceProofReadiness object");
   check("no_channel_deferred_signal", !hasDeferredSignal(summary), array(summary.readinessBlockers).join(",") || string(summary.readinessStatus));
   check("strict_ui_device_readiness_passed", string(uiReadiness.status) === "pass" || string(uiReadiness.status) === "strict_ui_device_ready", string(uiReadiness.status));

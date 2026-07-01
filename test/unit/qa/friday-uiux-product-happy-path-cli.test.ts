@@ -42,6 +42,32 @@ function selectedVisual(
   };
 }
 
+function selectedVisualWithServedUi(
+  servedUi: Record<string, unknown>,
+  desktopExtra: Record<string, unknown> = { status: "gap", mode: "static-ax" },
+) {
+  const visual = selectedVisual("live-loopback", {}, desktopExtra) as {
+    evidence: {
+      servedUi?: Array<Record<string, unknown>>;
+    };
+  };
+  visual.evidence.servedUi = [servedUi];
+  return visual;
+}
+
+function readyServedUi(overrides: Record<string, unknown> = {}) {
+  return {
+    status: "ready",
+    sourceStatus: "served_desktop_dist_ui_and_ios_source",
+    checks: {
+      renderedDesktop: true,
+      builtCss: true,
+      iosDesignSystem: true,
+    },
+    ...overrides,
+  };
+}
+
 function traceability(overrides: Record<string, unknown> = {}) {
   return {
     truth: "uiux_action_traceability_not_endbar_not_adoption_not_gui_proof",
@@ -303,6 +329,57 @@ describe("check-friday-uiux-product-happy-path", () => {
       const visual = writeJson(root, "visual.json", selectedVisual("live-loopback", {}, {
         mode: "static-ax",
       }));
+      const trace = writeJson(root, "trace.json", traceability());
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${process.cwd()}`,
+        `--selected-visual-report=${visual}`,
+        `--action-traceability-report=${trace}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string; detail?: string }> };
+      expect(report.blockers).toContainEqual(expect.objectContaining({
+        code: "desktop_visual_not_live_connected",
+        detail: "modes=static-ax",
+      }));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts current-head served ui fidelity as the served desktop visual input", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-happy-path-served-ui-"));
+    try {
+      const visual = writeJson(root, "visual.json", selectedVisualWithServedUi(readyServedUi()));
+      const trace = writeJson(root, "trace.json", traceability());
+      const output = execFileSync("node", [
+        script,
+        `--repo-root=${process.cwd()}`,
+        `--selected-visual-report=${visual}`,
+        `--action-traceability-report=${trace}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        selectedVisual?: { liveConnectedDesktopEvidenceCount?: number; desktopModes?: string[] };
+        blockers?: unknown[];
+      };
+      expect(report.status).toBe("product_happy_path_ready");
+      expect(report.selectedVisual?.liveConnectedDesktopEvidenceCount).toBe(1);
+      expect(report.selectedVisual?.desktopModes).toEqual(["static-ax", "served-ui-current-head"]);
+      expect(report.blockers).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects served ui fidelity unless it is ready and scoped to served dist/ui", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-happy-path-served-ui-gap-"));
+    try {
+      const visual = writeJson(root, "visual.json", selectedVisualWithServedUi(readyServedUi({
+        status: "gap",
+      })));
       const trace = writeJson(root, "trace.json", traceability());
       const result = spawnSync("node", [
         script,
