@@ -22,6 +22,7 @@ function contractBody() {
 | Surface | Screen [state] | action_id | Label | capability_id | reg | reg_status | truth_status | result/target | Rust/Hub owner gate test expectation |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | mobile | approval | check | Approve with proof | security_approval_bound_principal_gate_cat10_netnew | x | wired | wired_registry | result:confirmed | Runtime proof required. |
+| mobile | fridayChat | check | Approve | security_approval_bound_principal_gate_cat10_netnew | x | wired | wired_registry | result:confirmed | Runtime proof required. |
 `;
 }
 
@@ -53,6 +54,14 @@ cat > "${swiftProof}" <<'JSON'
   "run_id": "run-paused-1",
   "approval_id": "approval-1",
   "ui_actions": [
+    {
+      "surface": "mobile",
+      "screen": "fridayChat",
+      "action_id": "check",
+      "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
+      "status": "pass",
+      "evidence_ref": "proof://mobile/fridaychat-approval-approve/run-paused-1"
+    },
     {
       "surface": "mobile",
       "screen": "approval",
@@ -92,6 +101,12 @@ exit 0
         actions?: Array<{ surface?: string; screen?: string; action_id?: string; status?: string }>;
       };
       expect(actionEvidence.actions).toEqual([
+        expect.objectContaining({
+          surface: "mobile",
+          screen: "fridayChat",
+          action_id: "check",
+          status: "pass",
+        }),
         expect.objectContaining({
           surface: "mobile",
           screen: "approval",
