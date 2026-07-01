@@ -211,20 +211,28 @@ describe("check-friday-uiux-selected-visual-proof", () => {
     }
   });
 
-  it("passes when current selected mobile visual evidence is a design-proof sample", () => {
+  it("rejects design-proof sample evidence as product visual proof", () => {
     const { root, designRoot } = fixture();
     try {
       const evidence = writeReadyEvidence(root, "design-proof-sample");
-      const output = execFileSync("node", [
+      const result = spawnSync("node", [
         script,
         `--repo-root=${root}`,
         `--design-root=${designRoot}`,
         `--evidence-dir=${evidence}`,
         "--require-complete",
       ], { cwd: process.cwd(), encoding: "utf8" });
-      const report = JSON.parse(output) as { status?: string; blockers?: unknown[] };
-      expect(report.status).toBe("selected_visual_proof_ready");
-      expect(report.blockers).toEqual([]);
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        status?: string;
+        blockers?: Array<{ code?: string }>;
+        evidence?: { ios?: Array<{ modeStatus?: string }> };
+      };
+      expect(report.status).toBe("selected_visual_proof_gaps_present");
+      expect(report.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "mobile_selected_visual_proof_missing" }),
+      ]));
+      expect(report.evidence?.ios?.[0]?.modeStatus).toBe("design_sample_not_product_visual_proof");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
