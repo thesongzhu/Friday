@@ -228,15 +228,20 @@ function evaluateIosManifest(path) {
   const missing = requiredMobileDestinations.filter((destination) => !captured.has(destination));
   const truthOk = manifest.truth_label === "ios_selected_design_destination_capture_not_live_closure";
   const statusOk = manifest.status === "ready";
+  const evidenceHead = typeof manifest.repo_head === "string" ? manifest.repo_head : null;
+  const headOk = Boolean(head) && evidenceHead === head;
   const mode = manifest.mode || null;
   const allowedVisualModes = ["design-proof-sample", "live-loopback"];
   const modeOk = allowedVisualModes.includes(mode);
   return {
     path,
-    status: truthOk && statusOk && modeOk && missing.length === 0 ? "ready" : "gap",
+    status: truthOk && statusOk && headOk && modeOk && missing.length === 0 ? "ready" : "gap",
     truth_label: manifest.truth_label || null,
     manifest_status: manifest.status || null,
     generated_at_utc: manifest.generated_at_utc || null,
+    head: evidenceHead,
+    expectedHead: head,
+    headStatus: headOk ? "current_head" : evidenceHead ? "stale_or_wrong_head" : "missing_head",
     mode,
     allowedVisualModes,
     modeStatus: modeOk ? "visual_proof_mode" : mode === "offline-truth" ? "negative_control_not_visual_proof" : "missing_or_unknown_mode",
@@ -265,6 +270,8 @@ function evaluateDesktopCapture(path) {
     "ui_device_accessibility_click_capture_real_ui_not_endbar",
   ].includes(capture.truth_label);
   const statusOk = ["ready", "partial_capture_ready", undefined, null].includes(capture.status);
+  const evidenceHead = typeof capture.repo?.head === "string" ? capture.repo.head : null;
+  const headOk = Boolean(head) && evidenceHead === head;
   const declaredMode = typeof capture.mode === "string" ? capture.mode : null;
   const liveConnection = capture.live_connection && typeof capture.live_connection === "object"
     ? capture.live_connection
@@ -281,7 +288,7 @@ function evaluateDesktopCapture(path) {
     && /^[0-9]+$/.test(liveConnection.read_port);
   return {
     path,
-    eligibleForAggregate: truthOk && statusOk && desktopLiveConnected,
+    eligibleForAggregate: truthOk && statusOk && headOk && desktopLiveConnected,
     aggregate_key: desktopLiveConnected
       ? [
         declaredMode,
@@ -290,10 +297,13 @@ function evaluateDesktopCapture(path) {
         liveConnection.workbench_mission_id,
       ].join("\u001f")
       : null,
-    status: truthOk && statusOk && missing.length === 0 ? "ready" : "gap",
+    status: truthOk && statusOk && headOk && missing.length === 0 ? "ready" : "gap",
     truth_label: capture.truth_label || null,
     capture_status: capture.status || null,
     generated_at_utc: capture.generated_at_utc || null,
+    head: evidenceHead,
+    expectedHead: head,
+    headStatus: headOk ? "current_head" : evidenceHead ? "stale_or_wrong_head" : "missing_head",
     mode: desktopLiveConnected ? declaredMode : null,
     declaredMode,
     live_connection: liveConnection,

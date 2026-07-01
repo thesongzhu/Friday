@@ -65,7 +65,11 @@ describe("friday-uiux-product-closure-readiness contract", () => {
     expect(source).toContain("FRIDAY_UIUX_SELECTED_VISUAL_EVIDENCE_DIRS");
     expect(source).toContain("const selectedVisualEvidenceDirs = unique");
     expect(source).toContain("for (const dir of selectedVisualEvidenceDirs)");
-    expect(source).toContain("selectedVisualProofArgs.push(`--evidence-dir=${abs(dir)}`)");
+    expect(source).toContain("function addSelectedVisualEvidenceArg");
+    expect(source).toContain("selectedVisualProofArgs.push(`--served-ui-report=${resolved}`)");
+    expect(source).toContain("selectedVisualProofArgs.push(`--ios-manifest=${resolved}`)");
+    expect(source).toContain("selectedVisualProofArgs.push(`--desktop-capture=${resolved}`)");
+    expect(source).toContain("selectedVisualProofArgs.push(`--evidence-dir=${resolved}`)");
     expect(source).toContain("selectedVisualEvidenceDirs,");
   });
 });
