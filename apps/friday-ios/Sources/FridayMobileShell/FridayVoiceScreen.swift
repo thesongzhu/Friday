@@ -42,7 +42,7 @@ struct FridayVoiceScreen: View {
           Text("Voice")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
-          Text("input and speech output readiness")
+          Text("talk to Friday")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
@@ -58,7 +58,7 @@ struct FridayVoiceScreen: View {
       GlassPanel {
         HStack(spacing: 12) {
           ProgressView()
-          Text("Checking voice readiness")
+          Text("Preparing voice controls")
             .font(.footnote)
             .foregroundStyle(MobileTheme.textSecondary)
         }
@@ -68,13 +68,13 @@ struct FridayVoiceScreen: View {
       UnavailableView(
         reason: userFacingReason(reason),
         title: "Set Up Voice",
-        detail: "Friday needs microphone, speech, and playback readiness before voice can start.",
+        detail: "Connect microphone, speech, and playback so Friday can listen and reply.",
         systemImage: "waveform",
         identifier: "friday.voice.unavailable")
     case let .loaded(readiness):
       readinessCard(readiness)
       actionsCard(readiness)
-      gatesCard(readiness)
+      setupDetails(readiness)
     }
   }
 
@@ -88,7 +88,7 @@ struct FridayVoiceScreen: View {
     if normalized.contains("permission") || normalized.contains("microphone") || normalized.contains("speech") {
       return "Enable microphone and speech access, then refresh Voice."
     }
-    return "Voice starts after this device can confirm microphone, speech, playback, and Friday Chat handoff."
+    return "Voice starts after this device can use microphone, speech, playback, and Friday Chat handoff."
   }
 
   private func readinessCard(_ readiness: MobileVoiceReadiness) -> some View {
@@ -106,11 +106,11 @@ struct FridayVoiceScreen: View {
           .foregroundStyle(MobileTheme.textPrimary)
           .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("friday.voice.readiness-card")
-        Text("Capture and speech output run from Friday Chat when these gates are ready.")
+        Text("Use Voice to speak with Friday, then continue the same work in Chat.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
-          .accessibilityHint("Readiness plus local voice-loop truth: microphone capture, speech recognition, speech output, and Friday Chat handoff are checked on this device.")
+          .accessibilityHint("Voice checks microphone capture, speech recognition, speech output, and Friday Chat handoff on this device.")
         if readiness.canRequestPermission {
           Button {
             Task { await viewModel.requestPermission() }
@@ -136,7 +136,7 @@ struct FridayVoiceScreen: View {
   private func actionsCard(_ readiness: MobileVoiceReadiness) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("Voice I/O Actions", count: VoiceReadinessViewModel.actionRows(for: readiness).count)
+        cardHeader("Voice controls", count: VoiceReadinessViewModel.actionRows(for: readiness).count)
           .accessibilityIdentifier("friday.voice.actions-card")
         ForEach(VoiceReadinessViewModel.actionRows(for: readiness)) { row in
           HStack(alignment: .top, spacing: 10) {
@@ -183,10 +183,9 @@ struct FridayVoiceScreen: View {
     }
   }
 
-  private func gatesCard(_ readiness: MobileVoiceReadiness) -> some View {
+  private func setupDetails(_ readiness: MobileVoiceReadiness) -> some View {
     GlassPanel {
-      VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("Voice Gates", count: nil)
+      FridayProofDisclosure("Voice setup details") {
         readinessRow(
           title: "Microphone",
           value: readiness.microphone.rawValue,

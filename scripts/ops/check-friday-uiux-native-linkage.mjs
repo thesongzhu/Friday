@@ -199,7 +199,7 @@ const requirements = [
       mobileProductContract,
     ],
     productContractPath: mobileProductContract,
-    requiredStrings: ["Readiness plus local voice-loop truth", "friday.voice.readiness-card"],
+    requiredStrings: ["Voice setup details", "friday.voice.readiness-card"],
     requiredAccessibilityIds: ["friday.chat.voice-input", "friday.chat.voice-output", "friday.voice.open-chat-loop"],
     requiredRuntimeActionIds: [
       "mobile/voice/permission",

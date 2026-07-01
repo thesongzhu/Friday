@@ -62,7 +62,7 @@ struct FridayNewSessionScreen: View {
         .tint(MobileTheme.cyan)
         .disabled(intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || launchInFlight)
         .accessibilityIdentifier("friday.new-session.launch-button")
-        Text("Launch submits a governed Mission Intake. It is not provider-backed until the Hub accepts it and returns refs.")
+        Text("Launch asks Friday to start governed work, then hands the result into Chat when the Hub accepts it.")
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -94,21 +94,23 @@ struct FridayNewSessionScreen: View {
         createdOrReady: createdOrReady)
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-          cardHeader("Submitted", count: nil)
+          cardHeader("Mission ready", count: nil)
           Text(summary)
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
-          FridayProofLine(label: "mission", ref: missionId)
-          FridayProofLine(label: "work item", ref: workItemId)
-          FridayProofLine(label: "surface", ref: surfaceThreadId)
           FridayChip(
             text: createdOrReady ? "ready" : status,
             bg: MobileTheme.chipDoneBG,
             fg: MobileTheme.chipDoneFG)
-          Text("Friday saved a governed receipt. Provider execution and readable results still require the governed live loop to finish.")
+          Text("Friday saved the request. Continue in Chat to follow the run, approvals, and readable result in one place.")
             .font(.caption2)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
+          FridayProofDisclosure("Receipt details") {
+            FridayProofLine(label: "mission", ref: missionId)
+            FridayProofLine(label: "work item", ref: workItemId)
+            FridayProofLine(label: "surface", ref: surfaceThreadId)
+          }
           Divider().opacity(0.5)
           HStack(alignment: .top, spacing: 10) {
             Image(systemName: "arrowshape.turn.up.right.circle")
@@ -118,12 +120,14 @@ struct FridayNewSessionScreen: View {
               Text("Friday Chat handoff is armed")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(MobileTheme.textPrimary)
-              Text("The next tap carries these mission refs into Chat as a prefilled governed turn. It still cannot invent missing provider results.")
+              Text("The next tap opens the same governed turn in Friday Chat.")
                 .font(.caption2)
                 .foregroundStyle(MobileTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-              FridayProofLine(label: "handoff", ref: context.evidenceRef)
-              FridayProofLine(label: "action", ref: "mobile/newSession/open-chat-loop")
+              FridayProofDisclosure("Handoff details") {
+                FridayProofLine(label: "handoff", ref: context.evidenceRef)
+                FridayProofLine(label: "action", ref: "mobile/newSession/open-chat-loop")
+              }
             }
           }
           Button {

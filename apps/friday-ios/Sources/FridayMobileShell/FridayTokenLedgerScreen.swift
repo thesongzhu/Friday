@@ -88,8 +88,10 @@ struct FridayTokenLedgerScreen: View {
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
-        FridayProofLine(label: "run", ref: runId)
-        FridayProofLine(label: "mission", ref: projection.missionId)
+        FridayProofDisclosure("Usage receipt") {
+          FridayProofLine(label: "run", ref: runId)
+          FridayProofLine(label: "mission", ref: projection.missionId)
+        }
         Button {
           Task { await viewModel.loadDetail(.runReadback(runId: runId)) }
         } label: {
@@ -112,8 +114,10 @@ struct FridayTokenLedgerScreen: View {
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
-        FridayProofLine(label: "mission", ref: projection.missionId)
-        FridayProofLine(label: "live state", ref: projection.runtimeFeedStatus)
+        FridayProofDisclosure("Receipt details") {
+          FridayProofLine(label: "mission", ref: projection.missionId)
+          FridayProofLine(label: "live state", ref: projection.runtimeFeedStatus)
+        }
       }
     }
     .accessibilityIdentifier("friday.token-ledger.no-run-ref")
@@ -130,11 +134,13 @@ struct FridayTokenLedgerScreen: View {
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
-          ForEach(projection.providerReceiptRefs.prefix(5), id: \.self) { ref in
-            FridayProofLine(label: "provider", ref: ref)
-          }
-          ForEach(projection.channelReceiptRefs.prefix(5), id: \.self) { ref in
-            FridayProofLine(label: "channel", ref: ref)
+          FridayProofDisclosure("Projected receipts") {
+            ForEach(projection.providerReceiptRefs.prefix(5), id: \.self) { ref in
+              FridayProofLine(label: "provider", ref: ref)
+            }
+            ForEach(projection.channelReceiptRefs.prefix(5), id: \.self) { ref in
+              FridayProofLine(label: "channel", ref: ref)
+            }
           }
         }
       }
@@ -164,7 +170,6 @@ struct FridayTokenLedgerScreen: View {
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
             .fixedSize(horizontal: false, vertical: true)
-          FridayProofLine(label: "updated", ref: generatedText(detail.generatedAtMs))
           if !detail.facts.isEmpty {
             VStack(spacing: 8) {
               ForEach(detail.facts) { fact in
@@ -173,8 +178,11 @@ struct FridayTokenLedgerScreen: View {
             }
             .accessibilityIdentifier("friday.token-ledger.facts")
           }
-          ForEach(detail.refs, id: \.self) { ref in
-            FridayProofLine(label: nil, ref: ref)
+          FridayProofDisclosure("Ledger proof") {
+            FridayProofLine(label: "updated", ref: generatedText(detail.generatedAtMs))
+            ForEach(detail.refs, id: \.self) { ref in
+              FridayProofLine(label: nil, ref: ref)
+            }
           }
         }
       }

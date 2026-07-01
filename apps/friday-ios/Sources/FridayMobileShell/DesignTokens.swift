@@ -230,3 +230,37 @@ struct FridayProofLine: View {
     return ref
   }
 }
+
+struct FridayProofDisclosure<Content: View>: View {
+  let title: String
+  let content: Content
+
+  init(_ title: String = "Receipt details", @ViewBuilder content: () -> Content) {
+    self.title = title
+    self.content = content()
+  }
+
+  var body: some View {
+    DisclosureGroup {
+      VStack(alignment: .leading, spacing: 6) {
+        content
+      }
+      .padding(.top, 8)
+    } label: {
+      HStack(spacing: 8) {
+        Image(systemName: "doc.text.magnifyingglass")
+          .font(.system(size: 12, weight: .semibold))
+        Text(title)
+          .font(.system(size: 12, weight: .semibold))
+      }
+      .foregroundStyle(MobileTheme.cyan)
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 9)
+    .background(Color.white.opacity(0.44), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 13, style: .continuous)
+        .strokeBorder(MobileTheme.glassPanelBorder, lineWidth: 1)
+    )
+  }
+}

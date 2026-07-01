@@ -83,6 +83,23 @@ enum MobileDestination: String, CaseIterable, Identifiable {
     }
   }
 
+  var commandTileStatus: String {
+    if !isBuilt {
+      return "planned"
+    }
+    if contract.isEndBarReady {
+      return "ready"
+    }
+    switch contract.tier {
+    case .readinessOnly:
+      return "setup"
+    case .internalDebug:
+      return "internal"
+    default:
+      return "available"
+    }
+  }
+
   /// Route coverage only. This must not be used as a closed-loop product-completion signal.
   var isBuilt: Bool { contract.routeBuilt }
 
@@ -210,7 +227,7 @@ struct CommandSheet: View {
         .font(.headline)
         .foregroundStyle(dest.isBuilt ? MobileTheme.textPrimary : MobileTheme.textSecondary)
       FridayChip(
-        text: contract.tier.label,
+        text: dest.commandTileStatus,
         bg: contract.isEndBarReady ? MobileTheme.chipDoneBG : MobileTheme.chipNeutralBG,
         fg: contract.isEndBarReady ? MobileTheme.chipDoneFG : MobileTheme.chipNeutralFG)
       Text(dest.commandTileSummary)
