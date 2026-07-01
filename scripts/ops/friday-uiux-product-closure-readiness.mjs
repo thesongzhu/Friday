@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 
 const args = process.argv.slice(2);
 
@@ -365,11 +365,30 @@ const selectedVisualProofArgs = [
   `--repo-root=${repoRoot}`,
   `--design-root=${designRoot}`,
 ];
+function addSelectedVisualEvidenceArg(path) {
+  const resolved = abs(path);
+  const name = basename(resolved);
+  if (name.includes("served-ui-design-fidelity") && name.endsWith(".json")) {
+    selectedVisualProofArgs.push(`--served-ui-report=${resolved}`);
+    return;
+  }
+  switch (name) {
+    case "ios-design-destination-capture-manifest.json":
+      selectedVisualProofArgs.push(`--ios-manifest=${resolved}`);
+      break;
+    case "desktop-ax-accessibility-capture.json":
+      selectedVisualProofArgs.push(`--desktop-capture=${resolved}`);
+      break;
+    default:
+      selectedVisualProofArgs.push(`--evidence-dir=${resolved}`);
+      break;
+  }
+}
 for (const dir of evidenceDirs) {
-  selectedVisualProofArgs.push(`--evidence-dir=${abs(dir)}`);
+  addSelectedVisualEvidenceArg(dir);
 }
 for (const dir of selectedVisualEvidenceDirs) {
-  selectedVisualProofArgs.push(`--evidence-dir=${abs(dir)}`);
+  addSelectedVisualEvidenceArg(dir);
 }
 if (requireUiDeviceProof) selectedVisualProofArgs.push("--require-complete");
 const selectedVisualProof = runJson("selected_visual_proof", process.execPath, selectedVisualProofArgs);

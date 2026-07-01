@@ -462,6 +462,7 @@ if [ -n "${timeline_capture}" ] && [ "${workbench_timeline_status}" != "snapshot
     "--desktop=${desktop_capture}"
     "--timeline=${timeline_capture}"
     "--out=${workbench_events}"
+    "--allow-partial-events"
   )
   if [ -n "${channel_capture}" ]; then
     workbench_events_args+=("--channel=${channel_capture}")
@@ -471,7 +472,7 @@ if [ -n "${timeline_capture}" ] && [ "${workbench_timeline_status}" != "snapshot
   fi
   if node "${workbench_events_args[@]}" >"${workbench_events}.stdout"; then
     workbench_events_status="$(node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(j.status || "unknown");' "${workbench_events}.stdout")"
-    if [ "${workbench_events_status}" = "ready" ]; then
+    if [ "${workbench_events_status}" = "ready" ] || [ "${workbench_events_status}" = "partial_ready" ]; then
       same_run_events+=("${workbench_events}")
     fi
     if [ "${workbench_timeline_status}" = "skipped" ]; then

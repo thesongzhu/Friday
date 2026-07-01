@@ -783,10 +783,15 @@ if (blockers.length === 0) {
 writeFileSync(rawPath, `${rawSnapshots.join("\n")}\n`);
 const liveConnection = liveConnectionMetadata();
 const captureMode = captureModeForLiveConnection(liveConnection);
+const repoHead = run("git", ["rev-parse", "HEAD"]).stdout.trim();
 const capture = {
   truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
   generated_at_utc: new Date().toISOString(),
   status: blockers.length === 0 && observedActions.length > 0 ? "partial_capture_ready" : "blocked_or_empty",
+  repo: {
+    root: repoRoot,
+    head: repoHead,
+  },
   mission_id: missionId,
   workbench_mission_id: workbenchMissionId || null,
   surface: "desktop",
@@ -808,7 +813,7 @@ const summary = {
   status: blockers.length === 0 && observedActions.length > 0 ? "partial_capture_ready" : "blocked_or_empty",
   repo: {
     root: repoRoot,
-    head: run("git", ["rev-parse", "HEAD"]).stdout.trim(),
+    head: repoHead,
   },
   app: {
     dir: appDir,
