@@ -66,7 +66,7 @@ struct FridayVoiceScreen: View {
       }
     case let .unavailable(reason):
       UnavailableView(
-        reason: reason,
+        reason: userFacingReason(reason),
         title: "Set Up Voice",
         detail: "Friday needs microphone, speech, and playback readiness before voice can start.",
         systemImage: "waveform",
@@ -76,6 +76,19 @@ struct FridayVoiceScreen: View {
       actionsCard(readiness)
       gatesCard(readiness)
     }
+  }
+
+  private func userFacingReason(_ reason: String) -> String {
+    let normalized = reason.lowercased()
+    if normalized.contains("offline") || normalized.contains("transport")
+      || normalized.contains("connection") || normalized.contains("server dark")
+    {
+      return "Friday cannot reach the live Hub from this device. Check the connection, then try again."
+    }
+    if normalized.contains("permission") || normalized.contains("microphone") || normalized.contains("speech") {
+      return "Enable microphone and speech access, then refresh Voice."
+    }
+    return "Voice starts after this device can confirm microphone, speech, playback, and Friday Chat handoff."
   }
 
   private func readinessCard(_ readiness: MobileVoiceReadiness) -> some View {

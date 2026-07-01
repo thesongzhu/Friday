@@ -141,7 +141,7 @@ struct FridayNewSessionScreen: View {
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
           cardHeader("Needs Connection", count: nil)
-          Text(reason)
+          Text(userFacingReason(reason))
             .font(.caption)
             .foregroundStyle(MobileTheme.coral)
             .fixedSize(horizontal: false, vertical: true)
@@ -154,6 +154,19 @@ struct FridayNewSessionScreen: View {
   private var launchInFlight: Bool {
     if case .launching = viewModel.launchState { return true }
     return false
+  }
+
+  private func userFacingReason(_ reason: String) -> String {
+    let normalized = reason.lowercased()
+    if normalized.contains("offline") || normalized.contains("transport")
+      || normalized.contains("connection") || normalized.contains("server dark")
+    {
+      return "Friday cannot reach the live Hub from this device. Check the connection, then try again."
+    }
+    if normalized.contains("approval") || normalized.contains("operator") {
+      return "Approval is needed before Friday can continue."
+    }
+    return "Friday needs a fresh live Hub connection before this session can start."
   }
 
   private func cardHeader(_ title: String, count: Int?) -> some View {

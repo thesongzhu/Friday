@@ -126,7 +126,7 @@ struct FridayShareIntakeScreen: View {
       messageCard(
         title: "Needs Details",
         systemImage: "questionmark.circle",
-        reason: reason,
+        reason: userFacingReason(reason),
         tint: MobileTheme.coral,
         identifier: "friday.share.blocked")
     case .unavailable(let reason):

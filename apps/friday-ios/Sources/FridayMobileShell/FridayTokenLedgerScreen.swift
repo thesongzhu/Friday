@@ -14,7 +14,7 @@ struct FridayTokenLedgerScreen: View {
         case .unavailable(let reason):
           header(status: "connect", ready: false)
           UnavailableView(
-            reason: reason,
+            reason: userFacingReason(reason),
             title: "Connect Token Ledger",
             detail: "Friday needs a live run reference before it can show provider usage on this device.",
             systemImage: "chart.bar.doc.horizontal",
@@ -31,7 +31,7 @@ struct FridayTokenLedgerScreen: View {
   @ViewBuilder
   private func loadedContent(_ projection: HomeProjection) -> some View {
     let runId = projection.tokenLedgerRunId
-    header(status: runId == nil ? "waiting" : "ready", ready: runId != nil)
+    header(status: runId == nil ? "run needed" : "ready", ready: runId != nil)
 
     if let runId {
       runRefCard(runId: runId, projection: projection)
@@ -183,7 +183,7 @@ struct FridayTokenLedgerScreen: View {
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
           cardHeader(title, count: nil)
-          Text(reason)
+          Text(userFacingReason(reason))
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -226,5 +226,15 @@ struct FridayTokenLedgerScreen: View {
     guard generatedAtMs > 0 else { return "unknown" }
     let date = Date(timeIntervalSince1970: Double(generatedAtMs) / 1000.0)
     return date.formatted(date: .abbreviated, time: .shortened)
+  }
+
+  private func userFacingReason(_ reason: String) -> String {
+    let normalized = reason.lowercased()
+    if normalized.contains("offline") || normalized.contains("transport")
+      || normalized.contains("connection") || normalized.contains("server dark")
+    {
+      return "Friday cannot reach the live Hub from this device. Check the connection, then try again."
+    }
+    return "Usage appears after Friday has a live run reference for this mission."
   }
 }

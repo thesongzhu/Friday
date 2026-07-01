@@ -231,11 +231,11 @@ struct FridayProviderAuthScreen: View {
         healthy: projection.tokenLedgerRunId != nil)
       controlRow(
         "Provider receipts",
-        state: projection.providerReceiptRefs.isEmpty ? "waiting" : "\(projection.providerReceiptRefs.count) receipt(s)",
+        state: projection.providerReceiptRefs.isEmpty ? "receipts pending" : "\(projection.providerReceiptRefs.count) receipt(s)",
         healthy: !projection.providerReceiptRefs.isEmpty)
       controlRow(
         "Channel receipts",
-        state: projection.channelReceiptRefs.isEmpty ? "waiting" : "\(projection.channelReceiptRefs.count) receipt(s)",
+        state: projection.channelReceiptRefs.isEmpty ? "receipts pending" : "\(projection.channelReceiptRefs.count) receipt(s)",
         healthy: !projection.channelReceiptRefs.isEmpty)
       if let runId = projection.tokenLedgerRunId {
         Button {

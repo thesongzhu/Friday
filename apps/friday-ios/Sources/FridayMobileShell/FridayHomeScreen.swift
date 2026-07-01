@@ -184,8 +184,8 @@ struct FridayHomeScreen: View {
         id: "learning-\(candidate.id)",
         icon: "brain.head.profile",
         iconBg: MobileTheme.cyanSoft,
-        title: productLearningTitle(candidate.summary),
-        subtitle: productLearningSubtitle(kind: candidate.kind, state: candidate.state),
+        title: productLearningTitle(kind: candidate.kind),
+        subtitle: productLearningSubtitle(candidate),
         chip: "confirm",
         urgent: false,
         workItem: nil)
@@ -276,12 +276,31 @@ struct FridayHomeScreen: View {
     return "Owner: \(productReadableSentence(owner))."
   }
 
-  private func productLearningTitle(_ summary: String) -> String {
-    productReadableTitle(summary.isEmpty ? "Review learning candidate" : summary)
+  private func productLearningTitle(kind: String) -> String {
+    let label = productChipLabel(kind)
+    if label.contains("preference") {
+      return "Review preference"
+    }
+    if label.contains("world") || label.contains("model") {
+      return "Review world model"
+    }
+    if label.contains("memory") {
+      return "Review memory learning"
+    }
+    return "Review learning"
   }
 
-  private func productLearningSubtitle(kind: String, state: String) -> String {
-    "Candidate: \(productChipLabel(kind)) · \(productChipLabel(state))."
+  private func productLearningSubtitle(_ candidate: HomeRunOutcomeLearningCandidate) -> String {
+    let summary = candidate.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = summary.lowercased()
+    if !summary.isEmpty
+      && !normalized.contains("kind=")
+      && !normalized.contains("state=")
+      && !normalized.contains(";")
+    {
+      return productReadableSentence(summary)
+    }
+    return "\(productChipLabel(candidate.kind)) candidate is \(productChipLabel(candidate.state))."
   }
 
   private func productRouteTitle(_ rawRoute: String) -> String {
@@ -343,6 +362,12 @@ struct FridayHomeScreen: View {
       return "timeline"
     case "completed_with_proof":
       return "complete"
+    case "waiting", "queued", "pending":
+      return "in queue"
+    case "blocked":
+      return "needs attention"
+    case "off", "disabled":
+      return "needs setup"
     case "friday_owned":
       return "Friday"
     case "":
@@ -507,7 +532,7 @@ struct FridayHomeScreen: View {
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
     case .error(let reason):
-      Text(reason)
+      Text(userFacingDecisionReason(reason))
         .font(.caption2)
         .foregroundStyle(MobileTheme.coral)
     case nil:
@@ -566,7 +591,7 @@ struct FridayHomeScreen: View {
             .foregroundStyle(MobileTheme.textPrimary)
           Spacer()
           FridayChip(
-            text: projection.timelinePages.isEmpty ? "waiting" : "\(projection.timelinePages.count) pages",
+            text: projection.timelinePages.isEmpty ? "ready soon" : "\(projection.timelinePages.count) pages",
             bg: projection.timelinePages.isEmpty ? MobileTheme.chipNeutralBG : MobileTheme.chipPendingBG,
             fg: projection.timelinePages.isEmpty ? MobileTheme.chipNeutralFG : MobileTheme.chipPendingFG)
         }
@@ -589,7 +614,7 @@ struct FridayHomeScreen: View {
                   .foregroundStyle(MobileTheme.textPrimary)
                   .lineLimit(1)
                 Spacer(minLength: 8)
-                FridayChip(text: page.statusText, bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+                FridayChip(text: productChipLabel(page.statusText), bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
               }
               if !page.summary.isEmpty {
                 Text(page.summary)
@@ -889,7 +914,7 @@ struct FridayHomeScreen: View {
           bg: status.isFullyProvisioned ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
           fg: status.isFullyProvisioned ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
       } else {
-        FridayChip(text: "waiting", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
+        FridayChip(text: "setup needed", bg: MobileTheme.chipNeutralBG, fg: MobileTheme.chipNeutralFG)
       }
     }
     if let status {
@@ -988,6 +1013,19 @@ struct FridayHomeScreen: View {
       }
     }
     .joined(separator: ", ")
+  }
+
+  private func userFacingDecisionReason(_ reason: String) -> String {
+    let normalized = reason.lowercased()
+    if normalized.contains("offline") || normalized.contains("transport")
+      || normalized.contains("connection") || normalized.contains("server dark")
+    {
+      return "Friday cannot reach the live Hub from this device. Check the connection, then try again."
+    }
+    if normalized.contains("approval") || normalized.contains("operator") {
+      return "Approval is needed before Friday can continue."
+    }
+    return "Friday paused safely and needs a fresh live confirmation before continuing."
   }
 }
 

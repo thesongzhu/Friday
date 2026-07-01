@@ -162,7 +162,7 @@ struct FridayProjectionScreen: View {
       loadedContent(surface, projection)
     case .unavailable(let reason):
       UnavailableView(
-        reason: reason,
+        reason: displayReason(reason),
         title: "Connect \(surface.title)",
         detail: "Friday needs the live Hub projection before this destination can show current state.",
         systemImage: surface.icon,
@@ -351,7 +351,7 @@ struct FridayProjectionScreen: View {
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
           cardHeader(title, count: nil)
-          Text(reason)
+          Text(displayReason(reason))
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
@@ -449,7 +449,7 @@ struct FridayProjectionScreen: View {
         .accessibilityIdentifier("friday.missions.open-chat-loop")
       }
     case .blocked(let reason):
-      Text(reason)
+      Text(displayReason(reason))
         .font(.caption)
         .foregroundStyle(MobileTheme.coral)
         .fixedSize(horizontal: false, vertical: true)
@@ -740,11 +740,11 @@ struct FridayProjectionScreen: View {
     if let status {
       readinessRow(
         title: "Approval grant",
-        value: status.activeTrustGrantCount > 0 ? "active" : "waiting for operator",
+        value: status.activeTrustGrantCount > 0 ? "active" : "approval needed",
         healthy: status.activeTrustGrantCount > 0)
       readinessRow(
         title: "Shared context",
-        value: status.contextPassportCount > 0 ? "\(status.contextPassportCount) ready" : "waiting for setup",
+        value: status.contextPassportCount > 0 ? "\(status.contextPassportCount) ready" : "setup needed",
         healthy: status.contextPassportCount > 0 && status.contextPassportItemCount > 0)
       if let device = status.latestDevice {
         FridayProofLine(label: "device", ref: device.deviceId)
@@ -754,11 +754,11 @@ struct FridayProjectionScreen: View {
     } else {
       readinessRow(
         title: "Approval grant",
-        value: "waiting for Hub projection",
+        value: "connect Hub projection",
         healthy: false)
       readinessRow(
         title: "Shared context",
-        value: "waiting for Hub projection",
+        value: "connect Hub projection",
         healthy: false)
     }
   }
@@ -809,7 +809,7 @@ struct FridayProjectionScreen: View {
           healthy: true)
         readinessRow(
           title: "Live state mapping",
-          value: projection.runtimeFeedStatus.isEmpty ? "waiting for Hub projection" : projection.runtimeFeedStatus,
+          value: projection.runtimeFeedStatus.isEmpty ? "connect Hub projection" : displayStatus(projection.runtimeFeedStatus),
           healthy: false)
         FridayProofLine(label: "action", ref: "mobile/pet/state-mapping")
         FridayProofLine(label: "mission", ref: projection.missionId)
@@ -848,14 +848,14 @@ struct FridayProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Launch Tools", count: nil)
-        Text("Widgets, controls, push entry, share intake, and deep links stay grouped here for internal mobile diagnostics.")
+        Text("Widgets, controls, push entry, share intake, and deep links stay grouped here as Friday launch surfaces.")
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         readinessRow(title: "Share intake", value: "friday://share deep link wired", healthy: true)
         readinessRow(title: "Command sheet", value: "top-left launcher routes selected surfaces", healthy: true)
-        readinessRow(title: "Push entry", value: "local permission surface wired; APNs delivery still unproven", healthy: false)
-        readinessRow(title: "Widget/control", value: "native launcher proof still required", healthy: false)
+        readinessRow(title: "Push entry", value: "local permission ready; remote delivery setup next", healthy: false)
+        readinessRow(title: "Widget/control", value: "native launcher setup next", healthy: false)
         FridayProofLine(label: "action", ref: "mobile/entrypoints/readiness")
         FridayProofLine(label: "thread", ref: projection.fridayConversationId)
       }
@@ -890,15 +890,15 @@ struct FridayProjectionScreen: View {
             healthy: readiness.localNotificationUsable)
           readinessRow(
             title: "Remote APNs",
-            value: readiness.remoteDeliveryConfigured ? "configured" : "waiting for remote delivery setup",
+            value: readiness.remoteDeliveryConfigured ? "configured" : "set up remote delivery",
             healthy: readiness.remoteDeliveryConfigured)
           HStack(spacing: 6) {
-            statusChip(readiness.settings.alertSettingEnabled ? "alerts on" : "alerts off")
-            statusChip(readiness.settings.badgeSettingEnabled ? "badges on" : "badges off")
-            statusChip(readiness.settings.soundSettingEnabled ? "sounds on" : "sounds off")
+            statusChip(readiness.settings.alertSettingEnabled ? "alerts on" : "alerts muted")
+            statusChip(readiness.settings.badgeSettingEnabled ? "badges on" : "badges muted")
+            statusChip(readiness.settings.soundSettingEnabled ? "sounds on" : "sounds muted")
           }
         case let .unavailable(reason):
-          readinessRow(title: "Permission", value: reason, healthy: false)
+          readinessRow(title: "Permission", value: displayReason(reason), healthy: false)
         }
         HStack(spacing: 8) {
           Button {
@@ -1043,9 +1043,15 @@ struct FridayProjectionScreen: View {
     let decisionState = viewModel.runOutcomeLearningDecisionStates[candidate.id]
     return VStack(alignment: .leading, spacing: 6) {
       HStack(alignment: .top, spacing: 8) {
-        Text(candidate.summary)
+        VStack(alignment: .leading, spacing: 3) {
+          Text(displayLearningTitle(kind: candidate.kind))
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(MobileTheme.textPrimary)
+          Text(displayLearningSubtitle(candidate))
+            .font(.caption2)
+            .foregroundStyle(MobileTheme.textSecondary)
+        }
           .font(.system(size: 13, weight: .medium))
-          .foregroundStyle(MobileTheme.textPrimary)
           .frame(maxWidth: .infinity, alignment: .leading)
         HStack(spacing: 6) {
           Button {
@@ -1071,8 +1077,8 @@ struct FridayProjectionScreen: View {
         }
       }
       HStack(spacing: 6) {
-        statusChip(candidate.kind)
-        statusChip(candidate.state)
+        statusChip(displayStatus(candidate.kind))
+        statusChip(displayStatus(candidate.state))
       }
       learningDecisionStateView(decisionState)
       if !candidate.runId.isEmpty {
@@ -1114,7 +1120,7 @@ struct FridayProjectionScreen: View {
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
     case .error(let reason):
-      Text(reason)
+      Text(displayReason(reason))
         .font(.caption2)
         .foregroundStyle(MobileTheme.coral)
     case nil:
@@ -1224,11 +1230,67 @@ struct FridayProjectionScreen: View {
       return "timeline"
     case "completed_with_proof":
       return "complete"
+    case "waiting", "queued", "pending":
+      return "in queue"
+    case "blocked":
+      return "needs attention"
+    case "off", "disabled":
+      return "needs setup"
     case "":
       return "status"
     default:
       return displaySentence(raw)
     }
+  }
+
+  private func displayReason(_ raw: String) -> String {
+    let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if normalized.isEmpty {
+      return "Friday needs a live Hub connection before this action can continue."
+    }
+    if normalized.contains("server dark") || normalized.contains("transport")
+      || normalized.contains("connection") || normalized.contains("offline")
+    {
+      return "Friday cannot reach the live Hub from this device. Check the connection, then try again."
+    }
+    if normalized.contains("api_key_missing") {
+      return "Connect this provider account before Friday can route work there."
+    }
+    if normalized.contains("route_disabled") || normalized.contains("route_validation_not_ok") {
+      return "Enable and recheck this route before Friday can use it."
+    }
+    if normalized.contains("approval") || normalized.contains("operator") {
+      return "Approval is needed before Friday can continue."
+    }
+    return displaySentence(raw)
+  }
+
+  private func displayLearningTitle(kind: String) -> String {
+    let label = displayStatus(kind)
+    if label.contains("preference") {
+      return "Review preference"
+    }
+    if label.contains("world") || label.contains("model") {
+      return "Review world model"
+    }
+    if label.contains("memory") {
+      return "Review memory learning"
+    }
+    return "Review learning"
+  }
+
+  private func displayLearningSubtitle(_ candidate: HomeRunOutcomeLearningCandidate) -> String {
+    let summary = candidate.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = summary.lowercased()
+    if !summary.isEmpty
+      && !normalized.contains("candidate_kind=")
+      && !normalized.contains("kind=")
+      && !normalized.contains("state=")
+      && !normalized.contains(";")
+    {
+      return displaySentence(summary)
+    }
+    return "\(displayStatus(candidate.kind)) candidate is \(displayStatus(candidate.state))."
   }
 
   private func displayTitle(_ raw: String) -> String {

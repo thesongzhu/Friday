@@ -14,7 +14,7 @@ struct FridayContextPassportScreen: View {
         case .unavailable(let reason):
           header(status: "connect", ready: false)
           UnavailableView(
-            reason: reason,
+            reason: userFacingReason(reason),
             title: "Connect Shared Context",
             detail: "Friday needs the live Hub projection to show paired-device setup, approval grant, and shared-context readiness.",
             systemImage: "checklist.checked",
@@ -32,7 +32,7 @@ struct FridayContextPassportScreen: View {
   private func loadedContent(_ projection: HomeProjection) -> some View {
     let status = projection.t3ProvisioningStatus
     header(
-      status: status?.homeStatusLabel ?? "waiting",
+      status: userFacingStatus(status?.homeStatusLabel ?? "setup needed"),
       ready: status?.isFullyProvisioned == true)
 
     if let status {
@@ -44,7 +44,7 @@ struct FridayContextPassportScreen: View {
     } else {
       GlassPanel {
         VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-          Text("Waiting for provisioning")
+          Text("Setup Needed")
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
           Text("Device pairing, approval grant, and shared-context status will appear after the Hub projection refreshes.")
@@ -154,7 +154,7 @@ struct FridayContextPassportScreen: View {
           detail: "Authorizes scoped Friday work; mobile only reads the Hub projection.")
         ceremonyRow(
           title: "Shared context",
-          value: status.contextPassportCount > 0 ? "\(status.contextPassportCount) ready" : "waiting",
+          value: status.contextPassportCount > 0 ? "\(status.contextPassportCount) ready" : "setup needed",
           satisfied: status.contextPassportCount > 0,
           detail: "Shares non-sensitive mission context to the governed destination lane.")
         ceremonyRow(
@@ -235,7 +235,7 @@ struct FridayContextPassportScreen: View {
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
     case .error(let reason):
-      Text(reason)
+      Text(userFacingReason(reason))
         .font(.caption2)
         .foregroundStyle(MobileTheme.chipWarnFG)
         .fixedSize(horizontal: false, vertical: true)
@@ -273,6 +273,32 @@ struct FridayContextPassportScreen: View {
       }
     }
     .joined(separator: ", ")
+  }
+
+  private func userFacingStatus(_ status: String) -> String {
+    switch status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "waiting", "pending", "queued":
+      return "setup needed"
+    case "blocked":
+      return "needs attention"
+    case "off", "disabled":
+      return "needs setup"
+    default:
+      return status
+    }
+  }
+
+  private func userFacingReason(_ reason: String) -> String {
+    let normalized = reason.lowercased()
+    if normalized.contains("offline") || normalized.contains("transport")
+      || normalized.contains("connection") || normalized.contains("server dark")
+    {
+      return "Friday cannot reach the live Hub from this device. Check the connection, then try again."
+    }
+    if normalized.contains("approval") || normalized.contains("operator") {
+      return "Approval is needed before shared context can continue."
+    }
+    return "Shared context appears after the paired device and approval grant are visible in the Hub projection."
   }
 
   private func cardHeader(_ title: String, count: Int?) -> some View {
