@@ -65,6 +65,8 @@ import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitive
 
 const OPERATOR_ID = "ui-operator";
 
+type SystemIntentResult = Awaited<ReturnType<typeof systemApi.executeIntent>>;
+
 const STARTER_SKILL_PROMPTS: Record<string, string> = {
   "repo-health-check": "Run the repo-health-check starter skill for this workspace and tell me the next useful action.",
   "workspace-change-risk-review": "Run the workspace-change-risk-review starter skill against the current workspace changes and summarize risk.",
@@ -322,6 +324,7 @@ export function AgentPage() {
   const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
   const [remoteLabel, setRemoteLabel] = useState("");
   const [remoteFingerprint, setRemoteFingerprint] = useState("");
+  const [lastSystemIntentResult, setLastSystemIntentResult] = useState<SystemIntentResult | null>(null);
   const passkeysSupported = typeof PublicKeyCredential !== "undefined";
   const operatorUserId = authStorage.getUser()?.id?.trim() || "anonymous";
   const commandCenterSessionKey = `ui:command-center:${operatorUserId}`;
@@ -570,6 +573,7 @@ export function AgentPage() {
         layout: input.layout,
       }),
     onSuccess: (result) => {
+      setLastSystemIntentResult(result);
       toast.success(result.message);
       void queryClient.invalidateQueries({ queryKey: systemKeys.state() });
       void queryClient.invalidateQueries({ queryKey: systemKeys.approvals() });
@@ -760,6 +764,20 @@ export function AgentPage() {
             </div>
           </form>
         </ShellCard>
+
+        {lastSystemIntentResult ? (
+          <ShellCard
+            eyebrow={locale === "zh" ? "最近系统操作" : "Last system action"}
+            title={lastSystemIntentResult.message}
+            aside={<StatusPill tone={systemIntentTone(lastSystemIntentResult.status)}>{lastSystemIntentResult.status}</StatusPill>}
+          >
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Metric label="Action" value={lastSystemIntentResult.action.replaceAll("_", " ")} />
+              <Metric label="When" value={formatRelative(lastSystemIntentResult.performedAt)} />
+              <Metric label="Receipt" value={lastSystemIntentResult.id} mono />
+            </div>
+          </ShellCard>
+        ) : null}
 
         <ShellCard
           eyebrow={locale === "zh" ? "推荐技能" : "Recommended Skills"}
@@ -1393,6 +1411,10 @@ function Metric(props: {
       {props.tone ? <StatusPill tone={props.tone} className="mt-3">{props.tone}</StatusPill> : null}
     </div>
   );
+}
+
+function systemIntentTone(status: SystemIntentResult["status"]): "success" | "warning" | "danger" {
+  return status === "completed" ? "success" : status === "blocked" ? "danger" : "warning";
 }
 
 function RemoteDeviceCard(props: {
