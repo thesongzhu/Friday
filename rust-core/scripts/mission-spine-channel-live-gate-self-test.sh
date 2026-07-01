@@ -45,6 +45,8 @@ jq -e '
   .proof == "mission_spine_channel_live_proof"
   and .status == "passed"
   and .capture_mode == "--wrap-existing"
+  and (.head | type == "string" and length >= 12)
+  and (.head_short | type == "string" and length == 12)
   and .telegram_live.proof == "telegram_inbound_through_rust_channels_pipeline"
   and .telegram_live.sender_allowlisted == true
   and .secret_policy.artifact_contains_redacted_text_only == true
@@ -92,6 +94,8 @@ jq -e '
   .proof == "mission_spine_channel_live_proof"
   and .status == "failed_timeout"
   and .capture_mode == "--wrap-existing"
+  and (.head | type == "string" and length >= 12)
+  and (.head_short | type == "string" and length == 12)
   and .telegram_live.status == "failed_timeout"
   and .telegram_live.bot_identity_verified == true
   and .secret_policy.artifact_contains_redacted_text_only == true

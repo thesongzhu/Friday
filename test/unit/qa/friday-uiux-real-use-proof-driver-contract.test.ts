@@ -73,6 +73,9 @@ describe("friday-uiux-real-use-proof-driver contract", () => {
     expect(source).toContain("--defer-channel-proof");
     expect(source).toContain("defer_channel_proof=\"${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}\"");
     expect(source).toContain("shortlist_args+=(\"--defer-channel-proof\")");
+    expect(source).toContain("--negative-control-events");
+    expect(source).toContain("negative_control_events=()");
+    expect(source).toContain("shortlist_args+=(\"--negative-control-events\" \"${path}\")");
     expect(source).toContain("uiux_real_use_proof_driver_summary_not_endbar_not_adoption");
     expect(source).toContain("END-BAR requires strict UI/device readiness");
     expect(source).toContain("never fabricates accessibility clicks");
