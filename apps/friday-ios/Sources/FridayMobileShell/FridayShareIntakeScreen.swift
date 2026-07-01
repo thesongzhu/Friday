@@ -82,15 +82,21 @@ struct FridayShareIntakeScreen: View {
             .font(.headline)
             .foregroundStyle(MobileTheme.textPrimary)
             .accessibilityIdentifier("friday.share.ready")
-          FridayProofLine(label: "mission", ref: receipt.missionId)
-          if let workItemId = receipt.workItemId {
-            FridayProofLine(label: "work item", ref: workItemId)
-          }
-          FridayProofLine(label: "surface", ref: receipt.surfaceThreadId)
           FridayChip(
             text: receipt.createdOrReady ? "ready" : receipt.status,
             bg: MobileTheme.chipDoneBG,
             fg: MobileTheme.chipDoneFG)
+          Text("Friday saved this shared context. Continue in Chat to use it in the governed run.")
+            .font(.caption)
+            .foregroundStyle(MobileTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+          FridayProofDisclosure("Receipt details") {
+            FridayProofLine(label: "mission", ref: receipt.missionId)
+            if let workItemId = receipt.workItemId {
+              FridayProofLine(label: "work item", ref: workItemId)
+            }
+            FridayProofLine(label: "surface", ref: receipt.surfaceThreadId)
+          }
           Divider().opacity(0.5)
           HStack(alignment: .top, spacing: 10) {
             Image(systemName: "arrowshape.turn.up.right.circle")
@@ -100,12 +106,14 @@ struct FridayShareIntakeScreen: View {
               Text("Friday Chat handoff is armed")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(MobileTheme.textPrimary)
-              Text("The next tap carries this shared context into Chat as a prefilled governed turn. Provider results will appear when the live loop returns them.")
+              Text("The next tap opens Friday Chat with this context ready to use.")
                 .font(.caption2)
                 .foregroundStyle(MobileTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-              FridayProofLine(label: "handoff", ref: receipt.chatLaunchContext.evidenceRef)
-              FridayProofLine(label: "action", ref: "mobile/share/open-chat-loop")
+              FridayProofDisclosure("Handoff details") {
+                FridayProofLine(label: "handoff", ref: receipt.chatLaunchContext.evidenceRef)
+                FridayProofLine(label: "action", ref: "mobile/share/open-chat-loop")
+              }
             }
           }
           Button {

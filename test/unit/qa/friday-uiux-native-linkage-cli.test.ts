@@ -51,7 +51,7 @@ function writeCompleteRepo(root: string) {
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/CommandSheet.swift", "Command Sheet friday.command-sheet.destination MobileProductDestinationID.allCases");
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridayProviderAuthScreen.swift", "Provider Workspace friday.provider-workspace.overview friday.provider-workspace.open-ledger");
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridaySessionDetailScreen.swift", "friday.session.sidecar-open friday.session.sidecar-close friday.session.send-button");
-  writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridayVoiceScreen.swift", "Readiness plus local voice-loop truth friday.voice.readiness-card .accessibilityIdentifier(\"friday.voice.open-chat-loop\")");
+  writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridayVoiceScreen.swift", "Voice setup details friday.voice.readiness-card .accessibilityIdentifier(\"friday.voice.open-chat-loop\")");
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridayContextPassportScreen.swift", "friday.context-passport.checklist friday.context-passport.send");
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShell/FridayProjectionScreens.swift", "viewModel.decideMemory");
   writeFile(root, "apps/friday-ios/Sources/FridayMobileShellCore/MobileProductReadinessContract.swift", `
@@ -114,7 +114,7 @@ describe("check-friday-uiux-native-linkage", () => {
       expect(report.status).toBe("linkage_gaps_present");
       expect(report.gaps).toContainEqual(expect.objectContaining({
         id: "mobile-voice-loop",
-        missing: expect.arrayContaining(["string:Readiness plus local voice-loop truth", "accessibility:friday.voice.open-chat-loop"]),
+        missing: expect.arrayContaining(["string:Voice setup details", "accessibility:friday.voice.open-chat-loop"]),
       }));
     } finally {
       rmSync(root, { recursive: true, force: true });

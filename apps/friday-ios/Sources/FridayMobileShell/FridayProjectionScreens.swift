@@ -249,7 +249,7 @@ struct FridayProjectionScreen: View {
   private func detailActionsCard(_ projection: HomeProjection) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("Live controls", count: nil)
+        cardHeader("Actions", count: nil)
         HStack(spacing: 8) {
           Button {
             Task { await viewModel.loadDetail(.providersDoctor(probe: nil)) }
@@ -338,12 +338,14 @@ struct FridayProjectionScreen: View {
           Text(detail.summary)
             .font(.caption)
             .foregroundStyle(MobileTheme.textPrimary)
-          FridayProofLine(label: "updated", ref: generatedText(detail.generatedAtMs))
           if let providerReadiness = detail.providerReadiness {
             ProviderReadinessPanel(detail: providerReadiness)
           }
-          ForEach(detail.refs, id: \.self) { ref in
-            FridayProofLine(label: nil, ref: ref)
+          FridayProofDisclosure("Result details") {
+            FridayProofLine(label: "updated", ref: generatedText(detail.generatedAtMs))
+            ForEach(detail.refs, id: \.self) { ref in
+              FridayProofLine(label: nil, ref: ref)
+            }
           }
         }
       }
@@ -363,15 +365,17 @@ struct FridayProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Mission", count: nil)
-        FridayProofLine(label: "mission", ref: projection.missionId)
-        FridayProofLine(label: "thread", ref: projection.fridayConversationId)
         if let route = projection.routeDecisionSummary {
           Text(route)
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
         }
-        if let selected = projection.routeSelected {
-          FridayProofLine(label: "route", ref: selected)
+        FridayProofDisclosure("Mission details") {
+          FridayProofLine(label: "mission", ref: projection.missionId)
+          FridayProofLine(label: "thread", ref: projection.fridayConversationId)
+          if let selected = projection.routeSelected {
+            FridayProofLine(label: "route", ref: selected)
+          }
         }
       }
     }
@@ -435,9 +439,11 @@ struct FridayProjectionScreen: View {
           .font(.caption)
           .foregroundStyle(MobileTheme.textPrimary)
           .accessibilityIdentifier("friday.missions.dispatch-ready")
-        FridayProofLine(label: "mission", ref: missionId)
-        FridayProofLine(label: "work item", ref: workItemId)
-        FridayProofLine(label: "action", ref: "mobile/missions/dispatch")
+        FridayProofDisclosure("Dispatch receipt") {
+          FridayProofLine(label: "mission", ref: missionId)
+          FridayProofLine(label: "work item", ref: workItemId)
+          FridayProofLine(label: "action", ref: "mobile/missions/dispatch")
+        }
         Button {
           onOpenFridayChat(context)
         } label: {
@@ -533,18 +539,21 @@ struct FridayProjectionScreen: View {
   private func platformCard(_ projection: HomeProjection) -> some View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
-        cardHeader("Runtime", count: nil)
+        cardHeader("Connection", count: nil)
         HStack(spacing: 8) {
           Image(systemName: "antenna.radiowaves.left.and.right")
             .foregroundStyle(MobileTheme.textSecondary)
             .frame(width: 22)
-          Text("Live connection: \(projection.runtimeFeedStatus)")
+          Text(viewModel.isOnline ? "Friday is connected to the Hub." : "Connect Friday to the Hub to refresh this view.")
             .font(.subheadline)
             .foregroundStyle(MobileTheme.textPrimary)
           Spacer()
         }
-        FridayProofLine(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
-        FridayProofLine(label: "updated", ref: generatedText(projection.generatedAtMs))
+        FridayProofDisclosure("Connection details") {
+          FridayProofLine(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
+          FridayProofLine(label: "feed", ref: projection.runtimeFeedStatus)
+          FridayProofLine(label: "updated", ref: generatedText(projection.generatedAtMs))
+        }
       }
     }
   }
@@ -571,10 +580,12 @@ struct FridayProjectionScreen: View {
               HStack(spacing: 6) {
                 statusChip(capability.kind)
                 statusChip(capability.approvalState)
-                statusChip(capability.truthLabel)
               }
               if !capability.proofRef.isEmpty {
-                FridayProofLine(label: "receipt", ref: capability.proofRef)
+                FridayProofDisclosure("Capability receipt") {
+                  FridayProofLine(label: "status", ref: capability.truthLabel)
+                  FridayProofLine(label: "receipt", ref: capability.proofRef)
+                }
               }
             }
             .padding(.vertical, 4)
@@ -606,7 +617,6 @@ struct FridayProjectionScreen: View {
                 .font(.caption)
                 .foregroundStyle(MobileTheme.textSecondary)
               HStack(spacing: 8) {
-                FridayProofLine(label: "activity", ref: event.id)
                 Spacer()
                 Button {
                   Task { await viewModel.markActivityDone(activityId: event.id) }
@@ -620,8 +630,11 @@ struct FridayProjectionScreen: View {
                 .accessibilityIdentifier("friday.activity.mark-done")
               }
               candidateDecisionStateView(doneState, pendingText: "Marking activity done...")
-              if let proofRef = event.proofRef {
-                FridayProofLine(label: "receipt", ref: proofRef)
+              FridayProofDisclosure("Activity receipt") {
+                FridayProofLine(label: "activity", ref: event.id)
+                if let proofRef = event.proofRef {
+                  FridayProofLine(label: "receipt", ref: proofRef)
+                }
               }
             }
             .padding(.vertical, 4)
@@ -640,20 +653,20 @@ struct FridayProjectionScreen: View {
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
-        if let selected = projection.routeSelected {
-          FridayProofLine(label: "route", ref: selected)
-        }
-        if !projection.routeAlternatives.isEmpty {
-          VStack(alignment: .leading, spacing: 6) {
-            Text("Route Alternatives")
-              .font(.caption.weight(.semibold))
-              .foregroundStyle(MobileTheme.textSecondary)
-            ForEach(projection.routeAlternatives, id: \.self) { alternative in
-              FridayProofLine(label: "option", ref: alternative)
+        FridayProofDisclosure("Route details") {
+          if let selected = projection.routeSelected {
+            FridayProofLine(label: "route", ref: selected)
+          }
+          if !projection.routeAlternatives.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+              Text("Route Alternatives")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(MobileTheme.textSecondary)
+              ForEach(projection.routeAlternatives, id: \.self) { alternative in
+                FridayProofLine(label: "option", ref: alternative)
+              }
             }
           }
-        }
-        HStack(spacing: 6) {
           FridayProofLine(label: "action", ref: "mobile/workflow/retry")
           FridayProofLine(label: "action", ref: "mobile/workflow/cancel")
         }
@@ -679,11 +692,13 @@ struct FridayProjectionScreen: View {
         if projection.providerReceiptRefs.isEmpty && projection.channelReceiptRefs.isEmpty {
           emptyText("No receipts are visible right now.")
         } else {
-          ForEach(projection.providerReceiptRefs, id: \.self) {
-            FridayProofLine(label: "provider", ref: $0)
-          }
-          ForEach(projection.channelReceiptRefs, id: \.self) {
-            FridayProofLine(label: "channel", ref: $0)
+          FridayProofDisclosure("Receipt details") {
+            ForEach(projection.providerReceiptRefs, id: \.self) {
+              FridayProofLine(label: "provider", ref: $0)
+            }
+            ForEach(projection.channelReceiptRefs, id: \.self) {
+              FridayProofLine(label: "channel", ref: $0)
+            }
           }
         }
       }
@@ -719,7 +734,6 @@ struct FridayProjectionScreen: View {
         .buttonStyle(FridayButtonStyle(variant: .primary))
         .tint(MobileTheme.cyan)
         .accessibilityIdentifier("friday.onboarding.open-device-pairing")
-        FridayProofLine(label: "action", ref: "mobile/onboarding/open-device-pairing")
         readinessRow(
           title: "Provider auth",
           value: "read-only doctor; never stores provider secrets",
@@ -730,7 +744,10 @@ struct FridayProjectionScreen: View {
           Label("Check Provider Auth", systemImage: "stethoscope")
         }
         .disabled(viewModel.detailState.isLoading)
-        FridayProofLine(label: "mission", ref: projection.missionId)
+        FridayProofDisclosure("Setup details") {
+          FridayProofLine(label: "action", ref: "mobile/onboarding/open-device-pairing")
+          FridayProofLine(label: "mission", ref: projection.missionId)
+        }
       }
     }
   }
@@ -746,11 +763,13 @@ struct FridayProjectionScreen: View {
         title: "Shared context",
         value: status.contextPassportCount > 0 ? "\(status.contextPassportCount) ready" : "setup needed",
         healthy: status.contextPassportCount > 0 && status.contextPassportItemCount > 0)
-      if let device = status.latestDevice {
-        FridayProofLine(label: "device", ref: device.deviceId)
-        FridayProofLine(label: "device key", ref: device.pubkeyFingerprint)
+      FridayProofDisclosure("Provisioning details") {
+        if let device = status.latestDevice {
+          FridayProofLine(label: "device", ref: device.deviceId)
+          FridayProofLine(label: "device key", ref: device.pubkeyFingerprint)
+        }
+        FridayProofLine(label: "setup status", ref: status.truthLabel)
       }
-      FridayProofLine(label: "setup status", ref: status.truthLabel)
     } else {
       readinessRow(
         title: "Approval grant",
@@ -768,10 +787,6 @@ struct FridayProjectionScreen: View {
     GlassPanel {
       VStack(alignment: .leading, spacing: MobileTheme.rowSpacing) {
         cardHeader("Settings", count: nil)
-        FridayProofLine(label: "mode", ref: "live-read projection")
-        FridayProofLine(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
-        FridayProofLine(label: "feed", ref: projection.runtimeFeedStatus)
-        FridayProofLine(label: "updated", ref: generatedText(projection.generatedAtMs))
         Button {
           Task { await viewModel.loadDetail(.providersDoctor(probe: nil)) }
         } label: {
@@ -789,6 +804,12 @@ struct FridayProjectionScreen: View {
           Text("Token ledger appears after a real run ref is present.")
             .font(.caption)
             .foregroundStyle(MobileTheme.textSecondary)
+        }
+        FridayProofDisclosure("Settings details") {
+          FridayProofLine(label: "mode", ref: "live-read projection")
+          FridayProofLine(label: "protocol", ref: "v\(fridayCurrentSchemaVersion)")
+          FridayProofLine(label: "feed", ref: projection.runtimeFeedStatus)
+          FridayProofLine(label: "updated", ref: generatedText(projection.generatedAtMs))
         }
       }
     }
@@ -811,8 +832,10 @@ struct FridayProjectionScreen: View {
           title: "Live state mapping",
           value: projection.runtimeFeedStatus.isEmpty ? "connect Hub projection" : displayStatus(projection.runtimeFeedStatus),
           healthy: false)
-        FridayProofLine(label: "action", ref: "mobile/pet/state-mapping")
-        FridayProofLine(label: "mission", ref: projection.missionId)
+        FridayProofDisclosure("Companion details") {
+          FridayProofLine(label: "action", ref: "mobile/pet/state-mapping")
+          FridayProofLine(label: "mission", ref: projection.missionId)
+        }
       }
     }
     .accessibilityIdentifier("friday.pet-editor.readiness")
@@ -831,14 +854,18 @@ struct FridayProjectionScreen: View {
         if projection.providerReceiptRefs.isEmpty && projection.channelReceiptRefs.isEmpty {
           emptyText("No receipts are visible right now.")
         } else {
-          ForEach(projection.providerReceiptRefs, id: \.self) {
-            FridayProofLine(label: "provider", ref: $0)
-          }
-          ForEach(projection.channelReceiptRefs, id: \.self) {
-            FridayProofLine(label: "channel", ref: $0)
+          FridayProofDisclosure("Receipt details") {
+            ForEach(projection.providerReceiptRefs, id: \.self) {
+              FridayProofLine(label: "provider", ref: $0)
+            }
+            ForEach(projection.channelReceiptRefs, id: \.self) {
+              FridayProofLine(label: "channel", ref: $0)
+            }
           }
         }
-        FridayProofLine(label: "action", ref: "mobile/proof/viewer-open")
+        FridayProofDisclosure("Viewer details") {
+          FridayProofLine(label: "action", ref: "mobile/proof/viewer-open")
+        }
       }
     }
     .accessibilityIdentifier("friday.proof-viewer.receipts")
@@ -856,8 +883,10 @@ struct FridayProjectionScreen: View {
         readinessRow(title: "Command sheet", value: "top-left launcher routes selected surfaces", healthy: true)
         readinessRow(title: "Push entry", value: "local permission ready; remote delivery setup next", healthy: false)
         readinessRow(title: "Widget/control", value: "native launcher setup next", healthy: false)
-        FridayProofLine(label: "action", ref: "mobile/entrypoints/readiness")
-        FridayProofLine(label: "thread", ref: projection.fridayConversationId)
+        FridayProofDisclosure("Launch details") {
+          FridayProofLine(label: "action", ref: "mobile/entrypoints/readiness")
+          FridayProofLine(label: "thread", ref: projection.fridayConversationId)
+        }
       }
     }
     .accessibilityIdentifier("friday.entrypoints.readiness")
@@ -988,7 +1017,9 @@ struct FridayProjectionScreen: View {
         candidateDecisionStateView(recoveryState, pendingText: "Updating WorkItem...")
       }
       if let proofRef = item.proofRef {
-        FridayProofLine(label: "receipt", ref: proofRef)
+        FridayProofDisclosure("Work receipt") {
+          FridayProofLine(label: "receipt", ref: proofRef)
+        }
       }
     }
     .padding(.vertical, 4)
@@ -1033,7 +1064,9 @@ struct FridayProjectionScreen: View {
       }
       candidateDecisionStateView(decisionState, pendingText: "Applying memory decision...")
       if !candidate.evidenceRef.isEmpty {
-        FridayProofLine(label: "evidence", ref: candidate.evidenceRef)
+        FridayProofDisclosure("Memory evidence") {
+          FridayProofLine(label: "evidence", ref: candidate.evidenceRef)
+        }
       }
     }
     .padding(.vertical, 4)
@@ -1081,14 +1114,18 @@ struct FridayProjectionScreen: View {
         statusChip(displayStatus(candidate.state))
       }
       learningDecisionStateView(decisionState)
-      if !candidate.runId.isEmpty {
-        FridayProofLine(label: "run", ref: candidate.runId)
-      }
-      if !candidate.workItemId.isEmpty {
-        FridayProofLine(label: "work item", ref: candidate.workItemId)
-      }
-      if !candidate.evidenceRef.isEmpty {
-        FridayProofLine(label: "evidence", ref: candidate.evidenceRef)
+      if !candidate.runId.isEmpty || !candidate.workItemId.isEmpty || !candidate.evidenceRef.isEmpty {
+        FridayProofDisclosure("Learning evidence") {
+          if !candidate.runId.isEmpty {
+            FridayProofLine(label: "run", ref: candidate.runId)
+          }
+          if !candidate.workItemId.isEmpty {
+            FridayProofLine(label: "work item", ref: candidate.workItemId)
+          }
+          if !candidate.evidenceRef.isEmpty {
+            FridayProofLine(label: "evidence", ref: candidate.evidenceRef)
+          }
+        }
       }
     }
     .padding(.vertical, 4)
