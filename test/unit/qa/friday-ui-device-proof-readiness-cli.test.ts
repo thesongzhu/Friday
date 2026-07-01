@@ -6,6 +6,10 @@ import { describe, expect, it } from "vitest";
 
 const missionId = "mission_cli_ui_device_readiness";
 
+function currentGitHead() {
+  return execFileSync("git", ["rev-parse", "HEAD"], { cwd: process.cwd(), encoding: "utf8" }).trim();
+}
+
 function writeEvidenceDir(tempDir: string) {
   const files = {
     mobile: join(tempDir, "mobile.json"),
@@ -139,6 +143,7 @@ function writeRedactedChannelProof(tempDir: string) {
   const proof = join(tempDir, "channel-live-proof.json");
   writeFileSync(proof, JSON.stringify({
     proof: "mission_spine_channel_live_proof",
+    head: currentGitHead(),
     status: "passed",
     generated_at_utc: "2026-06-05T06:10:00Z",
     telegram_live: {
