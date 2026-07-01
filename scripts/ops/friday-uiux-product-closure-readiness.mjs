@@ -2,6 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -102,6 +103,15 @@ function parseJsonFromOutput(text) {
   return null;
 }
 
+function parseJsonFile(path) {
+  if (!path || !existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 function runJson(label, command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, {
     cwd: options.cwd || repoRoot,
@@ -112,9 +122,11 @@ function runJson(label, command, commandArgs, options = {}) {
   const stdout = (result.stdout || "").trim();
   if (stdout) {
     parsed = parseJsonFromOutput(stdout);
+    if (!parsed && options.fallbackJsonPath) parsed = parseJsonFile(options.fallbackJsonPath);
     if (!parsed && !options.suppressBlocks) block(`${label}_invalid_json`, "stdout did not contain a parseable JSON object");
   } else {
-    if (!options.suppressBlocks) block(`${label}_empty_stdout`, commandArgs.join(" "));
+    if (options.fallbackJsonPath) parsed = parseJsonFile(options.fallbackJsonPath);
+    if (!parsed && !options.suppressBlocks) block(`${label}_empty_stdout`, commandArgs.join(" "));
   }
   return {
     label,
@@ -403,6 +415,8 @@ const traceabilityArgs = [
   `--design-root=${designRoot}`,
   "--compact",
 ];
+const traceabilityOutPath = resolve(tmpdir(), `friday-uiux-action-traceability-${process.pid}.json`);
+traceabilityArgs.push(`--out=${traceabilityOutPath}`);
 for (const evidence of runtimeEvidence) {
   if (validAbsoluteFile(evidence, "runtime-evidence")) {
     traceabilityArgs.push(`--runtime-evidence=${abs(evidence)}`);
@@ -415,7 +429,9 @@ for (const dir of runtimeEvidenceDirs) {
 for (const dir of evidenceDirs) {
   if (existsSync(abs(dir))) traceabilityArgs.push(`--evidence-dir=${abs(dir)}`);
 }
-const uiuxTraceability = runJson("uiux_action_traceability", process.execPath, traceabilityArgs);
+const uiuxTraceability = runJson("uiux_action_traceability", process.execPath, traceabilityArgs, {
+  fallbackJsonPath: traceabilityOutPath,
+});
 
 const designRuntimeArgs = [
   `${repoRoot}/scripts/ops/check-friday-design-action-runtime-evidence.mjs`,
