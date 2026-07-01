@@ -23,6 +23,7 @@ function contractBody() {
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | mobile | approval | act | Reject | security_approval_bound_principal_gate_cat10_netnew | x | wired | wired_registry | result:rejected | Runtime proof required. |
 | mobile | approval | check | Approve with proof | security_approval_bound_principal_gate_cat10_netnew | x | wired | wired_registry | result:confirmed | Runtime proof required. |
+| mobile | fridayChat | act | Reject | security_approval_bound_principal_gate_cat10_netnew | x | wired | wired_registry | result:rejected | Runtime proof required. |
 `;
 }
 
@@ -58,6 +59,14 @@ describe("friday-mobile-approval-reject-proof", () => {
             status: "pass",
             evidence_ref: "proof://mobile/approval-reject/run-paused-1",
           },
+          {
+            surface: "mobile",
+            screen: "fridayChat",
+            action_id: "act",
+            capability_id: "security_approval_bound_principal_gate_cat10_netnew",
+            status: "pass",
+            evidence_ref: "proof://mobile/fridaychat-approval-reject/run-paused-1",
+          },
         ],
       }, null, 2));
       const swift = writeFile(root, "swift", "#!/usr/bin/env bash\nexit 0\n");
@@ -89,6 +98,12 @@ describe("friday-mobile-approval-reject-proof", () => {
         expect.objectContaining({
           surface: "mobile",
           screen: "approval",
+          action_id: "act",
+          status: "pass",
+        }),
+        expect.objectContaining({
+          surface: "mobile",
+          screen: "fridayChat",
           action_id: "act",
           status: "pass",
         }),
