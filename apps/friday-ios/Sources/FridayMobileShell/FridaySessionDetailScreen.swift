@@ -198,7 +198,7 @@ struct FridaySessionDetailScreen: View {
         fg: control?.isEnabled == true ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
     }
     if let reason = control?.reason {
-      Text(reason)
+      Text(userFacingReason(reason))
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -366,7 +366,7 @@ struct FridaySessionDetailScreen: View {
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
     case .blocked(let reason):
-      Text(reason)
+      Text(userFacingReason(reason))
         .font(.caption2)
         .foregroundStyle(MobileTheme.coral)
         .fixedSize(horizontal: false, vertical: true)
@@ -421,7 +421,7 @@ struct FridaySessionDetailScreen: View {
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
     case .error(let reason):
-      Text(reason)
+      Text(userFacingReason(reason))
         .font(.caption2)
         .foregroundStyle(MobileTheme.coral)
     case .idle, nil:
@@ -477,7 +477,7 @@ struct FridaySessionDetailScreen: View {
             FridayProofLine(label: nil, ref: ref)
           }
         case .unavailable(let reason), .notRequested(let reason):
-          Text(reason)
+          Text(userFacingReason(reason))
             .font(.caption2)
             .foregroundStyle(MobileTheme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -524,9 +524,15 @@ struct FridaySessionDetailScreen: View {
     let decisionState = homeViewModel.runOutcomeLearningDecisionStates[candidate.id]
     return VStack(alignment: .leading, spacing: 6) {
       HStack(alignment: .top, spacing: 8) {
-        Text(candidate.summary)
+        VStack(alignment: .leading, spacing: 3) {
+          Text(learningTitle(kind: candidate.kind))
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(MobileTheme.textPrimary)
+          Text(learningSubtitle(candidate))
+            .font(.caption2)
+            .foregroundStyle(MobileTheme.textSecondary)
+        }
           .font(.system(size: 13, weight: .medium))
-          .foregroundStyle(MobileTheme.textPrimary)
           .frame(maxWidth: .infinity, alignment: .leading)
         HStack(spacing: 6) {
           Button {
@@ -552,8 +558,8 @@ struct FridaySessionDetailScreen: View {
         }
       }
       HStack(spacing: 6) {
-        statusChip(candidate.kind)
-        statusChip(candidate.state)
+        statusChip(readableStatus(candidate.kind))
+        statusChip(readableStatus(candidate.state))
       }
       learningDecisionStateView(decisionState)
       if !candidate.runId.isEmpty {
@@ -593,6 +599,56 @@ struct FridaySessionDetailScreen: View {
     return "Friday needs a fresh live session view before this screen can continue."
   }
 
+  private func learningTitle(kind: String) -> String {
+    let label = readableStatus(kind)
+    if label.contains("preference") {
+      return "Review preference"
+    }
+    if label.contains("world") || label.contains("model") {
+      return "Review world model"
+    }
+    if label.contains("memory") {
+      return "Review memory learning"
+    }
+    return "Review learning"
+  }
+
+  private func learningSubtitle(_ candidate: HomeRunOutcomeLearningCandidate) -> String {
+    let summary = candidate.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+    let normalized = summary.lowercased()
+    if !summary.isEmpty
+      && !normalized.contains("candidate_kind=")
+      && !normalized.contains("kind=")
+      && !normalized.contains("state=")
+      && !normalized.contains(";")
+    {
+      return readableSentence(summary)
+    }
+    return "\(readableStatus(candidate.kind)) candidate is \(readableStatus(candidate.state))."
+  }
+
+  private func readableStatus(_ raw: String) -> String {
+    switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "waiting", "queued", "pending":
+      return "in queue"
+    case "blocked":
+      return "needs attention"
+    case "off", "disabled":
+      return "needs setup"
+    case "":
+      return "status"
+    default:
+      return readableSentence(raw)
+    }
+  }
+
+  private func readableSentence(_ raw: String) -> String {
+    raw
+      .replacingOccurrences(of: "_", with: " ")
+      .replacingOccurrences(of: "-", with: " ")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
   @ViewBuilder
   private func learningDecisionStateView(_ state: HomeLearningDecisionState?) -> some View {
     switch state {
@@ -605,7 +661,7 @@ struct FridaySessionDetailScreen: View {
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
     case .error(let reason):
-      Text(reason)
+      Text(userFacingReason(reason))
         .font(.caption2)
         .foregroundStyle(MobileTheme.coral)
     case nil:

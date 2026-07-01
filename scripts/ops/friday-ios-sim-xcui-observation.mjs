@@ -466,6 +466,22 @@ function treeIncludesIdentifier(tree, id) {
 function assertSelectedDesignTree(destination, tree) {
   if (!requireSelectedDesign) return;
 
+  const forbiddenRawProductPatterns = [
+    ["provider auth machine code", /\bapi_key_missing\b/i],
+    ["route validation machine code", /\broute_validation_not_ok\b/i],
+    ["route disabled machine code", /\bfriday_[a-z0-9_]+_route_disabled\b/i],
+    ["raw blockers label", /\bblockers:\s/i],
+    ["learning candidate machine summary", /\bcandidate_kind=/i],
+    ["transport debug copy", /server dark\?/i],
+    ["internal diagnostics copy", /\binternal mobile diagnostics\b/i],
+    ["honest-unavailable product copy", /\bhonest[-_ ]unavailable\b/i],
+  ];
+  for (const [name, pattern] of forbiddenRawProductPatterns) {
+    if (pattern.test(tree)) {
+      block("selected_design_raw_product_copy_visible", `${name}:${destination}`);
+    }
+  }
+
   const requiredByDestination = {
     home: [
       "friday.mobile.toolbar.command-sheet",

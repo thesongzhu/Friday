@@ -201,7 +201,7 @@ struct FridayChatScreen: View {
         .foregroundStyle(MobileTheme.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
     case .error(let reason):
-      Text(reason)
+      Text(userFacingChatReason(reason))
         .font(.caption2)
         .foregroundStyle(MobileTheme.chipWarnFG)
         .fixedSize(horizontal: false, vertical: true)

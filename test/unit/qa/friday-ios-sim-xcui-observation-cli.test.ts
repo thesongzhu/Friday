@@ -9,7 +9,10 @@ const script = "scripts/ops/friday-ios-sim-xcui-observation.mjs";
 const missionId = "mission_ios_sim_xcui_observation_contract";
 const fakeUdid = "11111111-2222-3333-4444-555555555555";
 
-async function writeFakeTools(binDir: string, mode: "pass" | "no-tree" | "missing-id" | "selected-design" | "legacy-home" = "pass") {
+async function writeFakeTools(
+  binDir: string,
+  mode: "pass" | "no-tree" | "missing-id" | "selected-design" | "legacy-home" | "raw-provider-copy" = "pass",
+) {
   await mkdir(binDir, { recursive: true });
   const xcrun = join(binDir, "xcrun");
   writeFileSync(xcrun, `#!/usr/bin/env bash
@@ -58,6 +61,13 @@ exit 64
             "  StaticText, 0x7, label: 'Hub provisioning'",
             "  Other, 0x8, identifier: 'friday.home.unavailable'",
           ].join("\\n")
+          : mode === "raw-provider-copy"
+            ? [
+              "Application, 0x1, identifier: 'com.friday.shell'",
+              "  Other, 0x2, identifier: 'friday.provider-auth.detail'",
+              "  StaticText, 0x3, label: 'blockers: api_key_missing, friday_claude_route_disabled'",
+              "  StaticText, 0x4, label: 'candidate_kind=preference; consumer=recall-preference'",
+            ].join("\\n")
           : [
             "Application, 0x1, identifier: 'com.friday.shell'",
             "  Button, 0x2, identifier: 'friday.mobile.toolbar.refresh', label: 'Refresh Hub status'",
@@ -224,6 +234,31 @@ describe("friday-ios-sim-xcui-observation", () => {
       const blockerCodes = output.blockers?.map((blocker) => blocker.code) ?? [];
       expect(blockerCodes).toContain("selected_design_required_id_missing");
       expect(blockerCodes).toContain("selected_design_forbidden_home_state_visible");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails selected-design enforcement when a product path exposes provider machine codes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-ios-xcui-observation-raw-provider-copy-"));
+    try {
+      const binDir = join(root, "bin");
+      const outDir = join(root, "out");
+      await writeFakeTools(binDir, "raw-provider-copy");
+      const result = spawnSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        "--destinations=providerAuth",
+        "--require-selected-design",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      });
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string }> };
+      expect(output.blockers?.map((blocker) => blocker.code)).toContain("selected_design_raw_product_copy_visible");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
