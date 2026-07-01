@@ -156,19 +156,19 @@ export function MissionWorkbenchPage() {
           </h1>
           <div className="mt-3 flex flex-wrap gap-2">
             {targetMissionId ? <StatusPill tone="neutral">selected mission</StatusPill> : null}
-            <StatusPill tone="warning">{isLoading ? "checking live connection" : "Hub projection unavailable"}</StatusPill>
+            <StatusPill tone="warning">{isLoading ? "checking live connection" : "connect mission projection"}</StatusPill>
           </div>
         </header>
         <div className="rounded-lg border border-[color:var(--color-border-warning)] bg-[color:var(--color-bg-warning-subtle)] p-4 text-sm text-[color:var(--color-text-primary)]">
           <p className="font-semibold">
-            {localize(locale, "真实 Rust Hub 投影不可用。", "Live Rust Hub projection is unavailable.")}
+            {localize(locale, "连接真实任务投影。", "Connect the live mission projection.")}
           </p>
           <p className="mt-1 text-[color:var(--color-text-secondary)]">
             {liveUnavailable
               ? localize(
                 locale,
-                "Friday 还没有拿到实时任务投影；连接恢复前不会显示占位任务或虚假证据。",
-                "Friday has not received the live mission projection yet. It will not show placeholder work or fabricated evidence while disconnected.",
+                "Friday 还没有拿到实时任务数据；连接恢复前不会显示占位任务或虚假证据。",
+                "Friday has not received live mission data yet. It will not show placeholder work or fabricated evidence before the connection is restored.",
               )
               : localize(
                 locale,
