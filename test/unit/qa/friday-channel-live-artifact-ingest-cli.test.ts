@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const script = "scripts/ops/friday-channel-live-artifact-ingest.mjs";
-const currentHead = "095811ada740d342e181f91ac38b5d8fac2ee768";
+const currentHead = "test-current-head";
 
 function writeRaw(path: string) {
   writeFileSync(path, JSON.stringify({
@@ -108,7 +108,7 @@ describe("friday-channel-live-artifact-ingest", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-channel-artifact-stale-head-"));
     try {
       const wrapper = join(root, "mission_spine_channel_live_proof.json");
-      writeWrapper(wrapper, { head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
+      writeWrapper(wrapper, { head: "test-stale-head" });
 
       const result = spawnSync("node", [
         script,
@@ -126,7 +126,7 @@ describe("friday-channel-live-artifact-ingest", () => {
       };
       expect(output.status).toBe("blocked");
       expect(output.currentHeadRequired).toBe(true);
-      expect(output.wrapperHead).toBe("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+      expect(output.wrapperHead).toBe("test-stale-head");
       expect(output.blockers?.map((blocker) => blocker.code)).toContain("wrapper_head_mismatch");
     } finally {
       rmSync(root, { recursive: true, force: true });

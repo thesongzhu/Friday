@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 const script = "scripts/ops/friday-channel-proof-events.mjs";
 const missionId = "mission_cli_channel_proof_events";
-const currentHead = "095811ada740d342e181f91ac38b5d8fac2ee768";
+const currentHead = "test-current-head";
 
 function writeChannelProof(path: string, overrides: Record<string, unknown> = {}) {
   writeFileSync(path, JSON.stringify({
@@ -134,7 +134,7 @@ describe("friday-channel-proof-events", () => {
       const proof = join(tempDir, "channel-live-proof.json");
       const channelCapture = join(tempDir, "channel-capture.json");
       const out = join(tempDir, "channel-events.jsonl");
-      writeChannelProof(proof, { head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
+      writeChannelProof(proof, { head: "test-stale-head" });
       writeFileSync(channelCapture, JSON.stringify({ truth: "redacted_channel_capture" }));
 
       const result = spawnSync("node", [
@@ -157,7 +157,7 @@ describe("friday-channel-proof-events", () => {
       };
       expect(output.status).toBe("blocked");
       expect(output.currentHeadRequired).toBe(true);
-      expect(output.proofHead).toBe("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+      expect(output.proofHead).toBe("test-stale-head");
       expect(output.blockers?.map((blocker) => blocker.code)).toContain("channel_live_proof_head_mismatch");
       expect(() => readFileSync(out, "utf8")).toThrow();
     } finally {
