@@ -720,7 +720,7 @@ derive_workbench_events_if_possible() {
     bridge_status="$(jq -r '.status // "unknown"' "$stdout_out" 2>/dev/null || printf 'unknown')"
     if [ "$bridge_status" != "ready" ]; then
       notes+=("workbench_snapshot_events_bridge:${bridge_status}:${stdout_out}")
-      if [ "${MODE}" = "require-proof" ]; then
+      if [ "${MODE}" = "require-proof" ] && { [ -z "$existing_events" ] || [ -z "${OBSERVATIONS_MANIFEST:-}" ]; }; then
         blockers+=("workbench_snapshot_events_bridge:${bridge_status}")
       fi
       return 0
@@ -743,7 +743,7 @@ derive_workbench_events_if_possible() {
     bridge_status="$(jq -r '.status // "unknown"' "$stdout_out" 2>/dev/null || printf 'unknown')"
     if [ "$bridge_status" != "unknown" ]; then
       notes+=("workbench_snapshot_events_bridge:${bridge_status}:${stdout_out}")
-      if [ "${MODE}" = "require-proof" ]; then
+      if [ "${MODE}" = "require-proof" ] && { [ -z "$existing_events" ] || [ -z "${OBSERVATIONS_MANIFEST:-}" ]; }; then
         blockers+=("workbench_snapshot_events_bridge:${bridge_status}")
       fi
       return 0
@@ -1017,6 +1017,12 @@ run_note_step "ui_device_gate_self_test" env \
   -u TIMELINE_EVIDENCE \
   -u OBSERVATIONS_MANIFEST \
   -u MISSION_SPINE_UI_DEVICE_PROOF \
+  -u MOBILE_EXTRA_EVIDENCE \
+  -u DESKTOP_EXTRA_EVIDENCE \
+  -u CHANNEL_EXTRA_EVIDENCE \
+  -u TIMELINE_EXTRA_EVIDENCE \
+  -u SHARED_EXTRA_EVIDENCE \
+  -u NEGATIVE_CONTROL_EVIDENCE_FILES \
   bash "${RUST_SCRIPTS_DIR}/mission-spine-ui-device-proof-gate-self-test.sh"
 
 if [ "${RUN_LIVE_READINESS}" = "1" ]; then
