@@ -696,7 +696,9 @@ if (blockers.length === 0) {
       });
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 350));
-    const raw = destinationReady.ready ? destinationReady.raw : captureTreeRaw();
+    // `waitForDestination` may return a minimal marker-only tree once the destination is ready.
+    // Capture a fresh full tree for evidence so status chips and proof refs are not dropped.
+    const raw = captureTreeRaw();
     rawSnapshots.push(`--- destination=${destination} nav=${navStatus} ---\n${raw}`);
     const elements = parseRawTree(raw);
     for (const [label, event] of [
