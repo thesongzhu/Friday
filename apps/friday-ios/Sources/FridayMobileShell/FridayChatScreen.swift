@@ -467,7 +467,7 @@ struct FridayChatScreen: View {
           Text(summary).font(.callout).foregroundStyle(MobileTheme.textPrimary)
         }
         // PROOF (the digest the operator signs over) — never a body.
-        FridayProofLine(label: "action seal", ref: short(card.actionDigest))
+        FridayProofLine(label: "action_digest", ref: short(card.actionDigest))
         FridayProofLine(label: "approval", ref: card.approvalId)
         Text("Friday paused this mutating action. Approving asks the operator signer for a "
           + "signature; the phone relays it but never signs.")

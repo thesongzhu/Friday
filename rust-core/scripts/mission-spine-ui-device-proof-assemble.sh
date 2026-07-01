@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
+current_head="$(git -C "$root" rev-parse HEAD 2>/dev/null || true)"
 
 usage() {
   cat >&2 <<'EOF'
@@ -255,6 +256,7 @@ mkdir -p "$(dirname "$out")"
 jq -n \
   --arg proof "mission_spine_ui_device_consumption" \
   --arg proof_source "real_ui_device_consumption" \
+  --arg head "$current_head" \
   --arg captured_at "$captured_at" \
   --arg capture_run_id "$capture_run_id" \
   --arg mission_id "$MISSION_ID" \
@@ -285,6 +287,7 @@ jq -n \
     {
       proof: $proof,
       proof_source: $proof_source,
+      head: $head,
       captured_at_utc: $captured_at,
       capture_run_id: $capture_run_id,
       mission_id: $mission_id,

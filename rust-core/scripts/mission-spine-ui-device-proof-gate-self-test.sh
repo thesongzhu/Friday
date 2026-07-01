@@ -72,6 +72,7 @@ write_proof() {
 {
   "proof": "mission_spine_ui_device_consumption",
   "proof_source": "$source",
+  "head": "ui-proof-gate-self-test-head",
   "fixture": $fixture,
   "captured_at_utc": "2026-06-04T21:00:00Z",
   "capture_run_id": "ui-proof-gate-self-test-run",

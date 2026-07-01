@@ -143,6 +143,37 @@ function hasStrictUiDeviceProof(value) {
   return true;
 }
 
+function containsHead(value, expectedHead) {
+  if (!expectedHead) return false;
+  const full = String(expectedHead);
+  const short = full.slice(0, 8);
+  const stack = [value];
+  const seen = new Set();
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current == null) continue;
+    if (typeof current === "string" || typeof current === "number" || typeof current === "boolean") {
+      const text = String(current);
+      if (text.includes(full) || (short.length >= 8 && text.includes(short))) return true;
+      continue;
+    }
+    if (typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      for (const item of current) stack.push(item);
+      continue;
+    }
+    for (const [key, child] of Object.entries(current)) {
+      if (/^(head|gitHead|sourceHead|mainHead|commit|commitSha|sha)$/i.test(key)) {
+        const text = String(child || "");
+        if (text.includes(full) || (short.length >= 8 && text.includes(short))) return true;
+      }
+      stack.push(child);
+    }
+  }
+  return false;
+}
+
 function arrayAt(value, path) {
   let current = value;
   for (const key of path) current = current?.[key];
@@ -235,6 +266,9 @@ if ((trace?.counts?.runtimeEvidenceInputs ?? 0) <= 0) {
 }
 if (!hasStrictUiDeviceProof(uiDeviceProof)) {
   block("ui_device_proof_not_strict_pass", `${String(uiDeviceProof?.truth || uiDeviceProof?.proof || "missing")}:${String(uiDeviceProof?.status || "missing")}`);
+}
+if (head && !containsHead(uiDeviceProof, head)) {
+  block("ui_device_proof_head_mismatch", `expected current head ${head} in strict UI/device proof`);
 }
 
 const proofRef = uiDeviceProofPath ? abs(uiDeviceProofPath) : "";

@@ -97,6 +97,7 @@ struct FridayVoiceScreen: View {
           .font(.caption)
           .foregroundStyle(MobileTheme.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
+          .accessibilityHint("Readiness plus local voice-loop truth: microphone capture, speech recognition, speech output, and Friday Chat handoff are checked on this device.")
         if readiness.canRequestPermission {
           Button {
             Task { await viewModel.requestPermission() }

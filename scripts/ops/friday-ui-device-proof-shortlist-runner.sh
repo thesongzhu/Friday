@@ -580,10 +580,11 @@ if [ -n "${timeline_capture}" ] && { [ -n "${channel_capture}" ] || [ "${defer_c
   for path in "${event_inputs[@]}"; do
     capture_dir_args+=("--events=${path}")
   done
+  set +u
   for path in "${negative_control_events[@]}"; do
+    [ -n "${path}" ] || continue
     capture_dir_args+=("--negative-control-events=${path}")
   done
-  set +u
   for path in "${shared_extra_evidence[@]}"; do
     [ -n "${path}" ] || continue
     capture_dir_args+=("--shared-extra-evidence=${path}")
