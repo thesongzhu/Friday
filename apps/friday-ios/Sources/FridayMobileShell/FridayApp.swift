@@ -56,6 +56,43 @@ private struct SimulatorFileDeviceKeypairBackend: DeviceKeypairBackend {
     try? Hex.encode(keypair.publicKey).write(to: publicKeyURL, atomically: true, encoding: .utf8)
   }
 }
+
+private final class UITestPairingClient: FridayPairingClient, @unchecked Sendable {
+  enum Mode: String {
+    case accepted
+    case denied
+    case delayedAccepted = "delayed_accepted"
+  }
+
+  private let mode: Mode
+  private let delayMs: UInt64
+
+  init(mode: Mode, delayMs: UInt64) {
+    self.mode = mode
+    self.delayMs = delayMs
+  }
+
+  func fetchHubStatus(manifest: FridayPairingManifest) async throws -> PairingHubStatusWire {
+    PairingHubStatusWire(
+      online: true,
+      capabilities: manifest.capabilitiesHint,
+      minVersion: manifest.version,
+      maxVersion: manifest.version)
+  }
+
+  func pairDevice(manifest: FridayPairingManifest, deviceId: String) async throws -> PairingPairAckWire {
+    if delayMs > 0 {
+      try await Task.sleep(nanoseconds: delayMs * 1_000_000)
+    }
+    try Task.checkCancellation()
+    switch mode {
+    case .accepted, .delayedAccepted:
+      return PairingPairAckWire(accepted: true)
+    case .denied:
+      return PairingPairAckWire(accepted: false, errorCode: .pairingDenied)
+    }
+  }
+}
 #endif
 
 /// The app's real-client wiring: the device X25519 transport keypair + the REAL sealed-WS
@@ -116,9 +153,13 @@ final class FridaySession: ObservableObject {
     self.devicePairing = designProofSample
       ? .evaluate(deviceKeypairRequested: false, readLiveRequested: false, writeLiveRequested: false)
       : Self.defaultDevicePairingReadiness(deviceKeypairBackend: selectedDeviceKeypairBackend)
-    self.makePairingClient = designProofSample || !Self.livePairingRequested(args: args, env: env)
-      ? { _ in nil }
-      : Self.defaultPairingClient
+    if designProofSample || !Self.livePairingRequested(args: args, env: env) {
+      self.makePairingClient = { _ in nil }
+    } else if let uiTestPairingClient = Self.uiTestPairingClient(args: args, env: env) {
+      self.makePairingClient = uiTestPairingClient
+    } else {
+      self.makePairingClient = Self.defaultPairingClient
+    }
 
     // The write client (Friday Chat read-WRITE / S6 surface). DEFAULT (gate OFF) = the throwing
     // `liveTransportNotWired` factory transport ⇒ honest-unavailable, with an ephemeral X25519
@@ -317,6 +358,20 @@ final class FridaySession: ObservableObject {
     // allowlist, and the Hub's PairAck. Read, write, run-control, signing, and trust minting remain
     // on their separate gates.
     return RealPairingClientFactory.makeLive(deviceKeypair: deviceKeypair)
+  }
+
+  static func uiTestPairingClient(args: [String], env: [String: String]) -> ((DeviceKeypair) -> FridayPairingClient?)? {
+    #if targetEnvironment(simulator)
+    let rawMode = env["FRIDAY_MOBILE_UITEST_PAIRING_ACK"]?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+    guard let rawMode, !rawMode.isEmpty else { return nil }
+    guard let mode = UITestPairingClient.Mode(rawValue: rawMode) else { return nil }
+    let delayMs = UInt64(env["FRIDAY_MOBILE_UITEST_PAIRING_DELAY_MS"] ?? "") ?? 0
+    return { _ in UITestPairingClient(mode: mode, delayMs: delayMs) }
+    #else
+    return nil
+    #endif
   }
 
   static func defaultDevicePairingReadiness(

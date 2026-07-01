@@ -822,14 +822,7 @@ struct FridayHomeScreen: View {
   private func pairingAttemptRows(_ attempt: MobilePairingAttempt) -> some View {
     if attempt.mode != .idle {
       Divider().opacity(0.35)
-      HStack {
-        Text("Pairing receipt").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
-        Spacer()
-        FridayChip(
-          text: attempt.mode.rawValue,
-          bg: attempt.mode == .accepted ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
-          fg: attempt.mode == .accepted ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
-      }
+      pairingAttemptHeader(attempt)
       Text(attempt.reason)
         .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
@@ -846,6 +839,41 @@ struct FridayHomeScreen: View {
       if let errorCode = attempt.errorCode {
         FridayProofLine(label: "issue", ref: errorCode)
       }
+    }
+  }
+
+  @ViewBuilder
+  private func pairingAttemptHeader(_ attempt: MobilePairingAttempt) -> some View {
+    switch attempt.mode {
+    case .idle:
+      pairingAttemptHeaderContent(attempt)
+        .accessibilityIdentifier("friday.home.pairing-receipt-idle")
+    case .sending:
+      pairingAttemptHeaderContent(attempt)
+        .accessibilityIdentifier("friday.home.pairing-receipt-sending")
+    case .accepted:
+      pairingAttemptHeaderContent(attempt)
+        .accessibilityIdentifier("friday.home.pairing-receipt-accepted")
+    case .denied:
+      pairingAttemptHeaderContent(attempt)
+        .accessibilityIdentifier("friday.home.pairing-receipt-denied")
+    case .unavailable:
+      pairingAttemptHeaderContent(attempt)
+        .accessibilityIdentifier("friday.home.pairing-receipt-unavailable")
+    case .cancelled:
+      pairingAttemptHeaderContent(attempt)
+        .accessibilityIdentifier("friday.home.pairing-receipt-cancelled")
+    }
+  }
+
+  private func pairingAttemptHeaderContent(_ attempt: MobilePairingAttempt) -> some View {
+    HStack {
+      Text("Pairing receipt").font(.caption.weight(.semibold)).foregroundStyle(MobileTheme.textPrimary)
+      Spacer()
+      FridayChip(
+        text: attempt.mode.rawValue,
+        bg: attempt.mode == .accepted ? MobileTheme.chipPendingBG : MobileTheme.chipWarnBG,
+        fg: attempt.mode == .accepted ? MobileTheme.chipPendingFG : MobileTheme.chipWarnFG)
     }
   }
 
