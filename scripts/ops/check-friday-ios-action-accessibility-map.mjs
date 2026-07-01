@@ -180,7 +180,7 @@ const ACTION_MAP = {
     evidenceScripts: ["scripts/ops/friday-mobile-firstlaunch-action-evidence.sh"],
   },
   "mobile/firstlaunch/cancel": {
-    accessibilityIds: ["friday.home.pairing-cancel-button"],
+    accessibilityIds: ["friday.home.pairing-cancel-button", "friday.home.pairing-receipt-cancelled"],
     evidenceScripts: ["scripts/ops/friday-mobile-firstlaunch-action-evidence.sh"],
   },
   "mobile/newSession/play": {

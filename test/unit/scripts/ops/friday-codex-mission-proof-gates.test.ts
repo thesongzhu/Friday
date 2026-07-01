@@ -1062,7 +1062,7 @@ describe("Codex mission proof gates", () => {
       'FRIDAY_DEEPSEEK_PROOF_PASSPHRASE_STDIN=1 "${PROOF_SCRIPT}"',
     );
     expect(proofSource).toContain(
-      'readonly EXPECTED_CODEX_CLI_VERSION="${FRIDAY_CODEX_MISSION_PROOF_CODEX_VERSION:-codex-cli 0.140.0}"',
+      'readonly EXPECTED_CODEX_CLI_VERSION="${FRIDAY_CODEX_MISSION_PROOF_CODEX_VERSION:-codex-cli 0.142.5}"',
     );
     expect(proofSource).toContain('CODEX_VERSION="$(codex --version');
     expect(proofSource).toContain("codex CLI version mismatch");

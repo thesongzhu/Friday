@@ -54,7 +54,7 @@ const ACTION_MAP = {
   "mobile/firstlaunch/scan": { screen: "pairing", accessibilityIds: ["friday.home.pairing-scan-button"], event: "mission_workbench_visible", interaction: "visible" },
   "mobile/firstlaunch/pairnow": { screen: "pairing", accessibilityIds: ["friday.home.pair-button"], event: "mission_workbench_visible", interaction: "visible" },
   "mobile/firstlaunch/retry": { screen: "pairing", accessibilityIds: ["friday.home.pairing-retry-button"], event: "reconnect_stale_verified", interaction: "visible" },
-  "mobile/firstlaunch/cancel": { screen: "pairing", accessibilityIds: ["friday.home.pairing-cancel-button"], event: "reconnect_stale_verified", interaction: "visible" },
+  "mobile/firstlaunch/cancel": { screen: "pairing", accessibilityIds: ["friday.home.pairing-cancel-button", "friday.home.pairing-receipt-cancelled"], event: "reconnect_stale_verified", interaction: "visible" },
   "mobile/newSession/play": { screen: "newSession", accessibilityIds: ["friday.new-session.launch-button"], event: "mission_intake_submitted", interaction: "visible" },
   "mobile/newSession/open-chat-loop": { screen: "newSession", accessibilityIds: ["friday.new-session.open-chat-loop"], event: "mission_intake_ready", interaction: "visible" },
   "mobile/missions/dispatch": { screen: "missions", accessibilityIds: ["friday.missions.dispatch-button"], event: "mission_intake_submitted", interaction: "visible" },

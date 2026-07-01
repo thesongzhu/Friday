@@ -106,13 +106,15 @@ final class FridayIOSAXObserverUITests: XCTestCase {
       try tap(app, identifier: "friday.settings.push-permission")
       try waitFor(app, identifier: "friday.settings.push-notifications-card", timeout: 10)
     case "pairing-retry":
-      try type(text, into: app, identifier: "friday.home.pairing-qr-input")
+      try type(pairingManifestJSON(from: text), into: app, identifier: "friday.home.pairing-qr-input")
       try tap(app, identifier: "friday.home.pair-button")
       try waitFor(app, identifier: "friday.home.pairing-retry-button", timeout: 10)
     case "pairing-cancel":
-      try type(text, into: app, identifier: "friday.home.pairing-qr-input")
+      try type(pairingManifestJSON(from: text), into: app, identifier: "friday.home.pairing-qr-input")
       try tap(app, identifier: "friday.home.pair-button")
       try waitFor(app, identifier: "friday.home.pairing-cancel-button", timeout: 10)
+      try tap(app, identifier: "friday.home.pairing-cancel-button")
+      try waitFor(app, identifier: "friday.home.pairing-receipt-cancelled", timeout: 10)
     case "session-sidecar-open":
       try tap(app, identifier: "friday.session.sidecar-open")
       try waitFor(app, identifier: "friday.session.sidecar-close", timeout: 10)
@@ -146,6 +148,17 @@ final class FridayIOSAXObserverUITests: XCTestCase {
   private func waitFor(_ app: XCUIApplication, identifier: String, timeout: TimeInterval) throws {
     let element = firstExistingElement(in: app, identifier: identifier, timeout: timeout)
     XCTAssertTrue(element.exists, "Timed out waiting for \(identifier)")
+  }
+
+  private func pairingManifestJSON(from text: String) -> String {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.hasPrefix("{") {
+      return trimmed
+    }
+    let expiresAt = Int64(Date().addingTimeInterval(60 * 60).timeIntervalSince1970 * 1000)
+    return """
+      {"kind":"friday.pairing.qr.v1","aad":"friday-pairing-ui-test-v1","hub_public_key_hex":"0000000000000000000000000000000000000000000000000000000000000000","v":1,"hub_id":"hub-ui-test","pairing_id":"pair-ui-test","pairing_secret":"ui-test-pairing-secret","display_name":"Friday UI Test Hub","transport_hints":[{"kind":"websocket","endpoint":"ws://127.0.0.1:48749","label":"ui-test-loopback"}],"expires_at":\(expiresAt),"capabilities_hint":["pairack-ui-test"]}
+      """
   }
 
   private func firstExistingElement(in app: XCUIApplication, identifier: String, timeout: TimeInterval) -> XCUIElement {

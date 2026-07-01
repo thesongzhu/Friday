@@ -1,6 +1,7 @@
 import FridayMobileShellCore
 import FridayRustClient
 import SwiftUI
+import UIKit
 
 private enum ProjectionSurface {
   case missions
@@ -113,6 +114,7 @@ private enum ProjectionSurface {
 struct FridayProjectionScreen: View {
   let destination: MobileDestination
   @ObservedObject var viewModel: HomeViewModel
+  @Environment(\.openURL) private var openURL
   var onOpenFridayChat: (ChatLaunchContext) -> Void = { _ in }
   var onOpenPairing: () -> Void = {}
   @State private var missionDispatchIntent = ""
@@ -906,17 +908,21 @@ struct FridayProjectionScreen: View {
           }
           .disabled(pushNotifications.state == .loading)
 
-          if pushNotifications.state.readiness?.canRequestPermission != false {
-            Button {
+          Button {
+            if pushNotifications.state.readiness?.canRequestPermission == false,
+               let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+              openURL(settingsURL)
+            } else {
               Task { await pushNotifications.requestPermission() }
-            } label: {
-              Label("Allow", systemImage: "bell.badge")
             }
-            .buttonStyle(FridayButtonStyle(variant: .primary))
-            .tint(MobileTheme.cyan)
-            .disabled(pushNotifications.state == .loading)
-            .accessibilityIdentifier("friday.settings.push-permission")
+          } label: {
+            Label(pushNotifications.state.readiness?.canRequestPermission == false ? "Manage" : "Allow",
+                  systemImage: "bell.badge")
           }
+          .buttonStyle(FridayButtonStyle(variant: .primary))
+          .tint(MobileTheme.cyan)
+          .disabled(pushNotifications.state == .loading)
+          .accessibilityIdentifier("friday.settings.push-permission")
         }
       }
     }

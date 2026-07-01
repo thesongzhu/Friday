@@ -246,8 +246,49 @@ function appLaunchEnv() {
   return env;
 }
 
-function appLaunchEnvForRequestFile() {
+function scenarioAppLaunchEnv(scenario) {
+  if (scenario === "pairing-retry") {
+    return {
+      FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR: "1",
+      FRIDAY_MOBILE_UITEST_PAIRING_ACK: "denied",
+    };
+  }
+  if (scenario === "pairing-cancel") {
+    return {
+      FRIDAY_MOBILE_SIMULATOR_FILE_DEVICE_KEYPAIR: "1",
+      FRIDAY_MOBILE_UITEST_PAIRING_ACK: "delayed_accepted",
+      FRIDAY_MOBILE_UITEST_PAIRING_DELAY_MS: "5000",
+    };
+  }
+  return {};
+}
+
+function scenarioRuntimeActionIds(scenario) {
+  switch (scenario) {
+    case "missions-dispatch":
+      return new Set(["mobile/missions/dispatch", "mobile/missions/open-chat-loop"]);
+    case "share-submit":
+      return new Set(["mobile/share/send", "mobile/share/open-chat-loop"]);
+    case "new-session-launch":
+      return new Set(["mobile/newSession/play", "mobile/newSession/open-chat-loop"]);
+    case "voice-open-chat":
+      return new Set(["mobile/voice/open-chat-loop", "mobile/fridayChat/voice-input", "mobile/fridayChat/voice-output"]);
+    case "settings-push-permission":
+      return new Set(["mobile/settings/push-permission"]);
+    case "pairing-retry":
+      return new Set(["mobile/firstlaunch/retry"]);
+    case "pairing-cancel":
+      return new Set(["mobile/firstlaunch/cancel"]);
+    case "session-sidecar-open":
+      return new Set(["mobile/session/sidecar/open", "mobile/session/sidecar/close"]);
+    default:
+      return null;
+  }
+}
+
+function appLaunchEnvForRequestFile(scenario) {
   const env = appLaunchEnv();
+  Object.assign(env, scenarioAppLaunchEnv(scenario));
   delete env.FRIDAY_MASTER_KEY;
   return env;
 }
@@ -329,7 +370,7 @@ function writeInteractionFile(destination, scenario) {
     text: interactionText,
     url: interactionUrl,
     appLaunchArgs: appLaunchArgs(destination),
-    appLaunchEnv: appLaunchEnvForRequestFile(),
+    appLaunchEnv: appLaunchEnvForRequestFile(scenario),
     masterKeyFile: writeMasterKeyFile(),
     generated_at_utc: new Date().toISOString(),
     truth: "ios_xcui_explicit_interaction_request_not_proof",
@@ -365,7 +406,10 @@ function runXcui(destination, scenario) {
         FRIDAY_IOS_AX_INTERACTION_FILE: interactionFile || interactionFilePath,
       } : {}),
       FRIDAY_IOS_AX_APP_LAUNCH_ARGS_JSON: JSON.stringify(appLaunchArgs(destination)),
-      FRIDAY_IOS_AX_APP_ENV_JSON: JSON.stringify(appLaunchEnv()),
+      FRIDAY_IOS_AX_APP_ENV_JSON: JSON.stringify({
+        ...appLaunchEnv(),
+        ...scenarioAppLaunchEnv(scenario),
+      }),
       FRIDAY_IOS_AX_INTERACTION_FILE: interactionFile || interactionFilePath,
       ...(attachRunning ? { FRIDAY_IOS_AX_ATTACH_RUNNING_APP: "1" } : {}),
     },
@@ -436,12 +480,15 @@ if (blockers.length === 0 && simulator) {
       block("destination_invalid", destination);
       continue;
     }
-    const targets = readPlan(destination);
+    const scenario = interactionScenarios.get(destination) || "";
+    const scenarioActions = scenarioRuntimeActionIds(scenario);
+    const targets = scenarioActions
+      ? readPlan(destination).filter((target) => scenarioActions.has(String(target.runtimeActionId || "")))
+      : readPlan(destination);
     allTargets.push(...targets.map((target) => ({ ...target, destination })));
     if (blockers.length > 0) break;
     const launchStdout = launchDestination(simulator, destination);
     if (blockers.length > 0) break;
-    const scenario = interactionScenarios.get(destination) || "";
     const runResult = runXcui(destination, scenario);
     xcodeRuns.push({
       destination,
