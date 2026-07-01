@@ -18,6 +18,7 @@ function usage() {
     [--interaction-scenarios=missions=missions-dispatch,shareIntake=share-submit]
     [--interaction-text='...'] [--interaction-url='https://...']
     [--normalize] [--require-observed] [--require-all-planned]
+    [--require-selected-design]
 
 Truth:
   Runs the checked-in Xcode UI-test bundle against an installed real iOS
@@ -67,6 +68,8 @@ const attachRunning = args.includes("--attach-running") || process.env.FRIDAY_IO
 const normalize = args.includes("--normalize");
 const requireObserved = args.includes("--require-observed");
 const requireAllPlanned = args.includes("--require-all-planned");
+const requireSelectedDesign = args.includes("--require-selected-design")
+  || process.env.FRIDAY_IOS_XCUI_REQUIRE_SELECTED_DESIGN === "1";
 const blockers = [];
 const warnings = [];
 
@@ -452,6 +455,53 @@ function observedRows(destination, targets, tree, treePath) {
   return { rows, missing };
 }
 
+function escapedRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function treeIncludesIdentifier(tree, id) {
+  return new RegExp(`identifier:\\s*['"]${escapedRegExp(id)}['"]`).test(tree);
+}
+
+function assertSelectedDesignTree(destination, tree) {
+  if (!requireSelectedDesign) return;
+
+  const requiredByDestination = {
+    home: [
+      "friday.mobile.toolbar.command-sheet",
+      "friday.mobile.toolbar.chat",
+      "friday.mobile.toolbar.refresh",
+      "friday.home.selected-design-intro",
+      "friday.home.selected-hero-pet",
+    ],
+  };
+  for (const id of requiredByDestination[destination] || []) {
+    if (!treeIncludesIdentifier(tree, id)) {
+      block("selected_design_required_id_missing", `${destination}:${id}`);
+    }
+  }
+
+  if (destination === "home") {
+    const forbiddenHomePatterns = [
+      ["legacy Friday Home title", /\bFriday Home\b/i],
+      ["offline landing state", /\bFriday is offline\b/i],
+      ["debug no-cache status copy", /No cached or fabricated status is shown/i],
+      ["home pairing setup panel", /\bDevice pairing\b/i],
+      ["home provisioning setup panel", /\bHub provisioning\b/i],
+      ["disabled setup badge", /\bdisabled\b/i],
+      ["not-loaded setup badge", /\bnot loaded\b/i],
+      ["read-off setup badge", /\bread off\b/i],
+      ["write-off setup badge", /\bwrite off\b/i],
+      ["home unavailable identifier", /identifier:\s*['"]friday\.home\.unavailable['"]/i],
+    ];
+    for (const [name, pattern] of forbiddenHomePatterns) {
+      if (pattern.test(tree)) {
+        block("selected_design_forbidden_home_state_visible", `${name}:${destination}`);
+      }
+    }
+  }
+}
+
 if (!missionId || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(missionId) || !missionId.toLowerCase().includes("mission")) {
   block("mission_id_unexpected_shape", missionId || "<missing>");
 }
@@ -490,6 +540,7 @@ if (blockers.length === 0 && simulator) {
     const launchStdout = launchDestination(simulator, destination);
     if (blockers.length > 0) break;
     const runResult = runXcui(destination, scenario);
+    assertSelectedDesignTree(destination, runResult.tree);
     xcodeRuns.push({
       destination,
       interaction_scenario: scenario || null,
@@ -579,6 +630,7 @@ const summary = {
   bundle_id: bundleId,
   live_loopback_requested: liveLoopback,
   live_device_peer_requested: liveDevicePeer,
+  selected_design_required: requireSelectedDesign,
   data_container: dataContainer,
   target_count: allTargets.length,
   observed_count: observations.length,
