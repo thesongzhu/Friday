@@ -41,19 +41,36 @@ function writeSelections(designRoot: string) {
   }, null, 2));
 }
 
+function initFixtureRepo(root: string) {
+  writeFile(root, ".fixture", "fixture repo for selected visual proof tests\n");
+  execFileSync("git", ["-C", root, "init", "-q"], { encoding: "utf8" });
+  execFileSync("git", ["-C", root, "config", "user.email", "friday-fixture@example.invalid"], { encoding: "utf8" });
+  execFileSync("git", ["-C", root, "config", "user.name", "Friday Fixture"], { encoding: "utf8" });
+  execFileSync("git", ["-C", root, "add", ".fixture", "design"], { encoding: "utf8" });
+  execFileSync("git", ["-C", root, "commit", "-q", "-m", "fixture"], { encoding: "utf8" });
+  return execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+}
+
+function fixtureHead(root: string) {
+  return execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+}
+
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "friday-uiux-selected-visual-proof-"));
   const designRoot = join(root, "design");
   writeSelections(designRoot);
-  return { root, designRoot };
+  const head = initFixtureRepo(root);
+  return { root, designRoot, head };
 }
 
 function writeReadyEvidence(root: string, mode = "live-loopback") {
   const evidence = join(root, "evidence");
+  const head = fixtureHead(root);
   writeFile(evidence, "ios-design-destination-capture-manifest.json", JSON.stringify({
     truth_label: "ios_selected_design_destination_capture_not_live_closure",
     status: "ready",
     generated_at_utc: "2026-06-27T00:00:00.000Z",
+    repo_head: head,
     mode,
     captures: [
       "home",
@@ -72,6 +89,7 @@ function writeReadyEvidence(root: string, mode = "live-loopback") {
     truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
     generated_at_utc: "2026-06-27T00:00:00.000Z",
     status: "partial_capture_ready",
+    repo: { head },
     mode: "live-loopback",
     live_connection: {
       read_host: "127.0.0.1",
@@ -96,10 +114,12 @@ function writeReadyEvidence(root: string, mode = "live-loopback") {
 
 function writeDesktopCapture(root: string, relative: string, screens: string[], mission = "mission_selected_visual_fixture") {
   const evidence = join(root, relative);
+  const head = fixtureHead(root);
   writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
     truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
     generated_at_utc: "2026-06-27T00:00:00.000Z",
     status: "partial_capture_ready",
+    repo: { head },
     mode: "live-loopback",
     live_connection: {
       read_host: "127.0.0.1",
@@ -119,7 +139,7 @@ function writeServedUiReport(root: string, relative = "evidence", overrides: Rec
     status: "pass",
     truth_label: "served_desktop_and_ios_design_fidelity_reads_real_selection_and_live_sources",
     generated_at_utc: "2026-06-30T00:00:00.000Z",
-    head: "fixture-head",
+    head: fixtureHead(root),
     distRoot: `${root}/dist/ui`,
     iosSourceRoot: `${root}/apps/friday-ios/Sources/FridayMobileShell`,
     failureCount: 0,
@@ -327,6 +347,7 @@ describe("check-friday-uiux-selected-visual-proof", () => {
       writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
         truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
         status: "partial_capture_ready",
+        repo: { head: fixtureHead(root) },
         mode: "live-loopback",
         live_connection: {
           read_host: "127.0.0.1",
@@ -410,6 +431,7 @@ describe("check-friday-uiux-selected-visual-proof", () => {
       writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
         truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
         status: "partial_capture_ready",
+        repo: { head: fixtureHead(root) },
         mode: "live-loopback",
         ui_actions: [
           "operations",
