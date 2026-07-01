@@ -106,7 +106,21 @@ describe("setup provider regressions", () => {
     expect(providerTruthSource).toContain("当前实际路由");
     expect(providerTruthSource).toContain("这不是 setup 输入回显");
     expect(providerTruthSource).toContain("Setup / 默认配置");
+    expect(providerTruthSource).toContain("Connect provider route");
+    expect(providerTruthSource).toContain("Choose model");
+    expect(providerTruthSource).not.toContain("Current route unavailable");
+    expect(providerTruthSource).not.toContain("Live provider truth is unavailable");
+    expect(providerTruthSource).not.toContain("No live route");
     expect(providerTruthHookSource).toContain("OpenAI Provider");
     expect(providerTruthHookSource).toContain("moonshot|kimi|月之暗面");
+  });
+
+  it("keeps mission workbench empty state user-facing instead of engineering-unavailable copy", () => {
+    const missionWorkbenchSource = readFileSync("ui/src/routes/mission-workbench-page.tsx", "utf8");
+
+    expect(missionWorkbenchSource).toContain("Connect the live mission projection");
+    expect(missionWorkbenchSource).toContain("placeholder work or fabricated evidence");
+    expect(missionWorkbenchSource).not.toContain("Hub projection unavailable");
+    expect(missionWorkbenchSource).not.toContain("Live Rust Hub projection is unavailable");
   });
 });

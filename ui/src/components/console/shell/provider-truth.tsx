@@ -16,13 +16,13 @@ function statusTone(status: ProviderTruthStatus): "success" | "warning" | "dange
 
 function statusLabel(status: ProviderTruthStatus, locale: AppLocale): string {
   if (status === "offline") {
-    return localize(locale, "离线", "Offline");
+    return localize(locale, "待连接", "Connect");
   }
   if (status === "unavailable") {
-    return localize(locale, "暂不可用", "Unavailable");
+    return localize(locale, "待设置", "Needs setup");
   }
   if (status === "degraded") {
-    return localize(locale, "降级", "Degraded");
+    return localize(locale, "需确认", "Review");
   }
   return localize(locale, "正常", "Healthy");
 }
@@ -72,7 +72,7 @@ function alertHeadline(
   if (alert.code === "route_adjusted") {
     return localize(locale, "真实路由已偏离默认配置", "Live route has moved off the configured default");
   }
-  return localize(locale, "真实 provider 状态不可用", "Live provider truth is unavailable");
+  return localize(locale, "需要连接 provider 路由", "Connect provider route");
 }
 
 function alertDetail(
@@ -104,8 +104,8 @@ function alertDetail(
     return alert.providerName;
   }
   return locale === "zh"
-    ? "Friday 当前无法完整确认 provider 真相。"
-    : "Friday could not fully confirm the provider truth right now.";
+    ? "Friday 需要先确认 provider 路由，才会把任务交给模型。"
+    : "Friday needs a confirmed provider route before handing work to a model.";
 }
 
 export function ProviderTruthCompact(props: {
@@ -120,9 +120,9 @@ export function ProviderTruthCompact(props: {
   const providerName = truth?.current?.providerName
     ?? (loading
       ? localize(locale, "读取 provider…", "Reading provider…")
-      : localize(locale, "未拿到路由", "No live route"));
+      : localize(locale, "连接路由", "Connect route"));
   const modelLabel = truth?.current?.model
-    ?? (loading ? localize(locale, "加载中", "Loading") : localize(locale, "不可用", "Unavailable"));
+    ?? (loading ? localize(locale, "加载中", "Loading") : localize(locale, "选择模型", "Choose model"));
 
   return (
     <span
@@ -187,7 +187,7 @@ export function ProviderTruthCard(props: {
     title: current?.providerName
       ?? (loading
         ? localize(locale, "正在读取当前 provider", "Reading current provider")
-        : localize(locale, "当前路由不可见", "Current route unavailable")),
+        : localize(locale, "连接 provider 路由", "Connect provider route")),
     model: current?.model ?? (loading ? localize(locale, "加载中", "Loading") : localize(locale, "未选择", "Not selected")),
     success: localize(
       locale,
