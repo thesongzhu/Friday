@@ -83,7 +83,7 @@ const checks = [
       ]),
       ...requireStrings(files.commandSheet, [
         "Command Sheet",
-        "Route coverage is not END-BAR",
+        "Route coverage only",
       ]),
       ...requireStrings(files.mobileProductContract, [
         "Device Pairing",
@@ -101,8 +101,8 @@ const checks = [
       ...requireStrings(files.home, [
         "showPairingProvisioning: Bool = false",
         "if showPairingProvisioning",
-        "Connect Friday to see approvals, memory candidates, and recovery items.",
-        "Connect Friday to see active work and provider progress.",
+        "friday.home.selected-design-intro",
+        "friday.home.selected-hero-pet",
       ]),
     ],
   },

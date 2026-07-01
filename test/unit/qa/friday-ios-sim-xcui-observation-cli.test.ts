@@ -9,7 +9,7 @@ const script = "scripts/ops/friday-ios-sim-xcui-observation.mjs";
 const missionId = "mission_ios_sim_xcui_observation_contract";
 const fakeUdid = "11111111-2222-3333-4444-555555555555";
 
-async function writeFakeTools(binDir: string, mode: "pass" | "no-tree" | "missing-id" = "pass") {
+async function writeFakeTools(binDir: string, mode: "pass" | "no-tree" | "missing-id" | "selected-design" | "legacy-home" = "pass") {
   await mkdir(binDir, { recursive: true });
   const xcrun = join(binDir, "xcrun");
   writeFileSync(xcrun, `#!/usr/bin/env bash
@@ -38,10 +38,30 @@ exit 64
     ? ""
     : mode === "missing-id"
       ? "Application, identifier: 'friday.mobile.toolbar.command-sheet', label: 'Open Command Sheet'"
-      : [
-        "Application, 0x1, identifier: 'com.friday.shell'",
-        "  Button, 0x2, identifier: 'friday.mobile.toolbar.refresh', label: 'Refresh Hub status'",
-      ].join("\\n");
+      : mode === "selected-design"
+        ? [
+          "Application, 0x1, identifier: 'com.friday.shell'",
+          "  Button, 0x2, identifier: 'friday.mobile.toolbar.command-sheet', label: 'Open Command Sheet'",
+          "  Button, 0x3, identifier: 'friday.mobile.toolbar.refresh', label: 'Refresh Hub status'",
+          "  Button, 0x4, identifier: 'friday.mobile.toolbar.chat', label: 'Open Friday Chat'",
+          "  Other, 0x5, identifier: 'friday.home.selected-design-intro', label: 'Good morning. Here is what Friday is watching for you.'",
+          "  Other, 0x6, identifier: 'friday.home.selected-hero-pet', label: 'Friday companion'",
+        ].join("\\n")
+        : mode === "legacy-home"
+          ? [
+            "Application, 0x1, identifier: 'com.friday.shell'",
+            "  StaticText, 0x2, label: 'Friday Home'",
+            "  StaticText, 0x3, label: 'Friday is offline'",
+            "  StaticText, 0x4, label: 'No cached or fabricated status is shown.'",
+            "  StaticText, 0x5, label: 'Device pairing'",
+            "  StaticText, 0x6, label: 'disabled'",
+            "  StaticText, 0x7, label: 'Hub provisioning'",
+            "  Other, 0x8, identifier: 'friday.home.unavailable'",
+          ].join("\\n")
+          : [
+            "Application, 0x1, identifier: 'com.friday.shell'",
+            "  Button, 0x2, identifier: 'friday.mobile.toolbar.refresh', label: 'Refresh Hub status'",
+          ].join("\\n");
   writeFileSync(xcodebuild, `#!/usr/bin/env bash
 set -euo pipefail
 echo "Test Suite 'FridayIOSAXObserverUITests' started"
@@ -151,6 +171,59 @@ describe("friday-ios-sim-xcui-observation", () => {
       expect(result.status).toBe(2);
       const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string }> };
       expect(output.blockers?.map((blocker) => blocker.code)).toContain("planned_actions_missing");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes selected-design enforcement for the current product home identifiers", async () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-ios-xcui-observation-selected-design-"));
+    try {
+      const binDir = join(root, "bin");
+      const outDir = join(root, "out");
+      await writeFakeTools(binDir, "selected-design");
+      const stdout = execFileSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        "--destinations=home",
+        "--require-selected-design",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      });
+      const output = JSON.parse(stdout) as { status?: string; selected_design_required?: boolean; blockers?: Array<{ code?: string }> };
+      expect(output.status).toBe("observation_ready");
+      expect(output.selected_design_required).toBe(true);
+      expect(output.blockers).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails selected-design enforcement for the old offline/debug home state", async () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-ios-xcui-observation-legacy-home-"));
+    try {
+      const binDir = join(root, "bin");
+      const outDir = join(root, "out");
+      await writeFakeTools(binDir, "legacy-home");
+      const result = spawnSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        "--destinations=home",
+        "--require-selected-design",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      });
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string }> };
+      const blockerCodes = output.blockers?.map((blocker) => blocker.code) ?? [];
+      expect(blockerCodes).toContain("selected_design_required_id_missing");
+      expect(blockerCodes).toContain("selected_design_forbidden_home_state_visible");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
