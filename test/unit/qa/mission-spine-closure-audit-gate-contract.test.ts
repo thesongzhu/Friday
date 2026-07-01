@@ -25,4 +25,13 @@ describe("mission-spine closure audit gate contract", () => {
     expect(script).toContain("\"uiux_non_channel_report_never_satisfies_strict_ui_device_proof\": true");
     expect(script).toContain("&& \"$ui_device_status\" == \"passed\"");
   });
+
+  it("requires channel live proof wrappers to match the current HEAD", () => {
+    expect(script).toContain("current_head=\"$(git -C \"$root\" rev-parse HEAD)\"");
+    expect(script).toContain("jq -e --arg current_head \"$current_head\"");
+    expect(script).toContain("(.head // .git_sha // .github.sha // .github.head_sha // \"\") == $current_head");
+    expect(script).toContain("channel_live_proof_status=\"blocked_wrapper_not_current_head_or_strict_schema\"");
+    expect(script).toContain("\"current_head\": \"$current_head\"");
+    expect(script).toContain("\"proof_head\": \"$channel_live_proof_head\"");
+  });
 });

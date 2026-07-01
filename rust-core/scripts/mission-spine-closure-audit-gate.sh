@@ -65,14 +65,17 @@ uiux_runtime_evidence_inputs_json="null"
 uiux_runtime_evidence_action_rows_json="null"
 uiux_residual_destinations_with_blockers_json="null"
 uiux_residual_destinations_all_runtime_actions_covered_json="null"
+current_head="$(git -C "$root" rev-parse HEAD)"
+channel_live_proof_head=""
 
 channel_wrapper_passes_strict_schema() {
   local artifact="$1"
   [[ -s "$artifact" ]] || return 1
-  jq -e '
+  jq -e --arg current_head "$current_head" '
     .proof == "mission_spine_channel_live_proof"
     and .status == "passed"
     and .capture_mode == "--live"
+    and ((.head // .git_sha // .github.sha // .github.head_sha // "") == $current_head)
     and .telegram_live.status == "passed"
     and .telegram_live.proof == "telegram_inbound_through_rust_channels_pipeline"
     and .telegram_live.bot_identity_verified == true
@@ -225,11 +228,17 @@ fi
 
 if [[ -s "$channel_live_proof_out" ]] \
   && jq -e '.proof == "mission_spine_channel_live_proof" and .status == "passed"' "$channel_live_proof_out" >/dev/null; then
-  channel_live_proof_available="true"
-  channel_live_proof_status="passed"
   channel_live_proof_generated_at="$(jq -r '.generated_at_utc // ""' "$channel_live_proof_out")"
-  if [[ "$ui_device_channel_proof_satisfies_telegram" == "true" ]]; then
-    channel_live_proof_source="ui_device_proof_channel_evidence"
+  channel_live_proof_head="$(jq -r '.head // .git_sha // .github.sha // .github.head_sha // ""' "$channel_live_proof_out")"
+  if channel_wrapper_passes_strict_schema "$channel_live_proof_out"; then
+    channel_live_proof_available="true"
+    channel_live_proof_status="passed"
+    if [[ "$ui_device_channel_proof_satisfies_telegram" == "true" ]]; then
+      channel_live_proof_source="ui_device_proof_channel_evidence"
+    fi
+  else
+    channel_live_proof_available="false"
+    channel_live_proof_status="blocked_wrapper_not_current_head_or_strict_schema"
   fi
 elif [[ -s "$telegram_raw_proof_out" ]] \
   && jq -e '
@@ -304,6 +313,8 @@ cat > "$report_out" <<EOF
     "artifact": "$channel_live_proof_artifact",
     "source": "$channel_live_proof_source",
     "ui_device_channel_proof_artifact": "$ui_device_channel_proof_artifact",
+    "current_head": "$current_head",
+    "proof_head": "$channel_live_proof_head",
     "generated_at_utc": "$channel_live_proof_generated_at",
     "scope": "machine-readable redacted wrapper artifact written by scripts/mission-spine-channel-live-gate.sh after real Telegram/channel proof passes; legacy raw artifacts are not accepted because they can contain provider/channel identifiers"
   },

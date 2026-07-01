@@ -12,6 +12,7 @@ function usage() {
     --channel-live-proof=/abs/channel-live-proof.json \\
     --channel-capture=/abs/channel-capture.json \\
     --out=/abs/channel-events.jsonl [--require-ready]
+    [--require-current-head] [--current-head=<git-sha>]
 
 Truth: converts a redacted channel live proof artifact into conservative
 same-run UI/device event rows. It accepts the mission-spine Telegram wrapper
@@ -31,10 +32,12 @@ if (args.includes("--help") || args.includes("-h")) {
 }
 
 const requireReady = args.includes("--require-ready");
+const requireCurrentHead = args.includes("--require-current-head");
 const missionId = arg("mission-id");
 const channelLiveProofPath = arg("channel-live-proof");
 const channelCapturePath = arg("channel-capture");
 const outPath = arg("out");
+const currentHead = arg("current-head") || process.env.FRIDAY_CURRENT_HEAD || "";
 const blockers = [];
 
 function block(code, detail) {
@@ -79,6 +82,30 @@ function stringValue(value) {
   return typeof value === "string" ? value : "";
 }
 
+function proofHead(proof) {
+  return stringValue(proof.head)
+    || stringValue(proof.git_sha)
+    || stringValue(proof.github?.sha)
+    || stringValue(proof.github?.head_sha)
+    || stringValue(proof.environment?.commit_sha);
+}
+
+function validateCurrentHead(proof, label) {
+  if (!requireCurrentHead) return [];
+  const failures = [];
+  if (!currentHead) {
+    failures.push("channel_live_proof_current_head_missing");
+    return failures;
+  }
+  const head = proofHead(proof);
+  if (!head) {
+    failures.push("channel_live_proof_head_missing");
+  } else if (head !== currentHead) {
+    failures.push(`channel_live_proof_head_mismatch:${label}:${head}`);
+  }
+  return failures;
+}
+
 function validateMissionSpineWrapper(proof) {
   const failures = [];
   if (proof.proof !== "mission_spine_channel_live_proof") failures.push("channel_live_proof_mismatch");
@@ -95,6 +122,7 @@ function validateMissionSpineWrapper(proof) {
   if (!String(proof.remaining_requirement || "").includes("UI/device consumption evidence")) {
     failures.push("channel_live_proof_missing_ui_device_boundary");
   }
+  failures.push(...validateCurrentHead(proof, "mission_spine"));
   return {
     source: "mission_spine_channel_live_proof",
     capturedAt: stringValue(proof.generated_at_utc),
@@ -123,6 +151,7 @@ function validatePhase24TrustedInbound(proof) {
   if (proof.criteria?.fullEvidenceSurfaceExported !== true) failures.push("phase24_channel_evidence_surface_not_exported");
   if (observedEventKey && !isObject(proof[observedEventKey])) failures.push(`phase24_channel_observed_event_missing:${observedEventKey}`);
   if (!isObject(proof.evidenceSurface)) failures.push("phase24_channel_evidence_surface_missing");
+  failures.push(...validateCurrentHead(proof, "phase24"));
   return {
     source: proof.schemaVersion || "phase24_channel_trusted_inbound",
     capturedAt: stringValue(proof.completedAt || proof.startedAt),
@@ -208,6 +237,9 @@ const output = {
   out: outPath ? abs(outPath) : null,
   outputRows: rows.length,
   emittedEvents: rows.map((row) => `${row.surface}:${row.event}`),
+  currentHeadRequired: requireCurrentHead,
+  currentHead: currentHead || null,
+  proofHead: proof && isObject(proof) ? proofHead(proof) || null : null,
   blockers,
   caveat: "Conservative channel event bridge only. Replay-blocked visibility is emitted only when the channel proof includes replay controls. Phase24 trusted-inbound artifacts prove user-origin channel consumption but do not emit replay-blocked visibility unless their own proof includes replay controls; this does not claim timeline proof, mobile/desktop/channel convergence, END-BAR, or GO-LIVE.",
 };

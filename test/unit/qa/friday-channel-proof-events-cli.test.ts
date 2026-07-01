@@ -6,10 +6,12 @@ import { describe, expect, it } from "vitest";
 
 const script = "scripts/ops/friday-channel-proof-events.mjs";
 const missionId = "mission_cli_channel_proof_events";
+const currentHead = "095811ada740d342e181f91ac38b5d8fac2ee768";
 
 function writeChannelProof(path: string, overrides: Record<string, unknown> = {}) {
   writeFileSync(path, JSON.stringify({
     proof: "mission_spine_channel_live_proof",
+    head: currentHead,
     generated_at_utc: "2026-06-24T23:59:00.000Z",
     status: "passed",
     scope: "real Telegram/channel inbound proof through Rust channel auth and redaction pipeline; not real UI/device consumption proof",
@@ -121,6 +123,43 @@ describe("friday-channel-proof-events", () => {
           captured_at: "2026-06-24T23:59:00.000Z",
         },
       ]);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed in strict mode when the channel wrapper is from a different head", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-channel-proof-events-head-"));
+    try {
+      const proof = join(tempDir, "channel-live-proof.json");
+      const channelCapture = join(tempDir, "channel-capture.json");
+      const out = join(tempDir, "channel-events.jsonl");
+      writeChannelProof(proof, { head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
+      writeFileSync(channelCapture, JSON.stringify({ truth: "redacted_channel_capture" }));
+
+      const result = spawnSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--channel-live-proof=${proof}`,
+        `--channel-capture=${channelCapture}`,
+        `--out=${out}`,
+        "--require-ready",
+        "--require-current-head",
+        `--current-head=${currentHead}`,
+      ], { cwd: process.cwd(), encoding: "utf8" });
+
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as {
+        status?: string;
+        currentHeadRequired?: boolean;
+        proofHead?: string;
+        blockers?: Array<{ code?: string }>;
+      };
+      expect(output.status).toBe("blocked");
+      expect(output.currentHeadRequired).toBe(true);
+      expect(output.proofHead).toBe("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+      expect(output.blockers?.map((blocker) => blocker.code)).toContain("channel_live_proof_head_mismatch");
+      expect(() => readFileSync(out, "utf8")).toThrow();
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
