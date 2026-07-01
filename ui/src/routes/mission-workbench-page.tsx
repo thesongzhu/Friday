@@ -63,6 +63,25 @@ function capabilityStateRenderKey(capability: MissionWorkbenchCapabilityState, i
   ].join(":");
 }
 
+function RefDetails(props: { label: string; refs: Array<[string, string | null | undefined]> }) {
+  const refs = props.refs.filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0);
+  if (refs.length === 0) return null;
+
+  return (
+    <details className="mt-3 rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-base)] p-2 text-xs text-[color:var(--color-text-secondary)]">
+      <summary className="cursor-pointer select-none font-medium text-[color:var(--color-text-primary)]">{props.label}</summary>
+      <div className="mt-2 space-y-2">
+        {refs.map(([label, ref]) => (
+          <p key={`${label}:${ref}`} className="break-all">
+            <span className="font-medium text-[color:var(--color-text-tertiary)]">{label}: </span>
+            {ref}
+          </p>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 export function MissionWorkbenchPage() {
   const { locale } = useAppLocale();
   const queryClient = useQueryClient();
@@ -136,8 +155,8 @@ export function MissionWorkbenchPage() {
             {localize(locale, "任务工作台", "Mission Workbench")}
           </h1>
           <div className="mt-3 flex flex-wrap gap-2">
-            {targetMissionId ? <StatusPill tone="neutral">capture target: {targetMissionId}</StatusPill> : null}
-            <StatusPill tone="warning">{isLoading ? "checking live Rust Hub" : "live Rust Hub unavailable"}</StatusPill>
+            {targetMissionId ? <StatusPill tone="neutral">selected mission</StatusPill> : null}
+            <StatusPill tone="warning">{isLoading ? "checking live connection" : "Hub projection unavailable"}</StatusPill>
           </div>
         </header>
         <div className="rounded-lg border border-[color:var(--color-border-warning)] bg-[color:var(--color-bg-warning-subtle)] p-4 text-sm text-[color:var(--color-text-primary)]">
@@ -148,13 +167,13 @@ export function MissionWorkbenchPage() {
             {liveUnavailable
               ? localize(
                 locale,
-                "此页面不会显示占位任务、工作项或证据行；请修复 /v1/mission-spine/workbench 后再捕获。",
-                "This page does not display placeholder Missions, WorkItems, or evidence rows; fix /v1/mission-spine/workbench before capture.",
+                "Friday 还没有拿到实时任务投影；连接恢复前不会显示占位任务或虚假证据。",
+                "Friday has not received the live mission projection yet. It will not show placeholder work or fabricated evidence while disconnected.",
               )
               : localize(
                 locale,
-                "正在检查 /v1/mission-spine/workbench；真实投影返回前不会渲染任务数据。",
-                "Checking /v1/mission-spine/workbench; Mission data is not rendered until a real projection returns.",
+                "正在连接任务投影；真实数据返回前不会渲染任务状态。",
+                "Connecting the mission projection. Mission status is not rendered until real data returns.",
               )}
           </p>
         </div>
@@ -171,8 +190,8 @@ export function MissionWorkbenchPage() {
             {localize(locale, "任务工作台", "Mission Workbench")}
           </h1>
           <div className="mt-3 flex flex-wrap gap-2">
-            <StatusPill tone="success">{snapshot.missionId}</StatusPill>
-            {targetMissionId ? <StatusPill tone={snapshot.missionId === targetMissionId ? "success" : "danger"}>capture target: {targetMissionId}</StatusPill> : null}
+            <StatusPill tone="success">{localize(locale, "任务已连接", "Mission connected")}</StatusPill>
+            {targetMissionId ? <StatusPill tone={snapshot.missionId === targetMissionId ? "success" : "danger"}>{snapshot.missionId === targetMissionId ? "selected mission" : "different mission"}</StatusPill> : null}
             <StatusPill tone="warning">{snapshot.runtimeFeedStatus.replaceAll("_", " ")}</StatusPill>
             {snapshot.statusLabels.map((label) => (
               <StatusPill key={label} tone={label === "error" ? "danger" : "warning"}>{label}</StatusPill>
@@ -184,7 +203,7 @@ export function MissionWorkbenchPage() {
         <div className="grid min-w-[280px] grid-cols-2 gap-2 text-sm">
           <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
             <p className="text-xs text-[color:var(--color-text-secondary)]">Conversation</p>
-            <p className="mt-1 truncate font-medium text-[color:var(--color-text-primary)]">{snapshot.fridayConversationId}</p>
+            <p className="mt-1 font-medium text-[color:var(--color-text-primary)]">{localize(locale, "已绑定", "Bound")}</p>
           </div>
           <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
             <p className="text-xs text-[color:var(--color-text-secondary)]">Duplicate preflight</p>
@@ -205,7 +224,7 @@ export function MissionWorkbenchPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{item.title}</p>
-                      <p className="mt-1 truncate text-xs text-[color:var(--color-text-secondary)]">{item.id}</p>
+                      <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">{item.done ? "completed with receipt" : "waiting for completion receipt"}</p>
                     </div>
                     <StatusPill tone={toneForState(item.state)}>{item.state}</StatusPill>
                   </div>
@@ -221,11 +240,7 @@ export function MissionWorkbenchPage() {
                   <p className="mt-3 text-xs leading-5 text-[color:var(--color-text-secondary)]">
                     {item.blockingReason}
                   </p>
-                  {item.proofRef ? (
-                    <p className="mt-3 break-all rounded-lg bg-[color:var(--color-bg-base)] p-2 text-xs text-[color:var(--color-text-secondary)]">
-                      {item.proofRef}
-                    </p>
-                  ) : null}
+                  <RefDetails label="Work receipt" refs={[["work item", item.id], ["proof", item.proofRef]]} />
                   {item.canRetry || item.canCancel ? (
                     <div className="mt-3 flex flex-wrap gap-2">
                       {item.canRetry ? (
@@ -450,7 +465,7 @@ export function MissionWorkbenchPage() {
                     <StatusPill tone="danger">authority: false</StatusPill>
                   </div>
                   <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{candidate.preview}</p>
-                  <p className="mt-3 break-all text-xs text-[color:var(--color-text-tertiary)]">{candidate.evidenceRef}</p>
+                  <RefDetails label="Memory evidence" refs={[["evidence", candidate.evidenceRef]]} />
                 </div>
               ))}
             </div>
@@ -463,7 +478,7 @@ export function MissionWorkbenchPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{capability.label}</p>
-                      <p className="mt-1 truncate text-xs text-[color:var(--color-text-secondary)]">{capability.id}</p>
+                      <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">{capability.dispatchAllowed ? "ready for governed dispatch" : "waiting for approval or guardrail"}</p>
                     </div>
                     <StatusPill tone="neutral">{capability.kind}</StatusPill>
                   </div>
@@ -475,7 +490,7 @@ export function MissionWorkbenchPage() {
                     </StatusPill>
                   </div>
                   <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{capability.summary}</p>
-                  <p className="mt-3 break-all text-xs text-[color:var(--color-text-tertiary)]">{capability.proofRef}</p>
+                  <RefDetails label="Capability receipt" refs={[["capability", capability.id], ["proof", capability.proofRef]]} />
                 </div>
               ))}
             </div>

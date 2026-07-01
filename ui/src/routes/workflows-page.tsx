@@ -642,7 +642,7 @@ export function WorkflowsPage() {
           </div>
         </ShellCard>
 
-        <ShellCard eyebrow={locale === "zh" ? "引导路径" : "Guided path"} title={locale === "zh" ? "Friday 在展示原始图表前先显示下一步安全操作" : "Friday shows the next safe moves before raw graph detail"}>
+        <ShellCard eyebrow={locale === "zh" ? "引导路径" : "Guided path"} title={locale === "zh" ? "Friday 先显示下一步安全操作，再展示依赖地图" : "Friday shows the next safe moves before the dependency map"}>
           {guidedSteps.length ? (
             <div className="space-y-3">
               {guidedSteps.map((step, index) => (
@@ -837,8 +837,8 @@ export function WorkflowsPage() {
             <div className="space-y-4">
               <p className="text-sm text-[color:var(--color-text-secondary)]">
                 {locale === "zh"
-                  ? "Friday 将原始图表保留在此作为操作上下文。恢复、部署、重运行和导出在上方，使此页面保持点击优先。"
-                  : "Friday keeps the raw graph here as operator context. Recovery, deploy, rerun, and export stay above it so this page remains click-first for standard work."}
+                  ? "Friday 将依赖地图保留在此作为操作上下文。恢复、部署、重运行和导出在上方，使此页面保持点击优先。"
+                  : "Friday keeps the dependency map here as operator context. Recovery, deploy, rerun, and export stay above it so this page remains click-first for standard work."}
               </p>
               <div className="h-[420px] overflow-hidden rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)]">
                 <ReactFlow
