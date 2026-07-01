@@ -35,6 +35,18 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("real channel, timeline, stress, and negative-control evidence");
   });
 
+  it("requires current-head channel proof when deriving strict channel events", () => {
+    const runner = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+    const readiness = readFileSync("scripts/ops/friday-ui-device-proof-readiness.sh", "utf8");
+
+    expect(runner).toContain("current_head=\"$(git -C \"${repo_root}\" rev-parse HEAD)\"");
+    expect(runner).toContain("--current-head=${current_head}");
+    expect(runner).toContain("--require-current-head");
+    expect(readiness).toContain("current_head=\"$(git -C \"${REPO_ROOT}\" rev-parse HEAD)\"");
+    expect(readiness).toContain("--current-head=${current_head}");
+    expect(readiness).toContain("--require-current-head");
+  });
+
   it("can bind the runner to an exact existing Mission instead of only creating a shared-id Mission", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
 

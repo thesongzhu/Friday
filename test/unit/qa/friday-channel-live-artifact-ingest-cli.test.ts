@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const script = "scripts/ops/friday-channel-live-artifact-ingest.mjs";
+const currentHead = "test-current-head";
 
 function writeRaw(path: string) {
   writeFileSync(path, JSON.stringify({
@@ -26,6 +27,7 @@ function writeRaw(path: string) {
 function writeWrapper(path: string, overrides: Record<string, unknown> = {}) {
   writeFileSync(path, JSON.stringify({
     proof: "mission_spine_channel_live_proof",
+    head: currentHead,
     generated_at_utc: "2026-06-26T17:35:00Z",
     status: "passed",
     capture_mode: "--live",
@@ -97,6 +99,35 @@ describe("friday-channel-live-artifact-ingest", () => {
       const output = JSON.parse(result.stdout) as { status?: string; blockers?: Array<{ code?: string }> };
       expect(output.status).toBe("blocked");
       expect(output.blockers?.map((blocker) => blocker.code)).toContain("channel_live_proof_missing");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when strict current-head validation sees a stale wrapper", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-channel-artifact-stale-head-"));
+    try {
+      const wrapper = join(root, "mission_spine_channel_live_proof.json");
+      writeWrapper(wrapper, { head: "test-stale-head" });
+
+      const result = spawnSync("node", [
+        script,
+        `--channel-live-proof=${wrapper}`,
+        "--require-compatible",
+        "--require-current-head",
+        `--current-head=${currentHead}`,
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as {
+        status?: string;
+        currentHeadRequired?: boolean;
+        wrapperHead?: string;
+        blockers?: Array<{ code?: string }>;
+      };
+      expect(output.status).toBe("blocked");
+      expect(output.currentHeadRequired).toBe(true);
+      expect(output.wrapperHead).toBe("test-stale-head");
+      expect(output.blockers?.map((blocker) => blocker.code)).toContain("wrapper_head_mismatch");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

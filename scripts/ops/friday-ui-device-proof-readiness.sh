@@ -772,11 +772,15 @@ derive_channel_events_if_possible() {
   mkdir -p "$(dirname "$derived_out")"
   existing_events="${SAME_RUN_EVENTS:-}"
 
+  local current_head
+  current_head="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
   if node "${REPO_ROOT}/scripts/ops/friday-channel-proof-events.mjs" \
     "--mission-id=${MISSION_ID}" \
     "--channel-live-proof=${CHANNEL_LIVE_PROOF}" \
     "--channel-capture=${CHANNEL_EVIDENCE}" \
-    "--out=${derived_out}" >"$stdout_out"; then
+    "--out=${derived_out}" \
+    "--current-head=${current_head}" \
+    --require-current-head >"$stdout_out"; then
     if [ ! -s "$derived_out" ]; then
       notes+=("channel_proof_events_bridge:no_events")
       return 0

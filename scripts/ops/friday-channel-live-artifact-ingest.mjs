@@ -11,6 +11,7 @@ function usage() {
     [--artifact-dir=/abs/downloaded-artifact-dir | --channel-live-proof=/abs/mission_spine_channel_live_proof.json] \\
     [--raw-telegram-proof=/abs/telegram_live_proof.json] \\
     [--out=/abs/report.json] [--require-compatible]
+    [--require-current-head] [--current-head=<git-sha>]
 
 Truth: validates a downloaded GitHub Telegram live-proof artifact against the
 current mission_spine_channel_live_proof wrapper schema. It does not download
@@ -38,6 +39,8 @@ const channelLiveProofArg = arg("channel-live-proof");
 const rawTelegramProofArg = arg("raw-telegram-proof");
 const outPath = arg("out");
 const requireCompatible = args.includes("--require-compatible");
+const requireCurrentHead = args.includes("--require-current-head");
+const currentHead = arg("current-head") || process.env.FRIDAY_CURRENT_HEAD || "";
 const blockers = [];
 const notes = [];
 
@@ -109,6 +112,18 @@ function expectTrue(value, code) {
   if (value !== true) block(code, String(value));
 }
 
+function stringValue(value) {
+  return typeof value === "string" ? value : "";
+}
+
+function wrapperHead(value) {
+  return stringValue(value?.head)
+    || stringValue(value?.git_sha)
+    || stringValue(value?.github?.sha)
+    || stringValue(value?.github?.head_sha)
+    || stringValue(value?.environment?.commit_sha);
+}
+
 if (artifactDir && (channelLiveProofArg || rawTelegramProofArg)) {
   notes.push("artifact_dir_with_explicit_paths:explicit_paths_take_precedence");
 }
@@ -130,6 +145,18 @@ if (wrapper && typeof wrapper === "object" && !Array.isArray(wrapper)) {
   if (wrapper.status !== "passed") block("wrapper_status_not_passed", String(wrapper.status ?? ""));
   if (!String(wrapper.remaining_requirement || "").includes("UI/device consumption evidence")) {
     block("wrapper_missing_ui_device_boundary", "remaining_requirement");
+  }
+  if (requireCurrentHead) {
+    if (!currentHead) {
+      block("current_head_missing", "--current-head or FRIDAY_CURRENT_HEAD");
+    } else {
+      const head = wrapperHead(wrapper);
+      if (!head) {
+        block("wrapper_head_missing", "head/github.sha");
+      } else if (head !== currentHead) {
+        block("wrapper_head_mismatch", head);
+      }
+    }
   }
   const telegram = wrapper.telegram_live && typeof wrapper.telegram_live === "object" ? wrapper.telegram_live : {};
   if (telegram.status !== "passed") block("telegram_status_not_passed", String(telegram.status ?? ""));
@@ -181,6 +208,9 @@ const report = {
   channelLiveProof: channelLiveProofPath || null,
   rawTelegramProof: rawTelegramProofPath || null,
   captureMode: wrapper?.capture_mode || null,
+  currentHeadRequired: requireCurrentHead,
+  currentHead: currentHead || null,
+  wrapperHead: wrapperHead(wrapper) || null,
   generatedAt: wrapper?.generated_at_utc || null,
   blockers,
   notes,

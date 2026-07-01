@@ -491,12 +491,15 @@ channel_events=""
 if [ -n "${channel_live_proof}" ] || [ -n "${channel_capture}" ]; then
   [ -n "${channel_live_proof}" ] || die "--channel-live-proof is required with --channel-capture"
   [ -n "${channel_capture}" ] || die "--channel-capture is required with --channel-live-proof"
+  current_head="$(git -C "${repo_root}" rev-parse HEAD)"
   channel_events="${out_dir}/channel-events.jsonl"
   node "${repo_root}/scripts/ops/friday-channel-proof-events.mjs" \
     "--mission-id=${mission_id}" \
     "--channel-live-proof=${channel_live_proof}" \
     "--channel-capture=${channel_capture}" \
     "--out=${channel_events}" \
+    "--current-head=${current_head}" \
+    --require-current-head \
     --require-ready
   event_inputs+=("${channel_events}")
 fi
