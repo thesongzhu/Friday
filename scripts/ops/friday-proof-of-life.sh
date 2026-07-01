@@ -24,9 +24,11 @@
 #     side effect of any real run). It does NOT change config, flags, or state.
 #
 # SECRET HYGIENE
-#   - The passphrase is read silently (read -rs), never echoed, never written to
-#     disk, and never placed in a process argv (it is JSON-escaped via `jq -Rs`
-#     reading stdin and streamed to curl with `--data @-`).
+#   - The passphrase is read silently (read -rs) by default, or from stdin only
+#     when FRIDAY_DEEPSEEK_PROOF_PASSPHRASE_STDIN=1 is set by a local wrapper.
+#     It is never echoed, never written to disk, and never placed in a process
+#     argv (it is JSON-escaped via `jq -Rs` reading stdin and streamed to curl
+#     with `--data @-`).
 #   - The access token is held only in a shell variable and used only in an
 #     Authorization header. It is never printed.
 #   - All HTTP is to 127.0.0.1 only. The only external network call is the one
@@ -45,6 +47,8 @@ readonly TS_HUB="http://127.0.0.1:3141"
 readonly DEEPSEEK_PROVIDER_ID="fa15f1fe-a0b6-4f79-96c3-4ae8e1be28a4"
 readonly DEEPSEEK_MODEL="deepseek-v4-flash"
 readonly RUST_HUB_DB="${HOME}/Library/Application Support/Friday/state/rust-hub.sqlite"
+readonly PASSPHRASE_STDIN="${FRIDAY_DEEPSEEK_PROOF_PASSPHRASE_STDIN:-0}"
+readonly PREFLIGHT_ONLY="${FRIDAY_DEEPSEEK_PROOF_PREFLIGHT_ONLY:-0}"
 # The exact 4-tool read-only allowlist the qualifier predicate requires (clause 4).
 readonly PONG_TASK="Reply with exactly one JSON object and nothing else: {\"tool\":\"none\",\"answer\":\"PONG\"}"
 
@@ -128,10 +132,28 @@ curl_bearer_get() {
   } | curl --config - 2>/dev/null
 }
 
+if [ "${PREFLIGHT_ONLY}" = "1" ]; then
+  echo "DeepSeek route proof preflight OK."
+  echo "  tsHub: ${TS_HUB}"
+  echo "  rustDb: ${RUST_HUB_DB}"
+  echo "  deepseekProviderId: ${DEEPSEEK_PROVIDER_ID}"
+  echo "  deepseekModel: ${DEEPSEEK_MODEL}"
+  echo "  tokenLedgerRows: $(ledger_count)"
+  echo "Truth: preflight creates no traffic and proves only local readiness, not route proof / GO."
+  exit 0
+fi
+
 # ─── Step 1: login → access token (secret never hits argv/disk) ───
-printf 'Enter Friday local passphrase (input hidden): ' >&2
-read -rs PASSPHRASE
-printf '\n' >&2
+if [ "${PASSPHRASE_STDIN}" = "1" ]; then
+  if ! IFS= read -r PASSPHRASE; then
+    echo "FATAL: failed to read passphrase from stdin." >&2
+    exit 4
+  fi
+else
+  printf 'Enter Friday local passphrase (input hidden): ' >&2
+  read -rs PASSPHRASE
+  printf '\n' >&2
+fi
 if [ -z "${PASSPHRASE}" ]; then
   echo "FATAL: empty passphrase." >&2
   exit 4
