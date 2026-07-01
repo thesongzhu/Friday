@@ -191,7 +191,21 @@ const liveConnectedVisualModes = new Set([
   "real-device-live",
   "product-live",
   "same-run-live",
+  "served-ui-current-head",
 ]);
+
+function servedUiDesktopVisualEntries(report) {
+  return arrayAt(report, ["evidence", "servedUi"])
+    .filter((item) =>
+      item?.status === "ready"
+      && item?.sourceStatus === "served_desktop_dist_ui_and_ios_source"
+      && item?.checks?.renderedDesktop === true
+      && item?.checks?.builtCss === true)
+    .map((item) => ({
+      ...item,
+      mode: "served-ui-current-head",
+    }));
+}
 
 function visualEvidenceEntriesForSurface(report, surface) {
   const entries = arrayAt(report, ["evidence", surface]);
@@ -199,6 +213,7 @@ function visualEvidenceEntriesForSurface(report, surface) {
   return [
     ...entries,
     ...arrayAt(report, ["evidence", "desktopAggregates"]),
+    ...servedUiDesktopVisualEntries(report),
   ];
 }
 

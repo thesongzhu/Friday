@@ -47,7 +47,7 @@ function summary(dir: string, overrides: Record<string, unknown> = {}) {
     workbenchTimelineStatus: "snapshot_ready_events_ready",
     stressCaptureStatus: "ready",
     accessibilityCaptureStatus: "ready",
-    productClosureStatus: "ready_for_runtime_capture",
+    productClosureStatus: "uiux_product_closure_evidence_ready",
     readinessStatus: "pass",
     readinessBlockers: [],
     fullProofGaps: [],
@@ -107,6 +107,21 @@ describe("Friday integrated end-to-end tape report", () => {
       expect.objectContaining({ code: "strict_ui_device_readiness_passed" }),
       expect.objectContaining({ code: "no_full_proof_gaps" }),
     ]));
+  });
+
+  it("blocks runtime-capture-only product closure status", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-integrated-tape-"));
+    const summaryPath = writeJson(dir, "summary.json", summary(dir, {
+      productClosureStatus: "ready_for_runtime_capture",
+    }));
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toContainEqual(expect.objectContaining({
+      code: "product_closure_evidence_ready",
+      detail: "ready_for_runtime_capture",
+    }));
   });
 
   it("blocks cross-mission or missing desktop evidence", () => {

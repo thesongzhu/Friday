@@ -556,7 +556,9 @@ const report = {
   status: blockers.length === 0
     ? runtimeCovered && uiDeviceProofAssembled
       ? "uiux_product_closure_evidence_ready"
-      : "ready_for_runtime_capture"
+      : nonChannelProductClosureReady
+        ? "non_channel_closure_ready_channel_deferred"
+        : "runtime_capture_required"
     : "blocked",
   repoRoot,
   designRoot,
