@@ -62,6 +62,7 @@ function summary(dir: string, overrides: Record<string, unknown> = {}) {
     missionId,
     captures: {
       mobile: {
+        surface: "mobile",
         mission_id: missionId,
         proof: mobileProof,
         events: mobileEvents,
@@ -70,6 +71,7 @@ function summary(dir: string, overrides: Record<string, unknown> = {}) {
         action_count: 1,
       },
       desktop: {
+        surface: "desktop",
         mission_id: missionId,
         proof: desktopProof,
         events: desktopEvents,

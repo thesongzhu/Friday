@@ -112,7 +112,7 @@ function eventRows(path) {
   }
 }
 
-function eventEvidenceFailures(path, missionId) {
+function eventEvidenceFailures(path, missionId, expectedSurface) {
   const rows = eventRows(path);
   if (!Array.isArray(rows)) return ["events_invalid_jsonl"];
   if (rows.length === 0) return ["event_rows_missing"];
@@ -125,6 +125,10 @@ function eventEvidenceFailures(path, missionId) {
     }
     if (string(row.mission_id || row.missionId) !== missionId) {
       failures.push(`event_row_mission_mismatch:${index + 1}`);
+      continue;
+    }
+    if (expectedSurface && string(row.surface) !== expectedSurface) {
+      failures.push(`event_row_surface_mismatch:${index + 1}`);
       continue;
     }
     if (!string(row.event)) {
@@ -191,21 +195,21 @@ function deferredSignals(summary) {
   return haystack.includes("defer") || haystack.includes("channel_deferred") ? blockers.length > 0 ? blockers : ["deferred signal present"] : [];
 }
 
-function hasCapture(capture, missionId) {
+function hasCapture(capture, missionId, expectedSurface) {
   if (!capture || typeof capture !== "object" || Array.isArray(capture)) return false;
   if (capture.mission_id !== missionId) return false;
   if (!fileExists(capture.proof)) return false;
   if (!fileExists(capture.events)) return false;
-  if (eventEvidenceFailures(capture.events, missionId).length > 0) return false;
+  if (eventEvidenceFailures(capture.events, missionId, expectedSurface).length > 0) return false;
   if (!fileExists(capture.action_runtime_evidence)) return false;
   if (actionEvidenceFailures(capture.action_runtime_evidence, missionId).length > 0) return false;
   return Number(capture.event_count || 0) > 0 && Number(capture.action_count || 0) > 0;
 }
 
-function captureDetail(capture, missionId) {
+function captureDetail(capture, missionId, expectedSurface) {
   if (!capture || typeof capture !== "object" || Array.isArray(capture)) return "<missing>";
   const eventFailures = fileExists(capture.events)
-    ? eventEvidenceFailures(capture.events, missionId)
+    ? eventEvidenceFailures(capture.events, missionId, expectedSurface)
     : [];
   const actionFailures = fileExists(capture.action_runtime_evidence)
     ? actionEvidenceFailures(capture.action_runtime_evidence, missionId)
@@ -228,8 +232,8 @@ if (summary && typeof summary === "object" && !Array.isArray(summary)) {
 
   check("summary_truth_shape", string(summary.truth).includes("ui_device_shortlist_runner_summary") || string(summary.truth).includes("uiux_real_use"), string(summary.truth));
   check("mission_id_present", missionId.toLowerCase().includes("mission"), missionId);
-  check("mobile_real_surface_capture", hasCapture(mobile, missionId), captureDetail(mobile, missionId));
-  check("desktop_real_surface_capture", hasCapture(desktop, missionId), captureDetail(desktop, missionId));
+  check("mobile_real_surface_capture", hasCapture(mobile, missionId, "mobile"), captureDetail(mobile, missionId, "mobile"));
+  check("desktop_real_surface_capture", hasCapture(desktop, missionId, "desktop"), captureDetail(desktop, missionId, "desktop"));
   check("action_runtime_traceability", ["runtime_actions_covered", "written"].includes(string(summary.gapStatus)) || ["runtime_actions_covered"].includes(string(summary.designActionRuntimeStatus)), string(summary.gapStatus || summary.designActionRuntimeStatus || ""));
   check("accessibility_capture_ready", ["ready", "passed"].includes(string(summary.accessibilityCaptureStatus)), string(summary.accessibilityCaptureStatus));
   check("stress_capture_ready", ["ready", "passed"].includes(string(summary.stressCaptureStatus)), string(summary.stressCaptureStatus));
