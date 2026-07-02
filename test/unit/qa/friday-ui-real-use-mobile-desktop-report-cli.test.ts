@@ -135,4 +135,26 @@ describe("Friday UI real-use mobile/desktop report", () => {
       expect.objectContaining({ code: "desktop_real_surface_capture" }),
     ]));
   });
+
+  it("blocks capture summaries whose action-runtime evidence file is not ready for the same mission", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-action-evidence-"));
+    const value = summary(dir);
+    writeFileSync(value.captures.mobile.action_runtime_evidence, JSON.stringify({
+      truth: "accessibility_click_action_runtime_evidence_real_ui_not_endbar",
+      status: "blocked",
+      missionId: "mission_other",
+      actions: [],
+    }, null, 2));
+    const summaryPath = writeJson(dir, "summary.json", value);
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "mobile_real_surface_capture",
+        detail: expect.stringContaining("action_runtime_evidence_not_ready"),
+      }),
+    ]));
+  });
 });
