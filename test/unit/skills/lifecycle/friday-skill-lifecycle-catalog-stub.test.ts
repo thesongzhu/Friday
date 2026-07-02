@@ -82,6 +82,7 @@ async function makeManagedSkillDir(): Promise<string> {
   const managedSkillsDir = await mkdtemp(join(tmpdir(), "friday-d21-skill-catalog-"));
   const skillDir = join(managedSkillsDir, "live-catalog-smoke");
   mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, "run.sh"), "#!/bin/sh\nprintf 'live-catalog-smoke'\n");
   writeFileSync(
     join(skillDir, "skill.manifest.json"),
     JSON.stringify({
@@ -156,6 +157,58 @@ async function makeLegacySkillMdDir(): Promise<string> {
       "",
       "Use this when a user wants to inspect a legacy markdown skill before install.",
     ].join("\n"),
+  );
+  return managedSkillsDir;
+}
+
+async function makeTamperedSignedSkillDir(): Promise<string> {
+  const managedSkillsDir = await mkdtemp(join(tmpdir(), "friday-a8-tampered-skill-catalog-"));
+  const skillDir = join(managedSkillsDir, "tampered-signed-skill");
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, "run.sh"), "#!/bin/sh\nprintf 'tampered'\n");
+  writeFileSync(
+    join(skillDir, "skill.manifest.json"),
+    JSON.stringify({
+      id: "tampered-signed-skill",
+      name: "Tampered Signed Skill",
+      description: "Declares a signature that does not verify against the local package bytes.",
+      version: "1.0.0",
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+      },
+      distribution: {
+        integrity: {
+          algorithm: "sha256",
+          digest: "not-the-real-digest",
+        },
+        signature: {
+          algorithm: "ed25519",
+          keyId: "test-key",
+          value: "definitely-not-a-valid-signature",
+        },
+      },
+    }),
+  );
+  return managedSkillsDir;
+}
+
+async function makeEmptyShellSkillDir(): Promise<string> {
+  const managedSkillsDir = await mkdtemp(join(tmpdir(), "friday-a8-empty-shell-skill-catalog-"));
+  const skillDir = join(managedSkillsDir, "empty-shell-skill");
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(
+    join(skillDir, "skill.manifest.json"),
+    JSON.stringify({
+      id: "empty-shell-skill",
+      name: "Empty Shell Skill",
+      description: "Declares a shell runtime without a real executable entrypoint.",
+      version: "1.0.0",
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+      },
+    }),
   );
   return managedSkillsDir;
 }
@@ -332,6 +385,66 @@ describe("createFridaySkillLifecycleService — B1 catalog truth-labeling", () =
       expect(result.items[0]?.manifest.description).toBe(
         "Summarizes open SKILL.md packages through Friday's governed catalog.",
       );
+    } finally {
+      rmSync(managedSkillsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mark tampered managed skill signatures as valid catalog evidence", async () => {
+    const managedSkillsDir = await makeTamperedSignedSkillDir();
+    try {
+      const service = createFridaySkillLifecycleService(makeMinimalDeps({
+        managedSkillsDir,
+        catalog: createFridayManagedSkillsCatalogBackend({
+          managedSkillsDir,
+          workspaceDir: managedSkillsDir,
+          nowIso: () => "2026-05-24T13:30:00.000Z",
+        }),
+      }));
+
+      const result = service.listCatalog({ q: "tampered" } as never);
+      expect(result.total).toBe(1);
+      expect(result.items[0]).toMatchObject({
+        skillId: "tampered-signed-skill",
+        signatureValid: false,
+        verificationStatus: "warning",
+        implementationStatus: "catalog-only",
+      });
+      expect(result.items[0]?.blockedReasons).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("signature"),
+        ]),
+      );
+      expect(result.items[0]?.recommendedNextAction).toContain("signature");
+    } finally {
+      rmSync(managedSkillsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not present empty shell managed skills as installed and available", async () => {
+    const managedSkillsDir = await makeEmptyShellSkillDir();
+    try {
+      const service = createFridaySkillLifecycleService(makeMinimalDeps({
+        managedSkillsDir,
+        catalog: createFridayManagedSkillsCatalogBackend({
+          managedSkillsDir,
+          workspaceDir: managedSkillsDir,
+          nowIso: () => "2026-05-24T13:30:00.000Z",
+        }),
+      }));
+
+      const result = service.listCatalog({ q: "empty shell" } as never);
+      expect(result.total).toBe(1);
+      expect(result.items[0]).toMatchObject({
+        skillId: "empty-shell-skill",
+        implementationStatus: "catalog-only",
+      });
+      expect(result.items[0]?.blockedReasons).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("entrypoint"),
+        ]),
+      );
+      expect(result.items[0]?.recommendedNextAction).toContain("entrypoint");
     } finally {
       rmSync(managedSkillsDir, { recursive: true, force: true });
     }

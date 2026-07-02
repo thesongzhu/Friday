@@ -133,6 +133,41 @@ describe("FridayAgentRunEventRepository", () => {
     expect(events[0].payload).toEqual(payload);
   });
 
+  it("redacts secret-shaped content before storing payload_json", () => {
+    const repo = createFridayAgentRunEventRepository();
+    const runId = "run-redaction";
+    seedRun(runId);
+
+    db.withWriteTransaction((writer) =>
+      repo.append(writer, {
+        eventId: idGenerator(),
+        runId,
+        seq: 1,
+        eventName: "agent.run.failed",
+        payload: {
+          runId,
+          message: "agent stderr included Authorization: Bearer sk-a5-agent-run-canary",
+        },
+        emittedAt: NOW,
+        createdAt: NOW,
+      }),
+    );
+
+    const stored = db.withReadConnection((reader) =>
+      reader
+        .prepare("SELECT payload_json FROM friday_agent_run_events WHERE run_id = ?")
+        .get(runId) as { payload_json: string },
+    );
+    const events = db.withReadConnection((reader) =>
+      repo.list(reader, runId),
+    );
+    const serialized = JSON.stringify(events[0].payload);
+
+    expect(stored.payload_json).not.toContain("sk-a5-agent-run-canary");
+    expect(serialized).not.toContain("sk-a5-agent-run-canary");
+    expect(serialized).toContain("[REDACTED]");
+  });
+
   it("returns empty array for non-existent run", () => {
     const repo = createFridayAgentRunEventRepository();
 

@@ -25,6 +25,7 @@ import {
   createFridayMutatingActionGate,
   type FridayCanonicalApprovalResolution,
 } from "../../../../../src/security/friday-mutating-action-gate.js";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 
 const principal = {
   principalType: "user" as const,
@@ -964,6 +965,7 @@ describe("createFridayAutonomyRoutes principal user-scoping (IDOR)", () => {
     const listStandingGoals = vi.fn(() => []);
     const listAgenda = vi.fn(() => []);
     const plan = vi.fn(async () => ({ id: "plan-1" }));
+    const getPolicy = vi.fn(() => ({ enabled: false }));
     const createStandingGoal = vi.fn(async () => ({
       goal: { id: "goal-1", userId: "user-1", objective: "Ship Friday", status: "active" },
       agendaItem: { id: "agenda-1", userId: "user-1", goalId: "goal-1", status: "pending" },
@@ -979,6 +981,10 @@ describe("createFridayAutonomyRoutes principal user-scoping (IDOR)", () => {
         approveRun: vi.fn(async () => ({ id: "run-1" })),
         cancelRun: vi.fn(() => ({ id: "run-1" })),
       },
+      policyService: {
+        getPolicy,
+        updatePolicy: vi.fn(() => ({ enabled: false })),
+      },
       standingAgendaService: {
         listStandingGoals,
         listAgenda,
@@ -988,7 +994,7 @@ describe("createFridayAutonomyRoutes principal user-scoping (IDOR)", () => {
         runAgendaItem: vi.fn(async () => ({ runId: "run-1", status: "queued" })),
       },
     });
-    return { routes, listStandingGoals, listAgenda, plan, createStandingGoal };
+    return { routes, listStandingGoals, listAgenda, plan, createStandingGoal, getPolicy };
   }
 
   function contextWithoutUserId(input: {
@@ -1017,6 +1023,19 @@ describe("createFridayAutonomyRoutes principal user-scoping (IDOR)", () => {
     expect(listStandingGoals).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "admin-001" }));
   });
 
+  it("cr02-03: rejects synthetic public principal before reading standing goals", async () => {
+    const { routes, listStandingGoals } = createUserScopedRoutes();
+    const route = routes.find((entry) => entry.operationId === "standing.goals.list")!;
+
+    await expect(route.handler({
+      ...makeRouteContext(),
+      principal: createFridayDefaultPublicHttpPrincipal(),
+    })).rejects.toMatchObject({
+      httpStatus: 401,
+    });
+    expect(listStandingGoals).not.toHaveBeenCalled();
+  });
+
   it("ignores a caller-supplied query userId and scopes agenda.list to the authenticated principal", async () => {
     const { routes, listAgenda } = createUserScopedRoutes();
     const route = routes.find((entry) => entry.operationId === "agenda.list")!;
@@ -1025,6 +1044,32 @@ describe("createFridayAutonomyRoutes principal user-scoping (IDOR)", () => {
 
     expect(listAgenda).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-1" }));
     expect(listAgenda).not.toHaveBeenCalledWith(expect.objectContaining({ userId: "admin-001" }));
+  });
+
+  it("cr02-03: rejects synthetic public principal before reading agenda", async () => {
+    const { routes, listAgenda } = createUserScopedRoutes();
+    const route = routes.find((entry) => entry.operationId === "agenda.list")!;
+
+    await expect(route.handler({
+      ...makeRouteContext(),
+      principal: createFridayDefaultPublicHttpPrincipal(),
+    })).rejects.toMatchObject({
+      httpStatus: 401,
+    });
+    expect(listAgenda).not.toHaveBeenCalled();
+  });
+
+  it("cr02-03: rejects synthetic public principal before reading autonomy policy", async () => {
+    const { routes, getPolicy } = createUserScopedRoutes();
+    const route = routes.find((entry) => entry.operationId === "autonomy.policy.get")!;
+
+    await expect(route.handler({
+      ...makeRouteContext(),
+      principal: createFridayDefaultPublicHttpPrincipal(),
+    })).rejects.toMatchObject({
+      httpStatus: 401,
+    });
+    expect(getPolicy).not.toHaveBeenCalled();
   });
 
   it("ignores a caller-supplied query userId and scopes capabilities.acquisition.plan to the authenticated principal", async () => {

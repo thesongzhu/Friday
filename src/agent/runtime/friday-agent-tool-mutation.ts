@@ -87,12 +87,27 @@ const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>)
     const action = typeof args.action === "string" ? args.action : "";
     return action !== "status" && action !== "config_get";
   },
+  mcp: (args) => {
+    const action = typeof args.action === "string" ? args.action : "";
+    if (!action) {
+      return false;
+    }
+    const readOnlyActions = new Set([
+      "list_servers",
+      "list_server_states",
+      "list_tools",
+      "search_tools",
+      "list_resources",
+      "read_resource",
+      "list_prompts",
+      "get_prompt",
+    ]);
+    return !readOnlyActions.has(action);
+  },
   guide_lens: (args) => {
     const action = typeof args.action === "string" ? args.action : "";
     return action === "update_preferences" || action === "update_avatar";
   },
-  // MCP servers run in their own sandbox with their own security.
-  // Agent readOnly should not block MCP tool calls.
   // skill_run is now in READ_ONLY_TOOLS — skills run in their own sandbox
 };
 
@@ -114,7 +129,6 @@ const READ_ONLY_TOOLS = new Set([
   "agents_list",
   "skills_list",
   "skill_run",   // Skills execute in their own sandbox; agent readOnly shouldn't block them
-  "mcp",         // MCP servers run in their own sandbox with their own security
   "capabilities",
   "task_status",
   "request_tool_pack",

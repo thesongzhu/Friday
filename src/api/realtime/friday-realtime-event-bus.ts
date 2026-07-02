@@ -8,6 +8,7 @@ import type {
   FridayEventBusListener,
   FridayRealtimeEventBus,
 } from "./friday-realtime-event-bus.types.js";
+import { redactEventPayload } from "./friday-event-payload-redactor.js";
 
 export function createFridayRealtimeEventBus(
   deps: CreateFridayRealtimeEventBusDeps,
@@ -52,6 +53,7 @@ export function createFridayRealtimeEventBus(
       correlationId?: string,
     ): FridayRealtimeEventEnvelope<TEvent> {
       let envelope: FridayRealtimeEventEnvelope<TEvent>;
+      const redactedPayload = redactEventPayload(payload);
 
       if (deps.db && deps.eventRepo) {
         // Durable path: allocate seq + persist in ONE atomic transaction
@@ -62,7 +64,7 @@ export function createFridayRealtimeEventBus(
             streamId,
             seq,
             event,
-            payload,
+            payload: redactedPayload,
             emittedAt: deps.nowIso(),
             correlationId,
           };
@@ -78,7 +80,7 @@ export function createFridayRealtimeEventBus(
           streamId,
           seq,
           event,
-          payload,
+          payload: redactedPayload,
           emittedAt: deps.nowIso(),
           correlationId,
         };

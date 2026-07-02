@@ -8,9 +8,10 @@
 //! 1. **Rank + bound** — score by recency half-life decay, sort, and cap at
 //!    `top_k` so recall injects a BOUNDED amount of context (recall adds prompt
 //!    tokens, which must stay bounded + ledgered, `07` §1/§3).
-//! 2. **PII redaction** — detect + mask email / phone / SSN / credit-card (the
-//!    last Luhn-validated) before the text leaves the Hub, ported from the oracle
-//!    PII guard. This is defense-in-depth ON TOP of the Context Passport gate.
+//! 2. **Sensitive text redaction** — detect + mask email / phone / SSN /
+//!    credit-card (the last Luhn-validated) plus credential-shaped API keys, JWTs,
+//!    bearer tokens, and private-key blocks before the text leaves the Hub. This is
+//!    defense-in-depth ON TOP of the Context Passport gate.
 //!
 //! **Honest scope:** there is NO semantic / EMBEDDING recall here — the oracle's
 //! hybrid VECTOR search (`friday-memory-hybrid.ts`) has no Rust counterpart (that is
@@ -38,22 +39,18 @@
 //! - **Phone** requires a full 10 digits; the oracle also matches bare 7-digit
 //!   locals. This is a DELIBERATE under-match — a bare 7-digit pattern would
 //!   over-redact benign numbers; disclosed, not a parity claim.
-//! - **Full-width / Chinese-IME input** is handled by a restricted 1:1 fold for
-//!   DETECTION only (see `fold_char`): full-width ASCII variants `U+FF01..=U+FF5E`
-//!   (digits `０..９`, latin, `＠`, `－`) and the ideographic space `U+3000` fold to
-//!   their ASCII counterparts before the patterns run, then spans are mapped back so
-//!   the ORIGINAL text is redacted byte-verbatim. This closes the innocent full-width
-//!   digit/punctuation leak (regex `\b`, the `[2-9]` phone class, and the
-//!   `is_ascii_digit` Luhn grouping all assume ASCII). It is deliberately NOT general
-//!   NFKC — that would break offset mapping and silently normalize non-PII recall text.
+//! - **Full-width / Chinese-IME input** is handled by a restricted detection fold
+//!   (see `fold_char` / `fold_for_detection`): full-width ASCII variants
+//!   `U+FF01..=U+FF5E` (digits `０..９`, latin, `＠`, `－`), Arabic-Indic digit ranges,
+//!   and the ideographic space `U+3000` fold to ASCII; zero-width format chars are
+//!   skipped in the detection copy. Spans are mapped back so the ORIGINAL text is
+//!   redacted byte-verbatim. This closes the innocent full-width digit/punctuation leak
+//!   plus CORR-23's Arabic-Indic and zero-width inserted PII leaks while preserving
+//!   non-PII text byte-for-byte.
 //! - **Residual under-matches (disclosed):** (a) a value with an ASCII word/digit char
 //!   glued to its LEFT (e.g. `x123-45-6789`) still under-matches — only the leading
 //!   boundary remains, and removing it too would let patterns start mid-ASCII-token.
-//!   (b) Zero-width chars injected INTO a value (`4111<U+200B>1111…`) defeat detection;
-//!   they are NOT folded/stripped because global zero-width stripping would corrupt
-//!   emoji ZWJ sequences — an adversarial, not innocent, vector. (c) A genuinely-CJK
-//!   email localpart (`用户@…`) is not matched (widening the localpart to `\p{L}` would
-//!   break the CJK-adjacency boundary). (d) Credit-card detection is group-aligned (see
+//!   (b) Credit-card detection is group-aligned (see
 //!   `luhn_card_subspan`): a PAN glued to a stray digit mid-group, or inside one
 //!   >19-digit run, is not isolated. All are pre-existing or adversarial, behind the
 //!   Passport gate for recall, and never leak MORE than before.
@@ -74,6 +71,9 @@ pub enum PiiKind {
     Phone,
     Ssn,
     CreditCard,
+    ApiKey,
+    Jwt,
+    PrivateKey,
 }
 
 impl PiiKind {
@@ -85,6 +85,9 @@ impl PiiKind {
             PiiKind::Phone => "[PHONE]",
             PiiKind::Ssn => "[SSN]",
             PiiKind::CreditCard => "[CREDIT_CARD]",
+            PiiKind::ApiKey => "[API_KEY]",
+            PiiKind::Jwt => "[JWT]",
+            PiiKind::PrivateKey => "[PRIVATE_KEY]",
         }
     }
 }
@@ -125,6 +128,36 @@ fn pii_patterns() -> &'static [(PiiKind, Regex)] {
     // boundary) so CJK-adjacent PII redacts.
     PATTERNS.get_or_init(|| {
         vec![
+            (
+                PiiKind::PrivateKey,
+                Regex::new(r"-----BEGIN (?:PGP )?[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:PGP )?[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")
+                    .unwrap(),
+            ),
+            (
+                PiiKind::Jwt,
+                Regex::new(r"(?-u:\b)eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}")
+                    .unwrap(),
+            ),
+            (
+                PiiKind::ApiKey,
+                Regex::new(r"(?-u:\b)(?:sk-[A-Za-z0-9_-]{8,}|gh[opsru]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{16,})")
+                    .unwrap(),
+            ),
+            (
+                PiiKind::ApiKey,
+                Regex::new(r"(?i)(?-u:\b)Bearer\s+[A-Za-z0-9._~+/=-]{16,}")
+                    .unwrap(),
+            ),
+            (
+                PiiKind::ApiKey,
+                Regex::new(r#"(?i)(?:^|[^A-Za-z0-9])"?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret[_-]?access[_-]?key|password|secret|token)"?\s*[=:]\s*"?[A-Za-z0-9._~+/=-]{8,}"?"#)
+                    .unwrap(),
+            ),
+            (
+                PiiKind::Email,
+                Regex::new(r"(?i)(?:^|[^\p{L}\p{N}._%+\-])[\p{L}\p{N}._%+\-]*[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}][\p{L}\p{N}._%+\-]*@[A-Z0-9.-]+\.[A-Z]{2,}")
+                    .unwrap(),
+            ),
             // No TRAILING `(?-u:\b)`: a trailing boundary UNDER-matches when an ASCII
             // word/digit char is glued directly after the value (e.g. `alice@example.com1`)
             // — and under-matching leaks a real value, the dangerous direction. The TLD
@@ -254,47 +287,134 @@ struct Span {
     kind: PiiKind,
 }
 
-/// Fold one char to its ASCII counterpart for DETECTION ONLY. Strictly 1:1
-/// (char -> char), so a folded-string offset maps back to the original by
-/// char-boundary lockstep. This is DELIBERATELY a restricted fold, NOT general
-/// NFKC: NFKC's many-to-one / one-to-many decompositions would break the offset
-/// mapping AND would silently normalize non-PII recall content (a fidelity change
-/// on the sole PII-defense path). Covers the innocent Chinese-IME full-width
-/// vectors — full-width ASCII variants `U+FF01..=U+FF5E` (digits `０..９`, latin,
-/// `＠`, `－`) fold by the fixed `0xFEE0` offset, and the ideographic space
-/// `U+3000` folds to a normal space. Everything else (genuine CJK, zero-width
-/// format chars, Arabic-Indic digits) is identity — those stay residual.
-fn fold_char(c: char) -> char {
+/// Fold one char to its ASCII counterpart for DETECTION ONLY. This is deliberately
+/// restricted, NOT general NFKC: the original recall text is never normalized, and
+/// only PII spans found on the detection copy are replaced in the original.
+fn fold_char(c: char) -> Option<char> {
     match c {
-        '\u{3000}' => ' ',
-        '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
-        _ => c,
+        '\u{00AD}'
+        | '\u{034F}'
+        | '\u{061C}'
+        | '\u{180E}'
+        | '\u{200B}'..='\u{200F}'
+        | '\u{202A}'..='\u{202E}'
+        | '\u{2060}'..='\u{206F}'
+        | '\u{FEFF}' => None,
+        '\u{3000}' => Some(' '),
+        '\u{FF01}'..='\u{FF5E}' => Some(char::from_u32(c as u32 - 0xFEE0).unwrap_or(c)),
+        '\u{0660}'..='\u{0669}' => char::from_u32('0' as u32 + (c as u32 - 0x0660)),
+        '\u{06F0}'..='\u{06F9}' => char::from_u32('0' as u32 + (c as u32 - 0x06F0)),
+        _ => Some(c),
     }
 }
 
-/// Build the detection copy (every char folded by [`fold_char`]) plus a map from
-/// folded byte-offset -> original byte-offset at every char boundary (ascending,
-/// with an end sentinel). Because the fold is 1:1, regex/Luhn spans found in the
-/// folded copy always land on char boundaries that are present in this map.
-fn fold_for_detection(content: &str) -> (String, Vec<(usize, usize)>) {
-    let mut folded = String::with_capacity(content.len());
-    let mut map: Vec<(usize, usize)> = Vec::new();
-    for (orig_off, c) in content.char_indices() {
-        map.push((folded.len(), orig_off));
-        folded.push(fold_char(c));
+#[derive(Clone, Copy)]
+struct FoldBoundary {
+    folded: usize,
+    original_start: usize,
+    original_end: usize,
+}
+
+fn upsert_boundary(
+    map: &mut Vec<FoldBoundary>,
+    folded: usize,
+    original_start: usize,
+    original_end: usize,
+) {
+    if let Some(last) = map.last_mut() {
+        if last.folded == folded {
+            last.original_start = last.original_start.min(original_start);
+            last.original_end = last.original_end.max(original_end);
+            return;
+        }
     }
-    map.push((folded.len(), content.len()));
+    map.push(FoldBoundary {
+        folded,
+        original_start,
+        original_end,
+    });
+}
+
+/// Build the detection copy plus a map from folded byte offsets to original byte
+/// spans at every char boundary. Skipped zero-width chars share the surrounding
+/// folded boundary, so a PII span crossing them maps back to the original bytes
+/// that include those inserted chars.
+fn fold_for_detection(content: &str) -> (String, Vec<FoldBoundary>) {
+    let mut folded = String::with_capacity(content.len());
+    let mut map: Vec<FoldBoundary> = Vec::new();
+    upsert_boundary(&mut map, 0, 0, 0);
+    for (orig_off, c) in content.char_indices() {
+        let orig_end = orig_off + c.len_utf8();
+        match fold_char(c) {
+            Some(folded_char) => {
+                upsert_boundary(&mut map, folded.len(), orig_off, orig_off);
+                folded.push(folded_char);
+                upsert_boundary(&mut map, folded.len(), orig_end, orig_end);
+            }
+            None => {
+                upsert_boundary(&mut map, folded.len(), orig_off, orig_end);
+            }
+        }
+    }
+    upsert_boundary(&mut map, folded.len(), content.len(), content.len());
     (folded, map)
 }
 
 /// Map a folded byte-offset (which sits on a char boundary present in `map`) back
 /// to the original byte-offset.
-fn orig_offset(map: &[(usize, usize)], folded_off: usize) -> usize {
-    match map.binary_search_by_key(&folded_off, |&(f, _)| f) {
-        Ok(i) => map[i].1,
+fn orig_start_offset(map: &[FoldBoundary], folded_off: usize) -> usize {
+    match map.binary_search_by_key(&folded_off, |b| b.folded) {
+        Ok(i) => map[i].original_start,
         // Defensive only: spans are char-aligned, so this branch is unreachable in
         // practice. Fall back to the nearest preceding boundary's original offset.
-        Err(i) => map.get(i.saturating_sub(1)).map(|&(_, o)| o).unwrap_or(0),
+        Err(i) => map
+            .get(i.saturating_sub(1))
+            .map(|b| b.original_start)
+            .unwrap_or(0),
+    }
+}
+
+fn orig_end_offset(map: &[FoldBoundary], folded_off: usize) -> usize {
+    match map.binary_search_by_key(&folded_off, |b| b.folded) {
+        Ok(i) => map[i].original_end,
+        Err(i) => map
+            .get(i.saturating_sub(1))
+            .map(|b| b.original_end)
+            .unwrap_or(0),
+    }
+}
+
+fn trim_leading_email_delimiter(folded: &str, start: usize, end: usize) -> usize {
+    let first_local = folded[start..end]
+        .char_indices()
+        .find_map(|(off, c)| {
+            (c.is_alphanumeric() || matches!(c, '.' | '_' | '%' | '+' | '-')).then_some(start + off)
+        })
+        .unwrap_or(start);
+    let Some(at_rel) = folded[first_local..end].find('@') else {
+        return first_local;
+    };
+    let at = first_local + at_rel;
+    let before_at = &folded[first_local..at];
+    let Some((last_off, last_char)) = before_at.char_indices().next_back() else {
+        return first_local;
+    };
+    if !last_char.is_ascii_alphanumeric() && !matches!(last_char, '.' | '_' | '%' | '+' | '-') {
+        return first_local;
+    }
+
+    let mut ascii_local_start = at;
+    for (off, c) in before_at.char_indices().rev() {
+        if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '%' | '+' | '-') {
+            ascii_local_start = first_local + off;
+            continue;
+        }
+        break;
+    }
+    if ascii_local_start <= first_local + last_off {
+        ascii_local_start
+    } else {
+        first_local
     }
 }
 
@@ -329,8 +449,13 @@ pub fn redact_pii(content: &str) -> (String, Vec<PiiKind>) {
                 }
                 continue;
             }
+            let start = if *kind == PiiKind::Email {
+                trim_leading_email_delimiter(&folded, m.start(), m.end())
+            } else {
+                m.start()
+            };
             spans.push(Span {
-                start: m.start(),
+                start,
                 end: m.end(),
                 kind: *kind,
             });
@@ -350,13 +475,13 @@ pub fn redact_pii(content: &str) -> (String, Vec<PiiKind>) {
         }
     }
     // Map each kept folded span back to original offsets and replace end-to-start
-    // so earlier byte offsets stay valid. The 1:1 fold keeps the map monotonic, so
-    // non-overlapping folded spans stay non-overlapping (and descending) in the
-    // original.
+    // so earlier byte offsets stay valid. Skipped zero-width chars stay untouched
+    // unless they sit inside a detected PII span, in which case the whole original
+    // span is replaced by the marker.
     let mut result = content.to_string();
     for s in kept.iter().rev() {
-        let os = orig_offset(&map, s.start);
-        let oe = orig_offset(&map, s.end);
+        let os = orig_start_offset(&map, s.start);
+        let oe = orig_end_offset(&map, s.end);
         result.replace_range(os..oe, s.kind.tag());
     }
     let mut kinds: Vec<PiiKind> = Vec::new();
@@ -732,6 +857,10 @@ mod tests {
                 !out.contains(raw),
                 "CJK-adjacent PII leaked: {raw:?} survived in {out:?}"
             );
+            assert!(
+                out.contains(input.split(raw).next().unwrap_or("")),
+                "CJK label text was over-redacted in {out:?}"
+            );
         }
     }
 
@@ -754,6 +883,94 @@ mod tests {
             "multi-sep card missed: {kinds:?}"
         );
         assert!(!out.contains("4111 - 1111 - 1111 - 1111"));
+    }
+
+    #[test]
+    fn redacts_secret_credentials_and_leaves_no_original_value() {
+        let jwt =
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuZXcxIn0.J9pK5c0aY6zC2wQpL8mN4vR3sT1uX7yZ0aB2cD4eF6g"; // pragma: allowlist secret
+        let pem =
+            "-----BEGIN PRIVATE KEY-----\nnew1-private-key-material\n-----END PRIVATE KEY-----"; // pragma: allowlist secret
+        let input = format!(
+            "Authorization: Bearer sk-new1recallcanary123456 \
+             github ghp_new1recallcanary123456 \
+             token=new1baretoken123 password=new1password123 \
+             OPENAI_API_KEY=new1openaiassignment123 \
+             SLACK_BOT_TOKEN=xoxb-new1slackassignment123 \
+             AWS_SECRET_ACCESS_KEY=new1awsassignment123 \
+             api_key=\"new1quotedassignment123\" \
+             \"access_token\": \"new1jsonassignment123\" \
+             jwt {jwt} pem {pem}"
+        );
+
+        let (out, kinds) = redact_pii(&input);
+
+        assert!(
+            !kinds.is_empty(),
+            "credential-shaped secrets must report at least one redaction kind"
+        );
+        for raw in [
+            "sk-new1recallcanary123456",
+            "ghp_new1recallcanary123456",
+            "new1baretoken123",
+            "new1password123",
+            "new1openaiassignment123",
+            "xoxb-new1slackassignment123",
+            "new1awsassignment123",
+            "new1quotedassignment123",
+            "new1jsonassignment123",
+            jwt,
+            "new1-private-key-material",
+        ] {
+            assert!(
+                !out.contains(raw),
+                "secret credential leaked: {raw:?} in {out:?}"
+            );
+        }
+        assert!(out.contains("[API_KEY]"), "missing API key marker: {out:?}");
+        assert!(out.contains("[JWT]"), "missing JWT marker: {out:?}");
+        assert!(
+            out.contains("[PRIVATE_KEY]"),
+            "missing private key marker: {out:?}"
+        );
+    }
+
+    #[test]
+    fn redacts_refuted_secret_credential_shapes() {
+        let short_payload_jwt = "eyJhbGciOiJIUzI1NiJ9.e30.aaaaaaaaaaaaaaaa"; // pragma: allowlist secret
+        let github_pat = "github_pat_11NEW1CANARY_abcdefghijklmnopqrstuvwxyz1234567890"; // pragma: allowlist secret
+        let pgp = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nnew1-pgp-private-key-material\n-----END PGP PRIVATE KEY BLOCK-----"; // pragma: allowlist secret
+        let input = format!(
+            "pat {github_pat} jwt {short_payload_jwt} \
+             env OPENAI_API_KEY=new1openaiassignment123 \
+             SLACK_BOT_TOKEN=xoxb-new1slackassignment123 \
+             AWS_SECRET_ACCESS_KEY=new1awsassignment123 \
+             quoted api_key=\"new1quotedassignment123\" \
+             json \"access_token\": \"new1jsonassignment123\" pgp {pgp}"
+        );
+
+        let (out, kinds) = redact_pii(&input);
+
+        assert!(
+            !kinds.is_empty(),
+            "credential-shaped secrets must report at least one redaction kind"
+        );
+        for raw in [
+            github_pat,
+            short_payload_jwt,
+            "new1-pgp-private-key-material",
+        ] {
+            assert!(
+                !out.contains(raw),
+                "refuted secret credential shape leaked: {raw:?} in {out:?}"
+            );
+        }
+        assert!(out.contains("[API_KEY]"), "missing API key marker: {out:?}");
+        assert!(out.contains("[JWT]"), "missing JWT marker: {out:?}");
+        assert!(
+            out.contains("[PRIVATE_KEY]"),
+            "missing private key marker: {out:?}"
+        );
     }
 
     #[test]
@@ -822,8 +1039,8 @@ mod tests {
         //    "id123-45-6789" leaked before this change too), NOT a new miss — real
         //    text puts a separator / label / CJK char before the value. Asserted as
         //    the current contract; a future leading-boundary improvement updates it.
-        //  - ZWSP-card is residual-by-design (asserted to STILL leak): zero-width
-        //    chars are not folded — global-stripping them would break emoji ZWJ.
+        //  - CORR-23 extends detection-copy normalization to ZWSP-card while
+        //    leaving benign zero-width prose byte-verbatim in the original output.
         let fw_ssn = to_fullwidth("123456789");
         let fw_phone = to_fullwidth("2125550143");
         let fw_card = to_fullwidth("4111111111111111");
@@ -883,12 +1100,13 @@ mod tests {
                 PiiKind::CreditCard,
                 [true, true, true, false],
             ),
-            // residual-by-design: zero-width injection stays a leak (don't global-strip).
+            // CORR-23: zero-width injection inside a PII token must redact on the
+            // detection copy without stripping benign zero-width content from output.
             (
                 "ZWSP-card",
                 "4111\u{200B}1111\u{200B}1111\u{200B}1111",
                 PiiKind::CreditCard,
-                [false, false, false, false],
+                [true, true, true, false],
             ),
         ];
         let contexts: [(&str, &str); 4] = [
@@ -963,18 +1181,20 @@ mod tests {
     }
 
     #[test]
-    fn cjk_localpart_email_is_a_documented_residual_leak() {
-        // Genuinely-CJK email localpart is NOT redacted: the fold doesn't touch CJK,
-        // and widening the localpart class to \p{L} would break the CJK-adjacency
-        // guarantee (it relies on CJK being a NON-word char at the leading boundary).
-        // Disclosed residual, NOT a regression — distinct from full-width-latin
-        // localpart, which folds to ASCII and DOES redact.
-        let (_out, kinds) = redact_pii("用户@example.com 发来邮件");
+    fn cjk_localpart_email_is_redacted_without_normalizing_remaining_text() {
+        let input = "用户@example.com 发来邮件";
+        let (out, kinds) = redact_pii(input);
         assert!(
-            !kinds.contains(&PiiKind::Email),
-            "CJK-localpart email unexpectedly redacted (residual changed): {kinds:?}"
+            kinds.contains(&PiiKind::Email),
+            "CJK-localpart email leaked: kinds={kinds:?} out={out:?}"
         );
-        // Full-width-latin localpart, by contrast, folds to ASCII and redacts.
+        assert!(
+            !out.contains("用户@example.com"),
+            "CJK-localpart email survived in {out:?}"
+        );
+        assert_eq!(out, "[EMAIL] 发来邮件");
+
+        // Full-width-latin localpart still folds to ASCII and redacts.
         let fw_email = format!("{}@example.com", to_fullwidth("alice"));
         let (out, kinds) = redact_pii(&format!("邮箱{fw_email}"));
         assert!(
@@ -985,6 +1205,65 @@ mod tests {
             !out.contains(&fw_email),
             "full-width-latin email leaked: {out:?}"
         );
+    }
+
+    #[test]
+    fn corr23_content_aware_fold_redacts_zero_width_and_arabic_indic_vectors() {
+        let cases = [
+            (
+                "ZWSP phone",
+                "电话212\u{200B}555\u{200B}0143打来",
+                "212\u{200B}555\u{200B}0143",
+                PiiKind::Phone,
+            ),
+            (
+                "ZWSP card",
+                "card 4111\u{200B}1111\u{200B}1111\u{200B}1111 ok",
+                "4111\u{200B}1111\u{200B}1111\u{200B}1111",
+                PiiKind::CreditCard,
+            ),
+            (
+                "Arabic-Indic phone",
+                "اتصل ٢١٢٥٥٥٠١٤٣ الآن",
+                "٢١٢٥٥٥٠١٤٣",
+                PiiKind::Phone,
+            ),
+            (
+                "Arabic-Indic SSN",
+                "ssn ١٢٣-٤٥-٦٧٨٩",
+                "١٢٣-٤٥-٦٧٨٩",
+                PiiKind::Ssn,
+            ),
+            (
+                "Arabic-Indic card",
+                "card ٤١١١ ١١١١ ١١١١ ١١١١",
+                "٤١١١ ١١١١ ١١١١ ١١١١",
+                PiiKind::CreditCard,
+            ),
+        ];
+
+        for (label, input, raw, kind) in cases {
+            let (out, kinds) = redact_pii(input);
+            assert!(
+                kinds.contains(&kind),
+                "{label} should detect {kind:?}, got {kinds:?} for {input:?}"
+            );
+            assert!(
+                !out.contains(raw),
+                "{label} leaked raw PII {raw:?} in {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn corr23_zero_width_no_pii_text_stays_byte_verbatim() {
+        let prose = "family emoji 👨\u{200D}👩\u{200D}👧\u{200D}👦 and soft hyphen\u{00AD} note";
+        let (out, kinds) = redact_pii(prose);
+        assert!(
+            kinds.is_empty(),
+            "benign zero-width prose flagged PII: {kinds:?}"
+        );
+        assert_eq!(out, prose, "benign zero-width prose was altered: {out:?}");
     }
 
     // --- ranking --------------------------------------------------------------
@@ -1050,6 +1329,33 @@ mod tests {
         assert!(ranked[0].sensitive);
         assert!(ranked[0].content.contains("[EMAIL]"));
         assert!(!ranked[0].content.contains("alice@example.com"));
+    }
+
+    #[test]
+    fn rank_redacts_secret_credentials_before_recall_injection() {
+        let now = 1_000_000;
+        let r = row(
+            "secret",
+            Some("provider key Authorization: Bearer sk-new1-ranked-not-real-canary123456"),
+            Some(now),
+        );
+
+        let ranked = rank_recall(&[r], now, 10, DEFAULT_HALF_LIFE_MS);
+
+        assert_eq!(ranked.len(), 1);
+        assert!(ranked[0].redacted);
+        assert!(
+            ranked[0].content.contains("[API_KEY]"),
+            "missing API key marker: {:?}",
+            ranked[0].content
+        );
+        assert!(
+            !ranked[0]
+                .content
+                .contains("sk-new1-ranked-not-real-canary123456"),
+            "ranked recall leaked secret credential: {:?}",
+            ranked[0].content
+        );
     }
 
     // --- Passport-gated render ------------------------------------------------

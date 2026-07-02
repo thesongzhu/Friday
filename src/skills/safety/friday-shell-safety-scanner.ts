@@ -45,6 +45,12 @@ const BLOCKING_PATTERNS: ReadonlyArray<PatternRule> = [
     regex: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+~(?:\/|\s|$|;)/,
     summary: "Recursive force-delete from home directory",
   },
+  {
+    id: "rm-recursive-dangerous-target",
+    level: "blocking",
+    regex: /\brm\b(?=[^\n;]*\s(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b)(?=[^\n;]*\s(?:"\/(?:["']?(?:\s|$|;)|\*["']?(?:\s|$|;)|(?:etc|bin|sbin|usr|var|lib|lib64|boot|dev|sys|proc|private|System|Applications)(?:\/|["']?(?:\s|$|;)))|'\/(?:["']?(?:\s|$|;)|\*["']?(?:\s|$|;)|(?:etc|bin|sbin|usr|var|lib|lib64|boot|dev|sys|proc|private|System|Applications)(?:\/|["']?(?:\s|$|;)))|\/(?:\s|$|;|\*|(?:etc|bin|sbin|usr|var|lib|lib64|boot|dev|sys|proc|private|System|Applications)(?:\/|\s|$|;))))/,
+    summary: "Recursive delete targets root or root-owned system paths",
+  },
   // B1 medium-severity sweep — close long-form-flag bypass of rm -rf.
   // The short-form patterns above match `-r` / `-f` / `-rf` / `-rR`, but a
   // crafty author could write `rm --recursive --force /` and avoid every
@@ -182,6 +188,25 @@ const ALL_PATTERNS: ReadonlyArray<PatternRule> = [
   ...ADVISORY_PATTERNS,
 ];
 
+const RM_RECURSIVE_DANGEROUS_TARGET_ID = "rm-recursive-dangerous-target";
+const RM_RECURSIVE_DANGEROUS_TARGET_PATTERN = "shell-tokenized-rm-recursive-dangerous-target";
+const ROOT_OWNED_PATH_PREFIXES = [
+  "/Applications",
+  "/System",
+  "/bin",
+  "/boot",
+  "/dev",
+  "/etc",
+  "/lib",
+  "/lib64",
+  "/private",
+  "/proc",
+  "/sbin",
+  "/sys",
+  "/usr",
+  "/var",
+];
+
 // ─── Scanner ───
 
 /**
@@ -199,7 +224,7 @@ const ALL_PATTERNS: ReadonlyArray<PatternRule> = [
  */
 export function scanShellScript(content: string): FridayShellSafetyScanResult {
   const findings: FridayShellSafetyFinding[] = [];
-  const lines = content.split("\n");
+  const lines = normalizeShellLineContinuations(content).split("\n");
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -210,6 +235,17 @@ export function scanShellScript(content: string): FridayShellSafetyScanResult {
     }
 
     const seenOnThisLine = new Set<string>();
+
+    if (detectRmRecursiveDangerousTarget(trimmed)) {
+      seenOnThisLine.add(RM_RECURSIVE_DANGEROUS_TARGET_ID);
+      findings.push({
+        id: RM_RECURSIVE_DANGEROUS_TARGET_ID,
+        level: "blocking",
+        pattern: RM_RECURSIVE_DANGEROUS_TARGET_PATTERN,
+        line: i + 1,
+        summary: "Recursive delete targets root or root-owned system paths",
+      });
+    }
 
     for (const rule of ALL_PATTERNS) {
       if (seenOnThisLine.has(rule.id)) {
@@ -230,6 +266,176 @@ export function scanShellScript(content: string): FridayShellSafetyScanResult {
 
   const verdict = deriveVerdict(findings);
   return { verdict, findings };
+}
+
+function normalizeShellLineContinuations(content: string): string {
+  return content.replace(/\\\r?\n[ \t]*/g, "");
+}
+
+function detectRmRecursiveDangerousTarget(line: string): boolean {
+  for (const segment of splitShellCommandSegments(line)) {
+    const tokens = tokenizeShellLikeLine(segment);
+    if (startsWithDynamicCommand(segment) && hasRecursiveDangerousOperands(tokens)) {
+      return true;
+    }
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i] !== "rm") continue;
+
+      let hasRecursive = false;
+      for (let j = i + 1; j < tokens.length; j++) {
+        const token = tokens[j];
+        if (!token) continue;
+        if (token === "--") continue;
+        if (token.startsWith("-")) {
+          if (token === "--recursive" || /^-[A-Za-z]*[rR][A-Za-z]*$/.test(token)) {
+            hasRecursive = true;
+          }
+          continue;
+        }
+        if (hasRecursive && isDangerousRmTarget(token)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function startsWithDynamicCommand(line: string): boolean {
+  return /^(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;]+\s*)*(?:\$\(|`|\$\{?[A-Za-z_])/.test(line.trimStart());
+}
+
+function hasRecursiveDangerousOperands(tokens: readonly string[]): boolean {
+  let hasRecursive = false;
+  for (const token of tokens) {
+    if (!token) continue;
+    if (token === "--") continue;
+    if (token.startsWith("-")) {
+      if (token === "--recursive" || /^-[A-Za-z]*[rR][A-Za-z]*$/.test(token)) {
+        hasRecursive = true;
+      }
+      continue;
+    }
+    if (hasRecursive && isDangerousRmTarget(token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function tokenizeShellLikeLine(line: string): string[] {
+  const normalized = line
+    .replace(/\$\{IFS[^}]*\}|\$IFS\b/g, " ")
+    .replace(/\$\{[A-Za-z_][A-Za-z0-9_]*:(?:-|\+|=)([^}]*)\}/g, "$1")
+    .replace(/\$\{[A-Za-z_][A-Za-z0-9_]*-([^}]*)\}/g, "$1")
+    .replace(/\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*/g, "");
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | "\"" | null = null;
+
+  for (let i = 0; i < normalized.length; i++) {
+    const ch = normalized[i];
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+    if (ch === "$" && (normalized[i + 1] === "'" || normalized[i + 1] === "\"")) {
+      quote = normalized[i + 1] as "'" | "\"";
+      i += 1;
+      continue;
+    }
+    if (ch === "'" || ch === "\"") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < normalized.length) {
+      current += normalized[i + 1];
+      i += 1;
+      continue;
+    }
+    if (/\s/.test(ch) || ch === ";") {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += ch;
+  }
+
+  if (current) {
+    tokens.push(current);
+  }
+  return tokens;
+}
+
+function splitShellCommandSegments(line: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let quote: "'" | "\"" | null = null;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quote) {
+      current += ch;
+      if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === "$" && (line[i + 1] === "'" || line[i + 1] === "\"")) {
+      current += ch;
+      current += line[i + 1];
+      quote = line[i + 1] as "'" | "\"";
+      i += 1;
+      continue;
+    }
+    if (ch === "'" || ch === "\"") {
+      current += ch;
+      quote = ch;
+      continue;
+    }
+    if (ch === ";") {
+      if (current.trim()) {
+        segments.push(current);
+      }
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+
+  if (current.trim()) {
+    segments.push(current);
+  }
+  return segments;
+}
+
+function isDangerousRmTarget(token: string): boolean {
+  const target = token.trim();
+  if (target === "/" || target === "/*" || target === "/.*" || target === "/.??*") {
+    return true;
+  }
+  if (/^\/\{[^}]*\b(?:etc|bin|sbin|usr|var|lib|lib64|boot|dev|sys|proc|private|System|Applications)\b/.test(target)) {
+    return true;
+  }
+  if (/^\/\.[*?]/.test(target)) {
+    return true;
+  }
+  return ROOT_OWNED_PATH_PREFIXES.some((prefix) =>
+    target === prefix ||
+    target.startsWith(`${prefix}/`) ||
+    target.startsWith(`${prefix}*`) ||
+    target === globClassVariant(prefix),
+  );
+}
+
+function globClassVariant(path: string): string {
+  return path.replace(/\/([^/])/, "/[$1]");
 }
 
 // ─── Verdict derivation ───

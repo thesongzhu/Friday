@@ -214,10 +214,87 @@ describe("materializeFridayCodeRepoSource (local)", () => {
 // ─── Git Source Detection Tests ───
 
 describe("materializeFridayCodeRepoSource (git)", () => {
-  it("throws with descriptive error for invalid git URL", () => {
+  it("rejects git hosts outside the source allowlist", () => {
     expect(() =>
       materializeFridayCodeRepoSource("git@invalid.host:nonexistent/repo.git"),
-    ).toThrow("Failed to clone");
+    ).toThrow("not allowed");
+  });
+
+  it("NEW-3: rejects scp-like git sources without a .git suffix before invoking git", async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+
+    vi.resetModules();
+    vi.doMock("node:child_process", () => ({
+      execFileSync: vi.fn((cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        throw new Error("git clone should not run for blocked source");
+      }),
+    }));
+
+    try {
+      const imported = await import("../../../../../src/skills/converter/code-repo/friday-source-materializer.js");
+
+      expect(() =>
+        imported.materializeFridayCodeRepoSource("git@invalid.host:nonexistent/repo"),
+      ).toThrow("not allowed");
+      expect(calls).toHaveLength(0);
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
+  });
+
+  it("A7: rejects metadata-service git URLs before invoking git", async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+
+    vi.resetModules();
+    vi.doMock("node:child_process", () => ({
+      execFileSync: vi.fn((cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        throw new Error("git clone should not run for blocked source");
+      }),
+    }));
+
+    try {
+      const imported = await import("../../../../../src/skills/converter/code-repo/friday-source-materializer.js");
+
+      expect(() =>
+        imported.materializeFridayCodeRepoSource("http://169.254.169.254/latest/meta-data/repo.git"),
+      ).toThrow("not allowed");
+      expect(calls).toHaveLength(0);
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
+  });
+
+  it("A7: terminates git clone options before the source URI", async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+
+    vi.resetModules();
+    vi.doMock("node:child_process", () => ({
+      execFileSync: vi.fn((cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        const tempDir = args.at(-1);
+        if (cmd === "git" && tempDir) {
+          writeFileSync(join(tempDir, "index.ts"), "export const ok = true;");
+        }
+        return "";
+      }),
+    }));
+
+    try {
+      const imported = await import("../../../../../src/skills/converter/code-repo/friday-source-materializer.js");
+      const result = imported.materializeFridayCodeRepoSource("https://github.com/example/repo.git");
+
+      expect(result.files.some((file) => file.relativePath === "index.ts")).toBe(true);
+      const cloneCall = calls.find((call) => call.cmd === "git");
+      expect(cloneCall?.args).toContain("--");
+      expect(cloneCall?.args[cloneCall.args.indexOf("--") + 1]).toBe("https://github.com/example/repo.git");
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
   });
 });
 
@@ -273,6 +350,44 @@ describe("materializeFridayCodeRepoSource (archive)", () => {
       execFileSync("tar", ["-cf", archivePath, "-C", sourceDir, "link.ts"], { stdio: "pipe" });
       expect(() => materializeFridayCodeRepoSource(archivePath)).toThrow("unsupported entry");
     } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("A7: rejects zip symlinks before extraction", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-test-zip-symlink-"));
+    const archivePath = join(tempDir, "symlink.zip");
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+
+    vi.resetModules();
+    vi.doMock("node:child_process", () => ({
+      execFileSync: vi.fn((cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        if (cmd === "unzip" && args[0] === "-Z1") {
+          return "link.ts\n";
+        }
+        if (cmd === "unzip" && args[0] === "-Z" && args[1] === "-l") {
+          return [
+            "Archive:  source.zip",
+            "lrwxr-xr-x  3.0 unx        9 bx        9 stor 26-Jul-02 00:25 link.ts",
+          ].join("\n");
+        }
+        if (cmd === "unzip" && args.includes("-d")) {
+          throw new Error("zip extraction should not run before type validation rejects symlink");
+        }
+        return "";
+      }),
+    }));
+
+    try {
+      writeFileSync(archivePath, "placeholder zip content");
+      const imported = await import("../../../../../src/skills/converter/code-repo/friday-source-materializer.js");
+
+      expect(() => imported.materializeFridayCodeRepoSource(archivePath)).toThrow("unsupported entry");
+      expect(calls.some((call) => call.cmd === "unzip" && call.args.includes("-d"))).toBe(false);
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
       rmSync(tempDir, { recursive: true, force: true });
     }
   });

@@ -487,6 +487,53 @@ describe("FridayRealtimeWsGateway", () => {
     expect(types.filter((t) => t === "event")).toHaveLength(2);
   });
 
+  it("redacts secret-shaped content while replaying stored events", () => {
+    db.withWriteTransaction((writer) => {
+      writer.prepare(
+        `INSERT INTO realtime_events
+          (event_id, stream_id, seq, event, payload_json, emitted_at, correlation_id, state_version_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "evt-ws-secret",
+        "workflow:wf-1",
+        1,
+        "workflow.run.failed",
+        JSON.stringify({
+          runId: "run-1",
+          error: {
+            code: "NODE_EXECUTION_FAILED",
+            message: "legacy row leaked Authorization: Bearer sk-a5-ws-replay-canary",
+          },
+        }),
+        NOW,
+        null,
+        null,
+        NOW,
+      );
+    });
+
+    const conn = gateway.createConnection("conn-redaction");
+    gateway.handleClientFrame(conn, { type: "hello", token: makeToken() });
+
+    const responses = gateway.handleClientFrame(conn, {
+      type: "resume",
+      streamId: "workflow:wf-1",
+      lastAckedSeq: 0,
+      epoch: EPOCH,
+      cursor: "",
+      subscriptions: [
+        { subscriptionId: "sub-redaction", streamId: "workflow:wf-1", topic: "workflow" },
+      ],
+    });
+    const eventFrame = responses.find((frame): frame is Extract<FridayRealtimeServerFrame, { type: "event" }> =>
+      frame.type === "event",
+    );
+    const serialized = JSON.stringify(eventFrame?.envelope.payload);
+
+    expect(serialized).not.toContain("sk-a5-ws-replay-canary");
+    expect(serialized).toContain("[REDACTED]");
+  });
+
   // ─── Stream authorization enforcement ───
 
   it("ack on non-subscribed stream returns STREAM_NOT_AUTHORIZED", () => {

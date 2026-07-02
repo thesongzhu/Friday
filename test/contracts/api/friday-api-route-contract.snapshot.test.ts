@@ -53,6 +53,10 @@ import type { FridayDeterministicPipelineRoutesDeps } from "../../../src/api/htt
 
 const FIXED_NOW = "2025-06-15T10:00:00.000Z";
 const FIXED_TOKEN_SECRET = "contract-test-secret-32-bytes!!";
+const EXPLICIT_AUTHENTICATED_ROUTE_EXCEPTIONS = new Set([
+  "tui.status.get",
+  "tui.jobs.list",
+]);
 
 import type { FridayPluginManifest, FridayPluginEntity } from "#plugins";
 
@@ -693,14 +697,14 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
     }
   });
 
-  it("every HTTP route is public (auth-boundary product invariant)", () => {
+  it("keeps authenticated HTTP routes limited to explicit RBAC exceptions", () => {
     const fixture = createContractRuntime({ includeExtendedRouteFamilies: true });
 
     try {
       const routes = fixture.runtime.routes.getRoutes();
       const offenders: { method: string; path: string; operationId: string; auth: unknown }[] = [];
       for (const route of routes) {
-        if (route.auth.public !== true) {
+        if (route.auth.public !== true && !EXPLICIT_AUTHENTICATED_ROUTE_EXCEPTIONS.has(route.operationId)) {
           offenders.push({
             method: route.method,
             path: route.path,

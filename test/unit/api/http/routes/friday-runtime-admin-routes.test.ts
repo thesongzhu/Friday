@@ -6,6 +6,7 @@ import {
   type FridayRuntimeAdminRoutesDeps,
 } from "#api";
 import type { FridayAuthPrincipal } from "#api";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 
 function makeCtx(
   overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {},
@@ -94,9 +95,53 @@ describe("FridayRuntimeAdminRoutes", () => {
   it("config.get parses comma-separated keys", async () => {
     const deps = makeDeps();
     const route = createFridayRuntimeAdminRoutes(deps).find((entry) => entry.operationId === "config.get")!;
-    await route.handler(makeCtx({ query: { keys: "feature.flag,feature.beta" } }));
+    await route.handler(makeCtx({
+      principal: makeAdminPrincipal({ role: "viewer", scopes: ["workflow.read"] }),
+      query: { keys: "feature.flag,feature.beta" },
+    }));
     expect(deps.config!.get).toHaveBeenCalledWith({
       keys: ["feature.flag", "feature.beta"],
+    });
+  });
+
+  it("cr02-02: config.get rejects the synthetic public principal before reading config", async () => {
+    const deps = makeDeps();
+    const route = createFridayRuntimeAdminRoutes(deps).find((entry) => entry.operationId === "config.get")!;
+
+    await expect(route.handler(makeCtx({
+      principal: createFridayDefaultPublicHttpPrincipal(),
+      query: { keys: "feature.flag" },
+    }))).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+    });
+    expect(deps.config!.get).not.toHaveBeenCalled();
+  });
+
+  it("cr02-02: config.revisions.list rejects the synthetic public principal before reading revisions", async () => {
+    const deps = makeDeps();
+    const route = createFridayRuntimeAdminRoutes(deps).find((entry) => entry.operationId === "config.revisions.list")!;
+
+    await expect(route.handler(makeCtx({
+      principal: createFridayDefaultPublicHttpPrincipal(),
+      query: { limit: "2" },
+    }))).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+    });
+    expect(deps.config!.listRevisions).not.toHaveBeenCalled();
+  });
+
+  it("config.revisions.list accepts a bound principal and parses limit", async () => {
+    const deps = makeDeps();
+    const route = createFridayRuntimeAdminRoutes(deps).find((entry) => entry.operationId === "config.revisions.list")!;
+
+    await route.handler(makeCtx({
+      principal: makeAdminPrincipal({ role: "viewer", scopes: ["workflow.read"] }),
+      query: { cursor: "rev-cursor", limit: "2" },
+    }));
+
+    expect(deps.config!.listRevisions).toHaveBeenCalledWith({
+      cursor: "rev-cursor",
+      limit: 2,
     });
   });
 
@@ -176,7 +221,38 @@ describe("FridayRuntimeAdminRoutes", () => {
   it("audit.logs.list delegates query", async () => {
     const deps = makeDeps();
     const route = createFridayRuntimeAdminRoutes(deps).find((entry) => entry.operationId === "audit.logs.list")!;
-    await route.handler(makeCtx({ query: { module: "learning", outcome: "failure" } }));
-    expect(deps.auditLogs!.list).toHaveBeenCalledWith({ module: "learning", outcome: "failure" });
+    await route.handler(makeCtx({
+      principal: makeAdminPrincipal({ principalId: "user-1" }),
+      query: { module: "learning", outcome: "failure" },
+    }));
+    expect(deps.auditLogs!.list).toHaveBeenCalledWith({
+      actorId: "user-1",
+      module: "learning",
+      outcome: "failure",
+    });
+  });
+
+  it("cr02-01: audit.logs.list binds a narrow-scope bearer to its own actorId", async () => {
+    const deps = makeDeps();
+    const route = createFridayRuntimeAdminRoutes(deps).find((entry) => entry.operationId === "audit.logs.list")!;
+
+    await route.handler(makeCtx({
+      principal: makeAdminPrincipal({
+        principalId: "user-1",
+        role: "viewer",
+        scopes: ["session.read"],
+      }),
+      query: {
+        actorId: "user-2",
+        module: "learning",
+        outcome: "failure",
+      },
+    }));
+
+    expect(deps.auditLogs!.list).toHaveBeenCalledWith({
+      actorId: "user-1",
+      module: "learning",
+      outcome: "failure",
+    });
   });
 });

@@ -49,6 +49,10 @@ interface FridayAgentRunRow {
   context_cost_summary_json: string | null;
   task_profile_json: string | null;
   metadata_json: string | null;
+  organic: number;
+  organic_principal: string | null;
+  organic_source: string | null;
+  organic_attestation_ref: string | null;
 }
 
 function parseRunMetadata(raw: string | null): FridayAgentRunMetadata | undefined {
@@ -89,6 +93,10 @@ function rowToRecord(row: FridayAgentRunRow): FridayAgentRunRecord {
     contextCostSummary: safeJsonParse<FridayAgentContextCostSummary>(row.context_cost_summary_json),
     taskProfile: safeJsonParse<FridayResolvedAgentTaskProfile>(row.task_profile_json),
     metadata: parseRunMetadata(row.metadata_json),
+    organic: row.organic === 1,
+    organicPrincipal: row.organic_principal ?? undefined,
+    organicSource: row.organic_source ?? undefined,
+    organicAttestationRef: row.organic_attestation_ref ?? undefined,
   };
 }
 

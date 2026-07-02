@@ -739,26 +739,36 @@ export function createFridaySkillExecutor(
   const nodeExecutor = createFridayNodeExecutor();
   const activeRuns = new Map<string, { cancelled: boolean; controller: AbortController }>();
 
-  function skillProcessSandbox(skillDir: string): FridayShellOsSandboxOptions {
+  function skillProcessSandbox(skill: FridayRegisteredSkill): FridayShellOsSandboxOptions {
     const darwin = process.platform === "darwin";
+    const executionMode = readExecutionMode(skill);
+    const requiresOsSandbox = executionMode === "restricted" || executionMode === "isolated";
+    const testOnlyNonDarwinBypass =
+      process.env.NODE_ENV !== "production"
+      && !darwin
+      && deps.allowTestOnlyNonDarwinShellSandboxExecution === true;
     return {
       enabled: darwin,
-      required: darwin,
+      required: (requiresOsSandbox || darwin) && !testOnlyNonDarwinBypass,
       denyNetwork: true,
-      writableRoots: [skillDir],
+      writableRoots: [skill.skillDir],
     };
   }
 
   function skillProcessSandboxMetadata(
     runtimeKind: FridayRegisteredSkill["manifest"]["runtime"]["kind"],
-    skillDir: string,
+    skill: FridayRegisteredSkill,
   ): Record<string, unknown> {
     if (runtimeKind === "shell" || runtimeKind === "python") {
-      const sandbox = skillProcessSandbox(skillDir);
+      const sandbox = skillProcessSandbox(skill);
       return {
         boundary: sandbox.enabled
           ? "darwin_sandbox_exec_write_network_guard"
-          : "os_sandbox_unavailable_fail_closed",
+          : sandbox.required
+            ? "os_sandbox_unavailable_fail_closed"
+            : deps.allowTestOnlyNonDarwinShellSandboxExecution === true && process.env.NODE_ENV !== "production"
+              ? "test_only_non_darwin_shell_sandbox_bypass"
+              : "open_no_os_sandbox",
         requested: sandbox.enabled,
         required: sandbox.required === true,
         denyNetwork: sandbox.denyNetwork !== false,
@@ -1055,7 +1065,7 @@ export function createFridaySkillExecutor(
                       command: entrypoint,
                       cwd: registered.skillDir,
                       env: buildRuntimeEnv(manifest.requirements.env),
-                      osSandbox: skillProcessSandbox(registered.skillDir),
+                      osSandbox: skillProcessSandbox(registered),
                       timeoutMs,
                       stdin: JSON.stringify(preparedInput),
                       signal: controller.signal,
@@ -1133,7 +1143,7 @@ export function createFridaySkillExecutor(
                       args: [entrypoint],
                       cwd: registered.skillDir,
                       env: buildRuntimeEnv(manifest.requirements.env),
-                      osSandbox: skillProcessSandbox(registered.skillDir),
+                      osSandbox: skillProcessSandbox(registered),
                       timeoutMs,
                       stdin: JSON.stringify(preparedInput),
                       signal: controller.signal,
@@ -1368,7 +1378,7 @@ export function createFridaySkillExecutor(
               executionMode: readExecutionMode(registered),
               trustTier: (registered.trust as Partial<FridayRegisteredSkill["trust"]> | undefined)?.trustTier,
               allowedExecutionModes: (registered.trust as Partial<FridayRegisteredSkill["trust"]> | undefined)?.sandboxPolicy?.allowedExecutionModes ?? [],
-              os: skillProcessSandboxMetadata(manifest.runtime.kind, registered.skillDir),
+              os: skillProcessSandboxMetadata(manifest.runtime.kind, registered),
             },
           },
         });

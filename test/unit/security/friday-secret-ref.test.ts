@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   buildFridaySecretRef,
   parseFridaySecretInput,
@@ -55,6 +58,26 @@ describe("friday secret refs", () => {
         refKind: "command-ref",
       },
     });
+  });
+
+  it("does not fall back to /bin/sh -lc for command refs when no explicit executor is injected", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "friday-secret-ref-shell-"));
+    const markerPath = path.join(tempDir, "marker");
+    try {
+      await expect(resolveFridaySecretInput(
+        { kind: "command-ref", command: `printf secret; touch ${markerPath}` },
+        { allowCommandRefs: true },
+      )).resolves.toMatchObject({
+        ok: false,
+        blocker: {
+          code: "SECRET_COMMAND_DISABLED",
+          refKind: "command-ref",
+        },
+      });
+      expect(existsSync(markerPath)).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects relative file refs and resolves absolute file refs", async () => {

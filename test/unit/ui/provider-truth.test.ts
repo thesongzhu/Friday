@@ -171,4 +171,30 @@ describe("loadProviderTruth", () => {
     expect(truth.alerts.some((alert) => alert.code === "truth_unavailable")).toBe(true);
     expect(truth.errors).toEqual([]);
   });
+
+  it("does not call routing explain when configured providers are not routing eligible", async () => {
+    vi.mocked(providersApi.list).mockResolvedValue([provider] as never);
+    vi.mocked(providersApi.listHealth).mockResolvedValue([
+      {
+        ...health,
+        routingEligible: false,
+        validationStatus: "never",
+        reasons: ["validation_unverified"],
+        suggestedAction: "Validate this provider before using it for routing.",
+      },
+    ] as never);
+    vi.mocked(providersApi.getRouting).mockResolvedValue({
+      defaultProviderId: "provider-1",
+      defaultModel: "gpt-4o-mini",
+      fallbackProviderIds: [],
+    });
+
+    const truth = await loadProviderTruth();
+
+    expect(providersApi.explainRouting).not.toHaveBeenCalled();
+    expect(truth.current?.providerId).toBe("provider-1");
+    expect(truth.currentStatus).toBe("degraded");
+    expect(truth.status).toBe("degraded");
+    expect(truth.errors).toEqual([]);
+  });
 });

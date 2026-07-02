@@ -244,6 +244,51 @@ function readOptionalStringArray(
   return items;
 }
 
+function readOptionalOrganicProvenance(
+  body: Record<string, unknown>,
+  field: string,
+  failures: string[],
+): FridayRustHubMissionIntakeRequest["organicProvenance"] | undefined {
+  const value = body[field];
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    failures.push(`${field}_invalid`);
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const requiredStringFields = [
+    "principal",
+    "source",
+    "attestationRef",
+    "taskSha256",
+    "issuedAt",
+    "route",
+  ] as const;
+  if (record.organic !== true) failures.push(`${field}_organic_invalid`);
+  for (const requiredField of requiredStringFields) {
+    if (typeof record[requiredField] !== "string" || record[requiredField].trim().length === 0) {
+      failures.push(`${field}_${requiredField}_invalid`);
+    }
+  }
+  if (record.source !== "operator_signature") failures.push(`${field}_source_invalid`);
+  if (record.publicKeyId !== undefined && typeof record.publicKeyId !== "string") {
+    failures.push(`${field}_publicKeyId_invalid`);
+  }
+  if (failures.some((failure) => failure.startsWith(`${field}_`))) return undefined;
+  return {
+    organic: true,
+    principal: (record.principal as string).trim(),
+    source: "operator_signature",
+    attestationRef: (record.attestationRef as string).trim(),
+    ...(typeof record.publicKeyId === "string" && record.publicKeyId.trim().length > 0
+      ? { publicKeyId: record.publicKeyId.trim() }
+      : {}),
+    taskSha256: (record.taskSha256 as string).trim().toLowerCase(),
+    issuedAt: (record.issuedAt as string).trim(),
+    route: (record.route as string).trim(),
+  };
+}
+
 const WORK_ITEM_COMPLETED_WITH_PROOF = "completed_with_proof";
 
 /** Validate a Mission intake body into the typed request (or throw a typed 400). */
@@ -267,6 +312,7 @@ function validateIntakeBody(body: unknown): FridayRustHubMissionIntakeRequest {
   const bodyRef = readOptionalString(b, "bodyRef", failures);
   const proofRequirements = readOptionalStringArray(b, "proofRequirements", failures);
   const includesSensitiveContext = readOptionalBoolean(b, "includesSensitiveContext", failures);
+  const organicProvenance = readOptionalOrganicProvenance(b, "organicProvenance", failures);
   if (
     failures.length > 0 ||
     fridayConversationId === undefined ||
@@ -300,6 +346,7 @@ function validateIntakeBody(body: unknown): FridayRustHubMissionIntakeRequest {
     ...(bodyRef !== undefined ? { bodyRef } : {}),
     ...(proofRequirements !== undefined ? { proofRequirements } : {}),
     ...(includesSensitiveContext !== undefined ? { includesSensitiveContext } : {}),
+    ...(organicProvenance !== undefined ? { organicProvenance } : {}),
   };
 }
 

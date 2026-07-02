@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { safeJsonParse } from "#utilities";
 import type { FridayRealtimeEventEnvelope, FridayRealtimeEventName } from "../model/friday-api-realtime.types.js";
+import { redactEventPayload } from "../realtime/friday-event-payload-redactor.js";
 
 // ─── Row type ───
 
@@ -54,6 +55,7 @@ function rowToEnvelope(row: FridayRealtimeEventRow): FridayRealtimeEventEnvelope
 export function createFridayRealtimeEventRepository(): FridayRealtimeEventRepository {
   return {
     append(db, envelope) {
+      const redactedPayload = redactEventPayload(envelope.payload);
       db.prepare(
         `INSERT INTO realtime_events (event_id, stream_id, seq, event, payload_json, emitted_at, correlation_id, state_version_json, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -62,7 +64,7 @@ export function createFridayRealtimeEventRepository(): FridayRealtimeEventReposi
         envelope.streamId,
         envelope.seq,
         envelope.event,
-        JSON.stringify(envelope.payload),
+        JSON.stringify(redactedPayload),
         envelope.emittedAt,
         envelope.correlationId ?? null,
         envelope.stateVersion ? JSON.stringify(envelope.stateVersion) : null,

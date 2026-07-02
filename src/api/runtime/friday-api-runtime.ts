@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import type Database from "better-sqlite3";
 
 import { FridayDomainError } from "#errors";
 import { createFridayMemoryGuardServiceFactory, createFridayMemoryItemRepository } from "#memory";
@@ -63,6 +64,7 @@ import { createFridayRealtimeEventBus } from "../realtime/friday-realtime-event-
 import { createFridayRealtimeEventRepository } from "../persistence/friday-realtime-event-repository.js";
 import { createFridayRealtimeCheckpointRepository } from "../persistence/friday-realtime-checkpoint-repository.js";
 import { createFridayRealtimeSubscriptionService } from "../realtime/friday-realtime-subscription-service.js";
+import { redactEventPayload } from "../realtime/friday-event-payload-redactor.js";
 import { createFridayRealtimeWsGateway } from "../realtime/friday-realtime-ws-gateway.js";
 import { createFridayFleetDashboardService } from "../fleet/friday-fleet-dashboard-service.js";
 import { createFridayWorkflowConflictService } from "../conflicts/friday-workflow-conflict-service.js";
@@ -161,6 +163,7 @@ import type {
   FridayRustHubAgentRunSealedClientServiceDispatchOutcome,
 } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
 import type {
+  FridayOrganicRunProvenance,
   FridayRustHubAgentRunConstraints,
   FridayRustHubAgentRunMissionContext,
   FridayRustHubAgentRunResumeResult,
@@ -1486,6 +1489,37 @@ function readRustAgentRunWsPort(raw: string | undefined): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+function stampOrganicProvenance(
+  db: Database.Database,
+  runId: string,
+  provenance: FridayOrganicRunProvenance | undefined,
+): void {
+  if (!provenance) return;
+  db.prepare(
+    `UPDATE friday_agent_runs
+     SET organic = 1,
+         organic_principal = ?,
+         organic_source = ?,
+         organic_attestation_ref = ?,
+         metadata_json = json_set(metadata_json, '$.organicProvenance', json(?))
+     WHERE id = ?`,
+  ).run(
+    provenance.principal,
+    provenance.source,
+    provenance.attestationRef,
+    JSON.stringify({
+      principal: provenance.principal,
+      source: provenance.source,
+      attestationRef: provenance.attestationRef,
+      ...(provenance.publicKeyId ? { publicKeyId: provenance.publicKeyId } : {}),
+      taskSha256: provenance.taskSha256,
+      issuedAt: provenance.issuedAt,
+      route: provenance.route,
+    }),
+    runId,
+  );
+}
+
 /**
  * (honest-non-finished) Project + return an HONEST non-Finished terminal result for a run whose
  * Rust loop terminated WITHOUT an answer (the persist guard skipped ⇒ the owner-gated readback
@@ -1508,9 +1542,10 @@ function projectHonestNonFinishedTerminal(input: {
   readonly turns: number;
   readonly executedTools: number;
   readonly completedAtIso: string;
+  readonly organicProvenance?: FridayOrganicRunProvenance;
 }): FridayAgentRuntimeResult {
-  const projection = input.db.withWriteTransaction((db) =>
-    input.projector.project(db, {
+  const projection = input.db.withWriteTransaction((db) => {
+    const result = input.projector.project(db, {
       truthLabel: "rust_wired_dev",
       proofOnly: true,
       ok: true,
@@ -1538,8 +1573,10 @@ function projectHonestNonFinishedTerminal(input: {
       // Stamp the BOUND OWNER (the authenticated caller, non-empty by the preflight) so the row is
       // owner-scoped for the read routes — the same shape the delivered/paused branches use. A ref.
       ...(input.ownerPrincipal ? { ownerPrincipalId: input.ownerPrincipal } : {}),
-    }),
-  );
+    });
+    stampOrganicProvenance(db, input.runId, input.organicProvenance);
+    return result;
+  });
   // A non-Finished terminal settle is NOT a fail-closed 503 — it returns an HONEST terminal row.
   // Logged body-free on its OWN line, never confused with a 503.
   console.warn(
@@ -1589,6 +1626,7 @@ async function composeRustReadOnlyAgentRun(args: {
    * authenticated `principalId` (forwarded as `forwardedPrincipal`), never this handle.
    */
   readonly missionContext?: FridayRustHubAgentRunMissionContext;
+  readonly organicProvenance?: FridayOrganicRunProvenance;
   readonly providerId: string;
   readonly model: string;
   readonly wsClient: FridayRustHubAgentRunSealedClientService;
@@ -1697,8 +1735,8 @@ async function composeRustReadOnlyAgentRun(args: {
   // EMPTY `response` (no body exists yet — the run paused pending approval) and a 0 tool count.
   if (isPausedDispatchOutcome(wsResult)) {
     const pausedAtIso = args.nowIso();
-    const pausedProjection = args.db.withWriteTransaction((db) =>
-      args.projector.project(db, {
+    const pausedProjection = args.db.withWriteTransaction((db) => {
+      const result = args.projector.project(db, {
         truthLabel: "rust_wired_dev",
         proofOnly: true,
         // `ok` is the receipt-well-formed flag (a fixed `true` on the receipt type — the same value
@@ -1736,8 +1774,10 @@ async function composeRustReadOnlyAgentRun(args: {
         // is reachable ONLY flag-on (the courier never returns a pause when off), so this never
         // changes byte-identical-when-off behavior.
         ...(callerPrincipal ? { ownerPrincipalId: callerPrincipal } : {}),
-      }),
-    );
+      });
+      stampOrganicProvenance(db, args.runId, args.organicProvenance);
+      return result;
+    });
     // A pause is NOT a fail-closed 503 — it is an honest non-Finished settle that returns a row.
     // Log it body-free (run_id + leg) on its OWN line so it is never confused with a 503.
     console.warn(
@@ -1805,6 +1845,7 @@ async function composeRustReadOnlyAgentRun(args: {
         turns: wsResult.turns ?? 0,
         executedTools: wsResult.executedTools ?? 0,
         completedAtIso: args.nowIso(),
+        organicProvenance: args.organicProvenance,
       });
     }
     // Every OTHER non-delivered case (denied, finished-but-missing-row, any error status) keeps
@@ -1868,6 +1909,7 @@ async function composeRustReadOnlyAgentRun(args: {
         args.runId,
       );
     }
+    stampOrganicProvenance(db, args.runId, args.organicProvenance);
     return result;
   });
 
@@ -2079,6 +2121,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     payload: unknown,
   ): Promise<void> => {
     const normalizedPayload = asRecord(payload);
+    const redactedPayload = redactEventPayload(normalizedPayload);
     const streamId = resolveWorkflowRealtimeStreamId(event, normalizedPayload);
     if (!streamId) {
       return;
@@ -2087,7 +2130,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     eventBus.publish(
       streamId,
       event as never,
-      normalizedPayload as never,
+      redactedPayload as never,
     );
   };
 
@@ -3962,14 +4005,14 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register grant routes (always available)
   for (const route of createFridayGrantRoutes({
-    async listActiveGrants() {
+    async listActiveGrants(principal) {
       return deps.db.withReadConnection((reader) => {
         const now = new Date().toISOString();
         const rows = reader.prepare(`
           SELECT id, principal_id, target, surface, scopes, issued_at, expires_at, tool_name
           FROM capability_grants
-          WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-        `).all(now) as Array<Record<string, unknown>>;
+          WHERE principal_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+        `).all(principal.principalId, now) as Array<Record<string, unknown>>;
         return rows.map((row) => ({
           id: String(row.id),
           principalId: String(row.principal_id),
@@ -4852,6 +4895,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       // `routeStartRun` uses it to qualify mission-bound Codex/Claude routes and threads it onto
       // sealed-WS dispatch. It NEVER overrides principal/owner; Rust re-validates binding.
       missionContext?: FridayRustHubAgentRunMissionContext;
+      organicProvenance?: FridayOrganicRunProvenance;
     }) => {
       if (deps.allowTestOnlyAgentRunStartExecution !== true) {
         void input;
@@ -5180,6 +5224,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             // `principalId`; the bound owner stays the authenticated `normalizedPrincipal`, and
             // Rust re-validates the Mission/WorkItem binding before producing proof/readback.
             ...(input.missionContext !== undefined ? { missionContext: input.missionContext } : {}),
+            ...(input.organicProvenance !== undefined ? { organicProvenance: input.organicProvenance } : {}),
             // Stamp the apiRequest idempotency descriptor onto the projected row so a
             // SUBSEQUENT request sharing this key REPLAYS this run (the lookup above) rather
             // than minting a second runId. Mirrors the EXACT shape the bare startRun persists

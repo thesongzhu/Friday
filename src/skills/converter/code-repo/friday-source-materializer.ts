@@ -23,6 +23,12 @@ const DEFAULT_MAX_TOTAL_BYTES = 50_000_000; // 50 MB
 const GIT_CLONE_TIMEOUT_MS = 60_000;
 const EXTRACT_TIMEOUT_MS = 30_000;
 const SUBPROCESS_TIMEOUT_KILL_SIGNAL = "SIGKILL";
+const ALLOWED_GIT_HOSTS = new Set(["github.com", "gitlab.com", "bitbucket.org"]);
+const BLOCKED_GIT_HOSTS = new Set([
+  "localhost",
+  "metadata.google.internal",
+  "metadata",
+]);
 
 const IGNORED_DIRS = new Set([
   ".git",
@@ -241,13 +247,14 @@ function materializeGitSource(
   sourceUri: string,
   options: FridaySourceMaterializerOptions,
 ): FridayCodeRepoMaterializedSource {
+  validateGitSourceUri(sourceUri);
   const tempDir = createTempWorkspace("friday-git-");
 
   try {
     // Shallow clone (depth=1) without submodules for safety
     execFileSync(
       "git",
-      ["clone", "--depth", "1", "--single-branch", "--no-recurse-submodules", sourceUri, tempDir],
+      ["clone", "--depth", "1", "--single-branch", "--no-recurse-submodules", "--", sourceUri, tempDir],
       {
         encoding: "utf-8",
         timeout: GIT_CLONE_TIMEOUT_MS,
@@ -288,6 +295,74 @@ function materializeGitSource(
     cleanupTempWorkspace(tempDir);
     throw err;
   }
+}
+
+function validateGitSourceUri(sourceUri: string): void {
+  const redactedSource = redactFridaySkillCandidateSourceUri(sourceUri);
+  const reject = (reason: string): never => {
+    throw new FridayDomainError(
+      "CONVERTER_GIT_SOURCE_NOT_ALLOWED",
+      `Git source is not allowed: ${reason}`,
+      { httpStatus: 400, details: { sourceUri: redactedSource } },
+    );
+  };
+
+  const scpLike = /^git@([^:]+):(.+)$/i.exec(sourceUri);
+  if (scpLike) {
+    const host = normalizeGitHost(scpLike[1]);
+    if (!ALLOWED_GIT_HOSTS.has(host)) {
+      reject(`host ${host}`);
+    }
+    if (scpLike[2].trim().length === 0) {
+      reject("empty repository path");
+    }
+    return;
+  }
+
+  let parsedUrl: URL | null = null;
+  try {
+    parsedUrl = new URL(sourceUri);
+  } catch {
+    parsedUrl = null;
+  }
+
+  if (parsedUrl) {
+    const parsed = parsedUrl;
+    const host = normalizeGitHost(parsed.hostname);
+    if (parsed.protocol !== "https:") {
+      reject(`protocol ${parsed.protocol}`);
+    }
+    if (isBlockedGitHost(host) || !ALLOWED_GIT_HOSTS.has(host)) {
+      reject(`host ${host}`);
+    }
+    return;
+  }
+
+  // Local .git paths are allowed, but must not be parsed as command options.
+  if (sourceUri.includes("://")) {
+    reject("unsupported URL");
+  }
+  if (sourceUri.trimStart().startsWith("-")) {
+    reject("local path begins with an option prefix");
+  }
+}
+
+function normalizeGitHost(host: string | undefined): string {
+  return (host ?? "").trim().toLowerCase().replace(/\.$/, "");
+}
+
+function isBlockedGitHost(host: string): boolean {
+  if (BLOCKED_GIT_HOSTS.has(host)) return true;
+  if (host === "::1" || host === "0:0:0:0:0:0:0:1") return true;
+  if (host.startsWith("127.")) return true;
+  if (host.startsWith("169.254.")) return true;
+  if (host.startsWith("10.")) return true;
+  if (host.startsWith("192.168.")) return true;
+  const octets = host.split(".").map((part) => Number(part));
+  if (octets.length === 4 && octets.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+    return octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31;
+  }
+  return host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
 }
 
 // ─── Archive Source Materializer ───
@@ -453,6 +528,27 @@ function validateZipArchiveEntries(archivePath: string): void {
     const entry = rawEntry.trim();
     if (!entry) continue;
     validateArchiveEntryPath(entry);
+  }
+  validateZipArchiveEntryTypes(archivePath);
+}
+
+function validateZipArchiveEntryTypes(archivePath: string): void {
+  const listing = execFileSync("unzip", ["-Z", "-l", archivePath], {
+    encoding: "utf8",
+    timeout: EXTRACT_TIMEOUT_MS,
+    killSignal: SUBPROCESS_TIMEOUT_KILL_SIGNAL,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const unsupportedEntryLine = listing
+    .split(/\r?\n/)
+    .find((line) => {
+      const trimmed = line.trimStart();
+      if (!/^[bcdlps-][rwxStTs-]{9}\s/.test(trimmed)) return false;
+      const type = trimmed[0];
+      return type !== "-" && type !== "d";
+    });
+  if (unsupportedEntryLine) {
+    throw new FridayDomainError("CONVERTER_UNSUPPORTED_ARCHIVE_ENTRY", `Archive contains unsupported entry type: ${unsupportedEntryLine.trim()}`, { httpStatus: 422 });
   }
 }
 

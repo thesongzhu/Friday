@@ -682,6 +682,7 @@ describe("FridayHub Bootstrap Integration", () => {
       skillDirs: [bundledSkillsDir, managedSkillsDir],
       tokenSecret: PHASE32_TOKEN_SECRET,
       allowTestOnlySkillRunExecution: true,
+      allowTestOnlyNonDarwinShellSandboxExecution: true,
       allowTestOnlyAutonomyLifecycleExecution: true,
     });
     hubs.push(hub);
@@ -1435,6 +1436,7 @@ describe("FridayHub Bootstrap Integration", () => {
 
     const initial = await getConfig.handler({
       ...baseCtx,
+      principal: configAdminPrincipal,
       query: { keys: "database.busyTimeoutMs" },
     } as never) as { revision: number; settings: Record<string, unknown> };
 
@@ -1456,12 +1458,16 @@ describe("FridayHub Bootstrap Integration", () => {
 
     const afterUpdate = await getConfig.handler({
       ...baseCtx,
+      principal: configAdminPrincipal,
       query: { keys: "database.busyTimeoutMs" },
     } as never) as { revision: number; settings: Record<string, unknown> };
     expect(afterUpdate.revision).toBe(2);
     expect(afterUpdate.settings["database.busyTimeoutMs"]).toBe(6000);
 
-    const revisions = await listRevisions.handler(baseCtx as never) as {
+    const revisions = await listRevisions.handler({
+      ...baseCtx,
+      principal: configAdminPrincipal,
+    } as never) as {
       items: Array<{ revision: number; changedKeys: string[] }>;
     };
     expect(revisions.items.map((revision) => revision.revision)).toEqual([2, 1]);
@@ -1476,6 +1482,7 @@ describe("FridayHub Bootstrap Integration", () => {
 
     const afterRevert = await getConfig.handler({
       ...baseCtx,
+      principal: configAdminPrincipal,
       query: { keys: "database.busyTimeoutMs" },
     } as never) as { revision: number; settings: Record<string, unknown> };
     expect(afterRevert.revision).toBe(3);

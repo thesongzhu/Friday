@@ -76,6 +76,46 @@ describe("createFridayGrantRoutes", () => {
     expect(revokeRoute.path).toBe("/v1/grants/:grantId/revoke");
   });
 
+  it("cr02-01: list only returns grants owned by the bound principal", async () => {
+    const deps: FridayGrantRoutesDeps = {
+      listActiveGrants: vi.fn(async () => [
+        {
+          id: "grant-owned",
+          principalId: "user-1",
+          target: "shell",
+          scopes: ["exec"],
+          issuedAt: "2026-04-08T00:00:00.000Z",
+        },
+        {
+          id: "grant-other",
+          principalId: "user-2",
+          target: "desktop",
+          scopes: ["desktop.execute"],
+          issuedAt: "2026-04-08T00:00:00.000Z",
+        },
+      ]),
+      revokeGrant: vi.fn(async () => ({ revoked: true })),
+    };
+    const route = createFridayGrantRoutes(deps).find((r) => r.operationId === "grants.list")!;
+
+    await expect(
+      route.handler(makeCtx({
+        principal: makePrincipal({
+          principalId: "user-1",
+          role: "viewer",
+          scopes: ["session.read"],
+        }),
+      })),
+    ).resolves.toEqual({
+      items: [
+        expect.objectContaining({
+          id: "grant-owned",
+          principalId: "user-1",
+        }),
+      ],
+    });
+  });
+
   it("rejects anonymous synthetic public grant revoke before delegating", async () => {
     const deps = createDeps();
     const route = createFridayGrantRoutes(deps).find((r) => r.operationId === "grants.revoke")!;

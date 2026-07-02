@@ -50,7 +50,7 @@ export interface UseUixPreferencesResult {
 }
 
 export function useUixPreferences(): UseUixPreferencesResult {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const queryClient = useQueryClient();
   const pendingPatchRef = useRef<UixPreferenceMap>({});
   const flushTimerRef = useRef<number | null>(null);
@@ -66,7 +66,7 @@ export function useUixPreferences(): UseUixPreferencesResult {
         return EMPTY_RECORDS;
       }
     },
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !authLoading,
     staleTime: 30_000,
     retry: false,
     refetchOnWindowFocus: false,

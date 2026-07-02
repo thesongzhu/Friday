@@ -1,13 +1,65 @@
+import * as net from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { FridaySqliteLayer } from "#state";
-import { createFridayFleetDashboardService } from "#api";
+import {
+  createFridayFleetDashboardService,
+  createFridayHttpRouteRegistry,
+  createFridayHttpServer,
+  type FridayAuthMiddlewareFactory,
+  type FridayHttpServer,
+  type FridayRealtimeWsGateway,
+} from "#api";
 import { createFridaySessionService } from "#sessions";
 import { createFridayJobSchedulerRepository } from "#jobs";
 import { createFridayTuiRoutes } from "../../../../../src/api/http/routes/friday-tui-routes.js";
 import { createTestDb, createTestIdGenerator } from "../../../../helpers/friday-test-db.helper.js";
 
 const NOW = "2026-04-19T12:00:00.000Z";
+
+function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      if (!addr || typeof addr === "string") {
+        server.close();
+        reject(new Error("failed to allocate free port"));
+        return;
+      }
+      const port = addr.port;
+      server.close((closeErr) => {
+        if (closeErr) reject(closeErr);
+        else resolve(port);
+      });
+    });
+    server.on("error", reject);
+  });
+}
+
+function makeStubWsGateway(): FridayRealtimeWsGateway {
+  return {
+    handleClientFrame: () => ({ handled: false }),
+    addConnection: () => {},
+    removeConnection: () => {},
+    broadcastEvent: () => {},
+  } as unknown as FridayRealtimeWsGateway;
+}
+
+function makeBearerStubMiddleware(): FridayAuthMiddlewareFactory {
+  return {
+    requireAuth: (ctx) => {
+      const auth = ctx.headers["authorization"] ?? ctx.headers["Authorization"];
+      if (!auth) {
+        return { passed: false as const, statusCode: 401, code: "UNAUTHORIZED", message: "missing token" };
+      }
+      return { passed: true as const };
+    },
+    requireAnyScope: () => ({ passed: true as const }),
+    requireAnyRole: () => ({ passed: true as const }),
+    enforceRateLimit: () => ({ passed: true as const }),
+  };
+}
 
 describe("createFridayTuiRoutes", () => {
   let db: FridaySqliteLayer;
@@ -55,8 +107,42 @@ describe("createFridayTuiRoutes", () => {
       "tui.status.get",
       "tui.jobs.list",
     ]);
-    expect(routes[0]?.auth).toEqual({ public: true });
-    expect(routes[1]?.auth).toEqual({ public: true });
+    expect(routes[0]?.auth).toEqual({ public: false, anyOfScopes: ["hub.admin"] });
+    expect(routes[1]?.auth).toEqual({ public: false, anyOfScopes: ["hub.admin"] });
+  });
+
+  it("cr02-04: anonymous HTTP callers cannot reach TUI status when registered with RBAC", async () => {
+    const routes = createFridayHttpRouteRegistry();
+    for (const route of createFridayTuiRoutes({
+      db,
+      version: "2026.04.19",
+      fleetService: createFridayFleetDashboardService({
+        db,
+        nowIso: () => NOW,
+        idGenerator: createTestIdGenerator(),
+      }),
+    })) {
+      routes.register(route);
+    }
+    const port = await findFreePort();
+    const server: FridayHttpServer = createFridayHttpServer({
+      routes,
+      wsGateway: makeStubWsGateway(),
+      middleware: makeBearerStubMiddleware(),
+      port,
+      host: "127.0.0.1",
+    });
+
+    try {
+      await server.listen();
+      const response = await fetch(`http://127.0.0.1:${port}/v1/status`);
+      expect(response.status).toBe(401);
+      const body = await response.json() as { ok: false; error: { code: string } };
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("UNAUTHORIZED");
+    } finally {
+      await server.close();
+    }
   });
 
   it("GET /v1/status returns counts backed by live state", async () => {

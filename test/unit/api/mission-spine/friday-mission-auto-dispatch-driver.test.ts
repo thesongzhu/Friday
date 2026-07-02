@@ -187,6 +187,85 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
       });
     });
 
+    it("fail-closes a Codex organic spawn request without operator-signature provenance", async () => {
+      const onDispatchError = vi.fn();
+      const startRun = vi.fn(async () => ({
+        runId: "run-1",
+      })) as unknown as MissionAutoDispatchStartRun;
+      const driver = createFridayMissionAutoDispatchDriver({
+        startRun: () => startRun,
+        deepseekProviderId: DEEPSEEK_PROVIDER,
+        deepseekFlashModel: DEEPSEEK_FLASH,
+        codexProviderId: CODEX_PROVIDER,
+        codexModel: CODEX_MODEL,
+        claudeProviderId: CLAUDE_PROVIDER,
+        claudeModel: CLAUDE_MODEL,
+        onDispatchError,
+      });
+
+      driver.onIntakeReady(
+        {
+          ...REQUEST,
+          lane: "codex",
+          targetProviderOrAgent: "codex",
+          deliveryRoute: "ops://codex-organic-spawn",
+        },
+        READY_RESULT,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(startRun).not.toHaveBeenCalled();
+      expect(onDispatchError).toHaveBeenCalledTimes(1);
+      expect(String(onDispatchError.mock.calls[0][0])).toContain(
+        "operator_signature",
+      );
+    });
+
+    it("forwards verified operator-signature provenance on a Codex organic spawn run", async () => {
+      const provenance = {
+        organic: true,
+        principal: "operator:local-hand",
+        source: "operator_signature",
+        attestationRef: "file:///tmp/friday-organic-attestation.json",
+        publicKeyId: "operator-key-1",
+        taskSha256: "a".repeat(64),
+        issuedAt: "2026-07-02T00:00:00.000Z",
+        route: "ops://codex-organic-spawn",
+      };
+      const startRun = vi.fn(async () => ({
+        runId: "run-1",
+      })) as unknown as MissionAutoDispatchStartRun;
+      const driver = createFridayMissionAutoDispatchDriver({
+        startRun: () => startRun,
+        deepseekProviderId: DEEPSEEK_PROVIDER,
+        deepseekFlashModel: DEEPSEEK_FLASH,
+        codexProviderId: CODEX_PROVIDER,
+        codexModel: CODEX_MODEL,
+        claudeProviderId: CLAUDE_PROVIDER,
+        claudeModel: CLAUDE_MODEL,
+        verifyOrganicProvenance: () => true,
+      });
+
+      driver.onIntakeReady(
+        {
+          ...REQUEST,
+          lane: "codex",
+          targetProviderOrAgent: "codex",
+          deliveryRoute: "ops://codex-organic-spawn",
+          organicProvenance: provenance,
+        } as unknown as FridayRustHubMissionIntakeRequest,
+        READY_RESULT,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(startRun).toHaveBeenCalledTimes(1);
+      const arg = (startRun as unknown as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as Record<string, unknown>;
+      expect(arg.organicProvenance).toEqual(provenance);
+    });
+
     it("uses the Rust-selected route for lane=auto instead of re-reading the raw request", async () => {
       const startRun = vi.fn(async () => ({
         runId: "run-1",

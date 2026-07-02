@@ -172,6 +172,25 @@ function buildCurrentSummary(input: {
   return buildConfiguredSummary(routing, providerById);
 }
 
+function hasRoutingEligibleProvider(input: {
+  health: FridayProviderHealthSnapshotItem[];
+  routing: FridayModelRoutingConfig | undefined;
+}): boolean {
+  const { health, routing } = input;
+  if (!routing?.defaultProviderId) {
+    return false;
+  }
+  const routedProviderIds = new Set([
+    routing.defaultProviderId,
+    ...(routing.fallbackProviderIds ?? []),
+  ]);
+  return health.some((item) =>
+    item.enabled &&
+    item.routingEligible &&
+    routedProviderIds.has(item.providerId)
+  );
+}
+
 function classifyHealthSeverity(
   item: FridayProviderHealthSnapshotItem | undefined,
 ): "healthy" | ProviderTruthAlertTone {
@@ -217,16 +236,21 @@ function buildHealthDetail(item: FridayProviderHealthSnapshotItem | undefined): 
 }
 
 export async function loadProviderTruth(): Promise<ProviderTruthSnapshot> {
-  const [providersResult, healthResult, routingResult, explainResult] = await Promise.allSettled([
+  const [providersResult, healthResult, routingResult] = await Promise.allSettled([
     providersApi.list(),
     providersApi.listHealth(),
     providersApi.getRouting(),
-    providersApi.explainRouting({}),
   ]);
 
   const providers = providersResult.status === "fulfilled" ? providersResult.value : [];
   const health = healthResult.status === "fulfilled" ? healthResult.value : [];
   const routing = routingResult.status === "fulfilled" ? routingResult.value : undefined;
+  const explainResult = hasRoutingEligibleProvider({ health, routing })
+    ? await Promise.resolve(providersApi.explainRouting({})).then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason) => ({ status: "rejected" as const, reason }),
+      )
+    : { status: "fulfilled" as const, value: undefined };
   const explain = explainResult.status === "fulfilled" ? explainResult.value : undefined;
 
   const errors: ProviderTruthSnapshot["errors"] = [];

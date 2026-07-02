@@ -1,7 +1,11 @@
 import { FridayDomainError } from "#errors";
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
-import { assertBoundPrincipalAuthorityForOperation } from "../../../security/friday-owner-session-channel-capability.js";
+import {
+  assertBoundPrincipalAuthorityForOperation,
+  isUnauthenticatedPublicPrincipal,
+} from "../../../security/friday-owner-session-channel-capability.js";
+import type { FridayAuthPrincipal } from "../../model/friday-api-auth.types.js";
 import type {
   FridayGetConfigQuery,
   FridayGetConfigResponse,
@@ -63,6 +67,30 @@ function assertRuntimeConfigAdminPrincipal(
   });
 }
 
+function bindAuditLogsQueryToPrincipal(
+  query: FridayListAuditLogsQuery,
+  principal: FridayAuthPrincipal,
+): FridayListAuditLogsQuery {
+  return {
+    ...query,
+    actorId: principal.principalId,
+  };
+}
+
+function assertBoundReadPrincipal(
+  principal: FridayAuthPrincipal | null | undefined,
+  operation: string,
+): FridayAuthPrincipal {
+  if (isUnauthenticatedPublicPrincipal(principal)) {
+    throw new FridayDomainError(
+      "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      `${operation} reads sensitive data and requires a bound owner/session/channel principal.`,
+      { httpStatus: 401 },
+    );
+  }
+  return principal as FridayAuthPrincipal;
+}
+
 export function createFridayRuntimeAdminRoutes(
   deps: FridayRuntimeAdminRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -86,6 +114,7 @@ export function createFridayRuntimeAdminRoutes(
         path: "/v1/config",
         auth: { public: true },
         async handler(ctx) {
+          assertBoundReadPrincipal(ctx.principal ?? null, "config.get");
           const query = ctx.query as Record<string, unknown>;
           return deps.config!.get({
             keys: readStringArrayQuery(query.keys),
@@ -123,6 +152,7 @@ export function createFridayRuntimeAdminRoutes(
         path: "/v1/config/revisions",
         auth: { public: true },
         async handler(ctx) {
+          assertBoundReadPrincipal(ctx.principal ?? null, "config.revisions.list");
           const query = ctx.query as Record<string, unknown>;
           const limit =
             typeof query.limit === "string" && query.limit.trim() !== ""
@@ -167,7 +197,11 @@ export function createFridayRuntimeAdminRoutes(
       path: "/v1/audit/logs",
       auth: { public: true },
       async handler(ctx) {
-        return deps.auditLogs!.list(ctx.query as FridayListAuditLogsQuery);
+        const principal = assertBoundReadPrincipal(ctx.principal ?? null, "audit.logs.list");
+        return deps.auditLogs!.list(bindAuditLogsQueryToPrincipal(
+          ctx.query as FridayListAuditLogsQuery,
+          principal,
+        ));
       },
     });
   }

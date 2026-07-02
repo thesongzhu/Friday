@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createTestDb, createTestIdGenerator } from "../../../helpers/friday-test-db.helper.js";
+import { FRIDAY_MEMORY_ERROR_CODES } from "../../../../src/memory/friday-memory.constants.js";
 import { createFridayEpisodeExtractor } from "../../../../src/memory/services/friday-episode-extractor.js";
 import type { FridaySqliteLayer } from "#state";
 
@@ -85,7 +86,7 @@ describe("FridayEpisodeExtractor", () => {
   it("extracts a minimal episode when run has no tool events", async () => {
     seedRun("run-empty", "do nothing", "completed");
 
-    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso, tsMemoryWritesEnabled: true });
     const episode = await extractor.extractFromRun("run-empty", "user-1");
 
     expect(episode).not.toBeNull();
@@ -102,7 +103,7 @@ describe("FridayEpisodeExtractor", () => {
       "completed",
     );
 
-    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso, tsMemoryWritesEnabled: true });
     const episode = await extractor.extractFromRun("run-sensitive", "user-1");
 
     expect(episode).toBeNull();
@@ -125,7 +126,7 @@ describe("FridayEpisodeExtractor", () => {
     );
     seedToolEvents("run-untrusted-source", [{ name: "web_fetch" }]);
 
-    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso, tsMemoryWritesEnabled: true });
     const episode = await extractor.extractFromRun("run-untrusted-source", "user-1");
 
     expect(episode).toBeNull();
@@ -143,7 +144,7 @@ describe("FridayEpisodeExtractor", () => {
     );
     seedToolEvents("run-memory-store-telemetry", [{ name: "memory_store" }]);
 
-    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso, tsMemoryWritesEnabled: true });
     const episode = await extractor.extractFromRun("run-memory-store-telemetry", "user-1");
 
     expect(episode).not.toBeNull();
@@ -155,7 +156,7 @@ describe("FridayEpisodeExtractor", () => {
   });
 
   it("returns null when run ID does not exist at all", async () => {
-    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso, tsMemoryWritesEnabled: true });
     const episode = await extractor.extractFromRun("nonexistent-run", "user-1");
 
     // No events and no run record → null (returns null on empty events)
@@ -171,7 +172,7 @@ describe("FridayEpisodeExtractor", () => {
       { name: "write", durationMs: 300 },
     ]);
 
-    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso, tsMemoryWritesEnabled: true });
     const episode = await extractor.extractFromRun(runId, "user-1");
 
     expect(episode).not.toBeNull();
@@ -202,7 +203,7 @@ describe("FridayEpisodeExtractor", () => {
       { name: "exec", durationMs: 400, isError: true },
     ]);
 
-    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso, tsMemoryWritesEnabled: true });
     const episode = await extractor.extractFromRun(runId, "user-1");
 
     expect(episode).not.toBeNull();
@@ -215,13 +216,39 @@ describe("FridayEpisodeExtractor", () => {
     seedRun(runId, "test persistence", "completed", 100);
     seedToolEvents(runId, [{ name: "read" }]);
 
-    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso, tsMemoryWritesEnabled: true });
     await extractor.extractFromRun(runId, "user-1");
 
     const rows = db.withReadConnection((conn) =>
       conn.prepare("SELECT * FROM friday_episodes WHERE run_id = ?").all(runId),
     );
     expect(rows).toHaveLength(1);
+  });
+
+  it("fail-closes episode persistence when TS durable memory writes are retired", async () => {
+    const runId = "run-retired-write";
+    seedRun(runId, "summarize local task progress", "completed", 100);
+    seedToolEvents(runId, [{ name: "read" }]);
+
+    const extractor = createFridayEpisodeExtractor({
+      db,
+      idGenerator: idGen,
+      nowIso,
+      tsMemoryWritesEnabled: false,
+    } as Parameters<typeof createFridayEpisodeExtractor>[0] & { tsMemoryWritesEnabled: boolean });
+
+    await expect(extractor.extractFromRun(runId, "user-retired")).rejects.toMatchObject({
+      code: FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+      httpStatus: 503,
+      details: { operation: "memory.episodeExtractor.persist" },
+    });
+
+    const row = db.withReadConnection((conn) =>
+      conn
+        .prepare("SELECT COUNT(*) AS count FROM friday_episodes WHERE run_id = ?")
+        .get(runId) as { count: number },
+    );
+    expect(row.count).toBe(0);
   });
 
   it("classifies tool categories correctly", async () => {
@@ -236,7 +263,7 @@ describe("FridayEpisodeExtractor", () => {
       { name: "custom_tool" }, // other
     ]);
 
-    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso, tsMemoryWritesEnabled: true });
     const episode = await extractor.extractFromRun(runId, "user-1");
 
     expect(episode!.steps.map((s) => s.category)).toEqual([

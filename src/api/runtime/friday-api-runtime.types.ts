@@ -28,7 +28,10 @@ import type {
 } from "../../autonomy/index.js";
 import type { FridayProviderService } from "#providers";
 import type { FridayRustHubAgentRunSealedClientService } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
-import type { FridayRustHubAgentRunMissionContext } from "../mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
+import type {
+  FridayOrganicRunProvenance,
+  FridayRustHubAgentRunMissionContext,
+} from "../mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
 import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
 import type { FridayRustHubProvidersDetectService } from "../mission-spine/friday-rust-hub-providers-detect-bridge-service.js";
@@ -106,6 +109,7 @@ export type FridayAgentRouteStartRun = (input: {
   constraints?: { readOnly?: boolean };
   allowedRustRouteTools?: string[];
   missionContext?: FridayRustHubAgentRunMissionContext;
+  organicProvenance?: FridayOrganicRunProvenance;
 }) => Promise<unknown>;
 
 export interface FridayApiRuntime {

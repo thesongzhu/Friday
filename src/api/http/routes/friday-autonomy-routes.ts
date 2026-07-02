@@ -54,6 +54,7 @@ import type {
   FridayCapabilityAcquisitionService,
   FridayStandingAgendaService,
 } from "../../../autonomy/index.js";
+import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
 import type { FridayWorkflowEntity } from "../../model/friday-api-workflow.types.js";
 import type { FridaySkillLifecycleDetail } from "#skills";
 import type { FridayPluginEntity } from "../../../plugins/model/friday-plugin.types.js";
@@ -656,7 +657,7 @@ function requireNonEmptyString(value: unknown, field: string): string {
 }
 
 function requireUserId(principal: { userId?: string } | null): string {
-  if (!principal?.userId) {
+  if (isUnauthenticatedPublicPrincipal(principal as never) || !principal?.userId) {
     throw new FridayDomainError("UNAUTHORIZED", "A user-scoped autonomy principal is required", {
       httpStatus: 401,
     });
@@ -829,10 +830,11 @@ export function createFridayAutonomyRoutes(
       method: "GET",
       path: "/v1/autonomy-policy",
       auth: { public: true },
-      async handler(): Promise<FridayAutonomyPolicyResponse> {
+      async handler(ctx): Promise<FridayAutonomyPolicyResponse> {
         if (!deps.policyService) {
           throw new FridayDomainError("NOT_IMPLEMENTED", "Autonomy policy service is not configured", { httpStatus: 501 });
         }
+        requireUserId(ctx.principal);
         return { policy: deps.policyService.getPolicy() };
       },
     },

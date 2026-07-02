@@ -50,7 +50,7 @@ export function createFridayTuiRoutes(
       operationId: "tui.status.get",
       method: "GET",
       path: "/v1/status",
-      auth: { public: true },
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
       async handler(): Promise<FridayTuiStatusResponse> {
         const activeSessions = deps.db.withReadConnection((db) => {
           const row = db
@@ -74,7 +74,7 @@ export function createFridayTuiRoutes(
       operationId: "tui.jobs.list",
       method: "GET",
       path: "/v1/jobs",
-      auth: { public: true },
+      auth: { public: false, anyOfScopes: ["hub.admin"] },
       async handler(): Promise<FridayTuiJobSummaryResponse[]> {
         return schedulerRepo.listAll().map((job) => ({
           jobId: job.id,

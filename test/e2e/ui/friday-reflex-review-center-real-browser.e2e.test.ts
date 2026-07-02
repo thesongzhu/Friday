@@ -1235,11 +1235,13 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
           db,
           idGenerator,
           nowIso: () => DP10_DOGFOOD_NOW,
+          tsMemoryWritesEnabled: true,
         });
         const patternExtractor = createFridayPatternExtractor({
           db,
           idGenerator,
           nowIso: () => DP10_DOGFOOD_NOW,
+          tsMemoryWritesEnabled: true,
         });
         const contextEngine: FridayContextEngine = {
           async afterTurn(input) {

@@ -34,6 +34,7 @@ import {
   FRIDAY_LEARNED_FACT_TRUST_LEVEL,
   readLearnedFactReviewBoundary,
 } from "../../../learning/services/friday-learned-fact-memory-view.js";
+import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
 
 interface FridayUixLearnedFactItem {
   key: string;
@@ -60,7 +61,7 @@ export interface FridayUixRoutesDeps {
 }
 
 function requireUserId(principal: { userId?: string } | null): string {
-  if (!principal?.userId) {
+  if (isUnauthenticatedPublicPrincipal(principal as never) || !principal?.userId) {
     throw new FridayDomainError("UNAUTHORIZED", "A user-scoped assistant principal is required", {
       httpStatus: 401,
     });

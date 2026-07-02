@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { FridaySqliteLayer } from "#state";
@@ -3083,20 +3083,28 @@ describe("FridayProviderService", () => {
       }
     });
 
-    it("validates command-ref credentials during provider revalidation", async () => {
-      await service.createProvider({
-        kind: "openai",
-        name: "OpenAI Command Ref",
-        baseUrl: "https://api.openai.com",
-        authMode: "api-key",
-        api: "openai-completions",
-        apiKey: "command:printf command-key-123",
-        supportedModels: ["gpt-4o"],
-        validateOnSave: false,
-      });
+    it("fails closed for command-ref credentials during provider revalidation without executing shell side effects", async () => {
+      const tempDir = mkdtempSync(path.join(tmpdir(), "friday-provider-command-ref-"));
+      const markerPath = path.join(tempDir, "marker");
+      try {
+        await service.createProvider({
+          kind: "openai",
+          name: "OpenAI Command Ref",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: `command:printf command-key-123; touch ${markerPath}`, // pragma: allowlist secret
+          supportedModels: ["gpt-4o"],
+          validateOnSave: false,
+        });
 
-      const state = await service.validateProvider("test-id-0001");
-      expect(state.status).toBe("ok");
+        const state = await service.validateProvider("test-id-0001");
+        expect(state.status).toBe("failed");
+        expect(state.errorCode).toBe("PROVIDER_COMMAND_REF_INVALID");
+        expect(existsSync(markerPath)).toBe(false);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
     });
   });
 

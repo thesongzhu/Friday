@@ -235,6 +235,7 @@ export interface CreateFridaySkillExecutorDeps {
   getBrowserManager?: () => FridayBrowserManager | undefined;
   getChannelRegistry?: () => FridayChannelRegistry | undefined;
   canonicalMutationGate?: FridayMutatingActionGate;
+  allowTestOnlyNonDarwinShellSandboxExecution?: boolean;
 }
 
 /**
