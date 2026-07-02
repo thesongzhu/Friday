@@ -92,13 +92,24 @@
 //!     outcome/error, so a Codex process that dies mid-turn leaves the same stale
 //!     `ReadyToDispatch + executing == 1` signal PASS-2 can reconcile. The remaining gap is the
 //!     same dispatch→first-SET window above.
+//!   * **The post-loop provider-binding window is closed narrowly.** If the loop already persisted
+//!     `run_result=finished` and the process then dies before provider-timeline binding, the row is
+//!     `ReadyToDispatch + executing == 0`, but it is distinguishable from the dispatch hand-off
+//!     state by the same WorkItem's durable `route-decision:agent-loop:{run_id}` plus that finished
+//!     `run_result`. Recovery replays ONLY that missing attach, completing the WorkItem with the
+//!     run as proof. A ready row without both durable witnesses is still untouched.
 //!
 //! GATING: none. The boot PASS-1+PASS-2 reconcile is a hard safety sweep. The loop-side marker
 //! writes are also flag-independent (see the no-degrade posture above), while WorkItem-status timing
 //! stays unchanged vs pre-#24b (binding driven after the loop).
 
-use friday_core::{WorkItemStatus, WorkflowRunState};
+use friday_core::{RouteDecisionCard, WorkItem, WorkItemStatus, WorkflowRunState};
 use friday_storage::{Db, StorageError};
+
+use crate::mission_runtime::{
+    answer_produced_outcome_receipt_for_work_item, attach_agent_loop_provider_state,
+    AgentLoopProviderRestState,
+};
 
 /// The actor recorded on the lifecycle audit row for a crash-recovery abort.
 const CRASH_RECOVERY_ACTOR: &str = "crash-recovery";
@@ -179,7 +190,7 @@ pub fn is_stale_executing_candidate(status: WorkItemStatus) -> bool {
 pub struct ReconcileOutcome {
     /// Non-terminal rows scanned.
     pub scanned: usize,
-    /// Genuinely-orphaned rows advanced to `FailedTerminal` with the crash-recovery marker.
+    /// Genuinely-orphaned rows advanced to a safe resting state.
     pub aborted: usize,
     /// Orphaned rows whose legal transition failed (logged + skipped; the sweep continues).
     pub skipped: usize,
@@ -248,6 +259,15 @@ pub fn reconcile_orphaned_work_items(
         };
 
         if !abort {
+            match recover_finished_post_loop_agent_binding(db, &item, now_ms) {
+                Ok(true) => {
+                    outcome.aborted += 1;
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    outcome.skipped += 1;
+                }
+            }
             continue;
         }
 
@@ -294,6 +314,94 @@ pub fn reconcile_orphaned_work_items(
     }
 
     Ok(outcome)
+}
+
+fn recover_finished_post_loop_agent_binding(
+    db: &Db,
+    item: &WorkItem,
+    now_ms: i64,
+) -> Result<bool, StorageError> {
+    if item.status != WorkItemStatus::ReadyToDispatch {
+        return Ok(false);
+    }
+    if db
+        .get_work_item_execution_state(&item.work_item_id)?
+        .is_some_and(|state| state.executing)
+    {
+        return Ok(false);
+    }
+
+    let Some((decision, run_id)) = latest_finished_agent_loop_decision(db, item)? else {
+        return Ok(false);
+    };
+    let Some(mission) = db.get_mission(&item.mission_id)? else {
+        return Ok(false);
+    };
+    let Some(result) = friday_storage::get_run_result(db.conn(), &run_id)? else {
+        return Ok(false);
+    };
+    if result.status != "finished" {
+        return Ok(false);
+    }
+
+    let proof_ref = format!("friday://agent-run/{run_id}");
+    let completion_proof_receipt = answer_produced_outcome_receipt_for_work_item(
+        db,
+        &decision.work_item_id,
+        &run_id,
+        &result.answer,
+        now_ms,
+    )?;
+    match attach_agent_loop_provider_state(
+        db,
+        &decision.mission_id,
+        &decision.work_item_id,
+        &mission.friday_conversation_id,
+        &run_id,
+        AgentLoopProviderRestState::Completed,
+        &proof_ref,
+        completion_proof_receipt.as_deref(),
+        true,
+        now_ms,
+    )? {
+        crate::mission_preflight::MissionAttachmentOutcome::Attached {
+            work_item_status: WorkItemStatus::CompletedWithProof,
+            ..
+        } => Ok(true),
+        _ => Ok(false),
+    }
+}
+
+fn latest_finished_agent_loop_decision(
+    db: &Db,
+    item: &WorkItem,
+) -> Result<Option<(RouteDecisionCard, String)>, StorageError> {
+    let mut decisions = db.list_route_decisions_for_mission(&item.mission_id)?;
+    decisions.retain(|decision| decision.work_item_id == item.work_item_id);
+    decisions.sort_by_key(|decision| (decision.created_at_ms, decision.decision_id.clone()));
+    for decision in decisions.into_iter().rev() {
+        let Some(run_id) = decision
+            .decision_id
+            .strip_prefix("route-decision:agent-loop:")
+            .filter(|run_id| !run_id.is_empty())
+        else {
+            continue;
+        };
+        if !decision
+            .trace_refs
+            .iter()
+            .any(|trace| trace == &format!("agent-run:{run_id}"))
+        {
+            continue;
+        }
+        let run_id = run_id.to_string();
+        if friday_storage::get_run_result(db.conn(), &run_id)?
+            .is_some_and(|result| result.status == "finished")
+        {
+            return Ok(Some((decision, run_id)));
+        }
+    }
+    Ok(None)
 }
 
 /// The deterministic id PREFIX of a scheduled workflow run (`sched:<schedule_id>:<slot_ts>` —

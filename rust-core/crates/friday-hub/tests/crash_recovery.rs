@@ -567,6 +567,41 @@ fn post_loop_reconcile_completes_finished_agent_loop_before_provider_binding() {
     );
 }
 
+#[test]
+fn post_loop_reconcile_leaves_agent_loop_route_without_finished_result_untouched() {
+    // No-degrade guard for NEW-6: a route decision alone is not proof that the loop finished.
+    // Without `run_result=finished`, this is still indistinguishable from an ordinary ready row.
+    let db = Db::open_hub(&temp_db("post-loop-no-result")).unwrap();
+    let mission = format!("mission-{}", unique("post-loop-no-result"));
+    seed_mission(&db, &mission);
+    seed_work_item(
+        &db,
+        &mission,
+        "wi-post-loop-no-result",
+        WorkItemStatus::ReadyToDispatch,
+    );
+    set_executing(&db, "wi-post-loop-no-result", false, RECONCILE_AT - 1);
+    seed_agent_loop_route_decision(
+        &db,
+        "wi-post-loop-no-result",
+        "run-post-loop-no-result",
+        NOW + 10,
+    );
+
+    let audit_before = verify_audit_chain(db.conn()).unwrap();
+    let outcome = reconcile_orphaned_work_items(&db, RECONCILE_AT).unwrap();
+
+    assert_eq!(outcome.aborted, 0);
+    assert_eq!(outcome.skipped, 0);
+    assert_eq!(
+        status_of(&db, "wi-post-loop-no-result"),
+        WorkItemStatus::ReadyToDispatch,
+        "a route decision without finished run_result is not enough to recover"
+    );
+    assert_eq!(blocking_reason_of(&db, "wi-post-loop-no-result"), None);
+    assert_eq!(verify_audit_chain(db.conn()).unwrap(), audit_before);
+}
+
 // ── #784(b): boot reconcile of orphaned SCHEDULED workflow runs ───────────────────────────────
 // A scheduled run executes synchronously inside one tick, so a `Pending`/`Running` `sched:` run at
 // boot is a daemon that DIED mid-tick. Left non-terminal it permanently WEDGES its schedule (the
