@@ -82,6 +82,7 @@ async function makeManagedSkillDir(): Promise<string> {
   const managedSkillsDir = await mkdtemp(join(tmpdir(), "friday-d21-skill-catalog-"));
   const skillDir = join(managedSkillsDir, "live-catalog-smoke");
   mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, "run.sh"), "#!/bin/sh\nprintf 'live-catalog-smoke'\n");
   writeFileSync(
     join(skillDir, "skill.manifest.json"),
     JSON.stringify({

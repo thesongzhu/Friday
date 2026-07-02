@@ -1,13 +1,15 @@
-import { readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadFridaySkillPackage } from "../manifest/friday-skill-package-loader.js";
+import { loadFridaySkillPackage, type FridayLoadedSkillPackage } from "../manifest/friday-skill-package-loader.js";
 import type {
   FridaySkillCatalogItem,
   FridaySkillCatalogQuery,
   FridaySkillCatalogResult,
+  FridaySignatureVerificationResult,
   FridaySkillSourceEntity,
 } from "../model/friday-skill-catalog.types.js";
+import { createFridaySkillSignatureVerifier } from "./friday-skill-signature-verifier.js";
 
 export interface FridaySkillCatalogBackend {
   listCatalog(query: FridaySkillCatalogQuery): FridaySkillCatalogResult;
@@ -21,6 +23,101 @@ export interface CreateFridayManagedSkillsCatalogBackendOptions {
 }
 
 const MANAGED_SKILLS_SOURCE_ID = "managed-skills";
+const TRUST_SCORE_VERIFIED = 90;
+const TRUST_SCORE_UNSIGNED = 55;
+const TRUST_SCORE_BLOCKED = 20;
+
+function buildLocalPackageBytes(loaded: FridayLoadedSkillPackage): Buffer {
+  const chunks: Buffer[] = [];
+  const declaredFiles = [...new Set(loaded.declaredFiles)].sort();
+  for (const filePath of declaredFiles) {
+    if (!existsSync(filePath)) {
+      chunks.push(Buffer.from(`missing:${relative(loaded.skillDir, filePath)}\0`));
+      continue;
+    }
+    const fileStat = statSync(filePath);
+    if (!fileStat.isFile()) {
+      continue;
+    }
+    const relativePath = relative(loaded.skillDir, filePath).replaceAll("\\", "/");
+    chunks.push(Buffer.from(`${relativePath}\0`));
+    chunks.push(readFileSync(filePath));
+    chunks.push(Buffer.from("\0"));
+  }
+  return Buffer.concat(chunks);
+}
+
+function verifyManagedSkillPackage(loaded: FridayLoadedSkillPackage): {
+  verification: FridaySignatureVerificationResult;
+  declaredDistribution: boolean;
+} {
+  const distribution = loaded.manifest.distribution;
+  if (!distribution) {
+    return {
+      declaredDistribution: false,
+      verification: {
+        integrityValid: false,
+        signatureValid: false,
+        checks: ["distribution:missing"],
+        reason: "No distribution integrity or signature metadata declared",
+      },
+    };
+  }
+
+  const verifier = createFridaySkillSignatureVerifier();
+  const signatureDoc = distribution.signature
+    ? {
+        skillId: loaded.manifest.id,
+        version: loaded.manifest.version,
+        keyId: distribution.signature.keyId,
+        algorithm: distribution.signature.algorithm,
+        value: distribution.signature.value,
+      }
+    : undefined;
+
+  return {
+    declaredDistribution: true,
+    verification: verifier.verifySignature({
+      packageBytes: buildLocalPackageBytes(loaded),
+      expectedChecksum: distribution.integrity.digest,
+      skillId: loaded.manifest.id,
+      version: loaded.manifest.version,
+      signatureDoc,
+    }),
+  };
+}
+
+function getEntrypointBlockedReason(loaded: FridayLoadedSkillPackage): string | undefined {
+  const { manifest, skillDir } = loaded;
+  if (manifest.runtime.kind === "builtin") {
+    return undefined;
+  }
+
+  const entrypoint = manifest.runtime.entrypoint.trim();
+  if (!entrypoint) {
+    return "Skill entrypoint is required for non-builtin runtimes.";
+  }
+
+  const entrypointPath = resolve(skillDir, entrypoint);
+  const relativeEntrypoint = relative(skillDir, entrypointPath);
+  if (relativeEntrypoint.startsWith("..") || relativeEntrypoint === "" || relativeEntrypoint.startsWith("/")) {
+    return `Skill entrypoint "${entrypoint}" escapes the skill directory.`;
+  }
+
+  try {
+    const fileStat = statSync(entrypointPath);
+    if (!fileStat.isFile()) {
+      return `Skill entrypoint "${entrypoint}" is not a file.`;
+    }
+    if (fileStat.size === 0) {
+      return `Skill entrypoint "${entrypoint}" is empty.`;
+    }
+  } catch {
+    return `Skill entrypoint "${entrypoint}" is missing.`;
+  }
+
+  return undefined;
+}
 
 export function createFridayManagedSkillsCatalogBackend(
   options: CreateFridayManagedSkillsCatalogBackendOptions,
@@ -58,7 +155,18 @@ export function createFridayManagedSkillsCatalogBackend(
       if (!loaded.ok) {
         continue;
       }
-      const { manifest } = loaded.value;
+      const loadedPackage = loaded.value;
+      const { manifest } = loadedPackage;
+      const { declaredDistribution, verification } = verifyManagedSkillPackage(loadedPackage);
+      const entrypointBlockedReason = getEntrypointBlockedReason(loadedPackage);
+      const blockedReasons: string[] = [];
+      if (declaredDistribution && !verification.signatureValid) {
+        blockedReasons.push(`Skill signature verification failed: ${verification.reason ?? verification.checks.join(", ")}`);
+      }
+      if (entrypointBlockedReason) {
+        blockedReasons.push(entrypointBlockedReason);
+      }
+      const blocked = blockedReasons.length > 0;
       let releasedAt = options.nowIso();
       try {
         releasedAt = statSync(skillDir).mtime.toISOString();
@@ -73,11 +181,21 @@ export function createFridayManagedSkillsCatalogBackend(
         version: manifest.version,
         category: manifest.category,
         releasedAt,
-        signatureValid: true,
-        trustScore: 80,
+        signatureValid: verification.signatureValid,
+        trustScore: verification.signatureValid
+          ? TRUST_SCORE_VERIFIED
+          : blocked
+            ? TRUST_SCORE_BLOCKED
+            : TRUST_SCORE_UNSIGNED,
         starter: (manifest.tags ?? []).includes("starter"),
         manifest,
-        implementationStatus: "installed",
+        implementationStatus: blocked ? "catalog-only" : "installed",
+        blockedReasons,
+        recommendedNextAction: blocked
+          ? entrypointBlockedReason
+            ? "Fix skill entrypoint before installation."
+            : "Fix skill signature before installation."
+          : undefined,
         firstUsePrompts: [
           ...(manifest.triggers.phrases ?? []),
           ...(manifest.triggers.intents ?? []),
