@@ -113,6 +113,9 @@ describe("ui truth regressions", () => {
     expect(memoryPage).toContain("Confidence boost");
     expect(memoryPage).toContain("lastAccessedAt");
     expect(memoryPage).toContain("automatic recall still follows permission, ranking, and context boundaries");
+    expect(memoryPage).not.toContain("Friday will learn as you interact.");
+    expect(memoryPage).not.toContain("会在你使用过程中自动学习");
+    expect(memoryPage).toContain("review or enabled learning flows save them");
   });
 
   it("keeps homepage repair copy inside the supervised proof boundary", () => {
