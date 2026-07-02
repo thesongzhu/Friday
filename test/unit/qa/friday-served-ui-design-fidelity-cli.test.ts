@@ -180,6 +180,36 @@ function writeBadDist(root: string) {
   return distRoot;
 }
 
+function writeFallbackTextDist(root: string) {
+  const distRoot = join(root, "dist");
+  writeFile(distRoot, "assets/app.css", `
+    :root { --accent: #0f7d8c; --coral: #d8634d; --app-bg: #f7f6f2; }
+    body { background: #f7f6f2; color: #242424; }
+  `);
+  const html = `
+    <!doctype html>
+    <html>
+      <head><link rel="stylesheet" href="/assets/app.css"></head>
+      <body>
+        <main data-testid="app-shell-rail">Friday Hub</main>
+        <aside data-testid="app-shell-right-rail" data-dock="right">
+          <section data-testid="desktop-proof-inspector">Right-docked ProofInspector</section>
+          <div data-testid="desktop-subtle-status-pet">subtle status</div>
+          <button data-friday-ui="button-primary" style="background: rgb(15, 125, 140); color: white">Approve</button>
+          <span data-friday-ui="chip">needs</span>
+          <span data-friday-ui="filter">all</span>
+        </aside>
+        <section>Checking local setup</section>
+        <section>sample design-proof readiness entrypoints mock</section>
+      </body>
+    </html>
+  `;
+  writeFile(distRoot, "index.html", html);
+  writeFile(distRoot, "home/index.html", html);
+  writeFile(distRoot, "chat/index.html", html);
+  return distRoot;
+}
+
 function run(root: string, designRoot: string, distRoot: string, iosRoot: string, extraArgs: string[] = []) {
   return spawnSync("node", [
     script,
@@ -249,6 +279,23 @@ describe("check-friday-served-ui-design-fidelity", () => {
         "Gate C2 pet reference canvas is blank",
         "Gate C2 pet reference interaction hook is missing",
         "Gate C2 pet reference frame did not change after interaction",
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails Gate D when the healthy served desktop normal path still renders fallback, demo, or internal readiness copy", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-d-fallback-copy-"));
+    try {
+      const result = run(root, writeSelections(root), writeFallbackTextDist(root), writeGoodIos(root));
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as { checks?: Array<{ ok?: boolean; message?: string }> };
+      const failures = report.checks?.filter((check) => check.ok === false).map((check) => check.message) ?? [];
+      expect(failures).toEqual(expect.arrayContaining([
+        "Gate D normal path still renders setup fallback copy",
+        "Gate D normal path still renders demo/mock/design-proof copy",
+        "Gate D normal path still renders internal readiness/entrypoints copy",
       ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
