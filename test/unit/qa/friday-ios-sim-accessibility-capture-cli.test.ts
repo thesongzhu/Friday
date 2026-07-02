@@ -159,6 +159,50 @@ describe("friday-ios-sim-accessibility-capture", () => {
     }
   });
 
+  it("fails Gate D when iOS AX/OCR normal-path observation contains fallback or internal copy", async () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-ios-sim-ax-gate-d-copy-"));
+    try {
+      const binDir = join(root, "bin");
+      const outDir = join(root, "out");
+      await writeFakeXcrun(binDir);
+      const { observation } = writeObservation(root, {
+        observations: [
+          {
+            screen: "home",
+            runtimeActionId: "mobile/home/refresh",
+            accessibility_id: "friday.mobile.toolbar.refresh",
+            interaction: "visible",
+            status: "pass",
+            event: "no_hidden_fallback_verified",
+            accessibility_label: "Checking local setup",
+            ocr_text: "iOS Entrypoints readiness",
+          },
+        ],
+      });
+      const result = spawnSync("node", [
+        script,
+        "--real",
+        "--require-observed",
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        `--observation=${observation}`,
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      });
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { status?: string; blockers?: Array<{ code?: string }> };
+      expect(output.status).toBe("blocked");
+      expect(output.blockers?.map((blocker) => blocker.code)).toEqual(expect.arrayContaining([
+        "ios_normal_path_forbidden_copy",
+      ]));
+      expect(existsSync(join(outDir, "ios-sim-accessibility-capture.json"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("emits normalizer-accepted capture JSON only after simulator/app and accessibility observation checks pass", async () => {
     const root = mkdtempSync(join(tmpdir(), "friday-ios-sim-ax-real-"));
     try {
