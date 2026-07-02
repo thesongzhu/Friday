@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -29,6 +30,22 @@ const skipBuild = args.get("skip-build") === "true";
 const distRoot = resolve(args.get("dist") ?? join(ROOT, "dist/ui"));
 const iosSourceRoot = resolve(args.get("ios-source") ?? join(ROOT, "apps/friday-ios/Sources/FridayMobileShell"));
 const outPath = args.get("out") ?? process.env.FRIDAY_SERVED_UI_DESIGN_FIDELITY_REPORT ?? "";
+const explicitProofManifest = args.get("proof-manifest") ?? process.env.FRIDAY_SERVED_UI_PROOF_MANIFEST ?? "";
+const proofArtifactsRoot = resolve(args.get("proof-artifacts-root")
+  ?? process.env.FRIDAY_SERVED_UI_PROOF_ARTIFACT_ROOT
+  ?? join(process.env.TMPDIR ?? "/tmp", "friday-served-ui-design-fidelity-proof"));
+const reportId = `served-ui-design-fidelity-${randomUUID()}`;
+const buildId = `${skipBuild ? "skip-build" : "build-ui"}:${Date.now()}`;
+const REQUIRED_PROOF_ARTIFACTS = [
+  "screenshotHashes",
+  "computedStyleComparison",
+  "componentInventory",
+  "structureAssertions",
+  "petInteraction",
+  "actionInventory",
+  "actionClosure",
+];
+let renderedProof = null;
 
 async function loadPlaywrightChromium() {
   try {
@@ -54,6 +71,15 @@ function readJson(path) {
 
 function readText(path) {
   return readFileSync(path, "utf8");
+}
+
+function sha256(data) {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+function writeJson(path, value) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function fail(message, details = {}) {
@@ -493,6 +519,15 @@ async function assertRenderedStructure(tokens) {
         const normalized = value.replaceAll(" ", "");
         return normalized.includes("15,125,140") || normalized.includes("216,99,77");
       });
+      const actions = [...document.querySelectorAll("button, [role='button'], a[href]")]
+        .map((node, index) => ({
+          index,
+          tagName: node.tagName.toLowerCase(),
+          label: (node.textContent ?? node.getAttribute("aria-label") ?? "").trim().slice(0, 120),
+          marker: node.getAttribute("data-friday-ui") ?? null,
+          testId: node.getAttribute("data-testid") ?? null,
+          disabled: node.hasAttribute("disabled") || node.getAttribute("aria-disabled") === "true",
+        }));
       return {
         rightRailPresent: Boolean(rightRail),
         inspectorPresent: Boolean(inspector),
@@ -502,7 +537,10 @@ async function assertRenderedStructure(tokens) {
         primaryActionPresent: Boolean(primaryAction),
         chipPresent: Boolean(chip),
         filterPresent: Boolean(filter),
+        background,
+        color,
         hasAccentApplied,
+        actions,
         expected,
       };
       }, tokens);
@@ -512,7 +550,8 @@ async function assertRenderedStructure(tokens) {
     const routeResults = [];
     for (const pathname of ["/home", "/chat"]) {
       const result = await inspectRoute(pathname);
-      routeResults.push({ pathname, ...result });
+      const screenshot = await page.screenshot({ fullPage: true });
+      routeResults.push({ pathname, screenshotSha256: sha256(screenshot), ...result });
       if (!result.rightRailPresent) checks.push(fail("served desktop shell does not render a right rail", { pathname }));
       if (!result.inspectorPresent) checks.push(fail("served desktop shell does not expose right-docked ProofInspector", { pathname }));
       if (result.bottomDockText) checks.push(fail("served desktop still exposes bottom ProofInspector timeline", { pathname }));
@@ -524,11 +563,227 @@ async function assertRenderedStructure(tokens) {
       if (!result.hasAccentApplied) checks.push(fail("served desktop rendered controls do not apply cyan/coral accent", { pathname }));
     }
 
+    renderedProof = {
+      url,
+      routeResults,
+      tokens,
+    };
     return checks.length > 0 ? checks : [pass("served desktop rendered structure matches selected design", { routes: routeResults })];
   } finally {
     if (browser) await browser.close();
     await new Promise((resolveClose) => server.close(resolveClose));
   }
+}
+
+function primaryScreenshotSha256() {
+  return renderedProof?.routeResults?.[0]?.screenshotSha256 ?? null;
+}
+
+function proofArtifactBase(artifactType) {
+  return {
+    artifactType,
+    reportId,
+    head: report.head,
+    buildId,
+    generatedAtUtc: report.generated_at_utc,
+    surfaceScope: report.surface_scope,
+    designRoot,
+    distRoot,
+    iosSourceRoot,
+    screenshotSha256: primaryScreenshotSha256(),
+  };
+}
+
+function writeGeneratedProofManifest() {
+  if (!renderedProof) return null;
+
+  const dir = join(proofArtifactsRoot, reportId);
+  const paths = {
+    screenshotHashes: join(dir, "screenshot-hashes.json"),
+    computedStyleComparison: join(dir, "computed-style-comparison.json"),
+    componentInventory: join(dir, "component-inventory.json"),
+    structureAssertions: join(dir, "structure-assertions.json"),
+    petInteraction: join(dir, "pet-interaction.json"),
+    actionInventory: join(dir, "action-inventory.json"),
+    actionClosure: join(dir, "action-closure.json"),
+  };
+  const routes = renderedProof.routeResults;
+
+  writeJson(paths.screenshotHashes, {
+    ...proofArtifactBase("screenshotHashes"),
+    screenshots: routes.map((route) => ({
+      id: `served-desktop${route.pathname.replaceAll("/", "-") || "-root"}`,
+      pathname: route.pathname,
+      url: `${renderedProof.url}${route.pathname}`,
+      sha256: route.screenshotSha256,
+      appSurface: "served-desktop-dist-ui",
+      buildId,
+      reportId,
+    })),
+  });
+  writeJson(paths.computedStyleComparison, {
+    ...proofArtifactBase("computedStyleComparison"),
+    comparisons: routes.map((route) => ({
+      pathname: route.pathname,
+      expectedTokens: renderedProof.tokens,
+      actual: {
+        background: route.background,
+        color: route.color,
+      },
+      ok: route.hasAccentApplied,
+    })),
+  });
+  writeJson(paths.componentInventory, {
+    ...proofArtifactBase("componentInventory"),
+    routes: routes.map((route) => ({
+      pathname: route.pathname,
+      components: {
+        primaryActionPresent: route.primaryActionPresent,
+        chipPresent: route.chipPresent,
+        filterPresent: route.filterPresent,
+        subtlePetPresent: route.subtlePetPresent,
+      },
+    })),
+  });
+  writeJson(paths.structureAssertions, {
+    ...proofArtifactBase("structureAssertions"),
+    routes: routes.map((route) => ({
+      pathname: route.pathname,
+      assertions: {
+        rightRailPresent: route.rightRailPresent,
+        inspectorPresent: route.inspectorPresent,
+        bottomDockAbsent: !route.bottomDockText,
+        heroPetAbsent: !route.heroPet,
+      },
+    })),
+  });
+  writeJson(paths.petInteraction, {
+    ...proofArtifactBase("petInteraction"),
+    status: "not_claimed_by_served_desktop_broad_fidelity_gate",
+    routes: routes.map((route) => ({
+      pathname: route.pathname,
+      subtleStatusPetPresent: route.subtlePetPresent,
+    })),
+    note: "Gate F verifies this linked pet report is present, current, parsed, and bound; Gate C2 remains the v9 interaction oracle.",
+  });
+  writeJson(paths.actionInventory, {
+    ...proofArtifactBase("actionInventory"),
+    routes: routes.map((route) => ({
+      pathname: route.pathname,
+      actions: route.actions,
+    })),
+  });
+  writeJson(paths.actionClosure, {
+    ...proofArtifactBase("actionClosure"),
+    status: "not_claimed_by_served_desktop_broad_fidelity_gate",
+    inventoriedActions: routes.reduce((count, route) => count + route.actions.length, 0),
+    closedLoopActions: [],
+    note: "Gate F verifies this linked closure report is present, current, parsed, and bound; Gate E remains the full closed-loop oracle.",
+  });
+
+  const manifestPath = join(dir, "proof-manifest.json");
+  writeJson(manifestPath, {
+    schema: "friday.served-ui-design-fidelity.proof-manifest.v1",
+    reportId,
+    head: report.head,
+    buildId,
+    generatedAtUtc: report.generated_at_utc,
+    appSurface: "served-desktop-dist-ui",
+    screenshotSha256: primaryScreenshotSha256(),
+    requiredArtifacts: REQUIRED_PROOF_ARTIFACTS,
+    artifacts: paths,
+  });
+  return manifestPath;
+}
+
+function assertGateFProofManifest(manifestPath) {
+  const checks = [];
+  if (!manifestPath) {
+    return {
+      summary: { status: "missing", requiredArtifacts: REQUIRED_PROOF_ARTIFACTS },
+      checks: [fail("Gate F proof manifest is missing")],
+    };
+  }
+
+  let manifest;
+  try {
+    manifest = readJson(manifestPath);
+  } catch (error) {
+    return {
+      summary: { status: "unreadable", path: manifestPath, requiredArtifacts: REQUIRED_PROOF_ARTIFACTS },
+      checks: [fail("Gate F proof manifest is unreadable", {
+        path: manifestPath,
+        error: error instanceof Error ? error.message : String(error),
+      })],
+    };
+  }
+
+  if (manifest.head !== report.head) {
+    checks.push(fail("Gate F proof manifest head is stale-before-HEAD", {
+      expected: report.head,
+      actual: manifest.head,
+    }));
+  }
+  if (!manifest.reportId || !manifest.buildId || !manifest.screenshotSha256) {
+    checks.push(fail("Gate F proof manifest is disconnected from report/build/screenshot identifiers"));
+  }
+
+  const parsedArtifacts = {};
+  for (const key of REQUIRED_PROOF_ARTIFACTS) {
+    const artifactPath = manifest.artifacts?.[key];
+    if (!artifactPath || !existsSync(artifactPath)) {
+      checks.push(fail(`Gate F proof artifact is missing: ${key}`, { path: artifactPath ?? null }));
+      continue;
+    }
+
+    let artifact;
+    try {
+      artifact = readJson(artifactPath);
+    } catch (error) {
+      checks.push(fail(`Gate F proof artifact is not parseable JSON: ${key}`, {
+        path: artifactPath,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      continue;
+    }
+
+    parsedArtifacts[key] = artifactPath;
+    if (artifact.artifactType !== key) {
+      checks.push(fail(`Gate F proof artifact type mismatch: ${key}`, {
+        path: artifactPath,
+        actual: artifact.artifactType,
+      }));
+    }
+    if (artifact.head !== report.head) {
+      checks.push(fail(`Gate F proof artifact is stale-before-HEAD: ${key}`, {
+        expected: report.head,
+        actual: artifact.head,
+      }));
+    }
+    if (artifact.reportId !== manifest.reportId || artifact.buildId !== manifest.buildId) {
+      checks.push(fail(`Gate F proof artifact is disconnected from manifest identifiers: ${key}`, {
+        path: artifactPath,
+      }));
+    }
+    if (artifact.screenshotSha256 !== manifest.screenshotSha256) {
+      checks.push(fail(`Gate F proof artifact is disconnected from screenshot hash: ${key}`, {
+        path: artifactPath,
+      }));
+    }
+  }
+
+  return {
+    summary: {
+      status: checks.length === 0 ? "parsed" : "failed",
+      path: manifestPath,
+      requiredArtifacts: REQUIRED_PROOF_ARTIFACTS,
+      parsedArtifacts,
+    },
+    checks: checks.length > 0 ? checks : [pass("Gate F proof manifest parsed all linked artifact reports", {
+      path: manifestPath,
+      requiredArtifacts: REQUIRED_PROOF_ARTIFACTS,
+    })],
+  };
 }
 
 const report = {
@@ -540,6 +795,8 @@ const report = {
   designRootSource: designRoot === REPO_DESIGN_WITNESS_ROOT ? "repo-witness-fallback" : "operator-desktop-handoff",
   distRoot,
   iosSourceRoot,
+  reportId,
+  buildId,
   surface_scope: ["served-desktop-dist-ui", "ios-source-selected-design"],
   checks: [],
 };
@@ -554,6 +811,10 @@ try {
   if (buildCheck.ok) {
     report.checks.push(...assertBuiltCss(tokens));
     report.checks.push(...await assertRenderedStructure(tokens));
+    const proofManifestPath = explicitProofManifest ? resolve(explicitProofManifest) : writeGeneratedProofManifest();
+    const proofResult = assertGateFProofManifest(proofManifestPath);
+    report.proofManifest = proofResult.summary;
+    report.checks.push(...proofResult.checks);
   }
 } catch (error) {
   report.checks.push(fail(error instanceof Error ? error.message : String(error)));
