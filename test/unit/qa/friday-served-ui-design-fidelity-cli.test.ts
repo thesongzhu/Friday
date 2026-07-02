@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -157,13 +157,14 @@ function writeBadDist(root: string) {
   return distRoot;
 }
 
-function run(root: string, designRoot: string, distRoot: string, iosRoot: string) {
+function run(root: string, designRoot: string, distRoot: string, iosRoot: string, extraArgs: string[] = []) {
   return spawnSync("node", [
     script,
     `--design-root=${designRoot}`,
     "--skip-build=true",
     `--dist=${distRoot}`,
     `--ios-source=${iosRoot}`,
+    ...extraArgs,
   ], { cwd: process.cwd(), encoding: "utf8" });
 }
 
@@ -176,6 +177,80 @@ describe("check-friday-served-ui-design-fidelity", () => {
       const report = JSON.parse(result.stdout) as { status?: string; failureCount?: number };
       expect(report.status).toBe("pass");
       expect(report.failureCount).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes and parses the Gate F proof manifest with all required linked artifact reports", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-served-ui-proof-"));
+    try {
+      const artifactsRoot = join(root, "proof-artifacts");
+      const result = run(root, writeSelections(root), writeGoodDist(root), writeGoodIos(root), [
+        `--proof-artifacts-root=${artifactsRoot}`,
+      ]);
+      expect(result.status).toBe(0);
+      const report = JSON.parse(result.stdout) as {
+        proofManifest?: {
+          status?: string;
+          path?: string;
+          requiredArtifacts?: string[];
+        };
+      };
+      expect(report.proofManifest?.status).toBe("parsed");
+      expect(report.proofManifest?.requiredArtifacts).toEqual([
+        "screenshotHashes",
+        "computedStyleComparison",
+        "componentInventory",
+        "structureAssertions",
+        "petInteraction",
+        "actionInventory",
+        "actionClosure",
+      ]);
+      expect(report.proofManifest?.path).toBeTruthy();
+      expect(existsSync(report.proofManifest?.path ?? "")).toBe(true);
+      const manifest = JSON.parse(readFileSync(report.proofManifest?.path ?? "", "utf8")) as {
+        artifacts?: Record<string, string>;
+      };
+      for (const key of report.proofManifest?.requiredArtifacts ?? []) {
+        const linkedPath = manifest.artifacts?.[key];
+        expect(linkedPath).toBeTruthy();
+        expect(existsSync(linkedPath ?? "")).toBe(true);
+        expect(() => JSON.parse(readFileSync(linkedPath ?? "", "utf8"))).not.toThrow();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails an explicitly supplied Gate F proof manifest that is stale and disconnected from required artifact reports", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-served-ui-stale-proof-"));
+    try {
+      const staleManifest = writeFile(root, "proof/manifest.json", JSON.stringify({
+        reportId: "stale-proof",
+        head: "old-head",
+        buildId: "stale-build",
+        artifacts: {
+          screenshotHashes: join(root, "proof/missing-screenshot-hashes.json"),
+          computedStyleComparison: join(root, "proof/missing-computed-style.json"),
+          componentInventory: join(root, "proof/missing-component-inventory.json"),
+          structureAssertions: join(root, "proof/missing-structure.json"),
+          petInteraction: join(root, "proof/missing-pet.json"),
+          actionInventory: join(root, "proof/missing-action-inventory.json"),
+          actionClosure: join(root, "proof/missing-action-closure.json"),
+        },
+      }));
+      const result = run(root, writeSelections(root), writeGoodDist(root), writeGoodIos(root), [
+        `--proof-manifest=${staleManifest}`,
+      ]);
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as { checks?: Array<{ ok?: boolean; message?: string }> };
+      const failures = report.checks?.filter((check) => check.ok === false).map((check) => check.message) ?? [];
+      expect(failures).toEqual(expect.arrayContaining([
+        "Gate F proof manifest head is stale-before-HEAD",
+        "Gate F proof artifact is missing: screenshotHashes",
+        "Gate F proof artifact is missing: actionClosure",
+      ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
