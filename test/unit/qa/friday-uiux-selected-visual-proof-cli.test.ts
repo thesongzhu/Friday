@@ -14,6 +14,13 @@ function writeFile(root: string, relative: string, body: string) {
   return target;
 }
 
+function writeBinaryFile(root: string, relative: string, body: Buffer) {
+  const target = join(root, relative);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, body);
+  return target;
+}
+
 function writeSelections(designRoot: string) {
   writeFile(designRoot, "saved/mobile-selection.json", JSON.stringify({
     surface: "mobile",
@@ -64,8 +71,15 @@ function fixture() {
   return { root, designRoot, head };
 }
 
-function sha256(value: string) {
+function sha256(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function tinyPngBytes(label: string) {
+  return Buffer.concat([
+    Buffer.from("89504e470d0a1a0a", "hex"),
+    Buffer.from(`fake-png-${label}\n`),
+  ]);
 }
 
 function writeReadyEvidence(root: string, mode = "live-loopback") {
@@ -84,8 +98,8 @@ function writeReadyEvidence(root: string, mode = "live-loopback") {
     "workflows",
   ];
   const mobileCaptures = mobileDestinations.map((destination) => {
-    const body = `fake-png-${destination}\n`;
-    const screenshot = writeFile(evidence, `${destination}.png`, body);
+    const body = tinyPngBytes(destination);
+    const screenshot = writeBinaryFile(evidence, `${destination}.png`, body);
     return {
       destination,
       status: "captured",
@@ -151,6 +165,44 @@ function writeMobileManifestWithoutCaptureProvenance(root: string) {
       "activity",
       "workflows",
     ].map((destination) => ({ destination, status: "captured", screenshot: `${destination}.png` })),
+  }, null, 2));
+  return evidence;
+}
+
+function writeMobileManifestWithNonPngScreenshots(root: string) {
+  const evidence = writeReadyEvidence(root);
+  const head = fixtureHead(root);
+  const mobileDestinations = [
+    "home",
+    "session",
+    "contextPassport",
+    "tokenLedger",
+    "shareIntake",
+    "voice",
+    "pairing",
+    "providerAuth",
+    "activity",
+    "workflows",
+  ];
+  const captures = mobileDestinations.map((destination) => {
+    const body = `not-png-${destination}\n`;
+    const screenshot = writeFile(evidence, `${destination}.png`, body);
+    return {
+      destination,
+      status: "captured",
+      screenshot,
+      screenshot_sha256: sha256(body),
+    };
+  });
+  writeFile(evidence, "ios-design-destination-capture-manifest.json", JSON.stringify({
+    truth_label: "ios_selected_design_destination_capture_not_live_closure",
+    status: "ready",
+    generated_at_utc: "2026-06-27T00:00:00.000Z",
+    repo_head: head,
+    mode: "live-loopback",
+    bundle_id: "com.friday.shell",
+    simulator_udid: "11111111-2222-3333-4444-555555555555",
+    captures,
   }, null, 2));
   return evidence;
 }
@@ -311,7 +363,7 @@ describe("check-friday-uiux-selected-visual-proof", () => {
   it("rejects iOS visual manifests whose screenshot hashes bind non-PNG bytes", () => {
     const { root, designRoot } = fixture();
     try {
-      const evidence = writeReadyEvidence(root);
+      const evidence = writeMobileManifestWithNonPngScreenshots(root);
       const result = spawnSync("node", [
         script,
         `--repo-root=${root}`,

@@ -113,6 +113,19 @@ function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+function isPngFile(path) {
+  const bytes = readFileSync(path);
+  return bytes.length >= 8
+    && bytes[0] === 0x89
+    && bytes[1] === 0x50
+    && bytes[2] === 0x4e
+    && bytes[3] === 0x47
+    && bytes[4] === 0x0d
+    && bytes[5] === 0x0a
+    && bytes[6] === 0x1a
+    && bytes[7] === 0x0a;
+}
+
 function selection(surface) {
   const path = resolve(designRoot, "saved", `${surface}-selection.json`);
   if (!existsSync(path)) {
@@ -256,6 +269,10 @@ function evaluateIosManifest(path) {
     }
     if (!screenshot || !existsSync(screenshot) || statSync(screenshot).size === 0) {
       captureProvenanceFailures.push({ destination, reason: "screenshot_missing_or_empty", screenshot });
+      continue;
+    }
+    if (!isPngFile(screenshot)) {
+      captureProvenanceFailures.push({ destination, reason: "screenshot_not_png", screenshot });
       continue;
     }
     if (typeof capture.screenshot_sha256 !== "string" || capture.screenshot_sha256 !== sha256File(screenshot)) {
