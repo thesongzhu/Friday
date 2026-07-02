@@ -231,6 +231,12 @@ function assertSessionReadableByPrincipal(
   const scope = sessionReadScopeForPrincipal(principal);
   const sessionAccountId = typeof session.accountId === "string" ? session.accountId.trim() : "";
   const sessionUserId = typeof session.userId === "string" ? session.userId.trim() : "";
+  const isPrivilegedOperatorRead = principal.role === "admin" || principal.role === "operator";
+  const isLegacyUnownedDefaultSession =
+    sessionAccountId === FRIDAY_SESSION_DEFAULT_ACCOUNT_ID && sessionUserId.length === 0;
+  if (isPrivilegedOperatorRead && isLegacyUnownedDefaultSession) {
+    return;
+  }
   const accountMatches = sessionAccountId.length > 0 && sessionAccountId === scope.accountId;
   const userMatches = !scope.userId || (sessionUserId.length > 0 && sessionUserId === scope.userId);
   if (!accountMatches || !userMatches) {

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   FRIDAY_SESSION_ARCHIVE_TIMEOUT_MS,
+  FRIDAY_SESSION_DEFAULT_ACCOUNT_ID,
   FRIDAY_SESSION_DEFAULT_MESSAGE_LIMIT,
   FRIDAY_SESSION_ERROR_CODES,
   FRIDAY_SESSION_FORK_DEFAULT_ARCHIVE_ON_MERGE,
@@ -869,13 +870,18 @@ export function createFridaySessionService(
 
         // Parse the fork key to get channel/chatId parts
         const forkParts = parseFridaySessionKey(forkKey);
+        const childAccountId =
+          forkParts.accountId && forkParts.accountId !== FRIDAY_SESSION_DEFAULT_ACCOUNT_ID
+            ? forkParts.accountId
+            : parent.accountId;
 
         // Create child session
         const childSession = sessionRepo.insert(db, {
           key: forkKey,
           channel: forkParts.channel ?? parent.channel,
           chatId: forkParts.chatId ?? parent.chatId,
-          accountId: forkParts.accountId ?? parent.accountId,
+          accountId: childAccountId,
+          userId: parent.userId,
           chatKind: parent.chatKind,
           metadata: input?.metadata,
           nowIso: now,
