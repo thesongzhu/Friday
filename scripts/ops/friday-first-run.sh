@@ -21,6 +21,18 @@ info() { printf "[friday] %s\n" "$*"; }
 warn() { printf "[friday] warning: %s\n" "$*" >&2; }
 fail() { printf "[friday] error: %s\n" "$*" >&2; exit 1; }
 
+node_recovery_hint() {
+  cat <<'EOF'
+Install Node.js 22+. Then run Friday Setup.command again.
+
+macOS with Homebrew:
+  brew install node@22
+
+Other install options:
+  https://nodejs.org/
+EOF
+}
+
 absolute_install_path() {
   local target="$1"
   local parent
@@ -146,12 +158,12 @@ relocate_for_launchd_if_needed
 info "Preparing Friday from ${REPO_DIR}"
 cd "${REPO_DIR}"
 
-command -v node >/dev/null 2>&1 || fail "Node.js ${MIN_NODE_VERSION}+ is required. Install Node.js, then run this again."
-command -v npm >/dev/null 2>&1 || fail "npm is required. Install Node.js with npm, then run this again."
+command -v node >/dev/null 2>&1 || fail "Node.js ${MIN_NODE_VERSION}+ is required. $(node_recovery_hint)"
+command -v npm >/dev/null 2>&1 || fail "npm is required. Install Node.js ${MIN_NODE_VERSION}+ with npm. $(node_recovery_hint)"
 
 NODE_MAJOR="$(node -v | sed 's/^v//' | cut -d. -f1)"
 if [[ "${NODE_MAJOR}" -lt "${MIN_NODE_VERSION}" ]]; then
-  fail "Node.js ${MIN_NODE_VERSION}+ is required. Found $(node -v)."
+  fail "Node.js ${MIN_NODE_VERSION}+ is required. Found $(node -v). $(node_recovery_hint)"
 fi
 
 info "Installing dependencies"
