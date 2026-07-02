@@ -12,6 +12,7 @@
 //!
 //! ## Operator-approved default windows (the named constants below)
 //!   * `token_ledger`  — 90d  (billing/observability history; keyed on `created_at`).
+//!   * `run_result` — 365d (final answer body store; keyed on `created_at`).
 //!   * `surface_event` — 90d  (timeline observability; keyed on `created_at_ms`).
 //!   * `provider_session_event` — 90d (provider app-server observation firehose; keyed on
 //!     `observed_at`).
@@ -67,6 +68,8 @@ use rusqlite::Transaction;
 
 /// `token_ledger` rows older than 90 days are pruned (keyed on `created_at`).
 pub const TOKEN_LEDGER_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+/// `run_result` rows older than 365 days are pruned (keyed on `created_at`).
+pub const RUN_RESULT_MAX_AGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
 /// `surface_event` rows older than 90 days are pruned (keyed on `created_at_ms`).
 pub const SURFACE_EVENT_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 /// `provider_session_event` rows older than 90 days are pruned (keyed on `observed_at`).
@@ -90,6 +93,7 @@ pub const DEFAULT_BATCH_LIMIT: i64 = 5_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RetentionWindows {
     pub token_ledger_max_age_ms: i64,
+    pub run_result_max_age_ms: i64,
     pub surface_event_max_age_ms: i64,
     pub provider_session_event_max_age_ms: i64,
     pub mission_max_age_ms: i64,
@@ -104,6 +108,7 @@ impl Default for RetentionWindows {
     fn default() -> Self {
         RetentionWindows {
             token_ledger_max_age_ms: TOKEN_LEDGER_MAX_AGE_MS,
+            run_result_max_age_ms: RUN_RESULT_MAX_AGE_MS,
             surface_event_max_age_ms: SURFACE_EVENT_MAX_AGE_MS,
             provider_session_event_max_age_ms: PROVIDER_SESSION_EVENT_MAX_AGE_MS,
             mission_max_age_ms: MISSION_MAX_AGE_MS,
@@ -120,6 +125,7 @@ impl Default for RetentionWindows {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RetentionOutcome {
     pub token_ledger_deleted: usize,
+    pub run_result_deleted: usize,
     pub surface_event_deleted: usize,
     pub provider_session_event_deleted: usize,
     pub mission_deleted: usize,
@@ -133,6 +139,7 @@ impl RetentionOutcome {
     /// Whether this sweep deleted anything (used by the tick to log only on a non-empty sweep).
     pub fn is_empty(&self) -> bool {
         self.token_ledger_deleted == 0
+            && self.run_result_deleted == 0
             && self.surface_event_deleted == 0
             && self.provider_session_event_deleted == 0
             && self.mission_deleted == 0
@@ -177,7 +184,24 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 2. surface_event — pure age on created_at_ms. Leaf (no table references surface_event).
+    // 2. run_result — pure age on created_at. Leaf w.r.t. hard FKs (audit_ref/run_id are soft
+    //    refs), and rows exist only for terminal run outcomes, so no state guard is needed.
+    let run_result_cutoff = now_ms - windows.run_result_max_age_ms;
+    match delete_bounded(
+        conn,
+        "DELETE FROM run_result
+          WHERE rowid IN (
+              SELECT rowid FROM run_result WHERE created_at < ?1
+               ORDER BY created_at LIMIT ?2
+          )",
+        run_result_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.run_result_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 3. surface_event — pure age on created_at_ms. Leaf (no table references surface_event).
     //    Deleted BEFORE work_item/mission so this tick can also free those parents.
     let surface_cutoff = now_ms - windows.surface_event_max_age_ms;
     match delete_bounded(
@@ -194,7 +218,7 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 3. provider_session_event — pure age on observed_at. This is the provider app-server
+    // 4. provider_session_event — pure age on observed_at. This is the provider app-server
     //    observation firehose (metadata/delta receipts), not the token ledger. It is a leaf w.r.t.
     //    Friday's core mission/work_item FKs, so a bounded age sweep cannot orphan mission state.
     let provider_session_cutoff = now_ms - windows.provider_session_event_max_age_ms;
@@ -212,7 +236,7 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 4. memory_item — rejected/expired CANDIDATES only, by created_at. CONFIRMED is excluded by
+    // 5. memory_item — rejected/expired CANDIDATES only, by created_at. CONFIRMED is excluded by
     //    state, so durable memory is NEVER deleted regardless of age. Leaf (no FK refs into it).
     let memory_cutoff = now_ms - windows.memory_candidate_max_age_ms;
     match delete_bounded(
@@ -231,7 +255,7 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 5. work_item — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child
+    // 6. work_item — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child
     //    in any table that RESTRICT-references work_item). A non-terminal work_item can never
     //    match the status set. Deleted BEFORE mission so an aged-out work_item frees its mission.
     let work_item_cutoff = now_ms - windows.work_item_max_age_ms;
@@ -258,7 +282,7 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 6. mission — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child in
+    // 7. mission — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child in
     //    ANY table that RESTRICT-references mission). A non-terminal (active/waiting/blocked/
     //    paused) mission can never match the status set.
     let mission_cutoff = now_ms - windows.mission_max_age_ms;
@@ -300,6 +324,7 @@ pub fn sweep_retention(
     // txn to join), and it must NEVER break the fail-safe contract (this fn never returns Err) — so
     // a receipt-write failure is SWALLOWED here, exactly as the session reaper swallows its own.
     let deleted = out.token_ledger_deleted
+        + out.run_result_deleted
         + out.surface_event_deleted
         + out.provider_session_event_deleted
         + out.memory_item_deleted
@@ -307,8 +332,9 @@ pub fn sweep_retention(
         + out.mission_deleted;
     if deleted > 0 {
         let summary = format!(
-            "retention.sweep:token_ledger={} surface_event={} provider_session_event={} memory_item={} work_item={} mission={} errors={}",
+            "retention.sweep:token_ledger={} run_result={} surface_event={} provider_session_event={} memory_item={} work_item={} mission={} errors={}",
             out.token_ledger_deleted,
+            out.run_result_deleted,
             out.surface_event_deleted,
             out.provider_session_event_deleted,
             out.memory_item_deleted,
@@ -405,8 +431,8 @@ fn delete_bounded(conn: &Connection, sql: &str, cutoff: i64, limit: i64) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{persist_run_result, RunResult};
     use crate::Db;
+    use crate::{persist_run_result, RunResult};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static C: AtomicU64 = AtomicU64::new(0);
@@ -588,25 +614,70 @@ mod tests {
         .unwrap();
         persist_run_result(
             db.conn(),
+            "rr_boundary",
+            &RunResult::new("finished", "boundary answer", None),
+            now - RUN_RESULT_MAX_AGE_MS,
+        )
+        .unwrap();
+        persist_run_result(
+            db.conn(),
             "rr_recent",
             &RunResult::new("finished", "recent answer", None),
             now - 1,
         )
         .unwrap();
-        assert_eq!(count(&db, "run_result"), 2);
+        assert_eq!(count(&db, "run_result"), 3);
 
         let out = sweep_retention(db.conn(), now, RetentionWindows::default());
         assert_eq!(out.table_errors, 0);
+        assert_eq!(out.run_result_deleted, 1);
 
         assert!(
             !exists(&db, "run_result", "run_id", "rr_old"),
             "aged run_result.answer rows should be pruned by retention"
         );
         assert!(
+            exists(&db, "run_result", "run_id", "rr_boundary"),
+            "strict age boundary is '< cutoff', so exact-boundary rows remain"
+        );
+        assert!(
             exists(&db, "run_result", "run_id", "rr_recent"),
             "recent run_result rows must remain available"
         );
+        assert_eq!(count(&db, "run_result"), 2);
+    }
+
+    #[test]
+    fn run_result_retention_respects_batch_limit() {
+        let db = Db::open_hub(&tmp("run-result-batch")).unwrap();
+        let now = 2_000 * 24 * 60 * 60 * 1000_i64;
+        let windows = RetentionWindows {
+            batch_limit: 2,
+            ..RetentionWindows::default()
+        };
+
+        for idx in 0..5 {
+            persist_run_result(
+                db.conn(),
+                &format!("rr_old_{idx}"),
+                &RunResult::new("finished", format!("old answer {idx}"), None),
+                idx + 1,
+            )
+            .unwrap();
+        }
+        assert_eq!(count(&db, "run_result"), 5);
+
+        let first = sweep_retention(db.conn(), now, windows);
+        assert_eq!(first.run_result_deleted, 2);
+        assert_eq!(count(&db, "run_result"), 3);
+
+        let second = sweep_retention(db.conn(), now, windows);
+        assert_eq!(second.run_result_deleted, 2);
         assert_eq!(count(&db, "run_result"), 1);
+
+        let third = sweep_retention(db.conn(), now, windows);
+        assert_eq!(third.run_result_deleted, 1);
+        assert_eq!(count(&db, "run_result"), 0);
     }
 
     // --- the consolidated e2e: ON prunes ONLY old-terminal; everything else survives ---
@@ -622,6 +693,22 @@ mod tests {
         // token_ledger: one OLD (prune) + one RECENT (keep).
         seed_token_ledger(&db, "tl_old", now - TOKEN_LEDGER_MAX_AGE_MS - 1);
         seed_token_ledger(&db, "tl_recent", now - 1);
+
+        // run_result: final answer body store; old terminal run answer pruned, recent kept.
+        persist_run_result(
+            db.conn(),
+            "rr_old",
+            &RunResult::new("finished", "OLD-PII-BODY", None),
+            now - RUN_RESULT_MAX_AGE_MS - 1,
+        )
+        .unwrap();
+        persist_run_result(
+            db.conn(),
+            "rr_recent",
+            &RunResult::new("finished", "recent answer", None),
+            now - 1,
+        )
+        .unwrap();
 
         // memory: confirmed-old (KEEP forever) + rejected-old (prune) + candidate-recent (keep).
         seed_memory(
@@ -735,6 +822,11 @@ mod tests {
         assert!(!exists(&db, "token_ledger", "ledger_id", "tl_old"));
         assert!(exists(&db, "token_ledger", "ledger_id", "tl_recent"));
 
+        // run_result: old answer body gone; recent answer survives.
+        assert_eq!(out.run_result_deleted, 1);
+        assert!(!exists(&db, "run_result", "run_id", "rr_old"));
+        assert!(exists(&db, "run_result", "run_id", "rr_recent"));
+
         // memory: rejected-old gone; confirmed + recent candidate survive.
         assert_eq!(out.memory_item_deleted, 1);
         assert!(!exists(&db, "memory_item", "memory_id", "mem_rejected_old"));
@@ -832,7 +924,7 @@ mod tests {
         assert_eq!(tick_kind, "retention.sweep");
         assert_eq!(
             summary,
-            "retention.sweep:token_ledger=1 surface_event=1 provider_session_event=1 memory_item=1 work_item=1 mission=2 errors=0",
+            "retention.sweep:token_ledger=1 run_result=1 surface_event=1 provider_session_event=1 memory_item=1 work_item=1 mission=2 errors=0",
             "summary records the real per-table counts + the concurrent error count"
         );
     }
