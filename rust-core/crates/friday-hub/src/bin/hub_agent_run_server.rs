@@ -383,7 +383,7 @@ fn run() -> Result<(), ServerError> {
     let listener = AgentRunWsListener::bind_loopback(port).map_err(|_| ServerError::Bind)?;
     let addr = listener.local_addr().map_err(|_| ServerError::Bind)?;
     eprintln!(
-        "hub_agent_run_server: listening (loopback-only) on {addr} — DARK (S-C: authed dispatch arm, no production caller)"
+        "hub_agent_run_server: listening (loopback-only) on {addr} — S-C authed dispatch arm active"
     );
 
     // (2b) Rust-owned session-lifecycle REAPER tick (DARK, DEFAULT-OFF). Spawn a background
