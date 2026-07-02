@@ -13,7 +13,7 @@ function writeFile(root: string, relative: string, body: string) {
   return target;
 }
 
-function writeSelections(root: string, options: { referenceHtml?: boolean } = {}) {
+function writeSelections(root: string, options: { referenceHtml?: boolean; petInteractive?: boolean } = {}) {
   const designRoot = join(root, "design");
   writeFile(designRoot, "saved/desktop-selection.json", JSON.stringify({
     operatorConfirmed: true,
@@ -55,7 +55,10 @@ function writeSelections(root: string, options: { referenceHtml?: boolean } = {}
         <span data-friday-ui="filter">All</span>
       </main>
     `);
-    writeFile(designRoot, "html/pet-anim-v9-reference.html", `
+    writeFile(designRoot, "html/pet-anim-v9-reference.html", options.petInteractive === false ? `
+      <canvas id="pet-canvas" width="96" height="96"></canvas>
+      <button data-pet-action="wag">Wag</button>
+    ` : `
       <canvas id="pet-canvas" width="96" height="96"></canvas>
       <button data-pet-action="wag">Wag</button>
       <script>
@@ -207,6 +210,13 @@ describe("check-friday-served-ui-design-fidelity", () => {
         "petInteractionReport",
         "actionInventoryContractReport",
       ]);
+      const petReport = (report as {
+        referenceOracle?: {
+          petInteractionReport?: Record<string, { changed?: boolean; canvasNonBlank?: boolean }>;
+        };
+      }).referenceOracle?.petInteractionReport?.["pet-anim-v9-reference.html"];
+      expect(petReport?.changed).toBe(true);
+      expect(petReport?.canvasNonBlank).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -222,6 +232,23 @@ describe("check-friday-served-ui-design-fidelity", () => {
       expect(failures).toEqual(expect.arrayContaining([
         "Gate A selected reference HTML is missing: desktop-gallery.html",
         "Gate A selected reference HTML is missing: pet-anim-v9-reference.html",
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails Gate C2 when the selected pet v9 reference is static or blank", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-c2-static-pet-"));
+    try {
+      const result = run(root, writeSelections(root, { petInteractive: false }), writeGoodDist(root), writeGoodIos(root));
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as { checks?: Array<{ ok?: boolean; message?: string }> };
+      const failures = report.checks?.filter((check) => check.ok === false).map((check) => check.message) ?? [];
+      expect(failures).toEqual(expect.arrayContaining([
+        "Gate C2 pet reference canvas is blank",
+        "Gate C2 pet reference interaction hook is missing",
+        "Gate C2 pet reference frame did not change after interaction",
       ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
