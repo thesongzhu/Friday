@@ -181,15 +181,31 @@ function methodName(name) {
 
 function extractSealedWsMessages() {
   const protocol = readText(join(repoRoot, "rust-core/crates/friday-protocol/src/lib.rs"));
-  const enumMatch = protocol.match(/pub\s+enum\s+Message\s*\{([\s\S]*?)\n\s*\}/);
-  if (!enumMatch) return [];
+  const enumBody = extractRustEnumBody(protocol, "Message");
+  if (!enumBody) return [];
   const variants = [];
-  for (const line of enumMatch[1].split("\n")) {
+  for (const line of enumBody.split("\n")) {
     const trimmed = line.trim();
     const match = trimmed.match(/^([A-Z][A-Za-z0-9_]+)\b/);
     if (match) variants.push(match[1]);
   }
   return unique(variants);
+}
+
+function extractRustEnumBody(source, enumName) {
+  const startMatch = new RegExp(`pub\\s+enum\\s+${enumName}\\s*\\{`).exec(source);
+  if (!startMatch) return "";
+  const bodyStart = startMatch.index + startMatch[0].length;
+  let depth = 1;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(bodyStart, index);
+    }
+  }
+  return "";
 }
 
 function buildSurfaceControls(sources) {
