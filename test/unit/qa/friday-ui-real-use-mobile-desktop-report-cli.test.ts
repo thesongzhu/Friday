@@ -180,4 +180,25 @@ describe("Friday UI real-use mobile/desktop report", () => {
       }),
     ]));
   });
+
+  it("blocks capture summaries whose event file does not contain same-mission UI events", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-event-evidence-"));
+    const value = summary(dir);
+    writeFileSync(value.captures.mobile.events, `${JSON.stringify({
+      surface: "mobile",
+      mission_id: "mission_other",
+      evidence_ref: value.captures.mobile.proof,
+    })}\n`);
+    const summaryPath = writeJson(dir, "summary.json", value);
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "mobile_real_surface_capture",
+        detail: expect.stringContaining("event_rows_missing"),
+      }),
+    ]));
+  });
 });
