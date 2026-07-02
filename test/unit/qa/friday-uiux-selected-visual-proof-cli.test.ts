@@ -112,6 +112,31 @@ function writeReadyEvidence(root: string, mode = "live-loopback") {
   return evidence;
 }
 
+function writeMobileManifestWithoutCaptureProvenance(root: string) {
+  const evidence = writeReadyEvidence(root);
+  const head = fixtureHead(root);
+  writeFile(evidence, "ios-design-destination-capture-manifest.json", JSON.stringify({
+    truth_label: "ios_selected_design_destination_capture_not_live_closure",
+    status: "ready",
+    generated_at_utc: "2026-06-27T00:00:00.000Z",
+    repo_head: head,
+    mode: "live-loopback",
+    captures: [
+      "home",
+      "session",
+      "contextPassport",
+      "tokenLedger",
+      "shareIntake",
+      "voice",
+      "pairing",
+      "providerAuth",
+      "activity",
+      "workflows",
+    ].map((destination) => ({ destination, status: "captured", screenshot: `${destination}.png` })),
+  }, null, 2));
+  return evidence;
+}
+
 function writeDesktopCapture(root: string, relative: string, screens: string[], mission = "mission_selected_visual_fixture") {
   const evidence = join(root, relative);
   const head = fixtureHead(root);
@@ -233,6 +258,33 @@ describe("check-friday-uiux-selected-visual-proof", () => {
         expect.objectContaining({ code: "mobile_selected_visual_proof_missing" }),
       ]));
       expect(report.evidence?.ios?.[0]?.modeStatus).toBe("design_sample_not_product_visual_proof");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects iOS visual manifests without bundle, simulator, and screenshot provenance", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeMobileManifestWithoutCaptureProvenance(root);
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        status?: string;
+        evidence?: { ios?: Array<{ captureStatus?: string }> };
+        blockers?: Array<{ code?: string }>;
+      };
+      expect(report.status).toBe("selected_visual_proof_gaps_present");
+      expect(report.evidence?.ios?.[0]?.captureStatus).toBe("missing_capture_provenance");
+      expect(report.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "mobile_selected_visual_proof_missing" }),
+      ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
