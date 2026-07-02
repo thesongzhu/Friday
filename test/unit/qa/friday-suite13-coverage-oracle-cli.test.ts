@@ -176,4 +176,47 @@ describe("Friday Suite-13 coverage oracle", () => {
       expect.objectContaining({ code: "invalid_orphan_reason" }),
     ]));
   });
+
+  it("blocks string-shaped test-oracle posture on exercised-green cells", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-suite13-oracle-"));
+    const censusPath = writeJson(dir, "census.json", census());
+    const ledgerPath = writeJson(dir, "ledger.json", ledger({
+      rows: [
+        {
+          cellId: "desktop-web|smart_queue|/home:retry|success",
+          status: "exercised-green",
+          assertionCount: 1,
+          testOracle: "true",
+          hubPosture: "production-fail-closed",
+          evidenceRef: "evidence/s13/desktop-smart-queue-green.json",
+        },
+        {
+          cellId: "sealed-ws|smart_watch|AskFridayRequest|permission-denied-fail-closed-503",
+          status: "exercised-green",
+          assertionCount: 1,
+          testOracle: false,
+          hubPosture: "test-oracle",
+          evidenceRef: "evidence/s13/sealed-ws-smart-watch-green.json",
+        },
+      ],
+    }));
+
+    const report = run([
+      `--census=${censusPath}`,
+      `--coverage-ledger=${ledgerPath}`,
+      "--require-passed",
+    ], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "green_cell_mock_or_test_oracle",
+        detail: "desktop-web|smart_queue|/home:retry|success",
+      }),
+      expect.objectContaining({
+        code: "green_cell_mock_or_test_oracle",
+        detail: "sealed-ws|smart_watch|AskFridayRequest|permission-denied-fail-closed-503",
+      }),
+    ]));
+  });
 });
