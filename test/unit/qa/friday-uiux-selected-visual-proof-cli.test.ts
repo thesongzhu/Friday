@@ -308,6 +308,31 @@ describe("check-friday-uiux-selected-visual-proof", () => {
     }
   });
 
+  it("rejects iOS visual manifests whose screenshot hashes bind non-PNG bytes", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeReadyEvidence(root);
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        status?: string;
+        evidence?: { ios?: Array<{ captureProvenanceFailures?: Array<{ reason?: string }> }> };
+      };
+      expect(report.status).toBe("selected_visual_proof_gaps_present");
+      expect(report.evidence?.ios?.[0]?.captureProvenanceFailures).toEqual(expect.arrayContaining([
+        expect.objectContaining({ reason: "screenshot_not_png" }),
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("passes when selected desktop visual evidence comes from current served ui fidelity", () => {
     const { root, designRoot } = fixture();
     try {
