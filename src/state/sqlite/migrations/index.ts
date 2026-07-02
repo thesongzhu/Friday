@@ -97,6 +97,7 @@ import { V095_SKILL_RUNS_REHOME_MIGRATION } from "./v095-skill-runs-rehome.js";
 import { V096_SKILL_GENERATOR_REHOME_MIGRATION } from "./v096-skill-generator-rehome.js";
 import { V097_WORKFLOW_GENERATOR_REHOME_MIGRATION } from "./v097-workflow-generator-rehome.js";
 import { V098_TEMPLATE_HARNESS_REHOME_MIGRATION } from "./v098-template-harness-rehome.js";
+import { V099_AGENT_RUN_ORGANIC_PROVENANCE_MIGRATION } from "./v099-agent-run-organic-provenance.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -200,6 +201,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V096_SKILL_GENERATOR_REHOME_MIGRATION,
   V097_WORKFLOW_GENERATOR_REHOME_MIGRATION,
   V098_TEMPLATE_HARNESS_REHOME_MIGRATION,
+  V099_AGENT_RUN_ORGANIC_PROVENANCE_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };
@@ -296,3 +298,4 @@ export { V095_SKILL_RUNS_REHOME_MIGRATION };
 export { V096_SKILL_GENERATOR_REHOME_MIGRATION };
 export { V097_WORKFLOW_GENERATOR_REHOME_MIGRATION };
 export { V098_TEMPLATE_HARNESS_REHOME_MIGRATION };
+export { V099_AGENT_RUN_ORGANIC_PROVENANCE_MIGRATION };

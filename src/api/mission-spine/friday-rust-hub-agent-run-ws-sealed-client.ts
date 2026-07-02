@@ -476,6 +476,23 @@ export interface FridayRustHubAgentRunRejectRequest {
 // matching Result; ANY other inbound (including the server's `Error` envelope) is
 // a typed fail-closed (503), never a partial.
 
+/**
+ * NEW-2 organic provenance: a signed operator attestation that marks a Codex organic spawn.
+ * This is TS-side provenance only; it is intentionally not forwarded on the Rust mission-intake
+ * wire. The Rust result still produces the mission/work-item handle, while the TS auto-dispatch
+ * driver stamps this verified provenance onto the agent-run row it starts.
+ */
+export interface FridayOrganicRunProvenance {
+  readonly organic: true;
+  readonly principal: string;
+  readonly source: "operator_signature";
+  readonly attestationRef: string;
+  readonly publicKeyId?: string;
+  readonly taskSha256: string;
+  readonly issuedAt: string;
+  readonly route: string;
+}
+
 /** (Lane B) A Mission intake/preflight request — `MissionIntakeRequestWire`. */
 export interface FridayRustHubMissionIntakeRequest {
   readonly fridayConversationId: string;
@@ -494,6 +511,7 @@ export interface FridayRustHubMissionIntakeRequest {
   readonly bodyRef?: string;
   readonly proofRequirements?: readonly string[];
   readonly includesSensitiveContext?: boolean;
+  readonly organicProvenance?: FridayOrganicRunProvenance;
 }
 
 /** (Lane B) Refs-only Mission intake result — `MissionIntakeResultWire`. */

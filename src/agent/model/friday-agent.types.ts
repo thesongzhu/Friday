@@ -222,6 +222,11 @@ export interface FridayAgentRunRecord {
   taskProfile?: FridayResolvedAgentTaskProfile;
   /** Machine-readable run metadata for UI/session affinity and future attribution. */
   metadata?: FridayAgentRunMetadata;
+  /** True only for runs stamped from verified operator-signature organic provenance. */
+  organic?: boolean;
+  organicPrincipal?: string;
+  organicSource?: "operator_signature" | string;
+  organicAttestationRef?: string;
   /** Derived UI health classification for a run. */
   health?: FridayAgentRunHealthSnapshot;
   /** Derived context summary for UI explanation layers. */
@@ -248,6 +253,15 @@ export interface FridayAgentRunMetadata {
   surface?: string;
   packContext?: FridayAgentPackContextMetadata;
   apiRequest?: FridayAgentApiRequestMetadata;
+  organicProvenance?: {
+    principal: string;
+    source: "operator_signature" | string;
+    attestationRef: string;
+    publicKeyId?: string;
+    taskSha256: string;
+    issuedAt: string;
+    route: string;
+  };
   executionBoundary?: {
     disabledToolNames?: string[];
   };

@@ -10,6 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 readonly PROOF_SCRIPT="${SCRIPT_DIR}/friday-codex-mission-proof-of-life.sh"
+readonly ATTESTATION_VERIFY_SCRIPT="${SCRIPT_DIR}/friday-operator-organic-attestation-verify.mjs"
 
 if [ ! -x "${PROOF_SCRIPT}" ]; then
   echo "FATAL: Codex mission launcher backend is not executable: ${PROOF_SCRIPT}" >&2
@@ -26,12 +27,25 @@ if [ -z "${TASK_TEXT}" ]; then
   exit 3
 fi
 
-readonly REQUIRED_OPERATOR_ORIGIN_ACK="operator-physical-hand-starts-og9-organic-run"
-if [ "${FRIDAY_OG9_OPERATOR_ORIGIN_ACK:-}" != "${REQUIRED_OPERATOR_ORIGIN_ACK}" ]; then
-  echo "FATAL: strict OG9 organic launch requires FRIDAY_OG9_OPERATOR_ORIGIN_ACK=${REQUIRED_OPERATOR_ORIGIN_ACK}." >&2
-  echo "This must be set by the operator at launch time; agent automation must use proof/soak wrappers instead." >&2
+if [ ! -f "${ATTESTATION_VERIFY_SCRIPT}" ]; then
+  echo "FATAL: Codex organic attestation verifier is missing: ${ATTESTATION_VERIFY_SCRIPT}" >&2
+  exit 3
+fi
+
+if [ -z "${FRIDAY_CODEX_ORGANIC_ATTESTATION:-}" ] || [ -z "${FRIDAY_CODEX_ORGANIC_ATTESTATION_VERIFY_KEY:-}" ]; then
+  echo "FATAL: strict Codex organic launch requires FRIDAY_CODEX_ORGANIC_ATTESTATION and FRIDAY_CODEX_ORGANIC_ATTESTATION_VERIFY_KEY." >&2
+  echo "These must point to an operator signature attestation and its verify key; env acknowledgements do not mark organic." >&2
   exit 4
 fi
+
+TASK_SHA256="$(printf '%s' "${TASK_TEXT}" | shasum -a 256 | awk '{print tolower($1)}')"
+ORGANIC_PROVENANCE_JSON="$(
+  node "${ATTESTATION_VERIFY_SCRIPT}" \
+    --attestation "${FRIDAY_CODEX_ORGANIC_ATTESTATION}" \
+    --public-key "${FRIDAY_CODEX_ORGANIC_ATTESTATION_VERIFY_KEY}" \
+    --route "ops://codex-organic-spawn" \
+    --task-sha256 "${TASK_SHA256}"
+)"
 
 ORGANIC_BODY_REF_ID="$(node -e 'process.stdout.write((globalThis.crypto?.randomUUID?.() ?? (`id-${Date.now()}-${Math.random().toString(16).slice(2)}`)).toLowerCase())')"
 
@@ -42,5 +56,6 @@ export FRIDAY_CODEX_MISSION_PROOF_TITLE="${FRIDAY_CODEX_ORGANIC_TITLE:-Codex org
 export FRIDAY_CODEX_MISSION_PROOF_INTENT="${TASK_TEXT}"
 export FRIDAY_CODEX_MISSION_PROOF_CAPABILITY_ID="observe-wrapper.codex.organic"
 export FRIDAY_CODEX_MISSION_PROOF_BODY_REF="${FRIDAY_CODEX_MISSION_PROOF_BODY_REF:-friday://body/ops/codex-organic-spawn/${ORGANIC_BODY_REF_ID}}"
+export FRIDAY_CODEX_MISSION_PROOF_ORGANIC_PROVENANCE="${ORGANIC_PROVENANCE_JSON}"
 
 exec "${PROOF_SCRIPT}"

@@ -611,6 +611,7 @@ INTAKE_BODY="$(jq -nc \
   --arg intent "${MISSION_INTENT}" \
   --arg capability "${CAPABILITY_ID}" \
   --arg bodyRef "${BODY_REF}" \
+  --argjson organicProvenance "${FRIDAY_CODEX_MISSION_PROOF_ORGANIC_PROVENANCE:-null}" \
   '{
     fridayConversationId: $conv,
     ownerPrincipal: $owner,
@@ -627,7 +628,7 @@ INTAKE_BODY="$(jq -nc \
     capabilityId: $capability,
     bodyRef: $bodyRef,
     includesSensitiveContext: false
-  }')"
+  } + (if $organicProvenance == null then {} else {organicProvenance: $organicProvenance} end)')"
 
 echo "Step 2: POST /v1/mission-spine/intake (Codex target)..."
 INTAKE_RAW="$(

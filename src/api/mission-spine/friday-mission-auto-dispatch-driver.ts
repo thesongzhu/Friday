@@ -1,3 +1,7 @@
+import { verify, createPublicKey, createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import {
   RUST_ROUTE_CLAUDE_PROVIDER_ID,
   RUST_ROUTE_CODEX_MISSION_DISPATCH_TIMEOUT_MS,
@@ -8,6 +12,7 @@ import type {
   FridayRustHubAgentRunMissionContext,
   FridayRustHubMissionIntakeRequest,
   FridayRustHubMissionIntakeResult,
+  FridayOrganicRunProvenance,
 } from "./friday-rust-hub-agent-run-ws-sealed-client.js";
 
 /**
@@ -62,6 +67,7 @@ export type MissionAutoDispatchStartRun = (input: {
   constraints?: { readOnly?: boolean };
   allowedRustRouteTools?: string[];
   missionContext?: FridayRustHubAgentRunMissionContext;
+  organicProvenance?: FridayOrganicRunProvenance;
   timeoutMs?: number;
 }) => Promise<unknown>;
 
@@ -96,6 +102,10 @@ export interface CreateFridayMissionAutoDispatchDriverOptions {
    * Defaults to a silent swallow — the bound seam is the observability surface, not this driver.
    */
   readonly onDispatchError?: (error: unknown) => void;
+  readonly verifyOrganicProvenance?: (input: {
+    request: FridayRustHubMissionIntakeRequest;
+    provenance: FridayOrganicRunProvenance;
+  }) => boolean;
 }
 
 export interface FridayMissionAutoDispatchDriver {
@@ -162,6 +172,100 @@ function isClaudeMissionTarget(
     selectedTargetProviderOrAgent(request, result) === RUST_ROUTE_CLAUDE_PROVIDER_ID;
 }
 
+function isCodexOrganicSpawn(request: FridayRustHubMissionIntakeRequest): boolean {
+  return request.deliveryRoute.trim() === "ops://codex-organic-spawn";
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",")}}`;
+}
+
+function attestationPathFromRef(attestationRef: string): string | null {
+  try {
+    return fileURLToPath(attestationRef);
+  } catch {
+    return null;
+  }
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function verifyOperatorSignatureProvenanceFromAttestationRef(input: {
+  request: FridayRustHubMissionIntakeRequest;
+  provenance: FridayOrganicRunProvenance;
+}): boolean {
+  const verifyKeyPath = process.env.FRIDAY_CODEX_ORGANIC_ATTESTATION_VERIFY_KEY;
+  if (!verifyKeyPath || verifyKeyPath.trim().length === 0) return false;
+  const attestationPath = attestationPathFromRef(input.provenance.attestationRef);
+  if (!attestationPath) return false;
+  try {
+    const attestation = JSON.parse(readFileSync(attestationPath, "utf8")) as Record<string, unknown>;
+    const signedPayload = {
+      issuedAt: attestation.issuedAt,
+      principal: attestation.principal,
+      publicKeyId: attestation.publicKeyId,
+      route: attestation.route,
+      schema: attestation.schema,
+      source: attestation.source,
+      taskSha256: attestation.taskSha256,
+    };
+    if (signedPayload.schema !== "friday.operator_organic_attestation.v1") return false;
+    if (signedPayload.source !== "operator_signature") return false;
+    if (signedPayload.route !== input.request.deliveryRoute.trim()) return false;
+    const operatorTask = typeof input.request.intent === "string" ? input.request.intent.trim() : "";
+    if (operatorTask.length === 0) return false;
+    if (signedPayload.taskSha256 !== sha256Hex(operatorTask)) return false;
+    if (signedPayload.taskSha256 !== input.provenance.taskSha256.toLowerCase()) return false;
+    if (signedPayload.principal !== input.provenance.principal) return false;
+    if (signedPayload.publicKeyId !== input.provenance.publicKeyId) return false;
+    if (signedPayload.issuedAt !== input.provenance.issuedAt) return false;
+    if (typeof attestation.signature !== "string") return false;
+    const publicKey = createPublicKey(readFileSync(verifyKeyPath, "utf8"));
+    if (publicKey.asymmetricKeyType !== "ed25519") return false;
+    return verify(
+      null,
+      Buffer.from(stableStringify(signedPayload), "utf8"),
+      publicKey,
+      Buffer.from(attestation.signature, "base64"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function validOperatorSignatureProvenance(
+  request: FridayRustHubMissionIntakeRequest,
+  verifyProvenance: (input: {
+    request: FridayRustHubMissionIntakeRequest;
+    provenance: FridayOrganicRunProvenance;
+  }) => boolean,
+): FridayOrganicRunProvenance | null {
+  const provenance = request.organicProvenance;
+  if (!provenance) return null;
+  if (provenance.organic !== true) return null;
+  if (provenance.source !== "operator_signature") return null;
+  if (provenance.route !== request.deliveryRoute.trim()) return null;
+  if (provenance.principal.trim().length === 0) return null;
+  if (provenance.attestationRef.trim().length === 0) return null;
+  if (!/^[a-f0-9]{64}$/i.test(provenance.taskSha256)) return null;
+  const normalized = {
+    ...provenance,
+    principal: provenance.principal.trim(),
+    attestationRef: provenance.attestationRef.trim(),
+    taskSha256: provenance.taskSha256.toLowerCase(),
+    route: provenance.route.trim(),
+  };
+  return verifyProvenance({ request, provenance: normalized }) ? normalized : null;
+}
+
 export function createFridayMissionAutoDispatchDriver(
   options: CreateFridayMissionAutoDispatchDriverOptions,
 ): FridayMissionAutoDispatchDriver {
@@ -174,6 +278,7 @@ export function createFridayMissionAutoDispatchDriver(
     claudeProviderId,
     claudeModel,
     onDispatchError,
+    verifyOrganicProvenance = verifyOperatorSignatureProvenanceFromAttestationRef,
   } = options;
 
   return {
@@ -216,6 +321,15 @@ export function createFridayMissionAutoDispatchDriver(
             : undefined;
         const codexMissionTarget = isCodexMissionTarget(request, result);
         const claudeMissionTarget = isClaudeMissionTarget(request, result);
+        const organicProvenance = isCodexOrganicSpawn(request)
+          ? validOperatorSignatureProvenance(request, verifyOrganicProvenance)
+          : null;
+        if (isCodexOrganicSpawn(request) && !organicProvenance) {
+          onDispatchError?.(
+            new Error("Codex organic spawn requires verified operator_signature provenance."),
+          );
+          return;
+        }
         const route = codexMissionTarget
           ? { providerId: codexProviderId, model: codexModel }
           : claudeMissionTarget
@@ -236,6 +350,7 @@ export function createFridayMissionAutoDispatchDriver(
           constraints: { readOnly: true },
           allowedRustRouteTools: [...RUST_ROUTE_READ_TOOL_ALLOWLIST],
           missionContext,
+          ...(organicProvenance ? { organicProvenance } : {}),
           ...(codexMissionTarget
             ? { timeoutMs: RUST_ROUTE_CODEX_MISSION_DISPATCH_TIMEOUT_MS }
             : {}),

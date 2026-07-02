@@ -244,6 +244,7 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         codexModel: CODEX_MODEL,
         claudeProviderId: CLAUDE_PROVIDER,
         claudeModel: CLAUDE_MODEL,
+        verifyOrganicProvenance: () => true,
       });
 
       driver.onIntakeReady(
