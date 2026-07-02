@@ -103,4 +103,32 @@ describe("Friday Suite-13 census builder", () => {
       expect.objectContaining({ code: "sealed_ws_messages_missing" }),
     ]));
   });
+
+  it("parses multiline sealed-WS Message variants without truncating at the first struct variant", () => {
+    const repoRoot = makeRepo();
+    writeFile(join(repoRoot, "rust-core/crates/friday-protocol/src/lib.rs"), `
+      pub enum Message {
+        AskFridayRequest {
+          prompt: String,
+        },
+        AgentRunResult {
+          run_id: String,
+        },
+        HubStatus,
+      }
+    `);
+
+    const out = join(repoRoot, "out/multiline-census.json");
+    const census = run([
+      `--repo-root=${repoRoot}`,
+      `--out=${out}`,
+      "--require-nonempty",
+    ]);
+
+    expect(census.sources.B.sealedWsMessages).toEqual(expect.arrayContaining([
+      "AskFridayRequest",
+      "AgentRunResult",
+      "HubStatus",
+    ]));
+  });
 });
