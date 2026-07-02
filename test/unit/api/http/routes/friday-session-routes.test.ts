@@ -57,7 +57,7 @@ function makeMockCtx(overrides: Record<string, unknown> = {}): Record<string, un
   };
 }
 
-function makeBoundPrincipal(): Record<string, unknown> {
+function makeBoundPrincipal(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     principalType: "user",
     principalId: "user:bound-1",
@@ -68,6 +68,7 @@ function makeBoundPrincipal(): Record<string, unknown> {
     tokenId: "00000000-0000-0000-0000-000000000103",
     tokenKind: "access",
     issuedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -172,6 +173,39 @@ describe("FridaySessionRoutes", () => {
         status: "active",
         limit: 10,
         cursor: "2026-01-01T00:00:00.000Z",
+      });
+    });
+
+    it("NEW-30 red: binds list scope to the authenticated principal instead of caller-supplied filters", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.listSessions).mockResolvedValue([]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const listRoute = routes.find((r) => r.operationId === "sessions.list")!;
+
+      await listRoute.handler(
+        makeMockCtx({
+          query: {
+            accountId: "tenant-victim",
+            userId: "user-victim",
+            channel: "discord",
+          },
+          principal: makeBoundPrincipal({
+            tenantId: "tenant-attacker",
+            userId: "user-attacker",
+            scopes: ["session.read"],
+            role: "viewer",
+          }),
+        }) as never,
+      );
+
+      expect(svc.listSessions).toHaveBeenCalledWith({
+        channel: "discord",
+        accountId: "tenant-attacker",
+        userId: "user-attacker",
+        status: undefined,
+        limit: undefined,
+        cursor: undefined,
       });
     });
 
@@ -323,6 +357,32 @@ describe("FridaySessionRoutes", () => {
       );
 
       expect(result).toHaveProperty("session", mockSession);
+    });
+
+    it("NEW-30 red: rejects get for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const getRoute = routes.find((r) => r.operationId === "sessions.get")!;
+
+      await expectRouteError(
+        getRoute.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:default:victim" },
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
     });
 
     it("throws FridayDomainError on malformed URL-encoded key", async () => {
@@ -680,6 +740,70 @@ describe("FridaySessionRoutes", () => {
       );
 
       expect(result).toHaveProperty("items");
+    });
+
+    it("NEW-30 red: rejects messages list for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+      vi.mocked(svc.getMessages).mockResolvedValue([makeMockMessage({
+        content: "victim transcript",
+        contentText: "victim transcript",
+      })]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.messages.list")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:default:victim" },
+            query: {},
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(svc.getMessages).not.toHaveBeenCalled();
+    });
+
+    it("NEW-30 red: rejects export for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+      vi.mocked(svc.getMessages).mockResolvedValue([makeMockMessage({
+        content: "victim export",
+        contentText: "victim export",
+      })]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.export")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:default:victim" },
+            query: { format: "json" },
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(svc.getMessages).not.toHaveBeenCalled();
     });
 
     it("validates invalid limit", async () => {
