@@ -741,6 +741,53 @@ async function assertRenderedStructure(tokens) {
                 : "missing-closed-loop",
         });
       }
+      const disabledUnavailableStates = [...document.querySelectorAll("body *")]
+        .map((node, index) => {
+          const rect = node.getBoundingClientRect();
+          const style = getComputedStyle(node);
+          const text = [...node.childNodes]
+            .filter((child) => child.nodeType === Node.TEXT_NODE)
+            .map((child) => child.textContent ?? "")
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim();
+          if (
+            rect.width <= 0
+            || rect.height <= 0
+            || style.visibility === "hidden"
+            || style.display === "none"
+            || !/\b(disabled|unavailable)\b/i.test(text)
+          ) {
+            return null;
+          }
+          const evidenceNode = node.closest([
+            "[data-friday-ineligibility]",
+            "[data-friday-action-ineligibility]",
+            "[data-friday-transient-error]",
+            "[data-friday-permission-gate]",
+            "[data-friday-safety-gate]",
+          ].join(","));
+          const evidence = evidenceNode
+            ? {
+              ineligibility: evidenceNode.getAttribute("data-friday-ineligibility")
+                ?? evidenceNode.getAttribute("data-friday-action-ineligibility")
+                ?? null,
+              transientError: evidenceNode.getAttribute("data-friday-transient-error"),
+              permissionGate: evidenceNode.getAttribute("data-friday-permission-gate"),
+              safetyGate: evidenceNode.getAttribute("data-friday-safety-gate"),
+            }
+            : null;
+          const hasMachineReadableEvidence = Object.values(evidence ?? {})
+            .some((value) => typeof value === "string" && value.trim().length > 0);
+          return {
+            index,
+            tagName: node.tagName.toLowerCase(),
+            text: text.slice(0, 160),
+            hasMachineReadableEvidence,
+            evidence,
+          };
+        })
+        .filter(Boolean);
       const visibleText = (document.body?.innerText ?? "").replace(/\s+/g, " ").trim();
       return {
         rightRailPresent: Boolean(rightRail),
@@ -755,6 +802,7 @@ async function assertRenderedStructure(tokens) {
         color,
         hasAccentApplied,
         actions,
+        disabledUnavailableStates,
         visibleText,
         expected,
       };
@@ -785,6 +833,11 @@ async function assertRenderedStructure(tokens) {
       }
       if (/\b(readiness|entrypoints)\b/.test(visibleText)) {
         checks.push(fail("Gate D normal path still renders internal readiness/entrypoints copy", { pathname }));
+      }
+      for (const state of result.disabledUnavailableStates) {
+        if (!state.hasMachineReadableEvidence) {
+          checks.push(fail("Gate D disabled/unavailable state lacks machine-readable ineligibility evidence", { pathname, state }));
+        }
       }
       for (const action of result.actions) {
         if (!action.closedLoop) {
