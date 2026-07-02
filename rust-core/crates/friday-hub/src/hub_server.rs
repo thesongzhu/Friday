@@ -1589,6 +1589,18 @@ pub fn context_passport_transfer_result_for_db(
     request: ContextPassportTransferRequestWire,
     now_ms: i64,
 ) -> Envelope {
+    context_passport_transfer_result_for_db_as_owner(db, msg_id, request, None, now_ms)
+}
+
+/// Owner-bound variant of [`context_passport_transfer_result_for_db`]. `authenticated_owner` is
+/// the Rust-derived sealed-session principal, never a request body field.
+pub fn context_passport_transfer_result_for_db_as_owner(
+    db: &Db,
+    msg_id: &str,
+    request: ContextPassportTransferRequestWire,
+    authenticated_owner: Option<&str>,
+    now_ms: i64,
+) -> Envelope {
     let passport_id = request.passport_id.trim();
     if passport_id.is_empty() {
         return context_passport_transfer_blocked(msg_id, now_ms, &request, "passport_id_required");
@@ -1637,6 +1649,18 @@ pub fn context_passport_transfer_result_for_db(
             )
         }
     };
+    let authenticated_owner = authenticated_owner.unwrap_or("").trim();
+    let mission_owner = resolve_conversation_owner(db, &mission.friday_conversation_id);
+    let owner_ok =
+        !authenticated_owner.is_empty() && mission_owner.as_deref() == Some(authenticated_owner);
+    if !owner_ok {
+        return context_passport_transfer_blocked(
+            msg_id,
+            now_ms,
+            &request,
+            "mission_owner_mismatch",
+        );
+    }
     if let Some(work_item_id) = request
         .work_item_id
         .as_ref()
@@ -2172,8 +2196,17 @@ impl<T: Transport> HubServer<T> {
     ) -> Envelope {
         // Delegate to the standalone `&Db` producer so the live serve-bin's flag-gated
         // `ProviderWorkspaceActionRequest` arm and this `HubServer::dispatch` arm share ONE
-        // implementation (no divergence). Byte-identical to the prior inline body.
-        provider_workspace_action_result_for_db(&self.db, msg_id, request, now_ms)
+        // implementation. This in-process facade has no sealed-session principal, so derive
+        // the owner from an already-resolved Mission to preserve the old test-only dispatch shape;
+        // the live serve-bin passes the authenticated principal explicitly.
+        let derived_owner = provider_workspace_mission_owner(&self.db, &request);
+        provider_workspace_action_result_for_db_as_owner(
+            &self.db,
+            msg_id,
+            request,
+            derived_owner.as_deref(),
+            now_ms,
+        )
     }
 }
 
@@ -2183,20 +2216,24 @@ impl<T: Transport> HubServer<T> {
 /// serve-bin (`hub_agent_run_server`) can route a sealed-session `ProviderWorkspaceActionRequest`
 /// through the SAME path the `HubServer::dispatch` arm uses (no second implementation to drift).
 ///
-/// OWNER-GATING NOTE (mirrors the seam, NOT FIX-Q3b): this path is NOT principal-bound. Unlike
-/// the Mission-intake/lifecycle/work-item/memory arms, the `ProviderWorkspaceActionRequestWire`
-/// carries NO self-asserted `owner_principal` body field, so there is nothing for FIX-Q3b to bind.
-/// Owner-binding here is STRUCTURAL via Mission context: [`dispatch_provider_action`] resolves the
-/// request's `mission_context` to a live WorkItem and requires `WorkItem.target_provider_or_agent`
-/// to match the session's provider (and the session to match the request) before the adapter is
-/// ever consulted. The authenticated boundary is the SEALED SESSION (allowlisted peer + session
-/// key) the caller already holds — exactly the channel auth the sibling `_for_db` arms rely on.
-/// Safe today because the boot `enforce_single_peer` guard refuses >1 peer and the dispatch flag
-/// is DARK; a per-principal binding is the multi-owner hardening FIX-Q3b defers.
+/// The legacy no-owner entrypoint is fail-closed; use
+/// [`provider_workspace_action_result_for_db_as_owner`] from live sealed-session dispatch.
 pub fn provider_workspace_action_result_for_db(
     db: &Db,
     msg_id: &str,
     request: ProviderWorkspaceActionRequestWire,
+    now_ms: i64,
+) -> Envelope {
+    provider_workspace_action_result_for_db_as_owner(db, msg_id, request, None, now_ms)
+}
+
+/// Owner-bound Provider Workspace action pre-dispatch guard. `authenticated_owner` is the
+/// Rust-derived sealed-session principal, never a request body field.
+pub fn provider_workspace_action_result_for_db_as_owner(
+    db: &Db,
+    msg_id: &str,
+    request: ProviderWorkspaceActionRequestWire,
+    authenticated_owner: Option<&str>,
     now_ms: i64,
 ) -> Envelope {
     let result = if request.mission_context.is_none() {
@@ -2204,6 +2241,13 @@ pub fn provider_workspace_action_result_for_db(
             request,
             "mission_context_required",
             "provider workspace action requires Mission context".to_string(),
+        )
+    } else if provider_workspace_owner_mismatch(db, &request, authenticated_owner) {
+        provider_workspace_rejected_result(
+            request,
+            "mission_owner_mismatch",
+            "provider workspace action blocked: target Mission is not owned by the authenticated owner"
+                .to_string(),
         )
     } else {
         match db.get_provider_session_link(&request.friday_session_id) {
@@ -2263,6 +2307,31 @@ pub fn provider_workspace_action_result_for_db(
         now_ms,
         Message::ProviderWorkspaceActionResult { result },
     )
+}
+
+fn provider_workspace_mission_owner(
+    db: &Db,
+    request: &ProviderWorkspaceActionRequestWire,
+) -> Option<String> {
+    let context = request.mission_context.as_ref()?;
+    let mission = db.get_mission(&context.mission_id).ok().flatten()?;
+    resolve_conversation_owner(db, &mission.friday_conversation_id)
+}
+
+fn provider_workspace_owner_mismatch(
+    db: &Db,
+    request: &ProviderWorkspaceActionRequestWire,
+    authenticated_owner: Option<&str>,
+) -> bool {
+    let Some(context) = request.mission_context.as_ref() else {
+        return false;
+    };
+    let Ok(Some(mission)) = db.get_mission(&context.mission_id) else {
+        return false;
+    };
+    let authenticated_owner = authenticated_owner.unwrap_or("").trim();
+    let mission_owner = resolve_conversation_owner(db, &mission.friday_conversation_id);
+    authenticated_owner.is_empty() || mission_owner.as_deref() != Some(authenticated_owner)
 }
 
 fn provider_workspace_rejected_result(
@@ -4431,6 +4500,190 @@ mod tests {
             created_at_ms: now + 5,
         })
         .unwrap();
+    }
+
+    fn seed_context_passport_mission(db: &Db, owner: &str, mission_id: &str) {
+        let now = 1_700_004_000_000;
+        let conversation_id = format!("fconv_{mission_id}");
+        db.upsert_friday_conversation(&FridayConversation {
+            friday_conversation_id: conversation_id.clone(),
+            owner_principal: owner.into(),
+            title: "Context passport owner scope".into(),
+            current_focus_summary: "context passport transfer should stay owner scoped".into(),
+            active_mission_ids: vec![mission_id.into()],
+            surface_thread_ids: Vec::new(),
+            memory_scope_ref: None,
+            truth_status: TruthStatus::WiredRegistry,
+            proof_refs: vec!["proof://context-passport-owner-scope".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_mission(&Mission {
+            mission_id: mission_id.into(),
+            friday_conversation_id: conversation_id,
+            title: "Context passport owner scope".into(),
+            intent: "prove cross-owner context passport transfer is blocked".into(),
+            status: MissionStatus::Active,
+            why_now: "Context passports carry refs across execution lanes.".into(),
+            decision_path_summary: "Seeded directly for owner-binding regression.".into(),
+            considered_options: vec![
+                "allow raw mission_id".into(),
+                "bind to authenticated owner".into(),
+            ],
+            deferred_options: Vec::new(),
+            known_pitfalls: vec!["mission_id alone is not an owner proof".into()],
+            handoff_inheritance: Vec::new(),
+            work_item_ids: Vec::new(),
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: vec!["proof://context-passport-owner-scope".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+    }
+
+    fn context_passport_request(
+        mission_id: &str,
+        passport_id: &str,
+    ) -> ContextPassportTransferRequestWire {
+        ContextPassportTransferRequestWire {
+            passport_id: passport_id.into(),
+            mission_id: mission_id.into(),
+            work_item_id: None,
+            destination_lane: "codex".into(),
+            destination_target: Some("codex".into()),
+            items: vec![friday_protocol::ContextPassportItemWire {
+                kind: "summary".into(),
+                label: "summary".into(),
+                included: true,
+                sensitive: false,
+            }],
+            approved_sensitive: false,
+        }
+    }
+
+    fn provider_workspace_action_request() -> ProviderWorkspaceActionRequestWire {
+        ProviderWorkspaceActionRequestWire {
+            request_id: "provider-action-owner-scope".into(),
+            friday_session_id: "friday-session-1".into(),
+            provider: "codex".into(),
+            action: "list_sessions".into(),
+            capability_id: "provider.codex.list_sessions".into(),
+            payload_ref: None,
+            mission_context: Some(friday_protocol::ProviderWorkspaceMissionContextWire {
+                friday_conversation_id: "fconv_provider_workspace".into(),
+                mission_id: "mission-provider-workspace".into(),
+                work_item_id: "work-provider-workspace".into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn provider_workspace_action_blocks_without_authenticated_owner_binding() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_provider_workspace_mission(&db);
+        db.upsert_provider_session_link(&provider_session_link())
+            .unwrap();
+
+        let response = provider_workspace_action_result_for_db(
+            &db,
+            "provider-action-owner-scope",
+            provider_workspace_action_request(),
+            1_700_004_030_000,
+        );
+
+        let Message::ProviderWorkspaceActionResult { result } = response.message else {
+            panic!("expected ProviderWorkspaceActionResult, got {response:?}");
+        };
+        assert_eq!(result.status, "mission_owner_mismatch");
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert_eq!(
+            result.blocker.as_deref(),
+            Some("provider workspace action blocked: target Mission is not owned by the authenticated owner"),
+        );
+    }
+
+    #[test]
+    fn provider_workspace_action_allows_authenticated_mission_owner() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_provider_workspace_mission(&db);
+        db.upsert_provider_session_link(&provider_session_link())
+            .unwrap();
+
+        let response = provider_workspace_action_result_for_db_as_owner(
+            &db,
+            "provider-action-owner-ok",
+            provider_workspace_action_request(),
+            Some("owner-1"),
+            1_700_004_040_000,
+        );
+
+        let Message::ProviderWorkspaceActionResult { result } = response.message else {
+            panic!("expected ProviderWorkspaceActionResult, got {response:?}");
+        };
+        assert_eq!(result.status, "implemented_unproven");
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert!(result.blocker.is_some());
+    }
+
+    #[test]
+    fn context_passport_transfer_blocks_mission_without_authenticated_owner_binding() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_context_passport_mission(&db, "principal:victim", "mission-passport-victim");
+
+        let response = context_passport_transfer_result_for_db(
+            &db,
+            "passport-cross-owner",
+            context_passport_request("mission-passport-victim", "passport-cross-owner"),
+            1_700_004_010_000,
+        );
+
+        let Message::ContextPassportTransferResult { result } = response.message else {
+            panic!("expected ContextPassportTransferResult, got {response:?}");
+        };
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.blocker.as_deref(), Some("mission_owner_mismatch"));
+        assert!(
+            db.get_mission("mission-passport-victim")
+                .unwrap()
+                .expect("seeded mission")
+                .context_passport_refs
+                .is_empty(),
+            "blocked cross-owner transfer must not mutate mission refs"
+        );
+    }
+
+    #[test]
+    fn context_passport_transfer_allows_authenticated_mission_owner() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_context_passport_mission(&db, "principal:owner", "mission-passport-owner");
+
+        let response = context_passport_transfer_result_for_db_as_owner(
+            &db,
+            "passport-owner",
+            context_passport_request("mission-passport-owner", "passport-owner"),
+            Some("principal:owner"),
+            1_700_004_020_000,
+        );
+
+        let Message::ContextPassportTransferResult { result } = response.message else {
+            panic!("expected ContextPassportTransferResult, got {response:?}");
+        };
+        assert_eq!(result.status, "confirmed");
+        assert_eq!(result.blocker, None);
+        assert_eq!(result.shared_item_count, 1);
+        assert!(
+            db.get_mission("mission-passport-owner")
+                .unwrap()
+                .expect("seeded mission")
+                .context_passport_refs
+                .contains(&"passport-owner".to_string()),
+            "the authenticated owner path should still attach the passport ref"
+        );
     }
 
     fn seed_mission_ask(db: &Db) {

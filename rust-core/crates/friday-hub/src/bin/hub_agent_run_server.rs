@@ -2219,12 +2219,14 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 if context_passport_transfer_enabled =>
             {
                 let now_ms = now_ms();
-                let result = friday_hub::hub_server::context_passport_transfer_result_for_db(
-                    runtime.db(),
-                    &env.msg_id,
-                    request,
-                    now_ms,
-                );
+                let result =
+                    friday_hub::hub_server::context_passport_transfer_result_for_db_as_owner(
+                        runtime.db(),
+                        &env.msg_id,
+                        request,
+                        runtime.policy().principal_id(),
+                        now_ms,
+                    );
                 eprintln!(
                     "hub_agent_run_server_dispatch: msg_id={} leg=context_passport_transfer (context-passport transfer enabled)",
                     env.msg_id
@@ -2298,12 +2300,14 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 if provider_workspace_dispatch_enabled =>
             {
                 let now_ms = now_ms();
-                let result = friday_hub::hub_server::provider_workspace_action_result_for_db(
-                    runtime.db(),
-                    &env.msg_id,
-                    request,
-                    now_ms,
-                );
+                let result =
+                    friday_hub::hub_server::provider_workspace_action_result_for_db_as_owner(
+                        runtime.db(),
+                        &env.msg_id,
+                        request,
+                        runtime.policy().principal_id(),
+                        now_ms,
+                    );
                 eprintln!(
                     "hub_agent_run_server_dispatch: msg_id={} leg=provider_workspace_action (provider-workspace dispatch enabled)",
                     env.msg_id
