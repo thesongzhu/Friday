@@ -1,6 +1,14 @@
-import { readFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = process.cwd();
@@ -208,5 +216,78 @@ describe("Claude mission proof operator gate", () => {
     ).toBeLessThan(
       source.indexOf('PASSPHRASE="$(read_provisioned_passphrase)"'),
     );
+  });
+
+  it("uses one keychain lookup before streaming the passphrase to proof", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "friday-claude-keychain-"));
+    try {
+      const binDir = join(tempRoot, "bin");
+      const fakeSecurityCount = join(tempRoot, "security-count");
+      const wrapperPath = join(
+        tempRoot,
+        "friday-claude-mission-proof-of-life-keychain.sh",
+      );
+      const fakeProofPath = join(
+        tempRoot,
+        "friday-claude-mission-proof-of-life.sh",
+      );
+      const fakeSecurityPath = join(binDir, "security");
+
+      mkdirSync(binDir);
+      writeFileSync(wrapperPath, readFileSync(keychainWrapper, "utf8"));
+      chmodSync(wrapperPath, 0o700);
+      writeFileSync(
+        fakeProofPath,
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${FRIDAY_CLAUDE_MISSION_PROOF_PREFLIGHT_ONLY:-0}" = "1" ]; then
+  echo "preflight-ok"
+  exit 0
+fi
+if [ "\${FRIDAY_CLAUDE_MISSION_PROOF_PASSPHRASE_STDIN:-0}" != "1" ]; then
+  echo "missing stdin mode" >&2
+  exit 12
+fi
+IFS= read -r passphrase
+printf 'proof-passphrase=%s\\n' "\${passphrase}"
+`,
+      );
+      chmodSync(fakeProofPath, 0o700);
+      writeFileSync(
+        fakeSecurityPath,
+        `#!/usr/bin/env bash
+set -euo pipefail
+count=0
+if [ -f "\${FRIDAY_FAKE_SECURITY_COUNT}" ]; then
+  count="$(cat "\${FRIDAY_FAKE_SECURITY_COUNT}")"
+fi
+count=$((count + 1))
+printf '%s\\n' "\${count}" > "\${FRIDAY_FAKE_SECURITY_COUNT}"
+printf 'keychain-passphrase\\n'
+`,
+      );
+      chmodSync(fakeSecurityPath, 0o700);
+
+      const result = spawnSync(wrapperPath, {
+        cwd: tempRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FRIDAY_CLAUDE_MISSION_PROOF_PASSPHRASE_FILE: join(
+            tempRoot,
+            "missing-passphrase",
+          ),
+          FRIDAY_FAKE_SECURITY_COUNT: fakeSecurityCount,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("preflight-ok");
+      expect(result.stdout).toContain("proof-passphrase=keychain-passphrase");
+      expect(readFileSync(fakeSecurityCount, "utf8").trim()).toBe("1");
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });
