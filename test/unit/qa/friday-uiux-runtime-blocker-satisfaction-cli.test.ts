@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -105,12 +105,14 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
         head,
       });
       const evidenceDir = writeEvidenceDir(root);
+      const out = join(root, "runtime-blocker-satisfaction.json");
       const output = execFileSync("node", [
         script,
         `--head=${head}`,
         `--action-traceability-report=${tracePath}`,
         `--ui-device-proof=${proofPath}`,
         `--ui-device-evidence-dir=${evidenceDir}`,
+        `--out=${out}`,
         "--require-ready",
       ], { cwd: process.cwd(), encoding: "utf8" });
       const report = JSON.parse(output) as {
@@ -119,6 +121,7 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
         counts?: { satisfactions?: number };
         satisfactions?: Array<{
           evidenceClass?: string;
+          evidenceRefs?: string[];
           evidenceTruthLabels?: string[];
           sameRun?: boolean;
           liveConnected?: boolean;
@@ -136,6 +139,33 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
         liveConnected: true,
         currentHead: true,
       }));
+      const refs = report.satisfactions?.[0]?.evidenceRefs || [];
+      expect(refs.length).toBeGreaterThan(0);
+      expect(refs.every((ref) => !/^[a-z][a-z0-9+.-]*:/i.test(ref))).toBe(true);
+      for (const ref of refs) {
+        const proof = join(dirname(out), ref);
+        expect(existsSync(proof)).toBe(true);
+        const value = JSON.parse(readFileSync(proof, "utf8")) as {
+          status?: string;
+          surface?: string;
+          id?: string;
+          kind?: string;
+          label?: string;
+          sameRun?: boolean;
+          liveConnected?: boolean;
+          currentHead?: boolean;
+        };
+        expect(value).toEqual(expect.objectContaining({
+          status: "ready",
+          surface: "mobile",
+          id: "home",
+          kind: "needsRuntimeEvidence",
+          label: "same-run user proof",
+          sameRun: true,
+          liveConnected: true,
+          currentHead: true,
+        }));
+      }
       expect(report.blockers).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
