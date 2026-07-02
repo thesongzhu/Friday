@@ -132,6 +132,14 @@ function isBooleanEvidence(value) {
   return typeof value === "boolean" || value === "true" || value === "false";
 }
 
+function isMockOrTestOraclePosture(value) {
+  return /^(mock|test[-_ ]?oracle)$/i.test(String(value || "").trim());
+}
+
+function isTruthyTestOracle(value) {
+  return value === true || /^(true|1|yes|test[-_ ]?oracle)$/i.test(String(value || "").trim());
+}
+
 function validateCensus(census) {
   if (!census || typeof census !== "object" || Array.isArray(census)) {
     block("census_not_object", censusPath || "");
@@ -226,7 +234,7 @@ function validateLedger(ledger, cellIds) {
     if (row?.status === "exercised-green") {
       const assertions = Number(row?.assertionCount || 0);
       if (!Number.isInteger(assertions) || assertions <= 0) block("green_cell_without_assertions", cellId);
-      if (row?.hubPosture === "mock" || row?.testOracle === true) block("green_cell_mock_or_test_oracle", cellId);
+      if (isMockOrTestOraclePosture(row?.hubPosture) || isTruthyTestOracle(row?.testOracle)) block("green_cell_mock_or_test_oracle", cellId);
     }
   }
 
