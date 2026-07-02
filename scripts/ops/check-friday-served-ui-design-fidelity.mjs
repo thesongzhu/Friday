@@ -656,7 +656,7 @@ async function assertRenderedStructure(tokens) {
     async function inspectRoute(pathname) {
       await page.goto(`${url}${pathname}`, { waitUntil: "networkidle" });
       await page.waitForSelector('[data-testid="app-shell-rail"]', { timeout: 10_000 });
-      return page.evaluate((expected) => {
+      return page.evaluate(async (expected) => {
       const rightRail = document.querySelector('[data-testid="app-shell-right-rail"]');
       const bottomDockText = [...document.querySelectorAll("section, aside, div")]
         .some((node) => /Proof inspector\s*[·-]\s*bottom timeline/i.test(node.textContent ?? ""));
@@ -675,15 +675,72 @@ async function assertRenderedStructure(tokens) {
         const normalized = value.replaceAll(" ", "");
         return normalized.includes("15,125,140") || normalized.includes("216,99,77");
       });
-      const actions = [...document.querySelectorAll("button, [role='button'], a[href]")]
-        .map((node, index) => ({
+
+      const captureActionState = () => ({
+        url: window.location.href,
+        bodyHtml: document.body?.innerHTML ?? "",
+        localStorage: JSON.stringify(Object.entries(window.localStorage).sort()),
+        sessionStorage: JSON.stringify(Object.entries(window.sessionStorage).sort()),
+        eventLog: JSON.stringify(window.__fridayActionEvents ?? window.__fridayGateActionEvents ?? []),
+      });
+      const visibleActionNodes = [...document.querySelectorAll("button, [role='button'], a[href]")]
+        .filter((node) => {
+          const rect = node.getBoundingClientRect();
+          const style = getComputedStyle(node);
+          return rect.width > 0
+            && rect.height > 0
+            && style.visibility !== "hidden"
+            && style.display !== "none"
+            && node.getAttribute("aria-hidden") !== "true";
+        });
+      const actions = [];
+      for (const [index, node] of visibleActionNodes.entries()) {
+        const disabled = node.hasAttribute("disabled") || node.getAttribute("aria-disabled") === "true";
+        const contract = node.getAttribute("data-friday-action-contract") ?? null;
+        const safeRefusal = node.getAttribute("data-friday-action-safe-refusal") ?? null;
+        const ineligibility = node.getAttribute("data-friday-action-ineligibility") ?? null;
+        const before = captureActionState();
+        let clickError = null;
+        const isNavigationLink = node instanceof HTMLAnchorElement && Boolean(node.getAttribute("href"));
+        if (!disabled && !safeRefusal && contract && !isNavigationLink) {
+          try {
+            node.click();
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          } catch (error) {
+            clickError = error instanceof Error ? error.message : String(error);
+          }
+        }
+        const after = captureActionState();
+        const stateChanged = before.url !== after.url
+          || before.bodyHtml !== after.bodyHtml
+          || before.localStorage !== after.localStorage
+          || before.sessionStorage !== after.sessionStorage
+          || before.eventLog !== after.eventLog;
+        const closedLoop = disabled
+          ? Boolean(ineligibility)
+          : Boolean(safeRefusal) || (Boolean(contract) && stateChanged);
+        actions.push({
           index,
           tagName: node.tagName.toLowerCase(),
           label: (node.textContent ?? node.getAttribute("aria-label") ?? "").trim().slice(0, 120),
           marker: node.getAttribute("data-friday-ui") ?? null,
           testId: node.getAttribute("data-testid") ?? null,
-          disabled: node.hasAttribute("disabled") || node.getAttribute("aria-disabled") === "true",
-        }));
+          disabled,
+          contract,
+          safeRefusal,
+          ineligibility,
+          stateChanged,
+          clickError,
+          closedLoop,
+          evidence: disabled
+            ? (ineligibility ? "machine-readable-ineligibility" : "disabled-without-ineligibility")
+            : safeRefusal
+              ? "safe-refusal"
+              : contract && stateChanged
+                ? "real-state-change"
+                : "missing-closed-loop",
+        });
+      }
       const visibleText = (document.body?.innerText ?? "").replace(/\s+/g, " ").trim();
       return {
         rightRailPresent: Boolean(rightRail),
@@ -728,6 +785,11 @@ async function assertRenderedStructure(tokens) {
       }
       if (/\b(readiness|entrypoints)\b/.test(visibleText)) {
         checks.push(fail("Gate D normal path still renders internal readiness/entrypoints copy", { pathname }));
+      }
+      for (const action of result.actions) {
+        if (!action.closedLoop) {
+          checks.push(fail("Gate E action has no closed-loop contract evidence", { pathname, action }));
+        }
       }
     }
 
@@ -843,10 +905,15 @@ function writeGeneratedProofManifest() {
   });
   writeJson(paths.actionClosure, {
     ...proofArtifactBase("actionClosure"),
-    status: "not_claimed_by_served_desktop_broad_fidelity_gate",
+    status: routes.every((route) => route.actions.every((action) => action.closedLoop)) ? "closed-loop-verified" : "failed",
     inventoriedActions: routes.reduce((count, route) => count + route.actions.length, 0),
-    closedLoopActions: [],
-    note: "Gate F verifies this linked closure report is present, current, parsed, and bound; Gate E remains the full closed-loop oracle.",
+    closedLoopActions: routes.flatMap((route) => route.actions
+      .filter((action) => action.closedLoop)
+      .map((action) => ({ pathname: route.pathname, ...action }))),
+    unresolvedActions: routes.flatMap((route) => route.actions
+      .filter((action) => !action.closedLoop)
+      .map((action) => ({ pathname: route.pathname, ...action }))),
+    note: "Gate E requires every visible served-desktop action to have a contract with a real state change, safe refusal, or disabled machine-readable ineligibility evidence.",
   });
 
   const manifestPath = join(dir, "proof-manifest.json");
@@ -995,7 +1062,10 @@ function hasRequiredArtifactBody(key, artifact, manifest) {
     case "actionClosure":
       return typeof artifact.status === "string"
         && typeof artifact.inventoriedActions === "number"
-        && Array.isArray(artifact.closedLoopActions);
+        && Array.isArray(artifact.closedLoopActions)
+        && Array.isArray(artifact.unresolvedActions)
+        && artifact.unresolvedActions.length === 0
+        && artifact.closedLoopActions.length === artifact.inventoriedActions;
     default:
       return false;
   }

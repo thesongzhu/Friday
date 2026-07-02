@@ -136,13 +136,31 @@ function writeGoodDist(root: string) {
         <aside data-testid="app-shell-right-rail" data-dock="right">
           <section data-testid="desktop-proof-inspector">Right-docked ProofInspector</section>
           <div data-testid="desktop-subtle-status-pet">subtle status</div>
-          <button data-friday-ui="button-primary" style="background: rgb(15, 125, 140); color: white">Approve</button>
+          <button
+            data-friday-ui="button-primary"
+            data-friday-action-contract="approve-request"
+            style="background: rgb(15, 125, 140); color: white"
+            onclick="document.body.dataset.approved = 'true'; document.getElementById('approval-state').textContent = 'approved';"
+          >Approve</button>
+          <span id="approval-state" data-friday-action-state="approve-request">ready</span>
           <span data-friday-ui="chip">needs</span>
           <span data-friday-ui="filter">all</span>
         </aside>
       </body>
     </html>
   `;
+  writeFile(distRoot, "index.html", html);
+  writeFile(distRoot, "home/index.html", html);
+  writeFile(distRoot, "chat/index.html", html);
+  return distRoot;
+}
+
+function writeOpenActionDist(root: string) {
+  const distRoot = writeGoodDist(root);
+  const html = readFileSync(join(distRoot, "index.html"), "utf8")
+    .replace(/\s+data-friday-action-contract="approve-request"/g, "")
+    .replace(/\s+onclick="[^"]+"/g, "")
+    .replace(/<span id="approval-state"[^>]*>ready<\/span>/g, "");
   writeFile(distRoot, "index.html", html);
   writeFile(distRoot, "home/index.html", html);
   writeFile(distRoot, "chat/index.html", html);
@@ -305,7 +323,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
   it("fails Gate E when a visible action has no closed-loop contract evidence", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-e-open-action-"));
     try {
-      const result = run(root, writeSelections(root), writeGoodDist(root), writeGoodIos(root));
+      const result = run(root, writeSelections(root), writeOpenActionDist(root), writeGoodIos(root));
       expect(result.status).toBe(1);
       const report = JSON.parse(result.stdout) as { checks?: Array<{ ok?: boolean; message?: string }> };
       const failures = report.checks?.filter((check) => check.ok === false).map((check) => check.message) ?? [];
