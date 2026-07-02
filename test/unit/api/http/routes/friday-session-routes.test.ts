@@ -814,6 +814,51 @@ describe("FridaySessionRoutes", () => {
       expect(svc.getMessages).not.toHaveBeenCalled();
     });
 
+    it("NEW-30 no-degrade: keeps absent-session message reads available for chat bootstrap", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(null);
+      vi.mocked(svc.getMessages).mockResolvedValue([]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.messages.list")!;
+
+      const result = await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "chat:default:chat-bootstrap" },
+          query: { limit: "200" },
+          principal: makeBoundPrincipal(),
+        }) as never,
+      );
+
+      expect(result).toEqual({ items: [] });
+      expect(svc.getSession).toHaveBeenCalledWith("chat:default:chat-bootstrap");
+      expect(svc.getMessages).toHaveBeenCalledWith("chat:default:chat-bootstrap", 100, undefined);
+    });
+
+    it("NEW-30 no-degrade: keeps absent-session export reads available as an empty transcript", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(null);
+      vi.mocked(svc.getMessages).mockResolvedValue([]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.export")!;
+
+      const result = await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "chat:default:chat-bootstrap" },
+          query: { format: "json" },
+          principal: makeBoundPrincipal(),
+        }) as never,
+      );
+
+      expect(JSON.parse(result.content)).toEqual({
+        sessionKey: "chat:default:chat-bootstrap",
+        messages: [],
+      });
+      expect(svc.getSession).toHaveBeenCalledWith("chat:default:chat-bootstrap");
+      expect(svc.getMessages).toHaveBeenCalledWith("chat:default:chat-bootstrap", 100);
+    });
+
     it("validates invalid limit", async () => {
       const svc = createMockService();
       const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
