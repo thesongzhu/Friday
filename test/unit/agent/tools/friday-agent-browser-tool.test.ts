@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createFridayAgentBrowserTool } from "#agent";
+import { createFridayAgentBrowserTool, createFridayAgentSsrfGuard } from "#agent";
 import { FRIDAY_BROWSER_ALLOW_ANY_ORIGIN, type FridayBrowserManager, type BrowserSession } from "#browser";
 
 // ─── Mock helpers ───
@@ -122,6 +122,66 @@ describe("FridayAgentBrowserTool", () => {
 
   beforeEach(() => {
     manager = createMockManager();
+  });
+
+  describe("SSRF guard", () => {
+    const blockedUrls = [
+      "http://169.254.169.254/latest/meta-data/",
+      "http://127.0.0.1:8787/admin",
+      "http://localhost/",
+      "http://192.168.1.1/",
+      "http://metadata.google.internal/",
+      "http://[::1]/",
+    ];
+
+    it("blocks private and metadata navigations by default before page.goto", async () => {
+      const actions = [
+        (url: string) => ({ action: "open", sessionId: "test-session", url }),
+        (url: string) => ({ action: "navigate", sessionId: "test-session", url }),
+        (url: string) => ({ action: "tabs", sessionId: "test-session", tabsAction: "new", url }),
+      ];
+
+      for (const buildArgs of actions) {
+        for (const url of blockedUrls) {
+          const isolatedManager = createMockManager();
+          const tool = createFridayAgentBrowserTool({ browserManager: isolatedManager });
+          const result = await tool.execute(buildArgs(url), signal());
+          const page = (await isolatedManager.getPage("test-session")).page;
+
+          expect(result.isError).toBe(true);
+          expect(String(result.content)).toMatch(/SSRF|blocked|private|not allowed/i);
+          expect(page.goto).not.toHaveBeenCalled();
+        }
+      }
+    });
+
+    it("allows public navigation with the default SSRF guard", async () => {
+      const tool = createFridayAgentBrowserTool({ browserManager: manager });
+      const result = await tool.execute(
+        { action: "navigate", sessionId: "test-session", url: "https://example.com/page" },
+        signal(),
+      );
+      const page = (await manager.getPage("test-session")).page;
+
+      expect(result.isError).toBeUndefined();
+      expect(page.goto).toHaveBeenCalledWith("https://example.com/page", { waitUntil: "domcontentloaded" });
+    });
+
+    it("preserves the operator escape hatch for private network browsing", async () => {
+      const ssrfGuard = createFridayAgentSsrfGuard({ allowPrivateNetwork: true });
+      const tool = createFridayAgentBrowserTool({
+        browserManager: manager,
+        ssrfGuard,
+      } as Parameters<typeof createFridayAgentBrowserTool>[0] & { ssrfGuard: typeof ssrfGuard });
+      const result = await tool.execute(
+        { action: "navigate", sessionId: "test-session", url: "http://127.0.0.1:8787/admin" },
+        signal(),
+      );
+      const page = (await manager.getPage("test-session")).page;
+
+      expect(result.isError).toBeUndefined();
+      expect(page.goto).toHaveBeenCalledWith("http://127.0.0.1:8787/admin", { waitUntil: "domcontentloaded" });
+    });
   });
 
   // ─── Tool definition ───
