@@ -187,7 +187,7 @@ describe("FridaySkillExecutor", () => {
       os: {
         boundary: process.platform === "darwin"
           ? "darwin_sandbox_exec_write_network_guard"
-          : "os_sandbox_unavailable_fail_closed",
+          : "open_no_os_sandbox",
         requested: process.platform === "darwin",
         required: process.platform === "darwin",
         denyNetwork: true,

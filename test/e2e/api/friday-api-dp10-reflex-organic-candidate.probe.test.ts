@@ -258,11 +258,13 @@ describe("DP-10 probe — repeated sessions.run tasks create Reflex candidates b
       db,
       idGenerator,
       nowIso: () => NOW,
+      tsMemoryWritesEnabled: true,
     });
     const patternExtractor = createFridayPatternExtractor({
       db,
       idGenerator,
       nowIso: () => NOW,
+      tsMemoryWritesEnabled: true,
     });
     const contextEngine: FridayContextEngine = {
       async afterTurn(input) {
@@ -613,11 +615,13 @@ describe("DP-10 probe — repeated sessions.run tasks create Reflex candidates b
       db,
       idGenerator,
       nowIso: () => NOW,
+      tsMemoryWritesEnabled: true,
     });
     const patternExtractor = createFridayPatternExtractor({
       db,
       idGenerator,
       nowIso: () => NOW,
+      tsMemoryWritesEnabled: true,
     });
     const contextEngine: FridayContextEngine = {
       async afterTurn(input) {
