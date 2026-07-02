@@ -782,6 +782,52 @@ describe("FridaySessionRoutes", () => {
       expect(svc.getMessages).not.toHaveBeenCalled();
     });
 
+    it("NEW-30 no-degrade: admin may read legacy channel mirrors without reopening viewer cross-owner reads", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        key: "channel:discord:team-chat",
+        channel: "discord",
+        accountId: "default",
+        chatId: "team-chat",
+      }));
+      vi.mocked(svc.getMessages).mockResolvedValue([makeMockMessage({
+        sessionKey: "channel:discord:team-chat",
+        role: "user",
+        contentText: "legacy channel mirror",
+      })]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.messages.list")!;
+
+      const adminResult = await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "channel:discord:team-chat" },
+          query: {},
+          principal: makeBoundPrincipal({ role: "admin" }),
+        }) as never,
+      );
+
+      expect(adminResult.items).toHaveLength(1);
+
+      vi.mocked(svc.getMessages).mockClear();
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "channel:discord:team-chat" },
+            query: {},
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(svc.getMessages).not.toHaveBeenCalled();
+    });
+
     it("NEW-30 red: rejects export for a session owned by a different principal", async () => {
       const svc = createMockService();
       vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
