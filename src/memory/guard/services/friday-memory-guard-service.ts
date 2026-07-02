@@ -16,7 +16,6 @@ import type {
 } from "../../model/friday-memory.types.js";
 
 import { FridayDomainError } from "#errors";
-import { FRIDAY_MEMORY_ERROR_CODES } from "../../friday-memory.constants.js";
 
 import {
   FRIDAY_MEMORY_GUARD_AUTO_PRUNE_BATCH_SIZE,
@@ -42,6 +41,7 @@ import {
   FRIDAY_MEMORY_GUARD_USER_SEGMENT,
 } from "../friday-memory-guard.constants.js";
 
+import { assertTsDurableMemoryWriteEnabled } from "../friday-ts-durable-memory-write-guard.js";
 import { sanitizeFridayMemoryQuery } from "./friday-memory-query-sanitizer.js";
 
 // ─── Helpers ───
@@ -56,21 +56,6 @@ function isStringArray(value: unknown): value is string[] {
 
 function byteLength(str: string): number {
   return new TextEncoder().encode(str).length;
-}
-
-function assertTsDurableMemoryWriteEnabled(enabled: boolean, operation: string): void {
-  if (enabled) return;
-  throw new FridayDomainError(
-    FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
-    "TypeScript durable memory writes are retired for this runtime; use the Rust-owned memory confirmation spine.",
-    {
-      httpStatus: 503,
-      details: {
-        operation,
-        replacement: "rust_owned_memory_confirmation_spine",
-      },
-    },
-  );
 }
 
 // ─── Namespace resolution ───

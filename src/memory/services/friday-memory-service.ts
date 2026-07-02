@@ -27,6 +27,7 @@ import { createFridayMemoryByokEmbeddingClient } from "./friday-memory-byok-embe
 import { assertFridayDurableMemoryBoundaryAllowed } from "./friday-memory-boundary-policy.js";
 import { mergeHybridResults } from "../search/friday-memory-hybrid.js";
 import { checkMemoryDuplicate } from "./friday-memory-dedup.js";
+import { assertTsDurableMemoryWriteEnabled } from "../guard/friday-ts-durable-memory-write-guard.js";
 
 /**
  * B4 / FRI-AUD-006 dedup-advisory default threshold. Placeholder until
@@ -71,21 +72,6 @@ function warnMemoryFallback(
     console.warn as FridayWarnSink,
     normalizeWarningKey(kind, message),
     `[friday][memory-service] ${label}: ${message}`,
-  );
-}
-
-function assertTsDurableMemoryWriteEnabled(enabled: boolean, operation: string): void {
-  if (enabled) return;
-  throw new FridayDomainError(
-    FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
-    "TypeScript durable memory writes are retired for this runtime; use the Rust-owned memory confirmation spine.",
-    {
-      httpStatus: 503,
-      details: {
-        operation,
-        replacement: "rust_owned_memory_confirmation_spine",
-      },
-    },
   );
 }
 

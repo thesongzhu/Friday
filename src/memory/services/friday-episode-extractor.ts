@@ -18,6 +18,7 @@ import type {
 } from "../../agent/model/friday-agent-world-state.types.js";
 import { safeJsonParse } from "#utilities";
 import { isFridaySensitiveLearningCandidate } from "../../learning/services/friday-sensitive-learning-guard.js";
+import { assertTsDurableMemoryWriteEnabled } from "../guard/friday-ts-durable-memory-write-guard.js";
 
 // ─── Deps ───────────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ export interface CreateFridayEpisodeExtractorDeps {
   db: FridaySqliteLayer;
   idGenerator: () => string;
   nowIso: () => string;
+  tsMemoryWritesEnabled?: boolean;
 }
 
 // ─── Public interface ───────────────────────────────────────────
@@ -56,6 +58,7 @@ export function createFridayEpisodeExtractor(
   deps: CreateFridayEpisodeExtractorDeps,
 ): FridayEpisodeExtractor {
   const { db, idGenerator, nowIso } = deps;
+  const tsMemoryWritesEnabled = deps.tsMemoryWritesEnabled === true;
 
   return {
     async extractFromRun(runId, userId) {
@@ -120,6 +123,7 @@ export function createFridayEpisodeExtractor(
       };
 
       // 8. Persist and prune old episodes
+      assertTsDurableMemoryWriteEnabled(tsMemoryWritesEnabled, "memory.episodeExtractor.persist");
       db.withWriteTransaction((conn) => {
         insertEpisode(conn, episode);
 

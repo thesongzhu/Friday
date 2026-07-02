@@ -9,6 +9,7 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayLearnedPattern } from "../../agent/model/friday-agent-world-state.types.js";
 import { safeJsonParse } from "#utilities";
+import { assertTsDurableMemoryWriteEnabled } from "../guard/friday-ts-durable-memory-write-guard.js";
 
 // ─── Deps ───────────────────────────────────────────────────────
 
@@ -16,6 +17,7 @@ export interface CreateFridayPatternExtractorDeps {
   db: FridaySqliteLayer;
   idGenerator?: () => string;
   nowIso?: () => string;
+  tsMemoryWritesEnabled?: boolean;
 }
 
 // ─── Public interface ───────────────────────────────────────────
@@ -57,6 +59,7 @@ export function createFridayPatternExtractor(
   const { db } = deps;
   const idGen = deps.idGenerator ?? defaultIdGenerator;
   const nowIso = deps.nowIso ?? (() => new Date().toISOString());
+  const tsMemoryWritesEnabled = deps.tsMemoryWritesEnabled === true;
 
   return {
     async extractPatterns(userId, limit = 100) {
@@ -91,6 +94,7 @@ export function createFridayPatternExtractor(
       const now = nowIso();
       const results: FridayLearnedPattern[] = [];
 
+      assertTsDurableMemoryWriteEnabled(tsMemoryWritesEnabled, "memory.patternExtractor.upsert");
       db.withWriteTransaction((conn) => {
         const upsert = conn.prepare(
           `INSERT INTO friday_learned_patterns (id, user_id, kind, description, pattern_json, confidence, sample_count, last_updated, created_at)

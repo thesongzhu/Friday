@@ -4015,6 +4015,7 @@ export async function createFridayHub(
     db: stateRuntime!.sqlite,
     idGenerator,
     nowIso,
+    tsMemoryWritesEnabled: config.allowTestOnlyTsMemoryWrites === true,
   });
   const worldModelStateManager = createFridayWorldStateManager({
     db: stateRuntime!.sqlite,
@@ -4024,6 +4025,7 @@ export async function createFridayHub(
   const worldModelDecisionEngine = createDefaultFridayDecisionEngine();
   const worldModelPatternExtractor = createFridayPatternExtractor({
     db: stateRuntime!.sqlite,
+    tsMemoryWritesEnabled: config.allowTestOnlyTsMemoryWrites === true,
   });
 
   const workspaceContextEngine = createFridayWorkspaceContextEngine({

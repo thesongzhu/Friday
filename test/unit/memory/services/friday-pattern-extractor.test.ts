@@ -42,7 +42,7 @@ describe("FridayPatternExtractor", () => {
   it("returns empty array when no episodes exist", async () => {
     const db = createTestDb();
     try {
-      const extractor = createFridayPatternExtractor({ db });
+      const extractor = createFridayPatternExtractor({ db, tsMemoryWritesEnabled: true });
       const patterns = await extractor.extractPatterns("user-1", 10);
       expect(patterns).toEqual([]);
     } finally {
@@ -53,7 +53,7 @@ describe("FridayPatternExtractor", () => {
   it("extracts tool sequence trigram patterns", async () => {
     const db = createTestDb();
     try {
-      const extractor = createFridayPatternExtractor({ db });
+      const extractor = createFridayPatternExtractor({ db, tsMemoryWritesEnabled: true });
 
       // Insert 3 episodes with the same tool sequence trigram
       for (let i = 0; i < 3; i++) {
@@ -83,7 +83,7 @@ describe("FridayPatternExtractor", () => {
   it("extracts failure mode patterns", async () => {
     const db = createTestDb();
     try {
-      const extractor = createFridayPatternExtractor({ db });
+      const extractor = createFridayPatternExtractor({ db, tsMemoryWritesEnabled: true });
 
       // Insert 3 failed episodes with similar task intent
       for (let i = 0; i < 3; i++) {
@@ -116,7 +116,7 @@ describe("FridayPatternExtractor", () => {
   it("extracts temporal patterns when enough episodes exist", async () => {
     const db = createTestDb();
     try {
-      const extractor = createFridayPatternExtractor({ db });
+      const extractor = createFridayPatternExtractor({ db, tsMemoryWritesEnabled: true });
 
       // Insert 6 episodes at various hours
       for (let i = 0; i < 6; i++) {
@@ -146,7 +146,7 @@ describe("FridayPatternExtractor", () => {
   it("extracts successful execution preference patterns from repeated wins", async () => {
     const db = createTestDb();
     try {
-      const extractor = createFridayPatternExtractor({ db });
+      const extractor = createFridayPatternExtractor({ db, tsMemoryWritesEnabled: true });
 
       for (let i = 0; i < 2; i++) {
         insertEpisode(db, {
@@ -171,7 +171,7 @@ describe("FridayPatternExtractor", () => {
   it("isolates patterns by userId", async () => {
     const db = createTestDb();
     try {
-      const extractor = createFridayPatternExtractor({ db });
+      const extractor = createFridayPatternExtractor({ db, tsMemoryWritesEnabled: true });
 
       // Insert episodes for user-1
       for (let i = 0; i < 3; i++) {
@@ -206,7 +206,7 @@ describe("FridayPatternExtractor", () => {
   it("does not create patterns from insufficient data", async () => {
     const db = createTestDb();
     try {
-      const extractor = createFridayPatternExtractor({ db });
+      const extractor = createFridayPatternExtractor({ db, tsMemoryWritesEnabled: true });
 
       // Single episode — not enough for any pattern
       insertEpisode(db, {
