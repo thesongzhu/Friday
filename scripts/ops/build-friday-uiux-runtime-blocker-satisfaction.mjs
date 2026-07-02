@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
@@ -210,11 +211,13 @@ function refForProofArtifact(path) {
 
 function writeSatisfactionProofArtifact(item, sourceEvidenceRefs) {
   const proofDir = resolve(proofArtifactRoot(), "runtime-blocker-satisfaction-proofs");
+  const rowHash = createHash("sha256").update(rowKey(item)).digest("hex").slice(0, 16);
   const file = resolve(proofDir, [
     safePathSegment(item.surface),
     safePathSegment(item.id),
     safePathSegment(item.kind),
     safePathSegment(item.label),
+    rowHash,
   ].join("__") + ".json");
   const proof = {
     truth: "same_run_ui_device_product_proof",
