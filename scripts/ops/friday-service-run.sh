@@ -58,5 +58,6 @@ if [[ -n "${BUILD_REASON}" ]]; then
 fi
 
 export FRIDAY_SYSTEM_ENABLED="${FRIDAY_SYSTEM_ENABLED:-true}"
+export FRIDAY_CANONICAL_GATE="${FRIDAY_CANONICAL_GATE:-true}"
 
 exec "${NODE_BIN}" "${DIST_ENTRY}" start

@@ -50,6 +50,20 @@ describe("Friday autostart scripts", () => {
     expect(uiRunner).toContain('exec open "${BASE_URL%/}/"');
   });
 
+  it("NEW-31 red: launchd hub plist carries the canonical mutating-action gate marker", () => {
+    const installer = readFileSync("scripts/ops/install-friday-launchagent.sh", "utf8");
+
+    expect(installer).toContain("<key>FRIDAY_CANONICAL_GATE</key>\n    <string>true</string>");
+  });
+
+  it("NEW-31 red: service runner defaults canonical mutating-action gate to protected", () => {
+    const serviceRunner = readFileSync("scripts/ops/friday-service-run.sh", "utf8");
+
+    expect(serviceRunner).toContain('export FRIDAY_CANONICAL_GATE="${FRIDAY_CANONICAL_GATE:-true}"');
+    expect(serviceRunner.indexOf('export FRIDAY_CANONICAL_GATE="${FRIDAY_CANONICAL_GATE:-true}"'))
+      .toBeLessThan(serviceRunner.indexOf('exec "${NODE_BIN}" "${DIST_ENTRY}" start'));
+  });
+
   it("includes autostart scripts in the npm package file list", () => {
     const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as { files: string[] };
 
