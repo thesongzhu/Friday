@@ -214,6 +214,48 @@ describe("check-friday-uiux-product-happy-path", () => {
     }
   });
 
+  it("rejects blocker satisfaction backed only by an opaque proof URI", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-happy-path-opaque-satisfaction-"));
+    try {
+      const visual = writeJson(root, "visual.json", selectedVisual("live-loopback"));
+      const trace = writeJson(root, "trace.json", traceability({
+        counts: {
+          runtimeEvidenceInputs: 2,
+          productActionsMissingRuntimeEvidence: 0,
+          destinationsWithResidualEndBarBlockers: 1,
+          destinationsStillBlocked: 1,
+        },
+        gaps: {
+          residualEndBarBlockers: [{
+            surface: "mobile",
+            id: "home",
+            blockers: [{ kind: "needsRuntimeEvidence", label: "same-run user proof" }],
+          }],
+        },
+      }));
+      const blockerSatisfaction = satisfaction(root, [satisfiedHomeRow({
+        evidenceRefs: ["proof://same-run/mobile-home"],
+      })]);
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${process.cwd()}`,
+        `--selected-visual-report=${visual}`,
+        `--action-traceability-report=${trace}`,
+        `--blocker-satisfaction-report=${blockerSatisfaction}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string; detail?: string }> };
+      expect(report.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "blocker_satisfaction_report_invalid" }),
+        expect.objectContaining({ code: "residual_endbar_blockers_present" }),
+      ]));
+      expect(JSON.stringify(report.blockers)).toContain("satisfaction_evidence_ref_not_file");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects blocker satisfaction backed by partial or not-END-BAR evidence labels", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-happy-path-forbidden-satisfaction-"));
     try {
