@@ -910,6 +910,19 @@ export function createFridaySkillGeneratorService(
     return evidenceRequirements;
   }
 
+  function hasExecutableSelfTestRuntimeProof(
+    test: FridaySkillGenerationExplicitTestSummary,
+  ): boolean {
+    const check = test.behavioralCheck;
+    return test.ok === true
+      && test.executable === true
+      && check?.attempted === true
+      && check.satisfied === true
+      && check.runStatus === "completed"
+      && check.expectedMarkers.length > 0
+      && check.expectedMarkers.every((marker) => check.matchedMarkers.includes(marker));
+  }
+
   async function collectDraftEvidenceStatus(input: {
     session: FridaySkillGenerationSession;
     draft: FridayGeneratedSkillDraft;
@@ -929,6 +942,11 @@ export function createFridaySkillGeneratorService(
         if (!input.session.explicitTest.executable) {
           missingEvidenceReasons.push(
             "Explicit self-test must execute real runtime behavior before approval.",
+          );
+        }
+        if (!hasExecutableSelfTestRuntimeProof(input.session.explicitTest)) {
+          missingEvidenceReasons.push(
+            "Explicit self-test must prove runtime marker behavior before approval.",
           );
         }
       }
