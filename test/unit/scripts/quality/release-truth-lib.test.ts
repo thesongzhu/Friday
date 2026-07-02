@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   classifyEvidenceTarget,
   classifyReleaseProofEnvironment,
+  MOCK_CONTAMINATION_PATTERNS,
+  scanTextForMockLeaks,
 } from "../../../../scripts/quality/release-truth-lib.mjs";
 
 describe("release truth evidence classification", () => {
@@ -36,5 +38,22 @@ describe("release truth evidence classification", () => {
       status: "not_configured",
       missingEnv: ["FRIDAY_AUTH_TOKEN"],
     });
+  });
+
+  it("detects broad mock-contamination proof labels, not only the old six markers", () => {
+    const contaminatedProofPhrases = [
+      "scripted MOCK provider completed the release proof",
+      "stubbed LLM bridge produced the closure artifact",
+      "synthetic fixture drove the real-green result",
+      "dry-run proof was accepted as release evidence",
+      "placeholder evidence bundle marked the run green",
+      "sample proof output stood in for live evidence",
+      "test oracle generated the passing artifact",
+    ];
+
+    expect(MOCK_CONTAMINATION_PATTERNS.length).toBeGreaterThanOrEqual(12);
+    for (const phrase of contaminatedProofPhrases) {
+      expect(scanTextForMockLeaks("release-proof", phrase)).not.toEqual([]);
+    }
   });
 });
