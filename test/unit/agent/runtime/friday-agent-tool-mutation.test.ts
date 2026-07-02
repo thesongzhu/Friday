@@ -79,6 +79,13 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("tool_search", { query: "select:provider" })).toBe(false);
   });
 
+  it("classifies MCP call_tool as mutating while keeping discovery/read actions non-mutating", () => {
+    expect(isMutatingToolCall("mcp", { action: "call_tool", toolName: "write_scratchpad" })).toBe(true);
+    expect(isMutatingToolCall("mcp", { action: "list_tools" })).toBe(false);
+    expect(isMutatingToolCall("mcp", { action: "read_resource" })).toBe(false);
+    expect(isMutatingToolCall("mcp", { action: "get_prompt" })).toBe(false);
+  });
+
   // ─── Conditional: browser ───
 
   it("classifies browser click as mutating", () => {
