@@ -200,10 +200,10 @@ pub struct RedactedInbound {
     pub channel_id: String,
     pub sender_id: String,
     pub bound_principal_id: String,
-    /// The message body with every detected PII span replaced by its opaque marker.
+    /// The message body with every detected sensitive span replaced by its opaque marker.
     pub text: String,
-    /// The DISTINCT PII kinds that were stripped (for honest audit — records THAT PII
-    /// was present, never the values). Empty when the body was clean.
+    /// The DISTINCT sensitive kinds that were stripped (for honest audit — records
+    /// THAT sensitive text was present, never the values). Empty when the body was clean.
     pub pii_redacted: Vec<crate::cognition::PiiKind>,
 }
 
@@ -214,11 +214,12 @@ pub struct RedactedInbound {
 /// part ownership buys; it does NOT by itself make redaction "strict".
 ///
 /// Redaction COMPLETENESS is delegated to and bounded by the single Hub redactor
-/// [`crate::cognition::redact_pii`] (Email / Phone / SSN / credit-card-by-Luhn, with the
-/// ASCII leading-boundary so PII adjacent to CJK is still stripped — the operator works
-/// in Chinese). KNOWN RESIDUAL LIMIT: a value with an ASCII word/digit char glued to its
-/// LEFT (e.g. `x123-45-6789`) can under-match — this layer inherits the redactor's
-/// documented bounds and does not claim to defeat every evasion.
+/// [`crate::cognition::redact_pii`] (Email / Phone / SSN / credit-card-by-Luhn plus
+/// credential-shaped API keys, JWTs, bearer tokens, and private-key blocks, with the
+/// ASCII leading-boundary so sensitive text adjacent to CJK is still stripped — the
+/// operator works in Chinese). KNOWN RESIDUAL LIMIT: a value with an ASCII word/digit char
+/// glued to its LEFT (e.g. `x123-45-6789`) can under-match — this layer inherits the
+/// redactor's documented bounds and does not claim to defeat every evasion.
 ///
 /// We apply the redactor to a fixpoint (release-active, bounded, never panics): tags like
 /// `[EMAIL]` never re-match a pattern, so this converges in one pass for the current

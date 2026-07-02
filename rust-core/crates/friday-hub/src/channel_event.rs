@@ -161,6 +161,9 @@ fn pii_kind_label(k: &crate::cognition::PiiKind) -> &'static str {
         PiiKind::Phone => "phone",
         PiiKind::Ssn => "ssn",
         PiiKind::CreditCard => "credit_card",
+        PiiKind::ApiKey => "api_key",
+        PiiKind::Jwt => "jwt",
+        PiiKind::PrivateKey => "private_key",
     }
 }
 

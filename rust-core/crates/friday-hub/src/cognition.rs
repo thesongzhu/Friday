@@ -8,9 +8,10 @@
 //! 1. **Rank + bound** — score by recency half-life decay, sort, and cap at
 //!    `top_k` so recall injects a BOUNDED amount of context (recall adds prompt
 //!    tokens, which must stay bounded + ledgered, `07` §1/§3).
-//! 2. **PII redaction** — detect + mask email / phone / SSN / credit-card (the
-//!    last Luhn-validated) before the text leaves the Hub, ported from the oracle
-//!    PII guard. This is defense-in-depth ON TOP of the Context Passport gate.
+//! 2. **Sensitive text redaction** — detect + mask email / phone / SSN /
+//!    credit-card (the last Luhn-validated) plus credential-shaped API keys, JWTs,
+//!    bearer tokens, and private-key blocks before the text leaves the Hub. This is
+//!    defense-in-depth ON TOP of the Context Passport gate.
 //!
 //! **Honest scope:** there is NO semantic / EMBEDDING recall here — the oracle's
 //! hybrid VECTOR search (`friday-memory-hybrid.ts`) has no Rust counterpart (that is
@@ -74,6 +75,9 @@ pub enum PiiKind {
     Phone,
     Ssn,
     CreditCard,
+    ApiKey,
+    Jwt,
+    PrivateKey,
 }
 
 impl PiiKind {
@@ -85,6 +89,9 @@ impl PiiKind {
             PiiKind::Phone => "[PHONE]",
             PiiKind::Ssn => "[SSN]",
             PiiKind::CreditCard => "[CREDIT_CARD]",
+            PiiKind::ApiKey => "[API_KEY]",
+            PiiKind::Jwt => "[JWT]",
+            PiiKind::PrivateKey => "[PRIVATE_KEY]",
         }
     }
 }
@@ -125,6 +132,31 @@ fn pii_patterns() -> &'static [(PiiKind, Regex)] {
     // boundary) so CJK-adjacent PII redacts.
     PATTERNS.get_or_init(|| {
         vec![
+            (
+                PiiKind::PrivateKey,
+                Regex::new(r"-----BEGIN (?:PGP )?[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:PGP )?[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")
+                    .unwrap(),
+            ),
+            (
+                PiiKind::Jwt,
+                Regex::new(r"(?-u:\b)eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}")
+                    .unwrap(),
+            ),
+            (
+                PiiKind::ApiKey,
+                Regex::new(r"(?-u:\b)(?:sk-[A-Za-z0-9_-]{8,}|gh[opsru]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{16,})")
+                    .unwrap(),
+            ),
+            (
+                PiiKind::ApiKey,
+                Regex::new(r"(?i)(?-u:\b)Bearer\s+[A-Za-z0-9._~+/=-]{16,}")
+                    .unwrap(),
+            ),
+            (
+                PiiKind::ApiKey,
+                Regex::new(r#"(?i)(?:^|[^A-Za-z0-9])"?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret[_-]?access[_-]?key|password|secret|token)"?\s*[=:]\s*"?[A-Za-z0-9._~+/=-]{8,}"?"#)
+                    .unwrap(),
+            ),
             // No TRAILING `(?-u:\b)`: a trailing boundary UNDER-matches when an ASCII
             // word/digit char is glued directly after the value (e.g. `alice@example.com1`)
             // — and under-matching leaks a real value, the dangerous direction. The TLD
@@ -758,8 +790,10 @@ mod tests {
 
     #[test]
     fn redacts_secret_credentials_and_leaves_no_original_value() {
-        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuZXcxIn0.J9pK5c0aY6zC2wQpL8mN4vR3sT1uX7yZ0aB2cD4eF6g";
-        let pem = "-----BEGIN PRIVATE KEY-----\nnew1-private-key-material\n-----END PRIVATE KEY-----";
+        let jwt =
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuZXcxIn0.J9pK5c0aY6zC2wQpL8mN4vR3sT1uX7yZ0aB2cD4eF6g";
+        let pem =
+            "-----BEGIN PRIVATE KEY-----\nnew1-private-key-material\n-----END PRIVATE KEY-----";
         let input = format!(
             "Authorization: Bearer sk-new1recallcanary123456 \
              github ghp_new1recallcanary123456 \
@@ -824,7 +858,11 @@ mod tests {
             !kinds.is_empty(),
             "credential-shaped secrets must report at least one redaction kind"
         );
-        for raw in [github_pat, short_payload_jwt, "new1-pgp-private-key-material"] {
+        for raw in [
+            github_pat,
+            short_payload_jwt,
+            "new1-pgp-private-key-material",
+        ] {
             assert!(
                 !out.contains(raw),
                 "refuted secret credential shape leaked: {raw:?} in {out:?}"
