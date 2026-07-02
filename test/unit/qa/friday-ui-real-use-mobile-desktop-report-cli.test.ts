@@ -18,10 +18,33 @@ function touch(dir: string, name: string) {
   return path;
 }
 
+function actionEvidence(dir: string, name: string, missionId: string, evidenceRef: string) {
+  const path = join(dir, name);
+  writeFileSync(path, JSON.stringify({
+    truth: "accessibility_click_action_runtime_evidence_real_ui_not_endbar",
+    status: "ready",
+    missionId,
+    actions: [
+      {
+        surface: name.includes("mobile") ? "mobile" : "desktop",
+        action_id: `${name}/refresh`,
+        status: "pass",
+        evidence_ref: evidenceRef,
+        mission_id: missionId,
+      },
+    ],
+  }, null, 2));
+  return path;
+}
+
 function summary(dir: string, overrides: Record<string, unknown> = {}) {
   const missionId = "mission_ui_real_use_cli";
   mkdirSync(join(dir, "mobile"), { recursive: true });
   mkdirSync(join(dir, "desktop"), { recursive: true });
+  const mobileProof = touch(join(dir, "mobile"), "proof.json");
+  const desktopProof = touch(join(dir, "desktop"), "proof.json");
+  const mobileEvents = touch(join(dir, "mobile"), "events.jsonl");
+  const desktopEvents = touch(join(dir, "desktop"), "events.jsonl");
   return {
     truth: "ui_device_shortlist_runner_summary_not_endbar_not_adoption",
     status: "partial_ready",
@@ -29,17 +52,17 @@ function summary(dir: string, overrides: Record<string, unknown> = {}) {
     captures: {
       mobile: {
         mission_id: missionId,
-        proof: touch(join(dir, "mobile"), "proof.json"),
-        events: touch(join(dir, "mobile"), "events.jsonl"),
-        action_runtime_evidence: touch(join(dir, "mobile"), "action.json"),
+        proof: mobileProof,
+        events: mobileEvents,
+        action_runtime_evidence: actionEvidence(join(dir, "mobile"), "mobile-action.json", missionId, mobileProof),
         event_count: 5,
         action_count: 1,
       },
       desktop: {
         mission_id: missionId,
-        proof: touch(join(dir, "desktop"), "proof.json"),
-        events: touch(join(dir, "desktop"), "events.jsonl"),
-        action_runtime_evidence: touch(join(dir, "desktop"), "action.json"),
+        proof: desktopProof,
+        events: desktopEvents,
+        action_runtime_evidence: actionEvidence(join(dir, "desktop"), "desktop-action.json", missionId, desktopProof),
         event_count: 5,
         action_count: 1,
       },
