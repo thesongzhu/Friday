@@ -145,7 +145,7 @@ function eventEvidenceFailures(path, missionId, expectedSurface) {
   return failures;
 }
 
-function actionEvidenceFailures(path, missionId) {
+function actionEvidenceFailures(path, missionId, expectedSurface) {
   const failures = [];
   const value = readOptionalJson(path);
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -167,6 +167,9 @@ function actionEvidenceFailures(path, missionId) {
   for (const [index, action] of actions.entries()) {
     if (string(action?.mission_id || action?.missionId || missionId) !== missionId) {
       failures.push(`action_runtime_evidence_action_mission_mismatch:${index + 1}`);
+    }
+    if (expectedSurface && string(action?.surface) !== expectedSurface) {
+      failures.push(`action_runtime_evidence_action_surface_mismatch:${index + 1}`);
     }
     if (!fileExists(action?.evidence_ref || action?.evidenceRef)) {
       failures.push(`action_runtime_evidence_action_ref_missing:${index + 1}`);
@@ -202,7 +205,7 @@ function hasCapture(capture, missionId, expectedSurface) {
   if (!fileExists(capture.events)) return false;
   if (eventEvidenceFailures(capture.events, missionId, expectedSurface).length > 0) return false;
   if (!fileExists(capture.action_runtime_evidence)) return false;
-  if (actionEvidenceFailures(capture.action_runtime_evidence, missionId).length > 0) return false;
+  if (actionEvidenceFailures(capture.action_runtime_evidence, missionId, expectedSurface).length > 0) return false;
   return Number(capture.event_count || 0) > 0 && Number(capture.action_count || 0) > 0;
 }
 
@@ -212,7 +215,7 @@ function captureDetail(capture, missionId, expectedSurface) {
     ? eventEvidenceFailures(capture.events, missionId, expectedSurface)
     : [];
   const actionFailures = fileExists(capture.action_runtime_evidence)
-    ? actionEvidenceFailures(capture.action_runtime_evidence, missionId)
+    ? actionEvidenceFailures(capture.action_runtime_evidence, missionId, expectedSurface)
     : [];
   const failures = [...eventFailures, ...actionFailures];
   return failures.length > 0
