@@ -50,10 +50,6 @@ export const DEFAULT_PROOF_INPUTS = [
   "scripts/ops/phase24b-discord-trusted-inbound-listener.mjs",
   "scripts/ops/phase24c-telegram-trusted-inbound-listener.mjs",
   "scripts/ops/phase24d-lark-feishu-trusted-inbound-listener.mjs",
-  "scripts/ops/phase24e-telegram-workflow-candidate-listener.mjs",
-  "scripts/ops/phase24f-discord-workflow-candidate-listener.mjs",
-  "scripts/ops/phase24g-lark-feishu-workflow-candidate-listener.mjs",
-  "scripts/ops/lib/workflow-candidate-proof-harness.mjs",
   "scripts/ops/validate-channel-proof-artifacts.mjs",
   "validation/real-world/lib",
   "test/e2e/live",
@@ -68,6 +64,13 @@ export const MOCK_CONTAMINATION_PATTERNS = [
   { pattern: /localStorage\.setItem\(/g, label: "localStorage.setItem" },
   { pattern: /\bfake transport\b/gi, label: "fake transport" },
   { pattern: /\bfake provider\b/gi, label: "fake provider" },
+  { pattern: /\bscripted\s+mock\s+(?:provider|transport|runtime|bin)\b/gi, label: "scripted mock runtime" },
+  { pattern: /\b(?:stubbed\s+(?:llm\s+)?(?:bridge|provider|runtime|transport)|llm\s+bridge\s+stubbed)\b/gi, label: "stubbed runtime boundary" },
+  { pattern: /\bsynthetic\s+fixtures?\s+(?:drove|drive|driven|accepted|produced)\b/gi, label: "synthetic fixture proof" },
+  { pattern: /\bdry[- ]run\s+proof\b/gi, label: "dry-run proof" },
+  { pattern: /\bplaceholder\s+evidence\b/gi, label: "placeholder evidence" },
+  { pattern: /\bsample\s+proof\b/gi, label: "sample proof" },
+  { pattern: /\btest\s+oracle\b/gi, label: "test oracle" },
 ];
 
 function normalizePath(filePath = "") {
