@@ -18,6 +18,11 @@ import type {
 } from "../../browser/friday-browser-manager.js";
 import { browserArtifactDir, validateUrl } from "../../browser/friday-browser-manager.js";
 import { resolveBrowserTarget } from "../../browser/friday-browser-target-id.js";
+import {
+  createFridayAgentSsrfGuard,
+  type FridayAgentSsrfGuard,
+  FridaySsrfBlockedError,
+} from "../security/friday-agent-ssrf-guard.js";
 import type {
   FridayDomDocumentLike,
   FridayDomElementLike,
@@ -27,6 +32,7 @@ import type {
 
 export interface CreateFridayAgentBrowserToolOptions {
   browserManager: FridayBrowserManager;
+  ssrfGuard?: FridayAgentSsrfGuard;
 }
 
 type BrowserAction =
@@ -137,6 +143,21 @@ export function createFridayAgentBrowserTool(
   options: CreateFridayAgentBrowserToolOptions,
 ): FridayAgentToolDefinition {
   const { browserManager } = options;
+  const ssrfGuard = options.ssrfGuard ?? createFridayAgentSsrfGuard();
+
+  function validateBrowserNavigationUrl(url: string): string | undefined {
+    const urlError = validateUrl(url, browserManager.options.allowedOrigins);
+    if (urlError) return urlError;
+    try {
+      ssrfGuard.validate(url);
+      return undefined;
+    } catch (err) {
+      if (err instanceof FridaySsrfBlockedError) {
+        return err.message;
+      }
+      throw err;
+    }
+  }
 
   return {
     name: "browser",
@@ -504,7 +525,7 @@ export function createFridayAgentBrowserTool(
     const executionContext = readBrowserExecutionContext(args);
 
     if (url) {
-      const urlError = validateUrl(url, browserManager.options.allowedOrigins);
+      const urlError = validateBrowserNavigationUrl(url);
       if (urlError) return errorResult(urlError);
     }
 
@@ -556,7 +577,7 @@ export function createFridayAgentBrowserTool(
   ): Promise<FridayAgentToolResult> {
     const url = readStringParam(args, "url", { required: true });
     const executionContext = readBrowserExecutionContext(args);
-    const urlError = validateUrl(url, browserManager.options.allowedOrigins);
+    const urlError = validateBrowserNavigationUrl(url);
     if (urlError) return errorResult(urlError);
 
     // Retry once on browser disconnect — re-open session then navigate
@@ -950,7 +971,7 @@ export function createFridayAgentBrowserTool(
         );
         const url = readStringParam(args, "url");
         if (url) {
-          const urlError = validateUrl(url, browserManager.options.allowedOrigins);
+          const urlError = validateBrowserNavigationUrl(url);
           if (urlError) {
             await page.close().catch(() => {});
             session.tabs.delete(tabId);

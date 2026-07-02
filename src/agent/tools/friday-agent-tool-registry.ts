@@ -273,7 +273,10 @@ export function createFridayAgentToolRegistry(
 
   if (options?.browserManager) {
     tools.push(
-      createFridayAgentBrowserTool({ browserManager: options.browserManager }),
+      createFridayAgentBrowserTool({
+        browserManager: options.browserManager,
+        ssrfGuard: options?.ssrfGuard,
+      }),
     );
   }
 
