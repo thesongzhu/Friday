@@ -230,9 +230,9 @@ function normalizeCapture(capturePath, raw) {
       if (!allowedInteractions.has(interaction)) block("interaction_not_supported", `${actionLabel}:${interaction || "<missing>"}`);
       if (status !== "pass") block("status_not_pass", `${actionLabel}:${status || "<missing>"}`);
       if (forbiddenTruth.test(String(action.source || ""))) block("ui_action_source_forbidden", actionLabel);
-
-      if (event) {
-        if (!allowedEvents.has(event)) block("event_not_supported", `${actionLabel}:${event}`);
+      if (!event) block("action_event_missing", actionLabel);
+      if (event && !allowedEvents.has(event)) block("event_not_supported", `${actionLabel}:${event}`);
+      if (event && allowedEvents.has(event)) {
         rows.push({
           surface,
           event,
