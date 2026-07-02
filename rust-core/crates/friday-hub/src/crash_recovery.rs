@@ -377,29 +377,34 @@ fn latest_finished_agent_loop_decision(
     item: &WorkItem,
 ) -> Result<Option<(RouteDecisionCard, String)>, StorageError> {
     let mut decisions = db.list_route_decisions_for_mission(&item.mission_id)?;
-    decisions.retain(|decision| decision.work_item_id == item.work_item_id);
+    decisions.retain(|decision| {
+        decision.work_item_id == item.work_item_id
+            && decision
+                .decision_id
+                .strip_prefix("route-decision:agent-loop:")
+                .is_some_and(|run_id| {
+                    !run_id.is_empty()
+                        && decision
+                            .trace_refs
+                            .iter()
+                            .any(|trace| trace == &format!("agent-run:{run_id}"))
+                })
+    });
     decisions.sort_by_key(|decision| (decision.created_at_ms, decision.decision_id.clone()));
-    for decision in decisions.into_iter().rev() {
-        let Some(run_id) = decision
-            .decision_id
-            .strip_prefix("route-decision:agent-loop:")
-            .filter(|run_id| !run_id.is_empty())
-        else {
-            continue;
-        };
-        if !decision
-            .trace_refs
-            .iter()
-            .any(|trace| trace == &format!("agent-run:{run_id}"))
-        {
-            continue;
-        }
-        let run_id = run_id.to_string();
-        if friday_storage::get_run_result(db.conn(), &run_id)?
-            .is_some_and(|result| result.status == "finished")
-        {
-            return Ok(Some((decision, run_id)));
-        }
+    let Some(decision) = decisions.pop() else {
+        return Ok(None);
+    };
+    let Some(run_id) = decision
+        .decision_id
+        .strip_prefix("route-decision:agent-loop:")
+    else {
+        return Ok(None);
+    };
+    let run_id = run_id.to_string();
+    if friday_storage::get_run_result(db.conn(), &run_id)?
+        .is_some_and(|result| result.status == "finished")
+    {
+        return Ok(Some((decision, run_id)));
     }
     Ok(None)
 }
