@@ -4519,6 +4519,48 @@ mod tests {
         }
     }
 
+    fn provider_workspace_action_request() -> ProviderWorkspaceActionRequestWire {
+        ProviderWorkspaceActionRequestWire {
+            request_id: "provider-action-owner-scope".into(),
+            friday_session_id: "friday-session-1".into(),
+            provider: "codex".into(),
+            action: "list_sessions".into(),
+            capability_id: "provider.codex.list_sessions".into(),
+            payload_ref: None,
+            mission_context: Some(friday_protocol::ProviderWorkspaceMissionContextWire {
+                friday_conversation_id: "fconv_provider_workspace".into(),
+                mission_id: "mission-provider-workspace".into(),
+                work_item_id: "work-provider-workspace".into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn provider_workspace_action_blocks_without_authenticated_owner_binding() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_provider_workspace_mission(&db);
+        db.upsert_provider_session_link(&provider_session_link())
+            .unwrap();
+
+        let response = provider_workspace_action_result_for_db(
+            &db,
+            "provider-action-owner-scope",
+            provider_workspace_action_request(),
+            1_700_004_030_000,
+        );
+
+        let Message::ProviderWorkspaceActionResult { result } = response.message else {
+            panic!("expected ProviderWorkspaceActionResult, got {response:?}");
+        };
+        assert_eq!(result.status, "mission_owner_mismatch");
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert_eq!(
+            result.blocker.as_deref(),
+            Some("provider workspace action blocked: target Mission is not owned by the authenticated owner"),
+        );
+    }
+
     #[test]
     fn context_passport_transfer_blocks_mission_without_authenticated_owner_binding() {
         let db = Db::open_hub(&tmp_db()).unwrap();
