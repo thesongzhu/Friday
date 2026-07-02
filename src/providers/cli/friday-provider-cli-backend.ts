@@ -1,7 +1,8 @@
 import { execFile as execFileCb, spawn } from "node:child_process";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import { FridayDomainError } from "#errors";
@@ -15,6 +16,14 @@ import type {
 const execFile = promisify(execFileCb);
 const CLI_OUTPUT_MAX_BYTES = 1_048_576;
 const CLI_COMPLETION_TIMEOUT_MS = 300_000;
+const CLI_BINARY_ALLOWLIST_ENV = "FRIDAY_CLI_BINARY_ALLOWLIST";
+const DEFAULT_CLI_BINARY_ALLOWLIST_DIRS = [
+  "/usr/local/bin",
+  "/usr/bin",
+  "/bin",
+  "/opt/homebrew/bin",
+  "/opt/homebrew/sbin",
+] as const;
 
 interface FridayCliBackendSpec {
   id: FridayProviderCliBackendId;
@@ -207,9 +216,95 @@ function getCliBackendSpec(backendId: FridayProviderCliBackendId): FridayCliBack
   return CLI_BACKEND_SPECS[backendId];
 }
 
+function realpathOrResolve(path: string): string {
+  return existsSync(path) ? realpathSync.native(path) : resolve(path);
+}
+
+function isPathWithin(path: string, root: string): boolean {
+  const resolvedPath = realpathOrResolve(path);
+  const resolvedRoot = realpathOrResolve(root);
+  return resolvedPath === resolvedRoot || resolvedPath.startsWith(`${resolvedRoot}${sep}`);
+}
+
+function parseOperatorCliBinaryAllowlist(): readonly string[] {
+  const raw = process.env[CLI_BINARY_ALLOWLIST_ENV];
+  if (!raw) {
+    return [];
+  }
+  return raw
+    .split(/[,:]/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0 && isAbsolute(entry))
+    .map(realpathOrResolve);
+}
+
+function listAllowedCliBinaryEntries(): readonly { path: string; kind: "dir" | "exact" }[] {
+  const defaults = DEFAULT_CLI_BINARY_ALLOWLIST_DIRS.map((entry) => ({
+    path: realpathOrResolve(entry),
+    kind: "dir" as const,
+  }));
+  const configured = parseOperatorCliBinaryAllowlist().map((entry) => {
+    if (existsSync(entry)) {
+      return {
+        path: entry,
+        kind: statSync(entry).isDirectory() ? "dir" as const : "exact" as const,
+      };
+    }
+    return { path: entry, kind: "exact" as const };
+  });
+  return [...defaults, ...configured];
+}
+
+function createCliBinaryPathValidationError(reason: string): FridayDomainError {
+  return new FridayDomainError(
+    "VALIDATION_ERROR",
+    `cliConfig.binaryPath is not in the allowed set: ${reason}`,
+    { httpStatus: 400 },
+  );
+}
+
+// Exported for focused NEW-32 tests and for provider-service write-time
+// validation. The spawn-time call remains load-bearing for persisted configs.
+export function assertAllowedCliBinaryPath(
+  binaryPath: string,
+  backendId: FridayProviderCliBackendId,
+): void {
+  const explicitPath = binaryPath.trim();
+  if (!isAbsolute(explicitPath)) {
+    throw createCliBinaryPathValidationError("explicit paths must be absolute");
+  }
+  if (explicitPath.split(/[\\/]+/).includes("..")) {
+    throw createCliBinaryPathValidationError("path traversal is not allowed");
+  }
+
+  const resolvedPath = realpathOrResolve(explicitPath);
+  if (isPathWithin(resolvedPath, tmpdir())) {
+    throw createCliBinaryPathValidationError("temporary directories are not allowed");
+  }
+  if (isPathWithin(resolvedPath, process.cwd())) {
+    throw createCliBinaryPathValidationError("the Friday workspace is not an allowed binary directory");
+  }
+
+  const spec = getCliBackendSpec(backendId);
+  const allowedEntries = listAllowedCliBinaryEntries();
+  if (allowedEntries.some((entry) => entry.kind === "exact" && entry.path === resolvedPath)) {
+    return;
+  }
+  if (
+    spec.binaryNames.includes(basename(resolvedPath)) &&
+    allowedEntries.some((entry) => entry.kind === "dir" && entry.path === dirname(resolvedPath))
+  ) {
+    return;
+  }
+
+  throw createCliBinaryPathValidationError("path must match an operator allowlisted file or directory");
+}
+
 function resolveBinaryPath(cliConfig: FridayProviderCliConfig): string {
   if (cliConfig.binaryPath && cliConfig.binaryPath.trim().length > 0) {
-    return cliConfig.binaryPath;
+    const binaryPath = cliConfig.binaryPath.trim();
+    assertAllowedCliBinaryPath(binaryPath, cliConfig.backendId);
+    return binaryPath;
   }
   const spec = getCliBackendSpec(cliConfig.backendId);
   return spec.binaryNames[0]!;
@@ -252,9 +347,10 @@ export async function probeFridayCliSession(input: {
 }): Promise<FridayCliSessionStatus> {
   const checkedAt = input.nowIso();
   const spec = getCliBackendSpec(input.cliConfig.backendId);
-  const binaryPath = resolveBinaryPath(input.cliConfig);
+  let binaryPath = input.cliConfig.binaryPath?.trim() || spec.binaryNames[0]!;
 
   try {
+    binaryPath = resolveBinaryPath(input.cliConfig);
     const versionResult = await runExecFile(
       binaryPath,
       spec.versionArgs,

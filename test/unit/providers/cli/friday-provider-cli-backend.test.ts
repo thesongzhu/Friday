@@ -1,17 +1,29 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { probeFridayCliSession, runFridayCliBackendTextCompletion } from "#providers";
 import { parseCodexStatus } from "../../../../src/providers/cli/friday-provider-cli-backend.js";
 
 describe("friday-provider-cli-backend", () => {
   let testDir: string | undefined;
+  const originalCliBinaryAllowlist = process.env.FRIDAY_CLI_BINARY_ALLOWLIST;
+  const originalPath = process.env.PATH;
 
   afterEach(() => {
     if (testDir) {
       rmSync(testDir, { recursive: true, force: true });
       testDir = undefined;
+    }
+    if (originalCliBinaryAllowlist === undefined) {
+      delete process.env.FRIDAY_CLI_BINARY_ALLOWLIST;
+    } else {
+      process.env.FRIDAY_CLI_BINARY_ALLOWLIST = originalCliBinaryAllowlist;
+    }
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
     }
   });
 
@@ -19,7 +31,7 @@ describe("friday-provider-cli-backend", () => {
     const cliPath = writeMockCli(`
       writeFileSync(${JSON.stringify(join(tmpdir(), "friday-new32-probe-pwned"))}, "executed");
       process.stdout.write("codex 1.0.0\\n");
-    `, "codex");
+    `, "codex", tmpdir());
     const sentinelPath = join(testDir!, "PWNED");
     writeFileSync(cliPath, `#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(sentinelPath)}, "executed");\nprocess.stdout.write("codex 1.0.0\\n");\n`);
     chmodSync(cliPath, 0o755);
@@ -41,7 +53,7 @@ describe("friday-provider-cli-backend", () => {
     const cliPath = writeMockCli(`
       writeFileSync(${JSON.stringify(join(tmpdir(), "friday-new32-completion-pwned"))}, "executed");
       process.stdout.write("unexpected completion\\n");
-    `, "codex");
+    `, "codex", tmpdir());
     const sentinelPath = join(testDir!, "PWNED");
     writeFileSync(cliPath, `#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(sentinelPath)}, "executed");\nprocess.stdout.write("unexpected completion\\n");\n`);
     chmodSync(cliPath, 0o755);
@@ -67,6 +79,7 @@ describe("friday-provider-cli-backend", () => {
         process.stdout.write("x".repeat(1100000));
       });
     `);
+    allowCliBinaryPath(cliPath);
 
     const result = await runFridayCliBackendTextCompletion({
       cliConfig: {
@@ -82,7 +95,8 @@ describe("friday-provider-cli-backend", () => {
   });
 
   it("maps missing CLI binaries to PROVIDER_UNREACHABLE for text completions", async () => {
-    const missingPath = join(tmpdir(), `friday-missing-cli-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const missingPath = `/usr/local/bin/friday-missing-cli-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    allowCliBinaryPath(missingPath);
 
     await expect(runFridayCliBackendTextCompletion({
       cliConfig: {
@@ -95,6 +109,23 @@ describe("friday-provider-cli-backend", () => {
       code: "PROVIDER_UNREACHABLE",
       httpStatus: 422,
       message: `CLI binary "${missingPath}" not found`,
+    });
+  });
+
+  it("keeps the default bare codex binary on PATH instead of applying explicit-path validation", async () => {
+    process.env.FRIDAY_CLI_BINARY_ALLOWLIST = "/definitely/not/codex";
+    process.env.PATH = "";
+
+    await expect(runFridayCliBackendTextCompletion({
+      cliConfig: {
+        backendId: "codex-cli",
+      },
+      systemPrompt: "system",
+      conversation: "hello",
+    })).rejects.toMatchObject({
+      code: "PROVIDER_UNREACHABLE",
+      httpStatus: 422,
+      message: "CLI binary \"codex\" not found",
     });
   });
 
@@ -149,8 +180,12 @@ describe("friday-provider-cli-backend", () => {
     });
   });
 
-  function writeMockCli(source: string, filename = "mock-cli.mjs"): string {
-    testDir = join(tmpdir(), `friday-provider-cli-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  function allowCliBinaryPath(binaryPath: string): void {
+    process.env.FRIDAY_CLI_BINARY_ALLOWLIST = binaryPath;
+  }
+
+  function writeMockCli(source: string, filename = "mock-cli.mjs", rootDir = join(homedir(), ".friday-test-cli-binaries")): string {
+    testDir = join(rootDir, `friday-provider-cli-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(testDir, { recursive: true });
     const cliPath = join(testDir, filename);
     writeFileSync(cliPath, `#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\n${source}`);

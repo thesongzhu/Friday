@@ -51,6 +51,7 @@ import { createFridayProviderProfileRepository } from "../persistence/friday-pro
 import { createFridaySecretRepository } from "../persistence/friday-secret-repository.js";
 import { createFridayProviderUsageRepository } from "../persistence/friday-provider-usage-repository.js";
 import {
+  assertAllowedCliBinaryPath,
   probeFridayCliSession,
   runFridayCliBackendTextCompletion,
 } from "../cli/friday-provider-cli-backend.js";
@@ -2187,6 +2188,9 @@ export function createFridayProviderService(
         "cliConfig is required when backendKind is 'cli'",
         { httpStatus: 400 },
       );
+    }
+    if (backendKind === "cli" && input.cliConfig?.binaryPath && input.cliConfig.binaryPath.trim().length > 0) {
+      assertAllowedCliBinaryPath(input.cliConfig.binaryPath, input.cliConfig.backendId);
     }
   }
 
