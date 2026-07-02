@@ -4433,6 +4433,92 @@ mod tests {
         .unwrap();
     }
 
+    fn seed_context_passport_mission(db: &Db, owner: &str, mission_id: &str) {
+        let now = 1_700_004_000_000;
+        let conversation_id = format!("fconv_{mission_id}");
+        db.upsert_friday_conversation(&FridayConversation {
+            friday_conversation_id: conversation_id.clone(),
+            owner_principal: owner.into(),
+            title: "Context passport owner scope".into(),
+            current_focus_summary: "context passport transfer should stay owner scoped".into(),
+            active_mission_ids: vec![mission_id.into()],
+            surface_thread_ids: Vec::new(),
+            memory_scope_ref: None,
+            truth_status: TruthStatus::WiredRegistry,
+            proof_refs: vec!["proof://context-passport-owner-scope".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_mission(&Mission {
+            mission_id: mission_id.into(),
+            friday_conversation_id: conversation_id,
+            title: "Context passport owner scope".into(),
+            intent: "prove cross-owner context passport transfer is blocked".into(),
+            status: MissionStatus::Active,
+            why_now: "Context passports carry refs across execution lanes.".into(),
+            decision_path_summary: "Seeded directly for owner-binding regression.".into(),
+            considered_options: vec!["allow raw mission_id".into(), "bind to authenticated owner".into()],
+            deferred_options: Vec::new(),
+            known_pitfalls: vec!["mission_id alone is not an owner proof".into()],
+            handoff_inheritance: Vec::new(),
+            work_item_ids: Vec::new(),
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: vec!["proof://context-passport-owner-scope".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+    }
+
+    fn context_passport_request(
+        mission_id: &str,
+        passport_id: &str,
+    ) -> ContextPassportTransferRequestWire {
+        ContextPassportTransferRequestWire {
+            passport_id: passport_id.into(),
+            mission_id: mission_id.into(),
+            work_item_id: None,
+            destination_lane: "codex".into(),
+            destination_target: Some("codex".into()),
+            items: vec![friday_protocol::ContextPassportItemWire {
+                kind: "summary".into(),
+                label: "summary".into(),
+                included: true,
+                sensitive: false,
+            }],
+            approved_sensitive: false,
+        }
+    }
+
+    #[test]
+    fn context_passport_transfer_blocks_mission_without_authenticated_owner_binding() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_context_passport_mission(&db, "principal:victim", "mission-passport-victim");
+
+        let response = context_passport_transfer_result_for_db(
+            &db,
+            "passport-cross-owner",
+            context_passport_request("mission-passport-victim", "passport-cross-owner"),
+            1_700_004_010_000,
+        );
+
+        let Message::ContextPassportTransferResult { result } = response.message else {
+            panic!("expected ContextPassportTransferResult, got {response:?}");
+        };
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.blocker.as_deref(), Some("mission_owner_mismatch"));
+        assert!(
+            db.get_mission("mission-passport-victim")
+                .unwrap()
+                .expect("seeded mission")
+                .context_passport_refs
+                .is_empty(),
+            "blocked cross-owner transfer must not mutate mission refs"
+        );
+    }
+
     fn seed_mission_ask(db: &Db) {
         let now = 1_700_000_100_000;
         db.upsert_friday_conversation(&FridayConversation {
