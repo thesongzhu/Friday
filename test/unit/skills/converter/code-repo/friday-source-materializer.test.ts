@@ -214,10 +214,10 @@ describe("materializeFridayCodeRepoSource (local)", () => {
 // ─── Git Source Detection Tests ───
 
 describe("materializeFridayCodeRepoSource (git)", () => {
-  it("throws with descriptive error for invalid git URL", () => {
+  it("rejects git hosts outside the source allowlist", () => {
     expect(() =>
       materializeFridayCodeRepoSource("git@invalid.host:nonexistent/repo.git"),
-    ).toThrow("Failed to clone");
+    ).toThrow("not allowed");
   });
 
   it("A7: rejects metadata-service git URLs before invoking git", async () => {

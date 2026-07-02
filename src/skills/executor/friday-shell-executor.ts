@@ -104,7 +104,9 @@ function resolveSandboxedSpawnSpec(
   sandbox: FridayShellOsSandboxOptions | undefined,
 ): { command: string; args: string[]; unavailableReason?: string } {
   if (!sandbox?.enabled) {
-    return spawnSpec;
+    return sandbox?.required
+      ? { ...spawnSpec, unavailableReason: "OS sandbox is required but no OS sandbox boundary is enabled." }
+      : spawnSpec;
   }
   if (process.platform !== "darwin") {
     return sandbox.required
