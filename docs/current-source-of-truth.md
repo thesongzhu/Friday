@@ -244,6 +244,7 @@ This document is the current architecture reference for steady-state Friday runt
 - `/v1/secrets*` is the active CRUD surface for encrypted secret metadata and rotation backed by the existing provider secret repository.
 - `GET /v1/workflow-versions/:versionId` is the canonical direct fetch route for workflow versions alongside `/v1/workflows/:workflowId/versions`.
 - `/v1/realtime/*` is the canonical realtime transport surface. WebSocket clients may connect through `/v1/realtime/ws`, and `/v1/ws` remains a thin compatibility alias for the same gateway.
+- Agent-run pause/resume control is intentionally narrower on HTTP than on the sealed-WS owner channel. `POST /v1/agent/runs/:runId/resume` is only a courier for an owner-authorized opaque approval when `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` is enabled; when that flag is off or the runtime relay is absent, the route short-circuits to 503 before any run lookup. Direct sealed-WS clients remain the run-control transport for operator/native surfaces that hold the owner session material.
 - `/v1/workflow-approvals*` is the canonical workflow approval surface; `/v1/approvals*` remains a compatibility alias for legacy or SSD-shaped clients.
 - `npm run check:architecture-boundaries` is the canonical repo-level import guard for core infrastructure layers (`state`, `security`, `channels`, `providers`) and must stay green before merge.
 - `npm run check:security-doctor` is the canonical repo-level guard for secret refs, capability-grant evidence, provider/channel doctor surfaces, and their targeted safety tests.
