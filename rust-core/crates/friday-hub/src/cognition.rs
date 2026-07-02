@@ -1336,7 +1336,7 @@ mod tests {
         let now = 1_000_000;
         let r = row(
             "secret",
-            Some("provider key Authorization: Bearer sk-new1-ranked-canary123456"),
+            Some("provider key Authorization: Bearer sk-new1-ranked-not-real-canary123456"),
             Some(now),
         );
 
@@ -1350,7 +1350,9 @@ mod tests {
             ranked[0].content
         );
         assert!(
-            !ranked[0].content.contains("sk-new1-ranked-canary123456"),
+            !ranked[0]
+                .content
+                .contains("sk-new1-ranked-not-real-canary123456"),
             "ranked recall leaked secret credential: {:?}",
             ranked[0].content
         );

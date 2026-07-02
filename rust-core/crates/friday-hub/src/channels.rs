@@ -532,7 +532,7 @@ mod tests {
     fn redact_inbound_strips_secret_credentials_using_shared_redactor() {
         let jwt = "eyJhbGciOiJIUzI1NiJ9.e30.aaaaaaaaaaaaaaaa"; // pragma: allowlist secret
         let raw = format!(
-            "inbound Authorization: Bearer sk-new1-inbound-canary123456 \
+            "inbound Authorization: Bearer sk-new1-inbound-not-real-canary123456 \
              github_pat_11NEW1CHANNEL_abcdefghijklmnopqrstuvwxyz1234567890 \
              \"access_token\": \"new1inboundjson123\" \
              jwt {jwt} \
@@ -542,7 +542,7 @@ mod tests {
         let out = redact_inbound(verified("owner"), raw);
 
         for leak in [
-            "sk-new1-inbound-canary123456",
+            "sk-new1-inbound-not-real-canary123456",
             "github_pat_11NEW1CHANNEL_abcdefghijklmnopqrstuvwxyz1234567890", // pragma: allowlist secret
             "new1inboundjson123",
             jwt,
