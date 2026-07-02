@@ -2196,8 +2196,17 @@ impl<T: Transport> HubServer<T> {
     ) -> Envelope {
         // Delegate to the standalone `&Db` producer so the live serve-bin's flag-gated
         // `ProviderWorkspaceActionRequest` arm and this `HubServer::dispatch` arm share ONE
-        // implementation (no divergence). Byte-identical to the prior inline body.
-        provider_workspace_action_result_for_db(&self.db, msg_id, request, now_ms)
+        // implementation. This in-process facade has no sealed-session principal, so derive
+        // the owner from an already-resolved Mission to preserve the old test-only dispatch shape;
+        // the live serve-bin passes the authenticated principal explicitly.
+        let derived_owner = provider_workspace_mission_owner(&self.db, &request);
+        provider_workspace_action_result_for_db_as_owner(
+            &self.db,
+            msg_id,
+            request,
+            derived_owner.as_deref(),
+            now_ms,
+        )
     }
 }
 
@@ -2207,20 +2216,24 @@ impl<T: Transport> HubServer<T> {
 /// serve-bin (`hub_agent_run_server`) can route a sealed-session `ProviderWorkspaceActionRequest`
 /// through the SAME path the `HubServer::dispatch` arm uses (no second implementation to drift).
 ///
-/// OWNER-GATING NOTE (mirrors the seam, NOT FIX-Q3b): this path is NOT principal-bound. Unlike
-/// the Mission-intake/lifecycle/work-item/memory arms, the `ProviderWorkspaceActionRequestWire`
-/// carries NO self-asserted `owner_principal` body field, so there is nothing for FIX-Q3b to bind.
-/// Owner-binding here is STRUCTURAL via Mission context: [`dispatch_provider_action`] resolves the
-/// request's `mission_context` to a live WorkItem and requires `WorkItem.target_provider_or_agent`
-/// to match the session's provider (and the session to match the request) before the adapter is
-/// ever consulted. The authenticated boundary is the SEALED SESSION (allowlisted peer + session
-/// key) the caller already holds — exactly the channel auth the sibling `_for_db` arms rely on.
-/// Safe today because the boot `enforce_single_peer` guard refuses >1 peer and the dispatch flag
-/// is DARK; a per-principal binding is the multi-owner hardening FIX-Q3b defers.
+/// The legacy no-owner entrypoint is fail-closed; use
+/// [`provider_workspace_action_result_for_db_as_owner`] from live sealed-session dispatch.
 pub fn provider_workspace_action_result_for_db(
     db: &Db,
     msg_id: &str,
     request: ProviderWorkspaceActionRequestWire,
+    now_ms: i64,
+) -> Envelope {
+    provider_workspace_action_result_for_db_as_owner(db, msg_id, request, None, now_ms)
+}
+
+/// Owner-bound Provider Workspace action pre-dispatch guard. `authenticated_owner` is the
+/// Rust-derived sealed-session principal, never a request body field.
+pub fn provider_workspace_action_result_for_db_as_owner(
+    db: &Db,
+    msg_id: &str,
+    request: ProviderWorkspaceActionRequestWire,
+    authenticated_owner: Option<&str>,
     now_ms: i64,
 ) -> Envelope {
     let result = if request.mission_context.is_none() {
@@ -2228,6 +2241,13 @@ pub fn provider_workspace_action_result_for_db(
             request,
             "mission_context_required",
             "provider workspace action requires Mission context".to_string(),
+        )
+    } else if provider_workspace_owner_mismatch(db, &request, authenticated_owner) {
+        provider_workspace_rejected_result(
+            request,
+            "mission_owner_mismatch",
+            "provider workspace action blocked: target Mission is not owned by the authenticated owner"
+                .to_string(),
         )
     } else {
         match db.get_provider_session_link(&request.friday_session_id) {
@@ -2287,6 +2307,31 @@ pub fn provider_workspace_action_result_for_db(
         now_ms,
         Message::ProviderWorkspaceActionResult { result },
     )
+}
+
+fn provider_workspace_mission_owner(
+    db: &Db,
+    request: &ProviderWorkspaceActionRequestWire,
+) -> Option<String> {
+    let context = request.mission_context.as_ref()?;
+    let mission = db.get_mission(&context.mission_id).ok().flatten()?;
+    resolve_conversation_owner(db, &mission.friday_conversation_id)
+}
+
+fn provider_workspace_owner_mismatch(
+    db: &Db,
+    request: &ProviderWorkspaceActionRequestWire,
+    authenticated_owner: Option<&str>,
+) -> bool {
+    let Some(context) = request.mission_context.as_ref() else {
+        return false;
+    };
+    let Ok(Some(mission)) = db.get_mission(&context.mission_id) else {
+        return false;
+    };
+    let authenticated_owner = authenticated_owner.unwrap_or("").trim();
+    let mission_owner = resolve_conversation_owner(db, &mission.friday_conversation_id);
+    authenticated_owner.is_empty() || mission_owner.as_deref() != Some(authenticated_owner)
 }
 
 fn provider_workspace_rejected_result(
@@ -4559,6 +4604,30 @@ mod tests {
             result.blocker.as_deref(),
             Some("provider workspace action blocked: target Mission is not owned by the authenticated owner"),
         );
+    }
+
+    #[test]
+    fn provider_workspace_action_allows_authenticated_mission_owner() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_provider_workspace_mission(&db);
+        db.upsert_provider_session_link(&provider_session_link())
+            .unwrap();
+
+        let response = provider_workspace_action_result_for_db_as_owner(
+            &db,
+            "provider-action-owner-ok",
+            provider_workspace_action_request(),
+            Some("owner-1"),
+            1_700_004_040_000,
+        );
+
+        let Message::ProviderWorkspaceActionResult { result } = response.message else {
+            panic!("expected ProviderWorkspaceActionResult, got {response:?}");
+        };
+        assert_eq!(result.status, "implemented_unproven");
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert!(result.blocker.is_some());
     }
 
     #[test]
