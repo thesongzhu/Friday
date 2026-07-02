@@ -100,6 +100,47 @@ function readOptionalJson(path) {
   }
 }
 
+function eventRows(path) {
+  try {
+    return readFileSync(path, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch {
+    return null;
+  }
+}
+
+function eventEvidenceFailures(path, missionId) {
+  const rows = eventRows(path);
+  if (!Array.isArray(rows)) return ["events_invalid_jsonl"];
+  if (rows.length === 0) return ["event_rows_missing"];
+  const failures = [];
+  let sameMissionEventRows = 0;
+  for (const [index, row] of rows.entries()) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      failures.push(`event_row_not_object:${index + 1}`);
+      continue;
+    }
+    if (string(row.mission_id || row.missionId) !== missionId) {
+      failures.push(`event_row_mission_mismatch:${index + 1}`);
+      continue;
+    }
+    if (!string(row.event)) {
+      failures.push(`event_row_event_missing:${index + 1}`);
+      continue;
+    }
+    if (!fileExists(row.evidence_ref || row.evidenceRef)) {
+      failures.push(`event_row_evidence_ref_missing:${index + 1}`);
+      continue;
+    }
+    sameMissionEventRows += 1;
+  }
+  if (sameMissionEventRows === 0) failures.push("event_rows_missing");
+  return failures;
+}
+
 function actionEvidenceFailures(path, missionId) {
   const failures = [];
   const value = readOptionalJson(path);
@@ -155,6 +196,7 @@ function hasCapture(capture, missionId) {
   if (capture.mission_id !== missionId) return false;
   if (!fileExists(capture.proof)) return false;
   if (!fileExists(capture.events)) return false;
+  if (eventEvidenceFailures(capture.events, missionId).length > 0) return false;
   if (!fileExists(capture.action_runtime_evidence)) return false;
   if (actionEvidenceFailures(capture.action_runtime_evidence, missionId).length > 0) return false;
   return Number(capture.event_count || 0) > 0 && Number(capture.action_count || 0) > 0;
@@ -162,9 +204,13 @@ function hasCapture(capture, missionId) {
 
 function captureDetail(capture, missionId) {
   if (!capture || typeof capture !== "object" || Array.isArray(capture)) return "<missing>";
-  const failures = fileExists(capture.action_runtime_evidence)
+  const eventFailures = fileExists(capture.events)
+    ? eventEvidenceFailures(capture.events, missionId)
+    : [];
+  const actionFailures = fileExists(capture.action_runtime_evidence)
     ? actionEvidenceFailures(capture.action_runtime_evidence, missionId)
     : [];
+  const failures = [...eventFailures, ...actionFailures];
   return failures.length > 0
     ? `${capture.proof || "<missing>"}:${failures.join(",")}`
     : capture.proof || "<missing>";

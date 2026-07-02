@@ -18,6 +18,17 @@ function touch(dir: string, name: string) {
   return path;
 }
 
+function eventsFile(dir: string, name: string, missionId: string, evidenceRef: string) {
+  const path = join(dir, name);
+  writeFileSync(path, `${JSON.stringify({
+    surface: name.includes("mobile") ? "mobile" : "desktop",
+    event: name.includes("mobile") ? "mission_intake_submitted" : "mission_workbench_visible",
+    mission_id: missionId,
+    evidence_ref: evidenceRef,
+  })}\n`);
+  return path;
+}
+
 function actionEvidence(dir: string, name: string, missionId: string, evidenceRef: string) {
   const path = join(dir, name);
   writeFileSync(path, JSON.stringify({
@@ -43,8 +54,8 @@ function summary(dir: string, overrides: Record<string, unknown> = {}) {
   mkdirSync(join(dir, "desktop"), { recursive: true });
   const mobileProof = touch(join(dir, "mobile"), "proof.json");
   const desktopProof = touch(join(dir, "desktop"), "proof.json");
-  const mobileEvents = touch(join(dir, "mobile"), "events.jsonl");
-  const desktopEvents = touch(join(dir, "desktop"), "events.jsonl");
+  const mobileEvents = eventsFile(join(dir, "mobile"), "mobile-events.jsonl", missionId, mobileProof);
+  const desktopEvents = eventsFile(join(dir, "desktop"), "desktop-events.jsonl", missionId, desktopProof);
   return {
     truth: "ui_device_shortlist_runner_summary_not_endbar_not_adoption",
     status: "partial_ready",
