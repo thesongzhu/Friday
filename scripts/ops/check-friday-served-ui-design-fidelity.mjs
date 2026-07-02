@@ -684,6 +684,7 @@ async function assertRenderedStructure(tokens) {
           testId: node.getAttribute("data-testid") ?? null,
           disabled: node.hasAttribute("disabled") || node.getAttribute("aria-disabled") === "true",
         }));
+      const visibleText = (document.body?.innerText ?? "").replace(/\s+/g, " ").trim();
       return {
         rightRailPresent: Boolean(rightRail),
         inspectorPresent: Boolean(inspector),
@@ -697,6 +698,7 @@ async function assertRenderedStructure(tokens) {
         color,
         hasAccentApplied,
         actions,
+        visibleText,
         expected,
       };
       }, tokens);
@@ -717,6 +719,16 @@ async function assertRenderedStructure(tokens) {
       if (!result.chipPresent) checks.push(fail("served desktop does not expose design-system chip marker", { pathname }));
       if (!result.filterPresent) checks.push(fail("served desktop does not expose design-system filter marker", { pathname }));
       if (!result.hasAccentApplied) checks.push(fail("served desktop rendered controls do not apply cyan/coral accent", { pathname }));
+      const visibleText = result.visibleText.toLowerCase();
+      if (/checking local setup|not set up yet|default offline|default unavailable/.test(visibleText)) {
+        checks.push(fail("Gate D normal path still renders setup fallback copy", { pathname }));
+      }
+      if (/\b(mock|sample|design-proof|proof-harness)\b/.test(visibleText)) {
+        checks.push(fail("Gate D normal path still renders demo/mock/design-proof copy", { pathname }));
+      }
+      if (/\b(readiness|entrypoints)\b/.test(visibleText)) {
+        checks.push(fail("Gate D normal path still renders internal readiness/entrypoints copy", { pathname }));
+      }
     }
 
     renderedProof = {
