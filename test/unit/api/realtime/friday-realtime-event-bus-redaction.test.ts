@@ -31,8 +31,8 @@ describe("FridayRealtimeEventBus redaction", () => {
     for (const payload of [envelope.payload, persisted[0].payload, received[0].payload]) {
       const serialized = JSON.stringify(payload);
       expect(serialized).not.toContain("sk-a5-event-bus-canary");
-      expect(serialized).not.toContain("github_pat_A5FineGrainedCanary_1234567890abcdef");
-      expect(serialized).not.toContain("eyJhbGciOiJIUzI1NiJ9.e30.aaaaaaaaaaaaaaaa");
+      expect(serialized).not.toContain("github_pat_A5FineGrainedCanary_1234567890abcdef"); // pragma: allowlist secret
+      expect(serialized).not.toContain("eyJhbGciOiJIUzI1NiJ9.e30.aaaaaaaaaaaaaaaa"); // pragma: allowlist secret
       expect(serialized).not.toContain("a5baretokenvalue123");
       expect(serialized).not.toContain("a5passwordvalue123");
       expect(serialized).not.toContain("a5openaiassignment123");

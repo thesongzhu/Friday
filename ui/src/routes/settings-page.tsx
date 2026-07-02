@@ -497,9 +497,10 @@ export function SettingsPage() {
   });
 
   const selectedProviderId = routingConfig?.defaultProviderId ?? providers[0]?.id;
+  const selectedProviderHealth = providerHealth.find((item) => item.providerId === selectedProviderId);
   const { data: routingExplain } = useQuery({
     queryKey: ["settings", "routing-explain", selectedProviderId],
-    enabled: Boolean(selectedProviderId),
+    enabled: Boolean(selectedProviderId) && selectedProviderHealth?.routingEligible === true,
     queryFn: () => providersApi.explainRouting({
       requestedProviderId: selectedProviderId,
       taskProfileId: "review",

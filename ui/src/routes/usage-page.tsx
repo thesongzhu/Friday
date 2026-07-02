@@ -105,11 +105,30 @@ function useRoutingConfig() {
   });
 }
 
-function useRoutingExplain() {
+function hasRoutingEligibleProvider(
+  healthItems: ProviderHealthItem[],
+  routingConfig: FridayModelRoutingConfig | undefined,
+): boolean {
+  if (!routingConfig?.defaultProviderId) {
+    return false;
+  }
+  const routedProviderIds = new Set([
+    routingConfig.defaultProviderId,
+    ...(routingConfig.fallbackProviderIds ?? []),
+  ]);
+  return healthItems.some((item) =>
+    item.enabled &&
+    item.routingEligible &&
+    routedProviderIds.has(item.providerId)
+  );
+}
+
+function useRoutingExplain(enabled: boolean) {
   return useQuery({
     queryKey: ["provider-routing-explain", "usage-page"],
     queryFn: async (): Promise<FridayProviderRoutingExplainReport> =>
       providersApi.explainRouting({ estimatedInputTokens: 0, complexity: "medium" }),
+    enabled,
     refetchInterval: 30_000,
   });
 }
@@ -216,7 +235,10 @@ export function UsagePage() {
   const { data: budgetStatus, isLoading: budgetLoading, isError: budgetError } = useBudgetStatus();
   const { data: providers = [], isLoading: providersLoading, isError: providersError } = useProviders();
   const { data: routingConfig, isLoading: routingLoading, isError: routingConfigError } = useRoutingConfig();
-  const { data: routingExplain, isLoading: routingExplainLoading, isError: routingExplainError } = useRoutingExplain();
+  const routingExplainEnabled = hasRoutingEligibleProvider(healthItems, routingConfig);
+  const { data: routingExplain, isLoading: routingExplainLoading, isError: routingExplainError } = useRoutingExplain(
+    routingExplainEnabled,
+  );
 
   const isLoading = healthLoading || usageLoading || budgetLoading || providersLoading;
   const isError = healthError || usageError || budgetError || providersError;
