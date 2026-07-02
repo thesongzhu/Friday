@@ -302,6 +302,21 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
+  it("fails Gate E when a visible action has no closed-loop contract evidence", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-e-open-action-"));
+    try {
+      const result = run(root, writeSelections(root), writeGoodDist(root), writeGoodIos(root));
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as { checks?: Array<{ ok?: boolean; message?: string }> };
+      const failures = report.checks?.filter((check) => check.ok === false).map((check) => check.message) ?? [];
+      expect(failures).toEqual(expect.arrayContaining([
+        "Gate E action has no closed-loop contract evidence",
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("writes and parses the Gate F proof manifest with all required linked artifact reports", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-proof-"));
     try {
