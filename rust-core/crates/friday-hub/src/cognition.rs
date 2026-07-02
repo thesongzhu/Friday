@@ -1003,12 +1003,13 @@ mod tests {
                 PiiKind::CreditCard,
                 [true, true, true, false],
             ),
-            // residual-by-design: zero-width injection stays a leak (don't global-strip).
+            // CORR-23: zero-width injection inside a PII token must redact on the
+            // detection copy without stripping benign zero-width content from output.
             (
                 "ZWSP-card",
                 "4111\u{200B}1111\u{200B}1111\u{200B}1111",
                 PiiKind::CreditCard,
-                [false, false, false, false],
+                [true, true, true, false],
             ),
         ];
         let contexts: [(&str, &str); 4] = [
@@ -1083,18 +1084,20 @@ mod tests {
     }
 
     #[test]
-    fn cjk_localpart_email_is_a_documented_residual_leak() {
-        // Genuinely-CJK email localpart is NOT redacted: the fold doesn't touch CJK,
-        // and widening the localpart class to \p{L} would break the CJK-adjacency
-        // guarantee (it relies on CJK being a NON-word char at the leading boundary).
-        // Disclosed residual, NOT a regression — distinct from full-width-latin
-        // localpart, which folds to ASCII and DOES redact.
-        let (_out, kinds) = redact_pii("用户@example.com 发来邮件");
+    fn cjk_localpart_email_is_redacted_without_normalizing_remaining_text() {
+        let input = "用户@example.com 发来邮件";
+        let (out, kinds) = redact_pii(input);
         assert!(
-            !kinds.contains(&PiiKind::Email),
-            "CJK-localpart email unexpectedly redacted (residual changed): {kinds:?}"
+            kinds.contains(&PiiKind::Email),
+            "CJK-localpart email leaked: kinds={kinds:?} out={out:?}"
         );
-        // Full-width-latin localpart, by contrast, folds to ASCII and redacts.
+        assert!(
+            !out.contains("用户@example.com"),
+            "CJK-localpart email survived in {out:?}"
+        );
+        assert_eq!(out, "[EMAIL] 发来邮件");
+
+        // Full-width-latin localpart still folds to ASCII and redacts.
         let fw_email = format!("{}@example.com", to_fullwidth("alice"));
         let (out, kinds) = redact_pii(&format!("邮箱{fw_email}"));
         assert!(
@@ -1105,6 +1108,62 @@ mod tests {
             !out.contains(&fw_email),
             "full-width-latin email leaked: {out:?}"
         );
+    }
+
+    #[test]
+    fn corr23_content_aware_fold_redacts_zero_width_and_arabic_indic_vectors() {
+        let cases = [
+            (
+                "ZWSP phone",
+                "电话212\u{200B}555\u{200B}0143打来",
+                "212\u{200B}555\u{200B}0143",
+                PiiKind::Phone,
+            ),
+            (
+                "ZWSP card",
+                "card 4111\u{200B}1111\u{200B}1111\u{200B}1111 ok",
+                "4111\u{200B}1111\u{200B}1111\u{200B}1111",
+                PiiKind::CreditCard,
+            ),
+            (
+                "Arabic-Indic phone",
+                "اتصل ٢١٢٥٥٥٠١٤٣ الآن",
+                "٢١٢٥٥٥٠١٤٣",
+                PiiKind::Phone,
+            ),
+            (
+                "Arabic-Indic SSN",
+                "ssn ١٢٣-٤٥-٦٧٨٩",
+                "١٢٣-٤٥-٦٧٨٩",
+                PiiKind::Ssn,
+            ),
+            (
+                "Arabic-Indic card",
+                "card ٤١١١ ١١١١ ١١١١ ١١١١",
+                "٤١١١ ١١١١ ١١١١ ١١١١",
+                PiiKind::CreditCard,
+            ),
+        ];
+
+        for (label, input, raw, kind) in cases {
+            let (out, kinds) = redact_pii(input);
+            assert!(
+                kinds.contains(&kind),
+                "{label} should detect {kind:?}, got {kinds:?} for {input:?}"
+            );
+            assert!(
+                !out.contains(raw),
+                "{label} leaked raw PII {raw:?} in {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn corr23_zero_width_no_pii_text_stays_byte_verbatim() {
+        let prose = "family emoji 👨\u{200D}👩\u{200D}👧\u{200D}👦 and soft hyphen\u{00AD} note";
+        let (out, kinds) = redact_pii(prose);
+        assert!(kinds.is_empty(), "benign zero-width prose flagged PII: {kinds:?}");
+        assert_eq!(out, prose, "benign zero-width prose was altered: {out:?}");
     }
 
     // --- ranking --------------------------------------------------------------
