@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createTestDb } from "../../../helpers/friday-test-db.helper.js";
+import { FRIDAY_MEMORY_ERROR_CODES } from "../../../../src/memory/friday-memory.constants.js";
 import { createFridayPatternExtractor } from "../../../../src/memory/services/friday-pattern-extractor.js";
 
 function insertEpisode(
@@ -218,6 +219,40 @@ describe("FridayPatternExtractor", () => {
       const patterns = await extractor.extractPatterns("user-1");
       // Tool sequence needs ≥2 episodes, temporal needs ≥5
       expect(patterns).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("fail-closes pattern persistence when TS durable memory writes are retired", async () => {
+    const db = createTestDb();
+    try {
+      for (let i = 0; i < 2; i++) {
+        insertEpisode(db, {
+          id: `ep-retired-pattern-${i}`,
+          userId: "user-retired",
+          taskIntent: "summarize and patch repeated issue",
+          toolSequence: ["read", "edit", "write"],
+        });
+      }
+
+      const extractor = createFridayPatternExtractor({
+        db,
+        tsMemoryWritesEnabled: false,
+      } as Parameters<typeof createFridayPatternExtractor>[0] & { tsMemoryWritesEnabled: boolean });
+
+      await expect(extractor.extractPatterns("user-retired")).rejects.toMatchObject({
+        code: FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+        httpStatus: 503,
+        details: { operation: "memory.patternExtractor.upsert" },
+      });
+
+      const row = db.withReadConnection((conn) =>
+        conn
+          .prepare("SELECT COUNT(*) AS count FROM friday_learned_patterns WHERE user_id = ?")
+          .get("user-retired") as { count: number },
+      );
+      expect(row.count).toBe(0);
     } finally {
       db.close();
     }

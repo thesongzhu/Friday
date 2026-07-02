@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createTestDb, createTestIdGenerator } from "../../../helpers/friday-test-db.helper.js";
+import { FRIDAY_MEMORY_ERROR_CODES } from "../../../../src/memory/friday-memory.constants.js";
 import { createFridayEpisodeExtractor } from "../../../../src/memory/services/friday-episode-extractor.js";
 import type { FridaySqliteLayer } from "#state";
 
@@ -222,6 +223,32 @@ describe("FridayEpisodeExtractor", () => {
       conn.prepare("SELECT * FROM friday_episodes WHERE run_id = ?").all(runId),
     );
     expect(rows).toHaveLength(1);
+  });
+
+  it("fail-closes episode persistence when TS durable memory writes are retired", async () => {
+    const runId = "run-retired-write";
+    seedRun(runId, "summarize local task progress", "completed", 100);
+    seedToolEvents(runId, [{ name: "read" }]);
+
+    const extractor = createFridayEpisodeExtractor({
+      db,
+      idGenerator: idGen,
+      nowIso,
+      tsMemoryWritesEnabled: false,
+    } as Parameters<typeof createFridayEpisodeExtractor>[0] & { tsMemoryWritesEnabled: boolean });
+
+    await expect(extractor.extractFromRun(runId, "user-retired")).rejects.toMatchObject({
+      code: FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+      httpStatus: 503,
+      details: { operation: "memory.episodeExtractor.persist" },
+    });
+
+    const row = db.withReadConnection((conn) =>
+      conn
+        .prepare("SELECT COUNT(*) AS count FROM friday_episodes WHERE run_id = ?")
+        .get(runId) as { count: number },
+    );
+    expect(row.count).toBe(0);
   });
 
   it("classifies tool categories correctly", async () => {
