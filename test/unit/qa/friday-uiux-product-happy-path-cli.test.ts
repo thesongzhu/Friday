@@ -94,6 +94,21 @@ function satisfaction(root: string, rows: Array<Record<string, unknown>>) {
   });
 }
 
+function satisfactionProof(root: string, relative = "proofs/mobile-home.json", overrides: Record<string, unknown> = {}) {
+  return writeJson(root, relative, {
+    truth: "same_run_ui_device_product_proof",
+    status: "ready",
+    surface: "mobile",
+    id: "home",
+    kind: "needsRuntimeEvidence",
+    label: "same-run user proof",
+    sameRun: true,
+    liveConnected: true,
+    currentHead: true,
+    ...overrides,
+  });
+}
+
 function satisfiedHomeRow(overrides: Record<string, unknown> = {}) {
   return {
     surface: "mobile",
@@ -102,7 +117,7 @@ function satisfiedHomeRow(overrides: Record<string, unknown> = {}) {
     label: "same-run user proof",
     status: "satisfied",
     evidenceClass: "same_run_ui_device_product_proof",
-    evidenceRefs: ["proof://same-run/mobile-home"],
+    evidenceRefs: ["proofs/mobile-home.json"],
     evidenceTruthLabels: ["same_run_ui_device_product_proof"],
     sameRun: true,
     liveConnected: true,
@@ -191,6 +206,7 @@ describe("check-friday-uiux-product-happy-path", () => {
           }],
         },
       }));
+      satisfactionProof(root);
       const blockerSatisfaction = satisfaction(root, [satisfiedHomeRow()]);
       const output = execFileSync("node", [
         script,
