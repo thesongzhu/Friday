@@ -32,6 +32,17 @@ describe("Friday autostart scripts", () => {
     expect(setupCommand).toContain("scripts/ops/friday-first-run.sh");
   });
 
+  it("keeps source-install quickstart and Node preflight recovery copy actionable", () => {
+    const readme = readFileSync("README.md", "utf8");
+    const firstRun = readFileSync("scripts/ops/friday-first-run.sh", "utf8");
+
+    expect(readme).toContain("## Quickstart");
+    expect(readme).toContain("Friday Setup.command");
+    expect(readme).toContain("brew install node@22");
+    expect(firstRun).toContain("brew install node@22");
+    expect(firstRun).toContain("Then run Friday Setup.command again");
+  });
+
   it("starts Friday at login, keeps it alive, and opens the UI after health is ready", () => {
     const installer = readFileSync("scripts/ops/install-friday-launchagent.sh", "utf8");
     const serviceRunner = readFileSync("scripts/ops/friday-service-run.sh", "utf8");
