@@ -39,22 +39,18 @@
 //! - **Phone** requires a full 10 digits; the oracle also matches bare 7-digit
 //!   locals. This is a DELIBERATE under-match — a bare 7-digit pattern would
 //!   over-redact benign numbers; disclosed, not a parity claim.
-//! - **Full-width / Chinese-IME input** is handled by a restricted 1:1 fold for
-//!   DETECTION only (see `fold_char`): full-width ASCII variants `U+FF01..=U+FF5E`
-//!   (digits `０..９`, latin, `＠`, `－`) and the ideographic space `U+3000` fold to
-//!   their ASCII counterparts before the patterns run, then spans are mapped back so
-//!   the ORIGINAL text is redacted byte-verbatim. This closes the innocent full-width
-//!   digit/punctuation leak (regex `\b`, the `[2-9]` phone class, and the
-//!   `is_ascii_digit` Luhn grouping all assume ASCII). It is deliberately NOT general
-//!   NFKC — that would break offset mapping and silently normalize non-PII recall text.
+//! - **Full-width / Chinese-IME input** is handled by a restricted detection fold
+//!   (see `fold_char` / `fold_for_detection`): full-width ASCII variants
+//!   `U+FF01..=U+FF5E` (digits `０..９`, latin, `＠`, `－`), Arabic-Indic digit ranges,
+//!   and the ideographic space `U+3000` fold to ASCII; zero-width format chars are
+//!   skipped in the detection copy. Spans are mapped back so the ORIGINAL text is
+//!   redacted byte-verbatim. This closes the innocent full-width digit/punctuation leak
+//!   plus CORR-23's Arabic-Indic and zero-width inserted PII leaks while preserving
+//!   non-PII text byte-for-byte.
 //! - **Residual under-matches (disclosed):** (a) a value with an ASCII word/digit char
 //!   glued to its LEFT (e.g. `x123-45-6789`) still under-matches — only the leading
 //!   boundary remains, and removing it too would let patterns start mid-ASCII-token.
-//!   (b) Zero-width chars injected INTO a value (`4111<U+200B>1111…`) defeat detection;
-//!   they are NOT folded/stripped because global zero-width stripping would corrupt
-//!   emoji ZWJ sequences — an adversarial, not innocent, vector. (c) A genuinely-CJK
-//!   email localpart (`用户@…`) is not matched (widening the localpart to `\p{L}` would
-//!   break the CJK-adjacency boundary). (d) Credit-card detection is group-aligned (see
+//!   (b) Credit-card detection is group-aligned (see
 //!   `luhn_card_subspan`): a PAN glued to a stray digit mid-group, or inside one
 //!   >19-digit run, is not isolated. All are pre-existing or adversarial, behind the
 //!   Passport gate for recall, and never leak MORE than before.
@@ -155,6 +151,11 @@ fn pii_patterns() -> &'static [(PiiKind, Regex)] {
             (
                 PiiKind::ApiKey,
                 Regex::new(r#"(?i)(?:^|[^A-Za-z0-9])"?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret[_-]?access[_-]?key|password|secret|token)"?\s*[=:]\s*"?[A-Za-z0-9._~+/=-]{8,}"?"#)
+                    .unwrap(),
+            ),
+            (
+                PiiKind::Email,
+                Regex::new(r"(?i)(?:^|[^\p{L}\p{N}._%+\-])[\p{L}\p{N}._%+\-]*[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}][\p{L}\p{N}._%+\-]*@[A-Z0-9.-]+\.[A-Z]{2,}")
                     .unwrap(),
             ),
             // No TRAILING `(?-u:\b)`: a trailing boundary UNDER-matches when an ASCII
@@ -286,48 +287,110 @@ struct Span {
     kind: PiiKind,
 }
 
-/// Fold one char to its ASCII counterpart for DETECTION ONLY. Strictly 1:1
-/// (char -> char), so a folded-string offset maps back to the original by
-/// char-boundary lockstep. This is DELIBERATELY a restricted fold, NOT general
-/// NFKC: NFKC's many-to-one / one-to-many decompositions would break the offset
-/// mapping AND would silently normalize non-PII recall content (a fidelity change
-/// on the sole PII-defense path). Covers the innocent Chinese-IME full-width
-/// vectors — full-width ASCII variants `U+FF01..=U+FF5E` (digits `０..９`, latin,
-/// `＠`, `－`) fold by the fixed `0xFEE0` offset, and the ideographic space
-/// `U+3000` folds to a normal space. Everything else (genuine CJK, zero-width
-/// format chars, Arabic-Indic digits) is identity — those stay residual.
-fn fold_char(c: char) -> char {
+/// Fold one char to its ASCII counterpart for DETECTION ONLY. This is deliberately
+/// restricted, NOT general NFKC: the original recall text is never normalized, and
+/// only PII spans found on the detection copy are replaced in the original.
+fn fold_char(c: char) -> Option<char> {
     match c {
-        '\u{3000}' => ' ',
-        '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
-        _ => c,
+        '\u{00AD}'
+        | '\u{034F}'
+        | '\u{061C}'
+        | '\u{180E}'
+        | '\u{200B}'..='\u{200F}'
+        | '\u{202A}'..='\u{202E}'
+        | '\u{2060}'..='\u{206F}'
+        | '\u{FEFF}' => None,
+        '\u{3000}' => Some(' '),
+        '\u{FF01}'..='\u{FF5E}' => Some(char::from_u32(c as u32 - 0xFEE0).unwrap_or(c)),
+        '\u{0660}'..='\u{0669}' => char::from_u32('0' as u32 + (c as u32 - 0x0660)),
+        '\u{06F0}'..='\u{06F9}' => char::from_u32('0' as u32 + (c as u32 - 0x06F0)),
+        _ => Some(c),
     }
 }
 
-/// Build the detection copy (every char folded by [`fold_char`]) plus a map from
-/// folded byte-offset -> original byte-offset at every char boundary (ascending,
-/// with an end sentinel). Because the fold is 1:1, regex/Luhn spans found in the
-/// folded copy always land on char boundaries that are present in this map.
-fn fold_for_detection(content: &str) -> (String, Vec<(usize, usize)>) {
-    let mut folded = String::with_capacity(content.len());
-    let mut map: Vec<(usize, usize)> = Vec::new();
-    for (orig_off, c) in content.char_indices() {
-        map.push((folded.len(), orig_off));
-        folded.push(fold_char(c));
+#[derive(Clone, Copy)]
+struct FoldBoundary {
+    folded: usize,
+    original_start: usize,
+    original_end: usize,
+}
+
+fn upsert_boundary(
+    map: &mut Vec<FoldBoundary>,
+    folded: usize,
+    original_start: usize,
+    original_end: usize,
+) {
+    if let Some(last) = map.last_mut() {
+        if last.folded == folded {
+            last.original_start = last.original_start.min(original_start);
+            last.original_end = last.original_end.max(original_end);
+            return;
+        }
     }
-    map.push((folded.len(), content.len()));
+    map.push(FoldBoundary {
+        folded,
+        original_start,
+        original_end,
+    });
+}
+
+/// Build the detection copy plus a map from folded byte offsets to original byte
+/// spans at every char boundary. Skipped zero-width chars share the surrounding
+/// folded boundary, so a PII span crossing them maps back to the original bytes
+/// that include those inserted chars.
+fn fold_for_detection(content: &str) -> (String, Vec<FoldBoundary>) {
+    let mut folded = String::with_capacity(content.len());
+    let mut map: Vec<FoldBoundary> = Vec::new();
+    upsert_boundary(&mut map, 0, 0, 0);
+    for (orig_off, c) in content.char_indices() {
+        let orig_end = orig_off + c.len_utf8();
+        match fold_char(c) {
+            Some(folded_char) => {
+                upsert_boundary(&mut map, folded.len(), orig_off, orig_off);
+                folded.push(folded_char);
+                upsert_boundary(&mut map, folded.len(), orig_end, orig_end);
+            }
+            None => {
+                upsert_boundary(&mut map, folded.len(), orig_off, orig_end);
+            }
+        }
+    }
+    upsert_boundary(&mut map, folded.len(), content.len(), content.len());
     (folded, map)
 }
 
 /// Map a folded byte-offset (which sits on a char boundary present in `map`) back
 /// to the original byte-offset.
-fn orig_offset(map: &[(usize, usize)], folded_off: usize) -> usize {
-    match map.binary_search_by_key(&folded_off, |&(f, _)| f) {
-        Ok(i) => map[i].1,
+fn orig_start_offset(map: &[FoldBoundary], folded_off: usize) -> usize {
+    match map.binary_search_by_key(&folded_off, |b| b.folded) {
+        Ok(i) => map[i].original_start,
         // Defensive only: spans are char-aligned, so this branch is unreachable in
         // practice. Fall back to the nearest preceding boundary's original offset.
-        Err(i) => map.get(i.saturating_sub(1)).map(|&(_, o)| o).unwrap_or(0),
+        Err(i) => map
+            .get(i.saturating_sub(1))
+            .map(|b| b.original_start)
+            .unwrap_or(0),
     }
+}
+
+fn orig_end_offset(map: &[FoldBoundary], folded_off: usize) -> usize {
+    match map.binary_search_by_key(&folded_off, |b| b.folded) {
+        Ok(i) => map[i].original_end,
+        Err(i) => map
+            .get(i.saturating_sub(1))
+            .map(|b| b.original_end)
+            .unwrap_or(0),
+    }
+}
+
+fn trim_leading_email_delimiter(folded: &str, start: usize, end: usize) -> usize {
+    folded[start..end]
+        .char_indices()
+        .find_map(|(off, c)| {
+            (c.is_alphanumeric() || matches!(c, '.' | '_' | '%' | '+' | '-')).then_some(start + off)
+        })
+        .unwrap_or(start)
 }
 
 /// Redact every PII span in `content`, replacing each with its kind marker (e.g.
@@ -361,8 +424,13 @@ pub fn redact_pii(content: &str) -> (String, Vec<PiiKind>) {
                 }
                 continue;
             }
+            let start = if *kind == PiiKind::Email {
+                trim_leading_email_delimiter(&folded, m.start(), m.end())
+            } else {
+                m.start()
+            };
             spans.push(Span {
-                start: m.start(),
+                start,
                 end: m.end(),
                 kind: *kind,
             });
@@ -382,13 +450,13 @@ pub fn redact_pii(content: &str) -> (String, Vec<PiiKind>) {
         }
     }
     // Map each kept folded span back to original offsets and replace end-to-start
-    // so earlier byte offsets stay valid. The 1:1 fold keeps the map monotonic, so
-    // non-overlapping folded spans stay non-overlapping (and descending) in the
-    // original.
+    // so earlier byte offsets stay valid. Skipped zero-width chars stay untouched
+    // unless they sit inside a detected PII span, in which case the whole original
+    // span is replaced by the marker.
     let mut result = content.to_string();
     for s in kept.iter().rev() {
-        let os = orig_offset(&map, s.start);
-        let oe = orig_offset(&map, s.end);
+        let os = orig_start_offset(&map, s.start);
+        let oe = orig_end_offset(&map, s.end);
         result.replace_range(os..oe, s.kind.tag());
     }
     let mut kinds: Vec<PiiKind> = Vec::new();
@@ -942,8 +1010,8 @@ mod tests {
         //    "id123-45-6789" leaked before this change too), NOT a new miss — real
         //    text puts a separator / label / CJK char before the value. Asserted as
         //    the current contract; a future leading-boundary improvement updates it.
-        //  - ZWSP-card is residual-by-design (asserted to STILL leak): zero-width
-        //    chars are not folded — global-stripping them would break emoji ZWJ.
+        //  - CORR-23 extends detection-copy normalization to ZWSP-card while
+        //    leaving benign zero-width prose byte-verbatim in the original output.
         let fw_ssn = to_fullwidth("123456789");
         let fw_phone = to_fullwidth("2125550143");
         let fw_card = to_fullwidth("4111111111111111");
@@ -1162,7 +1230,10 @@ mod tests {
     fn corr23_zero_width_no_pii_text_stays_byte_verbatim() {
         let prose = "family emoji 👨\u{200D}👩\u{200D}👧\u{200D}👦 and soft hyphen\u{00AD} note";
         let (out, kinds) = redact_pii(prose);
-        assert!(kinds.is_empty(), "benign zero-width prose flagged PII: {kinds:?}");
+        assert!(
+            kinds.is_empty(),
+            "benign zero-width prose flagged PII: {kinds:?}"
+        );
         assert_eq!(out, prose, "benign zero-width prose was altered: {out:?}");
     }
 
