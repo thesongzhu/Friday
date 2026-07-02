@@ -63,6 +63,6 @@ ENV FRIDAY_PORT=3141
 EXPOSE 3141
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:3141/v1/health || exit 1
+  CMD curl -f "http://localhost:${FRIDAY_PORT:-3141}/v1/health" || exit 1
 
 CMD ["node", "dist/cli/friday-cli.js", "start"]
