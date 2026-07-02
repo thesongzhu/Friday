@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -63,27 +64,44 @@ function fixture() {
   return { root, designRoot, head };
 }
 
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 function writeReadyEvidence(root: string, mode = "live-loopback") {
   const evidence = join(root, "evidence");
   const head = fixtureHead(root);
+  const mobileDestinations = [
+    "home",
+    "session",
+    "contextPassport",
+    "tokenLedger",
+    "shareIntake",
+    "voice",
+    "pairing",
+    "providerAuth",
+    "activity",
+    "workflows",
+  ];
+  const mobileCaptures = mobileDestinations.map((destination) => {
+    const body = `fake-png-${destination}\n`;
+    const screenshot = writeFile(evidence, `${destination}.png`, body);
+    return {
+      destination,
+      status: "captured",
+      screenshot,
+      screenshot_sha256: sha256(body),
+    };
+  });
   writeFile(evidence, "ios-design-destination-capture-manifest.json", JSON.stringify({
     truth_label: "ios_selected_design_destination_capture_not_live_closure",
     status: "ready",
     generated_at_utc: "2026-06-27T00:00:00.000Z",
     repo_head: head,
     mode,
-    captures: [
-      "home",
-      "session",
-      "contextPassport",
-      "tokenLedger",
-      "shareIntake",
-      "voice",
-      "pairing",
-      "providerAuth",
-      "activity",
-      "workflows",
-    ].map((destination) => ({ destination, status: "captured", screenshot: `${destination}.png` })),
+    bundle_id: "com.friday.shell",
+    simulator_udid: "11111111-2222-3333-4444-555555555555",
+    captures: mobileCaptures,
   }, null, 2));
   writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
     truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
