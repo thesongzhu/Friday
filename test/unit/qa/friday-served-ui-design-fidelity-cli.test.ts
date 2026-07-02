@@ -13,7 +13,7 @@ function writeFile(root: string, relative: string, body: string) {
   return target;
 }
 
-function writeSelections(root: string) {
+function writeSelections(root: string, options: { referenceHtml?: boolean } = {}) {
   const designRoot = join(root, "design");
   writeFile(designRoot, "saved/desktop-selection.json", JSON.stringify({
     operatorConfirmed: true,
@@ -47,6 +47,26 @@ function writeSelections(root: string) {
       }
     </style>
   `);
+  if (options.referenceHtml !== false) {
+    writeFile(designRoot, "html/desktop-gallery.html", `
+      <main data-reference-surface="desktop" data-selected-layout="threePane">
+        <button data-friday-ui="button-primary">Approve</button>
+        <span data-friday-ui="chip">Needs me</span>
+        <span data-friday-ui="filter">All</span>
+      </main>
+    `);
+    writeFile(designRoot, "html/pet-anim-v9-reference.html", `
+      <canvas id="pet-canvas" width="96" height="96"></canvas>
+      <button data-pet-action="wag">Wag</button>
+      <script>
+        window.__pet = { frame: 0, interact() { this.frame += 1; return this.frame; } };
+        const canvas = document.getElementById("pet-canvas");
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#0f7d8c";
+        context.fillRect(8, 8, 48, 48);
+      </script>
+    `);
+  }
   return designRoot;
 }
 
@@ -177,6 +197,32 @@ describe("check-friday-served-ui-design-fidelity", () => {
       const report = JSON.parse(result.stdout) as { status?: string; failureCount?: number };
       expect(report.status).toBe("pass");
       expect(report.failureCount).toBe(0);
+      expect((report as { referenceOracle?: { status?: string; requiredOutputs?: string[] } }).referenceOracle?.status).toBe("parsed");
+      expect((report as { referenceOracle?: { requiredOutputs?: string[] } }).referenceOracle?.requiredOutputs).toEqual([
+        "selectedJsonSha256",
+        "selectedHtmlSha256",
+        "screenshotSha256",
+        "computedStyleReport",
+        "componentInventoryReport",
+        "petInteractionReport",
+        "actionInventoryContractReport",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails Gate A when selected desktop and pet reference HTML cannot be rendered into oracle artifacts", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-a-missing-"));
+    try {
+      const result = run(root, writeSelections(root, { referenceHtml: false }), writeGoodDist(root), writeGoodIos(root));
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as { checks?: Array<{ ok?: boolean; message?: string }> };
+      const failures = report.checks?.filter((check) => check.ok === false).map((check) => check.message) ?? [];
+      expect(failures).toEqual(expect.arrayContaining([
+        "Gate A selected reference HTML is missing: desktop-gallery.html",
+        "Gate A selected reference HTML is missing: pet-anim-v9-reference.html",
+      ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
