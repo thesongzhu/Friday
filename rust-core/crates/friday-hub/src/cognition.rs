@@ -757,6 +757,88 @@ mod tests {
     }
 
     #[test]
+    fn redacts_secret_credentials_and_leaves_no_original_value() {
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuZXcxIn0.J9pK5c0aY6zC2wQpL8mN4vR3sT1uX7yZ0aB2cD4eF6g";
+        let pem = "-----BEGIN PRIVATE KEY-----\nnew1-private-key-material\n-----END PRIVATE KEY-----";
+        let input = format!(
+            "Authorization: Bearer sk-new1recallcanary123456 \
+             github ghp_new1recallcanary123456 \
+             token=new1baretoken123 password=new1password123 \
+             OPENAI_API_KEY=new1openaiassignment123 \
+             SLACK_BOT_TOKEN=xoxb-new1slackassignment123 \
+             AWS_SECRET_ACCESS_KEY=new1awsassignment123 \
+             api_key=\"new1quotedassignment123\" \
+             \"access_token\": \"new1jsonassignment123\" \
+             jwt {jwt} pem {pem}"
+        );
+
+        let (out, kinds) = redact_pii(&input);
+
+        assert!(
+            !kinds.is_empty(),
+            "credential-shaped secrets must report at least one redaction kind"
+        );
+        for raw in [
+            "sk-new1recallcanary123456",
+            "ghp_new1recallcanary123456",
+            "new1baretoken123",
+            "new1password123",
+            "new1openaiassignment123",
+            "xoxb-new1slackassignment123",
+            "new1awsassignment123",
+            "new1quotedassignment123",
+            "new1jsonassignment123",
+            jwt,
+            "new1-private-key-material",
+        ] {
+            assert!(
+                !out.contains(raw),
+                "secret credential leaked: {raw:?} in {out:?}"
+            );
+        }
+        assert!(out.contains("[API_KEY]"), "missing API key marker: {out:?}");
+        assert!(out.contains("[JWT]"), "missing JWT marker: {out:?}");
+        assert!(
+            out.contains("[PRIVATE_KEY]"),
+            "missing private key marker: {out:?}"
+        );
+    }
+
+    #[test]
+    fn redacts_refuted_secret_credential_shapes() {
+        let short_payload_jwt = "eyJhbGciOiJIUzI1NiJ9.e30.aaaaaaaaaaaaaaaa";
+        let github_pat = "github_pat_11NEW1CANARY_abcdefghijklmnopqrstuvwxyz1234567890";
+        let pgp = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nnew1-pgp-private-key-material\n-----END PGP PRIVATE KEY BLOCK-----";
+        let input = format!(
+            "pat {github_pat} jwt {short_payload_jwt} \
+             env OPENAI_API_KEY=new1openaiassignment123 \
+             SLACK_BOT_TOKEN=xoxb-new1slackassignment123 \
+             AWS_SECRET_ACCESS_KEY=new1awsassignment123 \
+             quoted api_key=\"new1quotedassignment123\" \
+             json \"access_token\": \"new1jsonassignment123\" pgp {pgp}"
+        );
+
+        let (out, kinds) = redact_pii(&input);
+
+        assert!(
+            !kinds.is_empty(),
+            "credential-shaped secrets must report at least one redaction kind"
+        );
+        for raw in [github_pat, short_payload_jwt, "new1-pgp-private-key-material"] {
+            assert!(
+                !out.contains(raw),
+                "refuted secret credential shape leaked: {raw:?} in {out:?}"
+            );
+        }
+        assert!(out.contains("[API_KEY]"), "missing API key marker: {out:?}");
+        assert!(out.contains("[JWT]"), "missing JWT marker: {out:?}");
+        assert!(
+            out.contains("[PRIVATE_KEY]"),
+            "missing private key marker: {out:?}"
+        );
+    }
+
+    #[test]
     fn multiple_pii_in_one_string_all_redacted() {
         let (out, kinds) = redact_pii("alice@example.com / ssn 123-45-6789");
         assert!(kinds.contains(&PiiKind::Email) && kinds.contains(&PiiKind::Ssn));
@@ -1050,6 +1132,31 @@ mod tests {
         assert!(ranked[0].sensitive);
         assert!(ranked[0].content.contains("[EMAIL]"));
         assert!(!ranked[0].content.contains("alice@example.com"));
+    }
+
+    #[test]
+    fn rank_redacts_secret_credentials_before_recall_injection() {
+        let now = 1_000_000;
+        let r = row(
+            "secret",
+            Some("provider key Authorization: Bearer sk-new1-ranked-canary123456"),
+            Some(now),
+        );
+
+        let ranked = rank_recall(&[r], now, 10, DEFAULT_HALF_LIFE_MS);
+
+        assert_eq!(ranked.len(), 1);
+        assert!(ranked[0].redacted);
+        assert!(
+            ranked[0].content.contains("[API_KEY]"),
+            "missing API key marker: {:?}",
+            ranked[0].content
+        );
+        assert!(
+            !ranked[0].content.contains("sk-new1-ranked-canary123456"),
+            "ranked recall leaked secret credential: {:?}",
+            ranked[0].content
+        );
     }
 
     // --- Passport-gated render ------------------------------------------------

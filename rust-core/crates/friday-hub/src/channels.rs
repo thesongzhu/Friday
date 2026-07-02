@@ -528,6 +528,46 @@ mod tests {
     }
 
     #[test]
+    fn redact_inbound_strips_secret_credentials_using_shared_redactor() {
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.e30.aaaaaaaaaaaaaaaa";
+        let raw = format!(
+            "inbound Authorization: Bearer sk-new1-inbound-canary123456 \
+             github_pat_11NEW1CHANNEL_abcdefghijklmnopqrstuvwxyz1234567890 \
+             \"access_token\": \"new1inboundjson123\" \
+             jwt {jwt} \
+             -----BEGIN PRIVATE KEY-----\nnew1-inbound-private-key\n-----END PRIVATE KEY-----"
+        );
+
+        let out = redact_inbound(verified("owner"), raw);
+
+        for leak in [
+            "sk-new1-inbound-canary123456",
+            "github_pat_11NEW1CHANNEL_abcdefghijklmnopqrstuvwxyz1234567890",
+            "new1inboundjson123",
+            jwt,
+            "new1-inbound-private-key",
+        ] {
+            assert!(
+                !out.text.contains(leak),
+                "channel inbound leaked secret credential {leak:?}: {:?}",
+                out.text
+            );
+        }
+        assert!(out.text.contains("[API_KEY]"), "missing API key marker");
+        assert!(out.text.contains("[JWT]"), "missing JWT marker");
+        assert!(
+            out.text.contains("[PRIVATE_KEY]"),
+            "missing private key marker"
+        );
+        assert!(
+            !out.pii_redacted.is_empty(),
+            "channel inbound must report redaction kinds"
+        );
+        assert_eq!(out.bound_principal_id, "owner");
+        assert_eq!(out.sender_id, "sender-1");
+    }
+
+    #[test]
     fn redact_inbound_strips_pii_adjacent_to_cjk() {
         // The operator works in Chinese: PII glued to CJK (no ASCII space) must still be
         // stripped (the (?-u:\b) ASCII-boundary fix). The CJK text is preserved.
