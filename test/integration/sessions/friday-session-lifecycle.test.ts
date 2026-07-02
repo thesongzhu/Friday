@@ -79,8 +79,10 @@ describe("Session Lifecycle (Integration)", () => {
     it("NEW-30 no-degrade: forked sessions inherit the parent owner user", async () => {
       const parent = await service.createSession({
         channel: "e2e",
-        accountId: "tenant-parent",
         chatId: "fork-owner",
+      });
+      await service.alignSessionContext(parent.key, {
+        accountId: "tenant-parent",
         userId: "user-parent",
       });
 
