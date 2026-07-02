@@ -11,7 +11,7 @@ import { FridayDomainError } from "#errors";
  * WORKFLOW catalog-MUTATION surface.
  *
  * It clones the execFile shape of `friday-rust-hub-run-task-bridge-service.ts`: it spawns
- * the prebuilt `hub_workflow_catalog` binary (or falls back to `cargo run --bin`), drives
+ * the prebuilt `hub_workflow_catalog` binary, drives
  * the five catalog ops the retired TS `workflows.*` mutation surface maps to —
  * `create / update / archive / publish / deploy` — and validates the bin's REFS-ONLY
  * stdout into a receipt. The bin emits ONLY safe identifiers/labels/counts and a BOUNDED
@@ -147,7 +147,7 @@ export interface CreateFridayRustHubWorkflowCatalogBridgeServiceOptions {
    * bin migrates on open (see the file header). Absent ⇒ the bridge fails closed.
    */
   readonly dbPath?: string;
-  /** Path to a prebuilt `hub_workflow_catalog` binary; falls back to `cargo run --bin` when absent. */
+  /** Path to a prebuilt `hub_workflow_catalog` binary. Absent ⇒ use repo release bin or fail closed. */
   readonly adapterBin?: string;
   readonly timeoutMs?: number;
 }
@@ -179,6 +179,15 @@ function readTimeoutMs(raw: string | undefined, fallback: number): number {
 function resolveDefaultRepoRoot(): string {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   return resolve(moduleDir, "../../..");
+}
+
+function resolvePrebuiltBin(
+  explicitBin: string | undefined,
+  rustCoreRoot: string,
+): string | undefined {
+  if (explicitBin) return resolve(explicitBin);
+  const releaseBin = resolve(rustCoreRoot, "target", "release", "hub_workflow_catalog");
+  return existsSync(releaseBin) ? releaseBin : undefined;
 }
 
 function asString(value: unknown): string | undefined {
@@ -384,15 +393,14 @@ export function createFridayRustHubWorkflowCatalogBridgeService(
   const rustCoreRoot = resolve(
     process.env.FRIDAY_MISSION_SPINE_RUST_CORE_ROOT ?? join(repoRoot, "rust-core"),
   );
-  const adapterBin = options.adapterBin ?? process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
+  const adapterBin = resolvePrebuiltBin(
+    options.adapterBin ?? process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN,
+    rustCoreRoot,
+  );
   const dbPathRaw = options.dbPath ?? process.env.FRIDAY_HUB_WORKFLOW_CATALOG_DB_PATH;
   const timeoutMs =
     options.timeoutMs ??
     readTimeoutMs(process.env.FRIDAY_HUB_WORKFLOW_CATALOG_TIMEOUT_MS, 120_000);
-
-  // One-time guard so the (loud) cargo-run-fallback warning is logged once per service
-  // instance, not on every mutation. Flipped true the first time the fallback is taken.
-  let warnedCargoFallback = false;
 
   return {
     async mutateCatalog(
@@ -414,37 +422,15 @@ export function createFridayRustHubWorkflowCatalogBridgeService(
 
       const adapterArgs = buildAdapterArgs(dbPath, input);
 
-      // Prefer the PREBUILT binary (`FRIDAY_HUB_WORKFLOW_CATALOG_BIN` / `adapterBin`). The
-      // `cargo run` fallback COMPILES the bin in the request hot path (latency + a
-      // non-JSON-stdout failure surface), so emit a LOUD one-time warning when it is taken.
-      const command = adapterBin ?? "cargo";
-      const args = adapterBin
-        ? adapterArgs
-        : [
-            "run",
-            "--quiet",
-            "--manifest-path",
-            join(rustCoreRoot, "Cargo.toml"),
-            "-p",
-            "friday-hub",
-            "--bin",
-            "hub_workflow_catalog",
-            "--",
-            ...adapterArgs,
-          ];
-      if (!adapterBin && !warnedCargoFallback) {
-        warnedCargoFallback = true;
-        console.warn(
-          "[friday][rust-workflow-catalog] FRIDAY_HUB_WORKFLOW_CATALOG_BIN is not set — " +
-            "falling back to `cargo run` in the request hot path (compiles per cold start; " +
-            "adds latency and a failure surface). Set it to a prebuilt hub_workflow_catalog " +
-            "binary at deploy time.",
+      if (!adapterBin) {
+        throw unavailable(
+          "Rust hub_workflow_catalog bridge requires a prebuilt binary; set FRIDAY_HUB_WORKFLOW_CATALOG_BIN or build rust-core/target/release/hub_workflow_catalog.",
         );
       }
 
       let stdout = "";
       try {
-        const result = await execFileAsync(command, args, {
+        const result = await execFileAsync(adapterBin, adapterArgs, {
           cwd: repoRoot,
           timeout: timeoutMs,
           maxBuffer: 2 * 1024 * 1024,

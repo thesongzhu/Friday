@@ -169,6 +169,31 @@ describe("friday-rust-hub-workflow-catalog-bridge-service (Tier-2 workflow catal
     }
   });
 
+  it("still honors FRIDAY_HUB_WORKFLOW_CATALOG_BIN when it is configured", async () => {
+    const previousBin = process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
+
+    try {
+      const { binPath, dbPath } = setup(okMock());
+      process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN = binPath;
+      const service = createFridayRustHubWorkflowCatalogBridgeService({ dbPath });
+
+      await expect(
+        service.mutateCatalog({ op: "publish", workflowId: "wf-env-bin", version: 1 }),
+      ).resolves.toMatchObject({
+        truthLabel: "rust_wired_dev",
+        proofOnly: true,
+        op: "publish",
+        workflowId: "wf-env-bin",
+      });
+    } finally {
+      if (previousBin === undefined) {
+        delete process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
+      } else {
+        process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN = previousBin;
+      }
+    }
+  });
+
   it("fails closed instead of cargo-running when no prebuilt bin is available", async () => {
     const previousBin = process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
     const previousRustRoot = process.env.FRIDAY_MISSION_SPINE_RUST_CORE_ROOT;
