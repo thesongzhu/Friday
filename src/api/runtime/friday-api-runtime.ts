@@ -63,6 +63,7 @@ import { createFridayRealtimeEventBus } from "../realtime/friday-realtime-event-
 import { createFridayRealtimeEventRepository } from "../persistence/friday-realtime-event-repository.js";
 import { createFridayRealtimeCheckpointRepository } from "../persistence/friday-realtime-checkpoint-repository.js";
 import { createFridayRealtimeSubscriptionService } from "../realtime/friday-realtime-subscription-service.js";
+import { redactEventPayload } from "../realtime/friday-event-payload-redactor.js";
 import { createFridayRealtimeWsGateway } from "../realtime/friday-realtime-ws-gateway.js";
 import { createFridayFleetDashboardService } from "../fleet/friday-fleet-dashboard-service.js";
 import { createFridayWorkflowConflictService } from "../conflicts/friday-workflow-conflict-service.js";
@@ -2079,6 +2080,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     payload: unknown,
   ): Promise<void> => {
     const normalizedPayload = asRecord(payload);
+    const redactedPayload = redactEventPayload(normalizedPayload);
     const streamId = resolveWorkflowRealtimeStreamId(event, normalizedPayload);
     if (!streamId) {
       return;
@@ -2087,7 +2089,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     eventBus.publish(
       streamId,
       event as never,
-      normalizedPayload as never,
+      redactedPayload as never,
     );
   };
 

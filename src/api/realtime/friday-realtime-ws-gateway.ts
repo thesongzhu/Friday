@@ -15,6 +15,7 @@ import {
   type FridayRealtimeFrameCrypto,
   isFridayRealtimeEncryptedFrameEnvelope,
 } from "./friday-realtime-frame-crypto.js";
+import { redactEventPayload } from "./friday-event-payload-redactor.js";
 import { FRIDAY_ERROR_CODES } from "#errors";
 
 // ─── Connection state ───
@@ -346,7 +347,13 @@ export function createFridayRealtimeWsGateway(
           ];
 
           for (const envelope of events) {
-            responses.push({ type: "event", envelope });
+            responses.push({
+              type: "event",
+              envelope: {
+                ...envelope,
+                payload: redactEventPayload(envelope.payload),
+              },
+            });
           }
 
           return responses;

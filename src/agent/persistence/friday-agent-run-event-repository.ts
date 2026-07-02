@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { safeJsonParse } from "#utilities";
+import { redactEventPayload } from "../../api/realtime/friday-event-payload-redactor.js";
 
 // ─── Run event record ───
 
@@ -65,6 +66,7 @@ export interface FridayAgentRunEventRepository {
 export function createFridayAgentRunEventRepository(): FridayAgentRunEventRepository {
   return {
     append(db, input) {
+      const redactedPayload = redactEventPayload(input.payload);
       db.prepare(
         `INSERT INTO friday_agent_run_events
           (event_id, run_id, seq, event_name, payload_json, emitted_at, created_at)
@@ -74,7 +76,7 @@ export function createFridayAgentRunEventRepository(): FridayAgentRunEventReposi
         input.runId,
         input.seq,
         input.eventName,
-        JSON.stringify(input.payload),
+        JSON.stringify(redactedPayload),
         input.emittedAt,
         input.createdAt,
       );
