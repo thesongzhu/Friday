@@ -496,9 +496,12 @@ describe("Codex mission proof gates", () => {
 
     expect(organicSource).toContain("FRIDAY_CODEX_ORGANIC_TASK");
     expect(organicSource).toContain("Usage: $0 '<operator task for Codex>'");
-    expect(organicSource).toContain("FRIDAY_OG9_OPERATOR_ORIGIN_ACK");
-    expect(organicSource).toContain("operator-physical-hand-starts-og9-organic-run");
-    expect(organicSource).toContain("agent automation must use proof/soak wrappers instead");
+    expect(organicSource).not.toContain("FRIDAY_OG9_OPERATOR_ORIGIN_ACK");
+    expect(organicSource).not.toContain("operator-physical-hand-starts-og9-organic-run");
+    expect(organicSource).toContain("FRIDAY_CODEX_ORGANIC_ATTESTATION");
+    expect(organicSource).toContain("FRIDAY_CODEX_ORGANIC_ATTESTATION_VERIFY_KEY");
+    expect(organicSource).toContain("friday-operator-organic-attestation-verify.mjs");
+    expect(organicSource).toContain("FRIDAY_CODEX_MISSION_PROOF_ORGANIC_PROVENANCE");
     expect(organicSource).toContain(
       'export FRIDAY_CODEX_MISSION_PROOF_RUN_KIND="organic"',
     );
@@ -523,19 +526,23 @@ describe("Codex mission proof gates", () => {
     expect(organicKeychainSource).toContain("trap 'unset PASSPHRASE' EXIT");
   });
 
-  it("refuses Codex organic launch without operator-origin acknowledgement", () => {
+  it("refuses Codex organic launch without a verified operator signature attestation", () => {
     const result = spawnSync(organicSpawnScript, ["operator task"], {
       cwd: repoRoot,
       encoding: "utf8",
       env: {
         ...process.env,
-        FRIDAY_OG9_OPERATOR_ORIGIN_ACK: "",
+        FRIDAY_OG9_OPERATOR_ORIGIN_ACK: "operator-physical-hand-starts-og9-organic-run",
+        FRIDAY_CODEX_ORGANIC_ATTESTATION: "",
+        FRIDAY_CODEX_ORGANIC_ATTESTATION_VERIFY_KEY: "",
       },
     });
 
     expect(result.status).toBe(4);
-    expect(result.stderr).toContain("strict OG9 organic launch requires FRIDAY_OG9_OPERATOR_ORIGIN_ACK");
-    expect(result.stderr).toContain("agent automation must use proof/soak wrappers instead");
+    expect(result.stderr).toContain(
+      "strict Codex organic launch requires FRIDAY_CODEX_ORGANIC_ATTESTATION",
+    );
+    expect(result.stderr).toContain("operator signature attestation");
   });
 
   it("D8 audit passes only when a linked session has matching completed WorkItem proof", async () => {
