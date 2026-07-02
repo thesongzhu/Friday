@@ -179,4 +179,28 @@ describe("FridayRuntimeAdminRoutes", () => {
     await route.handler(makeCtx({ query: { module: "learning", outcome: "failure" } }));
     expect(deps.auditLogs!.list).toHaveBeenCalledWith({ module: "learning", outcome: "failure" });
   });
+
+  it("cr02-01: audit.logs.list binds a narrow-scope bearer to its own actorId", async () => {
+    const deps = makeDeps();
+    const route = createFridayRuntimeAdminRoutes(deps).find((entry) => entry.operationId === "audit.logs.list")!;
+
+    await route.handler(makeCtx({
+      principal: makeAdminPrincipal({
+        principalId: "user-1",
+        role: "viewer",
+        scopes: ["session.read"],
+      }),
+      query: {
+        actorId: "user-2",
+        module: "learning",
+        outcome: "failure",
+      },
+    }));
+
+    expect(deps.auditLogs!.list).toHaveBeenCalledWith({
+      actorId: "user-1",
+      module: "learning",
+      outcome: "failure",
+    });
+  });
 });
