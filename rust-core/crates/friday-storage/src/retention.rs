@@ -405,6 +405,7 @@ fn delete_bounded(conn: &Connection, sql: &str, cutoff: i64, limit: i64) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{persist_run_result, RunResult};
     use crate::Db;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -571,6 +572,41 @@ mod tests {
         let tx = db.conn().unchecked_transaction().unwrap();
         crate::audit::append_audit(&tx, id, "owner", "test.action", None, 1).unwrap();
         tx.commit().unwrap();
+    }
+
+    #[test]
+    fn retention_sweep_prunes_old_run_result_answer_rows() {
+        let db = Db::open_hub(&tmp("run-result-retention")).unwrap();
+        let now = 2_000 * 24 * 60 * 60 * 1000_i64;
+
+        persist_run_result(
+            db.conn(),
+            "rr_old",
+            &RunResult::new("finished", "OLD-PII-BODY", None),
+            1,
+        )
+        .unwrap();
+        persist_run_result(
+            db.conn(),
+            "rr_recent",
+            &RunResult::new("finished", "recent answer", None),
+            now - 1,
+        )
+        .unwrap();
+        assert_eq!(count(&db, "run_result"), 2);
+
+        let out = sweep_retention(db.conn(), now, RetentionWindows::default());
+        assert_eq!(out.table_errors, 0);
+
+        assert!(
+            !exists(&db, "run_result", "run_id", "rr_old"),
+            "aged run_result.answer rows should be pruned by retention"
+        );
+        assert!(
+            exists(&db, "run_result", "run_id", "rr_recent"),
+            "recent run_result rows must remain available"
+        );
+        assert_eq!(count(&db, "run_result"), 1);
     }
 
     // --- the consolidated e2e: ON prunes ONLY old-terminal; everything else survives ---
