@@ -307,11 +307,14 @@ function validateGitSourceUri(sourceUri: string): void {
     );
   };
 
-  const scpLike = /^git@([^:]+):[^:]+\.git$/i.exec(sourceUri);
+  const scpLike = /^git@([^:]+):(.+)$/i.exec(sourceUri);
   if (scpLike) {
     const host = normalizeGitHost(scpLike[1]);
     if (!ALLOWED_GIT_HOSTS.has(host)) {
       reject(`host ${host}`);
+    }
+    if (scpLike[2].trim().length === 0) {
+      reject("empty repository path");
     }
     return;
   }
