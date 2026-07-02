@@ -411,6 +411,25 @@ fn executed_resume_advances_bound_work_item_to_completed_with_proof() {
         pt_links[0].target_ref,
         format!("friday://provider-timeline/friday-session-ok#{run_id}")
     );
+    let mission = db
+        .get_mission("mission-ok")
+        .unwrap()
+        .expect("mission remains readable");
+    assert_eq!(
+        mission.status,
+        MissionStatus::Done,
+        "operator-approved resume completion must auto-close the single-work-item Mission"
+    );
+    let conversation = db
+        .get_friday_conversation("fconv_ok")
+        .unwrap()
+        .expect("conversation remains readable");
+    assert!(
+        !conversation
+            .active_mission_ids
+            .contains(&"mission-ok".to_string()),
+        "auto-close must remove the Mission from active_mission_ids"
+    );
 }
 
 // ─────────────────────────── FALSE-PROOF GUARDS ───────────────────────────
