@@ -1,7 +1,11 @@
 import { FridayDomainError } from "#errors";
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
-import { assertBoundPrincipalAuthorityForOperation } from "../../../security/friday-owner-session-channel-capability.js";
+import {
+  assertBoundPrincipalAuthorityForOperation,
+  isUnauthenticatedPublicPrincipal,
+} from "../../../security/friday-owner-session-channel-capability.js";
+import type { FridayAuthPrincipal } from "../../model/friday-api-auth.types.js";
 import type {
   FridayGetConfigQuery,
   FridayGetConfigResponse,
@@ -61,6 +65,30 @@ function assertRuntimeConfigAdminPrincipal(
     anyOfScopes: ["hub.admin"],
     anyOfRoles: ["owner", "admin"],
   });
+}
+
+function bindAuditLogsQueryToPrincipal(
+  query: FridayListAuditLogsQuery,
+  principal: FridayAuthPrincipal,
+): FridayListAuditLogsQuery {
+  return {
+    ...query,
+    actorId: principal.principalId,
+  };
+}
+
+function assertBoundReadPrincipal(
+  principal: FridayAuthPrincipal | null | undefined,
+  operation: string,
+): FridayAuthPrincipal {
+  if (isUnauthenticatedPublicPrincipal(principal)) {
+    throw new FridayDomainError(
+      "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      `${operation} reads sensitive data and requires a bound owner/session/channel principal.`,
+      { httpStatus: 401 },
+    );
+  }
+  return principal as FridayAuthPrincipal;
 }
 
 export function createFridayRuntimeAdminRoutes(
@@ -167,7 +195,11 @@ export function createFridayRuntimeAdminRoutes(
       path: "/v1/audit/logs",
       auth: { public: true },
       async handler(ctx) {
-        return deps.auditLogs!.list(ctx.query as FridayListAuditLogsQuery);
+        const principal = assertBoundReadPrincipal(ctx.principal ?? null, "audit.logs.list");
+        return deps.auditLogs!.list(bindAuditLogsQueryToPrincipal(
+          ctx.query as FridayListAuditLogsQuery,
+          principal,
+        ));
       },
     });
   }

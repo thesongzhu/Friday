@@ -4005,14 +4005,14 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register grant routes (always available)
   for (const route of createFridayGrantRoutes({
-    async listActiveGrants() {
+    async listActiveGrants(principal) {
       return deps.db.withReadConnection((reader) => {
         const now = new Date().toISOString();
         const rows = reader.prepare(`
           SELECT id, principal_id, target, surface, scopes, issued_at, expires_at, tool_name
           FROM capability_grants
-          WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-        `).all(now) as Array<Record<string, unknown>>;
+          WHERE principal_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+        `).all(principal.principalId, now) as Array<Record<string, unknown>>;
         return rows.map((row) => ({
           id: String(row.id),
           principalId: String(row.principal_id),
