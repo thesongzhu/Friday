@@ -256,6 +256,59 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
+  it("fails a current-HEAD Gate F proof manifest whose artifact identifiers are self-consistent but disconnected from the live run", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-served-ui-forged-proof-"));
+    try {
+      const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: process.cwd(), encoding: "utf8" }).stdout.trim();
+      const forgedReportId = "forged-report";
+      const forgedBuildId = "forged-build";
+      const forgedScreenshotHash = "not-the-live-screenshot";
+      const manifestPath = join(root, "proof/manifest.json");
+      const artifactKeys = [
+        "screenshotHashes",
+        "computedStyleComparison",
+        "componentInventory",
+        "structureAssertions",
+        "petInteraction",
+        "actionInventory",
+        "actionClosure",
+      ];
+      const artifacts = Object.fromEntries(artifactKeys.map((key) => [key, join(root, `proof/${key}.json`)]));
+      for (const key of artifactKeys) {
+        writeFile(root, `proof/${key}.json`, JSON.stringify({
+          artifactType: key,
+          reportId: forgedReportId,
+          head,
+          buildId: forgedBuildId,
+          screenshotSha256: forgedScreenshotHash,
+        }));
+      }
+      writeFile(root, "proof/manifest.json", JSON.stringify({
+        reportId: forgedReportId,
+        head,
+        buildId: forgedBuildId,
+        screenshotSha256: forgedScreenshotHash,
+        requiredArtifacts: artifactKeys,
+        artifacts,
+      }));
+
+      const result = run(root, writeSelections(root), writeGoodDist(root), writeGoodIos(root), [
+        `--proof-manifest=${manifestPath}`,
+      ]);
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as { checks?: Array<{ ok?: boolean; message?: string }> };
+      const failures = report.checks?.filter((check) => check.ok === false).map((check) => check.message) ?? [];
+      expect(failures).toEqual(expect.arrayContaining([
+        "Gate F proof manifest is disconnected from this checker run identifiers",
+        "Gate F proof manifest is disconnected from the live screenshot hash",
+        "Gate F proof artifact is missing required body: screenshotHashes",
+        "Gate F proof artifact is missing required body: actionClosure",
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails red-first for the old amber/jade desktop, bottom proof dock, hero pet, missing design-system controls, and stock iOS user path", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-bad-"));
     try {
