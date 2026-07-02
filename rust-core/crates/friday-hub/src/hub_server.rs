@@ -1589,6 +1589,18 @@ pub fn context_passport_transfer_result_for_db(
     request: ContextPassportTransferRequestWire,
     now_ms: i64,
 ) -> Envelope {
+    context_passport_transfer_result_for_db_as_owner(db, msg_id, request, None, now_ms)
+}
+
+/// Owner-bound variant of [`context_passport_transfer_result_for_db`]. `authenticated_owner` is
+/// the Rust-derived sealed-session principal, never a request body field.
+pub fn context_passport_transfer_result_for_db_as_owner(
+    db: &Db,
+    msg_id: &str,
+    request: ContextPassportTransferRequestWire,
+    authenticated_owner: Option<&str>,
+    now_ms: i64,
+) -> Envelope {
     let passport_id = request.passport_id.trim();
     if passport_id.is_empty() {
         return context_passport_transfer_blocked(msg_id, now_ms, &request, "passport_id_required");
@@ -1637,6 +1649,18 @@ pub fn context_passport_transfer_result_for_db(
             )
         }
     };
+    let authenticated_owner = authenticated_owner.unwrap_or("").trim();
+    let mission_owner = resolve_conversation_owner(db, &mission.friday_conversation_id);
+    let owner_ok =
+        !authenticated_owner.is_empty() && mission_owner.as_deref() == Some(authenticated_owner);
+    if !owner_ok {
+        return context_passport_transfer_blocked(
+            msg_id,
+            now_ms,
+            &request,
+            "mission_owner_mismatch",
+        );
+    }
     if let Some(work_item_id) = request
         .work_item_id
         .as_ref()
@@ -4458,7 +4482,10 @@ mod tests {
             status: MissionStatus::Active,
             why_now: "Context passports carry refs across execution lanes.".into(),
             decision_path_summary: "Seeded directly for owner-binding regression.".into(),
-            considered_options: vec!["allow raw mission_id".into(), "bind to authenticated owner".into()],
+            considered_options: vec![
+                "allow raw mission_id".into(),
+                "bind to authenticated owner".into(),
+            ],
             deferred_options: Vec::new(),
             known_pitfalls: vec!["mission_id alone is not an owner proof".into()],
             handoff_inheritance: Vec::new(),
@@ -4516,6 +4543,35 @@ mod tests {
                 .context_passport_refs
                 .is_empty(),
             "blocked cross-owner transfer must not mutate mission refs"
+        );
+    }
+
+    #[test]
+    fn context_passport_transfer_allows_authenticated_mission_owner() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_context_passport_mission(&db, "principal:owner", "mission-passport-owner");
+
+        let response = context_passport_transfer_result_for_db_as_owner(
+            &db,
+            "passport-owner",
+            context_passport_request("mission-passport-owner", "passport-owner"),
+            Some("principal:owner"),
+            1_700_004_020_000,
+        );
+
+        let Message::ContextPassportTransferResult { result } = response.message else {
+            panic!("expected ContextPassportTransferResult, got {response:?}");
+        };
+        assert_eq!(result.status, "confirmed");
+        assert_eq!(result.blocker, None);
+        assert_eq!(result.shared_item_count, 1);
+        assert!(
+            db.get_mission("mission-passport-owner")
+                .unwrap()
+                .expect("seeded mission")
+                .context_passport_refs
+                .contains(&"passport-owner".to_string()),
+            "the authenticated owner path should still attach the passport ref"
         );
     }
 
