@@ -47,6 +47,38 @@ describe("FridayRealtimeEventRepository", () => {
     expect(events[0].payload).toEqual({ workflowId: "wf-1", revision: 1, etag: "abc" });
   });
 
+  it("redacts secret-shaped content before storing payload_json", () => {
+    db.withWriteTransaction((w) =>
+      repo.append(
+        w,
+        makeEnvelope({
+          event: "workflow.run.failed",
+          payload: {
+            runId: "run-1",
+            error: {
+              code: "NODE_EXECUTION_FAILED",
+              message: "request failed with Authorization: Bearer sk-a5-realtime-repo-canary",
+            },
+          },
+        }),
+      ),
+    );
+
+    const stored = db.withReadConnection((reader) =>
+      reader
+        .prepare("SELECT payload_json FROM realtime_events WHERE event_id = ?")
+        .get("evt-1") as { payload_json: string },
+    );
+    const events = db.withReadConnection((r) =>
+      repo.listByStream(r, "workflow:wf-1", 10),
+    );
+    const serialized = JSON.stringify(events[0].payload);
+
+    expect(stored.payload_json).not.toContain("sk-a5-realtime-repo-canary");
+    expect(serialized).not.toContain("sk-a5-realtime-repo-canary");
+    expect(serialized).toContain("[REDACTED]");
+  });
+
   it("getNextSeq returns 1 for empty stream", () => {
     const seq = db.withReadConnection((r) => repo.getNextSeq(r, "workflow:wf-1"));
     expect(seq).toBe(1);

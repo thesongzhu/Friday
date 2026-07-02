@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { afterEach, describe, it, expect, vi } from "vitest";
 
 import { createFridayApiRuntime } from "#api";
@@ -192,6 +194,21 @@ describe("API Runtime — Workflow Generator Registration", () => {
         prompt: expect.stringContaining("Ask Alice before generating durable files."),
       }),
       expect.anything(),
+    );
+  });
+
+  it("redacts workflow realtime payloads before the runtime publish sink", () => {
+    const source = readFileSync(
+      new URL("../../../../src/api/runtime/friday-api-runtime.ts", import.meta.url),
+      "utf8",
+    );
+    const publishWorkflowRealtimeEvent = source.match(
+      /const publishWorkflowRealtimeEvent = async \([\s\S]*?\n  \};/u,
+    )?.[0];
+
+    expect(publishWorkflowRealtimeEvent).toContain("redactEventPayload(normalizedPayload)");
+    expect(publishWorkflowRealtimeEvent).toMatch(
+      /eventBus\.publish\(\s*streamId,\s*event as never,\s*redactedPayload as never,\s*\)/u,
     );
   });
 });
