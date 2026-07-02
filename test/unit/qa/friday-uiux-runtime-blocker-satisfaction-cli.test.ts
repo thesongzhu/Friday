@@ -358,12 +358,14 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
         head,
       });
       const evidenceDir = writeEvidenceDir(root);
+      const out = join(root, "runtime-blocker-satisfaction.json");
       const output = execFileSync("node", [
         script,
         `--head=${head}`,
         `--action-traceability-report=${tracePath}`,
         `--ui-device-proof=${proofPath}`,
         `--ui-device-evidence-dir=${evidenceDir}`,
+        `--out=${out}`,
         "--require-ready",
       ], { cwd: process.cwd(), encoding: "utf8" });
       const report = JSON.parse(output) as {
@@ -374,7 +376,12 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
       expect(report.status).toBe("ready");
       expect(report.counts?.satisfactions).toBe(1);
       expect(report.satisfactions?.[0]?.id).toBe("tokenLedger");
-      expect(report.satisfactions?.[0]?.evidenceRefs).toContain("proof://desktop-ax/token-ledger");
+      const refs = report.satisfactions?.[0]?.evidenceRefs || [];
+      expect(refs.every((ref) => !/^[a-z][a-z0-9+.-]*:/i.test(ref))).toBe(true);
+      const proof = JSON.parse(readFileSync(join(dirname(out), refs[0]), "utf8")) as {
+        sourceEvidenceRefs?: string[];
+      };
+      expect(proof.sourceEvidenceRefs).toContain("proof://desktop-ax/token-ledger");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

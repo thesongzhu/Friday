@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 const args = process.argv.slice(2);
 
@@ -189,6 +189,59 @@ function rowKey(row) {
   ].join("\u001f");
 }
 
+function safePathSegment(value) {
+  return String(value || "unknown")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "unknown";
+}
+
+function proofArtifactRoot() {
+  if (outPath) return dirname(abs(outPath));
+  if (traceRef) return dirname(traceRef);
+  if (proofRef) return dirname(proofRef);
+  return resolve(process.cwd());
+}
+
+function refForProofArtifact(path) {
+  if (!outPath) return path;
+  return relative(dirname(abs(outPath)), path);
+}
+
+function writeSatisfactionProofArtifact(item, sourceEvidenceRefs) {
+  const proofDir = resolve(proofArtifactRoot(), "runtime-blocker-satisfaction-proofs");
+  const file = resolve(proofDir, [
+    safePathSegment(item.surface),
+    safePathSegment(item.id),
+    safePathSegment(item.kind),
+  ].join("__") + ".json");
+  const proof = {
+    truth: "same_run_ui_device_product_proof",
+    status: "ready",
+    head,
+    surface: item.surface,
+    id: item.id,
+    kind: item.kind,
+    label: item.label,
+    sameRun: true,
+    liveConnected: true,
+    currentHead: true,
+    evidenceClass: item.evidenceClass,
+    evidenceTruthLabels: item.evidenceTruthLabels,
+    sourceEvidenceRefs,
+    caveat:
+      "This artifact is the local, row-scoped proof reference for blocker satisfaction. Source refs are retained here for audit; the satisfaction row points here so downstream gates can validate one same-blocker proof file.",
+  };
+  try {
+    mkdirSync(proofDir, { recursive: true });
+    writeFileSync(file, `${JSON.stringify(proof, null, 2)}\n`);
+    return refForProofArtifact(file);
+  } catch (error) {
+    block("satisfaction_proof_artifact_write_failed", `${file}:${error.message}`);
+    return "";
+  }
+}
+
 function residualRows(trace) {
   const rows = [];
   for (const destination of arrayAt(trace, ["gaps", "residualEndBarBlockers"])) {
@@ -310,6 +363,11 @@ for (const row of residualRows(trace)) {
     skippedRows.push({ ...row, reason: `runtime_overlay_truth_forbidden:${String(forbiddenTruthLabel)}` });
     continue;
   }
+  const sourceEvidenceRefs = [...new Set([
+    ...evidenceRefs,
+    ...((actionCoverage?.evidenceRefs || []).filter(Boolean)),
+    ...((Array.isArray(overlay.evidenceRefs) ? overlay.evidenceRefs : []).filter(Boolean)),
+  ])];
   const item = {
     surface: row.surface,
     id: row.id,
@@ -317,11 +375,6 @@ for (const row of residualRows(trace)) {
     label: row.label,
     status: "satisfied",
     evidenceClass: "same_run_ui_device_product_proof",
-    evidenceRefs: [...new Set([
-      ...evidenceRefs,
-      ...((actionCoverage?.evidenceRefs || []).filter(Boolean)),
-      ...((Array.isArray(overlay.evidenceRefs) ? overlay.evidenceRefs : []).filter(Boolean)),
-    ])],
     evidenceTruthLabels: ["assembled_real_ui_device_proof_same_run_live_connected_current_head"],
     sameRun: true,
     liveConnected: true,
@@ -329,6 +382,7 @@ for (const row of residualRows(trace)) {
     caveat:
       "This row satisfies a needsRuntimeEvidence ProductReadinessContract residual only when paired with strict same-run UI/device proof and full action-runtime coverage; it does not claim adoption or public release.",
   };
+  item.evidenceRefs = [writeSatisfactionProofArtifact(item, sourceEvidenceRefs)].filter(Boolean);
   const key = rowKey(item);
   if (!byKey.has(key)) {
     byKey.set(key, true);
