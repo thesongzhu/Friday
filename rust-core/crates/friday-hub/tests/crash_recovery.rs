@@ -602,6 +602,55 @@ fn post_loop_reconcile_leaves_agent_loop_route_without_finished_result_untouched
     assert_eq!(verify_audit_chain(db.conn()).unwrap(), audit_before);
 }
 
+#[test]
+fn post_loop_reconcile_requires_latest_agent_loop_decision_to_be_finished() {
+    // No-degrade guard: if a newer agent-loop attempt exists for the same still-active WorkItem,
+    // an older finished run is stale history. Recovery must not complete the WorkItem from that
+    // older run while the latest attempt has no finished result.
+    let db = Db::open_hub(&temp_db("post-loop-latest-only")).unwrap();
+    let mission = format!("mission-{}", unique("post-loop-latest-only"));
+    seed_mission(&db, &mission);
+    seed_work_item(
+        &db,
+        &mission,
+        "wi-post-loop-latest-only",
+        WorkItemStatus::ReadyToDispatch,
+    );
+    set_executing(&db, "wi-post-loop-latest-only", false, RECONCILE_AT - 1);
+    seed_agent_loop_route_decision(
+        &db,
+        "wi-post-loop-latest-only",
+        "run-post-loop-old",
+        NOW + 10,
+    );
+    persist_run_result(
+        db.conn(),
+        "run-post-loop-old",
+        &RunResult::new("finished", "old durable answer", None),
+        NOW + 11,
+    )
+    .unwrap();
+    seed_agent_loop_route_decision(
+        &db,
+        "wi-post-loop-latest-only",
+        "run-post-loop-new",
+        NOW + 20,
+    );
+
+    let audit_before = verify_audit_chain(db.conn()).unwrap();
+    let outcome = reconcile_orphaned_work_items(&db, RECONCILE_AT).unwrap();
+
+    assert_eq!(outcome.aborted, 0);
+    assert_eq!(outcome.skipped, 0);
+    assert_eq!(
+        status_of(&db, "wi-post-loop-latest-only"),
+        WorkItemStatus::ReadyToDispatch,
+        "recovery must not complete from an older finished route decision"
+    );
+    assert_eq!(blocking_reason_of(&db, "wi-post-loop-latest-only"), None);
+    assert_eq!(verify_audit_chain(db.conn()).unwrap(), audit_before);
+}
+
 // ── #784(b): boot reconcile of orphaned SCHEDULED workflow runs ───────────────────────────────
 // A scheduled run executes synchronously inside one tick, so a `Pending`/`Running` `sched:` run at
 // boot is a daemon that DIED mid-tick. Left non-terminal it permanently WEDGES its schedule (the
