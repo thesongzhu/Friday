@@ -959,8 +959,9 @@ fn run_session_reaper_tick(db: &friday_storage::Db, retention_on: bool, now_ms: 
         );
         if !r.is_empty() {
             eprintln!(
-                "hub_agent_run_server: retention sweep token_ledger={} surface_event={} provider_session_event={} mission={} work_item={} memory_item={} table_errors={}",
+                "hub_agent_run_server: retention sweep token_ledger={} run_result={} surface_event={} provider_session_event={} mission={} work_item={} memory_item={} table_errors={}",
                 r.token_ledger_deleted,
+                r.run_result_deleted,
                 r.surface_event_deleted,
                 r.provider_session_event_deleted,
                 r.mission_deleted,
