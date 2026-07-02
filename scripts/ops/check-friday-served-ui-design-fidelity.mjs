@@ -724,6 +724,18 @@ function assertGateFProofManifest(manifestPath) {
       actual: manifest.head,
     }));
   }
+  if (manifest.reportId !== reportId || manifest.buildId !== buildId) {
+    checks.push(fail("Gate F proof manifest is disconnected from this checker run identifiers", {
+      expected: { reportId, buildId },
+      actual: { reportId: manifest.reportId, buildId: manifest.buildId },
+    }));
+  }
+  if (manifest.screenshotSha256 !== primaryScreenshotSha256()) {
+    checks.push(fail("Gate F proof manifest is disconnected from the live screenshot hash", {
+      expected: primaryScreenshotSha256(),
+      actual: manifest.screenshotSha256,
+    }));
+  }
   if (!manifest.reportId || !manifest.buildId || !manifest.screenshotSha256) {
     checks.push(fail("Gate F proof manifest is disconnected from report/build/screenshot identifiers"));
   }
@@ -770,6 +782,11 @@ function assertGateFProofManifest(manifestPath) {
         path: artifactPath,
       }));
     }
+    if (!hasRequiredArtifactBody(key, artifact, manifest)) {
+      checks.push(fail(`Gate F proof artifact is missing required body: ${key}`, {
+        path: artifactPath,
+      }));
+    }
   }
 
   return {
@@ -784,6 +801,36 @@ function assertGateFProofManifest(manifestPath) {
       requiredArtifacts: REQUIRED_PROOF_ARTIFACTS,
     })],
   };
+}
+
+function hasRequiredArtifactBody(key, artifact, manifest) {
+  switch (key) {
+    case "screenshotHashes":
+      return Array.isArray(artifact.screenshots)
+        && artifact.screenshots.some((screenshot) => screenshot?.sha256 === manifest.screenshotSha256);
+    case "computedStyleComparison":
+      return Array.isArray(artifact.comparisons)
+        && artifact.comparisons.some((comparison) => comparison?.ok === true && comparison?.actual);
+    case "componentInventory":
+      return Array.isArray(artifact.routes)
+        && artifact.routes.some((route) => route?.components?.primaryActionPresent === true);
+    case "structureAssertions":
+      return Array.isArray(artifact.routes)
+        && artifact.routes.some((route) => route?.assertions?.rightRailPresent === true);
+    case "petInteraction":
+      return Array.isArray(artifact.routes)
+        && artifact.routes.some((route) => route?.subtleStatusPetPresent === true)
+        && typeof artifact.status === "string";
+    case "actionInventory":
+      return Array.isArray(artifact.routes)
+        && artifact.routes.every((route) => Array.isArray(route?.actions));
+    case "actionClosure":
+      return typeof artifact.status === "string"
+        && typeof artifact.inventoriedActions === "number"
+        && Array.isArray(artifact.closedLoopActions);
+    default:
+      return false;
+  }
 }
 
 const report = {
