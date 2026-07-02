@@ -253,6 +253,20 @@ async function assertReferenceOracle() {
           interactionResult = window.__pet.interact();
         }
         const after = typeof window.__pet?.frame === "number" ? window.__pet.frame : null;
+        const canvas = document.querySelector("canvas");
+        let canvasNonBlank = false;
+        if (canvas instanceof HTMLCanvasElement) {
+          const context = canvas.getContext("2d");
+          if (context) {
+            const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+            for (let index = 0; index < pixels.length; index += 4) {
+              if (pixels[index] !== 0 || pixels[index + 1] !== 0 || pixels[index + 2] !== 0 || pixels[index + 3] !== 0) {
+                canvasNonBlank = true;
+                break;
+              }
+            }
+          }
+        }
         return {
           computedStyle: {
             color: style.color,
@@ -270,6 +284,7 @@ async function assertReferenceOracle() {
           pet: {
             hasPetHook: Boolean(window.__pet),
             hasInteract: typeof window.__pet?.interact === "function",
+            canvasNonBlank,
             before,
             after,
             changed: before !== null && after !== null && before !== after,
@@ -282,6 +297,17 @@ async function assertReferenceOracle() {
       componentInventoryReport[file] = snapshot.components;
       actionInventoryContractReport[file] = snapshot.actions;
       petInteractionReport[file] = snapshot.pet;
+      if (file === "pet-anim-v9-reference.html") {
+        if (!snapshot.pet.canvasNonBlank) {
+          checks.push(fail("Gate C2 pet reference canvas is blank"));
+        }
+        if (!snapshot.pet.hasPetHook || !snapshot.pet.hasInteract) {
+          checks.push(fail("Gate C2 pet reference interaction hook is missing"));
+        }
+        if (!snapshot.pet.changed) {
+          checks.push(fail("Gate C2 pet reference frame did not change after interaction"));
+        }
+      }
     }
   } finally {
     await browser.close();
@@ -298,7 +324,7 @@ async function assertReferenceOracle() {
     petInteractionReport,
     actionInventoryContractReport,
   };
-  return [pass("Gate A selected reference oracle captured", {
+  return checks.length > 0 ? checks : [pass("Gate A selected reference oracle captured", {
     htmlFiles,
     selectionFiles,
     requiredOutputs: REQUIRED_REFERENCE_OUTPUTS,
