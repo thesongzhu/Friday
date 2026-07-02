@@ -595,7 +595,6 @@ export function createFridayProviderService(
 
     const resolved = await resolveFridaySecretInput(effectiveKeySource, {
       env: process.env,
-      allowCommandRefs: true,
       readSecretRef: async (refKey) => {
         const secret = deps.db.withReadConnection((db) =>
           secretRepo.getByRef(db, SECRET_SCOPE, refKey),
@@ -2109,7 +2108,6 @@ export function createFridayProviderService(
     });
     const resolved = await resolveFridaySecretInput(parsed, {
       env: process.env,
-      allowCommandRefs: true,
       readSecretRef: async (refKey) => {
         const secret = deps.db.withReadConnection((db) =>
           secretRepo.getByRef(db, SECRET_SCOPE, refKey),

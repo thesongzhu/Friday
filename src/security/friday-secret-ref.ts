@@ -1,8 +1,4 @@
-import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
 
 const ENV_VAR_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -271,14 +267,19 @@ export async function resolveFridaySecretInput(
           },
         };
       }
+      if (!options.execCommand) {
+        return {
+          ok: false,
+          blocker: {
+            code: "SECRET_COMMAND_DISABLED",
+            message: "Command-based secret refs require an explicit non-shell executor.",
+            refKind: "command-ref",
+            details: { command: input.command },
+          },
+        };
+      }
       try {
-        const execCommand = options.execCommand ?? (async (command: string) => {
-          const result = await execFileAsync("/bin/sh", ["-lc", command], {
-            timeout: 5_000,
-            maxBuffer: 1024 * 1024,
-          });
-          return result.stdout;
-        });
+        const execCommand = options.execCommand;
         const value = await execCommand(input.command);
         const normalized = trimValue ? value.trim() : value;
         if (normalized.length === 0) {
