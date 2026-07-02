@@ -228,6 +228,16 @@ function writeFallbackTextDist(root: string) {
   return distRoot;
 }
 
+function writeDisabledUnavailableDist(root: string) {
+  const distRoot = writeGoodDist(root);
+  const html = readFileSync(join(distRoot, "index.html"), "utf8")
+    .replace("</aside>", "<section>Assistant disabled - provider unavailable</section></aside>");
+  writeFile(distRoot, "index.html", html);
+  writeFile(distRoot, "home/index.html", html);
+  writeFile(distRoot, "chat/index.html", html);
+  return distRoot;
+}
+
 function run(root: string, designRoot: string, distRoot: string, iosRoot: string, extraArgs: string[] = []) {
   return spawnSync("node", [
     script,
@@ -314,6 +324,21 @@ describe("check-friday-served-ui-design-fidelity", () => {
         "Gate D normal path still renders setup fallback copy",
         "Gate D normal path still renders demo/mock/design-proof copy",
         "Gate D normal path still renders internal readiness/entrypoints copy",
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails Gate D when disabled or unavailable copy lacks machine-readable ineligibility evidence", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-d-disabled-copy-"));
+    try {
+      const result = run(root, writeSelections(root), writeDisabledUnavailableDist(root), writeGoodIos(root));
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as { checks?: Array<{ ok?: boolean; message?: string }> };
+      const failures = report.checks?.filter((check) => check.ok === false).map((check) => check.message) ?? [];
+      expect(failures).toEqual(expect.arrayContaining([
+        "Gate D disabled/unavailable state lacks machine-readable ineligibility evidence",
       ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
