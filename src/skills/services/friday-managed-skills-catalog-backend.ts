@@ -1,12 +1,12 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadFridaySkillPackage, type FridayLoadedSkillPackage } from "../manifest/friday-skill-package-loader.js";
+import { type FridayLoadedSkillPackage, loadFridaySkillPackage } from "../manifest/friday-skill-package-loader.js";
 import type {
+  FridaySignatureVerificationResult,
   FridaySkillCatalogItem,
   FridaySkillCatalogQuery,
   FridaySkillCatalogResult,
-  FridaySignatureVerificationResult,
   FridaySkillSourceEntity,
 } from "../model/friday-skill-catalog.types.js";
 import { createFridaySkillSignatureVerifier } from "./friday-skill-signature-verifier.js";
