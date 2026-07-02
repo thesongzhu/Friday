@@ -1122,12 +1122,23 @@ function hasRequiredArtifactBody(key, artifact, manifest) {
       return Array.isArray(artifact.routes)
         && artifact.routes.every((route) => Array.isArray(route?.actions));
     case "actionClosure":
-      return typeof artifact.status === "string"
-        && typeof artifact.requireActionClosure === "boolean"
-        && typeof artifact.inventoriedActions === "number"
-        && Array.isArray(artifact.closedLoopActions)
-        && Array.isArray(artifact.unresolvedActions)
-        && artifact.closedLoopActions.length + artifact.unresolvedActions.length === artifact.inventoriedActions;
+      if (
+        typeof artifact.status !== "string"
+        || typeof artifact.requireActionClosure !== "boolean"
+        || typeof artifact.inventoriedActions !== "number"
+        || !Array.isArray(artifact.closedLoopActions)
+        || !Array.isArray(artifact.unresolvedActions)
+        || artifact.closedLoopActions.length + artifact.unresolvedActions.length !== artifact.inventoriedActions
+      ) {
+        return false;
+      }
+      if (artifact.unresolvedActions.length === 0) {
+        return artifact.status === "closed-loop-verified"
+          && artifact.closedLoopActions.length === artifact.inventoriedActions;
+      }
+      return artifact.requireActionClosure
+        ? artifact.status === "failed"
+        : artifact.status === "inventory-captured-with-unresolved-actions";
     default:
       return false;
   }
