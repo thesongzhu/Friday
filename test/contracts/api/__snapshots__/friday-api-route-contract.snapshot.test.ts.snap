@@ -46,24 +46,28 @@ exports[`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route
     "scopes": [],
   },
   {
-    "authKind": "public",
+    "authKind": "authenticated",
     "index": 2,
     "method": "GET",
     "operationId": "tui.status.get",
     "path": "/v1/status",
     "rateLimitPolicyId": null,
     "roles": [],
-    "scopes": [],
+    "scopes": [
+      "hub.admin",
+    ],
   },
   {
-    "authKind": "public",
+    "authKind": "authenticated",
     "index": 3,
     "method": "GET",
     "operationId": "tui.jobs.list",
     "path": "/v1/jobs",
     "rateLimitPolicyId": null,
     "roles": [],
-    "scopes": [],
+    "scopes": [
+      "hub.admin",
+    ],
   },
   {
     "authKind": "public",
