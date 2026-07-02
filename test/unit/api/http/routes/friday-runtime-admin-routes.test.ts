@@ -95,7 +95,10 @@ describe("FridayRuntimeAdminRoutes", () => {
   it("config.get parses comma-separated keys", async () => {
     const deps = makeDeps();
     const route = createFridayRuntimeAdminRoutes(deps).find((entry) => entry.operationId === "config.get")!;
-    await route.handler(makeCtx({ query: { keys: "feature.flag,feature.beta" } }));
+    await route.handler(makeCtx({
+      principal: makeAdminPrincipal({ role: "viewer", scopes: ["workflow.read"] }),
+      query: { keys: "feature.flag,feature.beta" },
+    }));
     expect(deps.config!.get).toHaveBeenCalledWith({
       keys: ["feature.flag", "feature.beta"],
     });
@@ -125,6 +128,21 @@ describe("FridayRuntimeAdminRoutes", () => {
       code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
     });
     expect(deps.config!.listRevisions).not.toHaveBeenCalled();
+  });
+
+  it("config.revisions.list accepts a bound principal and parses limit", async () => {
+    const deps = makeDeps();
+    const route = createFridayRuntimeAdminRoutes(deps).find((entry) => entry.operationId === "config.revisions.list")!;
+
+    await route.handler(makeCtx({
+      principal: makeAdminPrincipal({ role: "viewer", scopes: ["workflow.read"] }),
+      query: { cursor: "rev-cursor", limit: "2" },
+    }));
+
+    expect(deps.config!.listRevisions).toHaveBeenCalledWith({
+      cursor: "rev-cursor",
+      limit: 2,
+    });
   });
 
   it("config.update validates expectedRevision and patch", async () => {

@@ -114,6 +114,7 @@ export function createFridayRuntimeAdminRoutes(
         path: "/v1/config",
         auth: { public: true },
         async handler(ctx) {
+          assertBoundReadPrincipal(ctx.principal ?? null, "config.get");
           const query = ctx.query as Record<string, unknown>;
           return deps.config!.get({
             keys: readStringArrayQuery(query.keys),
@@ -151,6 +152,7 @@ export function createFridayRuntimeAdminRoutes(
         path: "/v1/config/revisions",
         auth: { public: true },
         async handler(ctx) {
+          assertBoundReadPrincipal(ctx.principal ?? null, "config.revisions.list");
           const query = ctx.query as Record<string, unknown>;
           const limit =
             typeof query.limit === "string" && query.limit.trim() !== ""
