@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 
 const args = process.argv.slice(2);
 const forbiddenTruth = /(synthetic|fixture|sample|dry[-_ ]?run|screenshot[-_ ]?only|design[-_ ]?proof|mock|placeholder)/i;
+const forbiddenNormalPathCopy = /checking local setup|not set up yet|default offline|default unavailable|\b(mock|sample|design-proof|proof-harness)\b|\b(readiness|entrypoints)\b/i;
 const imageEvidence = /\.(png|jpe?g|heic|gif|webp|tiff?)$/i;
 const allowedEvidenceTypes = new Set(["accessibility_tree", "accessibility_observation", "xctest_accessibility"]);
 const allowedInteractions = new Set(["tap", "visible", "type", "read"]);
@@ -240,6 +241,36 @@ function validateEvidenceRef(label, evidenceRef) {
   return ref;
 }
 
+function visibleObservationText(action) {
+  const textKeys = [
+    "accessibility_label",
+    "accessibilityLabel",
+    "ax_label",
+    "axLabel",
+    "visible_text",
+    "visibleText",
+    "screen_text",
+    "screenText",
+    "ocr_text",
+    "ocrText",
+    "ax_text",
+    "axText",
+    "label",
+    "title",
+    "text",
+    "value",
+  ];
+  return textKeys
+    .flatMap((key) => {
+      const value = action?.[key];
+      return Array.isArray(value) ? value : [value];
+    })
+    .filter((value) => typeof value === "string")
+    .map((value) => value.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
 function resolveSimulator() {
   const list = run("xcrun", ["simctl", "list", "devices", "--json"]);
   if (list.status !== 0) {
@@ -328,6 +359,10 @@ function normalizeObservation(raw, targets, captureEvidenceRef) {
     if (!allowedEvidenceTypes.has(actionEvidenceType)) block("evidence_type_not_accessibility", `${label}:${actionEvidenceType || "<missing>"}`);
     if (forbiddenTruth.test(String(action.source || ""))) block("ui_action_source_forbidden", label);
     if (forbiddenTruth.test(actionEvidenceType)) block("evidence_type_forbidden", `${label}:${actionEvidenceType}`);
+    const visibleText = visibleObservationText(action);
+    if (visibleText && forbiddenNormalPathCopy.test(visibleText)) {
+      block("ios_normal_path_forbidden_copy", `${label}:${runtimeActionId || "<missing>"}`);
+    }
 
     actions.push({
       screen: String(action.screen || target?.screen || "").trim(),
