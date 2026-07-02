@@ -214,6 +214,7 @@ function writeSatisfactionProofArtifact(item, sourceEvidenceRefs) {
     safePathSegment(item.surface),
     safePathSegment(item.id),
     safePathSegment(item.kind),
+    safePathSegment(item.label),
   ].join("__") + ".json");
   const proof = {
     truth: "same_run_ui_device_product_proof",
