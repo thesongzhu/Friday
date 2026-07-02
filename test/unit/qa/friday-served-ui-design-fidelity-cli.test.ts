@@ -566,6 +566,45 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
+  it("fails a Gate F actionClosure artifact that claims closed-loop while carrying unresolved actions", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-served-ui-inconsistent-action-closure-"));
+    try {
+      const artifactsRoot = join(root, "proof-artifacts");
+      const firstRun = run(root, writeSelections(root), writeNavigationHeavyDist(root), writeGoodIos(root), [
+        `--proof-artifacts-root=${artifactsRoot}`,
+      ]);
+      expect(firstRun.status).toBe(0);
+      const firstReport = JSON.parse(firstRun.stdout) as {
+        proofManifest?: { path?: string };
+      };
+      const manifest = JSON.parse(readFileSync(firstReport.proofManifest?.path ?? "", "utf8")) as {
+        artifacts?: Record<string, string>;
+      };
+      const actionClosurePath = manifest.artifacts?.actionClosure ?? "";
+      const actionClosure = JSON.parse(readFileSync(actionClosurePath, "utf8")) as {
+        status?: string;
+        unresolvedActions?: unknown[];
+      };
+      expect(actionClosure.unresolvedActions?.length).toBeGreaterThan(0);
+      writeFileSync(actionClosurePath, JSON.stringify({
+        ...actionClosure,
+        status: "closed-loop-verified",
+      }));
+
+      const secondRun = run(root, writeSelections(root), writeNavigationHeavyDist(root), writeGoodIos(root), [
+        `--proof-manifest=${firstReport.proofManifest?.path}`,
+      ]);
+      expect(secondRun.status).toBe(1);
+      const report = JSON.parse(secondRun.stdout) as { checks?: Array<{ ok?: boolean; message?: string }> };
+      const failures = report.checks?.filter((check) => check.ok === false).map((check) => check.message) ?? [];
+      expect(failures).toEqual(expect.arrayContaining([
+        "Gate F proof artifact is missing required body: actionClosure",
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails red-first for the old amber/jade desktop, bottom proof dock, hero pet, missing design-system controls, and stock iOS user path", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-bad-"));
     try {
