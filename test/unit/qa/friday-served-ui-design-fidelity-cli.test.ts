@@ -167,6 +167,23 @@ function writeOpenActionDist(root: string) {
   return distRoot;
 }
 
+function writeNavigationHeavyDist(root: string) {
+  const distRoot = writeGoodDist(root);
+  const html = readFileSync(join(distRoot, "index.html"), "utf8")
+    .replace("<main data-testid=\"app-shell-rail\">Friday Hub</main>", `
+      <main data-testid="app-shell-rail">
+        <a href="/home">Home</a>
+        <a href="/chat">Chat</a>
+        <button>Language</button>
+        Friday Hub
+      </main>
+    `);
+  writeFile(distRoot, "index.html", html);
+  writeFile(distRoot, "home/index.html", html);
+  writeFile(distRoot, "chat/index.html", html);
+  return distRoot;
+}
+
 function writeBadDist(root: string) {
   const distRoot = join(root, "dist");
   writeFile(distRoot, "assets/app.css", `
@@ -380,10 +397,37 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("fails Gate E when a visible action has no closed-loop contract evidence", () => {
+  it("does not turn ordinary navigation and chrome buttons into Gate E failures in default CI mode", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-e-default-nav-"));
+    try {
+      const result = run(root, writeSelections(root), writeNavigationHeavyDist(root), writeGoodIos(root));
+      expect(result.status).toBe(0);
+      const report = JSON.parse(result.stdout) as {
+        proofManifest?: { status?: string; path?: string };
+      };
+      expect(report.proofManifest?.status).toBe("parsed");
+      const manifest = JSON.parse(readFileSync(report.proofManifest?.path ?? "", "utf8")) as {
+        artifacts?: Record<string, string>;
+      };
+      const actionClosure = JSON.parse(readFileSync(manifest.artifacts?.actionClosure ?? "", "utf8")) as {
+        status?: string;
+        requireActionClosure?: boolean;
+        unresolvedActions?: unknown[];
+      };
+      expect(actionClosure.requireActionClosure).toBe(false);
+      expect(actionClosure.status).toBe("inventory-captured-with-unresolved-actions");
+      expect(actionClosure.unresolvedActions?.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails Gate E in strict mode when a visible action has no closed-loop contract evidence", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-e-open-action-"));
     try {
-      const result = run(root, writeSelections(root), writeOpenActionDist(root), writeGoodIos(root));
+      const result = run(root, writeSelections(root), writeOpenActionDist(root), writeGoodIos(root), [
+        "--require-action-closure=true",
+      ]);
       expect(result.status).toBe(1);
       const report = JSON.parse(result.stdout) as { checks?: Array<{ ok?: boolean; message?: string }> };
       const failures = report.checks?.filter((check) => check.ok === false).map((check) => check.message) ?? [];
