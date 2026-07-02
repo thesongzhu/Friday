@@ -236,4 +236,34 @@ describe("Friday UI real-use mobile/desktop report", () => {
       }),
     ]));
   });
+
+  it("blocks capture summaries whose action-runtime surface does not match the capture role", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-action-surface-"));
+    const value = summary(dir);
+    writeFileSync(value.captures.mobile.action_runtime_evidence, JSON.stringify({
+      truth: "accessibility_click_action_runtime_evidence_real_ui_not_endbar",
+      status: "ready",
+      missionId: value.missionId,
+      actions: [
+        {
+          surface: "desktop",
+          action_id: "desktop/operations/refresh",
+          status: "pass",
+          evidence_ref: value.captures.mobile.proof,
+          mission_id: value.missionId,
+        },
+      ],
+    }, null, 2));
+    const summaryPath = writeJson(dir, "summary.json", value);
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "mobile_real_surface_capture",
+        detail: expect.stringContaining("action_runtime_evidence_action_surface_mismatch"),
+      }),
+    ]));
+  });
 });
