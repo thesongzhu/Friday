@@ -260,6 +260,16 @@ async function assertExistingSessionReadable(
   return session;
 }
 
+async function assertSessionReadableIfPresent(
+  sessionService: FridaySessionService,
+  key: string,
+  principal: FridayAuthPrincipal,
+  operation: string,
+): Promise<void> {
+  const session = await sessionService.getSession(key);
+  assertSessionReadableByPrincipal(session, principal, operation);
+}
+
 async function alignSessionWithPrincipalContext(
   sessionService: FridaySessionService,
   sessionKey: string,
@@ -1024,7 +1034,7 @@ export function createFridaySessionRoutes(
           limit = Math.min(parsed, FRIDAY_MAX_LIST_LIMIT);
         }
 
-        await assertExistingSessionReadable(deps.sessionService, key, principal, "sessions.messages.list");
+        await assertSessionReadableIfPresent(deps.sessionService, key, principal, "sessions.messages.list");
         const items = await deps.sessionService.getMessages(key, limit, query.before);
         return { items };
       },
@@ -1042,7 +1052,7 @@ export function createFridaySessionRoutes(
         const query = ctx.query as Record<string, string | undefined>;
         const format = query.format === "markdown" ? "markdown" : "json";
         const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.export");
-        await assertExistingSessionReadable(deps.sessionService, key, principal, "sessions.export");
+        await assertSessionReadableIfPresent(deps.sessionService, key, principal, "sessions.export");
         const messages = await deps.sessionService.getMessages(key, FRIDAY_MAX_LIST_LIMIT);
         if (format === "markdown") {
           const lines = [`# Friday Session: ${key}\n`];
