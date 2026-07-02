@@ -63,6 +63,13 @@ describe("scanShellScript", () => {
     expect(rmHome).toBeDefined();
   });
 
+  it("A7: detects rm -rf /* as blocking", () => {
+    const result = scanShellScript("rm -rf /*");
+
+    expect(result.verdict).toBe("dangerous");
+    expect(result.findings.some((f) => f.id === "rm-recursive-dangerous-target")).toBe(true);
+  });
+
   // ─── B1: long-form-flag bypass for rm -rf ───
 
   it("B1: detects 'rm --recursive --force /' (long-form bypass) as blocking", () => {

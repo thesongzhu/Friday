@@ -211,4 +211,21 @@ describe("FridayShellExecutor", () => {
     expect(result.exitCode).toBe(126);
     expect(result.stderr).toContain("OS sandbox is required");
   });
+
+  it("A7: fails closed when required sandbox options are present but disabled", async () => {
+    const executor = createExecutor();
+    const result = await executor.run({
+      command: "echo",
+      args: ["hello"],
+      osSandbox: {
+        enabled: false,
+        required: true,
+        writableRoots: [tmpdir()],
+      },
+    });
+
+    expect(result.exitCode).toBe(126);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("OS sandbox is required");
+  });
 });
