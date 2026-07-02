@@ -47,13 +47,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use friday_core::{
     ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus, Risk,
-    TruthStatus, WorkItem, WorkItemStatus, WorkLane,
+    RouteDecisionCard, TruthStatus, WorkItem, WorkItemStatus, WorkLane,
 };
 use friday_hub::crash_recovery::{
     reconcile_orphaned_work_items, CRASH_RECOVERY_MARKER, EXECUTION_STATE_STALE_THRESHOLD_MS,
 };
 use friday_storage::audit::verify_audit_chain;
-use friday_storage::Db;
+use friday_storage::{persist_run_result, Db, RunResult};
 
 static C: AtomicU64 = AtomicU64::new(0);
 const NOW: i64 = 1_700_000_000_000;
@@ -162,6 +162,21 @@ fn seed_work_item(db: &Db, mission_id: &str, work_item_id: &str, status: WorkIte
         updated_at_ms: NOW,
     })
     .unwrap();
+}
+
+fn seed_agent_loop_route_decision(db: &Db, work_item_id: &str, run_id: &str, now_ms: i64) {
+    let item = db
+        .get_work_item(work_item_id)
+        .unwrap()
+        .expect("seeded work item exists");
+    let decision = RouteDecisionCard::from_work_item(
+        format!("route-decision:agent-loop:{run_id}"),
+        &item,
+        vec![format!("agent-run:{run_id}")],
+        now_ms,
+        None,
+    );
+    db.upsert_route_decision(&decision).unwrap();
 }
 
 fn status_of(db: &Db, work_item_id: &str) -> WorkItemStatus {
@@ -482,6 +497,74 @@ fn pass2_exactly_at_threshold_is_stale_and_reconciled() {
         "one ms under the threshold is still live"
     );
     assert_eq!(status_of(&db2, "wi-edge2"), WorkItemStatus::ProviderWaiting);
+}
+
+#[test]
+fn post_loop_reconcile_completes_finished_agent_loop_before_provider_binding() {
+    // NEW-6: if the loop returns and persists `run_result=finished`, then the process dies before
+    // the post-loop provider binding, the WorkItem is left at ReadyToDispatch + executing=0. It is
+    // not a mid-call stale heartbeat candidate, but it is also no longer a normal dispatch handoff:
+    // the durable agent-loop route decision + run_result prove the run already finished and only
+    // the provider-timeline bind is missing.
+    let db = Db::open_hub(&temp_db("post-loop-finished")).unwrap();
+    let mission = format!("mission-{}", unique("post-loop-finished"));
+    seed_mission(&db, &mission);
+    seed_work_item(
+        &db,
+        &mission,
+        "wi-post-loop-finished",
+        WorkItemStatus::ReadyToDispatch,
+    );
+    set_executing(&db, "wi-post-loop-finished", false, RECONCILE_AT - 1);
+    seed_agent_loop_route_decision(
+        &db,
+        "wi-post-loop-finished",
+        "run-post-loop-finished",
+        NOW + 10,
+    );
+    persist_run_result(
+        db.conn(),
+        "run-post-loop-finished",
+        &RunResult::new("finished", "durable answer", None),
+        NOW + 11,
+    )
+    .unwrap();
+
+    let audit_before = verify_audit_chain(db.conn()).unwrap();
+    let outcome = reconcile_orphaned_work_items(&db, RECONCILE_AT).unwrap();
+
+    assert_eq!(
+        outcome.aborted, 1,
+        "the post-loop binding orphan must be closed by recovery"
+    );
+    assert_eq!(outcome.skipped, 0);
+    assert_eq!(
+        status_of(&db, "wi-post-loop-finished"),
+        WorkItemStatus::CompletedWithProof,
+        "the finished run_result is the proof for the WorkItem completion"
+    );
+    let work = db
+        .get_work_item("wi-post-loop-finished")
+        .unwrap()
+        .expect("work item remains readable");
+    assert!(
+        work.proof_receipts
+            .contains(&"friday://agent-run/run-post-loop-finished".to_string()),
+        "the recovered completion carries the run proof receipt"
+    );
+    let links = db.list_mission_links(&mission).unwrap();
+    assert!(
+        links.iter().any(|link| {
+            link.work_item_id.as_deref() == Some("wi-post-loop-finished")
+                && link.target_ref.ends_with("#run-post-loop-finished")
+        }),
+        "recovery must recreate the provider-timeline MissionLink"
+    );
+    assert_eq!(
+        verify_audit_chain(db.conn()).unwrap(),
+        audit_before + 5,
+        "recovery drives the five legal provider lifecycle hops"
+    );
 }
 
 // ── #784(b): boot reconcile of orphaned SCHEDULED workflow runs ───────────────────────────────
