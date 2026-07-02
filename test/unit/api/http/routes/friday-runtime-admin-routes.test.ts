@@ -6,6 +6,7 @@ import {
   type FridayRuntimeAdminRoutesDeps,
 } from "#api";
 import type { FridayAuthPrincipal } from "#api";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 
 function makeCtx(
   overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {},
@@ -98,6 +99,32 @@ describe("FridayRuntimeAdminRoutes", () => {
     expect(deps.config!.get).toHaveBeenCalledWith({
       keys: ["feature.flag", "feature.beta"],
     });
+  });
+
+  it("cr02-02: config.get rejects the synthetic public principal before reading config", async () => {
+    const deps = makeDeps();
+    const route = createFridayRuntimeAdminRoutes(deps).find((entry) => entry.operationId === "config.get")!;
+
+    await expect(route.handler(makeCtx({
+      principal: createFridayDefaultPublicHttpPrincipal(),
+      query: { keys: "feature.flag" },
+    }))).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+    });
+    expect(deps.config!.get).not.toHaveBeenCalled();
+  });
+
+  it("cr02-02: config.revisions.list rejects the synthetic public principal before reading revisions", async () => {
+    const deps = makeDeps();
+    const route = createFridayRuntimeAdminRoutes(deps).find((entry) => entry.operationId === "config.revisions.list")!;
+
+    await expect(route.handler(makeCtx({
+      principal: createFridayDefaultPublicHttpPrincipal(),
+      query: { limit: "2" },
+    }))).rejects.toMatchObject({
+      code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+    });
+    expect(deps.config!.listRevisions).not.toHaveBeenCalled();
   });
 
   it("config.update validates expectedRevision and patch", async () => {
