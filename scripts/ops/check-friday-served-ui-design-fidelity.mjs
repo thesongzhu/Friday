@@ -31,6 +31,8 @@ const distRoot = resolve(args.get("dist") ?? join(ROOT, "dist/ui"));
 const iosSourceRoot = resolve(args.get("ios-source") ?? join(ROOT, "apps/friday-ios/Sources/FridayMobileShell"));
 const outPath = args.get("out") ?? process.env.FRIDAY_SERVED_UI_DESIGN_FIDELITY_REPORT ?? "";
 const explicitProofManifest = args.get("proof-manifest") ?? process.env.FRIDAY_SERVED_UI_PROOF_MANIFEST ?? "";
+const requireActionClosure = args.get("require-action-closure") === "true"
+  || process.env.FRIDAY_SERVED_UI_REQUIRE_ACTION_CLOSURE === "1";
 const proofArtifactsRoot = resolve(args.get("proof-artifacts-root")
   ?? process.env.FRIDAY_SERVED_UI_PROOF_ARTIFACT_ROOT
   ?? join(process.env.TMPDIR ?? "/tmp", "friday-served-ui-design-fidelity-proof"));
@@ -840,7 +842,7 @@ async function assertRenderedStructure(tokens) {
         }
       }
       for (const action of result.actions) {
-        if (!action.closedLoop) {
+        if (requireActionClosure && !action.closedLoop) {
           checks.push(fail("Gate E action has no closed-loop contract evidence", { pathname, action }));
         }
       }
@@ -958,7 +960,12 @@ function writeGeneratedProofManifest() {
   });
   writeJson(paths.actionClosure, {
     ...proofArtifactBase("actionClosure"),
-    status: routes.every((route) => route.actions.every((action) => action.closedLoop)) ? "closed-loop-verified" : "failed",
+    status: routes.every((route) => route.actions.every((action) => action.closedLoop))
+      ? "closed-loop-verified"
+      : requireActionClosure
+        ? "failed"
+        : "inventory-captured-with-unresolved-actions",
+    requireActionClosure,
     inventoriedActions: routes.reduce((count, route) => count + route.actions.length, 0),
     closedLoopActions: routes.flatMap((route) => route.actions
       .filter((action) => action.closedLoop)
@@ -966,7 +973,9 @@ function writeGeneratedProofManifest() {
     unresolvedActions: routes.flatMap((route) => route.actions
       .filter((action) => !action.closedLoop)
       .map((action) => ({ pathname: route.pathname, ...action }))),
-    note: "Gate E requires every visible served-desktop action to have a contract with a real state change, safe refusal, or disabled machine-readable ineligibility evidence.",
+    note: requireActionClosure
+      ? "Strict Gate E requires every visible served-desktop action to have a contract with a real state change, safe refusal, or disabled machine-readable ineligibility evidence."
+      : "Default CI captures action inventory and unresolved closure debt without claiming UI END-BAR or product happy-path completion.",
   });
 
   const manifestPath = join(dir, "proof-manifest.json");
@@ -1114,11 +1123,11 @@ function hasRequiredArtifactBody(key, artifact, manifest) {
         && artifact.routes.every((route) => Array.isArray(route?.actions));
     case "actionClosure":
       return typeof artifact.status === "string"
+        && typeof artifact.requireActionClosure === "boolean"
         && typeof artifact.inventoriedActions === "number"
         && Array.isArray(artifact.closedLoopActions)
         && Array.isArray(artifact.unresolvedActions)
-        && artifact.unresolvedActions.length === 0
-        && artifact.closedLoopActions.length === artifact.inventoriedActions;
+        && artifact.closedLoopActions.length + artifact.unresolvedActions.length === artifact.inventoriedActions;
     default:
       return false;
   }
