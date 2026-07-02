@@ -3093,7 +3093,7 @@ describe("FridayProviderService", () => {
           baseUrl: "https://api.openai.com",
           authMode: "api-key",
           api: "openai-completions",
-          apiKey: `command:printf command-key-123; touch ${markerPath}`,
+          apiKey: `command:printf command-key-123; touch ${markerPath}`, // pragma: allowlist secret
           supportedModels: ["gpt-4o"],
           validateOnSave: false,
         });

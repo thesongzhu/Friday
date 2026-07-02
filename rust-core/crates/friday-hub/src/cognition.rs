@@ -385,12 +385,37 @@ fn orig_end_offset(map: &[FoldBoundary], folded_off: usize) -> usize {
 }
 
 fn trim_leading_email_delimiter(folded: &str, start: usize, end: usize) -> usize {
-    folded[start..end]
+    let first_local = folded[start..end]
         .char_indices()
         .find_map(|(off, c)| {
             (c.is_alphanumeric() || matches!(c, '.' | '_' | '%' | '+' | '-')).then_some(start + off)
         })
-        .unwrap_or(start)
+        .unwrap_or(start);
+    let Some(at_rel) = folded[first_local..end].find('@') else {
+        return first_local;
+    };
+    let at = first_local + at_rel;
+    let before_at = &folded[first_local..at];
+    let Some((last_off, last_char)) = before_at.char_indices().next_back() else {
+        return first_local;
+    };
+    if !last_char.is_ascii_alphanumeric() && !matches!(last_char, '.' | '_' | '%' | '+' | '-') {
+        return first_local;
+    }
+
+    let mut ascii_local_start = at;
+    for (off, c) in before_at.char_indices().rev() {
+        if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '%' | '+' | '-') {
+            ascii_local_start = first_local + off;
+            continue;
+        }
+        break;
+    }
+    if ascii_local_start <= first_local + last_off {
+        ascii_local_start
+    } else {
+        first_local
+    }
 }
 
 /// Redact every PII span in `content`, replacing each with its kind marker (e.g.
@@ -832,6 +857,10 @@ mod tests {
                 !out.contains(raw),
                 "CJK-adjacent PII leaked: {raw:?} survived in {out:?}"
             );
+            assert!(
+                out.contains(input.split(raw).next().unwrap_or("")),
+                "CJK label text was over-redacted in {out:?}"
+            );
         }
     }
 
@@ -859,9 +888,9 @@ mod tests {
     #[test]
     fn redacts_secret_credentials_and_leaves_no_original_value() {
         let jwt =
-            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuZXcxIn0.J9pK5c0aY6zC2wQpL8mN4vR3sT1uX7yZ0aB2cD4eF6g";
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuZXcxIn0.J9pK5c0aY6zC2wQpL8mN4vR3sT1uX7yZ0aB2cD4eF6g"; // pragma: allowlist secret
         let pem =
-            "-----BEGIN PRIVATE KEY-----\nnew1-private-key-material\n-----END PRIVATE KEY-----";
+            "-----BEGIN PRIVATE KEY-----\nnew1-private-key-material\n-----END PRIVATE KEY-----"; // pragma: allowlist secret
         let input = format!(
             "Authorization: Bearer sk-new1recallcanary123456 \
              github ghp_new1recallcanary123456 \
@@ -908,9 +937,9 @@ mod tests {
 
     #[test]
     fn redacts_refuted_secret_credential_shapes() {
-        let short_payload_jwt = "eyJhbGciOiJIUzI1NiJ9.e30.aaaaaaaaaaaaaaaa";
-        let github_pat = "github_pat_11NEW1CANARY_abcdefghijklmnopqrstuvwxyz1234567890";
-        let pgp = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nnew1-pgp-private-key-material\n-----END PGP PRIVATE KEY BLOCK-----";
+        let short_payload_jwt = "eyJhbGciOiJIUzI1NiJ9.e30.aaaaaaaaaaaaaaaa"; // pragma: allowlist secret
+        let github_pat = "github_pat_11NEW1CANARY_abcdefghijklmnopqrstuvwxyz1234567890"; // pragma: allowlist secret
+        let pgp = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nnew1-pgp-private-key-material\n-----END PGP PRIVATE KEY BLOCK-----"; // pragma: allowlist secret
         let input = format!(
             "pat {github_pat} jwt {short_payload_jwt} \
              env OPENAI_API_KEY=new1openaiassignment123 \

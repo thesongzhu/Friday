@@ -19,12 +19,12 @@ describe("FridayRealtimeEventBus redaction", () => {
       error: {
         code: "NODE_EXECUTION_FAILED",
         message:
-          "tool stderr included Authorization: Bearer sk-a5-event-bus-canary " +
-          "github_pat_A5FineGrainedCanary_1234567890abcdef " +
-          "eyJhbGciOiJIUzI1NiJ9.e30.aaaaaaaaaaaaaaaa " +
+          "tool stderr included Authorization: Bearer sk-a5-event-bus-canary " + // pragma: allowlist secret
+          "github_pat_A5FineGrainedCanary_1234567890abcdef " + // pragma: allowlist secret
+          "eyJhbGciOiJIUzI1NiJ9.e30.aaaaaaaaaaaaaaaa " + // pragma: allowlist secret
           "token=a5baretokenvalue123 password=a5passwordvalue123 " +
-          'OPENAI_API_KEY=a5openaiassignment123 SLACK_BOT_TOKEN=xoxb-a5slackassignment123 AWS_SECRET_ACCESS_KEY=a5awsassignment123 api_key="a5quotedassignment123" "access_token": "a5jsonassignment123" ' +
-          "-----BEGIN PGP PRIVATE KEY BLOCK-----\na5-private-key-material\n-----END PGP PRIVATE KEY BLOCK-----",
+          'OPENAI_API_KEY=a5openaiassignment123 SLACK_BOT_TOKEN=xoxb-a5slackassignment123 AWS_SECRET_ACCESS_KEY=a5awsassignment123 api_key="a5quotedassignment123" "access_token": "a5jsonassignment123" ' + // pragma: allowlist secret
+          "-----BEGIN PGP PRIVATE KEY BLOCK-----\na5-private-key-material\n-----END PGP PRIVATE KEY BLOCK-----", // pragma: allowlist secret
       },
     });
 
