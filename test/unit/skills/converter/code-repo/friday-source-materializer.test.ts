@@ -220,6 +220,30 @@ describe("materializeFridayCodeRepoSource (git)", () => {
     ).toThrow("not allowed");
   });
 
+  it("NEW-3: rejects scp-like git sources without a .git suffix before invoking git", async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+
+    vi.resetModules();
+    vi.doMock("node:child_process", () => ({
+      execFileSync: vi.fn((cmd: string, args: string[]) => {
+        calls.push({ cmd, args });
+        throw new Error("git clone should not run for blocked source");
+      }),
+    }));
+
+    try {
+      const imported = await import("../../../../../src/skills/converter/code-repo/friday-source-materializer.js");
+
+      expect(() =>
+        imported.materializeFridayCodeRepoSource("git@invalid.host:nonexistent/repo"),
+      ).toThrow("not allowed");
+      expect(calls).toHaveLength(0);
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
+  });
+
   it("A7: rejects metadata-service git URLs before invoking git", async () => {
     const calls: Array<{ cmd: string; args: string[] }> = [];
 
