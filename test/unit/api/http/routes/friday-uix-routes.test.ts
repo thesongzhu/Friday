@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createFridayUixRoutes } from "#api";
 import type { FridayHttpContext } from "#api";
+import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
 import type { FridayUixSurfaceService } from "../../../../src/uix/services/friday-uix-surface-service.js";
 import type { FridayCommunicationPersona } from "../../../../src/uix/services/friday-communication-persona.js";
 
@@ -401,6 +402,19 @@ describe("FridayUixRoutes", () => {
     expect(result.onboardedAt).toBeNull();
   });
 
+  it("cr02-03: rejects synthetic public principal before reading user profile", async () => {
+    const service = makeService();
+    const routes = createFridayUixRoutes({ service });
+    const route = routes.find((entry) => entry.operationId === "uix.user.profile.get")!;
+
+    await expect(route.handler(makeCtx({
+      principal: createFridayDefaultPublicHttpPrincipal(),
+    }))).rejects.toMatchObject({
+      httpStatus: 401,
+    });
+    expect(service.listPreferences).not.toHaveBeenCalled();
+  });
+
   it("falls back to setup completion time when onboarding is already complete", async () => {
     const service = makeService();
     vi.mocked(service.listPreferences).mockReturnValue({
@@ -521,15 +535,16 @@ describe("FridayUixRoutes", () => {
 
   it("lists learned facts with explicit memory and context-use boundaries", async () => {
     const service = makeService();
+    const listLearnedFacts = vi.fn(() => [{
+      key: "pref:display_name",
+      value: "Captain Friday",
+      confidence: 0.8,
+      evidenceCount: 2,
+      lastConfirmedAt: NOW,
+    }]);
     const routes = createFridayUixRoutes({
       service,
-      listLearnedFacts: vi.fn(() => [{
-        key: "pref:display_name",
-        value: "Captain Friday",
-        confidence: 0.8,
-        evidenceCount: 2,
-        lastConfirmedAt: NOW,
-      }]),
+      listLearnedFacts,
     });
     const route = routes.find((entry) => entry.operationId === "uix.learnedfacts.list")!;
 
@@ -546,6 +561,23 @@ describe("FridayUixRoutes", () => {
       reviewBoundary: "not_review_center_confirmed",
       revocationBoundary: "clear_delete_or_synthetic_memory_delete",
     });
+  });
+
+  it("cr02-03: rejects synthetic public principal before listing learned facts", async () => {
+    const service = makeService();
+    const listLearnedFacts = vi.fn(() => []);
+    const routes = createFridayUixRoutes({
+      service,
+      listLearnedFacts,
+    });
+    const route = routes.find((entry) => entry.operationId === "uix.learnedfacts.list")!;
+
+    await expect(route.handler(makeCtx({
+      principal: createFridayDefaultPublicHttpPrincipal(),
+    }))).rejects.toMatchObject({
+      httpStatus: 401,
+    });
+    expect(listLearnedFacts).not.toHaveBeenCalled();
   });
 
   it("labels Review Center approved learned facts from fact metadata", async () => {
