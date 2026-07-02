@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SCRIPT_DIR = resolve(fileURLToPath(import.meta.url), "..");
 const ROOT = resolve(SCRIPT_DIR, "../..");
@@ -44,6 +44,15 @@ const REQUIRED_PROOF_ARTIFACTS = [
   "petInteraction",
   "actionInventory",
   "actionClosure",
+];
+const REQUIRED_REFERENCE_OUTPUTS = [
+  "selectedJsonSha256",
+  "selectedHtmlSha256",
+  "screenshotSha256",
+  "computedStyleReport",
+  "componentInventoryReport",
+  "petInteractionReport",
+  "actionInventoryContractReport",
 ];
 let renderedProof = null;
 
@@ -173,6 +182,127 @@ function readLockedTokens() {
     throw new Error("Could not extract locked design tokens from mobile-gallery.html");
   }
   return { accent, coral, appBg, ok, warn, danger };
+}
+
+async function assertReferenceOracle() {
+  const checks = [];
+  const htmlFiles = [
+    "mobile-gallery.html",
+    "desktop-gallery.html",
+    "pet-anim-v9-reference.html",
+  ];
+  const selectionFiles = [
+    "desktop-selection.json",
+    "mobile-selection.json",
+  ];
+
+  for (const file of htmlFiles) {
+    if (!existsSync(join(designRoot, "html", file))) {
+      checks.push(fail(`Gate A selected reference HTML is missing: ${file}`));
+    }
+  }
+  for (const file of selectionFiles) {
+    if (!existsSync(join(designRoot, "saved", file))) {
+      checks.push(fail(`Gate A selected JSON is missing: ${file}`));
+    }
+  }
+  if (checks.length > 0) {
+    report.referenceOracle = {
+      status: "missing",
+      requiredOutputs: REQUIRED_REFERENCE_OUTPUTS,
+    };
+    return checks;
+  }
+
+  const chromium = await loadPlaywrightChromium();
+  const browser = await chromium.launch({ headless: true });
+  const selectedJsonSha256 = {};
+  const selectedHtmlSha256 = {};
+  const screenshotSha256 = {};
+  const computedStyleReport = {};
+  const componentInventoryReport = {};
+  const petInteractionReport = {};
+  const actionInventoryContractReport = {};
+
+  try {
+    for (const file of selectionFiles) {
+      selectedJsonSha256[file] = sha256(readText(join(designRoot, "saved", file)));
+    }
+
+    for (const file of htmlFiles) {
+      const htmlPath = join(designRoot, "html", file);
+      selectedHtmlSha256[file] = sha256(readText(htmlPath));
+      const page = await browser.newPage({ viewport: { width: file.includes("mobile") ? 390 : 1440, height: 900 } });
+      await page.goto(pathToFileURL(htmlPath).href, { waitUntil: "networkidle" });
+      const screenshot = await page.screenshot({ fullPage: true });
+      screenshotSha256[file] = sha256(screenshot);
+      const snapshot = await page.evaluate(() => {
+        const probe = document.querySelector("[data-friday-ui], button, [role='button'], canvas, main") ?? document.body;
+        const style = getComputedStyle(probe);
+        const actions = [...document.querySelectorAll("button, [role='button'], a[href], [data-pet-action]")]
+          .map((node, index) => ({
+            index,
+            tagName: node.tagName.toLowerCase(),
+            label: (node.textContent ?? node.getAttribute("aria-label") ?? node.getAttribute("data-pet-action") ?? "").trim().slice(0, 120),
+            marker: node.getAttribute("data-friday-ui") ?? node.getAttribute("data-pet-action") ?? null,
+            disabled: node.hasAttribute("disabled") || node.getAttribute("aria-disabled") === "true",
+          }));
+        const before = typeof window.__pet?.frame === "number" ? window.__pet.frame : null;
+        let interactionResult = null;
+        if (typeof window.__pet?.interact === "function") {
+          interactionResult = window.__pet.interact();
+        }
+        const after = typeof window.__pet?.frame === "number" ? window.__pet.frame : null;
+        return {
+          computedStyle: {
+            color: style.color,
+            backgroundColor: style.backgroundColor,
+            borderRadius: style.borderRadius,
+            fontFamily: style.fontFamily,
+          },
+          components: {
+            fridayUiMarkers: [...document.querySelectorAll("[data-friday-ui]")].map((node) => node.getAttribute("data-friday-ui")),
+            buttons: document.querySelectorAll("button, [role='button']").length,
+            canvases: document.querySelectorAll("canvas").length,
+            selectedSurfaces: [...document.querySelectorAll("[data-reference-surface]")].map((node) => node.getAttribute("data-reference-surface")),
+          },
+          actions,
+          pet: {
+            hasPetHook: Boolean(window.__pet),
+            hasInteract: typeof window.__pet?.interact === "function",
+            before,
+            after,
+            changed: before !== null && after !== null && before !== after,
+            interactionResult,
+          },
+        };
+      });
+      await page.close();
+      computedStyleReport[file] = snapshot.computedStyle;
+      componentInventoryReport[file] = snapshot.components;
+      actionInventoryContractReport[file] = snapshot.actions;
+      petInteractionReport[file] = snapshot.pet;
+    }
+  } finally {
+    await browser.close();
+  }
+
+  report.referenceOracle = {
+    status: "parsed",
+    requiredOutputs: REQUIRED_REFERENCE_OUTPUTS,
+    selectedJsonSha256,
+    selectedHtmlSha256,
+    screenshotSha256,
+    computedStyleReport,
+    componentInventoryReport,
+    petInteractionReport,
+    actionInventoryContractReport,
+  };
+  return [pass("Gate A selected reference oracle captured", {
+    htmlFiles,
+    selectionFiles,
+    requiredOutputs: REQUIRED_REFERENCE_OUTPUTS,
+  })];
 }
 
 function runBuild() {
@@ -852,6 +982,7 @@ try {
   report.checks.push(...assertSelections());
   const tokens = readLockedTokens();
   report.lockedTokens = tokens;
+  report.checks.push(...await assertReferenceOracle());
   report.checks.push(...assertIosDesignFidelity(tokens));
   const buildCheck = runBuild();
   report.checks.push(buildCheck);

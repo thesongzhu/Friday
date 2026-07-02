@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Friday desktop selected reference</title>
+    <style>
+      :root {
+        --accent: #0f7d8c;
+        --coral: #d8634d;
+        --app-bg: #f7f6f2;
+      }
+      body {
+        margin: 0;
+        background: var(--app-bg);
+        color: #242424;
+        font-family: Inter, system-ui, sans-serif;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 240px 1fr 320px;
+        min-height: 100vh;
+      }
+      button {
+        border: 0;
+        border-radius: 8px;
+        background: var(--accent);
+        color: white;
+        padding: 10px 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <main data-reference-surface="desktop" data-selected-layout="threePane">
+      <nav>Rail</nav>
+      <section>
+        <button data-friday-ui="button-primary">Approve</button>
+        <span data-friday-ui="chip">Needs me</span>
+        <span data-friday-ui="filter">All</span>
+      </section>
+      <aside data-reference-inspector="rightDocked">Proof inspector</aside>
+    </main>
+  </body>
+</html>
