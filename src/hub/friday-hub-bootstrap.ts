@@ -1512,6 +1512,7 @@ export async function createFridayHub(
     getBrowserManager: () => browserManager,
     getChannelRegistry: () => channelRegistry,
     canonicalMutationGate: skillRunCanonicalMutationGate,
+    allowTestOnlyNonDarwinShellSandboxExecution: config.allowTestOnlyNonDarwinShellSandboxExecution,
   });
 
   const rulesRepository = createFridayRulesRepository();

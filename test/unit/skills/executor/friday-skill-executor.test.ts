@@ -260,6 +260,70 @@ describe("FridaySkillExecutor", () => {
     }
   });
 
+  it("allows non-Darwin isolated shell execution only behind the explicit test oracle", async () => {
+    const fs = await import("node:fs/promises");
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    const scriptDir = await fs.mkdtemp("/tmp/friday-isolated-shell-test-oracle-");
+
+    try {
+      await fs.writeFile(`${scriptDir}/run.sh`, "#!/bin/sh\nprintf '{\"ok\":true}\\n'\n", "utf8");
+      await fs.chmod(`${scriptDir}/run.sh`, 0o755);
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", { ...originalPlatform, value: "linux" });
+      }
+
+      const skill = makeRegisteredSkill({
+        id: "isolated-shell-test-oracle-skill",
+        runtimeKind: "shell",
+        entrypoint: "run.sh",
+        skillDir: scriptDir,
+        trust: {
+          trustTier: "workspace",
+          sandboxPolicy: {
+            trustTier: "workspace",
+            defaultExecutionMode: "trusted",
+            allowedExecutionModes: ["trusted", "restricted", "isolated"],
+          },
+          executionMode: "isolated",
+          requiredPermissionIds: [],
+          optionalPermissionIds: [],
+        },
+      });
+
+      const skills = new Map<string, FridayRegisteredSkill>();
+      skills.set("isolated-shell-test-oracle-skill", skill);
+      const executor = createFridaySkillExecutor({
+        db,
+        registry: createMockRegistry(skills),
+        runStore,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => "2025-01-15T10:00:00.000Z",
+        allowTestOnlyNonDarwinShellSandboxExecution: true,
+      });
+
+      const result = await executor.execute({
+        ...baseRequest,
+        skillId: "isolated-shell-test-oracle-skill",
+      }).result;
+
+      expect(result.status).toBe("completed");
+      expect(result.output).toEqual({ ok: true });
+      expect(runStore.getRun("test-id-0001")?.metadata?.sandbox).toMatchObject({
+        executionMode: "isolated",
+        os: {
+          boundary: "test_only_non_darwin_shell_sandbox_bypass",
+          requested: false,
+          required: false,
+        },
+      });
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+      await fs.rm(scriptDir, { recursive: true, force: true });
+    }
+  });
+
   it("runs shell skills that require the local shell capability", async () => {
     const skill = makeRegisteredSkill({
       id: "echo-skill",

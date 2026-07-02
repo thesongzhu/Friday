@@ -743,9 +743,13 @@ export function createFridaySkillExecutor(
     const darwin = process.platform === "darwin";
     const executionMode = readExecutionMode(skill);
     const requiresOsSandbox = executionMode === "restricted" || executionMode === "isolated";
+    const testOnlyNonDarwinBypass =
+      process.env.NODE_ENV !== "production"
+      && !darwin
+      && deps.allowTestOnlyNonDarwinShellSandboxExecution === true;
     return {
       enabled: darwin,
-      required: requiresOsSandbox || darwin,
+      required: (requiresOsSandbox || darwin) && !testOnlyNonDarwinBypass,
       denyNetwork: true,
       writableRoots: [skill.skillDir],
     };
@@ -762,7 +766,9 @@ export function createFridaySkillExecutor(
           ? "darwin_sandbox_exec_write_network_guard"
           : sandbox.required
             ? "os_sandbox_unavailable_fail_closed"
-            : "open_no_os_sandbox",
+            : deps.allowTestOnlyNonDarwinShellSandboxExecution === true && process.env.NODE_ENV !== "production"
+              ? "test_only_non_darwin_shell_sandbox_bypass"
+              : "open_no_os_sandbox",
         requested: sandbox.enabled,
         required: sandbox.required === true,
         denyNetwork: sandbox.denyNetwork !== false,

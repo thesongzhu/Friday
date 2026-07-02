@@ -634,6 +634,7 @@ describe("Phase 14 — live HTTP skill upgrade lifecycle proof (Phase 06 debt)",
       idGenerator,
       nowIso,
       canonicalMutationGate: executorCanonicalGate,
+      allowTestOnlyNonDarwinShellSandboxExecution: true,
     });
 
     apiRuntime = createFridayApiRuntime({
@@ -1518,6 +1519,7 @@ describe("Phase 14 — live HTTP skill upgrade lifecycle proof (Phase 06 debt)",
           idGenerator,
           nowIso,
           canonicalMutationGate: executorCanonicalGate,
+          allowTestOnlyNonDarwinShellSandboxExecution: true,
         });
         apiRuntime = createFridayApiRuntime({
           db,

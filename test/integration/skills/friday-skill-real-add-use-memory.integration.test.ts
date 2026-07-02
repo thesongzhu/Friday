@@ -177,6 +177,7 @@ describe("Friday real skill add/use/memory behavior", () => {
           approvalSignatureSecret: APPROVAL_SECRET,
           requireApprovalSignature: true,
         }),
+        allowTestOnlyNonDarwinShellSandboxExecution: true,
       });
 
       const directResult = await executor.execute({

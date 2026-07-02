@@ -682,6 +682,7 @@ describe("FridayHub Bootstrap Integration", () => {
       skillDirs: [bundledSkillsDir, managedSkillsDir],
       tokenSecret: PHASE32_TOKEN_SECRET,
       allowTestOnlySkillRunExecution: true,
+      allowTestOnlyNonDarwinShellSandboxExecution: true,
       allowTestOnlyAutonomyLifecycleExecution: true,
     });
     hubs.push(hub);
