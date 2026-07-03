@@ -395,23 +395,39 @@ fn run() -> Result<(), ServerError> {
     // flipped — wire-live = (rebuild bin + deploy + set the env flag) is a SEPARATE
     // operator-gated step. The reaper owns lifecycle on `agent_session` (the retired TS
     // `session-lifecycle-sweep` replacement).
-    if reaper_enabled() {
-        // (gap #25) The retention sweep rides the SAME reaper tick (no new thread). Its own
-        // default-off flag is read ONCE here and passed in; OFF ⇒ the tick runs the pre-#25
-        // session-sweep-only behavior, byte-identical. The retention sweep needs the reaper thread
-        // to be running at all, so when the reaper is DISABLED there is no retention either — the
-        // wire-live order is: enable the reaper, then (separately) enable retention.
-        let retention_on = retention_sweep_enabled();
-        if retention_on {
+    // (gap #25 / NEW-37) Read BOTH env vars unconditionally for diagnostics, but keep the
+    // run/delete semantics unchanged: the retention sweep still rides only the session reaper.
+    let reaper_raw = env::var(SESSION_REAPER_ENABLED_ENV).ok();
+    let retention_raw = env::var(RETENTION_SWEEP_ENABLED_ENV).ok();
+    let wiring = retention_wiring_from(reaper_raw.as_deref(), retention_raw.as_deref());
+    match wiring {
+        RetentionWiring::Enabled => {
             eprintln!(
                 "hub_agent_run_server: artifact-RETENTION sweep ENABLED (FRIDAY_RETENTION_SWEEP) — rides the reaper tick"
             );
-        } else {
+        }
+        RetentionWiring::ReaperOnly => {
             eprintln!(
                 "hub_agent_run_server: artifact-RETENTION sweep DISABLED (set FRIDAY_RETENTION_SWEEP=1 to enable)"
             );
         }
-        spawn_session_reaper(db_path.clone(), retention_on);
+        RetentionWiring::MisparsedTruthy => {
+            eprintln!(
+                "hub_agent_run_server: WARN artifact-RETENTION requested but FRIDAY_RETENTION_SWEEP requires exactly '1'; retention is OFF"
+            );
+        }
+        RetentionWiring::DeadConfigReaperOff => {
+            eprintln!(
+                "hub_agent_run_server: WARN artifact-RETENTION is DEAD-CONFIG: FRIDAY_RETENTION_SWEEP is set but the session reaper is DISABLED; also set FRIDAY_RUST_SESSION_REAPER_ENABLED=1"
+            );
+        }
+        RetentionWiring::Disabled => {}
+    }
+    if reaper_enabled_from(reaper_raw.as_deref()) {
+        spawn_session_reaper(
+            db_path.clone(),
+            retention_sweep_enabled_from(retention_raw.as_deref()),
+        );
     } else {
         eprintln!(
             "hub_agent_run_server: session-lifecycle reaper DISABLED (set FRIDAY_RUST_SESSION_REAPER_ENABLED=1 to enable)"
@@ -897,12 +913,6 @@ fn run_token_surface(
     }
 }
 
-/// Whether the operator has explicitly enabled the session-lifecycle reaper. Fail-closed:
-/// only the exact opt-in values enable it; everything else (including unset) is OFF.
-fn reaper_enabled() -> bool {
-    reaper_enabled_from(env::var(SESSION_REAPER_ENABLED_ENV).ok().as_deref())
-}
-
 /// Pure flag-matcher (separated from the env read so it is testable without mutating the
 /// process-global environment). DEFAULT-OFF: `None` (unset) ⇒ false; only the exact opt-in
 /// values `"1"`/`"true"` (case-insensitive, trimmed) ⇒ true; everything else ⇒ false.
@@ -913,11 +923,6 @@ fn reaper_enabled_from(raw: Option<&str>) -> bool {
     )
 }
 
-/// (gap #25) Whether the operator has explicitly enabled the artifact-retention sweep. Fail-closed.
-fn retention_sweep_enabled() -> bool {
-    retention_sweep_enabled_from(env::var(RETENTION_SWEEP_ENABLED_ENV).ok().as_deref())
-}
-
 /// (gap #25) Pure flag-matcher for `FRIDAY_RETENTION_SWEEP` (separated from the env read so it is
 /// testable without mutating the process environment). DEFAULT-OFF and STRICT: only the exact
 /// trimmed `"1"` enables it (the program-standard exact-1 idiom used by mission-/run-control
@@ -925,6 +930,39 @@ fn retention_sweep_enabled() -> bool {
 /// the pre-#25 behavior (session sweep only), byte-identical.
 fn retention_sweep_enabled_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RetentionWiring {
+    Enabled,
+    ReaperOnly,
+    MisparsedTruthy,
+    DeadConfigReaperOff,
+    Disabled,
+}
+
+fn retention_sweep_looks_requested(raw: Option<&str>) -> bool {
+    let Some(trimmed) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    !matches!(
+        trimmed.to_ascii_lowercase().as_str(),
+        "0" | "false" | "no" | "off"
+    )
+}
+
+fn retention_wiring_from(reaper_raw: Option<&str>, retention_raw: Option<&str>) -> RetentionWiring {
+    let reaper_on = reaper_enabled_from(reaper_raw);
+    let retention_on = retention_sweep_enabled_from(retention_raw);
+    let retention_requested = retention_sweep_looks_requested(retention_raw);
+
+    match (reaper_on, retention_on, retention_requested) {
+        (true, true, _) => RetentionWiring::Enabled,
+        (true, false, true) => RetentionWiring::MisparsedTruthy,
+        (true, false, false) => RetentionWiring::ReaperOnly,
+        (false, _, true) => RetentionWiring::DeadConfigReaperOff,
+        (false, _, false) => RetentionWiring::Disabled,
+    }
 }
 
 fn run_session_reaper_tick(db: &friday_storage::Db, retention_on: bool, now_ms: i64) {
@@ -1234,6 +1272,23 @@ fn spawn_scheduler_tick(db_path: String, workspace_root: String) {
                         "hub_agent_run_server: scheduler lease acquire failed (skipping tick)"
                     );
                     continue;
+                }
+            }
+            // (NEW-38) Heal stale scheduled workflow-run orphans under the SAME scheduler lease,
+            // before the next fire decision. This is limited to stale `sched:` Pending/Running rows;
+            // boot recovery stays unconditional and manual workflow runs stay out of scope.
+            match friday_hub::crash_recovery::reconcile_stale_scheduled_runs(&db, now_ms) {
+                Ok(outcome) if !outcome.is_empty() => {
+                    eprintln!(
+                        "hub_agent_run_server: scheduler stale-run reconcile aborted={} skipped={}",
+                        outcome.aborted, outcome.skipped,
+                    );
+                }
+                Ok(_) => {}
+                Err(_e) => {
+                    eprintln!(
+                        "hub_agent_run_server: scheduler stale-run reconcile failed (continuing)"
+                    );
                 }
             }
             // (2) Run ONE bounded tick. A tick error is logged (category only) and the loop
@@ -3614,6 +3669,40 @@ mod tests {
         assert!(
             retention_sweep_enabled_from(Some(" 1 ")),
             "padded 1 ⇒ enabled (trimmed)"
+        );
+    }
+
+    #[test]
+    fn retention_wiring_surfaces_dead_config_and_parse_asymmetry() {
+        assert_eq!(
+            retention_wiring_from(None, Some("1")),
+            RetentionWiring::DeadConfigReaperOff,
+            "retention ON with the reaper OFF is a dead config that must be surfaced"
+        );
+        assert_eq!(
+            retention_wiring_from(Some("0"), Some("1")),
+            RetentionWiring::DeadConfigReaperOff,
+            "an explicit reaper OFF still makes retention a dead config"
+        );
+        assert_eq!(
+            retention_wiring_from(Some("true"), Some("true")),
+            RetentionWiring::MisparsedTruthy,
+            "the reaper accepts true, but retention does not; surface the asymmetric parse"
+        );
+        assert_eq!(
+            retention_wiring_from(Some("true"), Some("1")),
+            RetentionWiring::Enabled,
+            "the existing accepted-value contract stays intact: reaper true plus retention 1"
+        );
+        assert_eq!(
+            retention_wiring_from(Some("1"), None),
+            RetentionWiring::ReaperOnly,
+            "reaper-only mode remains the session-sweep-only behavior"
+        );
+        assert_eq!(
+            retention_wiring_from(None, None),
+            RetentionWiring::Disabled,
+            "both flags absent is the quiet default-off posture"
         );
     }
 
