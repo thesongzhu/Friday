@@ -17,4 +17,13 @@ describe("CI npm dependency installation", () => {
     expect(workflow.match(/npm_config_fetch_retry_maxtimeout:\s+120000/g) ?? []).toHaveLength(installStepCount);
     expect(workflow.match(/for attempt in 1 2 3;/g) ?? []).toHaveLength(installStepCount);
   });
+
+  it("does not fail-open when every npm ci retry attempt fails", () => {
+    const workflow = readFileSync(ciWorkflowPath, "utf8");
+
+    expect(workflow).not.toMatch(/fi\n\s+status=\$\?/);
+    expect(workflow.match(/else\n\s+status=\$\?/g) ?? []).toHaveLength(
+      (workflow.match(/- name: Install dependencies/g) ?? []).length,
+    );
+  });
 });
