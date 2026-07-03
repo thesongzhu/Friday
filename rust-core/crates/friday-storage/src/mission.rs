@@ -10,11 +10,12 @@ use friday_core::Risk;
 use friday_core::{
     find_duplicate_mission as core_find_duplicate_mission,
     find_duplicate_work_item as core_find_duplicate_work_item, outcome_checked_proof_enabled,
-    validate_friday_conversation_id, ApprovalState, FridayConversation, HandoffJudgmentMemory,
-    Mission, MissionLink, MissionLinkKind, MissionStatus, MissionSurfaceProjection,
-    RouteActionItem, RouteActionReversibility, RouteActionTargetKind, RouteDecisionCard,
-    RouteDecisionProjection, SurfaceEvent, SurfaceEventKind, SurfaceKind, SurfaceThread,
-    TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
+    parse_outcome_receipt, validate_friday_conversation_id, ApprovalState, FridayConversation,
+    HandoffJudgmentMemory, Mission, MissionLink, MissionLinkKind, MissionStatus,
+    MissionSurfaceProjection, ProofRequirementKind, RouteActionItem, RouteActionReversibility,
+    RouteActionTargetKind, RouteDecisionCard, RouteDecisionProjection, SurfaceEvent,
+    SurfaceEventKind, SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem,
+    WorkItemStatus, WorkLane,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
@@ -372,6 +373,65 @@ fn validate_work_item(item: &WorkItem) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+fn validate_work_item_outcome_receipts(conn: &Connection, item: &WorkItem) -> Result<()> {
+    if item.status != WorkItemStatus::CompletedWithProof
+        || !outcome_checked_proof_enabled()
+        || !item.has_outcome_proof_requirements()
+    {
+        return Ok(());
+    }
+    if !item.completion_outcome_is_proven() {
+        return Err(unsupported(format!(
+            "work_item '{}' outcome-checked completion requires a typed outcome proof receipt matching every outcome proof requirement",
+            item.work_item_id
+        )));
+    }
+    for requirement in item.outcome_requirement_specs() {
+        if requirement.kind != ProofRequirementKind::AnswerProduced {
+            continue;
+        }
+        for receipt in &item.proof_receipts {
+            let Some(receipt) = parse_outcome_receipt(receipt) else {
+                continue;
+            };
+            if receipt.kind != ProofRequirementKind::AnswerProduced {
+                continue;
+            }
+            let Some(answer_len) = outcome_signal_field(&receipt.signal, "answer_len")
+                .and_then(|value| value.parse::<i64>().ok())
+            else {
+                return Err(outcome_receipt_unsupported(&item.work_item_id));
+            };
+            let Some(answer_sha256) = outcome_signal_field(&receipt.signal, "answer_sha256") else {
+                return Err(outcome_receipt_unsupported(&item.work_item_id));
+            };
+            let Some(stored) = crate::get_run_result_ref(conn, &receipt.run_id)? else {
+                return Err(outcome_receipt_unsupported(&item.work_item_id));
+            };
+            if stored.status != "finished"
+                || stored.answer_len != answer_len
+                || stored.answer_sha256 != answer_sha256
+            {
+                return Err(outcome_receipt_unsupported(&item.work_item_id));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn outcome_signal_field<'a>(signal: &'a str, key: &str) -> Option<&'a str> {
+    signal.split([';', ',']).find_map(|part| {
+        let (field, value) = part.trim().split_once('=')?;
+        (field.trim() == key).then_some(value.trim())
+    })
+}
+
+fn outcome_receipt_unsupported(work_item_id: &str) -> StorageError {
+    unsupported(format!(
+        "work_item '{work_item_id}' outcome-checked completion requires a typed outcome proof receipt backed by matching persisted run_result"
+    ))
 }
 
 fn require_safe_surface_body_ref(value: &str, field: &str) -> Result<()> {
@@ -1794,6 +1854,7 @@ pub fn find_duplicate_mission(conn: &Connection, candidate: &Mission) -> Result<
 
 pub fn upsert_work_item(conn: &Connection, item: &WorkItem) -> Result<()> {
     validate_work_item(item)?;
+    validate_work_item_outcome_receipts(conn, item)?;
     require_non_empty(&item.work_item_id, "work_item_id")?;
     require_non_empty(&item.mission_id, "work_item.mission_id")?;
     conn.execute(
@@ -3033,4 +3094,183 @@ pub fn list_mission_surface_projections(
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Db;
+    use friday_core::OUTCOME_CHECKED_PROOF_FLAG;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, MutexGuard};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self {
+                key,
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn tmp(tag: &str) -> String {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut path: PathBuf = std::env::temp_dir();
+        path.push(format!(
+            "friday-storage-mission-{tag}-{}-{unique}.sqlite",
+            std::process::id()
+        ));
+        path.to_string_lossy().into_owned()
+    }
+
+    fn judgment() -> HandoffJudgmentMemory {
+        HandoffJudgmentMemory {
+            task: "prove an outcome with a durable result".into(),
+            current_blocker: None,
+            target_lane_thread_agent_provider: WorkLane::Codex.as_str().into(),
+            read_first_files: vec!["rust-core/crates/friday-storage/src/mission.rs".into()],
+            required_output: "typed outcome receipt bound to run_result".into(),
+            done_criteria: vec!["completed_with_proof requires durable outcome proof".into()],
+            red_lines: vec!["do not accept detached proof receipt text".into()],
+            why_this_route: "storage owns the final completion invariant".into(),
+            considered_options: vec!["trust receipt string only".into()],
+            deferred_options: vec!["provider-specific attestations".into()],
+            previous_pitfalls: vec!["B4 receipt text looked like verification".into()],
+            inheritable_context: vec!["fake receipt must fail closed".into()],
+            proof_requirements: vec!["outcome:AnswerProduced:>=1".into()],
+            ownership_claim_ids: Vec::new(),
+        }
+    }
+
+    fn seed_graph(db: &Db, work_status: WorkItemStatus, proof_receipts: Vec<String>) -> WorkItem {
+        let now = 1_777_000_000_000;
+        upsert_conversation(
+            db.conn(),
+            &FridayConversation {
+                friday_conversation_id: "fconv_b4_verify".into(),
+                title: "B4 verify".into(),
+                created_at_ms: now,
+                updated_at_ms: now,
+                active_mission_ids: vec!["mission-b4".into()],
+                surface_thread_ids: Vec::new(),
+                owner_principal: "principal:b4-owner".into(),
+                truth_status: TruthStatus::Proven,
+                current_focus_summary: "B4 proof verification".into(),
+                memory_scope_ref: None,
+                proof_refs: vec!["proof://b4/test".into()],
+            },
+        )
+        .unwrap();
+        upsert_mission(
+            db.conn(),
+            &Mission {
+                mission_id: "mission-b4".into(),
+                friday_conversation_id: "fconv_b4_verify".into(),
+                title: "B4 verify".into(),
+                intent: "reject detached outcome receipts".into(),
+                status: MissionStatus::Active,
+                why_now: "completed_with_proof must mean true outcome evidence".into(),
+                decision_path_summary: "storage invariant red test".into(),
+                considered_options: vec!["trust receipt text".into()],
+                deferred_options: vec!["external attestation".into()],
+                known_pitfalls: vec!["receipt-only verification".into()],
+                handoff_inheritance: vec!["B4".into()],
+                work_item_ids: vec!["work-b4".into()],
+                memory_candidate_refs: Vec::new(),
+                context_passport_refs: Vec::new(),
+                proof_refs: vec!["proof://b4/test".into()],
+                created_at_ms: now,
+                updated_at_ms: now,
+            },
+        )
+        .unwrap();
+        WorkItem {
+            work_item_id: "work-b4".into(),
+            mission_id: "mission-b4".into(),
+            lane: WorkLane::Codex,
+            target_provider_or_agent: Some("codex".into()),
+            status: work_status,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some("mission.b4".into()),
+            risk_level: Risk::Medium,
+            approval_state: ApprovalState::NotRequired,
+            blocking_reason: None,
+            input_refs: vec!["input://b4".into()],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["outcome:AnswerProduced:>=1".into()],
+            proof_receipts,
+            judgment_memory: judgment(),
+            created_at_ms: now,
+            updated_at_ms: now,
+        }
+    }
+
+    #[test]
+    fn outcome_checked_upsert_rejects_detached_answer_receipt_without_run_result() {
+        let _flag = EnvVarGuard::set(OUTCOME_CHECKED_PROOF_FLAG, "1");
+        let db = Db::open_hub(&tmp("upsert-detached-receipt")).unwrap();
+        let fake_receipt =
+            "proof://outcome/AnswerProduced/run-missing?signal=answer_len=18".to_string();
+        let item = seed_graph(&db, WorkItemStatus::CompletedWithProof, vec![fake_receipt]);
+
+        let err = upsert_work_item(db.conn(), &item).expect_err(
+            "typed AnswerProduced receipt without a matching run_result must fail closed",
+        );
+
+        assert!(
+            err.to_string().contains("outcome-checked completion"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn outcome_checked_transition_rejects_detached_answer_receipt_without_run_result() {
+        let _flag = EnvVarGuard::set(OUTCOME_CHECKED_PROOF_FLAG, "1");
+        let db = Db::open_hub(&tmp("transition-detached-receipt")).unwrap();
+        let item = seed_graph(&db, WorkItemStatus::ProviderWaiting, Vec::new());
+        upsert_work_item(db.conn(), &item).unwrap();
+
+        let err = transition_work_item_status(
+            db.conn(),
+            "work-b4",
+            WorkItemStatus::CompletedWithProof,
+            "test://b4",
+            "prove B4 fail-close",
+            Some("proof://outcome/AnswerProduced/run-missing?signal=answer_len=18"),
+            1_777_000_000_010,
+        )
+        .expect_err("typed AnswerProduced transition must require a matching run_result");
+
+        assert!(
+            err.to_string().contains("outcome-checked completion"),
+            "unexpected error: {err}"
+        );
+    }
 }

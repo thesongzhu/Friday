@@ -2307,6 +2307,7 @@ impl<T: Transport> HubRuntime<T> {
                 &envelope.context.work_item_id,
                 run_id,
                 outcome.final_message.as_deref().unwrap_or_default(),
+                now_ms,
             )?
         } else {
             None
@@ -9267,10 +9268,15 @@ mod tests {
         assert_eq!(usage[0].provider_kind, "anthropic");
         let work_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
         assert_eq!(work_item.status, WorkItemStatus::CompletedWithProof);
+        let result_ref = friday_storage::get_run_result_ref(rt.db().conn(), run_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result_ref.answer_len, 11);
         assert_eq!(
             work_item.proof_receipts,
             vec![format!(
-                "proof://outcome/AnswerProduced/{run_id}?signal=answer_len=11"
+                "proof://outcome/AnswerProduced/{run_id}?signal=answer_sha256={};answer_len={}",
+                result_ref.answer_sha256, result_ref.answer_len
             )]
         );
         assert!(work_item.completion_outcome_is_proven());
