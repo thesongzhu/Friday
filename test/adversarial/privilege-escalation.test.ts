@@ -80,13 +80,10 @@ describe("TEST-37: Scope Escalation via Crafted Tokens Against Live API", () => 
     await env?.close();
   });
 
-  // Auth-boundary product invariant: under the no-login HTTP posture, scope-gating
-  // is intentionally OFF at HTTP route level. The 4 tests below previously asserted
-  // 403 on insufficient-scope tokens; they now assert the request is NOT 403,
-  // because the new contract is "every HTTP route is public". Function-level
-  // scope evaluation remains pinned by test/unit/api/auth/friday-rbac-policy.test.ts
-  // (principalHasAnyScope / principalHasAnyRole still reject insufficient scopes
-  // at the function level).
+  // Auth-boundary product invariant: most HTTP routes still keep route-level
+  // scope-gating off under the no-login posture. NEW-30 is the deliberate
+  // exception for sensitive session reads: authenticated tokens must carry
+  // concrete session.read authority, and wildcard-looking strings must not match.
 
   it("auth-boundary: viewer-scoped token reaching admin-only security center returns 200 (scope-gating off at HTTP layer)", async () => {
     const viewerToken = createTokenWithScopes(
@@ -128,19 +125,20 @@ describe("TEST-37: Scope Escalation via Crafted Tokens Against Live API", () => 
     }
   });
 
-  it("auth-boundary: token with no scopes reaching scope-protected endpoints returns 200 (scope-gating off at HTTP layer)", async () => {
+  it("auth-boundary: token with no scopes cannot read sensitive sessions", async () => {
     const noScopeToken = createTokenWithScopes([], { role: "viewer" });
 
     const res = await fetch(`${env.baseUrl}/v1/sessions`, {
       headers: authHeaders(noScopeToken),
     });
 
-    expect(res.status).toBe(200);
-    const json = (await res.json()) as { ok: boolean };
-    expect(json.ok).toBe(true);
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as { ok: boolean; error?: { code?: string } };
+    expect(json.ok).toBe(false);
+    expect(json.error?.code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_AUTHORITY_REQUIRED");
   });
 
-  it("auth-boundary: token with wildcard-looking scope string returns 200 (scope-gating off at HTTP layer)", async () => {
+  it("auth-boundary: wildcard-looking scope strings cannot read sensitive sessions", async () => {
     const wildcardToken = createTokenWithScopes(
       ["*" as FridayScope, "*.read" as FridayScope, "hub.*" as FridayScope],
       { role: "viewer" },
@@ -150,9 +148,10 @@ describe("TEST-37: Scope Escalation via Crafted Tokens Against Live API", () => 
       headers: authHeaders(wildcardToken),
     });
 
-    expect(res.status).toBe(200);
-    const json = (await res.json()) as { ok: boolean };
-    expect(json.ok).toBe(true);
+    expect(res.status).toBe(403);
+    const json = (await res.json()) as { ok: boolean; error?: { code?: string } };
+    expect(json.ok).toBe(false);
+    expect(json.error?.code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_AUTHORITY_REQUIRED");
   });
 });
 

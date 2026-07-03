@@ -49,6 +49,8 @@ import { isFridaySessionSendAllowed } from "#sessions";
 import type { FridayProviderTenantContext } from "#providers";
 import type { FridayChannelRegistry } from "#channels";
 import type { FridayAgentRunConstraints } from "../../../agent/model/friday-agent.types.js";
+import type { FridayAuthPrincipal } from "../../model/friday-api-auth.types.js";
+import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
 import { buildPublicV1AgentRunIsolation } from "./friday-public-v1-agent-isolation.js";
 
 // ─── Dependencies ───
@@ -174,6 +176,104 @@ function buildTenantContext(principal: unknown): FridayProviderTenantContext | u
     hubId: tenantId,
     userId,
   };
+}
+
+export function assertSessionReadPrincipal(
+  principal: FridayAuthPrincipal | null | undefined,
+  operation: string,
+): FridayAuthPrincipal {
+  if (isUnauthenticatedPublicPrincipal(principal)) {
+    throw new FridayDomainError(
+      "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      `${operation} reads sensitive session data and requires a bound owner/session/channel principal.`,
+      { httpStatus: 401 },
+    );
+  }
+  const bound = principal as FridayAuthPrincipal;
+  const hasReadAuthority =
+    bound.scopes.includes("session.read") ||
+    bound.role === "owner" ||
+    bound.role === "admin" ||
+    bound.role === "operator";
+  if (!hasReadAuthority) {
+    throw new FridayDomainError(
+      "OWNER_SESSION_CHANNEL_PRINCIPAL_AUTHORITY_REQUIRED",
+      `${operation} requires session.read authority.`,
+      { httpStatus: 403 },
+    );
+  }
+  return bound;
+}
+
+export function sessionReadScopeForPrincipal(principal: FridayAuthPrincipal): { accountId: string; userId?: string } {
+  const tenantContext = buildTenantContext(principal);
+  if (!tenantContext?.hubId) {
+    throw new FridayDomainError(
+      "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+      "session read requires a bound tenant/user principal.",
+      { httpStatus: 401 },
+    );
+  }
+  return {
+    accountId: tenantContext.hubId,
+    ...(tenantContext.userId ? { userId: tenantContext.userId } : {}),
+  };
+}
+
+function assertSessionReadableByPrincipal(
+  session: { accountId?: string; userId?: string } | null | undefined,
+  principal: FridayAuthPrincipal,
+  operation: string,
+): void {
+  if (!session) {
+    return;
+  }
+  const scope = sessionReadScopeForPrincipal(principal);
+  const sessionAccountId = typeof session.accountId === "string" ? session.accountId.trim() : "";
+  const sessionUserId = typeof session.userId === "string" ? session.userId.trim() : "";
+  const isPrivilegedOperatorRead = principal.role === "admin" || principal.role === "operator";
+  const isLegacyUnownedDefaultSession =
+    sessionAccountId === FRIDAY_SESSION_DEFAULT_ACCOUNT_ID && sessionUserId.length === 0;
+  if (isPrivilegedOperatorRead && isLegacyUnownedDefaultSession) {
+    return;
+  }
+  const accountMatches = sessionAccountId.length > 0 && sessionAccountId === scope.accountId;
+  const userMatches = !scope.userId || (sessionUserId.length > 0 && sessionUserId === scope.userId);
+  if (!accountMatches || !userMatches) {
+    throw new FridayDomainError(
+      "SESSION_OWNER_MISMATCH",
+      `${operation} refuses to read a session outside the bound principal scope.`,
+      { httpStatus: 404 },
+    );
+  }
+}
+
+async function assertExistingSessionReadable(
+  sessionService: FridaySessionService,
+  key: string,
+  principal: FridayAuthPrincipal,
+  operation: string,
+): Promise<FridaySessionGetResponse["session"]> {
+  const session = await sessionService.getSession(key);
+  if (!session) {
+    throw new FridayDomainError(
+      FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
+      `Session '${key}' not found`,
+      { httpStatus: 404 },
+    );
+  }
+  assertSessionReadableByPrincipal(session, principal, operation);
+  return session;
+}
+
+export async function assertSessionReadableIfPresent(
+  sessionService: FridaySessionService,
+  key: string,
+  principal: FridayAuthPrincipal,
+  operation: string,
+): Promise<void> {
+  const session = await sessionService.getSession(key);
+  assertSessionReadableByPrincipal(session, principal, operation);
 }
 
 async function alignSessionWithPrincipalContext(
@@ -707,6 +807,8 @@ export function createFridaySessionRoutes(
       auth: { public: true },
       async handler(ctx): Promise<FridaySessionListResponse> {
         const query = ctx.query as Record<string, string | undefined>;
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.list");
+        const principalScope = sessionReadScopeForPrincipal(principal);
 
         let limit: number | undefined;
         if (query.limit !== undefined) {
@@ -735,8 +837,8 @@ export function createFridaySessionRoutes(
 
         const items = await deps.sessionService.listSessions({
           channel: query.channel,
-          accountId: query.accountId,
-          userId: query.userId,
+          accountId: principalScope.accountId,
+          userId: principalScope.userId,
           status,
           limit,
           cursor: query.cursor,
@@ -781,14 +883,8 @@ export function createFridaySessionRoutes(
       async handler(ctx): Promise<FridaySessionGetResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
-        const session = await deps.sessionService.getSession(key);
-        if (!session) {
-          throw new FridayDomainError(
-            FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
-            `Session '${key}' not found`,
-            { httpStatus: 404 },
-          );
-        }
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.get");
+        const session = await assertExistingSessionReadable(deps.sessionService, key, principal, "sessions.get");
         return { session };
       },
     },
@@ -929,6 +1025,7 @@ export function createFridaySessionRoutes(
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
         const query = ctx.query as Record<string, string | undefined>;
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.messages.list");
 
         let limit: number | undefined;
         if (query.limit !== undefined) {
@@ -943,6 +1040,7 @@ export function createFridaySessionRoutes(
           limit = Math.min(parsed, FRIDAY_MAX_LIST_LIMIT);
         }
 
+        await assertSessionReadableIfPresent(deps.sessionService, key, principal, "sessions.messages.list");
         const items = await deps.sessionService.getMessages(key, limit, query.before);
         return { items };
       },
@@ -959,6 +1057,8 @@ export function createFridaySessionRoutes(
         const key = decodeSessionKeyParam(sessionKey);
         const query = ctx.query as Record<string, string | undefined>;
         const format = query.format === "markdown" ? "markdown" : "json";
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.export");
+        await assertSessionReadableIfPresent(deps.sessionService, key, principal, "sessions.export");
         const messages = await deps.sessionService.getMessages(key, FRIDAY_MAX_LIST_LIMIT);
         if (format === "markdown") {
           const lines = [`# Friday Session: ${key}\n`];
@@ -1194,6 +1294,8 @@ export function createFridaySessionRoutes(
       async handler(ctx): Promise<FridaySessionMemoryNamespaceResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.memory.namespace.get");
+        await assertSessionReadableIfPresent(deps.sessionService, key, principal, "sessions.memory.namespace.get");
         const namespace = await deps.sessionService.getSessionMemoryNamespace(key);
         return { namespace };
       },
@@ -1260,6 +1362,8 @@ export function createFridaySessionRoutes(
           limit = Math.min(parsed, FRIDAY_MAX_LIST_LIMIT);
         }
 
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.forks.list");
+        await assertSessionReadableIfPresent(deps.sessionService, key, principal, "sessions.forks.list");
         const items = await deps.sessionService.listForks(key, { status, limit });
         return { items };
       },
@@ -1366,6 +1470,8 @@ export function createFridaySessionRoutes(
         }
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.memory.extraction.get");
+        await assertSessionReadableIfPresent(deps.sessionService, key, principal, "sessions.memory.extraction.get");
         const status = await deps.extractionService.getExtractionStatus(key);
         return { status };
       },

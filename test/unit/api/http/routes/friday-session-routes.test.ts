@@ -57,7 +57,7 @@ function makeMockCtx(overrides: Record<string, unknown> = {}): Record<string, un
   };
 }
 
-function makeBoundPrincipal(): Record<string, unknown> {
+function makeBoundPrincipal(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     principalType: "user",
     principalId: "user:bound-1",
@@ -68,6 +68,7 @@ function makeBoundPrincipal(): Record<string, unknown> {
     tokenId: "00000000-0000-0000-0000-000000000103",
     tokenKind: "access",
     issuedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -140,12 +141,12 @@ describe("FridaySessionRoutes", () => {
       const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const listRoute = routes.find((r) => r.operationId === "sessions.list")!;
 
-      const result = await listRoute.handler(makeMockCtx({ query: {} }) as never);
+      const result = await listRoute.handler(makeMockCtx({ query: {}, principal: makeBoundPrincipal() }) as never);
       expect(result).toHaveProperty("items", sessions);
       expect(svc.listSessions).toHaveBeenCalledWith({
         channel: undefined,
-        accountId: undefined,
-        userId: undefined,
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
         status: undefined,
         limit: undefined,
         cursor: undefined,
@@ -162,16 +163,50 @@ describe("FridaySessionRoutes", () => {
       await listRoute.handler(
         makeMockCtx({
           query: { channel: "discord", status: "active", limit: "10", cursor: "2026-01-01T00:00:00.000Z" },
+          principal: makeBoundPrincipal(),
         }) as never,
       );
 
       expect(svc.listSessions).toHaveBeenCalledWith({
         channel: "discord",
-        accountId: undefined,
-        userId: undefined,
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
         status: "active",
         limit: 10,
         cursor: "2026-01-01T00:00:00.000Z",
+      });
+    });
+
+    it("NEW-30 red: binds list scope to the authenticated principal instead of caller-supplied filters", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.listSessions).mockResolvedValue([]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const listRoute = routes.find((r) => r.operationId === "sessions.list")!;
+
+      await listRoute.handler(
+        makeMockCtx({
+          query: {
+            accountId: "tenant-victim",
+            userId: "user-victim",
+            channel: "discord",
+          },
+          principal: makeBoundPrincipal({
+            tenantId: "tenant-attacker",
+            userId: "user-attacker",
+            scopes: ["session.read"],
+            role: "viewer",
+          }),
+        }) as never,
+      );
+
+      expect(svc.listSessions).toHaveBeenCalledWith({
+        channel: "discord",
+        accountId: "tenant-attacker",
+        userId: "user-attacker",
+        status: undefined,
+        limit: undefined,
+        cursor: undefined,
       });
     });
 
@@ -181,7 +216,7 @@ describe("FridaySessionRoutes", () => {
       const listRoute = routes.find((r) => r.operationId === "sessions.list")!;
 
       await expectRouteError(
-        listRoute.handler(makeMockCtx({ query: { limit: "abc" } }) as never),
+        listRoute.handler(makeMockCtx({ query: { limit: "abc" }, principal: makeBoundPrincipal() }) as never),
         FRIDAY_SESSION_ERROR_CODES.INVALID_INPUT,
       );
     });
@@ -192,7 +227,7 @@ describe("FridaySessionRoutes", () => {
       const listRoute = routes.find((r) => r.operationId === "sessions.list")!;
 
       await expectRouteError(
-        listRoute.handler(makeMockCtx({ query: { status: "invalid" } }) as never),
+        listRoute.handler(makeMockCtx({ query: { status: "invalid" }, principal: makeBoundPrincipal() }) as never),
         FRIDAY_SESSION_ERROR_CODES.INVALID_INPUT,
       );
     });
@@ -305,24 +340,53 @@ describe("FridaySessionRoutes", () => {
       const getRoute = routes.find((r) => r.operationId === "sessions.get")!;
 
       await expectRouteError(
-        getRoute.handler(makeMockCtx({ params: { sessionKey: "discord:default:nope" } }) as never),
+        getRoute.handler(makeMockCtx({ params: { sessionKey: "discord:default:nope" }, principal: makeBoundPrincipal() }) as never),
         FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
       );
     });
 
     it("returns session when found", async () => {
       const svc = createMockService();
-      const mockSession = makeMockSession();
+      const mockSession = makeMockSession({
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
+      });
       vi.mocked(svc.getSession).mockResolvedValue(mockSession);
 
       const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const getRoute = routes.find((r) => r.operationId === "sessions.get")!;
 
       const result = await getRoute.handler(
-        makeMockCtx({ params: { sessionKey: "discord:default:user1" } }) as never,
+        makeMockCtx({ params: { sessionKey: "discord:default:user1" }, principal: makeBoundPrincipal() }) as never,
       );
 
       expect(result).toHaveProperty("session", mockSession);
+    });
+
+    it("NEW-30 red: rejects get for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const getRoute = routes.find((r) => r.operationId === "sessions.get")!;
+
+      await expectRouteError(
+        getRoute.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:default:victim" },
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
     });
 
     it("throws FridayDomainError on malformed URL-encoded key", async () => {
@@ -670,16 +734,175 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.messages.list", () => {
     it("returns messages", async () => {
       const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
+      }));
       vi.mocked(svc.getMessages).mockResolvedValue([makeMockMessage()]);
 
       const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.messages.list")!;
 
       const result = await route.handler(
-        makeMockCtx({ params: { sessionKey: "discord:default:user1" }, query: {} }) as never,
+        makeMockCtx({ params: { sessionKey: "discord:default:user1" }, query: {}, principal: makeBoundPrincipal() }) as never,
       );
 
       expect(result).toHaveProperty("items");
+    });
+
+    it("NEW-30 red: rejects messages list for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+      vi.mocked(svc.getMessages).mockResolvedValue([makeMockMessage({
+        content: "victim transcript",
+        contentText: "victim transcript",
+      })]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.messages.list")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:default:victim" },
+            query: {},
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(svc.getMessages).not.toHaveBeenCalled();
+    });
+
+    it("NEW-30 no-degrade: admin may read legacy channel mirrors without reopening viewer cross-owner reads", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        key: "channel:discord:team-chat",
+        channel: "discord",
+        accountId: "default",
+        chatId: "team-chat",
+      }));
+      vi.mocked(svc.getMessages).mockResolvedValue([makeMockMessage({
+        sessionKey: "channel:discord:team-chat",
+        role: "user",
+        contentText: "legacy channel mirror",
+      })]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.messages.list")!;
+
+      const adminResult = await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "channel:discord:team-chat" },
+          query: {},
+          principal: makeBoundPrincipal({ role: "admin" }),
+        }) as never,
+      );
+
+      expect(adminResult.items).toHaveLength(1);
+
+      vi.mocked(svc.getMessages).mockClear();
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "channel:discord:team-chat" },
+            query: {},
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(svc.getMessages).not.toHaveBeenCalled();
+    });
+
+    it("NEW-30 red: rejects export for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+      vi.mocked(svc.getMessages).mockResolvedValue([makeMockMessage({
+        content: "victim export",
+        contentText: "victim export",
+      })]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.export")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:default:victim" },
+            query: { format: "json" },
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(svc.getMessages).not.toHaveBeenCalled();
+    });
+
+    it("NEW-30 no-degrade: keeps absent-session message reads available for chat bootstrap", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(null);
+      vi.mocked(svc.getMessages).mockResolvedValue([]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.messages.list")!;
+
+      const result = await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "chat:default:chat-bootstrap" },
+          query: { limit: "200" },
+          principal: makeBoundPrincipal(),
+        }) as never,
+      );
+
+      expect(result).toEqual({ items: [] });
+      expect(svc.getSession).toHaveBeenCalledWith("chat:default:chat-bootstrap");
+      expect(svc.getMessages).toHaveBeenCalledWith("chat:default:chat-bootstrap", 100, undefined);
+    });
+
+    it("NEW-30 no-degrade: keeps absent-session export reads available as an empty transcript", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(null);
+      vi.mocked(svc.getMessages).mockResolvedValue([]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.export")!;
+
+      const result = await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "chat:default:chat-bootstrap" },
+          query: { format: "json" },
+          principal: makeBoundPrincipal(),
+        }) as never,
+      );
+
+      expect(JSON.parse(result.content)).toEqual({
+        sessionKey: "chat:default:chat-bootstrap",
+        messages: [],
+      });
+      expect(svc.getSession).toHaveBeenCalledWith("chat:default:chat-bootstrap");
+      expect(svc.getMessages).toHaveBeenCalledWith("chat:default:chat-bootstrap", 100);
     });
 
     it("validates invalid limit", async () => {
@@ -692,6 +915,7 @@ describe("FridaySessionRoutes", () => {
           makeMockCtx({
             params: { sessionKey: "discord:default:user1" },
             query: { limit: "not-a-number" },
+            principal: makeBoundPrincipal(),
           }) as never,
         ),
         FRIDAY_SESSION_ERROR_CODES.INVALID_INPUT,
@@ -704,6 +928,10 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.memory.namespace.get", () => {
     it("returns namespace", async () => {
       const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
+      }));
       vi.mocked(svc.getSessionMemoryNamespace).mockResolvedValue(
         "tenant.default.channel.discord.user.user1.shared",
       );
@@ -712,13 +940,46 @@ describe("FridaySessionRoutes", () => {
       const route = routes.find((r) => r.operationId === "sessions.memory.namespace.get")!;
 
       const result = await route.handler(
-        makeMockCtx({ params: { sessionKey: "discord:default:user1" } }) as never,
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          principal: makeBoundPrincipal(),
+        }) as never,
       );
 
       expect(result).toHaveProperty(
         "namespace",
         "tenant.default.channel.discord.user.user1.shared",
       );
+    });
+
+    it("NEW-30 red: rejects namespace reads for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+      vi.mocked(svc.getSessionMemoryNamespace).mockResolvedValue(
+        "tenant.victim.channel.discord.user.user-victim.shared",
+      );
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.memory.namespace.get")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:tenant-victim:user-victim" },
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(svc.getSessionMemoryNamespace).not.toHaveBeenCalled();
     });
   });
 
@@ -807,13 +1068,21 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.forks.list", () => {
     it("returns fork list", async () => {
       const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
+      }));
       vi.mocked(svc.listForks).mockResolvedValue([makeMockSession()]);
 
       const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.list")!;
 
       const result = await route.handler(
-        makeMockCtx({ params: { sessionKey: "discord:default:user1" }, query: {} }) as never,
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          query: {},
+          principal: makeBoundPrincipal(),
+        }) as never,
       );
 
       expect(result).toHaveProperty("items");
@@ -837,6 +1106,37 @@ describe("FridaySessionRoutes", () => {
         ),
         FRIDAY_SESSION_ERROR_CODES.INVALID_INPUT,
       );
+    });
+
+    it("NEW-30 red: rejects fork list reads for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+      vi.mocked(svc.listForks).mockResolvedValue([makeMockSession({
+        key: "subagent:discord:tenant-victim:user-victim:child",
+      })]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.forks.list")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:tenant-victim:user-victim" },
+            query: {},
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(svc.listForks).not.toHaveBeenCalled();
     });
   });
 
@@ -1712,15 +2012,49 @@ describe("FridaySessionRoutes", () => {
 
     it("returns status when extraction service is configured", async () => {
       const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
+      }));
       const extractSvc = createMockExtractionService();
       const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extraction.get")!;
 
       const result = await route.handler(
-        makeMockCtx({ params: { sessionKey: "discord:default:user1" } }) as never,
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          principal: makeBoundPrincipal(),
+        }) as never,
       );
 
       expect(result).toHaveProperty("status");
+    });
+
+    it("NEW-30 red: rejects extraction status reads for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+      const extractSvc = createMockExtractionService();
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
+      const route = routes.find((r) => r.operationId === "sessions.memory.extraction.get")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:tenant-victim:user-victim" },
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(extractSvc.getExtractionStatus).not.toHaveBeenCalled();
     });
   });
 
@@ -1934,7 +2268,7 @@ describe("FridaySessionRoutes", () => {
       const listRoute = routes.find((r) => r.operationId === "sessions.list")!;
 
       await listRoute.handler(
-        makeMockCtx({ query: { limit: "500" } }) as never,
+        makeMockCtx({ query: { limit: "500" }, principal: makeBoundPrincipal() }) as never,
       );
 
       expect(svc.listSessions).toHaveBeenCalledWith(
@@ -1946,6 +2280,10 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.messages.list — limit cap", () => {
     it("caps limit to 100 when query limit exceeds maximum", async () => {
       const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
+      }));
       vi.mocked(svc.getMessages).mockResolvedValue([]);
 
       const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
@@ -1955,6 +2293,7 @@ describe("FridaySessionRoutes", () => {
         makeMockCtx({
           params: { sessionKey: "discord:default:user1" },
           query: { limit: "500" },
+          principal: makeBoundPrincipal(),
         }) as never,
       );
 
@@ -1965,6 +2304,10 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.forks.list — limit cap", () => {
     it("caps limit to 100 when query limit exceeds maximum", async () => {
       const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
+      }));
       vi.mocked(svc.listForks).mockResolvedValue([]);
 
       const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
@@ -1974,6 +2317,7 @@ describe("FridaySessionRoutes", () => {
         makeMockCtx({
           params: { sessionKey: "discord:default:user1" },
           query: { limit: "500" },
+          principal: makeBoundPrincipal(),
         }) as never,
       );
 

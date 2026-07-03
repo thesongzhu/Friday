@@ -75,6 +75,23 @@ describe("Session Lifecycle (Integration)", () => {
       const session = await service.getSession(key);
       expect(session!.messageCount).toBe(3);
     });
+
+    it("NEW-30 no-degrade: forked sessions inherit the parent owner user", async () => {
+      const parent = await service.createSession({
+        channel: "e2e",
+        chatId: "fork-owner",
+      });
+      await service.alignSessionContext(parent.key, {
+        accountId: "tenant-parent",
+        userId: "user-parent",
+      });
+
+      const result = await service.forkSession(parent.key, { taskId: "child-owner" });
+
+      expect(result.forkSession.parentSessionKey).toBe(parent.key);
+      expect(result.forkSession.accountId).toBe("tenant-parent");
+      expect(result.forkSession.userId).toBe("user-parent");
+    });
   });
 
   // ─── Archive session ───
