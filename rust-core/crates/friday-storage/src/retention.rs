@@ -2,9 +2,10 @@
 //!
 //! The session-lifecycle [`crate::session_lifecycle::sweep_lifecycle`] reaper prunes ONLY
 //! `agent_session` (+ its child messages). The other artifact tables — `token_ledger`,
-//! `surface_event`, `provider_session_event`, terminal `mission`/`work_item`, and
-//! rejected/expired memory CANDIDATES — grow UNBOUNDED (memory-extraction + surface_event/provider
-//! session observation rows are written per-run). This module adds an
+//! `surface_event`, `provider_session_event`, stale provider/process observation rows, terminal
+//! mission-spine child rows, terminal `mission`/`work_item`, and rejected/expired memory
+//! CANDIDATES — grow UNBOUNDED (memory-extraction + surface_event/provider session observation
+//! rows are written per-run). This module adds an
 //! age-AND-state-bounded sweep for them, driven from the EXISTING reaper tick behind its OWN
 //! default-off flag (`FRIDAY_RETENTION_SWEEP`) so deploying the new binary deletes NOTHING until
 //! the operator explicitly flips it. The flag read lives in the hub bin; this module is a pure
@@ -16,7 +17,11 @@
 //!   * `surface_event` — 90d  (timeline observability; keyed on `created_at_ms`).
 //!   * `provider_session_event` — 90d (provider app-server observation firehose; keyed on
 //!     `observed_at`).
+//!   * `provider_session_link` — 90d after last provider sighting, once its events/leases are
+//!     gone (keyed on `last_provider_seen_at`).
+//!   * `process_observation` — 90d (process observation firehose; keyed on `observed_at_ms`).
 //!   * terminal `mission` / `work_item` — 365d (keyed on `updated_at_ms`).
+//!   * terminal mission-spine child rows — 365d, only when attached to terminal+aged parents.
 //!   * `memory_item` — confirmed kept INDEFINITELY; rejected/expired CANDIDATES pruned at 30d
 //!     (keyed on `created_at`).
 //!   * `audit_ledger` (the hash-chained audit "chain", [`crate::audit::verify_audit_chain`]) —
@@ -128,6 +133,15 @@ pub struct RetentionOutcome {
     pub run_result_deleted: usize,
     pub surface_event_deleted: usize,
     pub provider_session_event_deleted: usize,
+    pub provider_session_link_deleted: usize,
+    pub process_observation_deleted: usize,
+    pub route_decision_control_deleted: usize,
+    pub route_decision_deleted: usize,
+    pub mission_link_deleted: usize,
+    pub mission_body_snapshot_deleted: usize,
+    pub process_lease_deleted: usize,
+    pub workspace_claim_deleted: usize,
+    pub surface_thread_deleted: usize,
     pub mission_deleted: usize,
     pub work_item_deleted: usize,
     pub memory_item_deleted: usize,
@@ -142,6 +156,15 @@ impl RetentionOutcome {
             && self.run_result_deleted == 0
             && self.surface_event_deleted == 0
             && self.provider_session_event_deleted == 0
+            && self.provider_session_link_deleted == 0
+            && self.process_observation_deleted == 0
+            && self.route_decision_control_deleted == 0
+            && self.route_decision_deleted == 0
+            && self.mission_link_deleted == 0
+            && self.mission_body_snapshot_deleted == 0
+            && self.process_lease_deleted == 0
+            && self.workspace_claim_deleted == 0
+            && self.surface_thread_deleted == 0
             && self.mission_deleted == 0
             && self.work_item_deleted == 0
             && self.memory_item_deleted == 0
@@ -167,6 +190,8 @@ pub fn sweep_retention(
     windows: RetentionWindows,
 ) -> RetentionOutcome {
     let mut out = RetentionOutcome::default();
+    let work_item_cutoff = now_ms - windows.work_item_max_age_ms;
+    let mission_cutoff = now_ms - windows.mission_max_age_ms;
 
     // 1. token_ledger — pure age on created_at. Leaf w.r.t. these FKs (nothing references it).
     let token_cutoff = now_ms - windows.token_ledger_max_age_ms;
@@ -236,7 +261,265 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 5. memory_item — rejected/expired CANDIDATES only, by created_at. CONFIRMED is excluded by
+    // 5. process_observation — process-discovery firehose, pure age on observed_at_ms. It is
+    //    deleted before workspace_claim so old matched observations do not pin old released claims.
+    match delete_bounded(
+        conn,
+        "DELETE FROM process_observation
+          WHERE rowid IN (
+              SELECT rowid FROM process_observation WHERE observed_at_ms < ?1
+               ORDER BY observed_at_ms LIMIT ?2
+          )",
+        provider_session_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.process_observation_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 6. route_decision_control — terminal route trace child rows only. The join back to the
+    //    matching route_decision prevents a mismatched but FK-valid control row from being treated
+    //    as terminal trace debris for an unrelated parent.
+    let route_trace_cutoff = work_item_cutoff.min(mission_cutoff);
+    match delete_bounded4(
+        conn,
+        "DELETE FROM route_decision_control
+          WHERE rowid IN (
+              SELECT c.rowid
+                FROM route_decision_control c
+                JOIN route_decision r
+                  ON r.decision_id = c.decision_id
+                 AND r.mission_id = c.mission_id
+                 AND r.work_item_id = c.work_item_id
+                JOIN mission m ON m.mission_id = c.mission_id
+                JOIN work_item w ON w.work_item_id = c.work_item_id
+               WHERE c.created_at_ms < ?1
+                 AND m.status IN ('done','archived','merged')
+                 AND m.updated_at_ms < ?2
+                 AND w.status IN
+                     ('completed_with_proof','failed_terminal','cancelled','merged','archived')
+                 AND w.updated_at_ms < ?3
+               ORDER BY c.created_at_ms LIMIT ?4
+          )",
+        route_trace_cutoff,
+        mission_cutoff,
+        work_item_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.route_decision_control_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 7. route_decision — terminal route trace rows after their controls are gone.
+    match delete_bounded4(
+        conn,
+        "DELETE FROM route_decision
+          WHERE rowid IN (
+              SELECT r.rowid
+                FROM route_decision r
+                JOIN mission m ON m.mission_id = r.mission_id
+                JOIN work_item w ON w.work_item_id = r.work_item_id
+               WHERE r.created_at_ms < ?1
+                 AND m.status IN ('done','archived','merged')
+                 AND m.updated_at_ms < ?2
+                 AND w.status IN
+                     ('completed_with_proof','failed_terminal','cancelled','merged','archived')
+                 AND w.updated_at_ms < ?3
+                 AND NOT EXISTS (
+                     SELECT 1 FROM route_decision_control c
+                      WHERE c.decision_id = r.decision_id
+                 )
+               ORDER BY r.created_at_ms LIMIT ?4
+          )",
+        route_trace_cutoff,
+        mission_cutoff,
+        work_item_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.route_decision_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 8. mission_link — only route-decision trace links are swept here; proof receipts and other
+    //    product evidence links keep their retention semantics and can still pin the parent.
+    match delete_bounded4(
+        conn,
+        "DELETE FROM mission_link
+          WHERE rowid IN (
+              SELECT l.rowid
+                FROM mission_link l
+                JOIN mission m ON m.mission_id = l.mission_id
+                LEFT JOIN work_item w ON w.work_item_id = l.work_item_id
+               WHERE l.created_at_ms < ?1
+                 AND l.link_kind = 'route_decision'
+                 AND m.status IN ('done','archived','merged')
+                 AND m.updated_at_ms < ?2
+                 AND (
+                     l.work_item_id IS NULL OR
+                     (w.status IN
+                         ('completed_with_proof','failed_terminal','cancelled','merged','archived')
+                      AND w.updated_at_ms < ?3)
+                 )
+               ORDER BY l.created_at_ms LIMIT ?4
+          )",
+        route_trace_cutoff,
+        mission_cutoff,
+        work_item_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.mission_link_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 9. mission_body_snapshot — full-text body snapshot attached to terminal+aged parents.
+    match delete_bounded4(
+        conn,
+        "DELETE FROM mission_body_snapshot
+          WHERE rowid IN (
+              SELECT b.rowid
+                FROM mission_body_snapshot b
+                JOIN mission m ON m.mission_id = b.mission_id
+                JOIN work_item w ON w.work_item_id = b.work_item_id
+               WHERE b.created_at_ms < ?1
+                 AND m.status IN ('done','archived','merged')
+                 AND m.updated_at_ms < ?2
+                 AND w.status IN
+                     ('completed_with_proof','failed_terminal','cancelled','merged','archived')
+                 AND w.updated_at_ms < ?3
+               ORDER BY b.created_at_ms LIMIT ?4
+          )",
+        route_trace_cutoff,
+        mission_cutoff,
+        work_item_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.mission_body_snapshot_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 10. process_lease — terminal process ownership rows attached to terminal+aged parents.
+    match delete_bounded4(
+        conn,
+        "DELETE FROM process_lease
+          WHERE rowid IN (
+              SELECT p.rowid
+                FROM process_lease p
+                JOIN mission m ON m.mission_id = p.mission_id
+                LEFT JOIN work_item w ON w.work_item_id = p.work_item_id
+               WHERE p.updated_at_ms < ?1
+                 AND p.state IN ('stopped_with_proof','stale')
+                 AND m.status IN ('done','archived','merged')
+                 AND m.updated_at_ms < ?2
+                 AND (
+                     p.work_item_id IS NULL OR
+                     (w.status IN
+                         ('completed_with_proof','failed_terminal','cancelled','merged','archived')
+                      AND w.updated_at_ms < ?3)
+                 )
+               ORDER BY p.updated_at_ms LIMIT ?4
+          )",
+        route_trace_cutoff,
+        mission_cutoff,
+        work_item_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.process_lease_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 11. workspace_claim — released/stale claims after process observations and leases are gone.
+    match delete_bounded4(
+        conn,
+        "DELETE FROM workspace_claim
+          WHERE rowid IN (
+              SELECT c.rowid
+                FROM workspace_claim c
+                JOIN mission m ON m.mission_id = c.mission_id
+                LEFT JOIN work_item w ON w.work_item_id = c.work_item_id
+               WHERE c.updated_at_ms < ?1
+                 AND c.state IN ('released','stale')
+                 AND m.status IN ('done','archived','merged')
+                 AND m.updated_at_ms < ?2
+                 AND (
+                     c.work_item_id IS NULL OR
+                     (w.status IN
+                         ('completed_with_proof','failed_terminal','cancelled','merged','archived')
+                      AND w.updated_at_ms < ?3)
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM process_lease p WHERE p.claim_id = c.claim_id
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM process_observation o WHERE o.matched_claim_id = c.claim_id
+                 )
+               ORDER BY c.updated_at_ms LIMIT ?4
+          )",
+        route_trace_cutoff,
+        mission_cutoff,
+        work_item_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.workspace_claim_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 12. provider_session_link — session mirror rows after old event children and process leases
+    //    are gone. A NULL last sighting is kept; only an explicitly old sighting can age out.
+    match delete_bounded(
+        conn,
+        "DELETE FROM provider_session_link
+          WHERE rowid IN (
+              SELECT l.rowid FROM provider_session_link l
+               WHERE l.last_provider_seen_at IS NOT NULL
+                 AND l.last_provider_seen_at < ?1
+                 AND NOT EXISTS (
+                     SELECT 1 FROM provider_session_event e
+                      WHERE e.friday_session_id = l.friday_session_id
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM process_lease p
+                      WHERE p.started_by_provider_session_id = l.friday_session_id
+                 )
+               ORDER BY l.last_provider_seen_at LIMIT ?2
+          )",
+        provider_session_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.provider_session_link_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 13. surface_thread — old terminal-mission threads only, after surface events and process
+    //    leases are gone.
+    match delete_bounded3(
+        conn,
+        "DELETE FROM surface_thread
+          WHERE rowid IN (
+              SELECT t.rowid
+                FROM surface_thread t
+                JOIN mission m ON m.mission_id = t.mission_id
+               WHERE t.updated_at_ms < ?1
+                 AND m.status IN ('done','archived','merged')
+                 AND m.updated_at_ms < ?2
+                 AND NOT EXISTS (
+                     SELECT 1 FROM surface_event e
+                      WHERE e.surface_thread_id = t.surface_thread_id
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM process_lease p
+                      WHERE p.started_by_surface_thread_id = t.surface_thread_id
+                 )
+               ORDER BY t.updated_at_ms LIMIT ?3
+          )",
+        mission_cutoff,
+        mission_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.surface_thread_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 14. memory_item — rejected/expired CANDIDATES only, by created_at. CONFIRMED is excluded by
     //    state, so durable memory is NEVER deleted regardless of age. Leaf (no FK refs into it).
     let memory_cutoff = now_ms - windows.memory_candidate_max_age_ms;
     match delete_bounded(
@@ -255,10 +538,9 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 6. work_item — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child
+    // 15. work_item — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child
     //    in any table that RESTRICT-references work_item). A non-terminal work_item can never
     //    match the status set. Deleted BEFORE mission so an aged-out work_item frees its mission.
-    let work_item_cutoff = now_ms - windows.work_item_max_age_ms;
     match delete_bounded(
         conn,
         "DELETE FROM work_item
@@ -271,6 +553,7 @@ pub fn sweep_retention(
                  AND NOT EXISTS (SELECT 1 FROM mission_link    c WHERE c.work_item_id = w.work_item_id)
                  AND NOT EXISTS (SELECT 1 FROM route_decision  c WHERE c.work_item_id = w.work_item_id)
                  AND NOT EXISTS (SELECT 1 FROM route_decision_control c WHERE c.work_item_id = w.work_item_id)
+                 AND NOT EXISTS (SELECT 1 FROM mission_body_snapshot c WHERE c.work_item_id = w.work_item_id)
                  AND NOT EXISTS (SELECT 1 FROM workspace_claim c WHERE c.work_item_id = w.work_item_id)
                  AND NOT EXISTS (SELECT 1 FROM process_lease   c WHERE c.work_item_id = w.work_item_id)
                ORDER BY w.updated_at_ms LIMIT ?2
@@ -282,10 +565,9 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 7. mission — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child in
+    // 16. mission — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child in
     //    ANY table that RESTRICT-references mission). A non-terminal (active/waiting/blocked/
     //    paused) mission can never match the status set.
-    let mission_cutoff = now_ms - windows.mission_max_age_ms;
     match delete_bounded(
         conn,
         "DELETE FROM mission
@@ -299,6 +581,7 @@ pub fn sweep_retention(
                  AND NOT EXISTS (SELECT 1 FROM mission_link    c WHERE c.mission_id = m.mission_id)
                  AND NOT EXISTS (SELECT 1 FROM route_decision  c WHERE c.mission_id = m.mission_id)
                  AND NOT EXISTS (SELECT 1 FROM route_decision_control c WHERE c.mission_id = m.mission_id)
+                 AND NOT EXISTS (SELECT 1 FROM mission_body_snapshot c WHERE c.mission_id = m.mission_id)
                  AND NOT EXISTS (SELECT 1 FROM workspace_claim c WHERE c.mission_id = m.mission_id)
                  AND NOT EXISTS (SELECT 1 FROM process_lease   c WHERE c.mission_id = m.mission_id)
                ORDER BY m.updated_at_ms LIMIT ?2
@@ -327,16 +610,34 @@ pub fn sweep_retention(
         + out.run_result_deleted
         + out.surface_event_deleted
         + out.provider_session_event_deleted
+        + out.provider_session_link_deleted
+        + out.process_observation_deleted
+        + out.route_decision_control_deleted
+        + out.route_decision_deleted
+        + out.mission_link_deleted
+        + out.mission_body_snapshot_deleted
+        + out.process_lease_deleted
+        + out.workspace_claim_deleted
+        + out.surface_thread_deleted
         + out.memory_item_deleted
         + out.work_item_deleted
         + out.mission_deleted;
     if deleted > 0 {
         let summary = format!(
-            "retention.sweep:token_ledger={} run_result={} surface_event={} provider_session_event={} memory_item={} work_item={} mission={} errors={}",
+            "retention.sweep:token_ledger={} run_result={} surface_event={} provider_session_event={} provider_session_link={} process_observation={} route_decision_control={} route_decision={} mission_link={} mission_body_snapshot={} process_lease={} workspace_claim={} surface_thread={} memory_item={} work_item={} mission={} errors={}",
             out.token_ledger_deleted,
             out.run_result_deleted,
             out.surface_event_deleted,
             out.provider_session_event_deleted,
+            out.provider_session_link_deleted,
+            out.process_observation_deleted,
+            out.route_decision_control_deleted,
+            out.route_decision_deleted,
+            out.mission_link_deleted,
+            out.mission_body_snapshot_deleted,
+            out.process_lease_deleted,
+            out.workspace_claim_deleted,
+            out.surface_thread_deleted,
             out.memory_item_deleted,
             out.work_item_deleted,
             out.mission_deleted,
@@ -423,6 +724,37 @@ fn delete_bounded(conn: &Connection, sql: &str, cutoff: i64, limit: i64) -> Resu
     crate::with_busy_retry(|| {
         let tx = conn.unchecked_transaction()?;
         let n = tx.execute(sql, params![cutoff, limit])?;
+        tx.commit()?;
+        Ok(n)
+    })
+}
+
+fn delete_bounded3(
+    conn: &Connection,
+    sql: &str,
+    cutoff1: i64,
+    cutoff2: i64,
+    limit: i64,
+) -> Result<usize> {
+    crate::with_busy_retry(|| {
+        let tx = conn.unchecked_transaction()?;
+        let n = tx.execute(sql, params![cutoff1, cutoff2, limit])?;
+        tx.commit()?;
+        Ok(n)
+    })
+}
+
+fn delete_bounded4(
+    conn: &Connection,
+    sql: &str,
+    cutoff1: i64,
+    cutoff2: i64,
+    cutoff3: i64,
+    limit: i64,
+) -> Result<usize> {
+    crate::with_busy_retry(|| {
+        let tx = conn.unchecked_transaction()?;
+        let n = tx.execute(sql, params![cutoff1, cutoff2, cutoff3, limit])?;
         tx.commit()?;
         Ok(n)
     })
@@ -943,7 +1275,7 @@ mod tests {
         assert_eq!(tick_kind, "retention.sweep");
         assert_eq!(
             summary,
-            "retention.sweep:token_ledger=1 run_result=1 surface_event=1 provider_session_event=1 memory_item=1 work_item=1 mission=2 errors=0",
+            "retention.sweep:token_ledger=1 run_result=1 surface_event=1 provider_session_event=1 provider_session_link=0 process_observation=0 route_decision_control=0 route_decision=0 mission_link=0 mission_body_snapshot=0 process_lease=0 workspace_claim=0 surface_thread=0 memory_item=1 work_item=1 mission=2 errors=0",
             "summary records the real per-table counts + the concurrent error count"
         );
     }
@@ -1120,13 +1452,7 @@ mod tests {
         seed_process_observation(&db, "obs_recent_unowned", 41002, now - 1, None);
 
         seed_mission(&db, "m_f2", "fconv_f2", "done", old_parent_seen);
-        seed_work_item(
-            &db,
-            "w_f2",
-            "m_f2",
-            "completed_with_proof",
-            old_parent_seen,
-        );
+        seed_work_item(&db, "w_f2", "m_f2", "completed_with_proof", old_parent_seen);
         seed_surface_thread(&db, "st_f2", "fconv_f2", "m_f2");
         db.conn()
             .execute(
@@ -1203,7 +1529,13 @@ mod tests {
                 [old_parent_seen],
             )
             .unwrap();
-        seed_process_observation(&db, "obs_old_claimed", 41003, old_session_seen, Some("claim_f2"));
+        seed_process_observation(
+            &db,
+            "obs_old_claimed",
+            41003,
+            old_session_seen,
+            Some("claim_f2"),
+        );
 
         let out = sweep_retention(db.conn(), now, w);
         assert_eq!(out.table_errors, 0);
@@ -1228,7 +1560,12 @@ mod tests {
             );
         }
         assert!(
-            exists(&db, "provider_session_link", "friday_session_id", "ps_recent"),
+            exists(
+                &db,
+                "provider_session_link",
+                "friday_session_id",
+                "ps_recent"
+            ),
             "recent provider session links must remain"
         );
         assert!(

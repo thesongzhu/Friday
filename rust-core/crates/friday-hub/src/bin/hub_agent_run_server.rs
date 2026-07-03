@@ -997,11 +997,20 @@ fn run_session_reaper_tick(db: &friday_storage::Db, retention_on: bool, now_ms: 
         );
         if !r.is_empty() {
             eprintln!(
-                "hub_agent_run_server: retention sweep token_ledger={} run_result={} surface_event={} provider_session_event={} mission={} work_item={} memory_item={} table_errors={}",
+                "hub_agent_run_server: retention sweep token_ledger={} run_result={} surface_event={} provider_session_event={} provider_session_link={} process_observation={} route_decision_control={} route_decision={} mission_link={} mission_body_snapshot={} process_lease={} workspace_claim={} surface_thread={} mission={} work_item={} memory_item={} table_errors={}",
                 r.token_ledger_deleted,
                 r.run_result_deleted,
                 r.surface_event_deleted,
                 r.provider_session_event_deleted,
+                r.provider_session_link_deleted,
+                r.process_observation_deleted,
+                r.route_decision_control_deleted,
+                r.route_decision_deleted,
+                r.mission_link_deleted,
+                r.mission_body_snapshot_deleted,
+                r.process_lease_deleted,
+                r.workspace_claim_deleted,
+                r.surface_thread_deleted,
                 r.mission_deleted,
                 r.work_item_deleted,
                 r.memory_item_deleted,
