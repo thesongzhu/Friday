@@ -22,7 +22,10 @@ describe("Phase 21B cross-user self-healing route denial", () => {
   let incidentId: string;
 
   beforeAll(async () => {
-    env = await createFridayApiTestEnv({ enableSelfHealing: true });
+    env = await createFridayApiTestEnv({
+      enableSelfHealing: true,
+      allowTestOnlyAutoFixExecution: true,
+    });
     userAToken = (await loginTestUser(env.baseUrl)).accessToken;
     userBToken = createTokenWithScopes([], { userId: "phase21-user-b" });
 
