@@ -18,28 +18,64 @@ function touch(dir: string, name: string) {
   return path;
 }
 
+function eventsFile(dir: string, name: string, missionId: string, evidenceRef: string) {
+  const path = join(dir, name);
+  writeFileSync(path, `${JSON.stringify({
+    surface: name.includes("mobile") ? "mobile" : "desktop",
+    event: name.includes("mobile") ? "mission_intake_submitted" : "mission_workbench_visible",
+    mission_id: missionId,
+    evidence_ref: evidenceRef,
+  })}\n`);
+  return path;
+}
+
+function actionEvidence(dir: string, name: string, missionId: string, evidenceRef: string) {
+  const path = join(dir, name);
+  writeFileSync(path, JSON.stringify({
+    truth: "accessibility_click_action_runtime_evidence_real_ui_not_endbar",
+    status: "ready",
+    missionId,
+    actions: [
+      {
+        surface: name.includes("mobile") ? "mobile" : "desktop",
+        action_id: `${name}/refresh`,
+        status: "pass",
+        evidence_ref: evidenceRef,
+        mission_id: missionId,
+      },
+    ],
+  }, null, 2));
+  return path;
+}
+
 function summary(dir: string, overrides: Record<string, unknown> = {}) {
   const missionId = "mission_ui_real_use_cli";
   mkdirSync(join(dir, "mobile"), { recursive: true });
   mkdirSync(join(dir, "desktop"), { recursive: true });
+  const mobileProof = touch(join(dir, "mobile"), "proof.json");
+  const desktopProof = touch(join(dir, "desktop"), "proof.json");
+  const mobileEvents = eventsFile(join(dir, "mobile"), "mobile-events.jsonl", missionId, mobileProof);
+  const desktopEvents = eventsFile(join(dir, "desktop"), "desktop-events.jsonl", missionId, desktopProof);
   return {
     truth: "ui_device_shortlist_runner_summary_not_endbar_not_adoption",
     status: "partial_ready",
     missionId,
     captures: {
       mobile: {
+        surface: "mobile",
         mission_id: missionId,
-        proof: touch(join(dir, "mobile"), "proof.json"),
-        events: touch(join(dir, "mobile"), "events.jsonl"),
-        action_runtime_evidence: touch(join(dir, "mobile"), "action.json"),
+        proof: mobileProof,
+        events: mobileEvents,
+        action_runtime_evidence: actionEvidence(join(dir, "mobile"), "mobile-action.json", missionId, mobileProof),
         event_count: 5,
         action_count: 1,
       },
       desktop: {
+        surface: "desktop",
         mission_id: missionId,
-        proof: touch(join(dir, "desktop"), "proof.json"),
-        events: touch(join(dir, "desktop"), "events.jsonl"),
-        action_runtime_evidence: touch(join(dir, "desktop"), "action.json"),
+        proof: desktopProof,
+        events: desktopEvents,
+        action_runtime_evidence: actionEvidence(join(dir, "desktop"), "desktop-action.json", missionId, desktopProof),
         event_count: 5,
         action_count: 1,
       },
@@ -133,6 +169,101 @@ describe("Friday UI real-use mobile/desktop report", () => {
     expect(report.status).toBe("blocked");
     expect(report.blockers).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "desktop_real_surface_capture" }),
+    ]));
+  });
+
+  it("blocks capture summaries whose action-runtime evidence file is not ready for the same mission", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-action-evidence-"));
+    const value = summary(dir);
+    writeFileSync(value.captures.mobile.action_runtime_evidence, JSON.stringify({
+      truth: "accessibility_click_action_runtime_evidence_real_ui_not_endbar",
+      status: "blocked",
+      missionId: "mission_other",
+      actions: [],
+    }, null, 2));
+    const summaryPath = writeJson(dir, "summary.json", value);
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "mobile_real_surface_capture",
+        detail: expect.stringContaining("action_runtime_evidence_not_ready"),
+      }),
+    ]));
+  });
+
+  it("blocks capture summaries whose event file does not contain same-mission UI events", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-event-evidence-"));
+    const value = summary(dir);
+    writeFileSync(value.captures.mobile.events, `${JSON.stringify({
+      surface: "mobile",
+      mission_id: "mission_other",
+      evidence_ref: value.captures.mobile.proof,
+    })}\n`);
+    const summaryPath = writeJson(dir, "summary.json", value);
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "mobile_real_surface_capture",
+        detail: expect.stringContaining("event_rows_missing"),
+      }),
+    ]));
+  });
+
+  it("blocks capture summaries whose event surface does not match the capture role", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-event-surface-"));
+    const value = summary(dir);
+    writeFileSync(value.captures.mobile.events, `${JSON.stringify({
+      surface: "desktop",
+      event: "mission_workbench_visible",
+      mission_id: value.missionId,
+      evidence_ref: value.captures.mobile.proof,
+    })}\n`);
+    const summaryPath = writeJson(dir, "summary.json", value);
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "mobile_real_surface_capture",
+        detail: expect.stringContaining("event_row_surface_mismatch"),
+      }),
+    ]));
+  });
+
+  it("blocks capture summaries whose action-runtime surface does not match the capture role", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-action-surface-"));
+    const value = summary(dir);
+    writeFileSync(value.captures.mobile.action_runtime_evidence, JSON.stringify({
+      truth: "accessibility_click_action_runtime_evidence_real_ui_not_endbar",
+      status: "ready",
+      missionId: value.missionId,
+      actions: [
+        {
+          surface: "desktop",
+          action_id: "desktop/operations/refresh",
+          status: "pass",
+          evidence_ref: value.captures.mobile.proof,
+          mission_id: value.missionId,
+        },
+      ],
+    }, null, 2));
+    const summaryPath = writeJson(dir, "summary.json", value);
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "mobile_real_surface_capture",
+        detail: expect.stringContaining("action_runtime_evidence_action_surface_mismatch"),
+      }),
     ]));
   });
 });

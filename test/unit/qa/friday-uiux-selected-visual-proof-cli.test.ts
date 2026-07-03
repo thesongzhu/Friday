@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -7,6 +8,13 @@ import { describe, expect, it } from "vitest";
 const script = "scripts/ops/check-friday-uiux-selected-visual-proof.mjs";
 
 function writeFile(root: string, relative: string, body: string) {
+  const target = join(root, relative);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, body);
+  return target;
+}
+
+function writeBinaryFile(root: string, relative: string, body: Buffer) {
   const target = join(root, relative);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, body);
@@ -63,27 +71,51 @@ function fixture() {
   return { root, designRoot, head };
 }
 
+function sha256(value: string | Buffer) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function tinyPngBytes(label: string) {
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(`fake-png-${label}\n`),
+  ]);
+}
+
 function writeReadyEvidence(root: string, mode = "live-loopback") {
   const evidence = join(root, "evidence");
   const head = fixtureHead(root);
+  const mobileDestinations = [
+    "home",
+    "session",
+    "contextPassport",
+    "tokenLedger",
+    "shareIntake",
+    "voice",
+    "pairing",
+    "providerAuth",
+    "activity",
+    "workflows",
+  ];
+  const mobileCaptures = mobileDestinations.map((destination) => {
+    const body = tinyPngBytes(destination);
+    const screenshot = writeBinaryFile(evidence, `${destination}.png`, body);
+    return {
+      destination,
+      status: "captured",
+      screenshot,
+      screenshot_sha256: sha256(body),
+    };
+  });
   writeFile(evidence, "ios-design-destination-capture-manifest.json", JSON.stringify({
     truth_label: "ios_selected_design_destination_capture_not_live_closure",
     status: "ready",
     generated_at_utc: "2026-06-27T00:00:00.000Z",
     repo_head: head,
     mode,
-    captures: [
-      "home",
-      "session",
-      "contextPassport",
-      "tokenLedger",
-      "shareIntake",
-      "voice",
-      "pairing",
-      "providerAuth",
-      "activity",
-      "workflows",
-    ].map((destination) => ({ destination, status: "captured", screenshot: `${destination}.png` })),
+    bundle_id: "com.friday.shell",
+    simulator_udid: "11111111-2222-3333-4444-555555555555",
+    captures: mobileCaptures,
   }, null, 2));
   writeFile(evidence, "desktop-ax-accessibility-capture.json", JSON.stringify({
     truth_label: "ui_device_accessibility_click_capture_real_ui_not_endbar",
@@ -108,6 +140,69 @@ function writeReadyEvidence(root: string, mode = "live-loopback") {
       "workflow",
       "evidence",
     ].map((screen) => ({ screen, status: "pass", runtimeActionId: `desktop/${screen}/check` })),
+  }, null, 2));
+  return evidence;
+}
+
+function writeMobileManifestWithoutCaptureProvenance(root: string) {
+  const evidence = writeReadyEvidence(root);
+  const head = fixtureHead(root);
+  writeFile(evidence, "ios-design-destination-capture-manifest.json", JSON.stringify({
+    truth_label: "ios_selected_design_destination_capture_not_live_closure",
+    status: "ready",
+    generated_at_utc: "2026-06-27T00:00:00.000Z",
+    repo_head: head,
+    mode: "live-loopback",
+    captures: [
+      "home",
+      "session",
+      "contextPassport",
+      "tokenLedger",
+      "shareIntake",
+      "voice",
+      "pairing",
+      "providerAuth",
+      "activity",
+      "workflows",
+    ].map((destination) => ({ destination, status: "captured", screenshot: `${destination}.png` })),
+  }, null, 2));
+  return evidence;
+}
+
+function writeMobileManifestWithNonPngScreenshots(root: string) {
+  const evidence = writeReadyEvidence(root);
+  const head = fixtureHead(root);
+  const mobileDestinations = [
+    "home",
+    "session",
+    "contextPassport",
+    "tokenLedger",
+    "shareIntake",
+    "voice",
+    "pairing",
+    "providerAuth",
+    "activity",
+    "workflows",
+  ];
+  const captures = mobileDestinations.map((destination) => {
+    const body = `not-png-${destination}\n`;
+    const screenshot = writeFile(evidence, `${destination}.png`, body);
+    return {
+      destination,
+      status: "captured",
+      screenshot,
+      screenshot_sha256: sha256(body),
+    };
+  });
+  writeFile(evidence, "ios-design-destination-capture-manifest.json", JSON.stringify({
+    truth_label: "ios_selected_design_destination_capture_not_live_closure",
+    status: "ready",
+    generated_at_utc: "2026-06-27T00:00:00.000Z",
+    repo_head: head,
+    mode: "live-loopback",
+    bundle_id: "com.friday.shell",
+    simulator_udid: "11111111-2222-3333-4444-555555555555",
+    captures,
   }, null, 2));
   return evidence;
 }
@@ -233,6 +328,58 @@ describe("check-friday-uiux-selected-visual-proof", () => {
         expect.objectContaining({ code: "mobile_selected_visual_proof_missing" }),
       ]));
       expect(report.evidence?.ios?.[0]?.modeStatus).toBe("design_sample_not_product_visual_proof");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects iOS visual manifests without bundle, simulator, and screenshot provenance", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeMobileManifestWithoutCaptureProvenance(root);
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        status?: string;
+        evidence?: { ios?: Array<{ captureStatus?: string }> };
+        blockers?: Array<{ code?: string }>;
+      };
+      expect(report.status).toBe("selected_visual_proof_gaps_present");
+      expect(report.evidence?.ios?.[0]?.captureStatus).toBe("missing_capture_provenance");
+      expect(report.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: "mobile_selected_visual_proof_missing" }),
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects iOS visual manifests whose screenshot hashes bind non-PNG bytes", () => {
+    const { root, designRoot } = fixture();
+    try {
+      const evidence = writeMobileManifestWithNonPngScreenshots(root);
+      const result = spawnSync("node", [
+        script,
+        `--repo-root=${root}`,
+        `--design-root=${designRoot}`,
+        `--evidence-dir=${evidence}`,
+        "--require-complete",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        status?: string;
+        evidence?: { ios?: Array<{ captureProvenanceFailures?: Array<{ reason?: string }> }> };
+      };
+      expect(report.status).toBe("selected_visual_proof_gaps_present");
+      expect(report.evidence?.ios?.[0]?.captureProvenanceFailures).toEqual(expect.arrayContaining([
+        expect.objectContaining({ reason: "screenshot_not_png" }),
+      ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -334,6 +334,88 @@ function satisfactionRows(report) {
   return [];
 }
 
+function blockerEvidenceValue(value, names) {
+  for (const name of names) {
+    if (typeof value?.[name] === "string") return value[name];
+  }
+  return "";
+}
+
+function boolValue(value, names) {
+  for (const name of names) {
+    if (typeof value?.[name] === "boolean") return value[name];
+  }
+  return false;
+}
+
+function proofTruthLabels(proof) {
+  return [
+    proof?.truth,
+    proof?.truthLabel,
+    proof?.truth_label,
+    ...(Array.isArray(proof?.evidenceTruthLabels) ? proof.evidenceTruthLabels : []),
+    ...(Array.isArray(proof?.evidence_truth_labels) ? proof.evidence_truth_labels : []),
+  ]
+    .map((value) => String(value || ""))
+    .filter(Boolean);
+}
+
+function readProofJson(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function validateSatisfactionEvidenceRefs(evidenceRefs, row, label, baseDir) {
+  const invalid = [];
+  for (const [refIndex, ref] of evidenceRefs.entries()) {
+    const refLabel = `${label}.evidenceRefs[${refIndex}]`;
+    const raw = String(ref || "");
+    if (/^[a-z][a-z0-9+.-]*:/i.test(raw)) {
+      invalid.push({ code: "satisfaction_evidence_ref_not_file", detail: `${refLabel}:${raw || "missing"}` });
+      continue;
+    }
+    const resolved = isAbsolute(raw) ? raw : resolve(baseDir, raw);
+    if (!existsSync(resolved)) {
+      invalid.push({ code: "satisfaction_evidence_ref_missing", detail: `${refLabel}:${resolved}` });
+      continue;
+    }
+    const proof = readProofJson(resolved);
+    if (!proof || typeof proof !== "object") {
+      invalid.push({ code: "satisfaction_evidence_ref_invalid_json", detail: `${refLabel}:${resolved}` });
+      continue;
+    }
+    const status = String(proof.status || "");
+    if (!["ready", "pass", "passed", "satisfied"].includes(status)) {
+      invalid.push({ code: "satisfaction_evidence_ref_not_ready", detail: `${refLabel}:${status || "missing"}` });
+    }
+    const truthLabels = proofTruthLabels(proof);
+    if (truthLabels.length === 0) {
+      invalid.push({ code: "satisfaction_evidence_ref_truth_missing", detail: refLabel });
+    }
+    for (const truthLabel of truthLabels) {
+      if (forbiddenSatisfactionTruth.test(truthLabel)) {
+        invalid.push({ code: "satisfaction_evidence_ref_truth_forbidden", detail: `${refLabel}:${truthLabel}` });
+      }
+    }
+    if (boolValue(proof, ["sameRun", "same_run"]) !== true) invalid.push({ code: "satisfaction_evidence_ref_not_same_run", detail: refLabel });
+    if (boolValue(proof, ["liveConnected", "live_connected"]) !== true) invalid.push({ code: "satisfaction_evidence_ref_not_live_connected", detail: refLabel });
+    if (boolValue(proof, ["currentHead", "current_head"]) !== true) invalid.push({ code: "satisfaction_evidence_ref_not_current_head", detail: refLabel });
+    const proofKey = blockerKey({
+      surface: blockerEvidenceValue(proof, ["surface"]),
+      id: blockerEvidenceValue(proof, ["id", "destination"]),
+      kind: blockerEvidenceValue(proof, ["kind", "blockerKind", "blocker_kind"]),
+      label: blockerEvidenceValue(proof, ["label", "blockerLabel", "blocker_label"]),
+    });
+    if (proofKey !== blockerKey(row)) {
+      invalid.push({ code: "satisfaction_evidence_ref_scope_mismatch", detail: refLabel });
+    }
+  }
+  return invalid;
+}
+
 function blockerSatisfactionReport() {
   if (!blockerSatisfactionReportPath) {
     return {
@@ -347,6 +429,7 @@ function blockerSatisfactionReport() {
   const parsed = readJson(blockerSatisfactionReportPath, "blocker-satisfaction-report");
   const invalid = [];
   const satisfiedKeys = new Set();
+  const baseDir = dirname(abs(blockerSatisfactionReportPath));
   const truth = String(parsed?.truth || parsed?.truth_label || parsed?.truthLabel || "");
   if (parsed?.status !== "ready") invalid.push({ code: "satisfaction_report_not_ready", detail: String(parsed?.status || "missing") });
   if (!/blocker.*satisfaction/i.test(truth)) invalid.push({ code: "satisfaction_truth_unexpected", detail: truth || "missing" });
@@ -376,6 +459,7 @@ function blockerSatisfactionReport() {
     if (row?.sameRun !== true && row?.same_run !== true) invalid.push({ code: "satisfaction_not_same_run", detail: label });
     if (row?.liveConnected !== true && row?.live_connected !== true) invalid.push({ code: "satisfaction_not_live_connected", detail: label });
     if (row?.currentHead !== true && row?.current_head !== true) invalid.push({ code: "satisfaction_not_current_head", detail: label });
+    invalid.push(...validateSatisfactionEvidenceRefs(evidenceRefs, row, label, baseDir));
     if (invalid.length === 0 || invalid.every((item) => !String(item.detail || "").startsWith(label))) {
       satisfiedKeys.add(blockerKey({
         surface: row?.surface,

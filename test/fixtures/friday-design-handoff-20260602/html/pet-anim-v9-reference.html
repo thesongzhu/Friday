@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Friday pet v9 reference</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f7f6f2;
+        color: #242424;
+        font-family: Inter, system-ui, sans-serif;
+      }
+      canvas {
+        width: 96px;
+        height: 96px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="pet-canvas" width="96" height="96"></canvas>
+    <button data-pet-action="wag">Wag</button>
+    <script>
+      window.__pet = {
+        frame: 0,
+        interact() {
+          this.frame += 1;
+          return this.frame;
+        },
+      };
+      const canvas = document.getElementById("pet-canvas");
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#0f7d8c";
+      context.fillRect(8, 8, 48, 48);
+    </script>
+  </body>
+</html>

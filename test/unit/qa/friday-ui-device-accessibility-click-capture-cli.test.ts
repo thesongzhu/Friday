@@ -222,4 +222,44 @@ describe("friday-ui-device-accessibility-click-capture", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("rejects passed accessibility actions without a per-action proof event", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-ui-accessibility-click-missing-event-"));
+    try {
+      const outDir = join(root, "out");
+      const captures = capture(root, {
+        ui_actions: [
+          {
+            screen: "fridayChat",
+            runtimeActionId: "mobile/home/refresh",
+            accessibility_id: "friday.chat.send",
+            interaction: "tap",
+            status: "pass",
+            event: "mission_intake_submitted",
+          },
+          {
+            screen: "fridayChat",
+            runtimeActionId: "mobile/memory/confirm",
+            accessibility_id: "friday.chat.memory-card.keep",
+            interaction: "tap",
+            status: "pass",
+          },
+        ],
+      });
+      const result = spawnSync("node", [
+        script,
+        `--mission-id=${missionId}`,
+        `--out-dir=${outDir}`,
+        `--capture=${captures.mobile}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      expect(result.status).toBe(2);
+      const output = JSON.parse(result.stdout) as { blockers?: Array<{ code?: string }> };
+      expect(output.blockers?.map((blocker) => blocker.code)).toContain("action_event_missing");
+      expect(existsSync(join(outDir, "accessibility-click-events.jsonl"))).toBe(false);
+      expect(existsSync(join(outDir, "action-runtime-evidence.json"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

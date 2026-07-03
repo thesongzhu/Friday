@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -105,12 +105,14 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
         head,
       });
       const evidenceDir = writeEvidenceDir(root);
+      const out = join(root, "runtime-blocker-satisfaction.json");
       const output = execFileSync("node", [
         script,
         `--head=${head}`,
         `--action-traceability-report=${tracePath}`,
         `--ui-device-proof=${proofPath}`,
         `--ui-device-evidence-dir=${evidenceDir}`,
+        `--out=${out}`,
         "--require-ready",
       ], { cwd: process.cwd(), encoding: "utf8" });
       const report = JSON.parse(output) as {
@@ -119,6 +121,7 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
         counts?: { satisfactions?: number };
         satisfactions?: Array<{
           evidenceClass?: string;
+          evidenceRefs?: string[];
           evidenceTruthLabels?: string[];
           sameRun?: boolean;
           liveConnected?: boolean;
@@ -136,6 +139,33 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
         liveConnected: true,
         currentHead: true,
       }));
+      const refs = report.satisfactions?.[0]?.evidenceRefs || [];
+      expect(refs.length).toBeGreaterThan(0);
+      expect(refs.every((ref) => !/^[a-z][a-z0-9+.-]*:/i.test(ref))).toBe(true);
+      for (const ref of refs) {
+        const proof = join(dirname(out), ref);
+        expect(existsSync(proof)).toBe(true);
+        const value = JSON.parse(readFileSync(proof, "utf8")) as {
+          status?: string;
+          surface?: string;
+          id?: string;
+          kind?: string;
+          label?: string;
+          sameRun?: boolean;
+          liveConnected?: boolean;
+          currentHead?: boolean;
+        };
+        expect(value).toEqual(expect.objectContaining({
+          status: "ready",
+          surface: "mobile",
+          id: "home",
+          kind: "needsRuntimeEvidence",
+          label: "same-run user proof",
+          sameRun: true,
+          liveConnected: true,
+          currentHead: true,
+        }));
+      }
       expect(report.blockers).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -328,12 +358,14 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
         head,
       });
       const evidenceDir = writeEvidenceDir(root);
+      const out = join(root, "runtime-blocker-satisfaction.json");
       const output = execFileSync("node", [
         script,
         `--head=${head}`,
         `--action-traceability-report=${tracePath}`,
         `--ui-device-proof=${proofPath}`,
         `--ui-device-evidence-dir=${evidenceDir}`,
+        `--out=${out}`,
         "--require-ready",
       ], { cwd: process.cwd(), encoding: "utf8" });
       const report = JSON.parse(output) as {
@@ -344,7 +376,12 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
       expect(report.status).toBe("ready");
       expect(report.counts?.satisfactions).toBe(1);
       expect(report.satisfactions?.[0]?.id).toBe("tokenLedger");
-      expect(report.satisfactions?.[0]?.evidenceRefs).toContain("proof://desktop-ax/token-ledger");
+      const refs = report.satisfactions?.[0]?.evidenceRefs || [];
+      expect(refs.every((ref) => !/^[a-z][a-z0-9+.-]*:/i.test(ref))).toBe(true);
+      const proof = JSON.parse(readFileSync(join(dirname(out), refs[0]), "utf8")) as {
+        sourceEvidenceRefs?: string[];
+      };
+      expect(proof.sourceEvidenceRefs).toContain("proof://desktop-ax/token-ledger");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -451,6 +488,128 @@ describe("build-friday-uiux-runtime-blocker-satisfaction", () => {
           detail: expect.stringContaining(head),
         }),
       ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes distinct proof artifacts for same destination blockers with different labels", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-runtime-satisfaction-row-scoped-"));
+    try {
+      const tracePath = writeJson(root, "trace.json", trace({
+        gaps: {
+          residualEndBarBlockers: [{
+            surface: "mobile",
+            id: "home",
+            title: "Friday Home",
+            tier: "liveWorkbench",
+            blockers: [
+              { kind: "needsRuntimeEvidence", label: "same-run user proof" },
+              { kind: "needsRuntimeEvidence", label: "same-run receipt proof" },
+            ],
+            evidenceOverlay: {
+              status: "runtime_action_evidence_attached_not_endbar",
+              runtimeActionCount: 1,
+              runtimeActionsCovered: 1,
+              runtimeActionsMissing: 0,
+              evidenceRefs: ["proof://runtime/mobile-home"],
+              evidenceTruthLabels: ["accessibility_click_action_runtime_evidence_real_ui_not_endbar"],
+            },
+          }],
+        },
+      }));
+      const proofPath = writeJson(root, "ui-device-proof.json", {
+        truth: "assembled_real_ui_device_proof",
+        status: "pass",
+        head,
+      });
+      const evidenceDir = writeEvidenceDir(root);
+      const out = join(root, "runtime-blocker-satisfaction.json");
+      const output = execFileSync("node", [
+        script,
+        `--head=${head}`,
+        `--action-traceability-report=${tracePath}`,
+        `--ui-device-proof=${proofPath}`,
+        `--ui-device-evidence-dir=${evidenceDir}`,
+        `--out=${out}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        counts?: { satisfactions?: number };
+        satisfactions?: Array<{ label?: string; evidenceRefs?: string[] }>;
+      };
+      expect(report.status).toBe("ready");
+      expect(report.counts?.satisfactions).toBe(2);
+      const refs = report.satisfactions?.flatMap((row) => row.evidenceRefs || []) || [];
+      expect(new Set(refs).size).toBe(2);
+      for (const row of report.satisfactions || []) {
+        const proof = JSON.parse(readFileSync(join(dirname(out), row.evidenceRefs?.[0] || ""), "utf8")) as {
+          label?: string;
+        };
+        expect(proof.label).toBe(row.label);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps proof artifacts distinct when labels sanitize to the same filename segment", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-runtime-satisfaction-label-hash-"));
+    try {
+      const tracePath = writeJson(root, "trace.json", trace({
+        gaps: {
+          residualEndBarBlockers: [{
+            surface: "mobile",
+            id: "home",
+            title: "Friday Home",
+            tier: "liveWorkbench",
+            blockers: [
+              { kind: "needsRuntimeEvidence", label: "same/run proof" },
+              { kind: "needsRuntimeEvidence", label: "same run proof" },
+            ],
+            evidenceOverlay: {
+              status: "runtime_action_evidence_attached_not_endbar",
+              runtimeActionCount: 1,
+              runtimeActionsCovered: 1,
+              runtimeActionsMissing: 0,
+              evidenceRefs: ["proof://runtime/mobile-home"],
+              evidenceTruthLabels: ["accessibility_click_action_runtime_evidence_real_ui_not_endbar"],
+            },
+          }],
+        },
+      }));
+      const proofPath = writeJson(root, "ui-device-proof.json", {
+        truth: "assembled_real_ui_device_proof",
+        status: "pass",
+        head,
+      });
+      const evidenceDir = writeEvidenceDir(root);
+      const out = join(root, "runtime-blocker-satisfaction.json");
+      const output = execFileSync("node", [
+        script,
+        `--head=${head}`,
+        `--action-traceability-report=${tracePath}`,
+        `--ui-device-proof=${proofPath}`,
+        `--ui-device-evidence-dir=${evidenceDir}`,
+        `--out=${out}`,
+        "--require-ready",
+      ], { cwd: process.cwd(), encoding: "utf8" });
+      const report = JSON.parse(output) as {
+        status?: string;
+        counts?: { satisfactions?: number };
+        satisfactions?: Array<{ label?: string; evidenceRefs?: string[] }>;
+      };
+      expect(report.status).toBe("ready");
+      expect(report.counts?.satisfactions).toBe(2);
+      const refs = report.satisfactions?.flatMap((row) => row.evidenceRefs || []) || [];
+      expect(new Set(refs).size).toBe(2);
+      for (const row of report.satisfactions || []) {
+        const proof = JSON.parse(readFileSync(join(dirname(out), row.evidenceRefs?.[0] || ""), "utf8")) as {
+          label?: string;
+        };
+        expect(proof.label).toBe(row.label);
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -106,6 +107,23 @@ function readJson(path, label) {
     block("json_unreadable", `${label}:${path}:${error.message}`);
     return null;
   }
+}
+
+function sha256File(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function isPngFile(path) {
+  const bytes = readFileSync(path);
+  return bytes.length >= 8
+    && bytes[0] === 0x89
+    && bytes[1] === 0x50
+    && bytes[2] === 0x4e
+    && bytes[3] === 0x47
+    && bytes[4] === 0x0d
+    && bytes[5] === 0x0a
+    && bytes[6] === 0x1a
+    && bytes[7] === 0x0a;
 }
 
 function selection(surface) {
@@ -224,7 +242,9 @@ function evaluateIosManifest(path) {
   if (!existsSync(path)) return { path, status: "missing" };
   const manifest = readJson(path, "ios-manifest");
   if (!manifest) return { path, status: "invalid" };
-  const captured = new Set((manifest.captures || []).map((capture) => capture.destination));
+  const captures = Array.isArray(manifest.captures) ? manifest.captures : [];
+  const captured = new Set(captures.map((capture) => capture.destination));
+  const manifestDir = dirname(path);
   const missing = requiredMobileDestinations.filter((destination) => !captured.has(destination));
   const truthOk = manifest.truth_label === "ios_selected_design_destination_capture_not_live_closure";
   const statusOk = manifest.status === "ready";
@@ -233,9 +253,36 @@ function evaluateIosManifest(path) {
   const mode = manifest.mode || null;
   const allowedVisualModes = ["live-loopback", "real-device-live", "product-live", "same-run-live"];
   const modeOk = allowedVisualModes.includes(mode);
+  const bundleOk = manifest.bundle_id === "com.friday.shell";
+  const simulatorOk = typeof manifest.simulator_udid === "string"
+    && /^[0-9A-Fa-f-]{36}$/.test(manifest.simulator_udid);
+  const captureByDestination = new Map(captures.map((capture) => [capture.destination, capture]));
+  const captureProvenanceFailures = [];
+  for (const destination of requiredMobileDestinations) {
+    const capture = captureByDestination.get(destination);
+    if (!capture) continue;
+    const screenshot = typeof capture.screenshot === "string" && capture.screenshot.length > 0
+      ? (isAbsolute(capture.screenshot) ? capture.screenshot : resolve(manifestDir, capture.screenshot))
+      : null;
+    if (capture.status !== "captured") {
+      captureProvenanceFailures.push({ destination, reason: "status_not_captured", actual: capture.status ?? null });
+    }
+    if (!screenshot || !existsSync(screenshot) || statSync(screenshot).size === 0) {
+      captureProvenanceFailures.push({ destination, reason: "screenshot_missing_or_empty", screenshot });
+      continue;
+    }
+    if (!isPngFile(screenshot)) {
+      captureProvenanceFailures.push({ destination, reason: "screenshot_not_png", screenshot });
+      continue;
+    }
+    if (typeof capture.screenshot_sha256 !== "string" || capture.screenshot_sha256 !== sha256File(screenshot)) {
+      captureProvenanceFailures.push({ destination, reason: "screenshot_sha256_mismatch", screenshot });
+    }
+  }
+  const captureProvenanceOk = bundleOk && simulatorOk && captureProvenanceFailures.length === 0;
   return {
     path,
-    status: truthOk && statusOk && headOk && modeOk && missing.length === 0 ? "ready" : "gap",
+    status: truthOk && statusOk && headOk && modeOk && missing.length === 0 && captureProvenanceOk ? "ready" : "gap",
     truth_label: manifest.truth_label || null,
     manifest_status: manifest.status || null,
     generated_at_utc: manifest.generated_at_utc || null,
@@ -254,6 +301,12 @@ function evaluateIosManifest(path) {
     requiredMobileDestinations,
     capturedDestinations: [...captured],
     missingDestinations: missing,
+    bundle_id: manifest.bundle_id || null,
+    bundleStatus: bundleOk ? "friday_shell_bundle" : "missing_or_wrong_bundle",
+    simulator_udid: manifest.simulator_udid || null,
+    simulatorStatus: simulatorOk ? "simulator_udid_present" : "missing_simulator_udid",
+    captureStatus: captureProvenanceOk ? "capture_provenance_bound" : "missing_capture_provenance",
+    captureProvenanceFailures,
     caveat: manifest.caveat || null,
   };
 }
