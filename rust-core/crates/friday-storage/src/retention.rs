@@ -594,6 +594,25 @@ mod tests {
             .unwrap();
     }
 
+    fn seed_process_observation(
+        db: &Db,
+        id: &str,
+        pid: i64,
+        observed_at_ms: i64,
+        matched_claim_id: Option<&str>,
+    ) {
+        db.conn()
+            .execute(
+                "INSERT INTO process_observation
+                    (observation_id, pid, ppid, process_kind, cwd_ref, port_bindings,
+                     command_hash, observed_at_ms, matched_claim_id, ownership_status)
+                 VALUES (?1, ?2, NULL, 'codex_cli', 'cwd:retention-test', '[]',
+                         NULL, ?3, ?4, 'observed_unowned')",
+                params![id, pid, observed_at_ms, matched_claim_id],
+            )
+            .unwrap();
+    }
+
     fn seed_audit(db: &Db, id: &str) {
         let tx = db.conn().unchecked_transaction().unwrap();
         crate::audit::append_audit(&tx, id, "owner", "test.action", None, 1).unwrap();
@@ -1084,6 +1103,143 @@ mod tests {
         assert_eq!(out.mission_deleted, 0);
         assert!(exists(&db, "work_item", "work_item_id", "w_guarded"));
         assert!(exists(&db, "mission", "mission_id", "m_guarded"));
+    }
+
+    #[test]
+    fn f2_aged_observe_and_terminal_child_rows_are_reaped_before_parents() {
+        let db = Db::open_hub(&tmp("f2-child-reap")).unwrap();
+        let now = 2_000 * 24 * 60 * 60 * 1000_i64;
+        let w = RetentionWindows::default();
+        let old_session_seen = now - PROVIDER_SESSION_EVENT_MAX_AGE_MS - 1;
+        let old_parent_seen = now - MISSION_MAX_AGE_MS - 1;
+        seed_conversation(&db, "fconv_f2");
+
+        seed_provider_session_link(&db, "ps_old", old_session_seen);
+        seed_provider_session_link(&db, "ps_recent", now - 1);
+        seed_process_observation(&db, "obs_old_unowned", 41001, old_session_seen, None);
+        seed_process_observation(&db, "obs_recent_unowned", 41002, now - 1, None);
+
+        seed_mission(&db, "m_f2", "fconv_f2", "done", old_parent_seen);
+        seed_work_item(
+            &db,
+            "w_f2",
+            "m_f2",
+            "completed_with_proof",
+            old_parent_seen,
+        );
+        seed_surface_thread(&db, "st_f2", "fconv_f2", "m_f2");
+        db.conn()
+            .execute(
+                "UPDATE surface_thread SET updated_at_ms = ?1 WHERE surface_thread_id = 'st_f2'",
+                [old_parent_seen],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO route_decision
+                    (decision_id, mission_id, work_item_id, selected_lane,
+                     selected_provider_or_agent, why_this_route, created_at_ms)
+                 VALUES ('rd_f2', 'm_f2', 'w_f2', 'codex', 'codex',
+                         'retention must reap terminal route trace children', ?1)",
+                [old_parent_seen],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO route_decision_control
+                    (decision_id, mission_id, work_item_id, control_kind, actor_ref, reason,
+                     active, created_at_ms)
+                 VALUES ('rd_f2', 'm_f2', 'w_f2', 'veto', 'operator:test',
+                         'retention must reap terminal route control children', 1, ?1)",
+                [old_parent_seen],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO mission_link
+                    (link_id, mission_id, work_item_id, link_kind, target_ref, proof_ref,
+                     created_at_ms)
+                 VALUES ('mlink_f2', 'm_f2', 'w_f2', 'route_decision',
+                         'friday://route-decision/rd_f2', NULL, ?1)",
+                [old_parent_seen],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO mission_body_snapshot
+                    (body_ref, owner_principal, mission_id, work_item_id, source_surface,
+                     body, body_sha256, body_len, created_at_ms)
+                 VALUES ('body_f2', 'owner', 'm_f2', 'w_f2', 'desktop',
+                         'terminal body snapshot',
+                         '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                         22, ?1)",
+                [old_parent_seen],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO workspace_claim
+                    (claim_id, mission_id, work_item_id, owner_principal, owner_agent,
+                     workspace_ref, claim_kind, state, reason, safe_release_policy,
+                     proof_requirements, proof_refs, created_at_ms, updated_at_ms, released_at_ms)
+                 VALUES ('claim_f2', 'm_f2', 'w_f2', 'owner', 'codex',
+                         'workspace:f2', 'workspace', 'released', 'retention test',
+                         'release_with_proof', '[]', '[\"proof:f2\"]', ?1, ?1, ?1)",
+                [old_parent_seen],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO process_lease
+                    (lease_id, claim_id, mission_id, work_item_id, pid, process_group_id,
+                     process_kind, command_ref, command_hash, cwd_ref, port_bindings,
+                     started_by_surface_thread_id, started_by_provider_session_id,
+                     health_check_ref, safe_stop_ref, last_observed_at_ms, stale_after_ms,
+                     state, proof_refs, created_at_ms, updated_at_ms)
+                 VALUES ('lease_f2', 'claim_f2', 'm_f2', 'w_f2', 41003, NULL,
+                         'codex_cli', NULL, NULL, 'cwd:retention-test', '[]',
+                         'st_f2', NULL, NULL, 'safe-stop:f2', ?1, NULL,
+                         'stopped_with_proof', '[\"proof:f2\"]', ?1, ?1)",
+                [old_parent_seen],
+            )
+            .unwrap();
+        seed_process_observation(&db, "obs_old_claimed", 41003, old_session_seen, Some("claim_f2"));
+
+        let out = sweep_retention(db.conn(), now, w);
+        assert_eq!(out.table_errors, 0);
+
+        for (table, id_col, id) in [
+            ("provider_session_link", "friday_session_id", "ps_old"),
+            ("process_observation", "observation_id", "obs_old_unowned"),
+            ("process_observation", "observation_id", "obs_old_claimed"),
+            ("route_decision_control", "decision_id", "rd_f2"),
+            ("route_decision", "decision_id", "rd_f2"),
+            ("mission_link", "link_id", "mlink_f2"),
+            ("mission_body_snapshot", "body_ref", "body_f2"),
+            ("process_lease", "lease_id", "lease_f2"),
+            ("workspace_claim", "claim_id", "claim_f2"),
+            ("surface_thread", "surface_thread_id", "st_f2"),
+            ("work_item", "work_item_id", "w_f2"),
+            ("mission", "mission_id", "m_f2"),
+        ] {
+            assert!(
+                !exists(&db, table, id_col, id),
+                "{table}.{id_col}={id} should be reaped by the F2 retention sweep"
+            );
+        }
+        assert!(
+            exists(&db, "provider_session_link", "friday_session_id", "ps_recent"),
+            "recent provider session links must remain"
+        );
+        assert!(
+            exists(
+                &db,
+                "process_observation",
+                "observation_id",
+                "obs_recent_unowned"
+            ),
+            "recent process observations must remain"
+        );
     }
 
     // --- flag-OFF parity is the CALLER's concern; here prove the empty/boundary behavior ---
