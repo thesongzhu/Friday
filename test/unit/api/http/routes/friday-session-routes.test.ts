@@ -944,6 +944,36 @@ describe("FridaySessionRoutes", () => {
         "tenant.default.channel.discord.user.user1.shared",
       );
     });
+
+    it("NEW-30 red: rejects namespace reads for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+      vi.mocked(svc.getSessionMemoryNamespace).mockResolvedValue(
+        "tenant.victim.channel.discord.user.user-victim.shared",
+      );
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.memory.namespace.get")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:tenant-victim:user-victim" },
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(svc.getSessionMemoryNamespace).not.toHaveBeenCalled();
+    });
   });
 
   // ─── sessions.forks.create ───
@@ -1061,6 +1091,37 @@ describe("FridaySessionRoutes", () => {
         ),
         FRIDAY_SESSION_ERROR_CODES.INVALID_INPUT,
       );
+    });
+
+    it("NEW-30 red: rejects fork list reads for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+      vi.mocked(svc.listForks).mockResolvedValue([makeMockSession({
+        key: "subagent:discord:tenant-victim:user-victim:child",
+      })]);
+
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
+      const route = routes.find((r) => r.operationId === "sessions.forks.list")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:tenant-victim:user-victim" },
+            query: {},
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(svc.listForks).not.toHaveBeenCalled();
     });
   });
 
@@ -1945,6 +2006,33 @@ describe("FridaySessionRoutes", () => {
       );
 
       expect(result).toHaveProperty("status");
+    });
+
+    it("NEW-30 red: rejects extraction status reads for a session owned by a different principal", async () => {
+      const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "tenant-victim",
+        userId: "user-victim",
+      }));
+      const extractSvc = createMockExtractionService();
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
+      const route = routes.find((r) => r.operationId === "sessions.memory.extraction.get")!;
+
+      await expectRouteError(
+        route.handler(
+          makeMockCtx({
+            params: { sessionKey: "discord:tenant-victim:user-victim" },
+            principal: makeBoundPrincipal({
+              tenantId: "tenant-attacker",
+              userId: "user-attacker",
+              scopes: ["session.read"],
+              role: "viewer",
+            }),
+          }) as never,
+        ),
+        "SESSION_OWNER_MISMATCH",
+      );
+      expect(extractSvc.getExtractionStatus).not.toHaveBeenCalled();
     });
   });
 
