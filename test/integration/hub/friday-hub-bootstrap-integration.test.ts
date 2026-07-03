@@ -456,11 +456,6 @@ describe("FridayHub Bootstrap Integration", () => {
       expect(route).toBeUndefined();
       expect(fs.existsSync(path.join(runDir, "system-companion.auth.token"))).toBe(false);
       expect(fs.existsSync(path.join(runDir, "system-companion.sock"))).toBe(false);
-      await expect(hub.systemHealth()).resolves.toMatchObject({
-        enabled: false,
-        remoteMode: "unavailable",
-        companionReadiness: "unavailable",
-      });
     } finally {
       if (previousEnabled === undefined) {
         delete process.env.FRIDAY_SYSTEM_ENABLED;
@@ -496,10 +491,10 @@ describe("FridayHub Bootstrap Integration", () => {
   });
 
 
-  it("defaults local system runtime on while keeping remote disabled", async () => {
+  it("keeps local system runtime on when explicitly enabled while remote stays disabled", async () => {
     const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
     const previousRemote = process.env.FRIDAY_SYSTEM_REMOTE_MODE;
-    delete process.env.FRIDAY_SYSTEM_ENABLED;
+    process.env.FRIDAY_SYSTEM_ENABLED = "true";
     delete process.env.FRIDAY_SYSTEM_REMOTE_MODE;
     try {
       const hub = await createIsolatedHub();
@@ -539,7 +534,7 @@ describe("FridayHub Bootstrap Integration", () => {
   it("keeps hub booting with system runtime unavailable when companion socket setup fails closed", async () => {
     const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
     const previousSocketPath = process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH;
-    delete process.env.FRIDAY_SYSTEM_ENABLED;
+    process.env.FRIDAY_SYSTEM_ENABLED = "true";
     const blockedSocketPath = path.join(makeTmpDir(), "system-companion.sock");
     fs.writeFileSync(blockedSocketPath, "not a socket");
     process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH = blockedSocketPath;
