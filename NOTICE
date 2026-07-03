@@ -13,6 +13,9 @@ ported from, or designed for compatibility with OpenClaw / Clawdbot behavior,
 including legacy SKILL.md compatibility, agent runtime references, scheduler
 guard behavior, and benchmark/adoption materials.
 
+The vendored TypeScript reference files under `docs/clawdbot-reference/` are
+covered by `docs/clawdbot-reference/NOTICE.md`.
+
 Original copyright and license notice:
 
 MIT License

@@ -172,6 +172,8 @@ Validation-on-save behavior:
 
 ## 4. Clawdbot reuse map
 
+Attribution for retained reference files lives in `docs/clawdbot-reference/NOTICE.md`.
+
 | Clawdbot source | Reuse | Friday adaptation |
 |---|---|---|
 | `<openclaw-repo>/src/config/zod-schema.core.ts:35-70` and `<openclaw-repo>/src/config/zod-schema.core.ts:84-91` | `ModelDefinitionSchema`, `ModelProviderSchema`, `ModelsConfigSchema` structure. | Keep field shapes (`baseUrl`, `auth`, `models`, `api`) but persist in SQLite row + `config_json` instead of file config tree. |
