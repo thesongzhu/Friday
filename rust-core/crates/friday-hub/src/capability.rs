@@ -204,11 +204,15 @@ impl CapabilityRouteTable {
             ("channel_config_telegram", "no Rust channels/connectors/trusted-inbound subsystem"),
             ("skills_lifecycle", "no skills/plugin promotion+execution subsystem"),
             ("memory_cognition_recall", "no recall/ranking/PII-decay cognition pipeline (PROOF-MEMORY-001 unbuilt)"),
-            ("self_heal", "no self-heal/repair subsystem"),
         ] {
             t.register(CapabilityEntry::disabled(id, CapabilityStatus::NoGo, blk));
         }
         // operator_gated — built/partly-built, blocked on an operator decision.
+        t.register(CapabilityEntry::disabled(
+            "self_heal",
+            CapabilityStatus::OperatorGated,
+            "auto-fix execution + rollback path exists behind fail-closed execution controls; production self-heal enablement/deployment remains gated",
+        ));
         t.register(CapabilityEntry::disabled(
             "design_baseline_ui",
             CapabilityStatus::OperatorGated,
