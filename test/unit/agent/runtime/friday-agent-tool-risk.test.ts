@@ -398,6 +398,71 @@ describe("friday-agent-tool-risk", () => {
       expect(getApprovalRequiredReasonForToolCall("desktop", { action: "close_app" })).toContain("approval");
     });
 
+    it("HR19 blocks high-risk desktop execute actionTypes routed through actionType", () => {
+      const highRiskExecuteCalls = [
+        { action: "execute", actionType: "launch_app", text: "com.apple.TextEdit" },
+        { action: "execute", actionType: "close_app", text: "com.apple.TextEdit" },
+        { action: "execute", actionType: "file_operation", operation: "write", path: "/tmp/friday-hr19.txt", content: "x" },
+        { action: "execute", actionType: "file_operation", operation: "delete", path: "/tmp/friday-hr19.txt" },
+        {
+          action: "execute",
+          actionType: "file_operation",
+          operation: "move",
+          path: "/tmp/friday-hr19.txt",
+          destinationPath: "/tmp/friday-hr19-moved.txt",
+        },
+        {
+          action: "execute",
+          actionType: "file_operation",
+          operation: "copy",
+          path: "/tmp/friday-hr19.txt",
+          destinationPath: "/tmp/friday-hr19-copy.txt",
+        },
+        { action: "execute", actionType: "keypress", text: "Meta+Q" },
+        { action: "execute", actionType: "type", text: "send this text" },
+        { action: "execute", actionType: "click", x: 12, y: 34 },
+        { action: "execute", actionType: "drag", startX: 1, startY: 2, endX: 3, endY: 4 },
+      ];
+
+      for (const args of highRiskExecuteCalls) {
+        expect(getApprovalRequiredReasonForToolCall("desktop", args)).toContain("approval");
+      }
+    });
+
+    it("HR19 keeps read-only desktop execute actionTypes out of approval", () => {
+      expect(
+        getApprovalRequiredReasonForToolCall("desktop", { action: "execute", actionType: "screenshot" }),
+      ).toBeNull();
+      expect(
+        getApprovalRequiredReasonForToolCall("desktop", { action: "execute", actionType: "read_element" }),
+      ).toBeNull();
+      expect(
+        getApprovalRequiredReasonForToolCall("desktop", {
+          action: "execute",
+          actionType: "file_operation",
+          operation: "read",
+          path: "/tmp/friday-hr19.txt",
+        }),
+      ).toBeNull();
+      expect(
+        getApprovalRequiredReasonForToolCall("desktop", {
+          action: "execute",
+          actionType: "file_operation",
+          operation: "list",
+          path: "/tmp",
+        }),
+      ).toBeNull();
+      expect(
+        getApprovalRequiredReasonForToolCall("desktop", {
+          action: "execute",
+          actionType: "file_operation",
+          operation: "stat",
+          path: "/tmp/friday-hr19.txt",
+        }),
+      ).toBeNull();
+      expect(getApprovalRequiredReasonForToolCall("desktop", { action: "session_info" })).toBeNull();
+    });
+
     it("blocks tts speak and synthesize", () => {
       expect(getApprovalRequiredReasonForToolCall("tts", { action: "speak" })).toContain("approval");
       expect(getApprovalRequiredReasonForToolCall("tts", { action: "synthesize" })).toContain("approval");
