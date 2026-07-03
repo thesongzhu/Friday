@@ -86,6 +86,22 @@ describe("isFridaySensitiveReadRoute", () => {
     expect(isFridaySensitiveReadRoute("/v1/system/remote/sessions")).toBe(true);
   });
 
+  it("NEW-36: centrally classifies the historical uix personal-read holes without over-flooring uix", () => {
+    for (const path of ["/v1/uix/user-profile", "/v1/uix/learned-facts"]) {
+      expect(FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES).toContain(path);
+      expect(isFridaySensitiveReadRoute(path)).toBe(true);
+    }
+
+    for (const path of [
+      "/v1/uix",
+      "/v1/uix/templates",
+      "/v1/uix/intents/resolve",
+      "/v1/uix/templates/:templateId/execute",
+    ]) {
+      expect(isFridaySensitiveReadRoute(path)).toBe(false);
+    }
+  });
+
   it("does NOT match the core no-login UX or minimal-public surfaces", () => {
     for (const path of [
       "/v1/health",
