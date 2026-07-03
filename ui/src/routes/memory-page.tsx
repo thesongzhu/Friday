@@ -223,7 +223,11 @@ export function MemoryPage() {
             <p className="text-sm text-[color:var(--color-text-secondary)]">
               {activeSearch
                 ? localize(locale, "没有匹配的记忆。", "No memories match your search.")
-                : localize(locale, "暂无记忆。Friday 会在你使用过程中自动学习。", "No memories stored yet. Friday will learn as you interact.")}
+                : localize(
+                  locale,
+                  "暂无记忆。经审核或已启用的学习流程保存后，新记忆会显示在这里。",
+                  "No memories stored yet. New memories appear here after review or enabled learning flows save them.",
+                )}
             </p>
           </div>
         </ShellCard>
