@@ -134,10 +134,10 @@ export function ConsoleShell() {
     >
       <div
         data-ui-shell="desktop-win"
-        className="relative flex min-h-screen w-full flex-col lg:h-screen lg:overflow-hidden lg:p-4"
+        className="relative flex min-h-screen w-full flex-col lg:h-screen lg:overflow-hidden"
       >
         <div
-          className="flex min-h-screen w-full flex-col overflow-hidden lg:min-h-0 lg:flex-1 lg:rounded-[16px] lg:border lg:shadow-[var(--shadow-device)]"
+          className="flex min-h-screen w-full flex-col overflow-hidden lg:min-h-0 lg:flex-1 lg:rounded-[16px] lg:shadow-[var(--shadow-device)]"
           style={{
             background: "var(--paper)",
             borderColor: "var(--line)",
