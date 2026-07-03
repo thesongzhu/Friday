@@ -263,7 +263,7 @@ fn run() -> Result<(), ServerError> {
     let listener = ReadWsListener::bind_loopback(port).map_err(|_| ServerError::Bind)?;
     let addr = listener.local_addr().map_err(|_| ServerError::Bind)?;
     eprintln!(
-        "hub_read_projection_server: listening (loopback-only) on {addr} — DARK (S-R1: read-projection arm, no LaunchAgent, no production caller)"
+        "hub_read_projection_server: listening (loopback-only) on {addr} — S-R1 read-projection arm active"
     );
 
     // (3) Long-lived accept loop. Each connection establishes the shared sealed session, then serves
