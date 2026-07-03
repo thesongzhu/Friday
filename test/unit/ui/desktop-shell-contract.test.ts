@@ -48,6 +48,13 @@ describe("UI-W1 desktop shell contract", () => {
     expect(rightRail).toContain("const MIN_RIGHT_RAIL_WIDTH = 248");
   });
 
+  it("keeps the desktop rail flush-left without a wrapper inset", () => {
+    const source = shellSource();
+
+    expect(source).not.toContain("lg:p-4");
+    expect(source).not.toContain("lg:border lg:shadow");
+  });
+
   it("renders the v9 desktop companion stage in the proof inspector", () => {
     const source = rightRailSource();
 
