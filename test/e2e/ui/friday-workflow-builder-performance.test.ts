@@ -19,6 +19,7 @@ const CHROMIUM_AVAILABLE = (() => {
 const BROWSER_E2E_TIMEOUT_MS = 120_000;
 const WORKFLOW_BUILDER_SHELL_BUDGET_MS = 2_000;
 const WORKFLOW_BUILDER_CANVAS_BUDGET_MS = 8_000;
+const MAIN_PUSH_CI_SHELL_READY_JITTER_MS = 6_251.996804;
 
 async function readBuilderTiming(pageHandle: FridayBrowserPageHandle, markName: string): Promise<number | null> {
   return pageHandle.page.evaluate((expectedMarkName) => {
@@ -58,6 +59,14 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday workflow builder interaction baseli
       await env.cleanup();
       env = null;
     }
+  });
+
+  it("keeps the CI shell-ready budget above observed main push runner jitter", () => {
+    if (!process.env.CI) {
+      return;
+    }
+
+    expect(WORKFLOW_BUILDER_SHELL_BUDGET_MS).toBeGreaterThan(MAIN_PUSH_CI_SHELL_READY_JITTER_MS);
   });
 
   it("renders a lightweight builder shell before the full canvas becomes interactive", { timeout: BROWSER_E2E_TIMEOUT_MS }, async () => {
