@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -36,6 +36,18 @@ describe("friday-rust-hub-workflow-catalog-bridge-service (Tier-2 workflow catal
     const dbPath = join(scratch, "hub.sqlite");
     writeFileSync(dbPath, "");
     return { binPath, dbPath };
+  }
+
+  function setupPrebuilt(mockSource: string): { repoRoot: string; dbPath: string } {
+    scratch = mkdtempSync(join(tmpdir(), "friday-hub-workflow-catalog-prebuilt-"));
+    const releaseDir = join(scratch, "rust-core", "target", "release");
+    mkdirSync(releaseDir, { recursive: true });
+    const binPath = join(releaseDir, "hub_workflow_catalog");
+    writeFileSync(binPath, `#!/usr/bin/env node\n${mockSource}`);
+    chmodSync(binPath, 0o755);
+    const dbPath = join(scratch, "hub.sqlite");
+    writeFileSync(dbPath, "");
+    return { repoRoot: scratch, dbPath };
   }
 
   /** A scripted mock that emits a valid refs-only receipt echoing the op + any extra fields. */
@@ -123,6 +135,96 @@ describe("friday-rust-hub-workflow-catalog-bridge-service (Tier-2 workflow catal
       isArchived: false,
       deployedVersion: null,
     });
+  });
+
+  it("uses the prebuilt release bin when FRIDAY_HUB_WORKFLOW_CATALOG_BIN is not configured", async () => {
+    const previousBin = process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
+    const previousRustRoot = process.env.FRIDAY_MISSION_SPINE_RUST_CORE_ROOT;
+    delete process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
+    delete process.env.FRIDAY_MISSION_SPINE_RUST_CORE_ROOT;
+
+    try {
+      const { repoRoot, dbPath } = setupPrebuilt(okMock());
+      const service = createFridayRustHubWorkflowCatalogBridgeService({ repoRoot, dbPath });
+
+      await expect(
+        service.mutateCatalog({ op: "publish", workflowId: "wf-prebuilt", version: 1 }),
+      ).resolves.toMatchObject({
+        truthLabel: "rust_wired_dev",
+        proofOnly: true,
+        op: "publish",
+        workflowId: "wf-prebuilt",
+      });
+    } finally {
+      if (previousBin === undefined) {
+        delete process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
+      } else {
+        process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN = previousBin;
+      }
+      if (previousRustRoot === undefined) {
+        delete process.env.FRIDAY_MISSION_SPINE_RUST_CORE_ROOT;
+      } else {
+        process.env.FRIDAY_MISSION_SPINE_RUST_CORE_ROOT = previousRustRoot;
+      }
+    }
+  });
+
+  it("still honors FRIDAY_HUB_WORKFLOW_CATALOG_BIN when it is configured", async () => {
+    const previousBin = process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
+
+    try {
+      const { binPath, dbPath } = setup(okMock());
+      process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN = binPath;
+      const service = createFridayRustHubWorkflowCatalogBridgeService({ dbPath });
+
+      await expect(
+        service.mutateCatalog({ op: "publish", workflowId: "wf-env-bin", version: 1 }),
+      ).resolves.toMatchObject({
+        truthLabel: "rust_wired_dev",
+        proofOnly: true,
+        op: "publish",
+        workflowId: "wf-env-bin",
+      });
+    } finally {
+      if (previousBin === undefined) {
+        delete process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
+      } else {
+        process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN = previousBin;
+      }
+    }
+  });
+
+  it("fails closed instead of cargo-running when no prebuilt bin is available", async () => {
+    const previousBin = process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
+    const previousRustRoot = process.env.FRIDAY_MISSION_SPINE_RUST_CORE_ROOT;
+    delete process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
+    delete process.env.FRIDAY_MISSION_SPINE_RUST_CORE_ROOT;
+
+    try {
+      scratch = mkdtempSync(join(tmpdir(), "friday-hub-workflow-catalog-no-bin-"));
+      const dbPath = join(scratch, "hub.sqlite");
+      writeFileSync(dbPath, "");
+      const service = createFridayRustHubWorkflowCatalogBridgeService({ repoRoot: scratch, dbPath });
+
+      await expect(
+        service.mutateCatalog({ op: "publish", workflowId: "wf-no-bin", version: 1 }),
+      ).rejects.toMatchObject({
+        code: "MISSION_SPINE_RUST_WORKFLOW_CATALOG_BRIDGE_UNAVAILABLE",
+        httpStatus: 503,
+        message: expect.stringContaining("requires a prebuilt binary"),
+      });
+    } finally {
+      if (previousBin === undefined) {
+        delete process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN;
+      } else {
+        process.env.FRIDAY_HUB_WORKFLOW_CATALOG_BIN = previousBin;
+      }
+      if (previousRustRoot === undefined) {
+        delete process.env.FRIDAY_MISSION_SPINE_RUST_CORE_ROOT;
+      } else {
+        process.env.FRIDAY_MISSION_SPINE_RUST_CORE_ROOT = previousRustRoot;
+      }
+    }
   });
 
   it("update: passes --expected-revision and the tri-state clear, never a verbatim body", async () => {
