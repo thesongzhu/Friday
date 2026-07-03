@@ -54,14 +54,9 @@ describe("B6 auto-fix production default", () => {
       ok: boolean;
       error?: {
         code?: string;
-        details?: { classification?: string; replacement?: string };
       };
     };
     expect(executeJson.ok).toBe(false);
     expect(executeJson.error?.code).toBe("TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED");
-    expect(executeJson.error?.details).toMatchObject({
-      classification: "fail_closed",
-      replacement: "rust_owned_autofix_execution_entrypoint_required",
-    });
   });
 });

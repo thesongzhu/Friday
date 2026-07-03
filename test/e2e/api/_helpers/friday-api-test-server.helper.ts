@@ -239,7 +239,7 @@ export async function createFridayApiTestEnv(
       nowIso: () => NOW,
       // TS Runtime Retirement (G1): opt in so the route-backed executeAction /
       // run-ready / dispatcher paths reach the now-method-guarded execute().
-      allowTestOnlyAutoFixExecution: options.allowTestOnlyAutoFixExecution ?? true,
+      allowTestOnlyAutoFixExecution: options.allowTestOnlyAutoFixExecution ?? false,
     })
     : undefined;
   const selfHealingService = selfLearningRuntime
@@ -288,7 +288,7 @@ export async function createFridayApiTestEnv(
     autoFix: selfHealingService
       ? {
           service: selfHealingService,
-          allowTestOnlyAutoFixExecution: options.allowTestOnlyAutoFixExecution ?? true,
+          allowTestOnlyAutoFixExecution: options.allowTestOnlyAutoFixExecution ?? false,
         }
       : undefined,
     uix: uixService ? { service: uixService } : undefined,
