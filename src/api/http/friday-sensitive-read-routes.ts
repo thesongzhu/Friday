@@ -48,18 +48,22 @@
  *   - /v1/system/remote/sessions  remote session inventory / posture (GET list) — gated
  *                    2026-06-24 (operator-authorized). POST create / POST heartbeat / DELETE
  *                    under this prefix are mutations (unaffected by this read floor).
+ *   - /v1/uix/user-profile and /v1/uix/learned-facts  personal UX profile / learned preference
+ *                    facts. These are already fail-closed at the route requireUserId helper
+ *                    (cr02-03 / #1450); exact-path floor entries keep the central read
+ *                    classification honest without over-flooring anonymous setup/template UX
+ *                    surfaces under the broader /v1/uix prefix.
  *
  * Intentionally NOT gated here (kept anonymous): health, setup, onboarding, auth
  * bootstrap/login/refresh, version/status/capabilities, and the core no-login UX surfaces
  * (agent, chat, skills, workflows, …). Mutations on public routes are already fail-closed by
  * the public-mutation safety floor; this gate closes the read side for sensitive surfaces.
  *
- * Known-ungated personal/posture surfaces deliberately left OUT of this targeted scope
- * (recorded so they are not silently dropped — candidates for a follow-up classification, NOT
- * closed here): /v1/uix/learned-facts, /v1/uix/user-profile. Each needs its own per-handler
- * review before gating. (The provider-spend and remote-device/session posture surfaces that
- * previously sat on this deferred list were reviewed and gated 2026-06-24 — see the prefixes
- * above.)
+ * The historical /v1/uix personal-read gap is not left open: /v1/uix/user-profile and
+ * /v1/uix/learned-facts are bound-principal-gated in their handlers and redundantly classified
+ * here as exact sensitive-read paths. Broader systemic public-GET classification remains a
+ * separate policy hardening track; do not replace this targeted list with a blanket /v1/uix
+ * prefix without auditing setup/onboarding/template consumers.
  */
 export const FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES: readonly string[] = [
   "/v1/memory",
@@ -79,6 +83,8 @@ export const FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES: readonly string[] = [
   "/v1/providers/budget",
   "/v1/system/remote/devices",
   "/v1/system/remote/sessions",
+  "/v1/uix/user-profile",
+  "/v1/uix/learned-facts",
 ];
 
 /**
