@@ -31,9 +31,9 @@ function StatusBadge({ status }: { status: ToolCallViewModel["status"] }) {
         status === "running" &&
           "animate-pulse bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]",
         status === "completed" &&
-          "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+          "bg-[color:var(--ok-soft)] text-[color:var(--ok)]",
         status === "failed" &&
-          "bg-red-500/10 text-red-600 dark:text-red-400",
+          "bg-[color:var(--danger-soft)] text-[color:var(--danger)]",
       )}
     >
       {status}
@@ -170,8 +170,8 @@ export function ChatToolActivity({ toolCalls, activeTool }: ChatToolActivityProp
                     call.status === "running"
                       ? "animate-pulse bg-[color:var(--color-accent)]"
                       : call.status === "completed"
-                        ? "bg-emerald-500"
-                        : "bg-red-500",
+                        ? "bg-[color:var(--ok)]"
+                        : "bg-[color:var(--danger)]",
                   )}
                 />
                 <span className="font-medium">{call.toolName}</span>

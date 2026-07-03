@@ -50,9 +50,9 @@ const EVENT_DOTS: Record<string, string> = {
 
 const RECEIPT_TONE_CLASSES = {
   neutral: "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] text-[color:var(--color-text-secondary)]",
-  warning: "border-amber-300 bg-amber-50 text-amber-900",
-  danger: "border-red-300 bg-red-50 text-red-900",
-  success: "border-emerald-300 bg-emerald-50 text-emerald-900",
+  warning: "border-[color:var(--warn-soft)] bg-[color:var(--warn-soft)] text-[color:var(--warn)]",
+  danger: "border-[color:var(--danger-soft)] bg-[color:var(--danger-soft)] text-[color:var(--danger)]",
+  success: "border-[color:var(--ok-soft)] bg-[color:var(--ok-soft)] text-[color:var(--ok)]",
 } as const;
 
 function formatPayload(event: RunAuditEvent): string {

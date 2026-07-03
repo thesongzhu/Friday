@@ -22,9 +22,9 @@ function statusBadge(status: string | undefined, locale: import("@/lib/i18n/loca
     case "deferred":
       return <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-bg-subtle)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-text-secondary)]">{localize(locale, "待加载", "Deferred")}</span>;
     case "error":
-      return <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium status-error">{localize(locale, "错误", "Error")}</span>;
+      return <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--danger-soft)] px-2 py-0.5 text-xs font-medium status-error">{localize(locale, "错误", "Error")}</span>;
     case "disconnected":
-      return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium status-warning">{localize(locale, "已断开", "Disconnected")}</span>;
+      return <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--warn-soft)] px-2 py-0.5 text-xs font-medium status-warning">{localize(locale, "已断开", "Disconnected")}</span>;
     default:
       return <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-bg-subtle)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-text-tertiary)]">{localize(locale, "未知", "Unknown")}</span>;
   }

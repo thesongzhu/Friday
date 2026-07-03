@@ -11,8 +11,8 @@ export interface AutonomousStepIndicatorProps {
 const DOT_CLASSES: Record<string, string> = {
   pending: "bg-[color:var(--color-text-faint)]",
   executing: "bg-[color:var(--color-accent)] animate-pulse",
-  completed: "bg-emerald-500",
-  failed: "bg-red-500",
+  completed: "bg-[color:var(--ok)]",
+  failed: "bg-[color:var(--danger)]",
 };
 
 export function AutonomousStepIndicator({ goal, locale }: AutonomousStepIndicatorProps) {
@@ -54,15 +54,15 @@ export function AutonomousStepIndicator({ goal, locale }: AutonomousStepIndicato
           <div className="flex items-center gap-1.5">
             {goal.status === "completed" ? (
               <>
-                <Check className="h-3.5 w-3.5 text-emerald-500" />
-                <span className="text-xs font-medium text-emerald-600">
+                <Check className="h-3.5 w-3.5 text-[color:var(--ok)]" />
+                <span className="text-xs font-medium text-[color:var(--ok)]">
                   {localize(locale, "完成", "Done")}
                 </span>
               </>
             ) : (
               <>
-                <X className="h-3.5 w-3.5 text-red-500" />
-                <span className="text-xs font-medium text-red-600">
+                <X className="h-3.5 w-3.5 text-[color:var(--danger)]" />
+                <span className="text-xs font-medium text-[color:var(--danger)]">
                   {localize(locale, "失败", "Failed")}
                 </span>
               </>

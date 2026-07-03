@@ -499,7 +499,7 @@ function DraftInspector(props: {
         />
       </label>
       {props.externalDraftReviewRequired ? (
-        <label className="flex items-start gap-3 rounded-[18px] border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        <label className="flex items-start gap-3 rounded-[18px] border border-[color:var(--warn-soft)] bg-[color:var(--warn-soft)] p-3 text-xs text-[color:var(--warn)]">
           <input
             type="checkbox"
             data-testid="workflow-builder-external-draft-review-confirm"

@@ -1919,12 +1919,12 @@ export function SetupPage() {
                   </div>
                 ) : null}
                 {openAICodexOAuth.status === "connected" ? (
-                  <p className="mt-3 text-xs font-medium text-green-700">
+                  <p className="mt-3 text-xs font-medium text-[color:var(--ok)]">
                     {localize(locale, "已连接，可以继续。", "Connected. You can continue.")}
                   </p>
                 ) : null}
                 {openAICodexOAuth.status === "error" && openAICodexOAuth.message ? (
-                  <p className="mt-3 text-xs font-medium text-red-700">{openAICodexOAuth.message}</p>
+                  <p className="mt-3 text-xs font-medium text-[color:var(--danger)]">{openAICodexOAuth.message}</p>
                 ) : null}
               </div>
             </div>
@@ -1948,9 +1948,9 @@ export function SetupPage() {
         {providerFeedback.status !== "idle" && (
           <div className={`mt-5 w-full max-w-md rounded-2xl border px-4 py-3 text-left shadow-sm ${
             providerFeedback.status === "error"
-              ? "border-red-200 bg-red-50"
+              ? "border-[color:var(--danger-soft)] bg-[color:var(--danger-soft)]"
               : providerFeedback.status === "saved"
-                ? "border-green-200 bg-green-50"
+                ? "border-[color:var(--ok-soft)] bg-[color:var(--ok-soft)]"
                 : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)]"
           }`}
           >
@@ -1958,16 +1958,16 @@ export function SetupPage() {
               {providerFeedback.status === "checking" ? (
                 <RefreshCw className="mt-0.5 h-4 w-4 animate-spin text-[color:var(--color-accent)]" />
               ) : providerFeedback.status === "saved" ? (
-                <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-700" />
+                <CheckCircle2 className="mt-0.5 h-4 w-4 text-[color:var(--ok)]" />
               ) : (
-                <AlertCircle className="mt-0.5 h-4 w-4 text-red-700" />
+                <AlertCircle className="mt-0.5 h-4 w-4 text-[color:var(--danger)]" />
               )}
               <div className="min-w-0">
                 <p className={`text-sm font-semibold ${
                   providerFeedback.status === "error"
-                    ? "text-red-900"
+                    ? "text-[color:var(--danger)]"
                     : providerFeedback.status === "saved"
-                      ? "text-green-900"
+                      ? "text-[color:var(--ok)]"
                       : "text-[color:var(--color-text-primary)]"
                 }`}
                 >
@@ -1979,9 +1979,9 @@ export function SetupPage() {
                 </p>
                 <p className={`mt-1 text-xs leading-5 ${
                   providerFeedback.status === "error"
-                    ? "text-red-800"
+                    ? "text-[color:var(--danger)]"
                     : providerFeedback.status === "saved"
-                      ? "text-green-800"
+                      ? "text-[color:var(--ok)]"
                       : "text-[color:var(--color-text-secondary)]"
                 }`}
                 >

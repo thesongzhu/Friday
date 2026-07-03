@@ -52,14 +52,14 @@ export function LearningInsightCard() {
       value: overview.coverage.patterns,
       label: localize(locale, "模式", "Patterns"),
       tone: "text-[color:var(--color-success)]",
-      bg: "bg-emerald-50",
+      bg: "bg-[color:var(--ok-soft)]",
     },
     {
       icon: Shield,
       value: autoFixBuckets.verifiedRepairs,
       label: localize(locale, "已验证修复", "Verified repairs"),
       tone: "text-[color:var(--color-warning)]",
-      bg: "bg-amber-50",
+      bg: "bg-[color:var(--warn-soft)]",
     },
     {
       icon: Brain,
@@ -238,8 +238,8 @@ export function LearningInsightCard() {
           )}
 
           {autoFixBuckets.recordedActions > 0 && overview.rollbackHotspots.length === 0 && (
-            <div className="mt-3 rounded-xl bg-emerald-50 px-3 py-2">
-              <p className="text-xs text-emerald-700">
+            <div className="mt-3 rounded-xl bg-[color:var(--ok-soft)] px-3 py-2">
+              <p className="text-xs text-[color:var(--ok)]">
                 {localize(
                   locale,
                   `Friday 已记录 ${String(autoFixBuckets.recordedActions)} 个修复动作，${String(autoFixBuckets.verifiedRepairs)} 个已验证完成。`,
@@ -250,8 +250,8 @@ export function LearningInsightCard() {
           )}
 
           {overview.rollbackHotspots.length > 0 && (
-            <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2">
-              <p className="text-xs text-amber-700">
+            <div className="mt-3 rounded-xl bg-[color:var(--warn-soft)] px-3 py-2">
+              <p className="text-xs text-[color:var(--warn)]">
                 {localize(
                   locale,
                   `Friday 在 ${String(overview.rollbackHotspots.length)} 个地方尝试修复后发现效果不好，已自动撤销并在学习更好的方案。`,
