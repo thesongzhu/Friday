@@ -28,6 +28,16 @@ describe("UI-W1 desktop shell contract", () => {
     expect(source).toContain("data-testid=\"desktop-proof-timeline\"");
   });
 
+  it("keeps a visible desktop Friday brand anchor before the hidden mobile top bar", () => {
+    const shell = shellSource();
+    const topBar = readFileSync("ui/src/components/console/shell/top-bar.tsx", "utf8");
+
+    expect(shell.indexOf("<TopBar")).toBeGreaterThan(-1);
+    expect(shell.indexOf("<MobileTopBar")).toBeGreaterThan(shell.indexOf("<TopBar"));
+    expect(topBar).toContain('data-testid="desktop-friday-brand"');
+    expect(topBar).toContain(">Friday<");
+  });
+
   it("uses the selected desktop rail and inspector dimensions", () => {
     const tokens = tokenSource();
     const rightRail = rightRailSource();
