@@ -1,0 +1,1941 @@
+{
+  "version": "anchor-prototype-20260605-9",
+  "refH": 328,
+  "frameW": 478,
+  "frameH": 364,
+  "baselineAy": 345,
+  "clips": {
+    "idle": {
+      "type": "inplace",
+      "meta": {
+        "movement": "stationary",
+        "role": "base",
+        "loops": 0,
+        "directional": false,
+        "intent": "breathe",
+        "energy": "neutral"
+      },
+      "groundMode": "foot",
+      "frames": [
+        [
+          0,
+          0,
+          478,
+          364
+        ],
+        [
+          480,
+          0,
+          478,
+          364
+        ],
+        [
+          960,
+          0,
+          478,
+          364
+        ],
+        [
+          1440,
+          0,
+          478,
+          364
+        ],
+        [
+          1920,
+          0,
+          478,
+          364
+        ],
+        [
+          2400,
+          0,
+          478,
+          364
+        ],
+        [
+          2880,
+          0,
+          478,
+          364
+        ],
+        [
+          3360,
+          0,
+          478,
+          364
+        ]
+      ],
+      "anchors": [
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            140,
+            68,
+            222,
+            278
+          ],
+          "drawAx": 99.0,
+          "drawAy": 277,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            142,
+            76,
+            220,
+            270
+          ],
+          "drawAx": 97.0,
+          "drawAy": 269,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            142,
+            69,
+            211,
+            277
+          ],
+          "drawAx": 97.0,
+          "drawAy": 276,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            142,
+            68,
+            210,
+            278
+          ],
+          "drawAx": 97.0,
+          "drawAy": 277,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            142,
+            68,
+            211,
+            278
+          ],
+          "drawAx": 97.0,
+          "drawAy": 277,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            134,
+            68,
+            222,
+            278
+          ],
+          "drawAx": 105.0,
+          "drawAy": 277,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            129,
+            80,
+            223,
+            266
+          ],
+          "drawAx": 110.0,
+          "drawAy": 265,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            132,
+            80,
+            220,
+            266
+          ],
+          "drawAx": 107.0,
+          "drawAy": 265,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        }
+      ],
+      "fps": 230
+    },
+    "sit": {
+      "type": "inplace",
+      "meta": {
+        "movement": "stationary",
+        "role": "base",
+        "loops": 0,
+        "directional": false,
+        "intent": "settle",
+        "energy": "calm"
+      },
+      "groundMode": "foot",
+      "frames": [
+        [
+          0,
+          0,
+          478,
+          364
+        ],
+        [
+          480,
+          0,
+          478,
+          364
+        ],
+        [
+          960,
+          0,
+          478,
+          364
+        ],
+        [
+          1440,
+          0,
+          478,
+          364
+        ],
+        [
+          1920,
+          0,
+          478,
+          364
+        ],
+        [
+          2400,
+          0,
+          478,
+          364
+        ],
+        [
+          2880,
+          0,
+          478,
+          364
+        ],
+        [
+          3360,
+          0,
+          478,
+          364
+        ]
+      ],
+      "anchors": [
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            134,
+            74,
+            218,
+            272
+          ],
+          "drawAx": 105.0,
+          "drawAy": 271,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            134,
+            74,
+            218,
+            272
+          ],
+          "drawAx": 105.0,
+          "drawAy": 271,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            134,
+            74,
+            217,
+            272
+          ],
+          "drawAx": 105.0,
+          "drawAy": 271,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            134,
+            73,
+            217,
+            273
+          ],
+          "drawAx": 105.0,
+          "drawAy": 272,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            133,
+            74,
+            218,
+            272
+          ],
+          "drawAx": 106.0,
+          "drawAy": 271,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            133,
+            74,
+            218,
+            272
+          ],
+          "drawAx": 106.0,
+          "drawAy": 271,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            133,
+            74,
+            219,
+            272
+          ],
+          "drawAx": 106.0,
+          "drawAy": 271,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            134,
+            74,
+            217,
+            272
+          ],
+          "drawAx": 105.0,
+          "drawAy": 271,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        }
+      ],
+      "fps": 230
+    },
+    "walk": {
+      "type": "loco",
+      "meta": {
+        "movement": "directional",
+        "role": "locomotion",
+        "loops": 0,
+        "directional": true,
+        "intent": "explore",
+        "energy": "steady"
+      },
+      "groundMode": "foot",
+      "frames": [
+        [
+          0,
+          0,
+          478,
+          364
+        ],
+        [
+          480,
+          0,
+          478,
+          364
+        ],
+        [
+          960,
+          0,
+          478,
+          364
+        ],
+        [
+          1440,
+          0,
+          478,
+          364
+        ],
+        [
+          1920,
+          0,
+          478,
+          364
+        ],
+        [
+          2400,
+          0,
+          478,
+          364
+        ],
+        [
+          2880,
+          0,
+          478,
+          364
+        ],
+        [
+          3360,
+          0,
+          478,
+          364
+        ]
+      ],
+      "anchors": [
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            144,
+            184,
+            212,
+            162
+          ],
+          "drawAx": 95.0,
+          "drawAy": 161,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            147,
+            180,
+            208,
+            166
+          ],
+          "drawAx": 92.0,
+          "drawAy": 165,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            146,
+            187,
+            213,
+            159
+          ],
+          "drawAx": 93.0,
+          "drawAy": 158,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            146,
+            183,
+            209,
+            163
+          ],
+          "drawAx": 93.0,
+          "drawAy": 162,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            149,
+            186,
+            203,
+            160
+          ],
+          "drawAx": 90.0,
+          "drawAy": 159,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            145,
+            182,
+            211,
+            164
+          ],
+          "drawAx": 94.0,
+          "drawAy": 163,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            146,
+            180,
+            203,
+            166
+          ],
+          "drawAx": 93.0,
+          "drawAy": 165,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            146,
+            190,
+            208,
+            156
+          ],
+          "drawAx": 93.0,
+          "drawAy": 155,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        }
+      ],
+      "fps": 175,
+      "stridePx": 28
+    },
+    "run": {
+      "type": "loco",
+      "meta": {
+        "movement": "directional",
+        "role": "locomotion",
+        "loops": 0,
+        "directional": true,
+        "intent": "burst",
+        "energy": "high"
+      },
+      "groundMode": "foot",
+      "frames": [
+        [
+          0,
+          0,
+          478,
+          364
+        ],
+        [
+          480,
+          0,
+          478,
+          364
+        ],
+        [
+          960,
+          0,
+          478,
+          364
+        ],
+        [
+          1440,
+          0,
+          478,
+          364
+        ],
+        [
+          1920,
+          0,
+          478,
+          364
+        ],
+        [
+          2400,
+          0,
+          478,
+          364
+        ],
+        [
+          2880,
+          0,
+          478,
+          364
+        ],
+        [
+          3360,
+          0,
+          478,
+          364
+        ]
+      ],
+      "anchors": [
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            135,
+            177,
+            218,
+            169
+          ],
+          "drawAx": 104.0,
+          "drawAy": 168,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            123,
+            186,
+            235,
+            160
+          ],
+          "drawAx": 116.0,
+          "drawAy": 159,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            138,
+            185,
+            208,
+            161
+          ],
+          "drawAx": 101.0,
+          "drawAy": 160,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            143,
+            183,
+            197,
+            163
+          ],
+          "drawAx": 96.0,
+          "drawAy": 162,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            137,
+            180,
+            214,
+            166
+          ],
+          "drawAx": 102.0,
+          "drawAy": 165,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            125,
+            183,
+            231,
+            163
+          ],
+          "drawAx": 114.0,
+          "drawAy": 162,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            142,
+            182,
+            202,
+            164
+          ],
+          "drawAx": 97.0,
+          "drawAy": 163,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            142,
+            179,
+            203,
+            167
+          ],
+          "drawAx": 97.0,
+          "drawAy": 166,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        }
+      ],
+      "fps": 145,
+      "stridePx": 46
+    },
+    "happy": {
+      "type": "inplace",
+      "meta": {
+        "movement": "stationary",
+        "role": "reaction",
+        "loops": 2,
+        "directional": false,
+        "intent": "greet",
+        "energy": "warm"
+      },
+      "groundMode": "foot",
+      "frames": [
+        [
+          0,
+          0,
+          478,
+          364
+        ],
+        [
+          480,
+          0,
+          478,
+          364
+        ],
+        [
+          960,
+          0,
+          478,
+          364
+        ],
+        [
+          1440,
+          0,
+          478,
+          364
+        ],
+        [
+          1920,
+          0,
+          478,
+          364
+        ],
+        [
+          2400,
+          0,
+          478,
+          364
+        ],
+        [
+          2880,
+          0,
+          478,
+          364
+        ],
+        [
+          3360,
+          0,
+          478,
+          364
+        ]
+      ],
+      "anchors": [
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            124,
+            84,
+            231,
+            262
+          ],
+          "drawAx": 115.0,
+          "drawAy": 261,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            125,
+            96,
+            232,
+            250
+          ],
+          "drawAx": 114.0,
+          "drawAy": 249,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            127,
+            85,
+            232,
+            261
+          ],
+          "drawAx": 112.0,
+          "drawAy": 260,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            128,
+            86,
+            230,
+            260
+          ],
+          "drawAx": 111.0,
+          "drawAy": 259,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            129,
+            73,
+            229,
+            273
+          ],
+          "drawAx": 110.0,
+          "drawAy": 272,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            127,
+            92,
+            232,
+            254
+          ],
+          "drawAx": 112.0,
+          "drawAy": 253,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            128,
+            84,
+            232,
+            262
+          ],
+          "drawAx": 111.0,
+          "drawAy": 261,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            128,
+            86,
+            231,
+            260
+          ],
+          "drawAx": 111.0,
+          "drawAy": 259,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        }
+      ],
+      "fps": 210
+    },
+    "beg": {
+      "type": "inplace",
+      "meta": {
+        "movement": "stationary",
+        "role": "reaction",
+        "loops": 2,
+        "directional": false,
+        "intent": "ask",
+        "energy": "warm"
+      },
+      "groundMode": "foot",
+      "frames": [
+        [
+          0,
+          0,
+          478,
+          364
+        ],
+        [
+          480,
+          0,
+          478,
+          364
+        ],
+        [
+          960,
+          0,
+          478,
+          364
+        ],
+        [
+          1440,
+          0,
+          478,
+          364
+        ],
+        [
+          1920,
+          0,
+          478,
+          364
+        ],
+        [
+          2400,
+          0,
+          478,
+          364
+        ],
+        [
+          2880,
+          0,
+          478,
+          364
+        ],
+        [
+          3360,
+          0,
+          478,
+          364
+        ]
+      ],
+      "anchors": [
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            132,
+            100,
+            223,
+            246
+          ],
+          "drawAx": 107.0,
+          "drawAy": 245,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            132,
+            100,
+            224,
+            246
+          ],
+          "drawAx": 107.0,
+          "drawAy": 245,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            132,
+            100,
+            214,
+            246
+          ],
+          "drawAx": 107.0,
+          "drawAy": 245,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            118,
+            103,
+            234,
+            243
+          ],
+          "drawAx": 121.0,
+          "drawAy": 242,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            132,
+            100,
+            222,
+            246
+          ],
+          "drawAx": 107.0,
+          "drawAy": 245,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            127,
+            115,
+            234,
+            231
+          ],
+          "drawAx": 112.0,
+          "drawAy": 230,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            131,
+            99,
+            223,
+            247
+          ],
+          "drawAx": 108.0,
+          "drawAy": 246,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            131,
+            102,
+            226,
+            244
+          ],
+          "drawAx": 108.0,
+          "drawAy": 243,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        }
+      ],
+      "fps": 210
+    },
+    "play": {
+      "type": "inplace",
+      "meta": {
+        "movement": "stationary",
+        "role": "play",
+        "loops": 2,
+        "directional": false,
+        "intent": "invite",
+        "energy": "playful"
+      },
+      "groundMode": "foot",
+      "frames": [
+        [
+          0,
+          0,
+          478,
+          364
+        ],
+        [
+          480,
+          0,
+          478,
+          364
+        ],
+        [
+          960,
+          0,
+          478,
+          364
+        ],
+        [
+          1440,
+          0,
+          478,
+          364
+        ],
+        [
+          1920,
+          0,
+          478,
+          364
+        ],
+        [
+          2400,
+          0,
+          478,
+          364
+        ],
+        [
+          2880,
+          0,
+          478,
+          364
+        ],
+        [
+          3360,
+          0,
+          478,
+          364
+        ]
+      ],
+      "anchors": [
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            136,
+            136,
+            212,
+            210
+          ],
+          "drawAx": 103.0,
+          "drawAy": 209,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            127,
+            146,
+            227,
+            200
+          ],
+          "drawAx": 112.0,
+          "drawAy": 199,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            123,
+            135,
+            228,
+            211
+          ],
+          "drawAx": 116.0,
+          "drawAy": 210,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            111,
+            127,
+            243,
+            219
+          ],
+          "drawAx": 128.0,
+          "drawAy": 218,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            113,
+            126,
+            242,
+            220
+          ],
+          "drawAx": 126.0,
+          "drawAy": 219,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            135,
+            146,
+            214,
+            200
+          ],
+          "drawAx": 104.0,
+          "drawAy": 199,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            130,
+            146,
+            224,
+            200
+          ],
+          "drawAx": 109.0,
+          "drawAy": 199,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            134,
+            146,
+            218,
+            200
+          ],
+          "drawAx": 105.0,
+          "drawAy": 199,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        }
+      ],
+      "fps": 210
+    },
+    "dance": {
+      "type": "inplace",
+      "meta": {
+        "movement": "stationary",
+        "role": "play",
+        "loops": 2,
+        "directional": false,
+        "intent": "celebrate",
+        "energy": "playful"
+      },
+      "groundMode": "union",
+      "frames": [
+        [
+          0,
+          0,
+          478,
+          364
+        ],
+        [
+          480,
+          0,
+          478,
+          364
+        ],
+        [
+          960,
+          0,
+          478,
+          364
+        ],
+        [
+          1440,
+          0,
+          478,
+          364
+        ],
+        [
+          1920,
+          0,
+          478,
+          364
+        ],
+        [
+          2400,
+          0,
+          478,
+          364
+        ],
+        [
+          2880,
+          0,
+          478,
+          364
+        ],
+        [
+          3360,
+          0,
+          478,
+          364
+        ]
+      ],
+      "anchors": [
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            128,
+            124,
+            231,
+            222
+          ],
+          "drawAx": 111.0,
+          "drawAy": 221,
+          "grounded": false,
+          "mode": "union",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            139,
+            97,
+            212,
+            249
+          ],
+          "drawAx": 100.0,
+          "drawAy": 248,
+          "grounded": false,
+          "mode": "union",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            144,
+            57,
+            198,
+            289
+          ],
+          "drawAx": 95.0,
+          "drawAy": 288,
+          "grounded": false,
+          "mode": "union",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            144,
+            28,
+            197,
+            314
+          ],
+          "drawAx": 95.0,
+          "drawAy": 317,
+          "grounded": false,
+          "mode": "union",
+          "foot": 341,
+          "gap": 22
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            144,
+            28,
+            197,
+            314
+          ],
+          "drawAx": 95.0,
+          "drawAy": 317,
+          "grounded": false,
+          "mode": "union",
+          "foot": 341,
+          "gap": 22
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            143,
+            69,
+            204,
+            273
+          ],
+          "drawAx": 96.0,
+          "drawAy": 276,
+          "grounded": false,
+          "mode": "union",
+          "foot": 341,
+          "gap": 22
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            150,
+            99,
+            197,
+            247
+          ],
+          "drawAx": 89.0,
+          "drawAy": 246,
+          "grounded": false,
+          "mode": "union",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            132,
+            124,
+            226,
+            222
+          ],
+          "drawAx": 107.0,
+          "drawAy": 221,
+          "grounded": false,
+          "mode": "union",
+          "foot": 345,
+          "gap": 18
+        }
+      ],
+      "fps": 165
+    },
+    "sleep": {
+      "type": "inplace",
+      "meta": {
+        "movement": "stationary",
+        "role": "long_rest",
+        "loops": 0,
+        "directional": false,
+        "intent": "recover",
+        "energy": "low"
+      },
+      "groundMode": "foot",
+      "frames": [
+        [
+          0,
+          0,
+          478,
+          364
+        ],
+        [
+          480,
+          0,
+          478,
+          364
+        ],
+        [
+          960,
+          0,
+          478,
+          364
+        ],
+        [
+          1440,
+          0,
+          478,
+          364
+        ],
+        [
+          1920,
+          0,
+          478,
+          364
+        ],
+        [
+          2400,
+          0,
+          478,
+          364
+        ],
+        [
+          2880,
+          0,
+          478,
+          364
+        ],
+        [
+          3360,
+          0,
+          478,
+          364
+        ]
+      ],
+      "anchors": [
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            154,
+            138,
+            216,
+            208
+          ],
+          "drawAx": 85.0,
+          "drawAy": 207,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            144,
+            139,
+            223,
+            207
+          ],
+          "drawAx": 95.0,
+          "drawAy": 206,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            141,
+            161,
+            233,
+            185
+          ],
+          "drawAx": 98.0,
+          "drawAy": 184,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            92,
+            160,
+            275,
+            186
+          ],
+          "drawAx": 147.0,
+          "drawAy": 185,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            148,
+            146,
+            221,
+            200
+          ],
+          "drawAx": 91.0,
+          "drawAy": 199,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            147,
+            147,
+            221,
+            199
+          ],
+          "drawAx": 92.0,
+          "drawAy": 198,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            147,
+            144,
+            220,
+            202
+          ],
+          "drawAx": 92.0,
+          "drawAy": 201,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            151,
+            150,
+            221,
+            196
+          ],
+          "drawAx": 88.0,
+          "drawAy": 195,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        }
+      ],
+      "fps": 210
+    },
+    "back": {
+      "type": "inplace",
+      "meta": {
+        "movement": "stationary",
+        "role": "look_away",
+        "loops": 1,
+        "directional": false,
+        "intent": "notice",
+        "energy": "curious"
+      },
+      "groundMode": "foot",
+      "frames": [
+        [
+          0,
+          0,
+          478,
+          364
+        ],
+        [
+          480,
+          0,
+          478,
+          364
+        ],
+        [
+          960,
+          0,
+          478,
+          364
+        ],
+        [
+          1440,
+          0,
+          478,
+          364
+        ],
+        [
+          1920,
+          0,
+          478,
+          364
+        ],
+        [
+          2400,
+          0,
+          478,
+          364
+        ],
+        [
+          2880,
+          0,
+          478,
+          364
+        ],
+        [
+          3360,
+          0,
+          478,
+          364
+        ]
+      ],
+      "anchors": [
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            156,
+            93,
+            172,
+            253
+          ],
+          "drawAx": 83.0,
+          "drawAy": 252,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            156,
+            93,
+            172,
+            253
+          ],
+          "drawAx": 83.0,
+          "drawAy": 252,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            155,
+            93,
+            173,
+            253
+          ],
+          "drawAx": 84.0,
+          "drawAy": 252,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            156,
+            93,
+            172,
+            253
+          ],
+          "drawAx": 83.0,
+          "drawAy": 252,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            156,
+            93,
+            173,
+            253
+          ],
+          "drawAx": 83.0,
+          "drawAy": 252,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            154,
+            93,
+            174,
+            253
+          ],
+          "drawAx": 85.0,
+          "drawAy": 252,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            155,
+            93,
+            173,
+            253
+          ],
+          "drawAx": 84.0,
+          "drawAy": 252,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        },
+        {
+          "ax": 239.0,
+          "ay": 345,
+          "contentRect": [
+            154,
+            93,
+            173,
+            253
+          ],
+          "drawAx": 85.0,
+          "drawAy": 252,
+          "grounded": true,
+          "mode": "foot",
+          "foot": 345,
+          "gap": 18
+        }
+      ],
+      "fps": 210
+    }
+  }
+}

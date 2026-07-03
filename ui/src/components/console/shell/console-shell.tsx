@@ -124,8 +124,6 @@ export function ConsoleShell() {
   );
 
   const isOnChatPage = location.pathname === "/chat";
-  const showDesktopTopBar = location.pathname !== "/home";
-
   return (
     <div
       className="min-h-screen"
@@ -134,32 +132,22 @@ export function ConsoleShell() {
         color: "var(--ink-900)",
       }}
     >
-      <div className="relative flex min-h-screen w-full lg:h-screen lg:overflow-hidden">
-        <Rail
-          collapsed={railCollapsed}
-          onToggleCollapse={() => {
-            setRailCollapsed((v) => {
-              const next = !v;
-              writeCollapsed(next);
-              return next;
-            });
-          }}
-        />
-
+      <div
+        data-ui-shell="desktop-win"
+        className="relative flex min-h-screen w-full flex-col lg:h-screen lg:overflow-hidden lg:p-4"
+      >
         <div
-          ref={mainScrollRef}
-          className={cn(
-            "scrollbar-autohide flex min-w-0 flex-1 flex-col",
-            isOnChatPage ? "overflow-hidden" : "overflow-y-auto",
-          )}
+          className="flex min-h-screen w-full flex-col overflow-hidden lg:min-h-0 lg:flex-1 lg:rounded-[16px] lg:border lg:shadow-[var(--shadow-device)]"
+          style={{
+            background: "var(--paper)",
+            borderColor: "var(--line)",
+          }}
         >
-          {showDesktopTopBar ? (
-            <TopBar
-              currentPageTitle={currentPageTitle}
-              locale={locale}
-              onOpenPalette={() => setPaletteOpen(true)}
-            />
-          ) : null}
+          <TopBar
+            currentPageTitle={currentPageTitle}
+            locale={locale}
+            onOpenPalette={() => setPaletteOpen(true)}
+          />
           <MobileTopBar
             currentPageTitle={currentPageTitle}
             locale={locale}
@@ -229,25 +217,56 @@ export function ConsoleShell() {
 
           <DesktopHubStrip locale={locale} onOpenPalette={() => setPaletteOpen(true)} />
 
-          <main
-            className={cn(
-              "flex w-full flex-1 justify-start px-4 pt-3 lg:px-5 lg:pt-3",
-              isOnChatPage && "min-h-0 pb-3 lg:pb-4",
-            )}
+          <div
+            data-ui-shell="win-body"
+            className="flex min-h-0 flex-1 flex-col lg:grid"
+            style={{
+              gridTemplateColumns: "var(--shell-rail-w) minmax(0, 1fr) var(--shell-right-rail-w-full)",
+              minHeight: "560px",
+            }}
           >
+            <Rail
+              collapsed={railCollapsed}
+              onToggleCollapse={() => {
+                setRailCollapsed((v) => {
+                  const next = !v;
+                  writeCollapsed(next);
+                  return next;
+                });
+              }}
+            />
             <div
-              className={cn("w-full", isOnChatPage && "flex min-h-0 flex-1 flex-col")}
+              ref={mainScrollRef}
+              className={cn(
+                "scrollbar-autohide flex min-w-0 flex-1 flex-col",
+                isOnChatPage ? "overflow-hidden" : "overflow-y-auto",
+              )}
               style={{
-                maxWidth: isOnChatPage ? undefined : "var(--shell-content-max-w)",
+                background: "var(--bg)",
               }}
             >
-              <Outlet />
+              <main
+                className={cn(
+                  "flex w-full flex-1 justify-start px-4 pt-3 lg:px-5 lg:pt-3",
+                  isOnChatPage && "min-h-0 pb-3 lg:pb-4",
+                )}
+              >
+                <div
+                  className={cn("w-full", isOnChatPage && "flex min-h-0 flex-1 flex-col")}
+                  style={{
+                    maxWidth: isOnChatPage ? undefined : "var(--shell-content-max-w)",
+                  }}
+                >
+                  <Outlet />
+                </div>
+              </main>
             </div>
-          </main>
 
+            <RightRail />
+          </div>
+
+          <DesktopBottomDock locale={locale} />
         </div>
-
-        <RightRail />
       </div>
 
       {paletteOpen ? (
@@ -265,6 +284,7 @@ function DesktopHubStrip(props: { locale: "zh" | "en"; onOpenPalette: () => void
 
   return (
     <div
+      data-ui-shell="hubstrip"
       className="hidden items-center gap-2 border-b px-4 py-2 text-xs lg:flex"
       style={{
         background: "var(--surface-glass)",
@@ -308,5 +328,33 @@ function DesktopHubStrip(props: { locale: "zh" | "en"; onOpenPalette: () => void
         className="ml-auto min-h-0 px-2 py-1"
       />
     </div>
+  );
+}
+
+function DesktopBottomDock(props: { locale: "zh" | "en" }) {
+  const { locale } = props;
+
+  return (
+    <section
+      data-ui-shell="dock-bottom"
+      data-testid="desktop-proof-timeline"
+      className="hidden border-t px-[15px] pb-[11px] pt-[9px] lg:block"
+      style={{
+        background: "var(--surface-2)",
+        borderColor: "var(--hair)",
+      }}
+      aria-label={localize(locale, "证明时间线", "Proof timeline")}
+    >
+      <div className="flex items-center gap-2 text-[11px] font-bold uppercase" style={{ color: "var(--ink-soft)" }}>
+        <span>{localize(locale, "证明时间线", "Proof timeline")}</span>
+        <span className="ml-auto text-[10.5px] font-medium normal-case" style={{ color: "var(--faint)" }}>
+          {localize(locale, "当前 surface", "current surface")}
+        </span>
+      </div>
+      <div className="mt-[7px] flex flex-col gap-[3px] font-mono text-[11px]" style={{ color: "var(--muted)" }}>
+        <span>receipt.chain · live-observation · operator-gate</span>
+        <span>pending-review · proof-inspector-right · no-claim-without-evidence</span>
+      </div>
+    </section>
   );
 }
