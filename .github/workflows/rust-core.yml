@@ -1,32 +1,14 @@
 name: Rust Core
 
 # Gates the all-Rust Friday Core workspace (rust-core/) added by the
-# Rust/mobile rewrite. Runs only when rust-core or this workflow changes.
+# Rust/mobile rewrite. Runs on every PR/push because the TS->Rust interop
+# proof bundles a src/** dependency closure that a hand-maintained paths
+# allowlist cannot safely track.
 on:
   push:
     branches:
       - main
-    paths:
-      - "rust-core/**"
-      - ".github/workflows/rust-core.yml"
-      - "src/api/http/routes/friday-memory-spine-routes.ts"
-      - "src/api/mission-spine/friday-memory-spine-dispatch-adapter.ts"
-      - "src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.ts"
-      - "test/interop/**"
-      - "package.json"
-      - "package-lock.json"
-      - "docs/ops/prod-flags-manifest.json"
   pull_request:
-    paths:
-      - "rust-core/**"
-      - ".github/workflows/rust-core.yml"
-      - "src/api/http/routes/friday-memory-spine-routes.ts"
-      - "src/api/mission-spine/friday-memory-spine-dispatch-adapter.ts"
-      - "src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.ts"
-      - "test/interop/**"
-      - "package.json"
-      - "package-lock.json"
-      - "docs/ops/prod-flags-manifest.json"
 
 concurrency:
   group: rust-core-${{ github.ref }}
