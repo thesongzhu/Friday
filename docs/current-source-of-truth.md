@@ -264,7 +264,7 @@ This document is the current architecture reference for steady-state Friday runt
 - Scope taxonomy is defined by the current auth model, including `security.read` / `security.write`, `fleet.read`, `diagnosis.read` / `diagnosis.write`, and the workflow, skill, plugin, and session scopes present in `src/api/model/friday-api-auth.types.ts`.
 - Provider kind and routing semantics are defined by the current provider model and cost-routing types. `openai-compatible` and `google` are canonical provider kinds; historical SSD wording around `"custom"` providers is not the active contract.
 - Anthropic provider auth is API-key only. Anthropic OAuth/bearer/token paths remain fail-closed compatibility surfaces and must not be advertised as supported provider auth modes.
-- OpenAI subscription/Codex account sign-in is **not** a current steady-state auth surface for Friday's `api.openai.com` provider path. The active OpenAI provider contract remains API-scoped `api-key` / `bearer-token` credentials. Subscription-based Codex access should be treated as a future Codex client/backend integration rather than a drop-in OAuth mode for the current HTTP provider path.
+- OpenAI Codex device OAuth is a current user-owned subscription-auth route for the separate `openai-codex` provider kind: `POST /v1/auth/oauth/openai-codex/device/initiate` and `POST /v1/auth/oauth/openai-codex/device/complete` are live provider OAuth surfaces. The `api.openai.com` provider path remains API-scoped `api-key` / `bearer-token`; Codex subscription auth must not be described as a drop-in OAuth mode for that OpenAI API provider.
 
 ## Deep link protocol
 
