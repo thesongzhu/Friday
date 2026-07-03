@@ -7,7 +7,7 @@ describe("resolveFridayCapabilityGates", () => {
     const gates = resolveFridayCapabilityGates({});
 
     expect(gates.desktopEnabled).toBe(false);
-    expect(gates.systemEnabled).toBe(true);
+    expect(gates.systemEnabled).toBe(false);
     expect(gates.discoveryEnabled).toBe(false);
     expect(gates.mcpServerEnabled).toBe(false);
     expect(gates.heartbeatEnabled).toBe(false);

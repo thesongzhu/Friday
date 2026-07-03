@@ -85,14 +85,16 @@ describe("Barrier 5: sever guideLens/setupAssistant companion bypasses", () => {
   let managedSkillsDir: string | null = null;
   let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
   const originalSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+  const originalSystemEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
   const originalTransport = process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
 
   beforeEach(() => {
     process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
     // Use the local in-process companion bridge so the bridge is constructed
     // (non-undefined — proving the gate, not a vacuous undefined-everywhere pass) WITHOUT
-    // starting a unix-socket server. FRIDAY_SYSTEM_ENABLED is unset → systemEnabled true →
+    // starting a unix-socket server. FRIDAY_SYSTEM_ENABLED is explicitly true so
     // the bridge IS built.
+    process.env.FRIDAY_SYSTEM_ENABLED = "true";
     process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT = "in_process";
     autoDetectEnvSnapshot = clearAutoDetectProviderEnv();
     captured.guideLensBridge = undefined;
@@ -108,6 +110,11 @@ describe("Barrier 5: sever guideLens/setupAssistant companion bypasses", () => {
       delete process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
     } else {
       process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = originalSuppression;
+    }
+    if (originalSystemEnabled === undefined) {
+      delete process.env.FRIDAY_SYSTEM_ENABLED;
+    } else {
+      process.env.FRIDAY_SYSTEM_ENABLED = originalSystemEnabled;
     }
     if (originalTransport === undefined) {
       delete process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
