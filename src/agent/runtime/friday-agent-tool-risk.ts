@@ -560,11 +560,29 @@ export function getApprovalRequiredReasonForToolCall(
     }
   }
 
-  // P2-SEC-010: desktop:launch_app requires approval — OS application control
+  // P2-SEC-010 / HR19: desktop OS-control execute actionTypes require approval.
   if (toolName === "desktop") {
     const action = typeof args.action === "string" ? args.action : "";
-    if (action === "launch_app" || action === "close_app") {
-      return "Launching or closing desktop applications requires explicit approval.";
+    const actionType = typeof args.actionType === "string" ? args.actionType : "";
+    const fileOperation = typeof args.operation === "string" ? args.operation : "";
+    const highRiskExecuteActionTypes = new Set([
+      "launch_app",
+      "close_app",
+      "keypress",
+      "type",
+      "click",
+      "drag",
+    ]);
+    const mutatingFileOperations = new Set(["write", "move", "copy", "delete"]);
+    if (
+      action === "launch_app" ||
+      action === "close_app" ||
+      (action === "execute" && highRiskExecuteActionTypes.has(actionType)) ||
+      (action === "execute" &&
+        actionType === "file_operation" &&
+        mutatingFileOperations.has(fileOperation))
+    ) {
+      return "High-risk desktop OS control requires explicit approval.";
     }
   }
 
