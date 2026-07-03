@@ -349,6 +349,27 @@ mod tests {
     }
 
     #[test]
+    fn self_heal_is_not_labeled_no_go_once_autofix_rollback_path_exists() {
+        let t = CapabilityRouteTable::friday_baseline();
+        match t.resolve("self_heal", "desktop") {
+            CapabilityResolution::Disabled {
+                status, blocker, ..
+            } => {
+                assert_eq!(
+                    status,
+                    CapabilityStatus::OperatorGated,
+                    "B6: self_heal has an auto-fix execution + rollback path; the truth label must not keep claiming NO-GO"
+                );
+                assert!(
+                    blocker.contains("auto-fix") && blocker.contains("rollback"),
+                    "B6 blocker must point at the gated auto-fix/rollback path, got {blocker:?}"
+                );
+            }
+            other => panic!("self_heal must stay disabled/gated until production ownership is enabled, got {other:?}"),
+        }
+    }
+
+    #[test]
     #[should_panic(expected = "non-empty exact blocker")]
     fn disabled_entry_without_blocker_is_rejected() {
         // A disabled capability without a truth-label blocker is structurally forbidden.
