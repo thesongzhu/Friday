@@ -54,7 +54,9 @@ describe("UI-W1 desktop shell contract", () => {
     expect(source).toContain("Companion");
     expect(source).toContain("desktop-pet-stage");
     expect(source).toContain("data-friday-pet-stage");
-    expect(source).toContain("pet-host.html");
+    expect(source).toContain("source/pet/g-idle.png");
+    expect(source).not.toContain("<iframe");
+    expect(source).not.toContain("pet-host.html");
     expect(source).not.toContain("Friday status dot");
   });
 });
