@@ -1184,7 +1184,7 @@ export function SettingsPage() {
                   {connectOAuth.status === "starting" || connectOAuth.status === "completing" ? (
                     <RefreshCw className="mt-0.5 h-4 w-4 animate-spin text-[color:var(--color-accent)]" />
                   ) : connectOAuth.status === "connected" ? (
-                    <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-700" />
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 text-[color:var(--ok)]" />
                   ) : (
                     <KeyRound className="mt-0.5 h-4 w-4 text-[color:var(--color-accent)]" />
                   )}
@@ -1217,7 +1217,7 @@ export function SettingsPage() {
                       </div>
                     ) : null}
                     {connectOAuth.status === "error" && connectOAuth.message ? (
-                      <p className="mt-2 text-xs font-medium text-red-700">{connectOAuth.message}</p>
+                      <p className="mt-2 text-xs font-medium text-[color:var(--danger)]">{connectOAuth.message}</p>
                     ) : null}
                   </div>
                 </div>

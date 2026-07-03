@@ -8,10 +8,40 @@
  */
 
 :root {
+  /* ── Canonical gallery tokens (UI-W1) ── */
+  --app-bg: #f7f6f2;
+  --bg: #f4f3f0;
+  --bg-2: #eceae6;
+  --surface: #ffffff;
+  --surface-2: #f6f5f2;
+  --surface-3: #efede9;
+  --paper: rgba(255,255,255,.74);
+  --paper-strong: #ffffff;
+  --ink: #19211e;
+  --ink-soft: #3c4642;
+  --muted: #6c756f;
+  --faint: #97a09a;
+  --line: rgba(26,40,35,.12);
+  --hair: rgba(26,40,35,.08);
+  --accent-ink: #0a5662;
+  --accent-soft: rgba(15,125,140,.12);
+  --coral-soft: rgba(216,99,77,.13);
+  --ok-soft: rgba(39,122,93,.12);
+  --warn-soft: rgba(168,106,29,.13);
+  --danger-soft: rgba(194,73,63,.12);
+  --r-xl: 30px;
+  --r-lg: 22px;
+  --r-md: 15px;
+  --r-sm: 11px;
+  --shadow-soft: 0 1px 2px rgba(16,28,24,.05);
+  --shadow-pop: 0 18px 48px -20px rgba(16,28,24,.3);
+  --shadow-device: 0 40px 90px -36px rgba(16,28,24,.45), 0 8px 24px -12px rgba(16,28,24,.25);
+  --font-desktop: "Space Grotesk", -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+
   /* ── Surfaces ── */
-  --surface-0: #f7f6f2; /* page background */
+  --surface-0: var(--app-bg); /* page background */
   --surface-1: rgba(255, 255, 255, 0.68); /* chrome / elevated panel */
-  --surface-2: rgba(255, 255, 255, 0.78); /* cards / floating */
+  --surface-card: rgba(255, 255, 255, 0.78); /* cards / floating */
   --surface-glass: rgba(255, 255, 255, 0.54);
   --surface-glass-strong: rgba(255, 255, 255, 0.76);
   --surface-border: rgba(18, 40, 45, 0.10);
@@ -24,10 +54,8 @@
 
   /* ── Locked cyan/coral action system ── */
   --accent: #0f7d8c;
-  --accent-soft: rgba(15, 125, 140, 0.12);
   --accent-muted: rgba(15, 125, 140, 0.07);
   --coral: #d8634d;
-  --coral-soft: rgba(216, 99, 77, 0.14);
 
   /* ── Truth colors ── */
   --ok: #277a5d;

@@ -489,14 +489,14 @@ export function ChannelsPage() {
                       isActive
                         ? "bg-[color:var(--color-accent-soft)]"
                         : needsAttention
-                          ? "bg-red-50/50"
+                          ? "bg-[color:var(--danger-soft)]"
                           : "hover:bg-[color:var(--color-bg-subtle)]"
                     }`}
                   >
                     <span className="relative text-lg">
                       {safeChannelEmoji(chKind)}
                       {needsAttention && (
-                        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-red-500" />
+                        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-[color:var(--danger)]" />
                       )}
                     </span>
                     <div className="min-w-0 flex-1">

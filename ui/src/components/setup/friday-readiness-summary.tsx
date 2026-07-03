@@ -222,8 +222,8 @@ export function buildFridayReadinessSummary(
 }
 
 function toneClass(tone: ReadinessBucket["tone"]): string {
-  if (tone === "success") return "border-emerald-200 bg-emerald-50 text-emerald-900";
-  if (tone === "warning") return "border-amber-200 bg-amber-50 text-amber-950";
+  if (tone === "success") return "border-[color:var(--ok-soft)] bg-[color:var(--ok-soft)] text-[color:var(--ok)]";
+  if (tone === "warning") return "border-[color:var(--warn-soft)] bg-[color:var(--warn-soft)] text-[color:var(--warn)]";
   return "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] text-[color:var(--color-text-primary)]";
 }
 

@@ -86,9 +86,9 @@ function normalizeGraphStatus(status?: string): WorkflowGraphNodeStatus {
 }
 
 function graphStatusClass(status: WorkflowGraphNodeStatus): string {
-  if (status === "completed") return "border-emerald-400/60 bg-emerald-500/10";
-  if (status === "failed" || status === "cancelled") return "border-red-400/60 bg-red-500/10";
-  if (status === "running" || status === "queued" || status === "paused") return "border-amber-400/70 bg-amber-500/10";
+  if (status === "completed") return "border-[color:var(--ok-soft)] bg-[color:var(--ok-soft)]";
+  if (status === "failed" || status === "cancelled") return "border-[color:var(--danger-soft)] bg-[color:var(--danger-soft)]";
+  if (status === "running" || status === "queued" || status === "paused") return "border-[color:var(--warn-soft)] bg-[color:var(--warn-soft)]";
   return "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface-strong)]";
 }
 
@@ -486,7 +486,7 @@ export function WorkflowsPage() {
                 <p className="mt-2 text-base font-semibold text-[color:var(--color-text-primary)]">{attentionSummary.title}</p>
                 <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{attentionSummary.summary}</p>
                 {latestDraftRequiresExternalReview ? (
-                  <label className="mt-4 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  <label className="mt-4 flex items-start gap-3 rounded-2xl border border-[color:var(--warn-soft)] bg-[color:var(--warn-soft)] p-3 text-xs text-[color:var(--warn)]">
                     <input
                       type="checkbox"
                       data-testid="workflow-operator-external-draft-review-confirm"

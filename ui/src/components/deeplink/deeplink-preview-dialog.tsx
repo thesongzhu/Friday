@@ -51,9 +51,9 @@ function buildDeepLinkRequestBody(input: string, confirmed?: boolean): DeepLinkR
 function checkLevelBadge(level: string) {
   switch (level) {
     case "blocking":
-      return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 ">Blocking</span>;
+      return <span className="rounded-full bg-[color:var(--danger-soft)] px-2 py-0.5 text-xs font-medium text-[color:var(--danger)]">Blocking</span>;
     case "warning":
-      return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 ">Warning</span>;
+      return <span className="rounded-full bg-[color:var(--warn-soft)] px-2 py-0.5 text-xs font-medium text-[color:var(--warn)]">Warning</span>;
     default:
       return <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-600 ">Advisory</span>;
   }
@@ -111,12 +111,12 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
         />
 
         {previewMutation.error ? (
-          <p className="mt-2 text-xs text-red-600 ">
+          <p className="mt-2 text-xs text-[color:var(--danger)]">
             {previewMutation.error instanceof Error ? previewMutation.error.message : "Preview failed"}
           </p>
         ) : null}
         {applyMutation.error ? (
-          <p className="mt-2 text-xs text-red-600 ">
+          <p className="mt-2 text-xs text-[color:var(--danger)]">
             {applyMutation.error instanceof Error ? applyMutation.error.message : "Import failed"}
           </p>
         ) : null}
@@ -138,11 +138,11 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-[color:var(--color-text-primary)]">{preview.payload.label}</span>
               {preview.verdict === "ready" ? (
-                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 ">Ready</span>
+                <span className="rounded-full bg-[color:var(--ok-soft)] px-2 py-0.5 text-xs font-medium text-[color:var(--ok)]">Ready</span>
               ) : preview.verdict === "needs_review" ? (
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 ">Needs Review</span>
+                <span className="rounded-full bg-[color:var(--warn-soft)] px-2 py-0.5 text-xs font-medium text-[color:var(--warn)]">Needs Review</span>
               ) : (
-                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 ">Blocked</span>
+                <span className="rounded-full bg-[color:var(--danger-soft)] px-2 py-0.5 text-xs font-medium text-[color:var(--danger)]">Blocked</span>
               )}
             </div>
 
@@ -169,7 +169,7 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
             ) : null}
 
             {applyResult ? (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">
+              <div className="rounded-lg border border-[color:var(--ok-soft)] bg-[color:var(--ok-soft)] p-2 text-xs text-[color:var(--ok)]">
                 {applyResult.message}
               </div>
             ) : null}

@@ -250,9 +250,9 @@ export function ChatSidePanel() {
                         key={step.id}
                         className={cn(
                           "h-1.5 w-1.5 rounded-full",
-                          step.status === "completed" ? "bg-emerald-500"
+                          step.status === "completed" ? "bg-[color:var(--ok)]"
                             : step.status === "executing" ? "bg-[color:var(--color-accent)] animate-pulse"
-                            : step.status === "failed" ? "bg-red-500"
+                            : step.status === "failed" ? "bg-[color:var(--danger)]"
                             : "bg-[color:var(--color-text-faint)]",
                         )}
                       />
@@ -333,7 +333,7 @@ export function ChatSidePanel() {
           </button>
         </div>
         <div className="mt-1.5 flex items-center gap-1.5 px-1">
-          <span className="h-[5px] w-[5px] rounded-full bg-emerald-400" />
+          <span className="h-[5px] w-[5px] rounded-full bg-[color:var(--ok)]" />
           <span className="text-[10px] text-[color:var(--color-text-faint)]">
             {queuedMessageCount > 0
               ? localize(locale, `已排队 ${queuedMessageCount} 条`, `${queuedMessageCount} queued`)

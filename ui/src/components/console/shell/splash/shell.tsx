@@ -10,7 +10,7 @@ export interface SplashAction {
 
 export interface SplashPill {
   label: string;
-  tone?: "neutral" | "amber" | "jade" | "rust";
+  tone?: "neutral" | "warn" | "ok" | "danger";
 }
 
 export interface SplashStep {
@@ -32,9 +32,9 @@ export interface SplashShellProps {
 
 const PILL_STYLE: Record<NonNullable<SplashPill["tone"]>, { background: string; color: string }> = {
   neutral: { background: "var(--surface-2)", color: "var(--ink-700)" },
-  amber: { background: "var(--accent-soft)", color: "var(--accent)" },
-  jade: { background: "rgba(79, 122, 92, 0.14)", color: "var(--ok)" },
-  rust: { background: "rgba(176, 80, 58, 0.14)", color: "var(--rust-500)" },
+  warn: { background: "var(--warn-soft)", color: "var(--warn)" },
+  ok: { background: "var(--ok-soft)", color: "var(--ok)" },
+  danger: { background: "var(--danger-soft)", color: "var(--danger)" },
 };
 
 const STEP_DOT: Record<NonNullable<SplashStep["status"]>, string> = {
