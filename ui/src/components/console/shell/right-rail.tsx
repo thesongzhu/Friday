@@ -6,9 +6,9 @@ import { useAppLocale } from "@/providers/locale-provider";
 
 const RIGHT_RAIL_COLLAPSED_KEY = "friday.shell.right-rail-collapsed";
 const RIGHT_RAIL_WIDTH_KEY = "friday.shell.right-rail-width";
-const DEFAULT_RIGHT_RAIL_WIDTH = 428;
-const MIN_RIGHT_RAIL_WIDTH = 360;
-const MAX_RIGHT_RAIL_WIDTH = 620;
+const DEFAULT_RIGHT_RAIL_WIDTH = 248;
+const MIN_RIGHT_RAIL_WIDTH = 248;
+const MAX_RIGHT_RAIL_WIDTH = 320;
 
 function readCollapsed(): boolean {
   try {
@@ -153,7 +153,7 @@ function DesktopProofInspector(props: {
               <div
                 data-testid="desktop-subtle-status-pet"
                 className="h-2.5 w-2.5 rounded-full bg-[color:var(--accent)] shadow-[0_0_10px_rgba(15,125,140,0.35)]"
-                aria-label={localize(locale, "Friday 状态点", "Friday status dot")}
+                aria-label={localize(locale, "Friday 实时状态", "Friday live status")}
               />
             </div>
             <h3 className="mt-2 text-xl font-semibold text-[color:var(--color-text-primary)]">
@@ -230,6 +230,7 @@ function DesktopProofInspector(props: {
           )}
           tone="warning"
         />
+        <DesktopCompanionStage locale={locale} />
       </div>
 
       <footer className="border-t border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-base)] px-4 py-3">
@@ -246,6 +247,50 @@ function DesktopProofInspector(props: {
         </div>
       </footer>
     </div>
+  );
+}
+
+function DesktopCompanionStage(props: { locale: "zh" | "en" }) {
+  const { locale } = props;
+
+  return (
+    <section aria-label={localize(locale, "Friday 伴随状态", "Friday companion status")}>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h4 className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[color:var(--color-text-faint)]">
+          Companion
+        </h4>
+        <span
+          aria-hidden="true"
+          className="h-[9px] w-[9px] rounded-full"
+          style={{ background: "var(--accent)" }}
+        />
+      </div>
+      <div
+        data-testid="desktop-subtle-status-pet"
+        data-friday-pet-stage="desktop"
+        className="desktop-pet-stage friday-pet-stage relative overflow-hidden border"
+        style={{
+          height: "176px",
+          borderRadius: "var(--r-md)",
+          background: "#eef3e8",
+          borderColor: "var(--hair)",
+        }}
+      >
+        <div
+          aria-hidden="true"
+          className="absolute inset-0"
+          style={{
+            background: "linear-gradient(180deg, #f6f8ef 0%, #e7efe0 100%)",
+          }}
+        />
+        <img
+          src="/source/pet/g-idle.png"
+          alt={localize(locale, "Friday v9 companion", "Friday v9 companion")}
+          className="absolute left-1/2 top-1/2 h-[132px] w-[132px] -translate-x-1/2 -translate-y-1/2 object-contain"
+          loading="eager"
+        />
+      </div>
+    </section>
   );
 }
 

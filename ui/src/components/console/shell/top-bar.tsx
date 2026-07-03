@@ -55,7 +55,17 @@ export function TopBar(props: {
         borderColor: "var(--surface-border)",
       }}
     >
-      <div className="flex min-w-0 items-center">
+      <div className="flex min-w-0 items-center gap-3">
+        <span
+          data-testid="desktop-friday-brand"
+          className="shrink-0 text-sm font-semibold tracking-tight"
+          style={{ color: "var(--ink-900)" }}
+        >Friday</span>
+        <span
+          aria-hidden="true"
+          className="h-4 w-px shrink-0"
+          style={{ background: "var(--surface-border)" }}
+        />
         <h2
           className="truncate text-sm font-semibold tracking-tight"
           style={{ color: "var(--ink-900)" }}

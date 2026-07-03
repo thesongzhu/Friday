@@ -72,10 +72,10 @@
   --radius-xl: 18px;
 
   /* ── Shell layout ── */
-  --shell-rail-w: 240px;
+  --shell-rail-w: 210px;
   --shell-rail-w-collapsed: 64px;
-  --shell-right-rail-w-full: 360px;
-  --shell-right-rail-w-compact: 280px;
+  --shell-right-rail-w-full: 248px;
+  --shell-right-rail-w-compact: 248px;
   --shell-right-rail-w-collapsed: 44px;
   --shell-content-max-w: 1280px;
   --shell-topbar-h: 56px;
