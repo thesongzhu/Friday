@@ -12,7 +12,7 @@ use friday_core::{MissionLinkKind, ProofRequirementKind, Risk, RouteDecisionCard
 use friday_crypto::{OperatorVerifyingKey, SecureStore};
 use friday_deepseek::{DeepSeekClient, Transport};
 use friday_storage::channel::get_channel;
-use friday_storage::{Db, StorageError};
+use friday_storage::{get_run_result_ref, persist_run_result, Db, RunResult, StorageError};
 
 use crate::agent_run_control::{resume_hooked as agent_run_control_resume_hooked, ControlOutcome};
 use crate::channel_event::{channel_event_id, ingest_channel_inbound, ChannelInboundReceipt};
@@ -345,6 +345,7 @@ pub fn ask_friday_for_mission<T: Transport>(
         &envelope.context.work_item_id,
         ledger_id,
         &ask_outcome.content,
+        now_ms,
     )
     .map_err(RecordAskError::Storage)?;
     let attachment = attach_completed_provider_state_for_ask(
@@ -384,6 +385,7 @@ pub(crate) fn answer_produced_outcome_receipt_for_work_item(
     work_item_id: &str,
     proof_id: &str,
     answer: &str,
+    now_ms: i64,
 ) -> Result<Option<String>, StorageError> {
     if !friday_core::outcome_checked_proof_enabled() {
         return Ok(None);
@@ -398,10 +400,26 @@ pub(crate) fn answer_produced_outcome_receipt_for_work_item(
     if !requires_answer_produced {
         return Ok(None);
     }
+    persist_run_result(
+        db.conn(),
+        proof_id,
+        &RunResult::new(
+            "finished",
+            answer,
+            Some(format!("friday://activity/{proof_id}")),
+        ),
+        now_ms,
+    )?;
+    let Some(result_ref) = get_run_result_ref(db.conn(), proof_id)? else {
+        return Err(StorageError::Unsupported(format!(
+            "outcome proof run_result '{proof_id}' was not persisted"
+        )));
+    };
     Ok(Some(format!(
-        "proof://outcome/{}/{proof_id}?signal=answer_len={}",
+        "proof://outcome/{}/{proof_id}?signal=answer_sha256={};answer_len={}",
         ProofRequirementKind::AnswerProduced.as_str(),
-        answer.chars().count()
+        result_ref.answer_sha256,
+        result_ref.answer_len
     )))
 }
 
@@ -1747,12 +1765,16 @@ mod tests {
         ));
         let work_item = db.get_work_item("work-runtime").unwrap().unwrap();
         assert_eq!(work_item.status, WorkItemStatus::CompletedWithProof);
+        let result_ref = friday_storage::get_run_result_ref(db.conn(), "ledger-ask-outcome-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(result_ref.answer_len, 18);
         assert_eq!(
             work_item.proof_receipts,
-            vec![
-                "proof://outcome/AnswerProduced/ledger-ask-outcome-1?signal=answer_len=18"
-                    .to_string()
-            ]
+            vec![format!(
+                "proof://outcome/AnswerProduced/ledger-ask-outcome-1?signal=answer_sha256={};answer_len={}",
+                result_ref.answer_sha256, result_ref.answer_len
+            )]
         );
         assert!(!work_item
             .proof_receipts

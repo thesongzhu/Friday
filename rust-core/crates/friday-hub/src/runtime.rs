@@ -2307,6 +2307,7 @@ impl<T: Transport> HubRuntime<T> {
                 &envelope.context.work_item_id,
                 run_id,
                 outcome.final_message.as_deref().unwrap_or_default(),
+                now_ms,
             )?
         } else {
             None

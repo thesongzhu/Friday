@@ -10,11 +10,12 @@ use friday_core::Risk;
 use friday_core::{
     find_duplicate_mission as core_find_duplicate_mission,
     find_duplicate_work_item as core_find_duplicate_work_item, outcome_checked_proof_enabled,
-    validate_friday_conversation_id, ApprovalState, FridayConversation, HandoffJudgmentMemory,
-    Mission, MissionLink, MissionLinkKind, MissionStatus, MissionSurfaceProjection,
-    RouteActionItem, RouteActionReversibility, RouteActionTargetKind, RouteDecisionCard,
-    RouteDecisionProjection, SurfaceEvent, SurfaceEventKind, SurfaceKind, SurfaceThread,
-    TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
+    parse_outcome_receipt, validate_friday_conversation_id, ApprovalState, FridayConversation,
+    HandoffJudgmentMemory, Mission, MissionLink, MissionLinkKind, MissionStatus,
+    MissionSurfaceProjection, ProofRequirementKind, RouteActionItem, RouteActionReversibility,
+    RouteActionTargetKind, RouteDecisionCard, RouteDecisionProjection, SurfaceEvent,
+    SurfaceEventKind, SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem,
+    WorkItemStatus, WorkLane,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
@@ -372,6 +373,65 @@ fn validate_work_item(item: &WorkItem) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+fn validate_work_item_outcome_receipts(conn: &Connection, item: &WorkItem) -> Result<()> {
+    if item.status != WorkItemStatus::CompletedWithProof
+        || !outcome_checked_proof_enabled()
+        || !item.has_outcome_proof_requirements()
+    {
+        return Ok(());
+    }
+    if !item.completion_outcome_is_proven() {
+        return Err(unsupported(format!(
+            "work_item '{}' outcome-checked completion requires a typed outcome proof receipt matching every outcome proof requirement",
+            item.work_item_id
+        )));
+    }
+    for requirement in item.outcome_requirement_specs() {
+        if requirement.kind != ProofRequirementKind::AnswerProduced {
+            continue;
+        }
+        for receipt in &item.proof_receipts {
+            let Some(receipt) = parse_outcome_receipt(receipt) else {
+                continue;
+            };
+            if receipt.kind != ProofRequirementKind::AnswerProduced {
+                continue;
+            }
+            let Some(answer_len) = outcome_signal_field(&receipt.signal, "answer_len")
+                .and_then(|value| value.parse::<i64>().ok())
+            else {
+                return Err(outcome_receipt_unsupported(&item.work_item_id));
+            };
+            let Some(answer_sha256) = outcome_signal_field(&receipt.signal, "answer_sha256") else {
+                return Err(outcome_receipt_unsupported(&item.work_item_id));
+            };
+            let Some(stored) = crate::get_run_result_ref(conn, &receipt.run_id)? else {
+                return Err(outcome_receipt_unsupported(&item.work_item_id));
+            };
+            if stored.status != "finished"
+                || stored.answer_len != answer_len
+                || stored.answer_sha256 != answer_sha256
+            {
+                return Err(outcome_receipt_unsupported(&item.work_item_id));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn outcome_signal_field<'a>(signal: &'a str, key: &str) -> Option<&'a str> {
+    signal.split([';', ',']).find_map(|part| {
+        let (field, value) = part.trim().split_once('=')?;
+        (field.trim() == key).then_some(value.trim())
+    })
+}
+
+fn outcome_receipt_unsupported(work_item_id: &str) -> StorageError {
+    unsupported(format!(
+        "work_item '{work_item_id}' outcome-checked completion requires a typed outcome proof receipt backed by matching persisted run_result"
+    ))
 }
 
 fn require_safe_surface_body_ref(value: &str, field: &str) -> Result<()> {
@@ -1794,6 +1854,7 @@ pub fn find_duplicate_mission(conn: &Connection, candidate: &Mission) -> Result<
 
 pub fn upsert_work_item(conn: &Connection, item: &WorkItem) -> Result<()> {
     validate_work_item(item)?;
+    validate_work_item_outcome_receipts(conn, item)?;
     require_non_empty(&item.work_item_id, "work_item_id")?;
     require_non_empty(&item.mission_id, "work_item.mission_id")?;
     conn.execute(
