@@ -623,6 +623,7 @@ fn completed_hybrid_source_materializes_deferred_claude_follow_up_work_item() {
 
 #[test]
 fn mission_closes_after_materialized_deferred_follow_up_completes() {
+    let _guard = EnvGuard::set("FRIDAY_OUTCOME_CHECKED_PROOF", "0");
     let db = Db::open_hub(&temp_db_path("wi-deferred-followup-close")).unwrap();
     seed(&db, WorkItemStatus::ProviderWaiting);
     seed_hybrid_route_decision(&db);
@@ -684,6 +685,7 @@ fn mission_closes_after_materialized_deferred_follow_up_completes() {
 
 #[test]
 fn mission_closes_when_run_bound_deferred_decision_materializes_intake_twin() {
+    let _guard = EnvGuard::set("FRIDAY_OUTCOME_CHECKED_PROOF", "0");
     let db = Db::open_hub(&temp_db_path("wi-deferred-followup-intake-twin-close")).unwrap();
     seed(&db, WorkItemStatus::ProviderWaiting);
     seed_hybrid_route_decision(&db);
