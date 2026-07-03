@@ -87,6 +87,21 @@ const forbiddenServedProductCopy = [
 ];
 
 describe("Friday product-facing unavailable copy", () => {
+  it("does not claim proof receipts are enforced by an unbypassable database trigger", () => {
+    const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+    const forbiddenReadmeClaims = [
+      /enforced down in the database/i,
+      /no clever code path can sneak around it/i,
+      /database[- ]enforced/i,
+    ];
+
+    const failures = forbiddenReadmeClaims
+      .filter((pattern) => pattern.test(readme))
+      .map((pattern) => String(pattern));
+
+    expect(failures).toEqual([]);
+  });
+
   it("keeps engineering unavailable/offline language out of visible product UI", () => {
     const failures: string[] = [];
     for (const relativePath of productSurfaceFiles) {
