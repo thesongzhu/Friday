@@ -22,6 +22,21 @@
 
 > **Friday isn't a model, and it isn't a chatbot.** The "brains" are the cloud AIs *you* already pay for (BYOK: Codex, Claude, DeepSeek, …). Friday is the **boss that puts them to work** — and the boss, plus your keys, your data, and your memory, all live on your own machine. **You own the boss; you just rent the brains.**
 
+## Quickstart
+
+Friday runs from source today and requires Node.js 22 or newer.
+
+On macOS with Homebrew:
+
+```bash
+brew install node@22
+git clone https://github.com/thesongzhu/Friday.git
+cd Friday
+open "Friday Setup.command"
+```
+
+If setup reports an older or missing Node.js, install Node.js 22+, then run `Friday Setup.command` again.
+
 ## What Is Friday?
 
 The trick with AI agents isn't prompting them yourself all day — it's building **the loop that prompts them for you**. Friday is that loop, turned into a product and made safe:
