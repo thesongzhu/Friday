@@ -1490,16 +1490,15 @@ mod tests {
                 [old_parent_seen],
             )
             .unwrap();
+        let fake_body_sha = "0123456789abcdef".repeat(4);
         db.conn()
             .execute(
                 "INSERT INTO mission_body_snapshot
                     (body_ref, owner_principal, mission_id, work_item_id, source_surface,
                      body, body_sha256, body_len, created_at_ms)
                  VALUES ('body_f2', 'owner', 'm_f2', 'w_f2', 'desktop',
-                         'terminal body snapshot',
-                         '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-                         22, ?1)",
-                [old_parent_seen],
+                         'terminal body snapshot', ?1, 22, ?2)",
+                params![fake_body_sha, old_parent_seen],
             )
             .unwrap();
         db.conn()
