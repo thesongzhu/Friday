@@ -55,7 +55,7 @@ const TEMPLATE_META: Partial<Record<FridayProviderKind, FridayProviderTemplateMe
   },
   anthropic: {
     displayName: "Anthropic API",
-    description: "Claude HTTP path with support for API keys, OAuth, and setup tokens inside Friday's supervised runtime.",
+    description: "Claude HTTP path with API key authentication inside Friday's supervised runtime.",
     tier: "official",
     status: "ready",
     modelDefaults: {

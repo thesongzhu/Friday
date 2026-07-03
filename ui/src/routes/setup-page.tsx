@@ -265,7 +265,7 @@ export function getProviderBootstrapRecommendation(kind: ProviderKind): SetupPro
     case "anthropic":
       return {
         backend: "HTTP first, Claude CLI optional later",
-        auth: "API key, token/setup-token, or OAuth",
+        auth: "API key",
         why: "Anthropic HTTP keeps tool-capable runs and verification inside Friday while Claude CLI stays a text-only backend.",
         boundary: "Claude CLI should not be treated as a native-tool backend for runs that require Friday tools.",
         operatorNote: "Attach Claude CLI later in Settings when you want a consumer-plan text route beside the HTTP provider.",
