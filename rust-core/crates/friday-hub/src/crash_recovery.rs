@@ -302,6 +302,11 @@ pub fn reconcile_orphaned_work_items(
 /// (which has no scheduler-tick owner and a different id shape).
 const SCHEDULED_RUN_ID_PREFIX: &str = "sched:";
 
+/// Periodic scheduled-run reconcile uses the same conservative staleness window as WorkItem
+/// execution-state recovery: a live scheduler tick may still own a fresh row, while a row older
+/// than this window is a stale orphan that will wedge future scheduled fires.
+pub const SCHEDULER_RUN_STALE_THRESHOLD_MS: i64 = EXECUTION_STATE_STALE_THRESHOLD_MS;
+
 /// Reconcile orphaned SCHEDULED workflow runs at boot (registry gap #784(b) — the scheduler-tick
 /// flip-precondition).
 ///
@@ -353,10 +358,32 @@ pub fn reconcile_orphaned_scheduled_runs(
     // boot this daemon owns no live tick, so a fresh `Pending`/`Running` run is a dead orphan, not a
     // live one to spare. (Reusing the bounded helper keeps the `Pending`/`Running`-only + `sched:`
     // filters in one tested SQL read.)
+    reconcile_scheduled_runs_before(db, now_ms, now_ms)
+}
+
+/// Reconcile stale scheduled workflow runs from the periodic scheduler tick. Unlike boot recovery,
+/// this path runs while the daemon is alive, so it must spare fresh `sched:` rows that may still be
+/// owned by the live scheduler tick. It remains scoped to `sched:` Pending/Running rows only.
+pub fn reconcile_stale_scheduled_runs(
+    db: &Db,
+    now_ms: i64,
+) -> Result<ReconcileOutcome, StorageError> {
+    reconcile_scheduled_runs_before(
+        db,
+        now_ms.saturating_sub(SCHEDULER_RUN_STALE_THRESHOLD_MS),
+        now_ms,
+    )
+}
+
+fn reconcile_scheduled_runs_before(
+    db: &Db,
+    updated_before_cutoff: i64,
+    now_ms: i64,
+) -> Result<ReconcileOutcome, StorageError> {
     let orphans = friday_storage::workflow::in_flight_runs_with_prefix_before(
         db.conn(),
         SCHEDULED_RUN_ID_PREFIX,
-        now_ms,
+        updated_before_cutoff,
     )?;
     let mut outcome = ReconcileOutcome {
         scanned: orphans.len(),
@@ -391,7 +418,6 @@ pub fn reconcile_orphaned_scheduled_runs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn tmp_db(tag: &str) -> friday_storage::Db {
         let path = std::env::temp_dir().join(format!(
@@ -402,10 +428,7 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let db = friday_storage::Db::open_hub(path.to_str().unwrap()).unwrap();
-        // Keep the path alive only long enough for SQLite sidecar cleanup; tests use one connection.
-        let _ = std::fs::remove_file(PathBuf::from(path).with_extension("sqlite-wal"));
-        db
+        friday_storage::Db::open_hub(path.to_str().unwrap()).unwrap()
     }
 
     fn seed_workflow_run(
@@ -588,7 +611,10 @@ mod tests {
 
         let outcome = reconcile_stale_scheduled_runs(&db, now).unwrap();
 
-        assert_eq!(outcome.scanned, 1, "only stale sched pending/running rows are scanned");
+        assert_eq!(
+            outcome.scanned, 1,
+            "only stale sched pending/running rows are scanned"
+        );
         assert_eq!(outcome.aborted, 1, "the stale sched orphan is failed");
         assert_eq!(outcome.skipped, 0);
         assert_eq!(workflow_state(&db, "sched:old:1"), WorkflowRunState::Failed);
@@ -613,7 +639,12 @@ mod tests {
     fn boot_scheduled_reconcile_stays_unconditional_on_age() {
         let db = tmp_db("boot-sched");
         let now = 1_000_000_i64;
-        seed_workflow_run(&db, "sched:fresh-boot:1", WorkflowRunState::Running, now - 1);
+        seed_workflow_run(
+            &db,
+            "sched:fresh-boot:1",
+            WorkflowRunState::Running,
+            now - 1,
+        );
 
         let outcome = reconcile_orphaned_scheduled_runs(&db, now).unwrap();
 
