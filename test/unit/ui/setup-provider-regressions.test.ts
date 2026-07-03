@@ -115,6 +115,16 @@ describe("setup provider regressions", () => {
     expect(providerTruthHookSource).toContain("moonshot|kimi|月之暗面");
   });
 
+  it("does not advertise Anthropic OAuth or setup-token onboarding in the setup recommendation", () => {
+    const setupSource = readFileSync("ui/src/routes/setup-page.tsx", "utf8");
+
+    expect(setupSource).toContain('case "anthropic"');
+    expect(setupSource).toContain('auth: "API key"');
+    expect(setupSource).not.toContain('auth: "API key, token/setup-token, or OAuth"');
+    expect(setupSource).not.toContain("Anthropic OAuth");
+    expect(setupSource).not.toContain("Anthropic setup-token");
+  });
+
   it("keeps mission workbench empty state user-facing instead of engineering-unavailable copy", () => {
     const missionWorkbenchSource = readFileSync("ui/src/routes/mission-workbench-page.tsx", "utf8");
 

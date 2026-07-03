@@ -88,4 +88,12 @@ describe("friday-provider-templates", () => {
       });
     }
   });
+
+  it("does not advertise Anthropic OAuth or setup-token onboarding", () => {
+    const anthropic = getFridayProviderTemplate("anthropic");
+
+    expect(anthropic?.description).toContain("API key");
+    expect(anthropic?.description).not.toMatch(/oauth|setup tokens?/i);
+    expect(anthropic?.authModes).toEqual(["api-key"]);
+  });
 });
