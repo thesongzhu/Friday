@@ -4788,7 +4788,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // OC-012: Keep session usage routes grouped ahead of main session routes.
   // Route lookup now prefers more specific static patterns, so this order
   // documents intent without being a shadowing workaround.
-  for (const route of createFridaySessionUsageRoutes({ db: deps.db })) {
+  for (const route of createFridaySessionUsageRoutes({ db: deps.db, sessionService })) {
     routes.register(route);
   }
 

@@ -4,11 +4,18 @@
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridaySqliteLayer } from "#state";
+import type { FridaySessionService } from "#sessions";
+import {
+  assertSessionReadableIfPresent,
+  assertSessionReadPrincipal,
+  sessionReadScopeForPrincipal,
+} from "./friday-session-routes.js";
 
 // ─── Types ───
 
 export interface FridaySessionUsageRoutesDeps {
   db: FridaySqliteLayer;
+  sessionService: FridaySessionService;
 }
 
 interface UsageByModelRow {
@@ -33,7 +40,7 @@ interface BulkUsageRow {
 export function createFridaySessionUsageRoutes(
   deps: FridaySessionUsageRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
-  const { db } = deps;
+  const { db, sessionService } = deps;
 
   return [
     // GET /v1/sessions/:sessionKey/usage — per-session aggregated usage
@@ -45,6 +52,8 @@ export function createFridaySessionUsageRoutes(
 
       async handler(ctx) {
         const { sessionKey } = ctx.params as { sessionKey: string };
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.usage.get");
+        await assertSessionReadableIfPresent(sessionService, sessionKey, principal, "sessions.usage.get");
 
         const rows = db.withReadConnection((conn) =>
           conn
@@ -104,6 +113,8 @@ export function createFridaySessionUsageRoutes(
 
       async handler(ctx) {
         const query = ctx.query as Record<string, string | undefined>;
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.usage.list");
+        const scope = sessionReadScopeForPrincipal(principal);
         let limit = 50;
         if (query.limit !== undefined) {
           const parsed = Number(query.limit);
@@ -112,21 +123,31 @@ export function createFridaySessionUsageRoutes(
           }
         }
 
+        const conditions = ["s.account_id = ?"];
+        const params: Array<string | number> = [scope.accountId];
+        if (scope.userId) {
+          conditions.push("s.user_id = ?");
+          params.push(scope.userId);
+        }
+        params.push(limit);
+
         const rows = db.withReadConnection((conn) =>
           conn
             .prepare(
               `SELECT
-                 session_key,
-                 COALESCE(SUM(usage_input), 0)  AS total_input,
-                 COALESCE(SUM(usage_output), 0) AS total_output,
-                 COALESCE(SUM(cost_usd), 0)     AS total_cost,
+                 r.session_key,
+                 COALESCE(SUM(r.usage_input), 0)  AS total_input,
+                 COALESCE(SUM(r.usage_output), 0) AS total_output,
+                 COALESCE(SUM(r.cost_usd), 0)     AS total_cost,
                  COUNT(*)                        AS run_count
-               FROM friday_agent_runs
-               GROUP BY session_key
+               FROM friday_agent_runs r
+               INNER JOIN sessions s ON s.session_key = r.session_key
+               WHERE ${conditions.join(" AND ")}
+               GROUP BY r.session_key
                ORDER BY total_cost DESC
                LIMIT ?`,
             )
-            .all(limit),
+            .all(...params),
         ) as BulkUsageRow[];
 
         return {

@@ -928,6 +928,10 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.memory.namespace.get", () => {
     it("returns namespace", async () => {
       const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
+      }));
       vi.mocked(svc.getSessionMemoryNamespace).mockResolvedValue(
         "tenant.default.channel.discord.user.user1.shared",
       );
@@ -936,7 +940,10 @@ describe("FridaySessionRoutes", () => {
       const route = routes.find((r) => r.operationId === "sessions.memory.namespace.get")!;
 
       const result = await route.handler(
-        makeMockCtx({ params: { sessionKey: "discord:default:user1" } }) as never,
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          principal: makeBoundPrincipal(),
+        }) as never,
       );
 
       expect(result).toHaveProperty(
@@ -1061,13 +1068,21 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.forks.list", () => {
     it("returns fork list", async () => {
       const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
+      }));
       vi.mocked(svc.listForks).mockResolvedValue([makeMockSession()]);
 
       const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.list")!;
 
       const result = await route.handler(
-        makeMockCtx({ params: { sessionKey: "discord:default:user1" }, query: {} }) as never,
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          query: {},
+          principal: makeBoundPrincipal(),
+        }) as never,
       );
 
       expect(result).toHaveProperty("items");
@@ -1997,12 +2012,19 @@ describe("FridaySessionRoutes", () => {
 
     it("returns status when extraction service is configured", async () => {
       const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
+      }));
       const extractSvc = createMockExtractionService();
       const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extraction.get")!;
 
       const result = await route.handler(
-        makeMockCtx({ params: { sessionKey: "discord:default:user1" } }) as never,
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          principal: makeBoundPrincipal(),
+        }) as never,
       );
 
       expect(result).toHaveProperty("status");
@@ -2282,6 +2304,10 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.forks.list — limit cap", () => {
     it("caps limit to 100 when query limit exceeds maximum", async () => {
       const svc = createMockService();
+      vi.mocked(svc.getSession).mockResolvedValue(makeMockSession({
+        accountId: "00000000-0000-0000-0000-000000000101",
+        userId: "00000000-0000-0000-0000-000000000102",
+      }));
       vi.mocked(svc.listForks).mockResolvedValue([]);
 
       const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
@@ -2291,6 +2317,7 @@ describe("FridaySessionRoutes", () => {
         makeMockCtx({
           params: { sessionKey: "discord:default:user1" },
           query: { limit: "500" },
+          principal: makeBoundPrincipal(),
         }) as never,
       );
 

@@ -178,7 +178,7 @@ function buildTenantContext(principal: unknown): FridayProviderTenantContext | u
   };
 }
 
-function assertSessionReadPrincipal(
+export function assertSessionReadPrincipal(
   principal: FridayAuthPrincipal | null | undefined,
   operation: string,
 ): FridayAuthPrincipal {
@@ -205,7 +205,7 @@ function assertSessionReadPrincipal(
   return bound;
 }
 
-function sessionReadScopeForPrincipal(principal: FridayAuthPrincipal): { accountId: string; userId?: string } {
+export function sessionReadScopeForPrincipal(principal: FridayAuthPrincipal): { accountId: string; userId?: string } {
   const tenantContext = buildTenantContext(principal);
   if (!tenantContext?.hubId) {
     throw new FridayDomainError(
@@ -266,7 +266,7 @@ async function assertExistingSessionReadable(
   return session;
 }
 
-async function assertSessionReadableIfPresent(
+export async function assertSessionReadableIfPresent(
   sessionService: FridaySessionService,
   key: string,
   principal: FridayAuthPrincipal,
@@ -1294,6 +1294,8 @@ export function createFridaySessionRoutes(
       async handler(ctx): Promise<FridaySessionMemoryNamespaceResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.memory.namespace.get");
+        await assertSessionReadableIfPresent(deps.sessionService, key, principal, "sessions.memory.namespace.get");
         const namespace = await deps.sessionService.getSessionMemoryNamespace(key);
         return { namespace };
       },
@@ -1360,6 +1362,8 @@ export function createFridaySessionRoutes(
           limit = Math.min(parsed, FRIDAY_MAX_LIST_LIMIT);
         }
 
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.forks.list");
+        await assertSessionReadableIfPresent(deps.sessionService, key, principal, "sessions.forks.list");
         const items = await deps.sessionService.listForks(key, { status, limit });
         return { items };
       },
@@ -1466,6 +1470,8 @@ export function createFridaySessionRoutes(
         }
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
+        const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.memory.extraction.get");
+        await assertSessionReadableIfPresent(deps.sessionService, key, principal, "sessions.memory.extraction.get");
         const status = await deps.extractionService.getExtractionStatus(key);
         return { status };
       },
