@@ -434,6 +434,67 @@ describe("FridayHub Bootstrap Integration", () => {
     expect(hub.workflowRuntime.approval).toBeDefined();
   });
 
+  it("keeps the local system runtime and companion IPC disabled by default", async () => {
+    const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
+    const previousRemote = process.env.FRIDAY_SYSTEM_REMOTE_MODE;
+    const previousTransport = process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
+    const previousSocketPath = process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH;
+    const previousToken = process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN;
+    const previousTokenFile = process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN_FILE;
+    delete process.env.FRIDAY_SYSTEM_ENABLED;
+    delete process.env.FRIDAY_SYSTEM_REMOTE_MODE;
+    delete process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
+    delete process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH;
+    delete process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN;
+    delete process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN_FILE;
+    try {
+      const hub = await createIsolatedHub();
+      const route = hub.apiRuntime.routes.getRoutes()
+        .find((entry) => entry.operationId === "system.session.get");
+      const runDir = path.join(lastStateDir ?? "", ".friday", "run");
+
+      expect(route).toBeUndefined();
+      expect(fs.existsSync(path.join(runDir, "system-companion.auth.token"))).toBe(false);
+      expect(fs.existsSync(path.join(runDir, "system-companion.sock"))).toBe(false);
+      await expect(hub.systemHealth()).resolves.toMatchObject({
+        enabled: false,
+        remoteMode: "unavailable",
+        companionReadiness: "unavailable",
+      });
+    } finally {
+      if (previousEnabled === undefined) {
+        delete process.env.FRIDAY_SYSTEM_ENABLED;
+      } else {
+        process.env.FRIDAY_SYSTEM_ENABLED = previousEnabled;
+      }
+      if (previousRemote === undefined) {
+        delete process.env.FRIDAY_SYSTEM_REMOTE_MODE;
+      } else {
+        process.env.FRIDAY_SYSTEM_REMOTE_MODE = previousRemote;
+      }
+      if (previousTransport === undefined) {
+        delete process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
+      } else {
+        process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT = previousTransport;
+      }
+      if (previousSocketPath === undefined) {
+        delete process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH;
+      } else {
+        process.env.FRIDAY_SYSTEM_COMPANION_SOCKET_PATH = previousSocketPath;
+      }
+      if (previousToken === undefined) {
+        delete process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN;
+      } else {
+        process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN = previousToken;
+      }
+      if (previousTokenFile === undefined) {
+        delete process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN_FILE;
+      } else {
+        process.env.FRIDAY_SYSTEM_COMPANION_AUTH_TOKEN_FILE = previousTokenFile;
+      }
+    }
+  });
+
 
   it("defaults local system runtime on while keeping remote disabled", async () => {
     const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
