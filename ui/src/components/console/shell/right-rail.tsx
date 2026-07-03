@@ -276,11 +276,18 @@ function DesktopCompanionStage(props: { locale: "zh" | "en" }) {
           borderColor: "var(--hair)",
         }}
       >
-        <iframe
-          title={localize(locale, "Friday v9 伴随动画", "Friday v9 companion animation")}
-          src="/pet-host.html"
-          className="absolute inset-0 h-full w-full border-0"
-          style={{ background: "#eef3e8" }}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0"
+          style={{
+            background: "linear-gradient(180deg, #f6f8ef 0%, #e7efe0 100%)",
+          }}
+        />
+        <img
+          src="/source/pet/g-idle.png"
+          alt={localize(locale, "Friday v9 companion", "Friday v9 companion")}
+          className="absolute left-1/2 top-1/2 h-[132px] w-[132px] -translate-x-1/2 -translate-y-1/2 object-contain"
+          loading="eager"
         />
       </div>
     </section>
