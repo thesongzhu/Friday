@@ -14,7 +14,7 @@ can never go prod-ON with no loop test again.
 | Artifact | Role |
 | --- | --- |
 | [`docs/ops/prod-flags-manifest.json`](./prod-flags-manifest.json) | Canonical source-of-truth: every loop flag, its `process`, `prod_state`, `closes_loop`, `coverage`, and the exact `e2e_test` (`<file/path>::<test_fn_name>`) that drives the WHOLE loop with the flag ON. The prod launch files (rust-ws-wrapper script + TS plist) are **not committed**, so this manifest IS the authoritative record. |
-| [`scripts/ci/verify-prod-flag-tests.mjs`](../../scripts/ci/verify-prod-flag-tests.mjs) | The gate. Parses the manifest and, for every flag with `prod_state ∈ {on, dark}`, asserts the named test **file exists** and **declares the named test function** (Rust `fn <name>` or vitest `it/test("<name>")`). Fails (exit 1), **naming the offending flag**, on any missing/unmapped/unresolvable test. |
+| [`scripts/ci/verify-prod-flag-tests.mjs`](../../scripts/ci/verify-prod-flag-tests.mjs) | The gate. Parses the manifest and, for every flag with `prod_state ∈ {on, dark}`, asserts the named test **file exists**, **declares the named test function** (Rust `fn <name>` or vitest `it/test("<name>")`), and Rust mappings are **not `#[ignore]`'d**. Fails (exit 1), **naming the offending flag**, on any missing/unmapped/unresolvable/ignored test. |
 
 ## CI wiring
 
@@ -30,17 +30,15 @@ node scripts/ci/verify-prod-flag-tests.mjs   # exit 0 = mapping complete; exit 1
 ## What the gate does and does NOT do
 
 - **Does:** prove the mapping is COMPLETE and RESOLVES — no prod-ON/dark flag is left
-  without a named, on-disk loop-closing test.
-- **Does NOT run the tests.** All 13 mapped tests today are **Rust `friday-hub` tests**,
-  executed by `cargo test --workspace` in `.github/workflows/rust-core.yml`. None are
-  `#[ignore]`'d, so they run with no key/network. This gate enforces that the mapping
-  *exists and resolves*; `rust-core.yml` enforces that the tests *pass*.
-  - **Caveat (PR coverage gap):** `rust-core.yml` is `pull_request`-triggered but
-    **path-filtered to `rust-core/**`** — so the loop tests run on PRs that touch
-    `rust-core/`, NOT on every PR. The mapped tests can only *break* when `rust-core/`
-    changes (and then `rust-core.yml` runs them), so this is sound, but a PR that does
-    not touch `rust-core/` gets the existence check only, not a fresh test run. THIS gate
-    (`prod-flag-tests` in `ci.yml`) DOES run on every PR — it just checks the mapping.
+  without a named, on-disk loop-closing test. For Rust mappings, it also rejects
+  `#[ignore]` / `cfg_attr(..., ignore)` so an ignored test cannot satisfy the mapping.
+- **Does NOT run the tests.** All mapped tests today are **Rust `friday-hub` tests**,
+  executed by `cargo test --workspace` in `.github/workflows/rust-core.yml`. The gate
+  enforces that none are `#[ignore]`'d, so the mapped Rust tests are eligible to run
+  with no key/network. This gate enforces that the mapping *exists, resolves, and is not
+  ignored*; `rust-core.yml` enforces that the tests *pass*.
+  - `rust-core.yml` runs on every PR and push to main so the Rust loop tests and
+    TS-to-Rust interop proof are not hidden behind a hand-maintained paths allowlist.
   - If a future mapping points at a **vitest** test, it would be run by the `test` job in
     `ci.yml` (no mapped test does today).
 - **Does NOT verify the live wrapper/plist.** Whether the running prod process actually

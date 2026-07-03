@@ -7,7 +7,7 @@
  * their `.ts` source so esbuild bundles from source — no prior `tsc` build required.
  */
 import { build } from "esbuild";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -60,10 +60,15 @@ const interopShimPlugin = {
   },
 };
 
-await build({
+const metafilePath = process.env.FRIDAY_SEALED_CLIENT_RUNNER_METAFILE
+  ? resolvePath(repoRoot, process.env.FRIDAY_SEALED_CLIENT_RUNNER_METAFILE)
+  : undefined;
+
+const result = await build({
   entryPoints: [entry],
   outfile,
   bundle: true,
+  metafile: Boolean(metafilePath),
   platform: "node",
   // CJS output: `ws` does dynamic `require("events")` etc., which only resolves natively in a
   // CJS module — an ESM bundle would throw "Dynamic require not supported".
@@ -82,5 +87,11 @@ await build({
   ],
   logLevel: "info",
 });
+
+if (metafilePath && result.metafile) {
+  mkdirSync(dirname(metafilePath), { recursive: true });
+  writeFileSync(metafilePath, `${JSON.stringify(result.metafile, null, 2)}\n`, "utf8");
+  process.stdout.write(`wrote metafile ${metafilePath}\n`);
+}
 
 process.stdout.write(`built ${outfile}\n`);

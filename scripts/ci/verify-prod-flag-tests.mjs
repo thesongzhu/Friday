@@ -15,10 +15,12 @@
  *   3. Any additional_e2e_tests entries use the same form.
  *   4. The named test file EXISTS and contains the named test function
  *      (Rust:  `fn <name>`  ·  vitest/TS:  `it("<name>"...)` or `test("<name>"...)`).
- *   5. No duplicate flag entries; coverage is a known value.
+ *   5. Rust mappings are not `#[ignore]` / `cfg_attr(..., ignore)`, because ignored
+ *      tests never run in PR CI.
+ *   6. No duplicate flag entries; coverage is a known value.
  *
- * It FAILS (exit 1), naming the offending flag, on any missing/unmapped/unresolvable
- * test. It does NOT verify the live wrapper/plist actually sets these flags — that
+ * It FAILS (exit 1), naming the offending flag, on any missing/unmapped/unresolvable/
+ * ignored test. It does NOT verify the live wrapper/plist actually sets these flags — that
  * drift check is deploy-time (see docs/ops/prod-flag-test-gate.md). It does NOT run
  * the tests; "passing" is enforced by the existing test jobs (rust-core.yml + the
  * `test` job) — this gate enforces that the mapping EXISTS and resolves so a flag can
@@ -33,9 +35,19 @@ import { readFile, access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  fileDeclaresTest,
+  parseTestRef,
+  resolveRustTest,
+} from "./lib/prod-flag-test-detect.mjs";
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const MANIFEST_PATH = join(REPO_ROOT, "docs", "ops", "prod-flags-manifest.json");
+const DEFAULT_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const REPO_ROOT = process.env.FRIDAY_PROD_FLAGS_REPO_ROOT
+  ? resolve(process.env.FRIDAY_PROD_FLAGS_REPO_ROOT)
+  : DEFAULT_REPO_ROOT;
+const MANIFEST_PATH = process.env.FRIDAY_PROD_FLAGS_MANIFEST_PATH
+  ? resolve(process.env.FRIDAY_PROD_FLAGS_MANIFEST_PATH)
+  : join(REPO_ROOT, "docs", "ops", "prod-flags-manifest.json");
 
 const ENFORCED_STATES = new Set(["on", "dark"]);
 const KNOWN_STATES = new Set(["on", "dark"]);
@@ -73,30 +85,6 @@ let enforcedCount = 0;
 let loopE2eCount = 0;
 let destinationOnlyCount = 0;
 
-// Parse "<path>::<fn>" once. Returns { file, fn } or null on a malformed ref.
-function parseTestRef(ref) {
-  if (typeof ref !== "string") return null;
-  const idx = ref.lastIndexOf("::");
-  if (idx <= 0 || idx + 2 >= ref.length) return null;
-  return { file: ref.slice(0, idx).trim(), fn: ref.slice(idx + 2).trim() };
-}
-
-// Does `content` contain a test named `fn`? Handles Rust fn decls + vitest it()/test().
-function fileDeclaresTest(content, fn) {
-  // Rust: `fn <name>(`  (covers #[test]/#[tokio::test] integration + inline mod tests)
-  const rustRe = new RegExp(String.raw`\bfn\s+${escapeRe(fn)}\s*\(`);
-  if (rustRe.test(content)) return true;
-  // vitest/jest: it("name"...) | test("name"...) | it('name'...) | it(`name`...)
-  const tsRe = new RegExp(
-    String.raw`\b(?:it|test)\s*\(\s*(['"\`])${escapeRe(fn)}\1`
-  );
-  return tsRe.test(content);
-}
-
-function escapeRe(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 async function checkTestRef(label, prodState, ref, fieldName) {
   const parsed = parseTestRef(ref);
   if (!parsed) {
@@ -125,6 +113,18 @@ async function checkTestRef(label, prodState, ref, fieldName) {
       `${label} (prod_state=${prodState}): mapped test FUNCTION "${parsed.fn}" not found in ${parsed.file}. ` +
         `Expected a Rust \`fn ${parsed.fn}(\` or a vitest it/test("${parsed.fn}"). ` +
         `If the test was renamed/removed, update the manifest — a prod-${prodState} flag may not be left without a loop test.`
+    );
+    return;
+  }
+
+  const rustResolution = parsed.file.endsWith(".rs")
+    ? resolveRustTest(content, parsed.fn)
+    : null;
+  if (rustResolution?.ignored) {
+    fail(
+      `${label} (prod_state=${prodState}): mapped test "${parsed.fn}" in ${parsed.file} is #[ignore]'d. ` +
+        `An ignored test never runs in PR CI, so a prod-${prodState} flag mapped to it is silently inert. ` +
+        `Un-ignore the test, or map to a committed test that runs in PR CI.`
     );
     return;
   }
