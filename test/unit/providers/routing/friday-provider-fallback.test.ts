@@ -490,6 +490,38 @@ describe("FridayProviderFallback", () => {
       expect(invokedKinds).not.toContain("openai");
     });
 
+    it("retries the same DeepSeek provider once on retry-after rate limit before giving up", async () => {
+      const fb = createFridayProviderFallback();
+      const deepseek = makeProvider("ds", "deepseek", true, "deepseek-v4-flash", ["deepseek-v4-flash"]);
+      let calls = 0;
+
+      const result = await fb.runWithFallback({
+        candidates: [{ provider: deepseek, model: "deepseek-v4-flash" }],
+        run: async () => {
+          calls += 1;
+          if (calls === 1) {
+            const err: any = new Error("rate limited");
+            err.status = 429;
+            err.retryAfterMs = 250;
+            throw err;
+          }
+          return "ok-after-retry";
+        },
+      });
+
+      expect(result.result).toBe("ok-after-retry");
+      expect(result.route.provider.id).toBe("ds");
+      expect(calls).toBe(2);
+      expect(result.attempts).toHaveLength(1);
+      expect(result.attempts[0]).toMatchObject({
+        providerId: "ds",
+        providerKind: "deepseek",
+        model: "deepseek-v4-flash",
+        reason: "transient",
+        status: 429,
+      });
+    });
+
     it("records all failed attempts in order", async () => {
       const fb = createFridayProviderFallback();
       const p1 = makeProvider("p1", "openai");

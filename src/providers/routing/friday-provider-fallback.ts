@@ -59,6 +59,10 @@ const TRANSIENT_ERROR_PATTERNS = [
   "socket hang up",
 ];
 
+const SAME_PROVIDER_MAX_RETRIES = 1;
+const SAME_PROVIDER_RETRY_BASE_DELAY_MS = 250;
+const SAME_PROVIDER_RETRY_MAX_DELAY_MS = 2_000;
+
 /**
  * Extracts a classifiable text string from an unknown thrown value.
  *
@@ -122,6 +126,61 @@ function classifyProviderError(err: unknown): {
     return { reason: "timeout", status, code };
   }
   return { reason: "unknown", status, code };
+}
+
+function readRetryAfterHeader(value: unknown, nowMs: () => number): number | undefined {
+  if (typeof value !== "string" || value.trim() === "") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1_000;
+  }
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isNaN(dateMs)) {
+    return Math.max(0, dateMs - nowMs());
+  }
+  return undefined;
+}
+
+function extractRetryAfterMs(err: unknown, nowMs: () => number): number | undefined {
+  if (err === null || typeof err !== "object") {
+    return undefined;
+  }
+  const obj = err as Record<string, unknown>;
+  if (typeof obj.retryAfterMs === "number" && Number.isFinite(obj.retryAfterMs) && obj.retryAfterMs >= 0) {
+    return obj.retryAfterMs;
+  }
+  if (typeof obj.retryAfterSeconds === "number" && Number.isFinite(obj.retryAfterSeconds) && obj.retryAfterSeconds >= 0) {
+    return obj.retryAfterSeconds * 1_000;
+  }
+  const headers = obj.headers;
+  if (headers instanceof Headers) {
+    return readRetryAfterHeader(headers.get("Retry-After"), nowMs);
+  }
+  if (headers !== null && typeof headers === "object") {
+    const record = headers as Record<string, unknown>;
+    return readRetryAfterHeader(record["Retry-After"] ?? record["retry-after"], nowMs);
+  }
+  return readRetryAfterHeader(obj.retryAfter, nowMs);
+}
+
+function boundedSameProviderRetryDelayMs(params: {
+  err: unknown;
+  retryIndex: number;
+  nowMs: () => number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+}): number {
+  const retryAfterMs = extractRetryAfterMs(params.err, params.nowMs);
+  const exponentialMs = params.baseDelayMs * 2 ** params.retryIndex;
+  const requestedMs = retryAfterMs ?? exponentialMs;
+  return Math.min(Math.max(0, requestedMs), params.maxDelayMs);
+}
+
+function canRetrySameProvider(reason: FridayProviderAttemptReason): boolean {
+  return reason === "transient" || reason === "timeout";
 }
 
 function normalizeModelId(input: string): string {
@@ -236,6 +295,14 @@ export interface FridayProviderFallbackOptions {
   nowMs?: () => number;
   /** Cooldown duration in milliseconds. Defaults to 120 000 (2 minutes). */
   cooldownMs?: number;
+  /** Bounded same-provider retries before routing to fallback providers. Defaults to 1. */
+  sameProviderMaxRetries?: number;
+  /** Base delay for same-provider retry backoff. Defaults to 250 ms. */
+  sameProviderRetryBaseDelayMs?: number;
+  /** Maximum same-provider retry delay. Defaults to 2 000 ms. */
+  sameProviderRetryMaxDelayMs?: number;
+  /** Async sleeper for retry backoff. Defaults to setTimeout. Tests may inject a no-op. */
+  sleepMs?: (ms: number) => Promise<void>;
 }
 
 // ─── Factory ───
@@ -245,6 +312,13 @@ export function createFridayProviderFallback(
 ): FridayProviderFallback {
   const nowMs = opts?.nowMs ?? (() => Date.now());
   const cooldownMs = opts?.cooldownMs ?? PROVIDER_COOLDOWN_MS;
+  const sameProviderMaxRetries = Math.max(0, Math.floor(opts?.sameProviderMaxRetries ?? SAME_PROVIDER_MAX_RETRIES));
+  const sameProviderRetryBaseDelayMs = Math.max(0, opts?.sameProviderRetryBaseDelayMs ?? SAME_PROVIDER_RETRY_BASE_DELAY_MS);
+  const sameProviderRetryMaxDelayMs = Math.max(
+    0,
+    opts?.sameProviderRetryMaxDelayMs ?? SAME_PROVIDER_RETRY_MAX_DELAY_MS,
+  );
+  const sleepMs = opts?.sleepMs ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
   // Track provider failure timestamps for cooldown
   const cooldownMap = new Map<string, number>();
@@ -333,36 +407,61 @@ export function createFridayProviderFallback(
       const orderedCandidates = [...ready, ...cooledDown];
 
       for (const candidate of orderedCandidates) {
-        try {
-          const result = await run(candidate);
-          return { result, route: candidate, attempts };
-        } catch (err) {
-          lastError = err;
-          const rawMessage = extractErrorText(err);
-          const classified = classifyProviderError(err);
-          // Apply cooldown for transient errors, auth failures, and
-          // model-unavailable errors. Without cooldown on persistent
-          // failures (e.g. revoked API key), every LLM call would
-          // attempt the broken provider before falling back, adding
-          // unnecessary latency to every request.
-          if (
-            classified.reason === "transient" ||
-            classified.reason === "auth" ||
-            classified.reason === "model_unavailable" ||
-            classified.reason === "timeout"
-          ) {
-            recordFailure(candidate.provider.id);
+        let retryIndex = 0;
+        while (true) {
+          try {
+            const result = await run(candidate);
+            return { result, route: candidate, attempts };
+          } catch (err) {
+            lastError = err;
+            const rawMessage = extractErrorText(err);
+            const classified = classifyProviderError(err);
+            attempts.push({
+              providerId: candidate.provider.id,
+              providerKind: candidate.provider.kind,
+              model: candidate.model,
+              error: redactKeyMaterial(rawMessage),
+              reason: classified.reason,
+              status: classified.status,
+              code: classified.code,
+              timestamp: new Date().toISOString(),
+            });
+
+            const retryAfterMs = extractRetryAfterMs(err, nowMs);
+            if (
+              canRetrySameProvider(classified.reason)
+              && retryAfterMs !== undefined
+              && retryIndex < sameProviderMaxRetries
+            ) {
+              const delayMs = boundedSameProviderRetryDelayMs({
+                err,
+                retryIndex,
+                nowMs,
+                baseDelayMs: sameProviderRetryBaseDelayMs,
+                maxDelayMs: sameProviderRetryMaxDelayMs,
+              });
+              retryIndex += 1;
+              if (delayMs > 0) {
+                await sleepMs(delayMs);
+              }
+              continue;
+            }
+
+            // Apply cooldown after same-provider retry budget is exhausted for
+            // transient errors, auth failures, and model-unavailable errors.
+            // Without cooldown on persistent failures (e.g. revoked API key),
+            // every LLM call would attempt the broken provider before falling
+            // back, adding unnecessary latency to every request.
+            if (
+              classified.reason === "transient" ||
+              classified.reason === "auth" ||
+              classified.reason === "model_unavailable" ||
+              classified.reason === "timeout"
+            ) {
+              recordFailure(candidate.provider.id);
+            }
+            break;
           }
-          attempts.push({
-            providerId: candidate.provider.id,
-            providerKind: candidate.provider.kind,
-            model: candidate.model,
-            error: redactKeyMaterial(rawMessage),
-            reason: classified.reason,
-            status: classified.status,
-            code: classified.code,
-            timestamp: new Date().toISOString(),
-          });
         }
       }
 
