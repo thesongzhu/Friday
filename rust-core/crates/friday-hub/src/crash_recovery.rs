@@ -391,6 +391,83 @@ pub fn reconcile_orphaned_scheduled_runs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn tmp_db(tag: &str) -> friday_storage::Db {
+        let path = std::env::temp_dir().join(format!(
+            "friday-crash-recovery-{tag}-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let db = friday_storage::Db::open_hub(path.to_str().unwrap()).unwrap();
+        // Keep the path alive only long enough for SQLite sidecar cleanup; tests use one connection.
+        let _ = std::fs::remove_file(PathBuf::from(path).with_extension("sqlite-wal"));
+        db
+    }
+
+    fn seed_workflow_run(
+        db: &friday_storage::Db,
+        run_id: &str,
+        state: WorkflowRunState,
+        updated_at: i64,
+    ) {
+        friday_storage::workflow::create_run(db.conn(), run_id, "workflow", updated_at).unwrap();
+        match state {
+            WorkflowRunState::Pending => {}
+            WorkflowRunState::Running => {
+                friday_storage::workflow::set_run_state(
+                    db.conn(),
+                    run_id,
+                    WorkflowRunState::Running,
+                    updated_at,
+                )
+                .unwrap();
+            }
+            WorkflowRunState::AwaitingCheckpoint => {
+                friday_storage::workflow::set_run_state(
+                    db.conn(),
+                    run_id,
+                    WorkflowRunState::Running,
+                    updated_at,
+                )
+                .unwrap();
+                friday_storage::workflow::set_run_state(
+                    db.conn(),
+                    run_id,
+                    WorkflowRunState::AwaitingCheckpoint,
+                    updated_at,
+                )
+                .unwrap();
+            }
+            WorkflowRunState::Failed => {
+                friday_storage::workflow::set_run_state(
+                    db.conn(),
+                    run_id,
+                    WorkflowRunState::Failed,
+                    updated_at,
+                )
+                .unwrap();
+            }
+            WorkflowRunState::Done | WorkflowRunState::Cancelled => {
+                panic!("test helper does not seed terminal {state:?}");
+            }
+        }
+        db.conn()
+            .execute(
+                "UPDATE workflow_run SET updated_at = ?1 WHERE run_id = ?2",
+                rusqlite::params![updated_at, run_id],
+            )
+            .unwrap();
+    }
+
+    fn workflow_state(db: &friday_storage::Db, run_id: &str) -> WorkflowRunState {
+        friday_storage::workflow::run_state(db.conn(), run_id)
+            .unwrap()
+            .unwrap()
+    }
 
     #[test]
     fn orphan_classifier_is_only_dispatched_and_hub_accepted() {
@@ -490,5 +567,62 @@ mod tests {
                 "classifiers must be disjoint for {s:?}"
             );
         }
+    }
+
+    #[test]
+    fn periodic_reconcile_advances_a_stale_sched_orphan_but_spares_fresh_and_manual_runs() {
+        let db = tmp_db("periodic-sched");
+        let now = 1_000_000_i64;
+        let stale = now - EXECUTION_STATE_STALE_THRESHOLD_MS - 1;
+        let fresh = now - EXECUTION_STATE_STALE_THRESHOLD_MS + 1;
+
+        seed_workflow_run(&db, "sched:old:1", WorkflowRunState::Running, stale);
+        seed_workflow_run(&db, "sched:fresh:1", WorkflowRunState::Running, fresh);
+        seed_workflow_run(&db, "manual:old:1", WorkflowRunState::Running, stale);
+        seed_workflow_run(
+            &db,
+            "sched:paused:1",
+            WorkflowRunState::AwaitingCheckpoint,
+            stale,
+        );
+
+        let outcome = reconcile_stale_scheduled_runs(&db, now).unwrap();
+
+        assert_eq!(outcome.scanned, 1, "only stale sched pending/running rows are scanned");
+        assert_eq!(outcome.aborted, 1, "the stale sched orphan is failed");
+        assert_eq!(outcome.skipped, 0);
+        assert_eq!(workflow_state(&db, "sched:old:1"), WorkflowRunState::Failed);
+        assert_eq!(
+            workflow_state(&db, "sched:fresh:1"),
+            WorkflowRunState::Running,
+            "fresh sched run may still be owned by the live scheduler tick"
+        );
+        assert_eq!(
+            workflow_state(&db, "manual:old:1"),
+            WorkflowRunState::Running,
+            "manual workflow runs stay out of the scheduled-run reconciler"
+        );
+        assert_eq!(
+            workflow_state(&db, "sched:paused:1"),
+            WorkflowRunState::AwaitingCheckpoint,
+            "awaiting-checkpoint is a legitimate pause, not a crash orphan"
+        );
+    }
+
+    #[test]
+    fn boot_scheduled_reconcile_stays_unconditional_on_age() {
+        let db = tmp_db("boot-sched");
+        let now = 1_000_000_i64;
+        seed_workflow_run(&db, "sched:fresh-boot:1", WorkflowRunState::Running, now - 1);
+
+        let outcome = reconcile_orphaned_scheduled_runs(&db, now).unwrap();
+
+        assert_eq!(outcome.scanned, 1);
+        assert_eq!(outcome.aborted, 1);
+        assert_eq!(
+            workflow_state(&db, "sched:fresh-boot:1"),
+            WorkflowRunState::Failed,
+            "boot reconcile must catch fast-restart orphans without a staleness window"
+        );
     }
 }

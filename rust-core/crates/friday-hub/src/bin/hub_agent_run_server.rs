@@ -3618,6 +3618,40 @@ mod tests {
     }
 
     #[test]
+    fn retention_wiring_surfaces_dead_config_and_parse_asymmetry() {
+        assert_eq!(
+            retention_wiring_from(None, Some("1")),
+            RetentionWiring::DeadConfigReaperOff,
+            "retention ON with the reaper OFF is a dead config that must be surfaced"
+        );
+        assert_eq!(
+            retention_wiring_from(Some("0"), Some("1")),
+            RetentionWiring::DeadConfigReaperOff,
+            "an explicit reaper OFF still makes retention a dead config"
+        );
+        assert_eq!(
+            retention_wiring_from(Some("true"), Some("true")),
+            RetentionWiring::MisparsedTruthy,
+            "the reaper accepts true, but retention does not; surface the asymmetric parse"
+        );
+        assert_eq!(
+            retention_wiring_from(Some("true"), Some("1")),
+            RetentionWiring::Enabled,
+            "the existing accepted-value contract stays intact: reaper true plus retention 1"
+        );
+        assert_eq!(
+            retention_wiring_from(Some("1"), None),
+            RetentionWiring::ReaperOnly,
+            "reaper-only mode remains the session-sweep-only behavior"
+        );
+        assert_eq!(
+            retention_wiring_from(None, None),
+            RetentionWiring::Disabled,
+            "both flags absent is the quiet default-off posture"
+        );
+    }
+
+    #[test]
     fn retention_sweep_runs_only_on_enabled_reaper_tick() {
         let (rt, _ws) = mock_runtime("retention-reaper-tick", OWNER);
         let now = 2_000 * 24 * 60 * 60 * 1000_i64;
