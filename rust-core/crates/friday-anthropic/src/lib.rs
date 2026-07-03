@@ -465,6 +465,40 @@ mod tests {
     /// so a header KAT can assert what actually reached the socket. Callers that
     /// only care about the response simply `handle.join().unwrap();` and discard
     /// the returned String.
+    fn read_full_http_request(stream: &mut std::net::TcpStream) -> Vec<u8> {
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+        let mut captured: Vec<u8> = Vec::new();
+        let mut tmp = [0u8; 1024];
+        loop {
+            match stream.read(&mut tmp) {
+                Ok(0) => break,
+                Ok(n) => {
+                    captured.extend_from_slice(&tmp[..n]);
+                    let Some(header_end) = captured.windows(4).position(|w| w == b"\r\n\r\n")
+                    else {
+                        continue;
+                    };
+                    let headers = String::from_utf8_lossy(&captured[..header_end + 4]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    let body_read = captured.len().saturating_sub(header_end + 4);
+                    if body_read >= content_length {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        captured
+    }
+
     fn serve_http_once(
         status: u16,
         reason: &'static str,
@@ -474,28 +508,9 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            // Read the FULL request header block. A single `read()` can return a PARTIAL request
-            // (TCP segments the request line + headers + JSON body across packets); closing the
-            // socket with UNREAD bytes still in the recv buffer sends an RST (not a clean FIN),
-            // which the client surfaces as `transport: Network Error` mid-response — a latent race
-            // in the old single-read helper, exposed under parallel test load. Loop until we've
-            // seen the header terminator (`\r\n\r\n`), then respond.
-            let mut captured: Vec<u8> = Vec::new();
-            let mut tmp = [0u8; 1024];
-            loop {
-                match stream.read(&mut tmp) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        captured.extend_from_slice(&tmp[..n]);
-                        if captured.windows(4).any(|w| w == b"\r\n\r\n") {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
+            let captured = read_full_http_request(&mut stream);
             let response = format!(
-                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
             stream.write_all(response.as_bytes()).unwrap();
@@ -533,22 +548,9 @@ mod tests {
             let mut captured_requests = Vec::new();
             for (status, reason, headers, body) in responses {
                 let (mut stream, _) = listener.accept().unwrap();
-                let mut captured: Vec<u8> = Vec::new();
-                let mut tmp = [0u8; 1024];
-                loop {
-                    match stream.read(&mut tmp) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            captured.extend_from_slice(&tmp[..n]);
-                            if captured.windows(4).any(|w| w == b"\r\n\r\n") {
-                                break;
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
+                let captured = read_full_http_request(&mut stream);
                 let mut response = format!(
-                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
                     body.len()
                 );
                 for (name, value) in headers {
