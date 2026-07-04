@@ -708,6 +708,118 @@ describe("Phase 7 pipeline integration", () => {
     expect(result.incidentsCreated).toHaveLength(1);
     expect(result.incidentsCreated[0]!.severity).toBe("medium");
   });
+
+  it("rolls back the event marker when the learning pipeline crashes mid-processing", () => {
+    const ledger = createFridayLearningEventLedger({ db });
+    const factRepo = createFridayPreferenceFactRepository();
+    const incidentRepo = createFridayErrorIncidentRepository();
+    const diagnosisRepo = createFridayDiagnosisRecordRepository();
+    const lessonRepo = createFridayLearnedLessonRepository();
+    const actionRepo = createFridayAutoFixActionRepository();
+    const approvalRepo = createFridayApprovalRequestRepository();
+    const events = createFridayLearningEventCollectionService({ ledger });
+    const extraction = createFridayPreferenceExtractionService({
+      idGenerator: idGen,
+    });
+    const facts = createFridayPreferenceFactService({
+      db,
+      factRepo,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+    });
+    const lifecycle = createFridayLearningLifecycleService({
+      db,
+      factRepo,
+    });
+    const crash = new Error("simulated diagnosis crash");
+
+    const crashingPipeline = createFridaySelfLearningPipelineService({
+      db,
+      events,
+      extraction,
+      facts,
+      lifecycle,
+      incidentRepo,
+      diagnosisRepo,
+      lessonRepo,
+      actionRepo,
+      approvalRepo,
+      diagnosisService: {
+        diagnoseInTransaction: vi.fn(() => {
+          throw crash;
+        }),
+        diagnose: vi.fn(() => {
+          throw crash;
+        }),
+      },
+      planService: createFridayAutoFixPlanService({
+        idGenerator: idGen,
+      }),
+      riskService: createFridayAutoFixRiskAssessmentService({
+        db,
+        actionRepo,
+      }),
+      idGenerator: idGen,
+      nowIso: () => NOW,
+    });
+
+    const event = makeEvent({
+      eventId: "evt-p7-crash-retry",
+      payload: { category: "tool", message: "mid_pipeline_crash" },
+    });
+
+    expect(() => crashingPipeline.processEvent(event)).toThrow(crash);
+
+    const eventCountAfterCrash = (
+      db.writer.prepare("SELECT COUNT(*) as cnt FROM learning_events WHERE event_id = ?")
+        .get(event.eventId) as { cnt: number }
+    ).cnt;
+    const incidentCountAfterCrash = (
+      db.writer.prepare("SELECT COUNT(*) as cnt FROM error_incidents")
+        .get() as { cnt: number }
+    ).cnt;
+    expect(eventCountAfterCrash).toBe(0);
+    expect(incidentCountAfterCrash).toBe(0);
+
+    const recoveryPipeline = createFridaySelfLearningPipelineService({
+      db,
+      events,
+      extraction,
+      facts,
+      lifecycle,
+      incidentRepo,
+      diagnosisRepo,
+      lessonRepo,
+      actionRepo,
+      approvalRepo,
+      diagnosisService: createFridayErrorDiagnosisService({
+        db,
+        incidentRepo,
+        diagnosisRepo,
+        lessonRepo,
+        idGenerator: idGen,
+      }),
+      planService: createFridayAutoFixPlanService({
+        idGenerator: idGen,
+      }),
+      riskService: createFridayAutoFixRiskAssessmentService({
+        db,
+        actionRepo,
+      }),
+      idGenerator: idGen,
+      nowIso: () => NOW,
+    });
+
+    const retryResult = recoveryPipeline.processEvent(event);
+
+    expect(retryResult.inserted).toBe(true);
+    expect(retryResult.diagnosisCreated).toHaveLength(1);
+    const incidentCountAfterRetry = (
+      db.writer.prepare("SELECT COUNT(*) as cnt FROM error_incidents")
+        .get() as { cnt: number }
+    ).cnt;
+    expect(incidentCountAfterRetry).toBe(1);
+  });
 });
 
 describe("Approval → execution linkage", () => {

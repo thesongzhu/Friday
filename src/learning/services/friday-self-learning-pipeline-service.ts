@@ -52,6 +52,11 @@ export interface CreateSelfLearningPipelineServiceDeps {
   nowIso: () => string;
 }
 
+type FridaySelfLearningProcessWriteResult = Omit<
+  FridaySelfLearningProcessResult,
+  "lifecycleState"
+>;
+
 function readContextString(
   value: JsonObject,
   ...keys: string[]
@@ -107,230 +112,232 @@ export function createFridaySelfLearningPipelineService(
   function processOne(
     event: FridayLearningEventAppendInput,
   ): FridaySelfLearningProcessResult {
-    // 1. Collect event
-    const { inserted } = deps.events.collect(event);
+    const writeResult = deps.db.withWriteTransaction<FridaySelfLearningProcessWriteResult>(() => {
+      // 1. Collect event
+      const { inserted } = deps.events.collect(event);
 
-    // Short-circuit on duplicate events — no downstream writes
-    if (!inserted) {
-      return {
-        eventId: event.eventId,
-        inserted: false,
-        extractedSignals: [],
-        factsUpdated: [],
-        incidentsCreated: [],
-        diagnosisCreated: [],
-        lessonsUpdated: [],
-        lifecycleState: deps.lifecycle.getState(event.userId),
-      };
-    }
+      // Short-circuit on duplicate events — no downstream writes
+      if (!inserted) {
+        return {
+          eventId: event.eventId,
+          inserted: false,
+          extractedSignals: [],
+          factsUpdated: [],
+          incidentsCreated: [],
+          diagnosisCreated: [],
+          lessonsUpdated: [],
+        };
+      }
 
-    // 2. Extract signals
-    const extractedSignals = deps.extraction.extract(event);
+      // 2. Extract signals
+      const extractedSignals = deps.extraction.extract(event);
 
-    // 3. Update facts
-    const nowIso = deps.nowIso();
-    const factsUpdated = deps.facts.applySignals({
-      event,
-      signals: extractedSignals,
-      nowIso,
-    });
+      // 3. Update facts
+      const nowIso = deps.nowIso();
+      const factsUpdated = deps.facts.applySignals({
+        event,
+        signals: extractedSignals,
+        nowIso,
+      });
 
-    // 4. Classify/create incidents if error signals exist
-    const errorSignals = extractedSignals.filter((s) => s.kind === "error");
-    const incidentsCreated: FridayErrorIncidentEntity[] = [];
-    const diagnosisCreated: FridayDiagnosisRecordEntity[] = [];
-    const lessonsUpdated: FridayLearnedLessonEntity[] = [];
+      // 4. Classify/create incidents if error signals exist
+      const errorSignals = extractedSignals.filter((s) => s.kind === "error");
+      const incidentsCreated: FridayErrorIncidentEntity[] = [];
+      const diagnosisCreated: FridayDiagnosisRecordEntity[] = [];
+      const lessonsUpdated: FridayLearnedLessonEntity[] = [];
 
-    if (errorSignals.length > 0) {
-      deps.db.withWriteTransaction((db) => {
-        for (const signal of errorSignals) {
-          const signalValue = signal.value as JsonObject;
-          const signalRunId = signal.runId ?? readContextString(signalValue, "runId", "workflowRunId");
-          const signalNodeId = readContextString(signalValue, "nodeId");
-          const category =
-            (signalValue["category"] as string) ??
-            (signal.key.startsWith("tool_failure:") ? "tool" : "workflow");
-          const signature =
-            (signalValue["signature"] as string) ??
-            computeIncidentSignature(category, signal.key, signal.sourceEventId);
+      if (errorSignals.length > 0) {
+        deps.db.withWriteTransaction((db) => {
+          for (const signal of errorSignals) {
+            const signalValue = signal.value as JsonObject;
+            const signalRunId = signal.runId ?? readContextString(signalValue, "runId", "workflowRunId");
+            const signalNodeId = readContextString(signalValue, "nodeId");
+            const category =
+              (signalValue["category"] as string) ??
+              (signal.key.startsWith("tool_failure:") ? "tool" : "workflow");
+            const signature =
+              (signalValue["signature"] as string) ??
+              computeIncidentSignature(category, signal.key, signal.sourceEventId);
 
-          // Derive severity from signal context
-          const VALID_SEVERITIES = new Set(["low", "medium", "high"]);
-          const rawSeverity = (signalValue["severity"] as string) ?? "medium";
-          const derivedSeverity = (
-            VALID_SEVERITIES.has(rawSeverity) ? rawSeverity : "medium"
-          ) as FridayErrorIncidentEntity["severity"];
+            // Derive severity from signal context
+            const VALID_SEVERITIES = new Set(["low", "medium", "high"]);
+            const rawSeverity = (signalValue["severity"] as string) ?? "medium";
+            const derivedSeverity = (
+              VALID_SEVERITIES.has(rawSeverity) ? rawSeverity : "medium"
+            ) as FridayErrorIncidentEntity["severity"];
 
-          // Create incident (auto-fix eligibility determined below)
-          const refreshedIncident = deps.incidentRepo.findLatestOpenBySignature(
-            db,
-            signal.userId,
-            signature,
-          );
-          let incident: FridayErrorIncidentEntity;
-          if (refreshedIncident) {
-            incident = deps.incidentRepo.refreshOpenIncident(db, {
-              incidentId: refreshedIncident.incidentId,
-              runId: signalRunId,
-              nodeId: signalNodeId,
-              ts: signal.ts,
-              category: category as FridayErrorIncidentEntity["category"],
-              severity: derivedSeverity,
-              context: signalValue,
-              nowIso,
-            }) ?? refreshedIncident;
-          } else {
-            incident = {
-              incidentId: deps.idGenerator(),
-              userId: signal.userId,
-              runId: signalRunId,
-              nodeId: signalNodeId,
-              ts: signal.ts,
-              category: category as FridayErrorIncidentEntity["category"],
-              severity: derivedSeverity,
+            // Create incident (auto-fix eligibility determined below)
+            const refreshedIncident = deps.incidentRepo.findLatestOpenBySignature(
+              db,
+              signal.userId,
               signature,
-              context: signalValue,
-              autoFixEligible: false,
-              status: "open",
-              createdAt: nowIso,
-              updatedAt: nowIso,
-            };
-
-            deps.incidentRepo.insert(db, incident);
-            incidentsCreated.push(incident);
-          }
-
-          // Phase 7: Use diagnosis service if available
-          if (deps.diagnosisService && deps.planService && deps.riskService && deps.actionRepo) {
-            const diagOutcome = deps.diagnosisService.diagnoseInTransaction(db, {
-              incident,
-              nowIso,
-            });
-
-            // Update incident eligibility
-            if (diagOutcome.autoFixEligible) {
-              incident.autoFixEligible = true;
-              deps.incidentRepo.setAutoFixEligibility(
-                db,
-                incident.incidentId,
-                true,
+            );
+            let incident: FridayErrorIncidentEntity;
+            if (refreshedIncident) {
+              incident = deps.incidentRepo.refreshOpenIncident(db, {
+                incidentId: refreshedIncident.incidentId,
+                runId: signalRunId,
+                nodeId: signalNodeId,
+                ts: signal.ts,
+                category: category as FridayErrorIncidentEntity["category"],
+                severity: derivedSeverity,
+                context: signalValue,
                 nowIso,
-              );
+              }) ?? refreshedIncident;
+            } else {
+              incident = {
+                incidentId: deps.idGenerator(),
+                userId: signal.userId,
+                runId: signalRunId,
+                nodeId: signalNodeId,
+                ts: signal.ts,
+                category: category as FridayErrorIncidentEntity["category"],
+                severity: derivedSeverity,
+                signature,
+                context: signalValue,
+                autoFixEligible: false,
+                status: "open",
+                createdAt: nowIso,
+                updatedAt: nowIso,
+              };
+
+              deps.incidentRepo.insert(db, incident);
+              incidentsCreated.push(incident);
             }
 
-            diagnosisCreated.push(diagOutcome.diagnosis);
-
-            // Build plans from diagnosis
-            let plans = diagOutcome.candidatePlans;
-            if (plans.length === 0 && diagOutcome.autoFixEligible) {
-              plans = deps.planService.buildPlans({
+            // Phase 7: Use diagnosis service if available
+            if (deps.diagnosisService && deps.planService && deps.riskService && deps.actionRepo) {
+              const diagOutcome = deps.diagnosisService.diagnoseInTransaction(db, {
                 incident,
-                diagnosis: diagOutcome.diagnosis,
-                matchedLessons: diagOutcome.matchedLessons,
-                recurrenceCount: diagOutcome.recurrenceCount,
-              });
-            }
-
-            // Create auto-fix actions for eligible plans
-            if (plans.length > 0 && diagOutcome.autoFixEligible) {
-              const bestPlan = plans[0]!;
-              const riskAssessment = deps.riskService.assess({
-                incident,
-                plan: bestPlan,
                 nowIso,
               });
 
-              if (shouldCreateAutoFixAction(db, incident, riskAssessment)) {
-                const action: FridayAutoFixActionEntity = {
-                  actionId: deps.idGenerator(),
-                  incidentId: incident.incidentId,
-                  userId: incident.userId,
-                  riskTier: riskAssessment.riskTier,
+              // Update incident eligibility
+              if (diagOutcome.autoFixEligible) {
+                incident.autoFixEligible = true;
+                deps.incidentRepo.setAutoFixEligibility(
+                  db,
+                  incident.incidentId,
+                  true,
+                  nowIso,
+                );
+              }
+
+              diagnosisCreated.push(diagOutcome.diagnosis);
+
+              // Build plans from diagnosis
+              let plans = diagOutcome.candidatePlans;
+              if (plans.length === 0 && diagOutcome.autoFixEligible) {
+                plans = deps.planService.buildPlans({
+                  incident,
+                  diagnosis: diagOutcome.diagnosis,
+                  matchedLessons: diagOutcome.matchedLessons,
+                  recurrenceCount: diagOutcome.recurrenceCount,
+                });
+              }
+
+              // Create auto-fix actions for eligible plans
+              if (plans.length > 0 && diagOutcome.autoFixEligible) {
+                const bestPlan = plans[0]!;
+                const riskAssessment = deps.riskService.assess({
+                  incident,
                   plan: bestPlan,
-                  rollbackPlan: bestPlan.rollbackPlan,
-                  status: "planned",
-                  outcome: null,
-                  createdAt: nowIso,
-                  updatedAt: nowIso,
-                };
+                  nowIso,
+                });
 
-                deps.actionRepo.insert(db, action);
-
-                // Create approval request for Tier 2
-                if (riskAssessment.requiresApproval && deps.approvalRepo) {
-                  const expiresAt = new Date(
-                    new Date(nowIso).getTime() + 24 * 60 * 60 * 1000,
-                  ).toISOString();
-                  const approvalRequest: FridayApprovalRequestEntity = {
-                    requestId: deps.idGenerator(),
-                    actionId: action.actionId,
-                    runId: incident.runId,
+                if (shouldCreateAutoFixAction(db, incident, riskAssessment)) {
+                  const action: FridayAutoFixActionEntity = {
+                    actionId: deps.idGenerator(),
+                    incidentId: incident.incidentId,
                     userId: incident.userId,
-                    description: `Approval needed: ${bestPlan.title}`,
-                    riskTier: 2,
+                    riskTier: riskAssessment.riskTier,
                     plan: bestPlan,
-                    requestedAt: nowIso,
-                    expiresAt,
-                    status: "pending",
+                    rollbackPlan: bestPlan.rollbackPlan,
+                    status: "planned",
+                    outcome: null,
                     createdAt: nowIso,
                     updatedAt: nowIso,
                   };
-                  deps.approvalRepo.insert(db, approvalRequest);
+
+                  deps.actionRepo.insert(db, action);
+
+                  // Create approval request for Tier 2
+                  if (riskAssessment.requiresApproval && deps.approvalRepo) {
+                    const expiresAt = new Date(
+                      new Date(nowIso).getTime() + 24 * 60 * 60 * 1000,
+                    ).toISOString();
+                    const approvalRequest: FridayApprovalRequestEntity = {
+                      requestId: deps.idGenerator(),
+                      actionId: action.actionId,
+                      runId: incident.runId,
+                      userId: incident.userId,
+                      description: `Approval needed: ${bestPlan.title}`,
+                      riskTier: 2,
+                      plan: bestPlan,
+                      requestedAt: nowIso,
+                      expiresAt,
+                      status: "pending",
+                      createdAt: nowIso,
+                      updatedAt: nowIso,
+                    };
+                    deps.approvalRepo.insert(db, approvalRequest);
+                  }
                 }
               }
+
+              // Phase 7: lesson extraction happens after successful auto-fix execution,
+              // NOT during ingestion. See FridayAutoFixLessonExtractionService.
+            } else {
+              // Fallback: original Phase 6 behavior (no diagnosis service)
+              const diagnosis: FridayDiagnosisRecordEntity = {
+                id: deps.idGenerator(),
+                incidentId: incident.incidentId,
+                runId: signalRunId,
+                nodeId: signalNodeId,
+                errorFingerprint: signature,
+                confidence: signal.confidence,
+                diagnosis: {
+                  signalKey: signal.key,
+                  category,
+                  autoDetected: true,
+                } satisfies JsonObject,
+                createdAt: nowIso,
+                updatedAt: nowIso,
+              };
+
+              deps.diagnosisRepo.insert(db, diagnosis);
+              diagnosisCreated.push(diagnosis);
+
+              const lesson = deps.lessonRepo.upsertByFingerprint(db, {
+                id: deps.idGenerator(),
+                fingerprint: signature,
+                title: `Error: ${signal.key}`,
+                cause: `Detected via ${event.kind} event`,
+                fix: `Review ${category} configuration`,
+                sourceIncidentId: incident.incidentId,
+                sourceDiagnosisId: diagnosis.id,
+                nowIso,
+              });
+              lessonsUpdated.push(lesson);
             }
-
-            // Phase 7: lesson extraction happens after successful auto-fix execution,
-            // NOT during ingestion. See FridayAutoFixLessonExtractionService.
-          } else {
-            // Fallback: original Phase 6 behavior (no diagnosis service)
-            const diagnosis: FridayDiagnosisRecordEntity = {
-              id: deps.idGenerator(),
-              incidentId: incident.incidentId,
-              runId: signalRunId,
-              nodeId: signalNodeId,
-              errorFingerprint: signature,
-              confidence: signal.confidence,
-              diagnosis: {
-                signalKey: signal.key,
-                category,
-                autoDetected: true,
-              } satisfies JsonObject,
-              createdAt: nowIso,
-              updatedAt: nowIso,
-            };
-
-            deps.diagnosisRepo.insert(db, diagnosis);
-            diagnosisCreated.push(diagnosis);
-
-            const lesson = deps.lessonRepo.upsertByFingerprint(db, {
-              id: deps.idGenerator(),
-              fingerprint: signature,
-              title: `Error: ${signal.key}`,
-              cause: `Detected via ${event.kind} event`,
-              fix: `Review ${category} configuration`,
-              sourceIncidentId: incident.incidentId,
-              sourceDiagnosisId: diagnosis.id,
-              nowIso,
-            });
-            lessonsUpdated.push(lesson);
           }
-        }
-      });
-    }
+        });
+      }
 
-    // 7. Recompute lifecycle state
-    const lifecycleState = deps.lifecycle.getState(event.userId);
+      return {
+        eventId: event.eventId,
+        inserted,
+        extractedSignals,
+        factsUpdated,
+        incidentsCreated,
+        diagnosisCreated,
+        lessonsUpdated,
+      };
+    });
 
     return {
-      eventId: event.eventId,
-      inserted,
-      extractedSignals,
-      factsUpdated,
-      incidentsCreated,
-      diagnosisCreated,
-      lessonsUpdated,
-      lifecycleState,
+      ...writeResult,
+      lifecycleState: deps.lifecycle.getState(event.userId),
     };
   }
 
