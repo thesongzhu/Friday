@@ -33,7 +33,6 @@ const NOT_COVERED_REASONS = new Set([
   "operator-gated",
   "offline-only",
   "android-mock",
-  "surface-N/A",
 ]);
 
 const CELL_STATUSES = new Set(["exercised-green", "recorded-gap"]);
