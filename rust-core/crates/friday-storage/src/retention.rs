@@ -945,6 +945,31 @@ mod tests {
             .unwrap();
     }
 
+    fn seed_agent_run_with_event(
+        db: &Db,
+        run_id: &str,
+        event_id: &str,
+        state: &str,
+        created_at: i64,
+    ) {
+        crate::agent_run::create_run(db.conn(), run_id, "retention test task", created_at)
+            .unwrap();
+        crate::agent_run::record_event(
+            db.conn(),
+            event_id,
+            run_id,
+            "agent.lifecycle",
+            created_at,
+        )
+        .unwrap();
+        db.conn()
+            .execute(
+                "UPDATE agent_run SET state = ?1, updated_at = ?2 WHERE run_id = ?3",
+                params![state, created_at, run_id],
+            )
+            .unwrap();
+    }
+
     fn seed_audit(db: &Db, id: &str) {
         let tx = db.conn().unchecked_transaction().unwrap();
         crate::audit::append_audit(&tx, id, "owner", "test.action", None, 1).unwrap();
@@ -1435,6 +1460,44 @@ mod tests {
         assert_eq!(out.mission_deleted, 0);
         assert!(exists(&db, "work_item", "work_item_id", "w_guarded"));
         assert!(exists(&db, "mission", "mission_id", "m_guarded"));
+    }
+
+    #[test]
+    fn terminal_aged_agent_run_events_are_reaped_before_run_row() {
+        let db = Db::open_hub(&tmp("agent-run-retention")).unwrap();
+        let now = 2_000 * 24 * 60 * 60 * 1000_i64;
+        let old = 1_i64;
+        let recent = now - 1;
+
+        seed_agent_run_with_event(&db, "run_old_done", "ev_old_done", "finished", old);
+        seed_agent_run_with_event(
+            &db,
+            "run_old_hold",
+            "ev_old_hold",
+            "awaiting_clarification",
+            old,
+        );
+        seed_agent_run_with_event(&db, "run_recent_done", "ev_recent_done", "finished", recent);
+
+        let out = sweep_retention(db.conn(), now, RetentionWindows::default());
+        assert_eq!(out.table_errors, 0);
+
+        assert!(
+            !exists(&db, "agent_run_event", "event_id", "ev_old_done"),
+            "old terminal run event should be pruned before its run row"
+        );
+        assert!(
+            !exists(&db, "agent_run", "run_id", "run_old_done"),
+            "old terminal run row should be pruned once event rows are gone"
+        );
+
+        assert!(
+            exists(&db, "agent_run", "run_id", "run_old_hold"),
+            "awaiting_clarification is a live hold, not a retention-terminal run"
+        );
+        assert!(exists(&db, "agent_run_event", "event_id", "ev_old_hold"));
+        assert!(exists(&db, "agent_run", "run_id", "run_recent_done"));
+        assert!(exists(&db, "agent_run_event", "event_id", "ev_recent_done"));
     }
 
     #[test]
