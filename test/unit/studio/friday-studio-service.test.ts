@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as zlib from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { FridaySsrfBlockedError } from "../../../src/agent/security/friday-agent-ssrf-guard.js";
@@ -45,6 +46,59 @@ function makePublicUrlGuard(options?: { dnsBlockedHost?: string }) {
       }
     },
   };
+}
+
+function makeDeflatedZipWithDeclaredSize(input: {
+  relativePath: string;
+  content: Buffer;
+  declaredUncompressedSize: number;
+}): Buffer {
+  const name = Buffer.from(input.relativePath, "utf8");
+  const compressed = zlib.deflateRawSync(input.content);
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(0, 6);
+  local.writeUInt16LE(8, 8);
+  local.writeUInt16LE(0, 10);
+  local.writeUInt16LE(0, 12);
+  local.writeUInt32LE(0, 14);
+  local.writeUInt32LE(compressed.length, 18);
+  local.writeUInt32LE(input.declaredUncompressedSize, 22);
+  local.writeUInt16LE(name.length, 26);
+  local.writeUInt16LE(0, 28);
+  const localEntry = Buffer.concat([local, name, compressed]);
+
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(0, 8);
+  central.writeUInt16LE(8, 10);
+  central.writeUInt16LE(0, 12);
+  central.writeUInt16LE(0, 14);
+  central.writeUInt32LE(0, 16);
+  central.writeUInt32LE(compressed.length, 20);
+  central.writeUInt32LE(input.declaredUncompressedSize, 24);
+  central.writeUInt16LE(name.length, 28);
+  central.writeUInt16LE(0, 30);
+  central.writeUInt16LE(0, 32);
+  central.writeUInt16LE(0, 34);
+  central.writeUInt16LE(0, 36);
+  central.writeUInt32LE(0, 38);
+  central.writeUInt32LE(0, 42);
+  const centralEntry = Buffer.concat([central, name]);
+
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(centralEntry.length, 12);
+  end.writeUInt32LE(localEntry.length, 16);
+  end.writeUInt16LE(0, 20);
+  return Buffer.concat([localEntry, centralEntry, end]);
 }
 
 describe("createFridayStudioService", () => {
@@ -278,6 +332,23 @@ describe("createFridayStudioService", () => {
     });
     expect(zipImport.pack.packJsonPath).toBe("pack.json");
     expect(zipImport.pack.productIds).toEqual(["guided_browser_automation"]);
+  });
+
+  it("rejects zip imports that expand past the studio file limit during inflate", () => {
+    const service = createFridayStudioService({ workspaceRoot: makeTempDir() });
+    const zip = makeDeflatedZipWithDeclaredSize({
+      relativePath: "pack.json",
+      content: Buffer.from(" ".repeat(11 * 1024 * 1024)),
+      declaredUncompressedSize: 1024,
+    });
+
+    expect(() =>
+      service.importLocalPack({
+        kind: "zip",
+        fileName: "zip-bomb.zip",
+        zipBase64: zip.toString("base64"),
+      }),
+    ).toThrow(/Zip entry expanded beyond limit: pack\.json/);
   });
 
   it("validates an integration builder run as a capability candidate", async () => {
