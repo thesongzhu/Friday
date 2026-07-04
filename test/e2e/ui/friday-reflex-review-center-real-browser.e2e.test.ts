@@ -1040,7 +1040,14 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
           const published = workflowRuntime.crud.publishVersion(workflow.id, version.versionNumber);
           approvedWorkflowId = workflow.id;
           approvedWorkflowVersionId = published.id;
-          const sopMemory = await memoryService.store(
+          const sopMemory = await memoryGuardFactory.forContext({
+            principalId: DP10_DOGFOOD_USER_ID,
+            subject: {
+              hubId: DP10_DOGFOOD_TENANT_ID,
+              userId: DP10_DOGFOOD_USER_ID,
+              accessLevel: "tenant",
+            },
+          }).store(
             "default",
             [
               "DP10_DOGFOOD_APPROVED_SOP",

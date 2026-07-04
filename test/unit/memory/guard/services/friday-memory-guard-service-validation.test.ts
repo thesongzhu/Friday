@@ -70,7 +70,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
   describe("namespace prefix descendants", () => {
     it("expands scope prefix to include descendants when listing", async () => {
-      const { guard, core, quotaRepo, db } = createGuardTestSetup();
+      const { guard, core, quotaRepo } = createGuardTestSetup();
       const descendants = [
         "tenant.default.user.user1.notes",
         "tenant.default.user.user1.tasks",
@@ -80,15 +80,15 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       await guard.list();
 
-      // Should call core.list with the prefix itself + expanded descendants + "default"
+      // Should call core.list with the prefix itself + scoped descendants only.
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants, "default"],
+          namespace: ["tenant.default.user.user1", ...descendants],
         }),
       );
     });
 
-    it("keeps scopePrefix and default namespace available when no descendants found", async () => {
+    it("keeps scopePrefix available when no descendants found", async () => {
       const { guard, core, quotaRepo } = createGuardTestSetup();
       vi.mocked(quotaRepo.listNamespacesByPrefix).mockReturnValue([]);
 
@@ -96,7 +96,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", "default"],
+          namespace: ["tenant.default.user.user1"],
         }),
       );
     });
@@ -114,26 +114,26 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
       const callArgs = vi.mocked(core.search).mock.calls[0];
       expect(callArgs[1]).toEqual(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants, "default"],
+          namespace: ["tenant.default.user.user1", ...descendants],
         }),
       );
     });
 
-    it("search keeps channel-scoped session namespaces returned by expanded scope", async () => {
+    it("search keeps current-user channel-scoped namespaces returned by expanded scope", async () => {
       const { guard, core, quotaRepo } = createGuardTestSetup();
       vi.mocked(quotaRepo.listNamespacesByPrefix).mockImplementation((_db, prefix) => {
         if (prefix === "tenant.default.user.user1") {
           return ["tenant.default.user.user1.notes"];
         }
         if (prefix === "tenant.default.channel") {
-          return ["tenant.default.channel.webchat.user.memextract-123.shared"];
+          return ["tenant.default.channel.webchat.user.user1.shared"];
         }
         return [];
       });
       vi.mocked(core.search).mockResolvedValue([
         createMockSearchResult({
           item: createMockMemoryItem({
-            namespace: "tenant.default.channel.webchat.user.memextract-123.shared",
+            namespace: "tenant.default.channel.webchat.user.user1.shared",
             content: "User prefers rg over grep",
           }),
         }),
@@ -142,7 +142,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
       const results = await guard.search("rg grep");
 
       expect(results).toHaveLength(1);
-      expect(results[0]?.item.namespace).toBe("tenant.default.channel.webchat.user.memextract-123.shared");
+      expect(results[0]?.item.namespace).toBe("tenant.default.channel.webchat.user.user1.shared");
     });
 
     it("list still includes channel-scoped session namespaces when direct user descendants are empty", async () => {
@@ -161,7 +161,79 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", "tenant.default.channel.webchat.user.user1.shared", "default"],
+          namespace: ["tenant.default.user.user1", "tenant.default.channel.webchat.user.user1.shared"],
+        }),
+      );
+    });
+
+    it("does not include unrelated channel namespaces in default list scope", async () => {
+      const { guard, core, quotaRepo } = createGuardTestSetup();
+      vi.mocked(quotaRepo.listNamespacesByPrefix).mockImplementation((_db, prefix) => {
+        if (prefix === "tenant.default.user.user1") {
+          return [];
+        }
+        if (prefix === "tenant.default.channel") {
+          return [
+            "tenant.default.channel.webchat.user.user1.shared",
+            "tenant.default.channel.webchat.user.other-user.shared",
+          ];
+        }
+        return [];
+      });
+
+      await guard.list();
+
+      expect(core.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          namespace: ["tenant.default.user.user1", "tenant.default.channel.webchat.user.user1.shared"],
+        }),
+      );
+    });
+
+    it("does not include unrelated channel namespaces in default search scope", async () => {
+      const { guard, core, quotaRepo } = createGuardTestSetup();
+      vi.mocked(quotaRepo.listNamespacesByPrefix).mockImplementation((_db, prefix) => {
+        if (prefix === "tenant.default.user.user1") {
+          return [];
+        }
+        if (prefix === "tenant.default.channel") {
+          return [
+            "tenant.default.channel.webchat.user.user1.shared",
+            "tenant.default.channel.webchat.user.other-user.shared",
+          ];
+        }
+        return [];
+      });
+
+      await guard.search("hello");
+
+      expect(vi.mocked(core.search).mock.calls[0][1]).toEqual(
+        expect.objectContaining({
+          namespace: ["tenant.default.user.user1", "tenant.default.channel.webchat.user.user1.shared"],
+        }),
+      );
+    });
+
+    it("does not include unrelated channel namespaces in default prune scope", async () => {
+      const { guard, core, quotaRepo } = createGuardTestSetup();
+      vi.mocked(quotaRepo.listNamespacesByPrefix).mockImplementation((_db, prefix) => {
+        if (prefix === "tenant.default.user.user1") {
+          return [];
+        }
+        if (prefix === "tenant.default.channel") {
+          return [
+            "tenant.default.channel.webchat.user.user1.old",
+            "tenant.default.channel.webchat.user.other-user.old",
+          ];
+        }
+        return [];
+      });
+
+      await guard.prune();
+
+      expect(core.prune).toHaveBeenCalledWith(
+        expect.objectContaining({
+          namespace: ["tenant.default.user.user1", "tenant.default.channel.webchat.user.user1.old"],
         }),
       );
     });
@@ -177,7 +249,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.prune).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants, "default"],
+          namespace: ["tenant.default.user.user1", ...descendants],
         }),
       );
     });
@@ -266,7 +338,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants, "default"],
+          namespace: ["tenant.default.user.user1", ...descendants],
         }),
       );
     });
@@ -283,7 +355,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: [...descendants, "default"],
+          namespace: descendants,
         }),
       );
     });
@@ -300,7 +372,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
       const callArgs = vi.mocked(core.search).mock.calls[0];
       expect(callArgs[1]).toEqual(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.archive", "default"],
+          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.archive"],
         }),
       );
     });
@@ -316,7 +388,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.prune).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.old", "default"],
+          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.old"],
         }),
       );
     });
