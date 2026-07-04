@@ -47,7 +47,7 @@ function normalizeOpenAiCompletions(body: Record<string, unknown>): FridayProvid
     output,
     cacheRead,
     cacheWrite,
-    total: input + output + cacheRead + cacheWrite,
+    total: input + output,
   };
 }
 
@@ -70,7 +70,7 @@ function normalizeOpenAiResponses(body: Record<string, unknown>): FridayProvider
     output,
     cacheRead,
     cacheWrite,
-    total: input + output + cacheRead + cacheWrite,
+    total: input + output,
   };
 }
 
