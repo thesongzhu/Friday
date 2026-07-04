@@ -178,6 +178,49 @@ describe("FridayProviderService", () => {
       expect(profile.config.keySource.kind).toBe("secret-ref");
     });
 
+    it("migrates env-ref provider keys into encrypted storage and clears process env", async () => {
+      process.env.A11_PROVIDER_ENV_KEY = "a11-env-provider-key"; // pragma: allowlist secret
+      try {
+        const profile = await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$A11_PROVIDER_ENV_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
+
+        expect(profile.config.keySource).toEqual({
+          kind: "secret-ref",
+          refKey: "provider:test-id-0001:apiKey",
+        });
+        expect(process.env.A11_PROVIDER_ENV_KEY).toBeUndefined();
+
+        const storedSecret = db.withReadConnection((conn) =>
+          conn.prepare(
+            `SELECT encrypted_value FROM secrets WHERE scope = ? AND ref_key = ?`,
+          ).get("provider", "provider:test-id-0001:apiKey") as { encrypted_value: string } | undefined,
+        );
+        expect(storedSecret?.encrypted_value).toBeTruthy();
+        expect(storedSecret?.encrypted_value).not.toContain("a11-env-provider-key");
+
+        await service.setRoutingConfig({
+          defaultProviderId: profile.id,
+          fallbackProviderIds: [],
+        });
+
+        const { result } = await service.runWithFallback({
+          run: async (_route, credential) => credential,
+        });
+        expect(result).toBe("a11-env-provider-key");
+      } finally {
+        delete process.env.A11_PROVIDER_ENV_KEY;
+      }
+    });
+
     it("fails closed for raw runtime provider secrets when FRIDAY_MASTER_KEY is missing", async () => {
       delete process.env.FRIDAY_MASTER_KEY;
       resetMasterKeyCache();
