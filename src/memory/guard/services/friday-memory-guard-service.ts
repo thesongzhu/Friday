@@ -311,9 +311,9 @@ function scopeNamespaceFilter(
         ? descendants
         : [scopePrefix, ...descendants];
 
-    // Also include channel-scoped namespaces and "default" for the current user.
+    // Also include channel-scoped namespaces for the current user.
     // Without this, items from session memory extraction (tenant.X.channel.Y.user.Z)
-    // and agent memory_store ("default") are invisible in the user's memory list.
+    // are invisible in the user's memory list.
     // Channel namespaces use session chatId as user segment (not the real userId),
     // so for the same hub we include all channel-scoped namespaces.
     if (context.subject.userId) {
@@ -322,7 +322,7 @@ function scopeNamespaceFilter(
         quotaRepo.listNamespacesByPrefix(readDb, channelPrefix, FRIDAY_MEMORY_GUARD_SCOPE_PREFIX_MAX_NAMESPACES),
       );
       // Include all channel namespaces within the same hub (they all belong to this tenant)
-      const expanded = [...new Set([...result, ...channelDescendants, "default"])];
+      const expanded = [...new Set([...result, ...channelDescendants])];
       return expanded;
     }
 
@@ -664,7 +664,7 @@ export function createFridayMemoryGuardService(
         // Scope check on all items — allow items from the expanded namespace query.
         // scopedNamespace already restricts which namespaces are queried, so items
         // returned by core.list() are pre-filtered. The scope check here is a safety
-        // net. For expanded namespaces (channel-scoped, "default"), we trust the
+        // net. For expanded channel-scoped namespaces, we trust the
         // query filter since it was built from the user's context.
         const allowedNamespaces = Array.isArray(scopedNamespace)
           ? new Set(scopedNamespace as string[])
