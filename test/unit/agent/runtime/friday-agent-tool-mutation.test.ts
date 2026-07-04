@@ -28,15 +28,16 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("workflow_list", {})).toBe(false);
   });
 
-  it("classifies all skill_run calls as non-mutating (skills run in sandbox)", () => {
-    // skill_run is always read-only — skills execute in their own sandbox
-    expect(isMutatingToolCall("skill_run", {})).toBe(false);
+  it("keeps known diagnostic skill_run calls non-mutating", () => {
     expect(isMutatingToolCall("skill_run", { skillId: "system-health-snapshot" })).toBe(false);
-    expect(isMutatingToolCall("skill_run", { skillId: "idea-clarifier" })).toBe(false);
-    expect(isMutatingToolCall("skill_run", { skillId: "browser-qa-report" })).toBe(false);
-    expect(isMutatingToolCall("skill_run", { skillId: "release-doc-sync" })).toBe(false);
-    expect(isMutatingToolCall("skill_run", { skillId: "browser-qa-fix" })).toBe(false);
-    expect(isMutatingToolCall("skill_run", { skillId: "user-generated-skill" })).toBe(false);
+  });
+
+  it("classifies arbitrary skill_run calls as mutating because skills can expose secrets", () => {
+    expect(isMutatingToolCall("skill_run", {})).toBe(true);
+    expect(isMutatingToolCall("skill_run", { skillId: "browser-qa-report" })).toBe(true);
+    expect(isMutatingToolCall("skill_run", { skillId: "release-doc-sync" })).toBe(true);
+    expect(isMutatingToolCall("skill_run", { skillId: "browser-qa-fix" })).toBe(true);
+    expect(isMutatingToolCall("skill_run", { skillId: "user-generated-skill" })).toBe(true);
   });
 
   // ─── Always read-only ───
@@ -231,7 +232,15 @@ describe("isMutatingToolCall", () => {
   it("keeps plain read-only exec non-mutating (regression guard)", () => {
     expect(isMutatingToolCall("exec", { command: "ls -la" })).toBe(false);
     expect(isMutatingToolCall("exec", { command: "grep -r foo src" })).toBe(false);
-    expect(isMutatingToolCall("exec", { command: "printenv" })).toBe(false);
+  });
+
+  it("classifies secret-reading exec commands as mutating", () => {
+    expect(isMutatingToolCall("exec", { command: "env" })).toBe(true);
+    expect(isMutatingToolCall("exec", { command: "printenv" })).toBe(true);
+    expect(isMutatingToolCall("exec", { command: "printenv OPENAI_API_KEY" })).toBe(true);
+    expect(isMutatingToolCall("exec", { command: "cat .env" })).toBe(true);
+    expect(isMutatingToolCall("exec", { command: "cat ~/.ssh/id_rsa" })).toBe(true);
+    expect(isMutatingToolCall("exec", { command: "grep -r API_KEY .env" })).toBe(true);
   });
 
   it("classifies plain mutating exec as mutating (regression guard)", () => {
