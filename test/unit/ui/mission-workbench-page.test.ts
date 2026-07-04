@@ -9,6 +9,7 @@ import { MissionWorkbenchPage } from "../../../ui/src/routes/mission-workbench-p
 
 const mocks = vi.hoisted(() => ({
   controlRouteDecision: vi.fn(),
+  createMissionFromSurface: vi.fn(),
   decideMemoryCandidate: vi.fn(),
   getSnapshot: vi.fn(),
   transitionWorkItemStatus: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("@/hooks/use-mission-workbench", () => ({
 vi.mock("@/lib/api/mission-workbench", () => ({
   missionWorkbenchApi: {
     controlRouteDecision: mocks.controlRouteDecision,
+    createMissionFromSurface: mocks.createMissionFromSurface,
     decideMemoryCandidate: mocks.decideMemoryCandidate,
     getSnapshot: mocks.getSnapshot,
     transitionWorkItemStatus: mocks.transitionWorkItemStatus,
@@ -149,6 +151,16 @@ describe("MissionWorkbenchPage", () => {
       recallable: true,
     });
     mocks.controlRouteDecision.mockReset();
+    mocks.createMissionFromSurface.mockReset();
+    mocks.createMissionFromSurface.mockResolvedValue({
+      fridayConversationId: "conversation_ui_spine",
+      missionId: "mission_ui_spine",
+      workItemId: "work_ui_spine",
+      surfaceThreadId: "mission-workbench:mission_ui_spine",
+      status: "ready",
+      blockers: [],
+      createdOrReady: true,
+    });
     mocks.transitionWorkItemStatus.mockReset();
 
     container = window.document.getElementById("root") as HTMLElement;
@@ -212,6 +224,36 @@ describe("MissionWorkbenchPage", () => {
       memoryId: "memory_ui_candidate",
       ownerPrincipal: "operator:mission-workbench",
       decision: "confirm",
+    });
+  });
+
+  it("creates a Mission through a Mission Workbench UI action", async () => {
+    await renderPage();
+
+    const createMission = container?.querySelector<HTMLButtonElement>(
+      "[data-testid=\"mission-spine-create-from-workbench\"]",
+    );
+    expect(createMission).not.toBeNull();
+
+    await act(async () => {
+      createMission!.click();
+      await flushCycles();
+    });
+
+    expect(mocks.createMissionFromSurface).toHaveBeenCalledWith({
+      fridayConversationId: "conversation_ui_spine",
+      ownerPrincipal: "operator:mission-workbench",
+      surfaceThreadId: "mission-workbench:mission_ui_spine",
+      surfaceKind: "desktop",
+      deliveryRoute: "desktop://mission-workbench",
+      visibilityPolicy: "compact",
+      missionId: "mission_ui_spine",
+      workItemId: "work_ui_spine",
+      title: "UI work item",
+      intent: "Route through Rust Hub.",
+      lane: "codex",
+      targetProviderOrAgent: "codex",
+      proofRequirements: ["outcome:AnswerProduced:>=1"],
     });
   });
 });
