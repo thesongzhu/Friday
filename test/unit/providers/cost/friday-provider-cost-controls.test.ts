@@ -4,8 +4,10 @@ import type { FridaySqliteLayer } from "#state";
 import type { FridayProviderKind, FridayResolvedProviderRoute } from "#providers";
 import {
   createFridayProviderBudgetService,
+  createFridayProviderCostCalculator,
   createFridayProviderCostRouter,
   createFridayProviderPricingCatalog,
+  createFridayProviderUsageNormalizer,
   createFridayProviderUsageRepository,
 } from "#providers";
 
@@ -50,6 +52,68 @@ function route(id: string, kind: FridayProviderKind, model: string): FridayResol
 }
 
 describe("Friday provider cost controls", () => {
+  describe("usage normalization", () => {
+    it("does not double-count OpenAI cached input tokens in total usage", () => {
+      const normalizer = createFridayProviderUsageNormalizer();
+
+      const usage = normalizer.normalize("openai-responses", {
+        usage: {
+          input_tokens: 1_000,
+          output_tokens: 200,
+          input_tokens_details: { cached_tokens: 300 },
+        },
+      });
+
+      expect(usage).toEqual({
+        input: 1_000,
+        output: 200,
+        cacheRead: 300,
+        cacheWrite: 0,
+        total: 1_200,
+      });
+    });
+
+    it("does not double-count OpenAI chat-completions cached prompt tokens in total usage", () => {
+      const normalizer = createFridayProviderUsageNormalizer();
+
+      const usage = normalizer.normalize("openai-completions", {
+        usage: {
+          prompt_tokens: 800,
+          completion_tokens: 120,
+          prompt_tokens_details: { cached_tokens: 250 },
+        },
+      });
+
+      expect(usage).toEqual({
+        input: 800,
+        output: 120,
+        cacheRead: 250,
+        cacheWrite: 0,
+        total: 920,
+      });
+    });
+  });
+
+  describe("subscription pricing mirror", () => {
+    it("keeps OpenAI Codex subscription usage out of OpenAI API dollar pricing", () => {
+      const catalog = createFridayProviderPricingCatalog();
+      const calculator = createFridayProviderCostCalculator({ pricingCatalog: catalog });
+
+      expect(catalog.getPricing("openai-codex", "gpt-5.4-mini")).toMatchObject({
+        inputPer1MUsd: 0,
+        outputPer1MUsd: 0,
+        cacheReadPer1MUsd: 0,
+        cacheWritePer1MUsd: 0,
+        qualityTier: "unknown",
+      });
+      expect(calculator.calculate({
+        providerKind: "openai-codex",
+        model: "gpt-5.4-mini",
+        usage: { input: 10_000, output: 2_000, cacheRead: 5_000, cacheWrite: 0, total: 12_000 },
+      })).toBe(0);
+    });
+  });
+
   describe("pricing catalog", () => {
     it("uses the longest matching model pattern before the generic fallback", () => {
       const catalog = createFridayProviderPricingCatalog();
