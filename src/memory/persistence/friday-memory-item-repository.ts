@@ -309,6 +309,8 @@ export function createFridayMemoryItemRepository(): FridayMemoryItemRepository {
         params.push(options.olderThan);
       }
 
+      if (conditions.length === 0) return [];
+
       const where = `WHERE ${conditions.join(" AND ")}`;
       const limit = options.limit ?? 1000;
       params.push(limit);

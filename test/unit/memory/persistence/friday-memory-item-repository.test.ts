@@ -499,6 +499,21 @@ describe("FridayMemoryItemRepository", () => {
     expect(repo.getById(db.writer, "i3")).not.toBeNull();
   });
 
+  it("fail-closes prune with expiredOnly false and no predicate", () => {
+    db.writer.transaction(() => {
+      repo.insert(db.writer, makeItem({ id: "i1", key: "k1", namespace: "ns-a" }));
+      repo.insert(db.writer, makeItem({ id: "i2", key: "k2", namespace: "ns-b" }));
+    })();
+
+    const deleted = db.writer.transaction(() =>
+      repo.prune(db.writer, { expiredOnly: false, nowIso: NOW }),
+    )();
+
+    expect(deleted).toEqual([]);
+    expect(repo.getById(db.writer, "i1")).not.toBeNull();
+    expect(repo.getById(db.writer, "i2")).not.toBeNull();
+  });
+
   // ─── FTS backfill ───
 
   it("FTS index includes pre-existing items after migration (backfill)", () => {
