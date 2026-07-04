@@ -232,7 +232,22 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        env:
+          npm_config_fetch_retries: 5
+          npm_config_fetch_retry_mintimeout: 10000
+          npm_config_fetch_retry_maxtimeout: 120000
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            else
+              status=$?
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+            sleep $((attempt * 10))
+          done
 
       - name: Proof no-mock leak gate
         run: npm run check:proof:no-mock-leaks
