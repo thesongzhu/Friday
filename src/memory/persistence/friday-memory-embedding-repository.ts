@@ -197,15 +197,12 @@ export function createFridayMemoryEmbeddingRepository(): FridayMemoryEmbeddingRe
       }
 
       const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-      params.push(input.candidateLimit);
-
       const sql = `
         SELECT e.item_id, e.vector_json
         FROM memory_embeddings e
         JOIN memory_items mi ON mi.id = e.item_id
         ${where}
         ORDER BY e.updated_at DESC
-        LIMIT ?
       `;
 
       const candidateRows = db.prepare(sql).all(...params) as Array<{
