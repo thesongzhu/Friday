@@ -70,7 +70,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
   describe("namespace prefix descendants", () => {
     it("expands scope prefix to include descendants when listing", async () => {
-      const { guard, core, quotaRepo, db } = createGuardTestSetup();
+      const { guard, core, quotaRepo } = createGuardTestSetup();
       const descendants = [
         "tenant.default.user.user1.notes",
         "tenant.default.user.user1.tasks",
@@ -80,15 +80,15 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       await guard.list();
 
-      // Should call core.list with the prefix itself + expanded descendants + "default"
+      // Should call core.list with the prefix itself + scoped descendants only.
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants, "default"],
+          namespace: ["tenant.default.user.user1", ...descendants],
         }),
       );
     });
 
-    it("keeps scopePrefix and default namespace available when no descendants found", async () => {
+    it("keeps scopePrefix available when no descendants found", async () => {
       const { guard, core, quotaRepo } = createGuardTestSetup();
       vi.mocked(quotaRepo.listNamespacesByPrefix).mockReturnValue([]);
 
@@ -96,7 +96,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", "default"],
+          namespace: ["tenant.default.user.user1"],
         }),
       );
     });
@@ -114,7 +114,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
       const callArgs = vi.mocked(core.search).mock.calls[0];
       expect(callArgs[1]).toEqual(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants, "default"],
+          namespace: ["tenant.default.user.user1", ...descendants],
         }),
       );
     });
@@ -161,7 +161,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", "tenant.default.channel.webchat.user.user1.shared", "default"],
+          namespace: ["tenant.default.user.user1", "tenant.default.channel.webchat.user.user1.shared"],
         }),
       );
     });
@@ -177,7 +177,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.prune).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants, "default"],
+          namespace: ["tenant.default.user.user1", ...descendants],
         }),
       );
     });
@@ -266,7 +266,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", ...descendants, "default"],
+          namespace: ["tenant.default.user.user1", ...descendants],
         }),
       );
     });
@@ -283,7 +283,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.list).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: [...descendants, "default"],
+          namespace: descendants,
         }),
       );
     });
@@ -300,7 +300,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
       const callArgs = vi.mocked(core.search).mock.calls[0];
       expect(callArgs[1]).toEqual(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.archive", "default"],
+          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.archive"],
         }),
       );
     });
@@ -316,7 +316,7 @@ describe("FridayMemoryGuardService — CX Review Fixes", () => {
 
       expect(core.prune).toHaveBeenCalledWith(
         expect.objectContaining({
-          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.old", "default"],
+          namespace: ["tenant.default.user.user1", "tenant.default.user.user1.old"],
         }),
       );
     });

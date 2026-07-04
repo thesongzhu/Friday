@@ -16,6 +16,16 @@ describe("FridayMemoryGuardService — Namespace Isolation", () => {
     );
   });
 
+  it("prefixes the default namespace for tenant access level", async () => {
+    const { guard, core } = createGuardTestSetup();
+    await guard.store("default", "content");
+    expect(core.store).toHaveBeenCalledWith(
+      "tenant.default.user.user1.default",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it("does not prefix namespace for system access level", async () => {
     const { guard, core } = createGuardTestSetup({
       subject: { hubId: "default", accessLevel: "system" },
@@ -126,10 +136,18 @@ describe("FridayMemoryGuardService — Namespace Isolation", () => {
       expect.objectContaining({
         namespace: expect.arrayContaining([
           "tenant.default.user.user1",
-          "default",
         ]),
       }),
     );
+  });
+
+  it("does not include the bare default namespace in tenant default list scope", async () => {
+    const { guard, core } = createGuardTestSetup();
+    await guard.list();
+    const callArgs = vi.mocked(core.list).mock.calls[0];
+    const namespaces = callArgs[0]?.namespace;
+    expect(Array.isArray(namespaces)).toBe(true);
+    expect(namespaces).not.toContain("default");
   });
 
   it("list filters out items outside scope", async () => {
@@ -153,10 +171,18 @@ describe("FridayMemoryGuardService — Namespace Isolation", () => {
       expect.objectContaining({
         namespace: expect.arrayContaining([
           "tenant.default.user.user1",
-          "default",
         ]),
       }),
     );
+  });
+
+  it("does not include the bare default namespace in tenant default search scope", async () => {
+    const { guard, core } = createGuardTestSetup();
+    await guard.search("hello");
+    const callArgs = vi.mocked(core.search).mock.calls[0];
+    const namespaces = callArgs[1]?.namespace;
+    expect(Array.isArray(namespaces)).toBe(true);
+    expect(namespaces).not.toContain("default");
   });
 
   it("search filters results outside scope", async () => {
@@ -192,10 +218,18 @@ describe("FridayMemoryGuardService — Namespace Isolation", () => {
       expect.objectContaining({
         namespace: expect.arrayContaining([
           "tenant.default.user.user1",
-          "default",
         ]),
       }),
     );
+  });
+
+  it("does not include the bare default namespace in tenant default prune scope", async () => {
+    const { guard, core } = createGuardTestSetup();
+    await guard.prune();
+    const callArgs = vi.mocked(core.prune).mock.calls[0];
+    const namespaces = callArgs[0]?.namespace;
+    expect(Array.isArray(namespaces)).toBe(true);
+    expect(namespaces).not.toContain("default");
   });
 
   // ─── Tenant without userId ───
