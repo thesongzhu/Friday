@@ -24,7 +24,8 @@ use friday_core::gate::{
 };
 use friday_core::{
     ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus, Risk,
-    SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
+    RouteDecisionCard, SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem,
+    WorkItemStatus, WorkLane,
 };
 use friday_crypto::{OperatorSigningKey, OperatorVerifyingKey};
 use friday_hub::agent_run_control::resume as bare_resume;
@@ -39,6 +40,7 @@ use friday_hub::{
     ExecError, FsToolExecutor, LoopStatus, RawToolCall, RunPolicy, ToolExecutor, ToolReceipt,
     TurnTrace,
 };
+use friday_storage::audit::verify_audit_chain;
 use friday_storage::{
     agent_run, get_run_result_ref, list_pending_requests_for_run, Db, StorageError,
 };
@@ -375,6 +377,7 @@ fn executed_resume_advances_bound_work_item_to_completed_with_proof() {
     let exec = FsToolExecutor::new(&ws.0);
 
     let approval = ed_approval(&request, &sk, &nonce, Some(FUTURE));
+    let audit_before = verify_audit_chain(db.conn()).unwrap();
     let outcome =
         resume_agent_loop_for_mission(&db, &exec, &vk, run_id, &signed_blob(&approval), NOW)
             .unwrap();
@@ -410,6 +413,104 @@ fn executed_resume_advances_bound_work_item_to_completed_with_proof() {
     assert_eq!(
         pt_links[0].target_ref,
         format!("friday://provider-timeline/friday-session-ok#{run_id}")
+    );
+    let mission = db
+        .get_mission("mission-ok")
+        .unwrap()
+        .expect("mission remains readable");
+    assert_eq!(
+        mission.status,
+        MissionStatus::Done,
+        "operator-approved resume completion must auto-close the single-work-item Mission"
+    );
+    assert!(
+        mission
+            .proof_refs
+            .contains(&format!("friday://agent-run/{run_id}")),
+        "Mission auto-close carries the run proof ref: {:?}",
+        mission.proof_refs
+    );
+    let conversation = db
+        .get_friday_conversation("fconv_ok")
+        .unwrap()
+        .expect("conversation remains readable");
+    assert!(
+        !conversation
+            .active_mission_ids
+            .contains(&"mission-ok".to_string()),
+        "auto-close must remove the Mission from active_mission_ids"
+    );
+    assert!(
+        verify_audit_chain(db.conn()).unwrap() > audit_before,
+        "resume success keeps the audit chain growing and verifiable"
+    );
+    let autoclose_audit_count: i64 = db
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM audit_ledger \
+             WHERE action LIKE 'mission.lifecycle:active->done:auto_close_after_work_item:%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        autoclose_audit_count, 1,
+        "auto-close adds one mission lifecycle audit receipt"
+    );
+}
+
+#[test]
+fn executed_resume_does_not_auto_close_with_unmaterialized_deferred_follow_up() {
+    let (sk, vk) = operator();
+    let db = Db::open_hub(&temp_db("deferred")).unwrap();
+    let ws = Workspace::new("deferred");
+    let owner = "owner:alice";
+    let run_id = "run-deferred";
+    seed_mission(&db, "deferred", owner);
+    bind_to_provider_routed(&db, "deferred", "friday-session-deferred", run_id);
+    let item = db
+        .get_work_item("work-deferred")
+        .unwrap()
+        .expect("work item exists");
+    db.upsert_route_decision(&RouteDecisionCard::from_work_item(
+        "route-decision:deferred".into(),
+        &item,
+        vec![format!("agent-run:{run_id}")],
+        NOW - 10,
+        None,
+    ))
+    .unwrap();
+    let (nonce, request) = pause_run(&db, &ws, run_id, owner, &vk, "out-deferred.txt");
+    let exec = FsToolExecutor::new(&ws.0);
+    let approval = ed_approval(&request, &sk, &nonce, Some(FUTURE));
+
+    let outcome =
+        resume_agent_loop_for_mission(&db, &exec, &vk, run_id, &signed_blob(&approval), NOW)
+            .unwrap();
+
+    assert!(outcome.accepted);
+    assert_eq!(
+        work_status(&db, "deferred"),
+        WorkItemStatus::CompletedWithProof
+    );
+    let mission = db
+        .get_mission("mission-deferred")
+        .unwrap()
+        .expect("mission remains readable");
+    assert_eq!(
+        mission.status,
+        MissionStatus::Active,
+        "unmaterialized deferred follow-up keeps the Mission open"
+    );
+    let conversation = db
+        .get_friday_conversation("fconv_deferred")
+        .unwrap()
+        .expect("conversation remains readable");
+    assert!(
+        conversation
+            .active_mission_ids
+            .contains(&"mission-deferred".to_string()),
+        "open Mission must remain in active_mission_ids"
     );
 }
 

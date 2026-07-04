@@ -10,10 +10,11 @@
 use friday_core::MemoryState;
 use friday_core::{
     outcome_checked_proof_enabled, requires_context_passport, ApprovalState, FridayConversation,
-    Mission, MissionLink, MissionLinkKind, SurfaceThread, WorkItem, WorkItemStatus, WorkspaceClaim,
+    Mission, MissionLink, MissionLinkKind, MissionStatus, RouteDecisionCard, SurfaceThread,
+    WorkItem, WorkItemStatus, WorkspaceClaim,
 };
 use friday_storage::{memory, mission, workflow, Db, MissionBodySnapshot, StorageError};
-use rusqlite::Connection;
+use rusqlite::Transaction;
 
 use crate::channel_event::ChannelInboundReceipt;
 use crate::provider_timeline::PendingState;
@@ -723,7 +724,7 @@ pub(crate) fn attach_provider_timeline_state_guarded_with_completion_receipt(
 ///
 /// Keep this in lock-step with the `else` branch above: any change to one must change the other.
 pub(crate) fn attach_provider_timeline_state_off_path_in(
-    conn: &Connection,
+    conn: &Transaction<'_>,
     attachment: ProviderTimelineAttachment,
     clear_executing: bool,
     completion_proof_receipt: Option<&str>,
@@ -758,6 +759,7 @@ pub(crate) fn attach_provider_timeline_state_off_path_in(
     }
 
     // OFF path (and same-status no-op): the pre-WI-1 inline write, verbatim.
+    let previous_status = work_item.status;
     work_item.status = next_status;
     work_item.updated_at_ms = attachment.now_ms;
     if next_status == WorkItemStatus::CompletedWithProof {
@@ -785,6 +787,15 @@ pub(crate) fn attach_provider_timeline_state_off_path_in(
         mission::upsert_work_item(conn, &work_item)?;
     }
     mission::upsert_mission(conn, &mission)?;
+    maybe_close_mission_after_off_path_completion(
+        conn,
+        &work_item,
+        previous_status,
+        attachment.proof_ref.as_deref(),
+        "friday-hub:provider-timeline",
+        "provider_timeline_completed_with_proof",
+        attachment.now_ms,
+    )?;
 
     let target_ref = format!(
         "friday://provider-timeline/{}#{}",
@@ -812,6 +823,156 @@ pub(crate) fn attach_provider_timeline_state_off_path_in(
         link_id,
         work_item_status: next_status,
     })
+}
+
+fn maybe_close_mission_after_off_path_completion(
+    conn: &Transaction<'_>,
+    item: &WorkItem,
+    previous_status: WorkItemStatus,
+    proof_ref: Option<&str>,
+    actor_ref: &str,
+    reason: &str,
+    now_ms: i64,
+) -> Result<(), StorageError> {
+    if previous_status == WorkItemStatus::CompletedWithProof
+        || item.status != WorkItemStatus::CompletedWithProof
+    {
+        return Ok(());
+    }
+
+    let Some(mut mission) = mission::get_mission(conn, &item.mission_id)? else {
+        return Ok(());
+    };
+    if !mission.status.can_transition_to(MissionStatus::Done) {
+        return Ok(());
+    }
+
+    let work_items = mission::list_work_items_for_mission(conn, &item.mission_id)?;
+    if work_items.is_empty()
+        || !work_items
+            .iter()
+            .all(|work_item| work_item.status == WorkItemStatus::CompletedWithProof)
+    {
+        return Ok(());
+    }
+    if has_unmaterialized_deferred_follow_up(conn, &item.mission_id, &work_items)? {
+        return Ok(());
+    }
+
+    let Some(proof_ref) = proof_ref else {
+        return Ok(());
+    };
+    let previous_mission_status = mission.status;
+    mission.status = mission
+        .status
+        .try_transition(MissionStatus::Done)
+        .map_err(|err| StorageError::Unsupported(err.to_string()))?;
+    mission.updated_at_ms = now_ms;
+    push_unique(&mut mission.proof_refs, proof_ref.to_string());
+    let lifecycle_entry = format!(
+        "lifecycle:{}:active->done by {}: auto-close after WorkItem '{}' completed_with_proof ({reason})",
+        mission.mission_id, actor_ref, item.work_item_id
+    );
+    mission.decision_path_summary =
+        append_lifecycle_summary(&mission.decision_path_summary, &lifecycle_entry);
+
+    friday_storage::audit::append_audit(
+        conn,
+        &format!("mission_autoclose:{}:{now_ms}", mission.mission_id),
+        actor_ref,
+        &format!(
+            "mission.lifecycle:{}->{}:auto_close_after_work_item:{}",
+            previous_mission_status.as_str(),
+            mission.status.as_str(),
+            item.work_item_id
+        ),
+        Some(mission.mission_id.as_str()),
+        now_ms,
+    )?;
+    mission::upsert_mission(conn, &mission)?;
+
+    let mut conversation = mission::get_conversation(conn, &mission.friday_conversation_id)?
+        .ok_or_else(|| {
+            StorageError::Unsupported(format!(
+                "mission_auto_close conversation '{}' not found",
+                mission.friday_conversation_id
+            ))
+        })?;
+    conversation
+        .active_mission_ids
+        .retain(|id| id != &mission.mission_id);
+    conversation.updated_at_ms = now_ms;
+    mission::upsert_conversation(conn, &conversation)?;
+
+    Ok(())
+}
+
+fn has_unmaterialized_deferred_follow_up(
+    conn: &Transaction<'_>,
+    mission_id: &str,
+    work_items: &[WorkItem],
+) -> Result<bool, StorageError> {
+    let route_decisions = mission::list_route_decisions_for_mission(conn, mission_id)?;
+    for decision in &route_decisions {
+        if decision.deferred_options.is_empty() {
+            continue;
+        }
+        if decision
+            .inheritable_context
+            .iter()
+            .any(|context| context.starts_with("source_route_decision:"))
+        {
+            continue;
+        }
+        if !deferred_route_decision_materialized(decision, &route_decisions, work_items) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn deferred_route_decision_materialized(
+    decision: &RouteDecisionCard,
+    route_decisions: &[RouteDecisionCard],
+    work_items: &[WorkItem],
+) -> bool {
+    let source_marker = format!("source_route_decision:{}", decision.decision_id);
+    if work_items.iter().any(|work_item| {
+        work_item
+            .judgment_memory
+            .inheritable_context
+            .iter()
+            .any(|context| context == &source_marker)
+    }) {
+        return true;
+    }
+
+    route_decisions
+        .iter()
+        .filter(|candidate| {
+            candidate.decision_id != decision.decision_id
+                && candidate.work_item_id == decision.work_item_id
+                && candidate.created_at_ms >= decision.created_at_ms
+                && !candidate.deferred_options.is_empty()
+        })
+        .any(|candidate| {
+            let source_marker = format!("source_route_decision:{}", candidate.decision_id);
+            work_items.iter().any(|work_item| {
+                work_item
+                    .judgment_memory
+                    .inheritable_context
+                    .iter()
+                    .any(|context| context == &source_marker)
+            })
+        })
+}
+
+fn append_lifecycle_summary(existing: &str, entry: &str) -> String {
+    if existing.trim().is_empty() {
+        entry.to_string()
+    } else {
+        format!("{existing}\n{entry}")
+    }
 }
 
 fn validate_preflight_request(request: &MissionPreflightRequest) -> Vec<String> {
