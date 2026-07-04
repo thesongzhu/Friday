@@ -5,6 +5,41 @@ interface GetMissionWorkbenchSnapshotResponse {
   snapshot: MissionWorkbenchSnapshot;
 }
 
+export interface MissionSpineIntakeRequest {
+  fridayConversationId: string;
+  ownerPrincipal: string;
+  surfaceThreadId: string;
+  surfaceKind: string;
+  deliveryRoute: string;
+  visibilityPolicy: string;
+  missionId: string;
+  workItemId: string;
+  title: string;
+  intent: string;
+  lane: string;
+  targetProviderOrAgent?: string;
+  capabilityId?: string;
+  bodyRef?: string;
+  proofRequirements?: string[];
+  includesSensitiveContext?: boolean;
+}
+
+export interface MissionSpineIntakeResult {
+  fridayConversationId: string;
+  missionId: string;
+  workItemId: string;
+  surfaceThreadId: string;
+  status: string;
+  blockers: string[];
+  duplicateMissionId?: string;
+  duplicateWorkItemId?: string;
+  createdOrReady: boolean;
+}
+
+interface MissionSpineIntakeResponse {
+  result: MissionSpineIntakeResult;
+}
+
 export interface MissionRouteDecisionControlRequest {
   controlKind: "veto" | "override";
   missionId: string;
@@ -53,6 +88,23 @@ interface TransitionMissionWorkItemStatusResponse {
   result: MissionWorkItemStatusResult;
 }
 
+export interface MemorySpineDecisionRequest {
+  memoryId: string;
+  ownerPrincipal: string;
+  decision: "confirm" | "reject";
+}
+
+export interface MemorySpineDecisionResult {
+  memoryId: string;
+  state: string;
+  status: string;
+  recallable: boolean;
+}
+
+interface MemorySpineDecisionResponse {
+  result: MemorySpineDecisionResult;
+}
+
 export const missionWorkbenchApi = {
   async getSnapshot(missionId?: string): Promise<MissionWorkbenchSnapshot> {
     const path = missionId
@@ -60,6 +112,16 @@ export const missionWorkbenchApi = {
       : "/v1/mission-spine/workbench";
     const data = await apiClient.get<GetMissionWorkbenchSnapshotResponse>(path);
     return data.snapshot;
+  },
+
+  async createMissionFromSurface(
+    request: MissionSpineIntakeRequest,
+  ): Promise<MissionSpineIntakeResult> {
+    const data = await apiClient.post<MissionSpineIntakeRequest, MissionSpineIntakeResponse>(
+      "/v1/mission-spine/intake",
+      request,
+    );
+    return data.result;
   },
 
   async controlRouteDecision(
@@ -83,6 +145,16 @@ export const missionWorkbenchApi = {
       MissionWorkItemStatusRequest,
       TransitionMissionWorkItemStatusResponse
     >(path, request);
+    return data.result;
+  },
+
+  async decideMemoryCandidate(
+    request: MemorySpineDecisionRequest,
+  ): Promise<MemorySpineDecisionResult> {
+    const data = await apiClient.post<MemorySpineDecisionRequest, MemorySpineDecisionResponse>(
+      "/v1/memory-spine/decide",
+      request,
+    );
     return data.result;
   },
 };

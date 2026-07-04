@@ -1326,7 +1326,7 @@ fn has_unmaterialized_deferred_follow_up(
 ) -> Result<bool> {
     let route_decisions = list_route_decisions_for_mission(conn, mission_id)?;
     for decision in &route_decisions {
-        if decision.deferred_options.is_empty() {
+        if !route_decision_requires_materialized_follow_up(decision) {
             continue;
         }
         if decision
@@ -1341,6 +1341,19 @@ fn has_unmaterialized_deferred_follow_up(
         }
     }
     Ok(false)
+}
+
+fn route_decision_requires_materialized_follow_up(decision: &RouteDecisionCard) -> bool {
+    decision
+        .deferred_options
+        .iter()
+        .any(|option| deferred_option_requires_materialized_follow_up(option))
+}
+
+fn deferred_option_requires_materialized_follow_up(option: &str) -> bool {
+    !option
+        .trim()
+        .eq_ignore_ascii_case("native UI implementation")
 }
 
 fn deferred_route_decision_materialized(
@@ -3230,6 +3243,132 @@ mod tests {
             created_at_ms: now,
             updated_at_ms: now,
         }
+    }
+
+    #[test]
+    fn completed_single_leg_mission_with_native_ui_deferred_route_auto_closes() {
+        let _flag = EnvVarGuard::set(OUTCOME_CHECKED_PROOF_FLAG, "0");
+        let db = Db::open_hub(&tmp("b1-native-ui-deferred-autoclose")).unwrap();
+        let mut item = seed_graph(&db, WorkItemStatus::ProviderWaiting, Vec::new());
+        item.judgment_memory.deferred_options = vec!["native UI implementation".into()];
+        upsert_work_item(db.conn(), &item).unwrap();
+        upsert_route_decision(
+            db.conn(),
+            &RouteDecisionCard::from_work_item(
+                "route-b1-native-ui-deferred".into(),
+                &item,
+                vec!["trace://b1/native-ui-deferred".into()],
+                1_777_000_000_001,
+                None,
+            ),
+        )
+        .unwrap();
+
+        let (completed, previous) = transition_work_item_status(
+            db.conn(),
+            "work-b4",
+            WorkItemStatus::CompletedWithProof,
+            "test://b1",
+            "provider returned durable proof for the only executable leg",
+            Some("proof://b1/single-leg-completed"),
+            1_777_000_000_010,
+        )
+        .unwrap();
+
+        assert_eq!(previous, WorkItemStatus::ProviderWaiting);
+        assert_eq!(completed.status, WorkItemStatus::CompletedWithProof);
+        let mission = db.get_mission("mission-b4").unwrap().unwrap();
+        assert_eq!(
+            mission.status,
+            MissionStatus::Done,
+            "a non-materializable native UI note must not strand a proven single-leg Mission active"
+        );
+        let conversation = get_conversation(db.conn(), "fconv_b4_verify")
+            .unwrap()
+            .unwrap();
+        assert!(
+            !conversation
+                .active_mission_ids
+                .iter()
+                .any(|id| id == "mission-b4"),
+            "auto-close must remove the Mission from the active set"
+        );
+    }
+
+    #[test]
+    fn materializable_claude_follow_up_still_blocks_until_follow_up_completes() {
+        let _flag = EnvVarGuard::set(OUTCOME_CHECKED_PROOF_FLAG, "0");
+        let db = Db::open_hub(&tmp("b1-claude-follow-up-blocks")).unwrap();
+        let mut item = seed_graph(&db, WorkItemStatus::ProviderWaiting, Vec::new());
+        item.judgment_memory.deferred_options = vec![
+            "Claude synthesis follow-up after the Codex work item produces a proof receipt".into(),
+        ];
+        upsert_work_item(db.conn(), &item).unwrap();
+        upsert_route_decision(
+            db.conn(),
+            &RouteDecisionCard::from_work_item(
+                "route-b1-claude-follow-up".into(),
+                &item,
+                vec!["trace://b1/claude-follow-up".into()],
+                1_777_000_001_001,
+                None,
+            ),
+        )
+        .unwrap();
+
+        transition_work_item_status(
+            db.conn(),
+            "work-b4",
+            WorkItemStatus::CompletedWithProof,
+            "test://b1",
+            "codex leg completed before claude follow-up",
+            Some("proof://b1/codex-leg-completed"),
+            1_777_000_001_010,
+        )
+        .unwrap();
+        let mission = db.get_mission("mission-b4").unwrap().unwrap();
+        assert_eq!(
+            mission.status,
+            MissionStatus::Active,
+            "a materializable Claude follow-up must keep the Mission active until it exists and completes"
+        );
+
+        materialize_deferred_route_follow_up(
+            db.conn(),
+            DeferredRouteFollowUpRequest {
+                decision_id: "route-b1-claude-follow-up",
+                source_work_item_id: "work-b4",
+                follow_up_work_item_id: "work-b1-claude-follow-up",
+                follow_up_lane: WorkLane::Claude,
+                follow_up_provider_or_agent: Some("claude"),
+                actor_ref: "test://b1",
+                reason: "prove the materializable deferred leg still gates close",
+                now_ms: 1_777_000_001_020,
+            },
+        )
+        .unwrap();
+        for (status, now) in [
+            (WorkItemStatus::Dispatched, 1_777_000_001_030),
+            (WorkItemStatus::HubAccepted, 1_777_000_001_031),
+            (WorkItemStatus::ProviderRouted, 1_777_000_001_032),
+            (WorkItemStatus::ProviderWaiting, 1_777_000_001_033),
+            (WorkItemStatus::CompletedWithProof, 1_777_000_001_034),
+        ] {
+            transition_work_item_status(
+                db.conn(),
+                "work-b1-claude-follow-up",
+                status,
+                "test://b1",
+                "advance materialized Claude follow-up",
+                (status == WorkItemStatus::CompletedWithProof)
+                    .then_some("proof://b1/claude-follow-up-completed"),
+                now,
+            )
+            .unwrap();
+        }
+
+        let mission = db.get_mission("mission-b4").unwrap().unwrap();
+        assert_eq!(mission.status, MissionStatus::Done);
     }
 
     #[test]

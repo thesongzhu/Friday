@@ -107,4 +107,81 @@ describe("missionWorkbenchApi", () => {
       },
     );
   });
+
+  it("creates a Mission through the Rust Mission Spine intake route", async () => {
+    const result = {
+      fridayConversationId: "conversation_ui_spine",
+      missionId: "mission_ui_spine",
+      workItemId: "work_ui_spine",
+      surfaceThreadId: "surface_ui_spine",
+      status: "ready",
+      blockers: [],
+      createdOrReady: true,
+    };
+    vi.mocked(apiClient.post).mockResolvedValue({ result });
+
+    await expect(
+      missionWorkbenchApi.createMissionFromSurface({
+        fridayConversationId: "conversation_ui_spine",
+        ownerPrincipal: "operator:ui",
+        surfaceThreadId: "surface_ui_spine",
+        surfaceKind: "desktop",
+        deliveryRoute: "desktop://mission-workbench",
+        visibilityPolicy: "compact",
+        missionId: "mission_ui_spine",
+        workItemId: "work_ui_spine",
+        title: "UI-created Mission",
+        intent: "Create a Mission from a real UI action.",
+        lane: "auto",
+        bodyRef: "friday://body/ui-spine",
+        proofRequirements: ["outcome:AnswerProduced:>=1"],
+      }),
+    ).resolves.toEqual(result);
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      "/v1/mission-spine/intake",
+      {
+        fridayConversationId: "conversation_ui_spine",
+        ownerPrincipal: "operator:ui",
+        surfaceThreadId: "surface_ui_spine",
+        surfaceKind: "desktop",
+        deliveryRoute: "desktop://mission-workbench",
+        visibilityPolicy: "compact",
+        missionId: "mission_ui_spine",
+        workItemId: "work_ui_spine",
+        title: "UI-created Mission",
+        intent: "Create a Mission from a real UI action.",
+        lane: "auto",
+        bodyRef: "friday://body/ui-spine",
+        proofRequirements: ["outcome:AnswerProduced:>=1"],
+      },
+    );
+  });
+
+  it("confirms or rejects memory candidates through the Rust Memory Spine decision route", async () => {
+    const result = {
+      memoryId: "memory_ui_candidate",
+      state: "confirmed",
+      status: "confirmed",
+      recallable: true,
+    };
+    vi.mocked(apiClient.post).mockResolvedValue({ result });
+
+    await expect(
+      missionWorkbenchApi.decideMemoryCandidate({
+        memoryId: "memory_ui_candidate",
+        ownerPrincipal: "operator:ui",
+        decision: "confirm",
+      }),
+    ).resolves.toEqual(result);
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      "/v1/memory-spine/decide",
+      {
+        memoryId: "memory_ui_candidate",
+        ownerPrincipal: "operator:ui",
+        decision: "confirm",
+      },
+    );
+  });
 });
