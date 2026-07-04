@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { GitBranch, RotateCcw, Search, ShieldX, XCircle } from "lucide-react";
+import { CheckCircle2, GitBranch, RotateCcw, Search, ShieldX, XCircle } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
@@ -129,6 +129,20 @@ export function MissionWorkbenchPage() {
           : "operator cancelled WorkItem from Mission Workbench recovery surface",
       });
     },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["mission-spine", "workbench", "snapshot", targetMissionId ?? "latest"],
+      });
+    },
+  });
+
+  const memoryDecisionMutation = useMutation({
+    mutationFn: (input: { memoryId: string; decision: "confirm" | "reject" }) =>
+      missionWorkbenchApi.decideMemoryCandidate({
+        memoryId: input.memoryId,
+        ownerPrincipal: "operator:mission-workbench",
+        decision: input.decision,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: ["mission-spine", "workbench", "snapshot", targetMissionId ?? "latest"],
@@ -466,6 +480,28 @@ export function MissionWorkbenchPage() {
                   </div>
                   <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{candidate.preview}</p>
                   <RefDetails label="Memory evidence" refs={[["evidence", candidate.evidenceRef]]} />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <ActionButton
+                      tone="secondary"
+                      className="gap-2 rounded-lg"
+                      data-testid={`mission-memory-confirm-${candidate.id}`}
+                      disabled={memoryDecisionMutation.isPending}
+                      onClick={() => memoryDecisionMutation.mutate({ memoryId: candidate.id, decision: "confirm" })}
+                    >
+                      <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                      Confirm
+                    </ActionButton>
+                    <ActionButton
+                      tone="danger"
+                      className="gap-2 rounded-lg"
+                      data-testid={`mission-memory-reject-${candidate.id}`}
+                      disabled={memoryDecisionMutation.isPending}
+                      onClick={() => memoryDecisionMutation.mutate({ memoryId: candidate.id, decision: "reject" })}
+                    >
+                      <XCircle className="h-4 w-4" aria-hidden="true" />
+                      Reject
+                    </ActionButton>
+                  </div>
                 </div>
               ))}
             </div>
