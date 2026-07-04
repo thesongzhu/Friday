@@ -801,9 +801,11 @@ describe("FridayProviderFallback", () => {
         },
       });
 
-      expect(result.attempts).toHaveLength(1);
-      expect(result.attempts[0].error).toContain("[REDACTED]");
-      expect(result.attempts[0].error).not.toContain("sk-test-abc");
+      expect(result.attempts).toHaveLength(2);
+      for (const attempt of result.attempts) {
+        expect(attempt.error).toContain("[REDACTED]");
+        expect(attempt.error).not.toContain("sk-test-abc");
+      }
     });
 
     it("redacts Google AIza API keys and ya29 OAuth tokens in attempt error logs", async () => {
