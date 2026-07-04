@@ -3233,6 +3233,55 @@ mod tests {
     }
 
     #[test]
+    fn completed_single_leg_mission_with_native_ui_deferred_route_auto_closes() {
+        let db = Db::open_hub(&tmp("b1-native-ui-deferred-autoclose")).unwrap();
+        let mut item = seed_graph(&db, WorkItemStatus::ProviderWaiting, Vec::new());
+        item.judgment_memory.deferred_options = vec!["native UI implementation".into()];
+        upsert_work_item(db.conn(), &item).unwrap();
+        upsert_route_decision(
+            db.conn(),
+            &RouteDecisionCard::from_work_item(
+                "route-b1-native-ui-deferred".into(),
+                &item,
+                vec!["trace://b1/native-ui-deferred".into()],
+                1_777_000_000_001,
+                None,
+            ),
+        )
+        .unwrap();
+
+        let (completed, previous) = transition_work_item_status(
+            db.conn(),
+            "work-b4",
+            WorkItemStatus::CompletedWithProof,
+            "test://b1",
+            "provider returned durable proof for the only executable leg",
+            Some("proof://b1/single-leg-completed"),
+            1_777_000_000_010,
+        )
+        .unwrap();
+
+        assert_eq!(previous, WorkItemStatus::ProviderWaiting);
+        assert_eq!(completed.status, WorkItemStatus::CompletedWithProof);
+        let mission = db.get_mission("mission-b4").unwrap().unwrap();
+        assert_eq!(
+            mission.status,
+            MissionStatus::Done,
+            "a non-materializable native UI note must not strand a proven single-leg Mission active"
+        );
+        let conversation = get_conversation(db.conn(), "fconv_b4_verify")
+            .unwrap()
+            .unwrap();
+        assert!(
+            !conversation
+                .active_mission_ids
+                .iter()
+                .any(|id| id == "mission-b4"),
+            "auto-close must remove the Mission from the active set"
+        );
+    }
+
+    #[test]
     fn outcome_checked_upsert_rejects_detached_answer_receipt_without_run_result() {
         let _flag = EnvVarGuard::set(OUTCOME_CHECKED_PROOF_FLAG, "1");
         let db = Db::open_hub(&tmp("upsert-detached-receipt")).unwrap();
