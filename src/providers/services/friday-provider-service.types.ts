@@ -102,6 +102,7 @@ export interface FridayProviderService {
     regionTag?: FridayProviderRegionTag;
     enabled?: boolean;
     validateOnSave?: boolean;
+    preserveEnvRef?: boolean;
   }): Promise<FridayProviderProfile>;
 
   updateProvider(
@@ -122,6 +123,7 @@ export interface FridayProviderService {
       regionTag?: FridayProviderRegionTag;
       enabled?: boolean;
       validateOnSave?: boolean;
+      preserveEnvRef?: boolean;
     },
   ): Promise<FridayProviderProfile>;
 

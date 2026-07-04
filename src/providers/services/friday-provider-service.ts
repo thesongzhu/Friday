@@ -481,7 +481,7 @@ export function createFridayProviderService(
 
   // ─── Key source resolution ───
 
-  function resolveKeySourceInput(apiKey: string | undefined): {
+  function resolveKeySourceInput(apiKey: string | undefined, options?: { preserveEnvRef?: boolean }): {
     keySource: FridayProviderKeySource;
     inlineSecret: string | null;
   } {
@@ -493,6 +493,12 @@ export function createFridayProviderService(
     });
     switch (parsed.kind) {
       case "env-ref": {
+        if (options?.preserveEnvRef) {
+          return {
+            keySource: { kind: "env-ref", envVar: parsed.envVar },
+            inlineSecret: null,
+          };
+        }
         const envValue = process.env[parsed.envVar];
         if (envValue && envValue.trim().length > 0) {
           return {
@@ -2787,7 +2793,7 @@ export function createFridayProviderService(
       const keyInput =
         input.authMode === "oauth" || input.authMode === "external-session"
           ? { keySource: { kind: "none" } satisfies FridayProviderKeySource, inlineSecret: null }
-          : resolveKeySourceInput(input.apiKey);
+          : resolveKeySourceInput(input.apiKey, { preserveEnvRef: input.preserveEnvRef });
       let keySource = keyInput.keySource;
 
       const config: FridayProviderConfigJson = {
@@ -2928,7 +2934,7 @@ export function createFridayProviderService(
         // OAuth mode forces keySource to none
         keySource = { kind: "none" };
       } else if (patch.apiKey !== undefined) {
-        const nextKeyInput = resolveKeySourceInput(patch.apiKey);
+        const nextKeyInput = resolveKeySourceInput(patch.apiKey, { preserveEnvRef: patch.preserveEnvRef });
         keySource = nextKeyInput.keySource;
         inlineSecret = nextKeyInput.inlineSecret;
         if (keySource.kind === "secret-ref" && inlineSecret !== null) {
