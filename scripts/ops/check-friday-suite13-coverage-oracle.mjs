@@ -234,6 +234,9 @@ function validateLedger(ledger, cellIds) {
       const assertions = Number(row?.assertionCount || 0);
       if (!Number.isInteger(assertions) || assertions <= 0) block("green_cell_without_assertions", cellId);
       if (isMockOrTestOraclePosture(row?.hubPosture) || isTruthyTestOracle(row?.testOracle)) block("green_cell_mock_or_test_oracle", cellId);
+      if (typeof row?.notCoveredReason === "string" && row.notCoveredReason.length > 0) {
+        block("green_cell_has_not_covered_reason", `${cellId}:${row.notCoveredReason}`);
+      }
     }
   }
 
