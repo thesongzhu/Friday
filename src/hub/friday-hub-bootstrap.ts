@@ -676,6 +676,7 @@ async function autoDetectProvidersFromEnv(
         supportedModels: entry.supportedModels ?? [entry.defaultModel],
         defaultModel: entry.defaultModel,
         validateOnSave: false,
+        preserveEnvRef: true,
       });
       detected.push({ kind: entry.kind, id: profile.id });
       existingKinds.add(entry.kind);
