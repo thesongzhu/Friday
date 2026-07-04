@@ -240,6 +240,56 @@ describe("createFridayGuideLensService", () => {
     expect(result.uiMap.elements.some((element) => element.id === "parser-authorize")).toBe(true);
   });
 
+  it("minimizes sensitive screen text before optional parser adapters", async () => {
+    const parse = vi.fn().mockResolvedValue({
+      provider: "omniparser",
+      used: true,
+      latencyMs: 17,
+      visibleText: "Authorize",
+      elements: [],
+    });
+    const service = createFridayGuideLensService({
+      idGenerator: idGenerator(),
+      nowIso,
+      parserAdapter: { parse },
+      defaultPreferences: { parserProvider: "omniparser" },
+    });
+
+    await service.captureSnapshot({
+      visibleText: [
+        "Customer: Jane Doe",
+        "Email: jane.doe@example.com",
+        "Phone: +1 (415) 555-0199",
+        "Shipping address: 1 Market St, San Francisco, CA 94105",
+        "Order #FR-123456",
+        "Authorize",
+      ].join("\n"),
+      screenshotText: "Account ID: acct_live_123456789 for jane.doe@example.com",
+      elements: [{
+        id: "customer-email",
+        role: "text",
+        label: "Jane Doe jane.doe@example.com",
+        text: "Phone +1 (415) 555-0199",
+        description: "Ship to 1 Market St, San Francisco, CA 94105",
+        source: "accessibility",
+        confidence: 0.91,
+        interactable: false,
+      }],
+    });
+
+    const parserSnapshot = parse.mock.calls[0]?.[0].snapshot;
+    const serialized = JSON.stringify(parserSnapshot);
+
+    expect(serialized).toContain("[sensitive_text:redacted]");
+    expect(serialized).toContain("Authorize");
+    expect(serialized).not.toContain("jane.doe@example.com");
+    expect(serialized).not.toContain("+1 (415) 555-0199");
+    expect(serialized).not.toContain("1 Market St");
+    expect(serialized).not.toContain("Jane Doe");
+    expect(serialized).not.toContain("FR-123456");
+    expect(parserSnapshot.elements?.[0]?.metadata).toBeUndefined();
+  });
+
   it("analyzes screenshots and only asks chatbox when intent is unclear", async () => {
     const service = createFridayGuideLensService({
       idGenerator: idGenerator(),
