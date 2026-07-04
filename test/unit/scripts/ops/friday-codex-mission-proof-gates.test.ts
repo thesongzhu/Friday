@@ -1459,7 +1459,14 @@ printf 'keychain-passphrase\\n'
     expect(proofKeychainWrapperSource).toContain(
       "trap 'unset PASSPHRASE' EXIT",
     );
+    expect(proofKeychainWrapperSource).toContain("local keychain_passphrase");
     expect(proofKeychainWrapperSource).toContain(
+      'keychain_passphrase="$(security find-generic-password -a "${KEYCHAIN_ACCOUNT}" -s "${KEYCHAIN_SERVICE}" -w 2>/dev/null)"',
+    );
+    expect(proofKeychainWrapperSource).toContain(
+      'printf \'%s\\n\' "${keychain_passphrase}"',
+    );
+    expect(proofKeychainWrapperSource).not.toContain(
       'security find-generic-password -a "${KEYCHAIN_ACCOUNT}" -s "${KEYCHAIN_SERVICE}" -w >/dev/null 2>&1',
     );
     expect(proofKeychainWrapperSource).toContain(

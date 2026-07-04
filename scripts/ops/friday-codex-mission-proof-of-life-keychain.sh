@@ -53,10 +53,13 @@ passphrase_file_ok() {
 }
 
 read_provisioned_passphrase() {
-  if command -v security >/dev/null 2>&1 \
-    && security find-generic-password -a "${KEYCHAIN_ACCOUNT}" -s "${KEYCHAIN_SERVICE}" -w >/dev/null 2>&1; then
-    security find-generic-password -a "${KEYCHAIN_ACCOUNT}" -s "${KEYCHAIN_SERVICE}" -w
-    return 0
+  if command -v security >/dev/null 2>&1; then
+    local keychain_passphrase
+    if keychain_passphrase="$(security find-generic-password -a "${KEYCHAIN_ACCOUNT}" -s "${KEYCHAIN_SERVICE}" -w 2>/dev/null)" \
+      && [ -n "${keychain_passphrase}" ]; then
+      printf '%s\n' "${keychain_passphrase}"
+      return 0
+    fi
   fi
 
   if passphrase_file_ok; then
