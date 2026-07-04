@@ -256,4 +256,43 @@ describe("Friday Suite-13 coverage oracle", () => {
       }),
     ]));
   });
+
+  it("blocks operator-gated or NOT-COVERED rows from being marked exercised-green", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-suite13-oracle-"));
+    const censusPath = writeJson(dir, "census.json", census());
+    const ledgerPath = writeJson(dir, "ledger.json", ledger({
+      rows: [
+        {
+          cellId: "desktop-web|smart_queue|/home:retry|success",
+          status: "exercised-green",
+          assertionCount: 1,
+          testOracle: false,
+          hubPosture: "production-fail-closed",
+          notCoveredReason: "operator-gated",
+          evidenceRef: "evidence/s13/desktop-smart-queue-green.json",
+        },
+        {
+          cellId: "sealed-ws|smart_watch|AskFridayRequest|permission-denied-fail-closed-503",
+          status: "recorded-gap",
+          notCoveredReason: "structurally-unreachable-503",
+          owningIssue: "S13-1-COVERAGE-ORACLE",
+          evidenceRef: "evidence/s13/sealed-ws-smart-watch-503.json",
+        },
+      ],
+    }));
+
+    const report = run([
+      `--census=${censusPath}`,
+      `--coverage-ledger=${ledgerPath}`,
+      "--require-passed",
+    ], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "green_cell_has_not_covered_reason",
+        detail: "desktop-web|smart_queue|/home:retry|success:operator-gated",
+      }),
+    ]));
+  });
 });
