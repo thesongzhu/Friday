@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CheckCircle2, GitBranch, RotateCcw, Search, ShieldX, XCircle } from "lucide-react";
+import { CheckCircle2, GitBranch, RotateCcw, Search, Send, ShieldX, XCircle } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
@@ -136,6 +136,34 @@ export function MissionWorkbenchPage() {
     },
   });
 
+  const missionIntakeMutation = useMutation({
+    mutationFn: () => {
+      if (!snapshot) throw new Error("Mission Workbench snapshot is not loaded.");
+      const primaryWorkItem = snapshot.workItems.find((item) => item.id === snapshot.routeDecision.workItemId)
+        ?? snapshot.workItems[0];
+      return missionWorkbenchApi.createMissionFromSurface({
+        fridayConversationId: snapshot.fridayConversationId,
+        ownerPrincipal: "operator:mission-workbench",
+        surfaceThreadId: `mission-workbench:${snapshot.missionId}`,
+        surfaceKind: "desktop",
+        deliveryRoute: "desktop://mission-workbench",
+        visibilityPolicy: "compact",
+        missionId: snapshot.missionId,
+        workItemId: snapshot.routeDecision.workItemId,
+        title: primaryWorkItem?.title ?? "Mission Workbench intake",
+        intent: snapshot.routeDecision.advisorSummary,
+        lane: snapshot.routeDecision.selectedRoute,
+        targetProviderOrAgent: snapshot.routeDecision.selectedRoute,
+        proofRequirements: ["outcome:AnswerProduced:>=1"],
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["mission-spine", "workbench", "snapshot", targetMissionId ?? "latest"],
+      });
+    },
+  });
+
   const memoryDecisionMutation = useMutation({
     mutationFn: (input: { memoryId: string; decision: "confirm" | "reject" }) =>
       missionWorkbenchApi.decideMemoryCandidate({
@@ -214,14 +242,32 @@ export function MissionWorkbenchPage() {
             {isLoading ? <StatusPill tone="neutral">checking live wire</StatusPill> : null}
           </div>
         </div>
-        <div className="grid min-w-[280px] grid-cols-2 gap-2 text-sm">
-          <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
-            <p className="text-xs text-[color:var(--color-text-secondary)]">Conversation</p>
-            <p className="mt-1 font-medium text-[color:var(--color-text-primary)]">{localize(locale, "已绑定", "Bound")}</p>
+        <div className="flex min-w-[280px] flex-col gap-2">
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
+              <p className="text-xs text-[color:var(--color-text-secondary)]">Conversation</p>
+              <p className="mt-1 font-medium text-[color:var(--color-text-primary)]">{localize(locale, "已绑定", "Bound")}</p>
+            </div>
+            <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
+              <p className="text-xs text-[color:var(--color-text-secondary)]">Duplicate preflight</p>
+              <p className="mt-1 truncate font-medium text-[color:var(--color-text-primary)]">{snapshot.duplicatePreflight.status}</p>
+            </div>
           </div>
-          <div className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-3">
-            <p className="text-xs text-[color:var(--color-text-secondary)]">Duplicate preflight</p>
-            <p className="mt-1 truncate font-medium text-[color:var(--color-text-primary)]">{snapshot.duplicatePreflight.status}</p>
+          <div className="flex flex-wrap gap-2">
+            <ActionButton
+              tone="primary"
+              className="gap-2 rounded-lg"
+              data-testid="mission-spine-create-from-workbench"
+              disabled={missionIntakeMutation.isPending}
+              onClick={() => missionIntakeMutation.mutate()}
+            >
+              <Send className="h-4 w-4" aria-hidden="true" />
+              Create Mission
+            </ActionButton>
+            {missionIntakeMutation.data ? (
+              <StatusPill tone="success">{missionIntakeMutation.data.status}</StatusPill>
+            ) : null}
+            {missionIntakeMutation.isError ? <StatusPill tone="danger">blocked</StatusPill> : null}
           </div>
         </div>
       </header>
