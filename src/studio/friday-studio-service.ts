@@ -1382,7 +1382,16 @@ function readZipEntryContent(zip: Buffer, localHeaderOffset: number, compressedS
     return Buffer.from(compressed);
   }
   if (method === 8) {
-    return zlib.inflateRawSync(compressed);
+    try {
+      return zlib.inflateRawSync(compressed, { maxOutputLength: MAX_IMPORT_FILE_BYTES });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE") {
+        throw new FridayDomainError("VALIDATION_ERROR", `Zip entry expanded beyond limit: ${fileName}`, {
+          httpStatus: 400,
+        });
+      }
+      throw error;
+    }
   }
   throw new FridayDomainError("VALIDATION_ERROR", `Unsupported zip compression method ${method}: ${fileName}`, {
     httpStatus: 400,
