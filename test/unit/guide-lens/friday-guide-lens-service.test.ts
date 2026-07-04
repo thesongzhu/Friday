@@ -262,14 +262,20 @@ describe("createFridayGuideLensService", () => {
         "Phone: +1 (415) 555-0199",
         "Shipping address: 1 Market St, San Francisco, CA 94105",
         "Order #FR-123456",
+        "Project Apollo renewal terms",
+        "Internal Q3 roadmap",
         "Authorize",
       ].join("\n"),
-      screenshotText: "Account ID: acct_live_123456789 for jane.doe@example.com",
+      screenshotText: [
+        "Account ID: acct_live_123456789 for jane.doe@example.com",
+        "Patient: Jane Doe DOB 01/02/1990 MRN A1234567",
+        "Full name: Jane Doe",
+      ].join("\n"),
       elements: [{
         id: "customer-email",
         role: "text",
         label: "Jane Doe jane.doe@example.com",
-        text: "Phone +1 (415) 555-0199",
+        text: "Patient Jane Doe DOB 01/02/1990",
         description: "Ship to 1 Market St, San Francisco, CA 94105",
         source: "accessibility",
         confidence: 0.91,
@@ -287,6 +293,10 @@ describe("createFridayGuideLensService", () => {
     expect(serialized).not.toContain("1 Market St");
     expect(serialized).not.toContain("Jane Doe");
     expect(serialized).not.toContain("FR-123456");
+    expect(serialized).not.toContain("Project Apollo");
+    expect(serialized).not.toContain("Internal Q3");
+    expect(serialized).not.toContain("01/02/1990");
+    expect(serialized).not.toContain("A1234567");
     expect(parserSnapshot.elements?.[0]?.metadata).toBeUndefined();
   });
 
