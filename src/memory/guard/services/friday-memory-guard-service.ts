@@ -312,17 +312,17 @@ function scopeNamespaceFilter(
         : [scopePrefix, ...descendants];
 
     // Also include channel-scoped namespaces for the current user.
-    // Without this, items from session memory extraction (tenant.X.channel.Y.user.Z)
-    // are invisible in the user's memory list.
-    // Channel namespaces use session chatId as user segment (not the real userId),
-    // so for the same hub we include all channel-scoped namespaces.
+    // Keep this filtered to the current user segment; default list/search/prune
+    // must never sweep every channel namespace in the same hub.
     if (context.subject.userId) {
       const channelPrefix = `${FRIDAY_MEMORY_GUARD_TENANT_PREFIX}.${context.subject.hubId}.${FRIDAY_MEMORY_GUARD_CHANNEL_SEGMENT}`;
       const channelDescendants = db.withReadConnection((readDb) =>
         quotaRepo.listNamespacesByPrefix(readDb, channelPrefix, FRIDAY_MEMORY_GUARD_SCOPE_PREFIX_MAX_NAMESPACES),
       );
-      // Include all channel namespaces within the same hub (they all belong to this tenant)
-      const expanded = [...new Set([...result, ...channelDescendants])];
+      const scopedChannelDescendants = channelDescendants.filter((namespace) =>
+        isExpandedChannelUserNamespaceInScope(namespace, context)
+      );
+      const expanded = [...new Set([...result, ...scopedChannelDescendants])];
       return expanded;
     }
 
