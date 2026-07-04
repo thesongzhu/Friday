@@ -18,6 +18,25 @@ const MUTATING_TOOLS = new Set([
 // Shell commands that are read-only (inspection, listing, searching)
 const READ_ONLY_SHELL_COMMANDS = /^\s*(ls|find|cat|head|tail|wc|grep|rg|awk|sed\s+-n|sort|uniq|diff|file|stat|which|where|type|echo|pwd|date|uname|whoami|id|env|printenv|df|du|free|top\s+-bn|uptime|hostname|nproc|test\s|[\[]\s)/;
 
+const SECRET_READ_PROGRAMS = new Set(["env", "printenv", "cat", "head", "tail", "grep", "rg", "awk", "sed"]);
+const SENSITIVE_ENV_NAME_RE = /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|secret|password|passwd|credential|private[_-]?key|client[_-]?secret|master[_-]?key)\b/i;
+const SENSITIVE_FILE_ARG_RE = /(?:^|[\/\s])(?:\.env(?:\.[\w.-]+)?|id_(?:rsa|dsa|ecdsa|ed25519)|[^\/\s]+\.(?:pem|key|p12|pfx)|secrets?(?:\.[\w.-]+)?|credentials?(?:\.[\w.-]+)?)(?:$|[\s])/i;
+
+const READ_ONLY_SKILL_RUN_IDS = new Set([
+  "system-health-snapshot",
+]);
+
+function readsSecretMaterial(commandParts: readonly string[]): boolean {
+  const program = commandParts[0]?.replace(/^["']+|["']+$/g, "").split("/").at(-1)?.toLowerCase() ?? "";
+  if (!SECRET_READ_PROGRAMS.has(program)) return false;
+
+  const command = commandParts.join(" ");
+  if (program === "env" || program === "printenv") {
+    return true;
+  }
+  return SENSITIVE_ENV_NAME_RE.test(command) || SENSITIVE_FILE_ARG_RE.test(command);
+}
+
 // Tools that are mutating only for certain actions/sub-operations
 const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>) => boolean> = {
   exec: (args) => {
@@ -35,7 +54,12 @@ const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>)
     //    + inline VAR=value assignments) so wrapped mutating commands don't masquerade as read-only.
     const unwrapped = unwrapCommand(command.split(/\s+/));
     if (unwrapped.approve) return true; // opaque/unverifiable wrapper → mutating (fail safe)
+    if (readsSecretMaterial(unwrapped.inner)) return true;
     return !READ_ONLY_SHELL_COMMANDS.test(unwrapped.inner.join(" "));
+  },
+  skill_run: (args) => {
+    const skillId = typeof args.skillId === "string" ? args.skillId : "";
+    return !READ_ONLY_SKILL_RUN_IDS.has(skillId);
   },
   system: (args) => {
     const action = typeof args.action === "string" ? args.action : "";
@@ -108,7 +132,8 @@ const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>)
     const action = typeof args.action === "string" ? args.action : "";
     return action === "update_preferences" || action === "update_avatar";
   },
-  // skill_run is now in READ_ONLY_TOOLS — skills run in their own sandbox
+  // MCP servers run in their own sandbox with their own security.
+  // Agent readOnly should not block MCP tool calls.
 };
 
 // Tools that are always read-only
@@ -128,7 +153,6 @@ const READ_ONLY_TOOLS = new Set([
   "list_subagents",
   "agents_list",
   "skills_list",
-  "skill_run",   // Skills execute in their own sandbox; agent readOnly shouldn't block them
   "capabilities",
   "task_status",
   "request_tool_pack",
