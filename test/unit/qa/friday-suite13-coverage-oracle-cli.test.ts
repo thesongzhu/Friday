@@ -219,4 +219,41 @@ describe("Friday Suite-13 coverage oracle", () => {
       }),
     ]));
   });
+
+  it("rejects surface-N/A as a freeform NOT-COVERED reason under the prompt §13.8 closed vocabulary", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-suite13-oracle-"));
+    const censusPath = writeJson(dir, "census.json", census());
+    const ledgerPath = writeJson(dir, "ledger.json", ledger({
+      rows: [
+        {
+          cellId: "desktop-web|smart_queue|/home:retry|success",
+          status: "recorded-gap",
+          notCoveredReason: "surface-N/A",
+          owningIssue: "S13-1-COVERAGE-ORACLE",
+          evidenceRef: "evidence/s13/desktop-smart-queue-gap.json",
+        },
+        {
+          cellId: "sealed-ws|smart_watch|AskFridayRequest|permission-denied-fail-closed-503",
+          status: "recorded-gap",
+          notCoveredReason: "structurally-unreachable-503",
+          owningIssue: "S13-1-COVERAGE-ORACLE",
+          evidenceRef: "evidence/s13/sealed-ws-smart-watch-503.json",
+        },
+      ],
+    }));
+
+    const report = run([
+      `--census=${censusPath}`,
+      `--coverage-ledger=${ledgerPath}`,
+      "--require-passed",
+    ], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "invalid_not_covered_reason",
+        detail: "desktop-web|smart_queue|/home:retry|success:surface-N/A",
+      }),
+    ]));
+  });
 });
