@@ -252,6 +252,45 @@ describe("FridayMemoryEmbeddingRepository", () => {
     expect(results.length).toBeLessThanOrEqual(2);
   });
 
+  it("recalls an older exact semantic match in a namespace larger than the candidate window", () => {
+    insertMemoryItem("target", "large-ns", "target");
+    db.writer.transaction(() => {
+      repo.upsert(db.writer, makeEmbedding({
+        id: "target-embedding",
+        itemId: "target",
+        providerId: "prov-1",
+        vector: [1.0, 0.0, 0.0],
+        updatedAt: "2026-02-17T09:00:00.000Z",
+      }));
+    })();
+
+    for (let i = 0; i < 250; i++) {
+      const id = `distractor-${String(i).padStart(3, "0")}`;
+      insertMemoryItem(id, "large-ns", id);
+      db.writer.transaction(() => {
+        repo.upsert(db.writer, makeEmbedding({
+          id: `distractor-embedding-${i}`,
+          itemId: id,
+          providerId: "prov-1",
+          vector: [0.0, 1.0, 0.0],
+          updatedAt: "2026-02-18T09:00:00.000Z",
+        }));
+      })();
+    }
+
+    const results = repo.querySimilar(db.writer, {
+      queryVector: [1.0, 0.0, 0.0],
+      model: "text-embedding-3-small",
+      nowIso: NOW,
+      namespace: "large-ns",
+      limit: 1,
+      candidateLimit: 250,
+      minScore: 0.9,
+    });
+
+    expect(results.map((result) => result.itemId)).toEqual(["target"]);
+  });
+
   it("excludes expired items by default", () => {
     const past = "2026-01-01T00:00:00.000Z";
     insertMemoryItem("mi-1", "test", "mi-1", past);
