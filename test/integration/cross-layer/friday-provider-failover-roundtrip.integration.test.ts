@@ -96,8 +96,11 @@ describe("friday provider failover roundtrip", () => {
 
     expect(result.result).toBe("response from success-1");
     expect(result.route.provider.id).toBe("success-1");
-    expect(result.attempts).toHaveLength(1);
-    expect(result.attempts[0]!.providerId).toBe("fail-1");
+    expect(result.attempts).toHaveLength(2);
+    expect(result.attempts.map((attempt) => attempt.providerId)).toEqual([
+      "fail-1",
+      "fail-1",
+    ]);
   });
 
   it("puts failed provider in cooldown after transient error", async () => {
