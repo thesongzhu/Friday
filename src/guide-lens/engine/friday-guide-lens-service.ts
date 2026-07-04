@@ -23,7 +23,7 @@ import { buildFridayGuideLensUiMap } from "./ui-map-builder.js";
 import { resolveFridayGuideLensTarget } from "./target-resolver.js";
 import { analyzeFridayGuideLensScreenshot } from "./screenshot-intake.js";
 import { verifyFridayGuideLensProgress } from "./verification.js";
-import { redactGuideLensText } from "./redaction.js";
+import { minimizeGuideLensParserText } from "./redaction.js";
 
 export interface CreateFridayGuideLensServiceDeps {
   idGenerator: () => string;
@@ -114,7 +114,7 @@ function redactOptionalText(
   text: string | undefined,
   source: "visible_text" | "screenshot_text" | "element_text",
 ): string | undefined {
-  return text ? redactGuideLensText(text, source).text : text;
+  return text ? minimizeGuideLensParserText(text, source).text : text;
 }
 
 function sanitizeElementForParser(element: FridayGuideLensElement): FridayGuideLensElement {
