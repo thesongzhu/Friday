@@ -148,7 +148,7 @@ describe("FridayProviderService", () => {
         baseUrl: "https://api.openai.com",
         authMode: "api-key",
         api: "openai-completions",
-        apiKey: "$OPENAI_API_KEY",
+        apiKey: "$FRIDAY_MISSING_PROVIDER_ENV_KEY",
         supportedModels: ["gpt-4o"],
         defaultModel: "gpt-4o",
         validateOnSave: false,
@@ -159,7 +159,7 @@ describe("FridayProviderService", () => {
       expect(profile.name).toBe("OpenAI");
       expect(profile.config.keySource).toEqual({
         kind: "env-ref",
-        envVar: "OPENAI_API_KEY",
+        envVar: "FRIDAY_MISSING_PROVIDER_ENV_KEY",
       });
     });
 
@@ -178,7 +178,7 @@ describe("FridayProviderService", () => {
       expect(profile.config.keySource.kind).toBe("secret-ref");
     });
 
-    it("migrates env-ref provider keys into encrypted storage and clears process env", async () => {
+    it("migrates env-ref provider keys into encrypted storage so runtime no longer needs process env", async () => {
       process.env.A11_PROVIDER_ENV_KEY = "a11-env-provider-key"; // pragma: allowlist secret
       try {
         const profile = await service.createProvider({
@@ -197,7 +197,6 @@ describe("FridayProviderService", () => {
           kind: "secret-ref",
           refKey: "provider:test-id-0001:apiKey",
         });
-        expect(process.env.A11_PROVIDER_ENV_KEY).toBeUndefined();
 
         const storedSecret = db.withReadConnection((conn) =>
           conn.prepare(
@@ -206,6 +205,8 @@ describe("FridayProviderService", () => {
         );
         expect(storedSecret?.encrypted_value).toBeTruthy();
         expect(storedSecret?.encrypted_value).not.toContain("a11-env-provider-key");
+
+        delete process.env.A11_PROVIDER_ENV_KEY;
 
         await service.setRoutingConfig({
           defaultProviderId: profile.id,

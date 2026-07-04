@@ -492,11 +492,19 @@ export function createFridayProviderService(
       secretRefPrefixes: ["secret://"],
     });
     switch (parsed.kind) {
-      case "env-ref":
+      case "env-ref": {
+        const envValue = process.env[parsed.envVar];
+        if (envValue && envValue.trim().length > 0) {
+          return {
+            keySource: { kind: "secret-ref", refKey: "" },
+            inlineSecret: envValue.trim(),
+          };
+        }
         return {
           keySource: { kind: "env-ref", envVar: parsed.envVar },
           inlineSecret: null,
         };
+      }
       case "secret-ref":
         return {
           keySource: { kind: "secret-ref", refKey: parsed.refKey },
@@ -533,7 +541,7 @@ export function createFridayProviderService(
     const envelope = encryptSecret(apiKey, masterKey);
     deps.db.withWriteTransaction((db) => {
       secretRepo.upsert(db, {
-        id: deps.idGenerator(),
+        id: `secret:${refKey}`,
         scope: SECRET_SCOPE,
         refKey,
         encryptedValue: JSON.stringify(envelope),
