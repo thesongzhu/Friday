@@ -20,6 +20,8 @@
 //!   * `provider_session_link` — 90d after last provider sighting, once its events/leases are
 //!     gone (keyed on `last_provider_seen_at`).
 //!   * `process_observation` — 90d (process observation firehose; keyed on `observed_at_ms`).
+//!   * terminal `agent_run` + `agent_run_event` — 365d (keyed on `agent_run.updated_at`
+//!     and `agent_run_event.created_at`; only hard-terminal states).
 //!   * terminal `mission` / `work_item` — 365d (keyed on `updated_at_ms`).
 //!   * terminal mission-spine child rows — 365d, only when attached to terminal+aged parents.
 //!   * `memory_item` — confirmed kept INDEFINITELY; rejected/expired CANDIDATES pruned at 30d
@@ -36,6 +38,9 @@
 //!      [`friday_core::WorkItemStatus::is_terminal`] = `completed_with_proof`/`failed_terminal`/
 //!      `cancelled`/`merged`/`archived`; [`friday_core::MemoryState`] durable = `confirmed`).
 //!      A NON-terminal/active mission or work_item, or a CONFIRMED memory, can NEVER match.
+//!      Likewise, an `agent_run` live hold such as `awaiting_clarification` is never
+//!      retention-terminal; run lifecycle rows match only hard-terminal labels (`finished`,
+//!      `mutation_completed`, `errored`, `bounded`, `blocked`, `interrupted`, `cancelled`).
 //!   2. **FK-safe parent deletes (no orphans, no FK crash).** `mission` and `work_item` are
 //!      RESTRICT-referenced (no `ON DELETE CASCADE`) by child tables and `foreign_keys` is ON on
 //!      every connection. `mission` is referenced by `work_item`, `surface_event`,
@@ -79,6 +84,8 @@ pub const RUN_RESULT_MAX_AGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
 pub const SURFACE_EVENT_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 /// `provider_session_event` rows older than 90 days are pruned (keyed on `observed_at`).
 pub const PROVIDER_SESSION_EVENT_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+/// Terminal `agent_run` rows older than 365 days are pruned after their events/results are gone.
+pub const AGENT_RUN_MAX_AGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
 /// Terminal `mission` rows older than 365 days are pruned (keyed on `updated_at_ms`).
 pub const MISSION_MAX_AGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
 /// Terminal `work_item` rows older than 365 days are pruned (keyed on `updated_at_ms`).
@@ -101,6 +108,7 @@ pub struct RetentionWindows {
     pub run_result_max_age_ms: i64,
     pub surface_event_max_age_ms: i64,
     pub provider_session_event_max_age_ms: i64,
+    pub agent_run_max_age_ms: i64,
     pub mission_max_age_ms: i64,
     pub work_item_max_age_ms: i64,
     pub memory_candidate_max_age_ms: i64,
@@ -116,6 +124,7 @@ impl Default for RetentionWindows {
             run_result_max_age_ms: RUN_RESULT_MAX_AGE_MS,
             surface_event_max_age_ms: SURFACE_EVENT_MAX_AGE_MS,
             provider_session_event_max_age_ms: PROVIDER_SESSION_EVENT_MAX_AGE_MS,
+            agent_run_max_age_ms: AGENT_RUN_MAX_AGE_MS,
             mission_max_age_ms: MISSION_MAX_AGE_MS,
             work_item_max_age_ms: WORK_ITEM_MAX_AGE_MS,
             memory_candidate_max_age_ms: MEMORY_CANDIDATE_MAX_AGE_MS,
@@ -131,6 +140,8 @@ impl Default for RetentionWindows {
 pub struct RetentionOutcome {
     pub token_ledger_deleted: usize,
     pub run_result_deleted: usize,
+    pub agent_run_event_deleted: usize,
+    pub agent_run_deleted: usize,
     pub surface_event_deleted: usize,
     pub provider_session_event_deleted: usize,
     pub provider_session_link_deleted: usize,
@@ -154,6 +165,8 @@ impl RetentionOutcome {
     pub fn is_empty(&self) -> bool {
         self.token_ledger_deleted == 0
             && self.run_result_deleted == 0
+            && self.agent_run_event_deleted == 0
+            && self.agent_run_deleted == 0
             && self.surface_event_deleted == 0
             && self.provider_session_event_deleted == 0
             && self.provider_session_link_deleted == 0
@@ -226,7 +239,59 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 3. surface_event — pure age on created_at_ms. Leaf (no table references surface_event).
+    // 3. agent_run_event — old events for hard-terminal+aged runs, before deleting the run row.
+    //    Events for a live hold (`awaiting_clarification`), approval states, or recent terminal
+    //    runs stay intact. Orphaned old events are safe to remove because no parent can need them
+    //    for a coherent run projection.
+    let agent_run_cutoff = now_ms - windows.agent_run_max_age_ms;
+    match delete_bounded(
+        conn,
+        "DELETE FROM agent_run_event
+          WHERE rowid IN (
+              SELECT e.rowid FROM agent_run_event e
+               WHERE e.created_at < ?1
+                 AND (
+                     NOT EXISTS (SELECT 1 FROM agent_run ar WHERE ar.run_id = e.run_id)
+                     OR EXISTS (
+                         SELECT 1 FROM agent_run ar
+                          WHERE ar.run_id = e.run_id
+                            AND ar.state IN
+                                ('finished','mutation_completed','errored','bounded',
+                                 'blocked','interrupted','cancelled')
+                            AND ar.updated_at < ?1
+                     )
+                 )
+               ORDER BY e.created_at LIMIT ?2
+          )",
+        agent_run_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.agent_run_event_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 4. agent_run — parent row last, after event rows and any still-retained run_result are gone.
+    match delete_bounded(
+        conn,
+        "DELETE FROM agent_run
+          WHERE rowid IN (
+              SELECT ar.rowid FROM agent_run ar
+               WHERE ar.state IN
+                     ('finished','mutation_completed','errored','bounded',
+                      'blocked','interrupted','cancelled')
+                 AND ar.updated_at < ?1
+                 AND NOT EXISTS (SELECT 1 FROM agent_run_event e WHERE e.run_id = ar.run_id)
+                 AND NOT EXISTS (SELECT 1 FROM run_result r WHERE r.run_id = ar.run_id)
+               ORDER BY ar.updated_at LIMIT ?2
+          )",
+        agent_run_cutoff,
+        windows.batch_limit,
+    ) {
+        Ok(n) => out.agent_run_deleted = n,
+        Err(_e) => out.table_errors += 1,
+    }
+
+    // 5. surface_event — pure age on created_at_ms. Leaf (no table references surface_event).
     //    Deleted BEFORE work_item/mission so this tick can also free those parents.
     let surface_cutoff = now_ms - windows.surface_event_max_age_ms;
     match delete_bounded(
@@ -243,7 +308,7 @@ pub fn sweep_retention(
         Err(_e) => out.table_errors += 1,
     }
 
-    // 4. provider_session_event — pure age on observed_at. This is the provider app-server
+    // 6. provider_session_event — pure age on observed_at. This is the provider app-server
     //    observation firehose (metadata/delta receipts), not the token ledger. It is a leaf w.r.t.
     //    Friday's core mission/work_item FKs, so a bounded age sweep cannot orphan mission state.
     let provider_session_cutoff = now_ms - windows.provider_session_event_max_age_ms;
@@ -608,6 +673,8 @@ pub fn sweep_retention(
     // a receipt-write failure is SWALLOWED here, exactly as the session reaper swallows its own.
     let deleted = out.token_ledger_deleted
         + out.run_result_deleted
+        + out.agent_run_event_deleted
+        + out.agent_run_deleted
         + out.surface_event_deleted
         + out.provider_session_event_deleted
         + out.provider_session_link_deleted
@@ -624,9 +691,11 @@ pub fn sweep_retention(
         + out.mission_deleted;
     if deleted > 0 {
         let summary = format!(
-            "retention.sweep:token_ledger={} run_result={} surface_event={} provider_session_event={} provider_session_link={} process_observation={} route_decision_control={} route_decision={} mission_link={} mission_body_snapshot={} process_lease={} workspace_claim={} surface_thread={} memory_item={} work_item={} mission={} errors={}",
+            "retention.sweep:token_ledger={} run_result={} agent_run_event={} agent_run={} surface_event={} provider_session_event={} provider_session_link={} process_observation={} route_decision_control={} route_decision={} mission_link={} mission_body_snapshot={} process_lease={} workspace_claim={} surface_thread={} memory_item={} work_item={} mission={} errors={}",
             out.token_ledger_deleted,
             out.run_result_deleted,
+            out.agent_run_event_deleted,
+            out.agent_run_deleted,
             out.surface_event_deleted,
             out.provider_session_event_deleted,
             out.provider_session_link_deleted,
@@ -941,6 +1010,24 @@ mod tests {
                  VALUES (?1, ?2, NULL, 'codex_cli', 'cwd:retention-test', '[]',
                          NULL, ?3, ?4, 'observed_unowned')",
                 params![id, pid, observed_at_ms, matched_claim_id],
+            )
+            .unwrap();
+    }
+
+    fn seed_agent_run_with_event(
+        db: &Db,
+        run_id: &str,
+        event_id: &str,
+        state: &str,
+        created_at: i64,
+    ) {
+        crate::agent_run::create_run(db.conn(), run_id, "retention test task", created_at).unwrap();
+        crate::agent_run::record_event(db.conn(), event_id, run_id, "agent.lifecycle", created_at)
+            .unwrap();
+        db.conn()
+            .execute(
+                "UPDATE agent_run SET state = ?1, updated_at = ?2 WHERE run_id = ?3",
+                params![state, created_at, run_id],
             )
             .unwrap();
     }
@@ -1275,7 +1362,7 @@ mod tests {
         assert_eq!(tick_kind, "retention.sweep");
         assert_eq!(
             summary,
-            "retention.sweep:token_ledger=1 run_result=1 surface_event=1 provider_session_event=1 provider_session_link=0 process_observation=0 route_decision_control=0 route_decision=0 mission_link=0 mission_body_snapshot=0 process_lease=0 workspace_claim=0 surface_thread=0 memory_item=1 work_item=1 mission=2 errors=0",
+            "retention.sweep:token_ledger=1 run_result=1 agent_run_event=0 agent_run=0 surface_event=1 provider_session_event=1 provider_session_link=0 process_observation=0 route_decision_control=0 route_decision=0 mission_link=0 mission_body_snapshot=0 process_lease=0 workspace_claim=0 surface_thread=0 memory_item=1 work_item=1 mission=2 errors=0",
             "summary records the real per-table counts + the concurrent error count"
         );
     }
@@ -1435,6 +1522,44 @@ mod tests {
         assert_eq!(out.mission_deleted, 0);
         assert!(exists(&db, "work_item", "work_item_id", "w_guarded"));
         assert!(exists(&db, "mission", "mission_id", "m_guarded"));
+    }
+
+    #[test]
+    fn terminal_aged_agent_run_events_are_reaped_before_run_row() {
+        let db = Db::open_hub(&tmp("agent-run-retention")).unwrap();
+        let now = 2_000 * 24 * 60 * 60 * 1000_i64;
+        let old = 1_i64;
+        let recent = now - 1;
+
+        seed_agent_run_with_event(&db, "run_old_done", "ev_old_done", "finished", old);
+        seed_agent_run_with_event(
+            &db,
+            "run_old_hold",
+            "ev_old_hold",
+            "awaiting_clarification",
+            old,
+        );
+        seed_agent_run_with_event(&db, "run_recent_done", "ev_recent_done", "finished", recent);
+
+        let out = sweep_retention(db.conn(), now, RetentionWindows::default());
+        assert_eq!(out.table_errors, 0);
+
+        assert!(
+            !exists(&db, "agent_run_event", "event_id", "ev_old_done"),
+            "old terminal run event should be pruned before its run row"
+        );
+        assert!(
+            !exists(&db, "agent_run", "run_id", "run_old_done"),
+            "old terminal run row should be pruned once event rows are gone"
+        );
+
+        assert!(
+            exists(&db, "agent_run", "run_id", "run_old_hold"),
+            "awaiting_clarification is a live hold, not a retention-terminal run"
+        );
+        assert!(exists(&db, "agent_run_event", "event_id", "ev_old_hold"));
+        assert!(exists(&db, "agent_run", "run_id", "run_recent_done"));
+        assert!(exists(&db, "agent_run_event", "event_id", "ev_recent_done"));
     }
 
     #[test]
@@ -1757,6 +1882,7 @@ mod tests {
             w.provider_session_event_max_age_ms,
             90 * 24 * 60 * 60 * 1000
         );
+        assert_eq!(w.agent_run_max_age_ms, 365 * 24 * 60 * 60 * 1000);
         assert_eq!(w.mission_max_age_ms, 365 * 24 * 60 * 60 * 1000);
         assert_eq!(w.work_item_max_age_ms, 365 * 24 * 60 * 60 * 1000);
         assert_eq!(w.memory_candidate_max_age_ms, 30 * 24 * 60 * 60 * 1000);
