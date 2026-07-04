@@ -522,6 +522,45 @@ describe("FridayProviderFallback", () => {
       });
     });
 
+    it("retries the same provider once with backoff when transient errors omit retry-after", async () => {
+      const sleptMs: number[] = [];
+      const fb = createFridayProviderFallback({
+        sameProviderRetryBaseDelayMs: 125,
+        sameProviderRetryMaxDelayMs: 1_000,
+        sleepMs: async (ms) => {
+          sleptMs.push(ms);
+        },
+      });
+      const deepseek = makeProvider("ds", "deepseek", true, "deepseek-v4-flash", ["deepseek-v4-flash"]);
+      let calls = 0;
+
+      const result = await fb.runWithFallback({
+        candidates: [{ provider: deepseek, model: "deepseek-v4-flash" }],
+        run: async () => {
+          calls += 1;
+          if (calls === 1) {
+            const err: any = new Error("socket hang up while contacting provider");
+            err.code = "ECONNRESET";
+            throw err;
+          }
+          return "ok-after-backoff";
+        },
+      });
+
+      expect(result.result).toBe("ok-after-backoff");
+      expect(result.route.provider.id).toBe("ds");
+      expect(calls).toBe(2);
+      expect(sleptMs).toEqual([125]);
+      expect(result.attempts).toHaveLength(1);
+      expect(result.attempts[0]).toMatchObject({
+        providerId: "ds",
+        providerKind: "deepseek",
+        model: "deepseek-v4-flash",
+        reason: "transient",
+        code: "ECONNRESET",
+      });
+    });
+
     it("records all failed attempts in order", async () => {
       const fb = createFridayProviderFallback();
       const p1 = makeProvider("p1", "openai");
@@ -762,9 +801,11 @@ describe("FridayProviderFallback", () => {
         },
       });
 
-      expect(result.attempts).toHaveLength(1);
-      expect(result.attempts[0].error).toContain("[REDACTED]");
-      expect(result.attempts[0].error).not.toContain("sk-test-abc");
+      expect(result.attempts).toHaveLength(2);
+      for (const attempt of result.attempts) {
+        expect(attempt.error).toContain("[REDACTED]");
+        expect(attempt.error).not.toContain("sk-test-abc");
+      }
     });
 
     it("redacts Google AIza API keys and ya29 OAuth tokens in attempt error logs", async () => {

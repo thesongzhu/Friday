@@ -427,10 +427,8 @@ export function createFridayProviderFallback(
               timestamp: new Date().toISOString(),
             });
 
-            const retryAfterMs = extractRetryAfterMs(err, nowMs);
             if (
               canRetrySameProvider(classified.reason)
-              && retryAfterMs !== undefined
               && retryIndex < sameProviderMaxRetries
             ) {
               const delayMs = boundedSameProviderRetryDelayMs({
