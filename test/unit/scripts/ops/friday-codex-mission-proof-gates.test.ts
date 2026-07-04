@@ -3,7 +3,14 @@ import {
   spawnSync,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
@@ -543,6 +550,73 @@ describe("Codex mission proof gates", () => {
       "strict Codex organic launch requires FRIDAY_CODEX_ORGANIC_ATTESTATION",
     );
     expect(result.stderr).toContain("operator signature attestation");
+  });
+
+  it("uses one keychain lookup before streaming the passphrase to proof", () => {
+    const tempRoot = makeTempRoot();
+    const binDir = join(tempRoot, "bin");
+    const fakeSecurityCount = join(tempRoot, "security-count");
+    const wrapperPath = join(
+      tempRoot,
+      "friday-codex-mission-proof-of-life-keychain.sh",
+    );
+    const fakeProofPath = join(
+      tempRoot,
+      "friday-codex-mission-proof-of-life.sh",
+    );
+    const fakeSecurityPath = join(binDir, "security");
+
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(wrapperPath, readFileSync(proofKeychainWrapper, "utf8"));
+    chmodSync(wrapperPath, 0o700);
+    writeFileSync(
+      fakeProofPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${FRIDAY_CODEX_MISSION_PROOF_PREFLIGHT_ONLY:-0}" = "1" ]; then
+  echo "preflight-ok"
+  exit 0
+fi
+if [ "\${FRIDAY_CODEX_MISSION_PROOF_PASSPHRASE_STDIN:-0}" != "1" ]; then
+  echo "missing stdin mode" >&2
+  exit 12
+fi
+IFS= read -r passphrase
+printf 'proof-passphrase=%s\\n' "\${passphrase}"
+`,
+    );
+    chmodSync(fakeProofPath, 0o700);
+    writeFileSync(
+      fakeSecurityPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+count_file="\${FRIDAY_FAKE_SECURITY_COUNT}"
+count=0
+if [ -f "\${count_file}" ]; then
+  count="$(cat "\${count_file}")"
+fi
+count="$((count + 1))"
+printf '%s\\n' "\${count}" >"\${count_file}"
+printf 'keychain-passphrase\\n'
+`,
+    );
+    chmodSync(fakeSecurityPath, 0o700);
+
+    const result = spawnSync("bash", [wrapperPath], {
+      cwd: tempRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FRIDAY_FAKE_SECURITY_COUNT: fakeSecurityCount,
+        HOME: tempRoot,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("preflight-ok");
+    expect(result.stdout).toContain("proof-passphrase=keychain-passphrase");
+    expect(readFileSync(fakeSecurityCount, "utf8").trim()).toBe("1");
   });
 
   it("D8 audit passes only when a linked session has matching completed WorkItem proof", async () => {
@@ -1385,7 +1459,14 @@ describe("Codex mission proof gates", () => {
     expect(proofKeychainWrapperSource).toContain(
       "trap 'unset PASSPHRASE' EXIT",
     );
+    expect(proofKeychainWrapperSource).toContain("local keychain_passphrase");
     expect(proofKeychainWrapperSource).toContain(
+      'keychain_passphrase="$(security find-generic-password -a "${KEYCHAIN_ACCOUNT}" -s "${KEYCHAIN_SERVICE}" -w 2>/dev/null)"',
+    );
+    expect(proofKeychainWrapperSource).toContain(
+      'printf \'%s\\n\' "${keychain_passphrase}"',
+    );
+    expect(proofKeychainWrapperSource).not.toContain(
       'security find-generic-password -a "${KEYCHAIN_ACCOUNT}" -s "${KEYCHAIN_SERVICE}" -w >/dev/null 2>&1',
     );
     expect(proofKeychainWrapperSource).toContain(
