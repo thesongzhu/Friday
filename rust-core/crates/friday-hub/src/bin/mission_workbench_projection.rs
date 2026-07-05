@@ -73,6 +73,8 @@ mod tests {
         let db = Db::open_hub(&path).unwrap();
         let now = 1_780_640_000_000;
         let conversation_id = "fconv_mission_workbench_probe";
+        let expected_mission_id = env::var("FRIDAY_MISSION_WORKBENCH_PROBE_MISSION_ID")
+            .unwrap_or_else(|_| "mission_workbench_probe_20260605".to_string());
         let mission_id = "mission_workbench_probe_20260605";
         let work_provider = "work_probe_provider";
         let work_done = "work_probe_done";
@@ -373,6 +375,11 @@ mod tests {
 
         let snapshot =
             friday_hub::workbench_projection::project_workbench(&db, Some(mission_id)).unwrap();
+        assert_eq!(
+            snapshot.get("missionId").and_then(serde_json::Value::as_str),
+            Some(expected_mission_id.as_str()),
+            "probe DB must honor FRIDAY_MISSION_WORKBENCH_PROBE_MISSION_ID so strict UI/device can bind Workbench to the same mission"
+        );
         let status_labels = snapshot
             .get("statusLabels")
             .and_then(serde_json::Value::as_array)
