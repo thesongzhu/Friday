@@ -1,9 +1,16 @@
+import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 const apiProxyTarget = process.env.FRIDAY_UI_API_PROXY_TARGET ?? "http://127.0.0.1:3141";
+const repoRoot = realpathIfExists(resolve(__dirname, ".."));
+const nodeModulesRoot = realpathIfExists(resolve(repoRoot, "node_modules"));
+
+function realpathIfExists(path: string): string {
+  return existsSync(path) ? realpathSync(path) : path;
+}
 
 function hasPackageSegment(id: string, packageName: string): boolean {
   const normalized = id.replaceAll("\\", "/");
@@ -95,6 +102,9 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     strictPort: true,
+    fs: {
+      allow: [repoRoot, nodeModulesRoot],
+    },
     proxy: {
       "/v1": {
         target: apiProxyTarget,
