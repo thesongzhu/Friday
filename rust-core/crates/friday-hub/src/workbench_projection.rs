@@ -273,7 +273,7 @@ fn status_labels_json(
         .any(|item| item.status == WorkItemStatus::FailedTerminal);
     let has_offline = surface_events
         .iter()
-        .any(|event| event.event_kind == SurfaceEventKind::SystemStatus);
+        .any(surface_event_is_offline_status);
     let mut labels = Vec::new();
     if has_stale {
         labels.push("stale");
@@ -285,6 +285,14 @@ fn status_labels_json(
         labels.push("error");
     }
     labels
+}
+
+fn surface_event_is_offline_status(event: &SurfaceEvent) -> bool {
+    event.event_kind == SurfaceEventKind::SystemStatus
+        && [event.body_ref.as_deref(), event.proof_ref.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|value| value.to_ascii_lowercase().contains("offline"))
 }
 
 struct WorkItemRecoveryMetadata {
