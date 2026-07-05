@@ -131,4 +131,24 @@ describe("friday-uiux-real-use-proof-driver contract", () => {
     expect(source).toContain("require_file_if_set \"shared-extra-evidence\" \"${path}\"");
     expect(source).toContain("shortlist_args+=(\"--shared-extra-evidence\" \"${path}\")");
   });
+
+  it("fails closed for an empty shared extra evidence value", () => {
+    const outDir = join(tmpdir(), `friday-uiux-real-use-proof-driver-empty-shared-${Date.now()}`);
+    try {
+      expect(() => execFileSync("bash", [
+        script,
+        "--plan-only",
+        "--out-dir",
+        outDir,
+        "--shared-extra-evidence",
+        "",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        stdio: "pipe",
+      })).toThrow(/shared-extra-evidence missing or empty/);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
 });
