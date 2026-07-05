@@ -6277,6 +6277,29 @@ mod tests {
     }
 
     #[test]
+    fn interop_db_path_override_is_explicit_and_stable() {
+        let override_path = std::env::temp_dir().join("friday-interop-persist-red.sqlite");
+        let selected = interop_db_path(
+            "persist-red",
+            Some(override_path.to_string_lossy().as_ref()),
+        );
+        assert_eq!(
+            selected, override_path,
+            "manual interop evidence runs need an explicit DB path so Workbench projection can audit the completed_with_proof rows"
+        );
+
+        let generated = interop_db_path("persist-red", None);
+        assert!(
+            generated
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .contains("friday-execrun-interop-persist-red-"),
+            "default interop tests keep their isolated temp DB naming"
+        );
+    }
+
+    #[test]
     fn sealed_proof_round_trips_and_rejects_malformed() {
         let k = DataKey::generate();
         let sealed = seal(&k, AUTH_CHALLENGE, SESSION_AAD).unwrap();
