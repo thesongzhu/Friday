@@ -30,6 +30,12 @@ describe("friday-desktop-ax-accessibility-capture contract", () => {
       expect(summary.status).toBe("plan_ready");
       expect(summary.targetCount).toBeGreaterThan(0);
       expect(summary.targets).toContainEqual(expect.objectContaining({
+        runtimeActionId: "desktop/operations/destination-visible",
+        accessibility_id: "friday.desktop.nav.operations",
+        event: "mission_workbench_visible",
+        interaction: "visible",
+      }));
+      expect(summary.targets).toContainEqual(expect.objectContaining({
         runtimeActionId: "desktop/operations/refresh",
         accessibility_id: "friday.desktop.refresh",
         interaction: "visible",
