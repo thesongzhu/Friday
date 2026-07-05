@@ -17,7 +17,9 @@
 //! This fn takes an ALREADY-OPENED [`Db`] (the bin and the server open it `open_hub_readonly`) and
 //! does pure reads + JSON shaping. It never touches a provider credential or the model path.
 
-use friday_core::{MissionLinkKind, WorkItem, WorkItemStatus, WorkLane};
+use friday_core::{
+    MissionLinkKind, SurfaceEvent, SurfaceEventKind, WorkItem, WorkItemStatus, WorkLane,
+};
 use friday_storage::Db;
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Map, Value};
@@ -120,7 +122,7 @@ pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<
         "missionId": mission.mission_id,
         "fridayConversationId": mission.friday_conversation_id,
         "runtimeFeedStatus": "live_rust_hub_projection",
-        "statusLabels": status_labels_json(&work_items),
+        "statusLabels": status_labels_json(&work_items, &surface_events),
         "tokenLedgerRunId": readback_refs.token_ledger_run_id,
         "agentSessionId": readback_refs.agent_session_id,
         "duplicatePreflight": {
@@ -259,21 +261,36 @@ fn work_items_json(work_items: &[WorkItem]) -> Vec<Value> {
     rows
 }
 
-fn status_labels_json(work_items: &[WorkItem]) -> Vec<&'static str> {
+fn status_labels_json(
+    work_items: &[WorkItem],
+    surface_events: &[SurfaceEvent],
+) -> Vec<&'static str> {
     let has_stale = work_items
         .iter()
         .any(|item| item.status == WorkItemStatus::FailedRetryable);
     let has_error = work_items
         .iter()
         .any(|item| item.status == WorkItemStatus::FailedTerminal);
+    let has_offline = surface_events.iter().any(surface_event_is_offline_status);
     let mut labels = Vec::new();
     if has_stale {
         labels.push("stale");
+    }
+    if has_offline {
+        labels.push("offline");
     }
     if has_error {
         labels.push("error");
     }
     labels
+}
+
+fn surface_event_is_offline_status(event: &SurfaceEvent) -> bool {
+    event.event_kind == SurfaceEventKind::SystemStatus
+        && [event.body_ref.as_deref(), event.proof_ref.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|value| value.to_ascii_lowercase().contains("offline"))
 }
 
 struct WorkItemRecoveryMetadata {
@@ -1229,7 +1246,8 @@ mod tests {
     use crate::mission_preflight::{attach_channel_inbound_receipt, attach_memory_candidate_ref};
     use friday_core::{
         ApprovalState, FridayConversation, HandoffJudgmentMemory, MemoryScope, Mission,
-        MissionStatus, RouteDecisionCard, TruthStatus, WorkItem, WorkItemStatus, WorkLane,
+        MissionStatus, RouteDecisionCard, SurfaceEvent, SurfaceEventKind, SurfaceKind,
+        SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
     };
     use friday_storage::memory;
     use rusqlite::params;
@@ -1410,6 +1428,100 @@ mod tests {
         assert!(
             labels.is_empty(),
             "a successful live Rust Hub projection must not be hard-labelled stale/offline/error"
+        );
+    }
+
+    #[test]
+    fn system_status_surface_event_projects_offline_status_label() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        let mission = db.get_mission(&mission_id).unwrap().unwrap();
+        let surface_thread_id = "surface-offline-status-desktop";
+        db.upsert_surface_thread(&SurfaceThread {
+            surface_thread_id: surface_thread_id.into(),
+            friday_conversation_id: mission.friday_conversation_id.clone(),
+            mission_id: Some(mission_id.clone()),
+            surface_kind: SurfaceKind::Desktop,
+            channel_binding_id: None,
+            delivery_route: "scratch://offline-status".into(),
+            visibility_policy: VisibilityPolicy::StatusOnly,
+            allowed_actions: vec![],
+            last_seen_at_ms: Some(1_780_640_000_500),
+            last_delivered_event_seq: None,
+            created_at_ms: 1_780_640_000_500,
+            updated_at_ms: 1_780_640_000_500,
+        })
+        .unwrap();
+        db.upsert_surface_event(&SurfaceEvent {
+            surface_event_id: "surface-event-offline-status".into(),
+            friday_conversation_id: mission.friday_conversation_id,
+            mission_id: mission_id.clone(),
+            work_item_id: None,
+            surface_thread_id: surface_thread_id.into(),
+            source_surface: SurfaceKind::Desktop,
+            event_kind: SurfaceEventKind::SystemStatus,
+            body_ref: Some("friday://body/surface-event/offline-status".into()),
+            visibility_policy: VisibilityPolicy::StatusOnly,
+            proof_ref: Some("proof://surface-event/offline-status-proof".into()),
+            created_at_ms: 1_780_640_000_510,
+        })
+        .unwrap();
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        let labels = snapshot
+            .get("statusLabels")
+            .and_then(Value::as_array)
+            .expect("statusLabels array");
+        assert!(
+            labels.iter().any(|label| label.as_str() == Some("offline")),
+            "system_status surface events must make the offline label available for strict workbench preflight"
+        );
+    }
+
+    #[test]
+    fn intake_system_status_surface_event_does_not_project_offline_label() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        let mission = db.get_mission(&mission_id).unwrap().unwrap();
+        let surface_thread_id = "surface-intake-status-desktop";
+        db.upsert_surface_thread(&SurfaceThread {
+            surface_thread_id: surface_thread_id.into(),
+            friday_conversation_id: mission.friday_conversation_id.clone(),
+            mission_id: Some(mission_id.clone()),
+            surface_kind: SurfaceKind::Desktop,
+            channel_binding_id: None,
+            delivery_route: "scratch://intake-status".into(),
+            visibility_policy: VisibilityPolicy::StatusOnly,
+            allowed_actions: vec![],
+            last_seen_at_ms: Some(1_780_640_001_500),
+            last_delivered_event_seq: None,
+            created_at_ms: 1_780_640_001_500,
+            updated_at_ms: 1_780_640_001_500,
+        })
+        .unwrap();
+        db.upsert_surface_event(&SurfaceEvent {
+            surface_event_id: "surface-event-intake-status".into(),
+            friday_conversation_id: mission.friday_conversation_id,
+            mission_id: mission_id.clone(),
+            work_item_id: None,
+            surface_thread_id: surface_thread_id.into(),
+            source_surface: SurfaceKind::Desktop,
+            event_kind: SurfaceEventKind::SystemStatus,
+            body_ref: Some("friday://body/surface-event/intake-status".into()),
+            visibility_policy: VisibilityPolicy::StatusOnly,
+            proof_ref: Some("proof://surface-event/intake-status-proof".into()),
+            created_at_ms: 1_780_640_001_510,
+        })
+        .unwrap();
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        let labels = snapshot
+            .get("statusLabels")
+            .and_then(Value::as_array)
+            .expect("statusLabels array");
+        assert!(
+            !labels.iter().any(|label| label.as_str() == Some("offline")),
+            "generic/intake system_status is a lifecycle fact, not an offline truth label"
         );
     }
 
