@@ -176,6 +176,16 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("fullProofGaps,");
   });
 
+  it("preserves channel-deferred as the only full proof gap even when non-channel inputs are complete", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+    const channelDeferredIndex = source.indexOf("if (isChannelDeferredOnly(gapReport)) return [\"same_mission_mobile_desktop_channel_capture\"]");
+    const completeInputsIndex = source.indexOf("if (gapReport.status === \"complete_inputs_observed\") return []");
+
+    expect(channelDeferredIndex).toBeGreaterThanOrEqual(0);
+    expect(completeInputsIndex).toBeGreaterThanOrEqual(0);
+    expect(channelDeferredIndex).toBeLessThan(completeInputsIndex);
+  });
+
   it("lets readiness derive workbench events while channel proof is deferred", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-readiness.sh", "utf8");
 
