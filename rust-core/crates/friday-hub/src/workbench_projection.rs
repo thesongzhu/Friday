@@ -271,9 +271,7 @@ fn status_labels_json(
     let has_error = work_items
         .iter()
         .any(|item| item.status == WorkItemStatus::FailedTerminal);
-    let has_offline = surface_events
-        .iter()
-        .any(surface_event_is_offline_status);
+    let has_offline = surface_events.iter().any(surface_event_is_offline_status);
     let mut labels = Vec::new();
     if has_stale {
         labels.push("stale");
