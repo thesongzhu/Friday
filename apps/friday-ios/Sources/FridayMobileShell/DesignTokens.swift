@@ -4,7 +4,8 @@ import SwiftUI
 /// baseline (friday-design-handoff-20260602/saved/mobile-selection.json):
 ///   variant = claudeCalm, palette = cyanCoral, theme = light,
 ///   background = warmOffWhite, form = glassNative, motion = richRestrained,
-///   petStyle = retroLcd, density = comfort.
+///   saved petStyle = retroLcd is stale; the 2026-06-29 operator override locks the v9 dog,
+///   density = comfort.
 ///
 /// Tokens are intentionally aligned with the desktop sibling's `HubTheme`
 /// (#676) so both consume the same locked palette/form vocabulary.

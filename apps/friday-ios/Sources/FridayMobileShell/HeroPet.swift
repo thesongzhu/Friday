@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// The Friday Home Hero Pet — the locked 155px animated v9 mobile companion (petStyle =
-/// retroLcd, petProminence = heroPet), rendered as the PURE-DOG hero card from the locked mobile
-/// design (`mobile-gallery.html` `heroBlock()` / `.hero.pet-stage-card`).
+/// The Friday Home Hero Pet — the locked 155px animated v9 mobile companion. The saved
+/// `retroLcd` petStyle label is stale; the 2026-06-29 operator override accepts this v9 dog.
+/// It renders as the PURE-DOG hero card from the locked mobile design
+/// (`mobile-gallery.html` `heroBlock()` / `.hero.pet-stage-card`).
 ///
 /// This is the bare pet STAGE: NO text, NO status badges inside the card (the gallery's home pet
 /// stage is a bare `#eef3e8` card with only the dog). The honest read-seam status truth lives in
