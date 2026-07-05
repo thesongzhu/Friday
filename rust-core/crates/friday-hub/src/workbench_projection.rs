@@ -1473,6 +1473,53 @@ mod tests {
     }
 
     #[test]
+    fn intake_system_status_surface_event_does_not_project_offline_label() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        let mission = db.get_mission(&mission_id).unwrap().unwrap();
+        let surface_thread_id = "surface-intake-status-desktop";
+        db.upsert_surface_thread(&SurfaceThread {
+            surface_thread_id: surface_thread_id.into(),
+            friday_conversation_id: mission.friday_conversation_id.clone(),
+            mission_id: Some(mission_id.clone()),
+            surface_kind: SurfaceKind::Desktop,
+            channel_binding_id: None,
+            delivery_route: "scratch://intake-status".into(),
+            visibility_policy: VisibilityPolicy::StatusOnly,
+            allowed_actions: vec![],
+            last_seen_at_ms: Some(1_780_640_001_500),
+            last_delivered_event_seq: None,
+            created_at_ms: 1_780_640_001_500,
+            updated_at_ms: 1_780_640_001_500,
+        })
+        .unwrap();
+        db.upsert_surface_event(&SurfaceEvent {
+            surface_event_id: "surface-event-intake-status".into(),
+            friday_conversation_id: mission.friday_conversation_id,
+            mission_id: mission_id.clone(),
+            work_item_id: None,
+            surface_thread_id: surface_thread_id.into(),
+            source_surface: SurfaceKind::Desktop,
+            event_kind: SurfaceEventKind::SystemStatus,
+            body_ref: Some("friday://body/surface-event/intake-status".into()),
+            visibility_policy: VisibilityPolicy::StatusOnly,
+            proof_ref: Some("proof://surface-event/intake-status-proof".into()),
+            created_at_ms: 1_780_640_001_510,
+        })
+        .unwrap();
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        let labels = snapshot
+            .get("statusLabels")
+            .and_then(Value::as_array)
+            .expect("statusLabels array");
+        assert!(
+            !labels.iter().any(|label| label.as_str() == Some("offline")),
+            "generic/intake system_status is a lifecycle fact, not an offline truth label"
+        );
+    }
+
+    #[test]
     fn real_failed_retryable_work_item_projects_stale_retry_affordance() {
         let db = Db::open_hub(&tmp()).unwrap();
         let mission_id = seed_real_producer_mission(&db);
