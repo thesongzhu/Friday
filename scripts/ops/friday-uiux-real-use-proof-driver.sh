@@ -23,6 +23,7 @@ usage:
     [--harvest-dir /abs/artifact-dir ...]
     [--same-run-events /abs/events.jsonl ...]
     [--negative-control-events /abs/negative-events.jsonl ...]
+    [--shared-extra-evidence /abs/real-evidence ...]
     [--selected-visual-evidence-dir /abs/served-or-visual-evidence ...]
     [--runtime-evidence-dir /abs/evidence-dir ...]
     [--extra-action-runtime-evidence /abs/action-runtime-evidence.json ...]
@@ -71,6 +72,7 @@ accessibility_captures=()
 harvest_dirs=()
 same_run_events=()
 negative_control_events=()
+shared_extra_evidence=()
 runtime_evidence_dirs=()
 selected_visual_evidence_dirs=()
 extra_action_runtime_evidence=()
@@ -242,6 +244,15 @@ while [ "$#" -gt 0 ]; do
       negative_control_events+=("${1#--negative-control-events=}")
       shift
       ;;
+    --shared-extra-evidence)
+      [ "$#" -ge 2 ] || die "--shared-extra-evidence requires a value"
+      shared_extra_evidence+=("$2")
+      shift 2
+      ;;
+    --shared-extra-evidence=*)
+      shared_extra_evidence+=("${1#--shared-extra-evidence=}")
+      shift
+      ;;
     --runtime-evidence-dir)
       [ "$#" -ge 2 ] || die "--runtime-evidence-dir requires a value"
       runtime_evidence_dirs+=("$2")
@@ -337,7 +348,7 @@ require_file_if_set() {
 }
 
 set +u
-for path in "${accessibility_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${negative_control_events[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
+for path in "${accessibility_captures[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${negative_control_events[@]}" "${shared_extra_evidence[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
   require_abs_if_set "input path" "${path}"
 done
 set -u
@@ -347,6 +358,12 @@ require_file_if_set "--channel-live-proof" "${channel_live_proof}"
 require_file_if_set "--channel-capture" "${channel_capture}"
 require_file_if_set "--timeline-capture" "${timeline_capture}"
 require_file_if_set "--workbench-db" "${workbench_db}"
+set +u
+for path in "${shared_extra_evidence[@]}"; do
+  [ -n "${path}" ] || die "shared-extra-evidence missing or empty"
+  require_file_if_set "shared-extra-evidence" "${path}"
+done
+set -u
 if [ -n "${desktop_ax_app_dir}" ]; then
   require_abs_if_set "--desktop-ax-app-dir" "${desktop_ax_app_dir}"
 fi
@@ -520,6 +537,10 @@ done
 for path in "${negative_control_events[@]}"; do
   [ -n "${path}" ] || continue
   shortlist_args+=("--negative-control-events" "${path}")
+done
+for path in "${shared_extra_evidence[@]}"; do
+  [ -n "${path}" ] || continue
+  shortlist_args+=("--shared-extra-evidence" "${path}")
 done
 for dir in "${runtime_evidence_dirs[@]}"; do
   [ -n "${dir}" ] || continue
