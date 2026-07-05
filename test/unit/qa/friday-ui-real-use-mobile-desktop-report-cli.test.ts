@@ -122,6 +122,95 @@ describe("Friday UI real-use mobile/desktop report", () => {
     expect(report.blockers).toEqual([]);
   });
 
+  it("accepts explicit mobile and desktop UI action runtime evidence from live write/read captures", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-explicit-actions-"));
+    const value = summary(dir);
+    writeFileSync(value.captures.mobile.action_runtime_evidence, JSON.stringify({
+      truth: "action_runtime_evidence_from_explicit_ios_ui_actions_not_endbar",
+      status: "ready",
+      missionId: value.missionId,
+      actions: [
+        {
+          surface: "mobile",
+          action_id: "chat:typing",
+          status: "pass",
+          evidence_ref: value.captures.mobile.proof,
+          mission_id: value.missionId,
+          truth_label: "explicit_ui_action_runtime_evidence_not_endbar_not_adoption",
+        },
+      ],
+    }, null, 2));
+    writeFileSync(value.captures.desktop.action_runtime_evidence, JSON.stringify({
+      truth: "action_runtime_evidence_from_explicit_macos_ui_actions_not_endbar",
+      status: "ready",
+      missionId: value.missionId,
+      actions: [
+        {
+          surface: "desktop",
+          action_id: "desktop/fridayChat/act",
+          status: "pass",
+          evidence_ref: value.captures.desktop.proof,
+          mission_id: value.missionId,
+          truth_label: "explicit_ui_action_runtime_evidence_not_endbar_not_adoption",
+        },
+      ],
+    }, null, 2));
+    const summaryPath = writeJson(dir, "summary.json", value);
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"]);
+
+    expect(report.status).toBe("strict_uiux_real_use_ready");
+    expect(report.blockers).toEqual([]);
+  });
+
+  it("does not accept explicit UI action runtime truth from the wrong platform", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-explicit-platform-"));
+    const value = summary(dir);
+    writeFileSync(value.captures.mobile.action_runtime_evidence, JSON.stringify({
+      truth: "action_runtime_evidence_from_explicit_macos_ui_actions_not_endbar",
+      status: "ready",
+      missionId: value.missionId,
+      actions: [
+        {
+          surface: "mobile",
+          action_id: "chat:typing",
+          status: "pass",
+          evidence_ref: value.captures.mobile.proof,
+          mission_id: value.missionId,
+        },
+      ],
+    }, null, 2));
+    writeFileSync(value.captures.desktop.action_runtime_evidence, JSON.stringify({
+      truth: "action_runtime_evidence_from_explicit_ios_ui_actions_not_endbar",
+      status: "ready",
+      missionId: value.missionId,
+      actions: [
+        {
+          surface: "desktop",
+          action_id: "desktop/fridayChat/act",
+          status: "pass",
+          evidence_ref: value.captures.desktop.proof,
+          mission_id: value.missionId,
+        },
+      ],
+    }, null, 2));
+    const summaryPath = writeJson(dir, "summary.json", value);
+
+    const report = run([`--ui-device-summary=${summaryPath}`, "--require-ready"], true);
+
+    expect(report.status).toBe("blocked");
+    expect(report.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "mobile_real_surface_capture",
+        detail: expect.stringContaining("action_runtime_evidence_truth_surface_mismatch"),
+      }),
+      expect.objectContaining({
+        code: "desktop_real_surface_capture",
+        detail: expect.stringContaining("action_runtime_evidence_truth_surface_mismatch"),
+      }),
+    ]));
+  });
+
   it("marks channel-deferred summaries as deferred, not strict-ready", () => {
     const dir = mkdtempSync(join(tmpdir(), "friday-ui-real-use-"));
     const summaryPath = writeJson(dir, "summary.json", summary(dir, {
