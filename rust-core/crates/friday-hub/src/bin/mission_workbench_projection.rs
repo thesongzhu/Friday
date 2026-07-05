@@ -58,11 +58,12 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
 mod tests {
     use super::*;
     use friday_core::{
-        ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionLink,
-        MissionLinkKind, MissionStatus, RouteDecisionCard, SurfaceEvent, SurfaceEventKind,
-        SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus,
-        WorkLane,
+        ApprovalState, FridayConversation, HandoffJudgmentMemory, MemoryScope, Mission,
+        MissionLink, MissionLinkKind, MissionStatus, RouteDecisionCard, SurfaceEvent,
+        SurfaceEventKind, SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem,
+        WorkItemStatus, WorkLane,
     };
+    use friday_storage::memory;
 
     #[test]
     #[ignore = "writes an isolated probe DB only when FRIDAY_MISSION_WORKBENCH_PROBE_DB is set"]
@@ -75,6 +76,8 @@ mod tests {
         let mission_id = "mission_workbench_probe_20260605";
         let work_provider = "work_probe_provider";
         let work_done = "work_probe_done";
+        let work_retryable = "work_probe_retryable";
+        let work_terminal = "work_probe_terminal";
 
         db.upsert_friday_conversation(&FridayConversation {
             friday_conversation_id: conversation_id.into(),
@@ -106,8 +109,13 @@ mod tests {
             deferred_options: vec!["final UI/device evidence".into()],
             known_pitfalls: vec!["provider ack is not completion".into()],
             handoff_inheritance: vec!["keep proof refs redacted".into()],
-            work_item_ids: vec![work_provider.into(), work_done.into()],
-            memory_candidate_refs: vec!["memory://candidate/workbench-probe".into()],
+            work_item_ids: vec![
+                work_provider.into(),
+                work_done.into(),
+                work_retryable.into(),
+                work_terminal.into(),
+            ],
+            memory_candidate_refs: vec!["friday://memory/workbench-probe".into()],
             context_passport_refs: Vec::new(),
             proof_refs: vec!["proof://mission/workbench-probe".into()],
             created_at_ms: now,
@@ -194,6 +202,65 @@ mod tests {
             updated_at_ms: now + 7,
         };
         db.upsert_work_item(&done_item).unwrap();
+        db.upsert_work_item(&WorkItem {
+            work_item_id: work_retryable.into(),
+            mission_id: mission_id.into(),
+            lane: WorkLane::FridayHub,
+            target_provider_or_agent: None,
+            status: WorkItemStatus::FailedRetryable,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some("capability.retry-negative-control".into()),
+            risk_level: friday_core::Risk::ReadOnly,
+            approval_state: ApprovalState::NotRequired,
+            blocking_reason: Some(
+                "retryable negative-control state for Workbench stale label".into(),
+            ),
+            input_refs: vec!["body://redacted/retryable-negative-control".into()],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["must remain non-completion".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: judgment("Retryable failure label negative control", "friday_hub"),
+            created_at_ms: now + 17,
+            updated_at_ms: now + 18,
+        })
+        .unwrap();
+        db.upsert_work_item(&WorkItem {
+            work_item_id: work_terminal.into(),
+            mission_id: mission_id.into(),
+            lane: WorkLane::FridayHub,
+            target_provider_or_agent: None,
+            status: WorkItemStatus::FailedTerminal,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some("capability.error-negative-control".into()),
+            risk_level: friday_core::Risk::ReadOnly,
+            approval_state: ApprovalState::NotRequired,
+            blocking_reason: Some(
+                "terminal negative-control state for Workbench error label".into(),
+            ),
+            input_refs: vec!["body://redacted/error-negative-control".into()],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["must remain non-completion".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: judgment("Terminal failure label negative control", "friday_hub"),
+            created_at_ms: now + 19,
+            updated_at_ms: now + 20,
+        })
+        .unwrap();
+        memory::record_candidate(
+            db.conn(),
+            &memory::NewMemoryCandidate {
+                memory_id: "workbench-probe",
+                scope: MemoryScope::Global,
+                content_ref: Some("blob://memory/workbench-probe"),
+                content: Some("Workbench probe memory is review-only until confirmed."),
+                principal_id: Some("owner_probe"),
+                sensitive: false,
+                created_at: now + 21,
+            },
+        )
+        .unwrap();
 
         db.upsert_route_decision(&RouteDecisionCard::from_work_item(
             "route_probe_provider".into(),
@@ -237,7 +304,7 @@ mod tests {
                 mission_id: mission_id.into(),
                 work_item_id: None,
                 link_kind: MissionLinkKind::MemoryCandidate,
-                target_ref: "memory://candidate/redacted-probe".into(),
+                target_ref: "friday://memory/workbench-probe".into(),
                 proof_ref: Some("proof://memory/candidate-review-only".into()),
                 created_at_ms: now + 12,
             },
@@ -255,6 +322,14 @@ mod tests {
         }
 
         for (id, work, surface, kind, proof, ts) in [
+            (
+                "surface_event_probe_offline_status",
+                None,
+                SurfaceKind::Desktop,
+                SurfaceEventKind::SystemStatus,
+                Some("proof://surface/offline-status-redacted-probe"),
+                now + 17,
+            ),
             (
                 "surface_event_probe_mobile",
                 Some(work_provider),
@@ -295,6 +370,29 @@ mod tests {
             })
             .unwrap();
         }
+
+        let snapshot =
+            friday_hub::workbench_projection::project_workbench(&db, Some(mission_id)).unwrap();
+        let status_labels = snapshot
+            .get("statusLabels")
+            .and_then(serde_json::Value::as_array)
+            .expect("statusLabels array");
+        for label in ["stale", "offline", "error"] {
+            assert!(
+                status_labels
+                    .iter()
+                    .any(|value| value.as_str() == Some(label)),
+                "probe DB must project {label} for live-preflight negative-control coverage"
+            );
+        }
+        let memory_candidates = snapshot
+            .get("memoryCandidates")
+            .and_then(serde_json::Value::as_array)
+            .expect("memoryCandidates array");
+        assert!(
+            !memory_candidates.is_empty(),
+            "probe DB must project a review-only memory candidate"
+        );
     }
 
     fn judgment(task: &str, target: &str) -> HandoffJudgmentMemory {
