@@ -73,6 +73,7 @@ describe("FridayPrerequisiteInstaller", () => {
       expect(plans).toHaveLength(1);
       expect(plans[0].installCommand).toBe("");
       expect(plans[0].description).toContain("Manual installation");
+      expect(plans[0].requiresApproval).toBe(true);
     });
 
     it("should use Linux recipes on Linux", async () => {
@@ -143,6 +144,30 @@ describe("FridayPrerequisiteInstaller", () => {
 
       expect(result.status).toBe("failed");
       expect(result.errorMessage).toContain("Permission denied");
+    });
+
+    it("should not execute approval-gated install plans without an approval ticket", async () => {
+      const execFn = createMockExec(0, "v22.0.0\n");
+      const installer = createFridayPrerequisiteInstaller({
+        environmentScanner: createMockScanner(),
+        execCommand: execFn,
+      });
+
+      const result = await installer.install(
+        {
+          software: "node",
+          installCommand: "brew install node",
+          verifyCommand: "node --version",
+          platform: "darwin",
+          description: "Install Node.js",
+          requiresApproval: true,
+        },
+        signal(),
+      );
+
+      expect(execFn).not.toHaveBeenCalled();
+      expect(result.status).toBe("skipped");
+      expect(result.errorMessage).toContain("Approval required");
     });
 
     it("should return failed when no install command exists", async () => {
