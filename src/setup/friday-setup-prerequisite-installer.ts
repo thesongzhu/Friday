@@ -201,7 +201,7 @@ export function createFridayPrerequisiteInstaller(
             verifyCommand: `${software} --version`,
             platform: "all",
             description: `No automatic installer for "${software}". Manual installation required.`,
-            requiresApproval: false,
+            requiresApproval: true,
           });
           continue;
         }
@@ -215,6 +215,14 @@ export function createFridayPrerequisiteInstaller(
     async install(plan, signal) {
       if (signal.aborted) {
         return { software: plan.software, status: "skipped" as const };
+      }
+
+      if (plan.requiresApproval) {
+        return {
+          software: plan.software,
+          status: "skipped" as const,
+          errorMessage: `Approval required before installing "${plan.software}".`,
+        };
       }
 
       // If no install command, cannot install
