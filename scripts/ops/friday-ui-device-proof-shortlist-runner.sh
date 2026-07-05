@@ -838,8 +838,8 @@ function gapNameFor(value) {
 function deriveFullProofGaps(bundle, gapReport) {
   const fallback = Array.isArray(bundle?.fullProofGaps) ? bundle.fullProofGaps : [];
   if (!gapReport || typeof gapReport !== "object") return fallback;
-  if (gapReport.status === "complete_inputs_observed") return [];
   if (isChannelDeferredOnly(gapReport)) return ["same_mission_mobile_desktop_channel_capture"];
+  if (gapReport.status === "complete_inputs_observed") return [];
 
   const gaps = gapReport.gaps || {};
   const result = new Set();
