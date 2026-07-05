@@ -295,6 +295,29 @@ mod tests {
             })
             .unwrap();
         }
+
+        let snapshot =
+            friday_hub::workbench_projection::project_workbench(&db, Some(mission_id)).unwrap();
+        let status_labels = snapshot
+            .get("statusLabels")
+            .and_then(serde_json::Value::as_array)
+            .expect("statusLabels array");
+        for label in ["stale", "offline", "error"] {
+            assert!(
+                status_labels
+                    .iter()
+                    .any(|value| value.as_str() == Some(label)),
+                "probe DB must project {label} for live-preflight negative-control coverage"
+            );
+        }
+        let memory_candidates = snapshot
+            .get("memoryCandidates")
+            .and_then(serde_json::Value::as_array)
+            .expect("memoryCandidates array");
+        assert!(
+            !memory_candidates.is_empty(),
+            "probe DB must project a review-only memory candidate"
+        );
     }
 
     fn judgment(task: &str, target: &str) -> HandoffJudgmentMemory {
