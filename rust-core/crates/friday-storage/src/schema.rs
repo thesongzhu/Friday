@@ -173,6 +173,9 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // NOT chained and never references the audit ledger. It holds NO row id/body that was
     // deleted — only integer counts — so it carries no secret/PII content class.
     "retention_log",
+    // G1: singleton tail anchor for the Hub audit hash chain. This is separate
+    // from the ledger rows so deletion of the final row is detectable.
+    "audit_chain_head",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -711,6 +714,16 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0042_activity_item_owner,
         },
+        // G1: persist the audit chain tail outside `audit_ledger` so `verify_audit_chain`
+        // can detect tail deletion in addition to row mutation and middle deletion.
+        // The migration is additive Hub-only; existing databases seed the anchor from the
+        // currently present chain tail and fresh databases seed genesis/zero rows.
+        Migration {
+            version: 43,
+            name: "audit_chain_head",
+            destructive: false,
+            up: m0043_audit_chain_head,
+        },
     ]
 }
 
@@ -861,6 +874,14 @@ CREATE TABLE audit_ledger (
     created_at  INTEGER NOT NULL
 );
 CREATE INDEX idx_audit_created ON audit_ledger(created_at);";
+
+const DDL_AUDIT_CHAIN_HEAD: &str = "
+CREATE TABLE IF NOT EXISTS audit_chain_head (
+    chain_id      INTEGER PRIMARY KEY CHECK(chain_id = 1),
+    last_audit_id TEXT,
+    entry_hash    BLOB NOT NULL CHECK(length(entry_hash) = 32),
+    row_count     INTEGER NOT NULL CHECK(row_count >= 0)
+);";
 
 const DDL_MEMORY_ITEM: &str = "
 CREATE TABLE memory_item (
@@ -2686,4 +2707,19 @@ fn m0040_mission_body_snapshot(tx: &Transaction) -> rusqlite::Result<()> {
 
 fn m0041_retention_log(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_RETENTION_LOG)
+}
+
+fn m0043_audit_chain_head(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_AUDIT_CHAIN_HEAD)?;
+    tx.execute_batch(
+        "INSERT OR REPLACE INTO audit_chain_head
+             (chain_id, last_audit_id, entry_hash, row_count)
+         SELECT 1,
+                (SELECT audit_id FROM audit_ledger ORDER BY rowid DESC LIMIT 1),
+                COALESCE(
+                    (SELECT entry_hash FROM audit_ledger ORDER BY rowid DESC LIMIT 1),
+                    zeroblob(32)
+                ),
+                (SELECT COUNT(*) FROM audit_ledger);",
+    )
 }
