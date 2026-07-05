@@ -154,11 +154,15 @@ function actionEvidenceFailures(path, missionId, expectedSurface) {
   const truth = string(value.truth || value.truth_label || value.truthLabel);
   const acceptedTruths = new Set([
     "accessibility_click_action_runtime_evidence_real_ui_not_endbar",
-    "action_runtime_evidence_from_explicit_ios_ui_actions_not_endbar",
-    "action_runtime_evidence_from_explicit_macos_ui_actions_not_endbar",
   ]);
+  if (expectedSurface === "mobile") acceptedTruths.add("action_runtime_evidence_from_explicit_ios_ui_actions_not_endbar");
+  if (expectedSurface === "desktop") acceptedTruths.add("action_runtime_evidence_from_explicit_macos_ui_actions_not_endbar");
   if (!acceptedTruths.has(truth)) {
-    failures.push("action_runtime_evidence_truth_mismatch");
+    failures.push(
+      truth.startsWith("action_runtime_evidence_from_explicit_")
+        ? "action_runtime_evidence_truth_surface_mismatch"
+        : "action_runtime_evidence_truth_mismatch",
+    );
   }
   if (string(value.status) !== "ready") {
     failures.push("action_runtime_evidence_not_ready");
