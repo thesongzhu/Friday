@@ -120,4 +120,15 @@ describe("friday-uiux-real-use-proof-driver contract", () => {
     expect(source).toContain("writing partial driver summary with blockers");
     expect(source).toContain("partial_ready");
   });
+
+  it("threads shared extra evidence through to the UI/device shortlist runner", () => {
+    const source = readFileSync(script, "utf8");
+
+    expect(source).toContain("[--shared-extra-evidence /abs/real-evidence ...]");
+    expect(source).toContain("shared_extra_evidence=()");
+    expect(source).toContain("shared_extra_evidence+=(\"$2\")");
+    expect(source).toContain("shared_extra_evidence+=(\"${1#--shared-extra-evidence=}\")");
+    expect(source).toContain("require_file_if_set \"shared-extra-evidence\" \"${path}\"");
+    expect(source).toContain("shortlist_args+=(\"--shared-extra-evidence\" \"${path}\")");
+  });
 });
