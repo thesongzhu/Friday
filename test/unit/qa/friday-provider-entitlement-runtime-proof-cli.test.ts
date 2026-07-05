@@ -72,4 +72,14 @@ describe("Friday provider entitlement runtime proof CLI", () => {
     expect(proof.real_external_api).toBe(false);
     expect(proof.blockers).toEqual([]);
   });
+
+  it("provisions a scratch-only master key before runtime provider creation", () => {
+    const source = readFileSync(script, "utf8");
+
+    expect(source).toContain("ensureScratchMasterKeyForRuntimeProof");
+    expect(source).toContain('process.env.FRIDAY_MASTER_KEY = randomBytes(32).toString("hex")');
+    expect(source.indexOf("ensureScratchMasterKeyForRuntimeProof()")).toBeLessThan(
+      source.indexOf("createFridayHub({"),
+    );
+  });
 });

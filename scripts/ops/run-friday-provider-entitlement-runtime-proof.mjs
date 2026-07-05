@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import net from "node:net";
+import { randomBytes } from "node:crypto";
 
 const HOST = "127.0.0.1";
 const LOCAL_PASSPHRASE =
@@ -209,6 +210,7 @@ async function loginLocal(baseUrl) {
 }
 
 async function createIsolatedHub(stateDir) {
+  ensureScratchMasterKeyForRuntimeProof();
   const [{ createFridayHub }, { createFridayHttpServer }] = await Promise.all([
     import("#hub"),
     import("#api"),
@@ -236,6 +238,13 @@ async function createIsolatedHub(stateDir) {
   const baseUrl = `http://${HOST}:${String(port)}`;
   const accessToken = await loginLocal(baseUrl);
   return { hub, httpServer, baseUrl, accessToken };
+}
+
+function ensureScratchMasterKeyForRuntimeProof() {
+  if (process.env.FRIDAY_MASTER_KEY || process.env.FRIDAY_MASTER_KEY_SOURCE) {
+    return;
+  }
+  process.env.FRIDAY_MASTER_KEY = randomBytes(32).toString("hex");
 }
 
 async function stopIsolatedHub(runtime) {
