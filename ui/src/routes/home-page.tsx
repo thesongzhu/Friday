@@ -245,6 +245,94 @@ function runtimeChipParts(status: SystemHealthStatus, locale: "zh" | "en") {
   };
 }
 
+function MobileWebHomeSurface(props: {
+  locale: "zh" | "en";
+  systemLabel: string;
+  runtimeLabel: string;
+  runtimeColor: string;
+  onOpenChat: () => void;
+  onOpenCommandSheet: () => void;
+}) {
+  const { locale, systemLabel, runtimeLabel, runtimeColor, onOpenChat, onOpenCommandSheet } = props;
+
+  return (
+    <div
+      data-testid="mobile-web-home-surface"
+      data-friday-mobile-strategy="design-truth-aligned"
+      className="mb-5 lg:hidden"
+    >
+      <div className="grid gap-4">
+        <div
+          data-testid="mobile-web-hero-pet"
+          data-friday-pet-stage="mobile-web"
+          data-friday-mobile-strategy="design-truth-aligned"
+          className="relative min-h-[168px] overflow-hidden rounded-[8px] border"
+          style={{
+            background: "#eef3e8",
+            borderColor: "var(--color-border-soft)",
+          }}
+        >
+          <div className="absolute inset-0 bg-[linear-gradient(180deg,#f8faf2_0%,#e5efdd_100%)]" aria-hidden="true" />
+          <img
+            src="/source/pet/g-idle.png"
+            alt={localize(locale, "Friday mobile hero pet", "Friday mobile hero pet")}
+            className="absolute bottom-3 right-4 h-[132px] w-[132px] object-contain"
+            loading="eager"
+          />
+          <div className="relative max-w-[210px] p-4">
+            <p className="text-xs font-semibold text-[color:var(--color-text-faint)]">
+              Friday Home
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold leading-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+              {localize(locale, "状态先行", "Status first")}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">
+              {localize(locale, "Chat 与 Status 同屏，Friday 随时可开。", "Chat and Status share the home surface so Friday is always one tap away.")}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={onOpenChat}
+            className="min-h-[52px] rounded-[8px] border px-3 text-left text-sm font-semibold"
+            style={{
+              background: "var(--color-bg-subtle)",
+              borderColor: "var(--color-border-soft)",
+              color: "var(--color-text-primary)",
+            }}
+          >
+            <span className="block text-xs font-medium text-[color:var(--color-text-faint)]">Chat</span>
+            {localize(locale, "开始新任务", "Start a task")}
+          </button>
+          <button
+            type="button"
+            onClick={onOpenCommandSheet}
+            className="min-h-[52px] rounded-[8px] border px-3 text-left text-sm font-semibold"
+            style={{
+              background: "var(--color-bg-subtle)",
+              borderColor: "var(--color-border-soft)",
+              color: "var(--color-text-primary)",
+            }}
+          >
+            <span className="block text-xs font-medium text-[color:var(--color-text-faint)]">Command Sheet</span>
+            {localize(locale, "打开命令", "Open command")}
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 rounded-[8px] border px-3 py-2 text-sm" style={{ borderColor: "var(--color-border-soft)" }}>
+          <span className="font-semibold text-[color:var(--color-text-primary)]">Status</span>
+          <span className="inline-flex items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
+            <span className="h-2 w-2 rounded-full" style={{ background: runtimeColor }} aria-hidden="true" />
+            {systemLabel} · {runtimeLabel}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function HomePage() {
   const navigate = useAppNavigate();
   const queryClient = useQueryClient();
@@ -526,6 +614,14 @@ export function HomePage() {
         data-testid="home-surface-ready"
         className="rounded-[30px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-5 shadow-[var(--shadow-floating)]"
       >
+        <MobileWebHomeSurface
+          locale={locale}
+          systemLabel={systemLabel}
+          runtimeLabel={runtimeChip.label}
+          runtimeColor={runtimeChip.color}
+          onOpenChat={() => navigate("/chat")}
+          onOpenCommandSheet={() => requestCommandPaletteOpen()}
+        />
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(390px,430px)] xl:items-start">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-3">
