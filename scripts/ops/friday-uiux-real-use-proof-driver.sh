@@ -360,7 +360,7 @@ require_file_if_set "--timeline-capture" "${timeline_capture}"
 require_file_if_set "--workbench-db" "${workbench_db}"
 set +u
 for path in "${shared_extra_evidence[@]}"; do
-  [ -n "${path}" ] || continue
+  [ -n "${path}" ] || die "shared-extra-evidence missing or empty"
   require_file_if_set "shared-extra-evidence" "${path}"
 done
 set -u
