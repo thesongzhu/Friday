@@ -16,6 +16,7 @@ usage:
     [--accessibility-capture /abs/real-accessibility-capture.json ...]
     [--stress-capture /abs/real-same-run-stress-capture.json ...]
     [--negative-control-events /abs/negative-events.jsonl ...]
+    [--shared-extra-evidence /abs/real-evidence ...]
     [--harvest-dir /abs/artifact-dir ...]
     [--same-run-events /abs/events.jsonl ...]
     [--selected-visual-evidence-dir /abs/served-or-visual-evidence ...]
@@ -56,6 +57,7 @@ defer_channel_proof="${FRIDAY_UI_DEVICE_DEFER_CHANNEL_PROOF:-0}"
 accessibility_captures=()
 stress_captures=()
 negative_control_events=()
+shared_extra_evidence_inputs=()
 harvest_dirs=()
 same_run_events=()
 runtime_evidence_dirs=()
@@ -180,6 +182,15 @@ while [ "$#" -gt 0 ]; do
       negative_control_events+=("${1#--negative-control-events=}")
       shift
       ;;
+    --shared-extra-evidence)
+      [ "$#" -ge 2 ] || die "--shared-extra-evidence requires a value"
+      shared_extra_evidence_inputs+=("$2")
+      shift 2
+      ;;
+    --shared-extra-evidence=*)
+      shared_extra_evidence_inputs+=("${1#--shared-extra-evidence=}")
+      shift
+      ;;
     --harvest-dir)
       [ "$#" -ge 2 ] || die "--harvest-dir requires a value"
       harvest_dirs+=("$2")
@@ -274,7 +285,7 @@ require_file_if_set() {
 }
 
 set +u
-for path in "${accessibility_captures[@]}" "${stress_captures[@]}" "${negative_control_events[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
+for path in "${accessibility_captures[@]}" "${stress_captures[@]}" "${negative_control_events[@]}" "${shared_extra_evidence_inputs[@]}" "${harvest_dirs[@]}" "${same_run_events[@]}" "${runtime_evidence_dirs[@]}" "${selected_visual_evidence_dirs[@]}" "${extra_action_runtime_evidence[@]}"; do
   require_abs_if_set "input path" "${path}"
 done
 set -u
@@ -512,6 +523,11 @@ for path in "${negative_control_events[@]}"; do
     require_file_if_set "negative-control evidence_ref" "${negative_evidence_ref}"
     shared_extra_evidence+=("${negative_evidence_ref}")
   done < <(node -e 'const fs=require("fs"); const seen=new Set(); const text=fs.readFileSync(process.argv[1],"utf8"); for (const line of text.split(/\r?\n/)) { if (!line.trim()) continue; const row=JSON.parse(line); const ref=typeof row.evidence_ref==="string" ? row.evidence_ref : ""; if (ref && !seen.has(ref)) { seen.add(ref); console.log(ref); } }' "${path}")
+done
+for path in "${shared_extra_evidence_inputs[@]}"; do
+  [ -n "${path}" ] || continue
+  require_file_if_set "shared-extra-evidence" "${path}"
+  shared_extra_evidence+=("${path}")
 done
 for path in "${same_run_events[@]}"; do
   [ -n "${path}" ] || continue
