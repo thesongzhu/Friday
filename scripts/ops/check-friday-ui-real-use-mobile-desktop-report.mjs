@@ -151,7 +151,13 @@ function actionEvidenceFailures(path, missionId, expectedSurface) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return ["action_runtime_evidence_invalid_json"];
   }
-  if (string(value.truth || value.truth_label || value.truthLabel) !== "accessibility_click_action_runtime_evidence_real_ui_not_endbar") {
+  const truth = string(value.truth || value.truth_label || value.truthLabel);
+  const acceptedTruths = new Set([
+    "accessibility_click_action_runtime_evidence_real_ui_not_endbar",
+    "action_runtime_evidence_from_explicit_ios_ui_actions_not_endbar",
+    "action_runtime_evidence_from_explicit_macos_ui_actions_not_endbar",
+  ]);
+  if (!acceptedTruths.has(truth)) {
     failures.push("action_runtime_evidence_truth_mismatch");
   }
   if (string(value.status) !== "ready") {
