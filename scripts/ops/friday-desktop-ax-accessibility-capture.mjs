@@ -207,19 +207,33 @@ function actionPlan() {
   const destinationFilter = new Set(destinationsCsv.split(",").map((value) => value.trim()).filter(Boolean));
   return parseDesktopDestinations()
     .filter((destination) => destinationFilter.size === 0 || destinationFilter.has(destination.destination))
-    .flatMap((destination) =>
-    destination.runtimeActionIds.map((runtimeActionId) => ({
-      runtimeActionId,
-      destination: defaultActionMap.get(runtimeActionId)?.destination || destination.destination,
-      title: destination.title,
-      tier: destination.tier,
-      ...(defaultActionMap.get(runtimeActionId) || {
+    .flatMap((destination) => {
+      const navigationTarget = {
+        runtimeActionId: `desktop/${destination.destination}/destination-visible`,
+        destination: destination.destination,
+        title: destination.title,
+        tier: destination.tier,
         screen: destination.destination,
         accessibility_id: `friday.desktop.nav.${destination.destination}`,
         event: "mission_workbench_visible",
         interaction: "visible",
-      }),
-    })));
+      };
+      return [
+        navigationTarget,
+        ...destination.runtimeActionIds.map((runtimeActionId) => ({
+          runtimeActionId,
+          destination: defaultActionMap.get(runtimeActionId)?.destination || destination.destination,
+          title: destination.title,
+          tier: destination.tier,
+          ...(defaultActionMap.get(runtimeActionId) || {
+            screen: destination.destination,
+            accessibility_id: `friday.desktop.nav.${destination.destination}`,
+            event: "mission_workbench_visible",
+            interaction: "visible",
+          }),
+        })),
+      ];
+    });
 }
 
 function jsonOut(path, value) {
@@ -667,6 +681,7 @@ if (blockers.length === 0) {
         action_id: `desktop/${destination}/destination-visible`,
         capability_id: `desktop/${destination}/destination-visible`,
         accessibility_id: `friday.desktop.nav.${destination}`,
+        event: "mission_workbench_visible",
         interaction: "visible",
         status: "pass",
         evidence_ref: rawPath,
@@ -684,6 +699,7 @@ if (blockers.length === 0) {
         action_id: `desktop/${destination}/destination-visible`,
         capability_id: `desktop/${destination}/destination-visible`,
         accessibility_id: `friday.desktop.nav.${destination}`,
+        event: "mission_workbench_visible",
         interaction: "visible",
         status: "pass",
         evidence_ref: rawPath,
