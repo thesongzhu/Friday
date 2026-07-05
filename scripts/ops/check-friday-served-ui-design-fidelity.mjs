@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = resolve(fileURLToPath(import.meta.url), "..");
@@ -191,7 +191,8 @@ function startFileServer(root) {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const decodedPath = decodeURIComponent(url.pathname);
     let filePath = resolve(root, `.${decodedPath}`);
-    if (!filePath.startsWith(root)) {
+    const relativePath = relative(root, filePath);
+    if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
       res.writeHead(403);
       res.end("forbidden");
       return;
