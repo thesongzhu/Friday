@@ -98,6 +98,19 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("capture_dir_args+=(\"--negative-control-events=${path}\")");
   });
 
+  it("threads shared extra evidence refs for supplied same-run event files", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("[--shared-extra-evidence /abs/real-evidence ...]");
+    expect(source).toContain("shared_extra_evidence_inputs=()");
+    expect(source).toContain("shared_extra_evidence_inputs+=(\"$2\")");
+    expect(source).toContain("shared_extra_evidence_inputs+=(\"${1#--shared-extra-evidence=}\")");
+    expect(source).toContain("\"${negative_control_events[@]}\" \"${shared_extra_evidence_inputs[@]}\"");
+    expect(source).toContain("for path in \"${shared_extra_evidence_inputs[@]}\"; do");
+    expect(source).toContain("require_file_if_set \"shared-extra-evidence\" \"${path}\"");
+    expect(source).toContain("shared_extra_evidence+=(\"${path}\")");
+  });
+
   it("can derive non-channel workbench timeline inputs from the Rust Hub DB", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
 
@@ -161,6 +174,16 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("if (isChannelDeferredOnly(gapReport)) return [\"same_mission_mobile_desktop_channel_capture\"]");
     expect(source).toContain("initialFullProofGaps: bundle.fullProofGaps || []");
     expect(source).toContain("fullProofGaps,");
+  });
+
+  it("preserves channel-deferred as the only full proof gap even when non-channel inputs are complete", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+    const channelDeferredIndex = source.indexOf("if (isChannelDeferredOnly(gapReport)) return [\"same_mission_mobile_desktop_channel_capture\"]");
+    const completeInputsIndex = source.indexOf("if (gapReport.status === \"complete_inputs_observed\") return []");
+
+    expect(channelDeferredIndex).toBeGreaterThanOrEqual(0);
+    expect(completeInputsIndex).toBeGreaterThanOrEqual(0);
+    expect(channelDeferredIndex).toBeLessThan(completeInputsIndex);
   });
 
   it("lets readiness derive workbench events while channel proof is deferred", () => {
