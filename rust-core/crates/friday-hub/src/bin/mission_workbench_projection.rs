@@ -75,7 +75,7 @@ mod tests {
         let conversation_id = "fconv_mission_workbench_probe";
         let expected_mission_id = env::var("FRIDAY_MISSION_WORKBENCH_PROBE_MISSION_ID")
             .unwrap_or_else(|_| "mission_workbench_probe_20260605".to_string());
-        let mission_id = "mission_workbench_probe_20260605";
+        let mission_id = expected_mission_id.as_str();
         let work_provider = "work_probe_provider";
         let work_done = "work_probe_done";
         let work_retryable = "work_probe_retryable";
