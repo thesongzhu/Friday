@@ -27,6 +27,22 @@ const RED = "\x1b[31m";
 const CYAN = "\x1b[36m";
 const MAGENTA = "\x1b[35m";
 
+const ANSI_ESCAPE_SEQUENCE_PATTERN = /(?:\x1B\][\s\S]*?(?:\x07|\x1B\\)|\x1B\[[0-?]*[ -/]*[@-~]|\x1B[@-Z\\-_])/g;
+const TERMINAL_CONTROL_CHAR_PATTERN = /[\x00-\x1F\x7F-\x9F]/g;
+const DIRECTIONAL_FORMAT_CONTROL_PATTERN = /[\u202A-\u202E\u2066-\u2069]/g;
+
+function sanitizeTuiText(value: string): string {
+  return value
+    .replace(ANSI_ESCAPE_SEQUENCE_PATTERN, "")
+    .replace(TERMINAL_CONTROL_CHAR_PATTERN, "")
+    .replace(DIRECTIONAL_FORMAT_CONTROL_PATTERN, "");
+}
+
+function tuiText(value: string, maxLength?: number): string {
+  const sanitized = sanitizeTuiText(value);
+  return typeof maxLength === "number" ? sanitized.slice(0, maxLength) : sanitized;
+}
+
 // ─── Interface ───
 
 export interface FridayTuiRenderer {
@@ -55,7 +71,7 @@ export function createFridayTuiRenderer(): FridayTuiRenderer {
     if (!hub) return `${DIM}Hub status: loading...${RESET}\n`;
     const upMin = Math.floor(hub.uptime / 60);
     return [
-      `${BOLD}Hub${RESET} v${hub.version}  `,
+      `${BOLD}Hub${RESET} v${tuiText(hub.version)}  `,
       `${GREEN}up ${upMin}m${RESET}  `,
       `sessions: ${hub.activeSessions}  `,
       `jobs: ${hub.runningJobs}  `,
@@ -88,7 +104,7 @@ export function createFridayTuiRenderer(): FridayTuiRenderer {
 
     if (state.error) {
       lines.push("");
-      lines.push(`${RED}Error: ${state.error}${RESET}`);
+      lines.push(`${RED}Error: ${tuiText(state.error)}${RESET}`);
     }
 
     return lines.join("\n") + "\n";
@@ -99,12 +115,16 @@ export function createFridayTuiRenderer(): FridayTuiRenderer {
     const lines: string[] = [];
     lines.push(`${BOLD}${"ID".padEnd(12)} ${"Channel".padEnd(16)} ${"Status".padEnd(12)} Created${RESET}`);
     for (const s of sessions) {
-      const color = statusColor(s.status);
+      const sessionId = tuiText(s.sessionId, 10);
+      const channelId = tuiText(s.channelId, 14);
+      const status = tuiText(s.status);
+      const createdAt = tuiText(s.createdAt, 16);
+      const color = statusColor(status);
       lines.push(
-        `${s.sessionId.slice(0, 10).padEnd(12)} ` +
-        `${s.channelId.slice(0, 14).padEnd(16)} ` +
-        `${color}${s.status.padEnd(12)}${RESET} ` +
-        `${DIM}${s.createdAt.slice(0, 16)}${RESET}`,
+        `${sessionId.padEnd(12)} ` +
+        `${channelId.padEnd(16)} ` +
+        `${color}${status.padEnd(12)}${RESET} ` +
+        `${DIM}${createdAt}${RESET}`,
       );
     }
     return lines.join("\n") + "\n";
@@ -115,11 +135,14 @@ export function createFridayTuiRenderer(): FridayTuiRenderer {
     const lines: string[] = [];
     lines.push(`${BOLD}${"Name".padEnd(28)} ${"Status".padEnd(12)} Last Run${RESET}`);
     for (const j of jobs) {
-      const color = statusColor(j.status);
+      const name = tuiText(j.name, 26);
+      const status = tuiText(j.status);
+      const lastRunAt = j.lastRunAt ? tuiText(j.lastRunAt, 16) : "never";
+      const color = statusColor(status);
       lines.push(
-        `${j.name.slice(0, 26).padEnd(28)} ` +
-        `${color}${j.status.padEnd(12)}${RESET} ` +
-        `${DIM}${j.lastRunAt?.slice(0, 16) ?? "never"}${RESET}`,
+        `${name.padEnd(28)} ` +
+        `${color}${status.padEnd(12)}${RESET} ` +
+        `${DIM}${lastRunAt}${RESET}`,
       );
     }
     return lines.join("\n") + "\n";
@@ -130,11 +153,15 @@ export function createFridayTuiRenderer(): FridayTuiRenderer {
     const lines: string[] = [];
     lines.push(`${BOLD}${"Satellite".padEnd(20)} ${"Type".padEnd(10)} ${"Code".padEnd(12)} Expires${RESET}`);
     for (const p of pairings) {
+      const displayName = tuiText(p.displayName, 18);
+      const type = tuiText(p.type);
+      const pairingCode = tuiText(p.pairingCode);
+      const expiresAt = tuiText(p.expiresAt, 16);
       lines.push(
-        `${MAGENTA}${p.displayName.slice(0, 18).padEnd(20)}${RESET} ` +
-        `${p.type.padEnd(10)} ` +
-        `${YELLOW}${p.pairingCode.padEnd(12)}${RESET} ` +
-        `${DIM}${p.expiresAt.slice(0, 16)}${RESET}`,
+        `${MAGENTA}${displayName.padEnd(20)}${RESET} ` +
+        `${type.padEnd(10)} ` +
+        `${YELLOW}${pairingCode.padEnd(12)}${RESET} ` +
+        `${DIM}${expiresAt}${RESET}`,
       );
     }
     lines.push("");
@@ -147,9 +174,12 @@ export function createFridayTuiRenderer(): FridayTuiRenderer {
     const lines: string[] = [];
     const recent = events.slice(-20);
     for (const e of recent) {
+      const timestamp = tuiText(e.timestamp, 19).slice(11, 19);
+      const type = tuiText(e.type);
+      const message = tuiText(e.message);
       lines.push(
-        `${DIM}${e.timestamp.slice(11, 19)}${RESET} ` +
-        `${CYAN}[${e.type}]${RESET} ${e.message}`,
+        `${DIM}${timestamp}${RESET} ` +
+        `${CYAN}[${type}]${RESET} ${message}`,
       );
     }
     return lines.join("\n") + "\n";
