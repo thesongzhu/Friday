@@ -109,7 +109,7 @@ describe("FridayPrerequisiteInstaller", () => {
           verifyCommand: "node --version",
           platform: "darwin",
           description: "Install Node.js",
-          requiresApproval: true,
+          requiresApproval: false,
         },
         signal(),
       );
@@ -137,7 +137,7 @@ describe("FridayPrerequisiteInstaller", () => {
           verifyCommand: "node --version",
           platform: "darwin",
           description: "Install Node.js",
-          requiresApproval: true,
+          requiresApproval: false,
         },
         signal(),
       );
@@ -234,16 +234,14 @@ describe("FridayPrerequisiteInstaller", () => {
       expect(results[0].version).toBe("22.0.0");
     });
 
-    it("should install missing software and return results", async () => {
+    it("should skip approval-gated missing software instead of executing it", async () => {
       // isInstalled always returns false, so nothing is "already installed"
       const scanner = createMockScanner({
         isInstalled: vi.fn().mockResolvedValue(false),
         getVersion: vi.fn().mockResolvedValue(null),
       });
 
-      const execFn = vi.fn()
-        .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "" })        // brew install node
-        .mockResolvedValueOnce({ exitCode: 0, stdout: "v22.0.0\n", stderr: "" }); // node --version verify
+      const execFn = createMockExec();
 
       const installer = createFridayPrerequisiteInstaller({
         environmentScanner: scanner,
@@ -251,11 +249,14 @@ describe("FridayPrerequisiteInstaller", () => {
       });
 
       const results = await installer.installAll(["node"], signal());
-      // Should have install result
-      expect(results.length).toBeGreaterThanOrEqual(1);
-      const installed = results.find((r) => r.status === "installed");
-      expect(installed).toBeDefined();
-      expect(installed!.version).toBe("v22.0.0");
+      expect(execFn).not.toHaveBeenCalled();
+      expect(results).toEqual([
+        expect.objectContaining({
+          software: "node",
+          status: "skipped",
+          errorMessage: expect.stringContaining("Approval required"),
+        }),
+      ]);
     });
   });
 });
