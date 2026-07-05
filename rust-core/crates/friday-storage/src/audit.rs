@@ -54,7 +54,7 @@ fn hash_entry(prev: &[u8; 32], canon: &[u8]) -> [u8; 32] {
 fn last_hash(conn: &Connection) -> rusqlite::Result<[u8; 32]> {
     let row: Option<Vec<u8>> = conn
         .query_row(
-            "SELECT entry_hash FROM audit_ledger ORDER BY rowid DESC LIMIT 1",
+            "SELECT entry_hash FROM audit_chain_head WHERE chain_id = 1",
             [],
             |r| r.get(0),
         )
@@ -97,6 +97,17 @@ pub fn append_audit(
             created_at
         ],
     )?;
+    let updated = tx.execute(
+        "UPDATE audit_chain_head
+            SET last_audit_id = ?1,
+                entry_hash = ?2,
+                row_count = row_count + 1
+          WHERE chain_id = 1",
+        rusqlite::params![audit_id, &entry[..]],
+    )?;
+    if updated != 1 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
     Ok(entry)
 }
 
@@ -122,6 +133,7 @@ pub fn verify_audit_chain(conn: &Connection) -> Result<usize> {
 
     let mut prev = GENESIS_PREV_HASH;
     let mut count = 0usize;
+    let mut last_audit_id: Option<String> = None;
     for row in rows {
         let (audit_id, prev_hash, entry_hash, actor, action, payload_ref, created_at) = row?;
         if prev_hash.as_slice() != prev.as_slice() {
@@ -139,7 +151,32 @@ pub fn verify_audit_chain(conn: &Connection) -> Result<usize> {
             return Err(StorageError::AuditChainBroken(audit_id));
         }
         prev = expected;
+        last_audit_id = Some(audit_id);
         count += 1;
+    }
+    let head: Option<(Option<String>, Vec<u8>, i64)> = conn
+        .query_row(
+            "SELECT last_audit_id, entry_hash, row_count
+               FROM audit_chain_head
+              WHERE chain_id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((anchored_last_id, anchored_hash, anchored_count)) = head else {
+        return Err(StorageError::AuditChainBroken(
+            "<audit_chain_head>".to_string(),
+        ));
+    };
+    let broken_id = anchored_last_id
+        .clone()
+        .or_else(|| last_audit_id.clone())
+        .unwrap_or_else(|| "<audit_chain_head>".to_string());
+    if anchored_count != count as i64
+        || anchored_hash.as_slice() != prev.as_slice()
+        || anchored_last_id.as_deref() != last_audit_id.as_deref()
+    {
+        return Err(StorageError::AuditChainBroken(broken_id));
     }
     Ok(count)
 }

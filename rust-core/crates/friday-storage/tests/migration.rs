@@ -151,10 +151,10 @@ fn forward_migration_v41_to_v42_adds_activity_owner_to_null_preserving_pre_v42_r
             )
             .unwrap();
     }
-    // Reopen with the full set -> forward-migrate to v42 (adds the additive owner ALTER).
+    // Reopen with the full set -> forward-migrate through v42 (adds the additive owner
+    // ALTER) and any later additive migrations.
     let db = Db::open_hub(&p).unwrap();
     assert_eq!(db.version().unwrap(), hub_max_version());
-    assert_eq!(hub_max_version(), 42, "M6 lands the hub at code_max 42");
     assert_eq!(
         db.count("activity_item").unwrap(),
         1,
@@ -208,6 +208,41 @@ fn forward_migration_v41_to_v42_adds_activity_owner_to_null_preserving_pre_v42_r
         db.mark_activity_done("owned-1", Some("alice"), 5).unwrap(),
         "owner allowed"
     );
+}
+
+#[test]
+fn forward_migration_v42_to_v43_seeds_empty_audit_chain_head() {
+    // G1 additive migration v43: the Hub audit chain gets a singleton tail anchor.
+    // A pre-v43 database with no audit rows must migrate to the genesis head.
+    let p = temp_db_path("audit-chain-head-mig");
+    {
+        let mut migs = hub_migrations();
+        migs.retain(|m| m.version <= 42);
+        let db = Db::open(&p, Profile::Hub, &migs, "v42").unwrap();
+        assert_eq!(db.version().unwrap(), 42);
+        assert!(
+            db.conn()
+                .prepare("SELECT row_count FROM audit_chain_head")
+                .is_err(),
+            "audit_chain_head must not exist before v43"
+        );
+    }
+
+    let db = Db::open_hub(&p).unwrap();
+    assert_eq!(db.version().unwrap(), hub_max_version());
+    let (last_audit_id, hash_len, row_count): (Option<String>, i64, i64) = db
+        .conn()
+        .query_row(
+            "SELECT last_audit_id, length(entry_hash), row_count
+               FROM audit_chain_head
+              WHERE chain_id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(last_audit_id, None);
+    assert_eq!(hash_len, 32);
+    assert_eq!(row_count, 0);
 }
 
 #[test]
