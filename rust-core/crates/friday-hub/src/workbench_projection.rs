@@ -17,7 +17,9 @@
 //! This fn takes an ALREADY-OPENED [`Db`] (the bin and the server open it `open_hub_readonly`) and
 //! does pure reads + JSON shaping. It never touches a provider credential or the model path.
 
-use friday_core::{MissionLinkKind, WorkItem, WorkItemStatus, WorkLane};
+use friday_core::{
+    MissionLinkKind, SurfaceEvent, SurfaceEventKind, WorkItem, WorkItemStatus, WorkLane,
+};
 use friday_storage::Db;
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Map, Value};
@@ -120,7 +122,7 @@ pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<
         "missionId": mission.mission_id,
         "fridayConversationId": mission.friday_conversation_id,
         "runtimeFeedStatus": "live_rust_hub_projection",
-        "statusLabels": status_labels_json(&work_items),
+        "statusLabels": status_labels_json(&work_items, &surface_events),
         "tokenLedgerRunId": readback_refs.token_ledger_run_id,
         "agentSessionId": readback_refs.agent_session_id,
         "duplicatePreflight": {
@@ -259,16 +261,25 @@ fn work_items_json(work_items: &[WorkItem]) -> Vec<Value> {
     rows
 }
 
-fn status_labels_json(work_items: &[WorkItem]) -> Vec<&'static str> {
+fn status_labels_json(
+    work_items: &[WorkItem],
+    surface_events: &[SurfaceEvent],
+) -> Vec<&'static str> {
     let has_stale = work_items
         .iter()
         .any(|item| item.status == WorkItemStatus::FailedRetryable);
     let has_error = work_items
         .iter()
         .any(|item| item.status == WorkItemStatus::FailedTerminal);
+    let has_offline = surface_events
+        .iter()
+        .any(|event| event.event_kind == SurfaceEventKind::SystemStatus);
     let mut labels = Vec::new();
     if has_stale {
         labels.push("stale");
+    }
+    if has_offline {
+        labels.push("offline");
     }
     if has_error {
         labels.push("error");
