@@ -330,6 +330,51 @@ describe("FridayTuiRenderer", () => {
     const output = renderer.renderFrame(state);
     expect(output).toContain("Hub unreachable");
   });
+
+  it("strips terminal control sequences from hub-provided text fields", () => {
+    const dangerous = "safe\x1b[2Jafter\x1b]0;owned\x07line\rbreak\nnext\u0000end";
+    const assertNoInjectedControls = (output: string) => {
+      expect(output).toContain("safe");
+      expect(output).not.toContain("\x1b[2J");
+      expect(output).not.toContain("\x1b]0;owned\x07");
+      expect(output).not.toContain("\r");
+      expect(output).not.toContain("\u0000");
+      expect(output).not.toContain("break\nnext");
+    };
+
+    assertNoInjectedControls(renderer.renderFrame({
+      ...createInitialTuiState(),
+      error: dangerous,
+    }));
+    assertNoInjectedControls(renderer.renderFrame({
+      ...createInitialTuiState(),
+      currentView: "sessions",
+      sessions: [
+        { sessionId: dangerous, channelId: dangerous, status: dangerous, createdAt: "2026-02-25T10:00:00Z", lastActivityAt: null },
+      ],
+    }));
+    assertNoInjectedControls(renderer.renderFrame({
+      ...createInitialTuiState(),
+      currentView: "jobs",
+      jobs: [
+        { jobId: "j-001", name: dangerous, status: dangerous, lastRunAt: "2026-02-25T11:59:00Z", nextRunAt: null },
+      ],
+    }));
+    assertNoInjectedControls(renderer.renderFrame({
+      ...createInitialTuiState(),
+      currentView: "pairing",
+      pairings: [
+        { satelliteId: "sat-001", displayName: dangerous, type: dangerous, pairingCode: dangerous, status: dangerous, expiresAt: "2026-02-26T00:00:00Z" },
+      ],
+    }));
+    assertNoInjectedControls(renderer.renderFrame({
+      ...createInitialTuiState(),
+      currentView: "events",
+      events: [
+        { id: "e-1", type: dangerous, message: dangerous, timestamp: "2026-02-25T12:00:05Z" },
+      ],
+    }));
+  });
 });
 
 // ─── Input Parser ───
