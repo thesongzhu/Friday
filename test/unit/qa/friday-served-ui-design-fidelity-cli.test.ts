@@ -73,6 +73,31 @@ function writeSelections(root: string, options: { referenceHtml?: boolean; petIn
   return designRoot;
 }
 
+function writeLegacyPetReference(root: string) {
+  const designRoot = writeSelections(root);
+  writeFile(designRoot, "html/pet-anim-v9-reference.html", `
+    <canvas id="pet-canvas" width="96" height="96"></canvas>
+    <button data-pet-action="wag">Wag</button>
+    <script>
+      let frame = 0;
+      const canvas = document.getElementById("pet-canvas");
+      const context = canvas.getContext("2d");
+      function draw(color) {
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = color;
+        context.fillRect(8, 8, 48, 48);
+      }
+      draw("#0f7d8c");
+      window.__pet = {
+        state() { return "happy/" + frame; },
+        step() { frame += 1; draw("#d8634d"); },
+        click() { frame += 1; draw("#277a5d"); },
+      };
+    </script>
+  `);
+  return designRoot;
+}
+
 function writeGoodIos(root: string) {
   const iosRoot = join(root, "ios");
   writeFile(iosRoot, "DesignTokens.swift", `
@@ -335,6 +360,31 @@ describe("check-friday-served-ui-design-fidelity", () => {
         "Gate C2 pet reference interaction hook is missing",
         "Gate C2 pet reference frame did not change after interaction",
       ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts the legacy selected pet reference click/step hook as an interactive Gate C2 oracle", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-c2-legacy-pet-"));
+    try {
+      const result = run(root, writeLegacyPetReference(root), writeGoodDist(root), writeGoodIos(root));
+      expect(result.status).toBe(0);
+      const report = JSON.parse(result.stdout) as {
+        referenceOracle?: {
+          petInteractionReport?: Record<string, {
+            changed?: boolean;
+            canvasNonBlank?: boolean;
+            hasClick?: boolean;
+            hasStep?: boolean;
+          }>;
+        };
+      };
+      const petReport = report.referenceOracle?.petInteractionReport?.["pet-anim-v9-reference.html"];
+      expect(petReport?.canvasNonBlank).toBe(true);
+      expect(petReport?.changed).toBe(true);
+      expect(petReport?.hasClick).toBe(true);
+      expect(petReport?.hasStep).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

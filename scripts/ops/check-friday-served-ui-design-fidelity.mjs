@@ -4,8 +4,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, extname, join, relative, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = resolve(fileURLToPath(import.meta.url), "..");
 const ROOT = resolve(SCRIPT_DIR, "../..");
@@ -186,6 +186,42 @@ function readLockedTokens() {
   return { accent, coral, appBg, ok, warn, danger };
 }
 
+function startFileServer(root) {
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const decodedPath = decodeURIComponent(url.pathname);
+    let filePath = resolve(root, `.${decodedPath}`);
+    const relativePath = relative(root, filePath);
+    if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+      res.writeHead(403);
+      res.end("forbidden");
+      return;
+    }
+    try {
+      if (statSync(filePath).isDirectory()) {
+        filePath = join(filePath, "index.html");
+      }
+      res.writeHead(200, { "content-type": contentType(filePath) });
+      res.end(readFileSync(filePath));
+    } catch {
+      res.writeHead(404);
+      res.end("not found");
+    }
+  });
+
+  return new Promise((resolveServer, rejectServer) => {
+    server.once("error", rejectServer);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        rejectServer(new Error("reference server did not bind to a tcp port"));
+        return;
+      }
+      resolveServer({ server, url: `http://127.0.0.1:${address.port}` });
+    });
+  });
+}
+
 async function assertReferenceOracle() {
   const checks = [];
   const htmlFiles = [
@@ -218,6 +254,7 @@ async function assertReferenceOracle() {
 
   const chromium = await loadPlaywrightChromium();
   const browser = await chromium.launch({ headless: true });
+  const referenceServer = await startFileServer(designRoot);
   const selectedJsonSha256 = {};
   const selectedHtmlSha256 = {};
   const screenshotSha256 = {};
@@ -235,10 +272,26 @@ async function assertReferenceOracle() {
       const htmlPath = join(designRoot, "html", file);
       selectedHtmlSha256[file] = sha256(readText(htmlPath));
       const page = await browser.newPage({ viewport: { width: file.includes("mobile") ? 390 : 1440, height: 900 } });
-      await page.goto(pathToFileURL(htmlPath).href, { waitUntil: "networkidle" });
+      await page.goto(`${referenceServer.url}/html/${file}`, { waitUntil: "networkidle" });
+      if (file === "pet-anim-v9-reference.html") {
+        await page.waitForFunction(() => Boolean(window.__pet) || Boolean(document.querySelector("canvas")), null, { timeout: 5000 }).catch(() => {});
+      }
       const screenshot = await page.screenshot({ fullPage: true });
       screenshotSha256[file] = sha256(screenshot);
       const snapshot = await page.evaluate(() => {
+        function petState() {
+          if (!window.__pet) return null;
+          if (typeof window.__pet.frame === "number") return `frame:${window.__pet.frame}`;
+          if (typeof window.__pet.state === "function") {
+            try {
+              return `state:${window.__pet.state()}`;
+            } catch {
+              return "state:error";
+            }
+          }
+          return null;
+        }
+
         const probe = document.querySelector("[data-friday-ui], button, [role='button'], canvas, main") ?? document.body;
         const style = getComputedStyle(probe);
         const actions = [...document.querySelectorAll("button, [role='button'], a[href], [data-pet-action]")]
@@ -249,12 +302,18 @@ async function assertReferenceOracle() {
             marker: node.getAttribute("data-friday-ui") ?? node.getAttribute("data-pet-action") ?? null,
             disabled: node.hasAttribute("disabled") || node.getAttribute("aria-disabled") === "true",
           }));
-        const before = typeof window.__pet?.frame === "number" ? window.__pet.frame : null;
+        const before = petState();
         let interactionResult = null;
         if (typeof window.__pet?.interact === "function") {
           interactionResult = window.__pet.interact();
+        } else if (typeof window.__pet?.click === "function") {
+          interactionResult = window.__pet.click();
+        } else if (typeof window.__pet?.step === "function") {
+          interactionResult = window.__pet.step(3);
+        } else {
+          document.querySelector("[data-pet-action], canvas")?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
         }
-        const after = typeof window.__pet?.frame === "number" ? window.__pet.frame : null;
+        const after = petState();
         const canvas = document.querySelector("canvas");
         let canvasNonBlank = false;
         if (canvas instanceof HTMLCanvasElement) {
@@ -286,6 +345,8 @@ async function assertReferenceOracle() {
           pet: {
             hasPetHook: Boolean(window.__pet),
             hasInteract: typeof window.__pet?.interact === "function",
+            hasClick: typeof window.__pet?.click === "function",
+            hasStep: typeof window.__pet?.step === "function",
             canvasNonBlank,
             before,
             after,
@@ -303,7 +364,7 @@ async function assertReferenceOracle() {
         if (!snapshot.pet.canvasNonBlank) {
           checks.push(fail("Gate C2 pet reference canvas is blank"));
         }
-        if (!snapshot.pet.hasPetHook || !snapshot.pet.hasInteract) {
+        if (!snapshot.pet.hasPetHook || !(snapshot.pet.hasInteract || snapshot.pet.hasClick || snapshot.pet.hasStep)) {
           checks.push(fail("Gate C2 pet reference interaction hook is missing"));
         }
         if (!snapshot.pet.changed) {
@@ -313,6 +374,7 @@ async function assertReferenceOracle() {
     }
   } finally {
     await browser.close();
+    await new Promise((resolveClose) => referenceServer.server.close(resolveClose));
   }
 
   report.referenceOracle = {
