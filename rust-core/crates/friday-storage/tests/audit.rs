@@ -83,3 +83,22 @@ fn deleting_a_row_breaks_the_chain() {
         other => panic!("expected AuditChainBroken(au2), got {other:?}"),
     }
 }
+
+#[test]
+fn deleting_tail_row_breaks_the_chain() {
+    let p = temp_db_path("audit-tail-del");
+    let mut db = Db::open_hub(&p).unwrap();
+    append(&mut db, "au0", "pairing", 0);
+    append(&mut db, "au1", "model_call", 1);
+    append(&mut db, "au2", "revoke", 2);
+    assert_eq!(audit::verify_audit_chain(db.conn()).unwrap(), 3);
+
+    db.conn()
+        .execute("DELETE FROM audit_ledger WHERE audit_id = 'au2'", [])
+        .unwrap();
+
+    match audit::verify_audit_chain(db.conn()) {
+        Err(StorageError::AuditChainBroken(id)) => assert_eq!(id, "au2"),
+        other => panic!("expected AuditChainBroken(au2), got {other:?}"),
+    }
+}
