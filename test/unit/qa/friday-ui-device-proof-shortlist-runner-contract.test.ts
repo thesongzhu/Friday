@@ -98,6 +98,19 @@ describe("friday-ui-device-proof-shortlist-runner contract", () => {
     expect(source).toContain("capture_dir_args+=(\"--negative-control-events=${path}\")");
   });
 
+  it("threads shared extra evidence refs for supplied same-run event files", () => {
+    const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
+
+    expect(source).toContain("[--shared-extra-evidence /abs/real-evidence ...]");
+    expect(source).toContain("shared_extra_evidence_inputs=()");
+    expect(source).toContain("shared_extra_evidence_inputs+=(\"$2\")");
+    expect(source).toContain("shared_extra_evidence_inputs+=(\"${1#--shared-extra-evidence=}\")");
+    expect(source).toContain("\"${negative_control_events[@]}\" \"${shared_extra_evidence_inputs[@]}\"");
+    expect(source).toContain("for path in \"${shared_extra_evidence_inputs[@]}\"; do");
+    expect(source).toContain("require_file_if_set \"shared-extra-evidence\" \"${path}\"");
+    expect(source).toContain("shared_extra_evidence+=(\"${path}\")");
+  });
+
   it("can derive non-channel workbench timeline inputs from the Rust Hub DB", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-shortlist-runner.sh", "utf8");
 
