@@ -6289,12 +6289,14 @@ mod tests {
         );
 
         let generated = interop_db_path("persist-red", None);
+        let generated_name = generated
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
         assert!(
-            generated
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default()
-                .contains("friday-execrun-interop-persist-red-"),
+            generated_name.starts_with("friday-execrun-interop-")
+                && generated_name.contains("-persist-red-")
+                && generated_name.ends_with(".sqlite"),
             "default interop tests keep their isolated temp DB naming"
         );
     }
@@ -6939,6 +6941,7 @@ mod tests {
         answer: &str,
     ) -> (HubRuntime<FinishTransport>, TempWs) {
         let ws = TempWs::new(tag);
+        let persist_db_path = std::env::var("FRIDAY_INTEROP_PERSIST_DB_PATH").ok();
         let client = DeepSeekClient::with_transport(
             FinishTransport {
                 answer: answer.to_string(),
@@ -6948,13 +6951,7 @@ mod tests {
         let agent = DeepSeekAgentLlmClient::new(client);
         let rt = HubRuntime::new(
             HubConfig {
-                db_path: std::env::temp_dir()
-                    .join(format!(
-                        "friday-execrun-interop-{}-{}-{}.sqlite",
-                        std::process::id(),
-                        tag,
-                        C.fetch_add(1, Ordering::Relaxed)
-                    ))
+                db_path: interop_db_path(tag, persist_db_path.as_deref())
                     .to_string_lossy()
                     .into_owned(),
                 workspace_root: ws.0.clone(),
@@ -6970,6 +6967,21 @@ mod tests {
         )
         .unwrap();
         (rt, ws)
+    }
+
+    fn interop_db_path(tag: &str, persist_db_path: Option<&str>) -> std::path::PathBuf {
+        if let Some(path) = persist_db_path
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            return std::path::PathBuf::from(path);
+        }
+        std::env::temp_dir().join(format!(
+            "friday-execrun-interop-{}-{}-{}.sqlite",
+            std::process::id(),
+            tag,
+            C.fetch_add(1, Ordering::Relaxed)
+        ))
     }
 
     /// The fixed TS-client X25519 secret scalar (same fixture as `CLIENT_SECRET` above): the TS
