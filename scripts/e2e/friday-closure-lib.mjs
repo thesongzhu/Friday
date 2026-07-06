@@ -158,10 +158,17 @@ export function buildClosureScratchEnv(baseEnv = process.env, paths) {
     FRIDAY_SYSTEM_ENABLED: baseEnv.FRIDAY_SYSTEM_ENABLED ?? "true",
     FRIDAY_AUTOFIX_DISPATCHER_ENABLED: baseEnv.FRIDAY_AUTOFIX_DISPATCHER_ENABLED ?? "true",
     FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: baseEnv.FRIDAY_ROUTE_WORKFLOWS_VIA_RUST ?? "1",
+    FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: baseEnv.FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST ?? "1",
     FRIDAY_HUB_WORKFLOW_CATALOG_DB_PATH: baseEnv.FRIDAY_HUB_WORKFLOW_CATALOG_DB_PATH
       ?? path.join(paths.state, "friday.db"),
     FRIDAY_HUB_WORKFLOW_CATALOG_BIN: baseEnv.FRIDAY_HUB_WORKFLOW_CATALOG_BIN
       ?? path.join(paths.state, "bin", "hub_workflow_catalog"),
+    FRIDAY_HUB_WORKFLOW_RUN_DB_PATH: baseEnv.FRIDAY_HUB_WORKFLOW_RUN_DB_PATH
+      ?? path.join(paths.state, "friday.db"),
+    FRIDAY_HUB_WORKFLOW_RUN_BIN: baseEnv.FRIDAY_HUB_WORKFLOW_RUN_BIN
+      ?? path.join(paths.state, "bin", "hub_workflow_run"),
+    FRIDAY_HUB_WORKFLOW_RUN_READBACK_BIN: baseEnv.FRIDAY_HUB_WORKFLOW_RUN_READBACK_BIN
+      ?? path.join(paths.state, "bin", "hub_workflow_run_readback"),
   };
 }
 
