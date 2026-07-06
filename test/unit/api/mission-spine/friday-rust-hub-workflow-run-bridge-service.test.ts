@@ -104,6 +104,30 @@ describe("FridayRustHubWorkflowRunBridgeService", () => {
         httpStatus: 403,
       });
 
+      await expect(service.getRun("rust-run-1", {
+        principalType: "user",
+        principalId: "tenant-admin",
+        tenantId: "tenant-b",
+        userId: "admin-user",
+        role: "admin",
+        scopes: ["workflow.read"],
+        tokenId: "token-admin",
+        tokenKind: "access",
+        issuedAt: "2026-07-06T00:00:00.000Z",
+      })).resolves.toMatchObject({ run: { id: "rust-run-1", status: "completed" } });
+
+      await expect(service.getRun("rust-run-1", {
+        principalType: "user",
+        principalId: "tenant-hub-admin",
+        tenantId: "tenant-b",
+        userId: "hub-admin-user",
+        role: "viewer",
+        scopes: ["hub.admin"],
+        tokenId: "token-hub-admin",
+        tokenKind: "access",
+        issuedAt: "2026-07-06T00:00:00.000Z",
+      })).resolves.toMatchObject({ run: { id: "rust-run-1", status: "completed" } });
+
       await expect(service.startRun({
         workflowId: "wf-1",
         triggerType: "manual",
