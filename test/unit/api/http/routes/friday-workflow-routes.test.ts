@@ -300,17 +300,30 @@ describe("FridayWorkflowRoutes", () => {
       });
     });
 
-    it("flag-ON does NOT route create or deploy (they stay retired/fail-closed)", async () => {
+    it("flag-ON create routes an authorized request to the bridge (refs-only response)", async () => {
       const bridge = makeStubBridge();
       const route = flagOnRoutes(bridge).find((r) => r.operationId === "workflows.create")!;
-      // create is NOT route-wired (graph→def compiler out of scope) → today's retirement 503.
-      await expect(
-        route.handler(makeCtx({ body: { slug: "wf", name: "Workflow", graph: {} } })),
-      ).rejects.toMatchObject({
-        code: "TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED",
-        httpStatus: 503,
+      const graph = { nodes: [{ id: "trigger1", type: "trigger" }], edges: [] };
+      const res = await route.handler(makeCtx({
+        body: {
+          slug: "wf",
+          name: "Workflow",
+          description: "Closure workflow",
+          tags: ["closure", "rust"],
+          graph,
+        },
+      }));
+      expect(res).toMatchObject({ routedVia: "rust_hub_workflow_catalog" });
+      expect(bridge.mutateCatalog).toHaveBeenCalledTimes(1);
+      expect(bridge.calls[0]).toMatchObject({
+        op: "create",
+        workflowId: expect.any(String),
+        slug: "wf",
+        name: "Workflow",
+        description: "Closure workflow",
+        defJson: JSON.stringify(graph),
+        tagsJson: JSON.stringify(["closure", "rust"]),
       });
-      expect(bridge.mutateCatalog).not.toHaveBeenCalled();
     });
   });
 });
