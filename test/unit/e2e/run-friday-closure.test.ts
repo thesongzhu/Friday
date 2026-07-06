@@ -38,7 +38,7 @@ describe("run-friday-closure helpers", () => {
       kind: "openai",
       name: "Closure OpenAI",
       baseUrl: "https://api.openai.com",
-      authMode: "api-key",
+      authMode: "bearer-token",
       api: "openai-responses",
       apiKey: "$OPENAI_API_KEY",
       supportedModels: ["gpt-4o-mini", "gpt-4o"],
@@ -48,6 +48,28 @@ describe("run-friday-closure helpers", () => {
       preserveEnvRef: true,
     });
     expect(JSON.stringify(request)).not.toContain("sk-");
+  });
+
+  it("uses provider-catalog auth modes for closure HTTP providers", () => {
+    expect(buildClosureProviderCreateRequest({
+      kind: "deepseek",
+      name: "Closure DeepSeek",
+      baseUrl: "https://api.deepseek.com",
+      api: "openai-completions",
+      envVar: "DEEPSEEK_API_KEY",
+      supportedModels: ["deepseek-chat"],
+      defaultModel: "deepseek-chat",
+    }).authMode).toBe("bearer-token");
+
+    expect(buildClosureProviderCreateRequest({
+      kind: "anthropic",
+      name: "Closure Anthropic",
+      baseUrl: "https://api.anthropic.com",
+      api: "anthropic-messages",
+      envVar: "ANTHROPIC_API_KEY",
+      supportedModels: ["claude-sonnet-4-6"],
+      defaultModel: "claude-sonnet-4-6",
+    }).authMode).toBe("api-key");
   });
 
   it("closeWritableStream flushes and closes a write stream", async () => {
