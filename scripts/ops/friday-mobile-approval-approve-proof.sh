@@ -120,13 +120,19 @@ const path = require("node:path");
 const [swiftProofPath, outPath] = process.argv.slice(2);
 const swiftProof = JSON.parse(fs.readFileSync(swiftProofPath, "utf8"));
 const actionRows = Array.isArray(swiftProof.ui_actions) ? swiftProof.ui_actions : [];
+const allActionsPassed = actionRows.length > 0
+  && actionRows.every((row) => row && row.status === "pass");
+const proofPassed = swiftProof.status === "pass" && allActionsPassed;
 const evidence = {
   truth: "mobile_approval_approve_action_runtime_evidence_signed_artifact_relay_not_sim_tap_not_endbar",
-  status: actionRows.length > 0 ? "ready" : "blocked",
+  status: proofPassed ? "ready" : "blocked",
   actions: actionRows,
   source_proof: swiftProofPath,
   run_id: swiftProof.run_id,
   approval_id: swiftProof.approval_id,
+  failure_reason: proofPassed
+    ? null
+    : (swiftProof.failure_reason || swiftProof.resume?.status || "mobile_approval_approve_not_passed"),
   caveat:
     "Approve action evidence only: mobile Swift write-client relay of an externally supplied signed artifact. It does not prove simulator tap, END-BAR, release, or adoption.",
 };
