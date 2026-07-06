@@ -8,6 +8,7 @@ import fs from "node:fs";
 import {
   closeWritableStream,
   createLedger,
+  describeCommandFailure,
   markInterruptedClosureLedger,
   persistLedger,
   runStep,
@@ -136,6 +137,62 @@ describe("run-friday-closure helpers", () => {
     expect(snapshot.completedAt).toBeTruthy();
     expect(snapshot.entries.at(-1)?.status).toBe(FRIDAY_CLOSURE_STATUSES.FAIL);
     expect(snapshot.entries.at(-1)?.details?.interrupted).toBe(true);
+    expect(snapshot.verdict).toBe("NO-GO");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("records retired CLI command failures as gaps without leaking command output or making them pass", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-closure-cli-gap-"));
+    const paths = {
+      runId: "cli-gap-run",
+      root: dir,
+      state: join(dir, "state"),
+      skills: join(dir, "skills"),
+      artifacts: join(dir, "artifacts"),
+      logs: join(dir, "logs"),
+      exports: join(dir, "exports"),
+      responses: join(dir, "responses"),
+      transcripts: join(dir, "transcripts"),
+    };
+    for (const value of Object.values(paths)) {
+      if (typeof value === "string") {
+        fs.mkdirSync(value, { recursive: true });
+      }
+    }
+
+    const failureMessage = describeCommandFailure({
+      description: "friday run output-current-date-time",
+      code: 1,
+      output: [
+        "Fatal error: FridayDomainError: Skill run execution is fail-closed",
+        "code: 'TS_RUNTIME_SKILL_RUNS_RETIRED'",
+        "super-secret-output-that-must-not-enter-ledger",
+      ].join("\n"),
+    });
+    expect(failureMessage).toContain("TS_RUNTIME_SKILL_RUNS_RETIRED");
+    expect(failureMessage).not.toContain("super-secret-output-that-must-not-enter-ledger");
+
+    const ledger = createLedger(paths);
+    persistLedger(ledger);
+    await runStep(ledger, {
+      id: "local.cli.convert-import-pack-run",
+      stage: "local.cli",
+      description: "Exercise friday convert/import/pack/run through the compiled CLI",
+    }, async () => {
+      throw new Error(failureMessage);
+    });
+
+    const snapshot = JSON.parse(readFileSync(join(dir, "ledger.json"), "utf8"));
+    const entry = snapshot.entries.at(-1);
+    expect(entry.status).toBe(FRIDAY_CLOSURE_STATUSES.FAIL);
+    expect(entry.details.recordedGap).toMatchObject({
+      status: "recorded-gap",
+      reason: "ts_runtime_retired_fail_closed",
+      code: "TS_RUNTIME_SKILL_RUNS_RETIRED",
+      notPass: true,
+    });
+    expect(entry.details.recordedGap.manifestSurfaceIds).toContain("skills_run");
     expect(snapshot.verdict).toBe("NO-GO");
 
     rmSync(dir, { recursive: true, force: true });
