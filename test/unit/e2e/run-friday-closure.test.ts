@@ -225,4 +225,58 @@ describe("run-friday-closure helpers", () => {
 
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it("records unavailable provider entitlement failures as gaps without making them pass", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-closure-provider-gap-"));
+    const paths = {
+      runId: "provider-gap-run",
+      root: dir,
+      state: join(dir, "state"),
+      skills: join(dir, "skills"),
+      artifacts: join(dir, "artifacts"),
+      logs: join(dir, "logs"),
+      exports: join(dir, "exports"),
+      responses: join(dir, "responses"),
+      transcripts: join(dir, "transcripts"),
+    };
+    for (const value of Object.values(paths)) {
+      if (typeof value === "string") {
+        fs.mkdirSync(value, { recursive: true });
+      }
+    }
+
+    const ledger = createLedger(paths);
+    persistLedger(ledger);
+    await runStep(ledger, {
+      id: "local.uix.templates",
+      stage: "local.uix",
+      description: "List and execute every assistant template plus the guided wizard",
+    }, async () => {
+      throw new Error(
+        "Template generate-skill failed: "
+        + JSON.stringify({
+          ok: false,
+          error: {
+            code: "PROVIDER_NO_CANDIDATES",
+            message: "No enabled providers available for routing: defaultProviderId validation failed: Authentication failed",
+            retryable: false,
+          },
+        }),
+      );
+    });
+
+    const snapshot = JSON.parse(readFileSync(join(dir, "ledger.json"), "utf8"));
+    const entry = snapshot.entries.at(-1);
+    expect(entry.status).toBe(FRIDAY_CLOSURE_STATUSES.FAIL);
+    expect(entry.details.recordedGap).toMatchObject({
+      status: "recorded-gap",
+      reason: "provider_entitlement_unavailable_fail_closed",
+      code: "PROVIDER_NO_CANDIDATES",
+      acceptanceGroupId: "provider_entitlement_matrix",
+      notPass: true,
+    });
+    expect(snapshot.verdict).toBe("NO-GO");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
