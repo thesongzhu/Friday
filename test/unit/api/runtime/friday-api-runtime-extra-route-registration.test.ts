@@ -716,6 +716,65 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(execution.getRun).not.toHaveBeenCalled();
   });
 
+  it("routes live workflow run start/read to the Rust bridge when routeWorkflowRunsViaRust is on", async () => {
+    const { workflowRuntime, execution } = makeWorkflowRuntimeSpies();
+    const rustRun = {
+      id: "rust-run-1",
+      workflowId: "workflow-1",
+      workflowVersionId: "rust-version:1",
+      status: "completed" as const,
+      triggerType: "manual",
+      startedAt: NOW,
+      finishedAt: NOW,
+      createdAt: NOW,
+      updatedAt: NOW,
+      evidenceStatus: "available" as const,
+      completionVerification: "verified" as const,
+    };
+    const rustWorkflowRunBridge = {
+      startRun: vi.fn(async () => ({ run: rustRun })),
+      getRun: vi.fn(async () => ({ run: rustRun })),
+    };
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      workflowRuntime,
+      routeWorkflowRunsViaRust: true,
+      rustWorkflowRunBridge,
+    } as CreateFridayApiRuntimeDeps & {
+      routeWorkflowRunsViaRust: true;
+      rustWorkflowRunBridge: typeof rustWorkflowRunBridge;
+    });
+
+    const startRoute = runtime.routes.getRoutes().find((r) => r.operationId === "runs.start");
+    expect(startRoute).toBeDefined();
+    await expect(startRoute!.handler({
+      requestId: "req-workflow-run-rust-start",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      body: { workflowId: "workflow-1", triggerType: "manual" },
+      headers: {},
+      principal: makePrincipal({ role: "admin", scopes: ["workflow.write", "workflow.read"] }),
+    })).resolves.toMatchObject({ run: { id: "rust-run-1", status: "completed" } });
+
+    const getRoute = runtime.routes.getRoutes().find((r) => r.operationId === "runs.get");
+    expect(getRoute).toBeDefined();
+    await expect(getRoute!.handler({
+      requestId: "req-workflow-run-rust-get",
+      receivedAt: NOW,
+      params: { runId: "rust-run-1" },
+      query: {},
+      body: null,
+      headers: {},
+      principal: makePrincipal({ role: "admin", scopes: ["workflow.read"] }),
+    })).resolves.toMatchObject({ run: { id: "rust-run-1", status: "completed" } });
+
+    expect(rustWorkflowRunBridge.startRun).toHaveBeenCalledTimes(1);
+    expect(rustWorkflowRunBridge.getRun).toHaveBeenCalledTimes(1);
+    expect(execution.startRun).not.toHaveBeenCalled();
+    expect(execution.getRun).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["runs.cancel", { reason: "operator requested" }, "cancelRun"],
     ["runs.retry", { nodeIds: ["node-1"] }, "retryRun"],
