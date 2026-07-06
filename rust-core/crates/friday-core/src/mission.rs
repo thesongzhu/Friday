@@ -754,7 +754,7 @@ impl WorkItem {
         }
         let requirements = self.outcome_requirement_specs();
         if requirements.is_empty() {
-            return true;
+            return false;
         }
         requirements.iter().all(|requirement| {
             self.proof_receipts.iter().any(|receipt| {
