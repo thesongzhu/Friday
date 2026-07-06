@@ -144,7 +144,9 @@ function parseProjection(
   const version = typeof fallback.workflowVersionId === "string" && fallback.workflowVersionId
     ? fallback.workflowVersionId
     : `rust-version:${String(reqNumber(root, "version"))}`;
-  const statusRaw = reqString(root, "status");
+  const statusRaw = typeof root.status === "string" && root.status.trim() !== ""
+    ? root.status
+    : reqString(root, "run_state");
   const status = mapStatus(statusRaw);
   const createdAtMs = reqNumber(root, "created_at_ms");
   const updatedAtMs = reqNumber(root, "updated_at_ms");
@@ -245,6 +247,12 @@ export function createFridayRustHubWorkflowRunBridgeService(
   );
   const timeoutMs =
     options.timeoutMs ?? readTimeoutMs(process.env.FRIDAY_HUB_WORKFLOW_RUN_TIMEOUT_MS, 120_000);
+  const metadataByRunId = new Map<string, {
+    workflowId: string;
+    workflowVersionId: string;
+    triggerType: string;
+    proofRequired?: boolean;
+  }>();
 
   function requireDbPath(): string {
     if (!dbPathRaw) {
@@ -284,15 +292,26 @@ export function createFridayRustHubWorkflowRunBridgeService(
         input.workflowId,
       ];
       const parsed = await runJsonBin(runBin, args, { cwd: repoRoot, timeoutMs });
+      const run = toRunEntity(parseProjection(parsed, {
+        workflowId: input.workflowId,
+        triggerType: input.triggerType,
+        proofRequired: input.proofRequired,
+      }));
+      metadataByRunId.set(run.id, {
+        workflowId: run.workflowId,
+        workflowVersionId: run.workflowVersionId,
+        triggerType: run.triggerType,
+        proofRequired: run.proofRequired,
+      });
       return {
-        run: toRunEntity(parseProjection(parsed, {
-          workflowId: input.workflowId,
-          triggerType: input.triggerType,
-          proofRequired: input.proofRequired,
-        })),
+        run,
       };
     },
     async getRun(runId) {
+      const metadata = metadataByRunId.get(runId);
+      if (!metadata) {
+        throw unavailable("Rust workflow-run readback requires start-run metadata in this runtime.");
+      }
       const dbPath = requireDbPath();
       const parsed = await runJsonBin(readbackBin, [
         "--db",
@@ -300,7 +319,7 @@ export function createFridayRustHubWorkflowRunBridgeService(
         "--run-id",
         runId,
       ], { cwd: repoRoot, timeoutMs });
-      return { run: toRunEntity(parseProjection(parsed)) };
+      return { run: toRunEntity(parseProjection(parsed, metadata)) };
     },
   };
 }
