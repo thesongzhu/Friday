@@ -13,6 +13,7 @@ import {
   FRIDAY_CLOSURE_STATUSES,
   collectCloudBlockers,
   createClosureRunId,
+  classifyRetiredRuntimeClosureFailure,
   resolveReadinessReport,
   resolveClosureRoot,
   resolveClosureVerdict,
@@ -22,6 +23,15 @@ import { acquireWorkspaceRunLock, releaseWorkspaceRunLock } from "../quality/wor
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const DIST_CLI = path.join(REPO_ROOT, "dist", "cli", "friday-cli.js");
+const TS_RUNTIME_RETIREMENT_MANIFEST = (() => {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, "docs", "ops", "ts-runtime-retirement-manifest.json"), "utf8"),
+    );
+  } catch {
+    return null;
+  }
+})();
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_TIMEOUT_MS = 180_000;
 const ALL_MODES = process.argv.includes("--all");
@@ -530,9 +540,12 @@ export async function runStep(ledger, { id, stage, description }, fn) {
     entry.details = { ...(entry.details || {}), ...(result?.details || {}) };
   } catch (error) {
     entry.status = FRIDAY_CLOSURE_STATUSES.FAIL;
+    const errorText = error instanceof Error ? error.message : String(error);
+    const recordedGap = classifyRetiredRuntimeClosureFailure(errorText, TS_RUNTIME_RETIREMENT_MANIFEST);
     entry.details = {
       ...(entry.details || {}),
-      error: error instanceof Error ? error.message : String(error),
+      error: errorText,
+      ...(recordedGap ? { recordedGap } : {}),
     };
   } finally {
     entry.completedAt = nowIso();

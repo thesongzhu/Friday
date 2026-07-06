@@ -160,6 +160,44 @@ export function buildClosureScratchEnv(baseEnv = process.env, paths) {
   };
 }
 
+const TS_RETIRED_RUNTIME_CODE = /\b(TS_RUNTIME_[A-Z0-9_]+_RETIRED)\b/u;
+
+export function classifyRetiredRuntimeClosureFailure(errorText, manifest = null) {
+  const text = typeof errorText === "string" ? errorText : String(errorText ?? "");
+  const match = text.match(TS_RETIRED_RUNTIME_CODE);
+  if (!match) {
+    return null;
+  }
+  const code = match[1];
+  const surfaces = Array.isArray(manifest?.surfaces) ? manifest.surfaces : [];
+  const manifestSurfaceIds = surfaces
+    .filter((surface) => {
+      if (surface?.classification !== "fail_closed" || surface?.executes_product_logic !== false) {
+        return false;
+      }
+      const declaredCode =
+        surface?.family_code
+        ?? surface?.familyCode
+        ?? surface?.errorCode
+        ?? surface?.expectedErrorCode
+        ?? surface?.code;
+      if (declaredCode === code) {
+        return true;
+      }
+      return JSON.stringify(surface).includes(code);
+    })
+    .map((surface) => surface.id)
+    .filter((id) => typeof id === "string" && id.trim().length > 0);
+
+  return {
+    status: "recorded-gap",
+    reason: "ts_runtime_retired_fail_closed",
+    code,
+    manifestSurfaceIds,
+    notPass: true,
+  };
+}
+
 function entryHasHiddenClosureFailure(entry) {
   if (!entry || typeof entry !== "object") {
     return false;
