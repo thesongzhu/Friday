@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   cmdRuns,
   finalizeCliCommand,
@@ -869,6 +869,87 @@ describe("runCliSkillCommand", () => {
 
     // The guard fires BEFORE hub creation → the executor sink is never reached.
     expect(createHubCalled).toBe(false);
+  });
+
+  it("routes a governed local skill run through the Rust skill-run bin when the Rust route flag and operator materials are present", async () => {
+    const parsed = parseArgs(argv("run", "output-current-date-time", "--skills-dir", "/tmp/friday-managed-skills"));
+    let createHubCalled = false;
+    const logs: string[] = [];
+    const execFileFn = vi.fn(async () => ({
+      stdout: JSON.stringify({
+        truth_label: "d21_skill_run_local",
+        ok: true,
+        runs_skill: true,
+        executes_skill: true,
+        completes_work_item: false,
+        run_ref: "proof://skill-run-local/run-1",
+        proof_ref: "proof://skill-run-local/proof-1",
+        skill_id: "output-current-date-time",
+        status: "skill_executed_not_completed",
+        exit_code: 0,
+        output_sha256: "a".repeat(64),
+        output_len: 32,
+      }),
+      stderr: "",
+    }));
+
+    await runCliSkillCommand(parsed, {
+      env: {
+        FRIDAY_ROUTE_SKILL_RUNS_VIA_RUST: "1",
+        FRIDAY_D21_SKILL_RUN_LOCAL_BIN: "/tmp/hub_skill_run_local",
+        FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH: "/tmp/friday-hub.sqlite",
+        FRIDAY_D21_OPERATOR_VK_PATH: "/tmp/operator.vk",
+        FRIDAY_D21_SKILL_RUN_APPROVAL_JSON: "/tmp/approval.json",
+        FRIDAY_D21_SKILL_RUN_MISSION_ID: "mission-cli",
+        FRIDAY_D21_SKILL_RUN_WORK_ITEM_ID: "work-cli",
+        FRIDAY_D21_SKILL_RUN_OPERATOR_PRINCIPAL_ID: "operator",
+      },
+      createHub: (async () => {
+        createHubCalled = true;
+        throw new Error("createHub must not be called when the Rust skill-run route is active");
+      }) as FridayCliRunCommandDeps["createHub"],
+      fetchFn: async () => {
+        throw new Error("fetch should not be called for local Rust execution");
+      },
+      logger: {
+        log: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+        error: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
+      },
+      execFileFn,
+    } as FridayCliRunCommandDeps & { execFileFn: typeof execFileFn });
+
+    expect(createHubCalled).toBe(false);
+    expect(execFileFn).toHaveBeenCalledTimes(1);
+    expect(execFileFn).toHaveBeenCalledWith(
+      "/tmp/hub_skill_run_local",
+      expect.arrayContaining([
+        "run-local",
+        "--db",
+        "/tmp/friday-hub.sqlite",
+        "--operator-vk-path",
+        "/tmp/operator.vk",
+        "--approval-json",
+        "/tmp/approval.json",
+        "--managed-skills-root",
+        "/tmp/friday-managed-skills",
+        "--skill-id",
+        "output-current-date-time",
+        "--mission-id",
+        "mission-cli",
+        "--work-item-id",
+        "work-cli",
+        "--operator-principal-id",
+        "operator",
+        "--approved-first-run-skill-id",
+        "output-current-date-time",
+      ]),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          FRIDAY_D21_SKILL_RUN_LOCAL: "1",
+        }),
+      }),
+    );
+    expect(logs.some((line) => line.includes("Run proof://skill-run-local/run-1 — skill_executed_not_completed"))).toBe(true);
   });
 
   it("fails fast when only one remote-hub env var is configured", async () => {
