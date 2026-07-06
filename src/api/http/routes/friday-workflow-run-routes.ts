@@ -31,6 +31,7 @@ import type {
   FridayStartRunRequest,
   FridayStartRunResponse,
 } from "../../model/friday-api-workflow.types.js";
+import type { FridayRustHubWorkflowRunBridgeService } from "../../mission-spine/friday-rust-hub-workflow-run-bridge-service.js";
 
 export interface FridayWorkflowRunRoutesDeps {
   startRun: (
@@ -90,6 +91,13 @@ export interface FridayWorkflowRunRoutesDeps {
     runId: UUID,
     principal: FridayAuthPrincipal | null,
   ) => Promise<FridayResumeRunResponse>;
+  /**
+   * DARK workflow-run Rust bridge, DEFAULT-OFF. With the flag unset, the routes
+   * keep today's deps-backed behavior. With the flag on, start/read are routed
+   * to the proof-only Rust bridge after auth; absent bridge fails closed.
+   */
+  routeWorkflowRunsViaRust?: boolean;
+  rustWorkflowRunBridge?: FridayRustHubWorkflowRunBridgeService;
 }
 
 function assertWorkflowRunWritePrincipal(
@@ -100,6 +108,38 @@ function assertWorkflowRunWritePrincipal(
     anyOfScopes: ["hub.admin", "workflow.write"],
     anyOfRoles: ["owner", "admin", "operator"],
   });
+}
+
+function assertWorkflowRunReadPrincipal(
+  principal: FridayAuthPrincipal | null | undefined,
+): void {
+  assertBoundPrincipalAuthorityForOperation(principal, "workflow.run.start", "api", {
+    anyOfScopes: ["hub.admin", "workflow.read", "workflow.write"],
+    anyOfRoles: ["owner", "admin", "operator"],
+  });
+}
+
+function rustWorkflowRunBridgeUnavailable(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_WORKFLOW_RUN_RUST_BRIDGE_UNAVAILABLE",
+    "Rust workflow-run route bridge is enabled but no bridge service is configured.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_run_entrypoint_required",
+      },
+    },
+  );
+}
+
+function requireRustWorkflowRunBridge(
+  deps: FridayWorkflowRunRoutesDeps,
+): FridayRustHubWorkflowRunBridgeService {
+  if (!deps.rustWorkflowRunBridge) {
+    rustWorkflowRunBridgeUnavailable();
+  }
+  return deps.rustWorkflowRunBridge;
 }
 
 export function createFridayWorkflowRunRoutes(
@@ -129,6 +169,12 @@ export function createFridayWorkflowRunRoutes(
             { httpStatus: 400 },
           );
         }
+        if (deps.routeWorkflowRunsViaRust === true) {
+          return requireRustWorkflowRunBridge(deps).startRun(
+            body as unknown as FridayStartRunRequest,
+            ctx.principal,
+          );
+        }
         return deps.startRun(body as unknown as FridayStartRunRequest, ctx.principal);
       },
     },
@@ -139,6 +185,10 @@ export function createFridayWorkflowRunRoutes(
       auth: { public: true },
       async handler(ctx) {
         const { runId } = ctx.params as { runId: UUID };
+        if (deps.routeWorkflowRunsViaRust === true) {
+          assertWorkflowRunReadPrincipal(ctx.principal ?? null);
+          return requireRustWorkflowRunBridge(deps).getRun(runId, ctx.principal);
+        }
         return deps.getRun(runId, ctx.principal);
       },
     },
