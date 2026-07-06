@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createFridayRustHubWorkflowRunBridgeService } from "../../../../src/api/mission-spine/friday-rust-hub-workflow-run-bridge-service.js";
+import type { FridayAuthPrincipal } from "../../../../src/api/model/friday-api-auth.types.js";
 
 function writeJsonBin(path: string, payload: Record<string, unknown>): void {
   writeFileSync(
@@ -57,11 +58,22 @@ describe("FridayRustHubWorkflowRunBridgeService", () => {
         runBin,
         readbackBin,
       });
+      const owner: FridayAuthPrincipal = {
+        principalType: "user",
+        principalId: "tenant-a",
+        tenantId: "tenant-a",
+        userId: "user-a",
+        role: "operator",
+        scopes: ["workflow.write", "workflow.read"],
+        tokenId: "token-owner",
+        tokenKind: "access",
+        issuedAt: "2026-07-06T00:00:00.000Z",
+      };
 
       const started = await service.startRun({
         workflowId: "wf-1",
         triggerType: "manual",
-      }, null);
+      }, owner);
       expect(started.run).toMatchObject({
         id: "rust-run-1",
         workflowId: "wf-1",
@@ -69,12 +81,44 @@ describe("FridayRustHubWorkflowRunBridgeService", () => {
         status: "completed",
       });
 
-      const read = await service.getRun("rust-run-1", null);
+      const read = await service.getRun("rust-run-1", owner);
       expect(read.run).toMatchObject({
         id: "rust-run-1",
         workflowId: "wf-1",
         workflowVersionId: "rust-version:1",
         status: "completed",
+      });
+
+      await expect(service.getRun("rust-run-1", {
+        principalType: "user",
+        principalId: "tenant-b",
+        tenantId: "tenant-b",
+        userId: "user-b",
+        role: "viewer",
+        scopes: ["workflow.read"],
+        tokenId: "token-other",
+        tokenKind: "access",
+        issuedAt: "2026-07-06T00:00:00.000Z",
+      })).rejects.toMatchObject({
+        code: "WORKFLOW_RUN_FORBIDDEN",
+        httpStatus: 403,
+      });
+
+      await expect(service.startRun({
+        workflowId: "wf-1",
+        triggerType: "manual",
+        dryRun: true,
+      }, owner)).rejects.toMatchObject({
+        code: "TS_RUNTIME_WORKFLOW_RUN_RUST_BRIDGE_UNAVAILABLE",
+        httpStatus: 503,
+      });
+
+      await expect(service.startRun({
+        workflowId: "wf-1",
+        triggerType: "webhook",
+      }, owner)).rejects.toMatchObject({
+        code: "TS_RUNTIME_WORKFLOW_RUN_RUST_BRIDGE_UNAVAILABLE",
+        httpStatus: 503,
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
