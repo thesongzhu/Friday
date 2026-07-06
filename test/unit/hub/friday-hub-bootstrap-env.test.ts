@@ -10,6 +10,7 @@ import {
   resolveRouteRunOutcomeLearningViaRust,
   resolveMissionAutoDispatch,
   resolveRouteProvidersViaRust,
+  resolveRouteWorkflowRunsViaRust,
   resolveRouteWorkflowsViaRust,
 } from "#hub";
 import type { FridayHubConfig } from "#hub";
@@ -513,6 +514,36 @@ describe("resolveRouteWorkflowsViaRust", () => {
     expect(resolveRouteWorkflowsViaRust(true, emptyEnv())).toBe(true);
     expect(resolveRouteWorkflowsViaRust(false, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "1" })).toBe(false);
     expect(resolveRouteWorkflowsViaRust(false, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "true" })).toBe(false);
+  });
+});
+
+// ─── Tier-2 workflow-run route bridge: routeWorkflowRunsViaRust (DARK, default-off) ───
+
+describe("resolveRouteWorkflowRunsViaRust", () => {
+  it("defaults to false when neither config nor env is set", () => {
+    expect(resolveRouteWorkflowRunsViaRust(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("parses FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST 1/true (case-insensitive, trimmed) as true", () => {
+    expect(resolveRouteWorkflowRunsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "1" })).toBe(true);
+    expect(resolveRouteWorkflowRunsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "true" })).toBe(true);
+    expect(resolveRouteWorkflowRunsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "TRUE" })).toBe(true);
+    expect(resolveRouteWorkflowRunsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "  1  " })).toBe(true);
+  });
+
+  it("treats 0, false, empty, and garbage env values as false (fail-safe off)", () => {
+    expect(resolveRouteWorkflowRunsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "0" })).toBe(false);
+    expect(resolveRouteWorkflowRunsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "false" })).toBe(false);
+    expect(resolveRouteWorkflowRunsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "" })).toBe(false);
+    expect(resolveRouteWorkflowRunsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "yes" })).toBe(false);
+    expect(resolveRouteWorkflowRunsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "on" })).toBe(false);
+  });
+
+  it("uses explicit config over the env (true wins; false beats env true)", () => {
+    expect(resolveRouteWorkflowRunsViaRust(true, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "0" })).toBe(true);
+    expect(resolveRouteWorkflowRunsViaRust(true, emptyEnv())).toBe(true);
+    expect(resolveRouteWorkflowRunsViaRust(false, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "1" })).toBe(false);
+    expect(resolveRouteWorkflowRunsViaRust(false, { FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST: "true" })).toBe(false);
   });
 });
 
