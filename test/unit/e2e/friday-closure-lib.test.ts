@@ -8,6 +8,7 @@ import {
   collectCloudBlockers,
   createClosureRunId,
   parseEnabledChannelKinds,
+  classifyRetiredRuntimeClosureFailure,
   resolveClosureVerdict,
   resolveCloudContractReport,
   resolveReadinessReport,
@@ -208,6 +209,38 @@ describe("friday closure lib", () => {
     ]);
 
     expect(verdict.summary).toEqual({ pass: 0, fail: 1, blocker: 0 });
+    expect(verdict.verdict).toBe("NO-GO");
+  });
+
+  it("classifies retired TS runtime closure failures as recorded gaps without making them pass", () => {
+    const recordedGap = classifyRetiredRuntimeClosureFailure(
+      "Session create failed: {\"error\":{\"code\":\"TS_RUNTIME_SESSION_RETIRED\"}}",
+      {
+        surfaces: [
+          {
+            id: "sessions_create",
+            family_code: "TS_RUNTIME_SESSION_RETIRED",
+            classification: "fail_closed",
+            executes_product_logic: false,
+          },
+        ],
+      },
+    );
+
+    expect(recordedGap).toEqual({
+      status: "recorded-gap",
+      reason: "ts_runtime_retired_fail_closed",
+      code: "TS_RUNTIME_SESSION_RETIRED",
+      manifestSurfaceIds: ["sessions_create"],
+      notPass: true,
+    });
+    const verdict = resolveClosureVerdict([
+      {
+        id: "local.sessions-agent-memory",
+        status: FRIDAY_CLOSURE_STATUSES.FAIL,
+        details: { recordedGap },
+      },
+    ]);
     expect(verdict.verdict).toBe("NO-GO");
   });
 });
