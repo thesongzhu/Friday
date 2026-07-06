@@ -160,6 +160,8 @@ export function buildClosureScratchEnv(baseEnv = process.env, paths) {
     FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: baseEnv.FRIDAY_ROUTE_WORKFLOWS_VIA_RUST ?? "1",
     FRIDAY_HUB_WORKFLOW_CATALOG_DB_PATH: baseEnv.FRIDAY_HUB_WORKFLOW_CATALOG_DB_PATH
       ?? path.join(paths.state, "friday.db"),
+    FRIDAY_HUB_WORKFLOW_CATALOG_BIN: baseEnv.FRIDAY_HUB_WORKFLOW_CATALOG_BIN
+      ?? path.join(paths.state, "bin", "hub_workflow_catalog"),
   };
 }
 

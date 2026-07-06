@@ -74,6 +74,29 @@ function writeText(filePath, text) {
   fs.writeFileSync(filePath, text, "utf8");
 }
 
+function shellSingleQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+export function writeClosureRustWorkflowCatalogBridgeBin(
+  binPath,
+  repoRoot = REPO_ROOT,
+) {
+  const rustCoreDir = path.join(repoRoot, "rust-core");
+  writeText(
+    binPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `cd ${shellSingleQuote(rustCoreDir)}`,
+      'exec cargo run -q -p friday-hub --bin hub_workflow_catalog -- "$@"',
+      "",
+    ].join("\n"),
+  );
+  fs.chmodSync(binPath, 0o755);
+  return binPath;
+}
+
 export async function closeWritableStream(stream, timeoutMs = 5_000) {
   if (!stream || stream.destroyed || stream.closed) {
     return;
@@ -1397,6 +1420,10 @@ async function runLocalStage(ledger) {
   const closureWorkspaceRoot = path.join(ledger.paths.root, "workspace");
   ensureDir(closureWorkspaceRoot);
   fridayEnv.FRIDAY_WORKSPACE_ROOT = closureWorkspaceRoot;
+  const defaultWorkflowCatalogBin = path.join(ledger.paths.state, "bin", "hub_workflow_catalog");
+  if (fridayEnv.FRIDAY_HUB_WORKFLOW_CATALOG_BIN === defaultWorkflowCatalogBin) {
+    writeClosureRustWorkflowCatalogBridgeBin(defaultWorkflowCatalogBin);
+  }
   const serverLogPath = path.join(ledger.paths.logs, "local-friday-server.log");
   const server = spawn(process.execPath, [
     DIST_CLI,
