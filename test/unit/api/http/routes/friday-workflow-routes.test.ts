@@ -321,9 +321,26 @@ describe("FridayWorkflowRoutes", () => {
         slug: "wf",
         name: "Workflow",
         description: "Closure workflow",
-        defJson: JSON.stringify(graph),
         tagsJson: JSON.stringify(["closure", "rust"]),
       });
+      const createInput = bridge.calls[0] as { defJson?: string };
+      expect(createInput.defJson).toBeDefined();
+      const rustDefinition = JSON.parse(createInput.defJson!);
+      expect(rustDefinition).toMatchObject({
+        schema_version: 1,
+        name: "Workflow",
+        steps: [
+          expect.objectContaining({
+            id: "trigger1",
+            action: "read_file",
+            params: [["path", "README.md"]],
+            force_checkpoint: false,
+            evidence_required: false,
+          }),
+        ],
+      });
+      expect(rustDefinition).not.toHaveProperty("schemaVersion");
+      expect(rustDefinition).not.toHaveProperty("graph");
     });
   });
 });
