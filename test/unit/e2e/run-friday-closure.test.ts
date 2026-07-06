@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 
 import {
+  buildClosureProviderCreateRequest,
   closeWritableStream,
   createLedger,
   describeCommandFailure,
@@ -17,6 +18,33 @@ import {
 import { FRIDAY_CLOSURE_STATUSES } from "../../../scripts/e2e/friday-closure-lib.mjs";
 
 describe("run-friday-closure helpers", () => {
+  it("keeps closure provider env refs out of scratch secret storage", () => {
+    const request = buildClosureProviderCreateRequest({
+      kind: "openai",
+      name: "Closure OpenAI",
+      baseUrl: "https://api.openai.com",
+      api: "openai-responses",
+      envVar: "OPENAI_API_KEY",
+      supportedModels: ["gpt-4o-mini", "gpt-4o"],
+      defaultModel: "gpt-4o-mini",
+    });
+
+    expect(request).toMatchObject({
+      kind: "openai",
+      name: "Closure OpenAI",
+      baseUrl: "https://api.openai.com",
+      authMode: "api-key",
+      api: "openai-responses",
+      apiKey: "$OPENAI_API_KEY",
+      supportedModels: ["gpt-4o-mini", "gpt-4o"],
+      defaultModel: "gpt-4o-mini",
+      enabled: true,
+      validateOnSave: false,
+      preserveEnvRef: true,
+    });
+    expect(JSON.stringify(request)).not.toContain("sk-");
+  });
+
   it("closeWritableStream flushes and closes a write stream", async () => {
     const dir = mkdtempSync(join(tmpdir(), "friday-closure-stream-"));
     const filePath = join(dir, "stream.log");
