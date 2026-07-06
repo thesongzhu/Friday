@@ -134,4 +134,63 @@ exit 0
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("does not mark refused Swift approve action evidence ready", () => {
+    const root = mkdtempSync(join(tmpdir(), "friday-mobile-approval-approve-refused-"));
+    try {
+      const swiftProof = join(root, "mobile-approval-approve-proof.json");
+      const signedApproval = writeFile(root, "signed-approval.json", "{\"signed\":true}\n");
+      const fakeSwift = writeFile(root, "swift", `#!/usr/bin/env bash
+cat > "${swiftProof}" <<'JSON'
+{
+  "truth_label": "ios_mobile_live_approval_approve_write_client_proof_signed_artifact_relay_not_sim_tap_not_endbar",
+  "status": "fail",
+  "failure_reason": "approval_refused",
+  "run_id": "run-refused-1",
+  "approval_id": "approval-refused-1",
+  "resume": {
+    "accepted": false,
+    "status": "approval_refused"
+  },
+  "ui_actions": [
+    {
+      "surface": "mobile",
+      "screen": "approval",
+      "action_id": "check",
+      "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
+      "status": "fail",
+      "evidence_ref": "proof://mobile/approval-approve/run-refused-1"
+    }
+  ]
+}
+JSON
+exit 0
+`);
+      chmodSync(fakeSwift, 0o755);
+      const out = join(root, "action-runtime-evidence.json");
+
+      execFileSync("bash", [wrapper], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FRIDAY_MOBILE_APPROVAL_APPROVE_LIVE: "1",
+          FRIDAY_MOBILE_APPROVAL_APPROVE_STEP: "approve",
+          FRIDAY_MOBILE_APPROVAL_APPROVE_RUN_ID: "run-refused-1",
+          FRIDAY_MOBILE_APPROVAL_APPROVE_APPROVAL_ID: "approval-refused-1",
+          FRIDAY_MOBILE_APPROVAL_APPROVE_SIGNED_APPROVAL: signedApproval,
+          FRIDAY_MOBILE_APPROVAL_APPROVE_SWIFT_PROOF_OUT: swiftProof,
+          FRIDAY_MOBILE_APPROVAL_APPROVE_ACTION_RUNTIME_OUT: out,
+          PATH: `${root}:${process.env.PATH ?? ""}`,
+        },
+      });
+
+      const actionEvidence = JSON.parse(readFileSync(out, "utf8")) as {
+        status?: string;
+      };
+      expect(actionEvidence.status).toBe("blocked");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
