@@ -97,6 +97,30 @@ export function writeClosureRustWorkflowCatalogBridgeBin(
   return binPath;
 }
 
+export function writeClosureRustWorkflowRunBridgeBins(
+  runBinPath,
+  readbackBinPath,
+  repoRoot = REPO_ROOT,
+) {
+  const rustCoreDir = path.join(repoRoot, "rust-core");
+  const writeWrapper = (binPath, binName) => {
+    writeText(
+      binPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `cd ${shellSingleQuote(rustCoreDir)}`,
+        `exec cargo run -q -p friday-hub --bin ${binName} -- "$@"`,
+        "",
+      ].join("\n"),
+    );
+    fs.chmodSync(binPath, 0o755);
+  };
+  writeWrapper(runBinPath, "hub_workflow_run");
+  writeWrapper(readbackBinPath, "hub_workflow_run_readback");
+  return { runBinPath, readbackBinPath };
+}
+
 export async function closeWritableStream(stream, timeoutMs = 5_000) {
   if (!stream || stream.destroyed || stream.closed) {
     return;
@@ -1419,10 +1443,22 @@ async function runLocalStage(ledger) {
   // so its e2e hubs (which set their own state dirs) are unaffected.
   const closureWorkspaceRoot = path.join(ledger.paths.root, "workspace");
   ensureDir(closureWorkspaceRoot);
+  writeText(
+    path.join(closureWorkspaceRoot, "README.md"),
+    "Friday closure workspace fixture for Rust workflow-run proof path.\n",
+  );
   fridayEnv.FRIDAY_WORKSPACE_ROOT = closureWorkspaceRoot;
   const defaultWorkflowCatalogBin = path.join(ledger.paths.state, "bin", "hub_workflow_catalog");
   if (fridayEnv.FRIDAY_HUB_WORKFLOW_CATALOG_BIN === defaultWorkflowCatalogBin) {
     writeClosureRustWorkflowCatalogBridgeBin(defaultWorkflowCatalogBin);
+  }
+  const defaultWorkflowRunBin = path.join(ledger.paths.state, "bin", "hub_workflow_run");
+  const defaultWorkflowRunReadbackBin = path.join(ledger.paths.state, "bin", "hub_workflow_run_readback");
+  if (
+    fridayEnv.FRIDAY_HUB_WORKFLOW_RUN_BIN === defaultWorkflowRunBin
+    && fridayEnv.FRIDAY_HUB_WORKFLOW_RUN_READBACK_BIN === defaultWorkflowRunReadbackBin
+  ) {
+    writeClosureRustWorkflowRunBridgeBins(defaultWorkflowRunBin, defaultWorkflowRunReadbackBin);
   }
   const serverLogPath = path.join(ledger.paths.logs, "local-friday-server.log");
   const server = spawn(process.execPath, [
