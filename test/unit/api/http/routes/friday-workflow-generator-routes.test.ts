@@ -309,7 +309,10 @@ describe("FridayWorkflowGeneratorRoutes", () => {
       steps: [
         expect.objectContaining({
           id: "emit_hello_world",
-          action: expect.any(String),
+          action: "read_file",
+          params: [["path", "README.md"]],
+          force_checkpoint: false,
+          evidence_required: false,
         }),
       ],
     });
