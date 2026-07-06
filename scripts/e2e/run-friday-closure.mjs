@@ -726,7 +726,9 @@ function signSatelliteChallenge(privateKeyPem, challengeNonce) {
   return signer.sign(privateKeyPem, "base64");
 }
 
-function describeCommandFailure(result) {
+const TS_RETIRED_RUNTIME_COMMAND_CODE = /\b(TS_RUNTIME_[A-Z0-9_]+_RETIRED)\b/u;
+
+export function describeCommandFailure(result) {
   const parts = [
     `${result.description} failed`,
     `code ${String(result.code)}`,
@@ -739,6 +741,12 @@ function describeCommandFailure(result) {
   }
   if (result.forcedKill) {
     parts.push("forced-kill");
+  }
+  const retiredRuntimeCode = typeof result.output === "string"
+    ? result.output.match(TS_RETIRED_RUNTIME_COMMAND_CODE)?.[1]
+    : null;
+  if (retiredRuntimeCode) {
+    parts.push(`retired-runtime ${retiredRuntimeCode}`);
   }
   return parts.join(" ");
 }
