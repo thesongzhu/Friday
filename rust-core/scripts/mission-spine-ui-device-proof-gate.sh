@@ -353,6 +353,13 @@ jq -e '
   exit 6
 }
 
+current_head="$(git rev-parse HEAD)"
+proof_head="$(jq -r '.head // ""' "$proof")"
+if [[ "$proof_head" != "$current_head" ]]; then
+  echo "BLOCKER: UI/device proof artifact head is not current: proof=${proof_head:-missing} current=$current_head" >&2
+  exit 10
+fi
+
 while IFS=$'\t' read -r evidence_file expected_sha256 expected_bytes; do
   if [[ -z "$evidence_file" ]]; then
     continue
