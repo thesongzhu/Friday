@@ -15,6 +15,44 @@ import Testing
 private let liveMobileApprovalApproveEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_APPROVAL_APPROVE_TEST"] == "1"
 
+@Test
+func mobileApprovalApproveProofMarksRefusedResumeAsFailure() throws {
+  let dir = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "friday-mobile-approval-approve-refused-\(UUID().uuidString)",
+    isDirectory: true)
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: dir) }
+
+  let proofURL = dir.appendingPathComponent("mobile-approval-approve-proof.json")
+  setenv("FRIDAY_MOBILE_APPROVAL_APPROVE_PROOF_OUT", proofURL.path, 1)
+  defer { unsetenv("FRIDAY_MOBILE_APPROVAL_APPROVE_PROOF_OUT") }
+
+  try writeMobileApprovalApproveProofIfRequested(
+    result: ResumeRelayResult(
+      runId: "run-refused",
+      op: "resume",
+      accepted: false,
+      status: "approval_refused",
+      auditRef: "run-refused:resume:receipt"),
+    approvalId: "approval-refused",
+    signedApprovalPath: dir.appendingPathComponent("signed-approval.json").path,
+    signedBlobByteCount: 439,
+    writeConfig: AgentRunServerConfig(host: "127.0.0.1", port: 48750))
+
+  let data = try Data(contentsOf: proofURL)
+  guard let proof = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+    Issue.record("proof JSON is not an object")
+    return
+  }
+  #expect(proof["status"] as? String == "fail")
+  #expect(proof["failure_reason"] as? String == "approval_refused")
+  let resume = proof["resume"] as? [String: Any] ?? [:]
+  #expect(resume["accepted"] as? Bool == false)
+  let actions = proof["ui_actions"] as? [[String: Any]] ?? []
+  #expect(!actions.isEmpty)
+  #expect(actions.allSatisfy { ($0["status"] as? String) == "fail" })
+}
+
 @MainActor
 @Test(.enabled(if: liveMobileApprovalApproveEnabled))
 func liveMobileApprovalApproveRelaysOperatorSignedBlobVerbatim() async throws {
@@ -98,9 +136,10 @@ private func writeMobileApprovalApproveProofIfRequested(
     return
   }
 
-  let proof: [String: Any] = [
+  let proofStatus = result.accepted ? "pass" : "fail"
+  var proof: [String: Any] = [
     "truth_label": "ios_mobile_live_approval_approve_write_client_proof_signed_artifact_relay_not_sim_tap_not_endbar",
-    "status": "pass",
+    "status": proofStatus,
     "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
     "run_id": result.runId,
     "approval_id": approvalId,
@@ -122,13 +161,16 @@ private func writeMobileApprovalApproveProofIfRequested(
         "screen": "approval",
         "action_id": "check",
         "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
-        "status": "pass",
+        "status": proofStatus,
         "evidence_ref": "proof://mobile/approval-approve/\(result.runId)",
         "truth_label": "explicit_mobile_approval_approve_runtime_evidence_from_live_swift_write_client",
       ],
     ],
     "caveat": "Mobile Swift write-client approve proof only. The signed artifact is supplied externally; the app never reads a signing key or mints a signature. Not a simulator tap, END-BAR, GO-LIVE, release, or adoption.",
   ]
+  if !result.accepted {
+    proof["failure_reason"] = result.status
+  }
 
   let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
   let url = URL(fileURLWithPath: rawPath)
@@ -261,7 +303,7 @@ private func appendMobileFridayChatApproveEvidenceIfRequested(
     "screen": "fridayChat",
     "action_id": "check",
     "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
-    "status": "pass",
+    "status": result.accepted ? "pass" : "fail",
     "evidence_ref": "proof://mobile/fridaychat-approval-approve/\(result.runId)",
     "truth_label": "explicit_mobile_fridaychat_approve_runtime_evidence_from_view_model_relaying_signed_blob_verbatim",
   ])
