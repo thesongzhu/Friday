@@ -44,10 +44,13 @@ func mobileApprovalApproveProofMarksRefusedResumeAsFailure() throws {
     Issue.record("proof JSON is not an object")
     return
   }
-  #expect(proof["status"] as? String != "pass")
+  #expect(proof["status"] as? String == "fail")
+  #expect(proof["failure_reason"] as? String == "approval_refused")
+  let resume = proof["resume"] as? [String: Any] ?? [:]
+  #expect(resume["accepted"] as? Bool == false)
   let actions = proof["ui_actions"] as? [[String: Any]] ?? []
   #expect(!actions.isEmpty)
-  #expect(actions.allSatisfy { ($0["status"] as? String) != "pass" })
+  #expect(actions.allSatisfy { ($0["status"] as? String) == "fail" })
 }
 
 @MainActor
