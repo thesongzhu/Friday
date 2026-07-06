@@ -342,5 +342,33 @@ describe("FridayWorkflowRoutes", () => {
       expect(rustDefinition).not.toHaveProperty("schemaVersion");
       expect(rustDefinition).not.toHaveProperty("graph");
     });
+
+    it("flag-ON create rejects unsupported workflow graphs instead of flattening them", async () => {
+      const bridge = makeStubBridge();
+      const route = flagOnRoutes(bridge).find((r) => r.operationId === "workflows.create")!;
+      await expect(
+        route.handler(makeCtx({
+          body: {
+            slug: "wf",
+            name: "Workflow",
+            graph: {
+              nodes: [
+                { id: "trigger1", type: "trigger", config: { triggerType: "manual" } },
+                { id: "collect", type: "data", config: { mapping: { message: "hello" } } },
+              ],
+              edges: [{ id: "edge-trigger-collect", sourceNodeId: "trigger1", targetNodeId: "collect" }],
+            },
+          },
+        })),
+      ).rejects.toMatchObject({
+        code: "TS_RUNTIME_WORKFLOW_CATALOG_GRAPH_UNSUPPORTED",
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_linear_workflow_translation_required",
+        },
+      });
+      expect(bridge.mutateCatalog).not.toHaveBeenCalled();
+    });
   });
 });
