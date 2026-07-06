@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { UUID } from "#workflows";
 import { FridayDomainError } from "#errors";
@@ -49,9 +50,9 @@ export interface FridayWorkflowRoutesDeps {
    * `hub_workflow_catalog` bin (#657) via {@link rustWorkflowCatalogBridge} (after auth)
    * instead of the retired TS path, returning a refs-only receipt. DEFAULT/unset ⇒
    * byte-identical to today's fail-closed `TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED`
-   * 503 (this flag's branch is never entered). `create` (graph→def compiler out of scope)
-   * and the catalog pointer-`deploy` (semantic mismatch with the richer draft-deploy route)
-   * are intentionally NOT route-wired — they remain fail-closed/retired even with the flag on.
+   * 503 (this flag's branch is never entered). The catalog pointer-`deploy` remains
+   * intentionally NOT route-wired because it has a semantic mismatch with the richer draft-deploy
+   * route.
    */
   routeWorkflowsViaRust?: boolean;
   /**
@@ -112,6 +113,26 @@ function requirePositiveIntField(body: Record<string, unknown> | null, field: st
   return value;
 }
 
+function requireNonEmptyStringField(body: Record<string, unknown> | null, field: string, maxLen: number): string {
+  const value = body ? body[field] : undefined;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${field} is required and must be a non-empty string`,
+      { httpStatus: 400 },
+    );
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > maxLen) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${field} must be at most ${String(maxLen)} characters`,
+      { httpStatus: 400 },
+    );
+  }
+  return trimmed;
+}
+
 function throwRetiredWorkflowCatalogMutation(): never {
   throw new FridayDomainError(
     "TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED",
@@ -140,6 +161,32 @@ function assertWorkflowWritePrincipal(
     anyOfScopes: ["hub.admin", "workflow.write"],
     anyOfRoles: ["owner", "admin", "operator"],
   });
+}
+
+/**
+ * Flag-on (DARK) `workflows.create` → Rust `hub_workflow_catalog create`. Auth has ALREADY run
+ * in the handler. The route returns a refs-only receipt because the Rust bridge deliberately
+ * withholds verbatim name/description/tags and the definition body.
+ */
+async function routeCreateViaRust(
+  bridge: FridayRustHubWorkflowCatalogBridgeService,
+  body: Record<string, unknown> | null,
+): Promise<FridayWorkflowCatalogRustRouteResponse> {
+  const slug = requireNonEmptyStringField(body, "slug", 128);
+  const name = requireNonEmptyStringField(body, "name", 255);
+  const description = body && typeof body.description === "string" ? body.description : undefined;
+  const tagsJson = body && Array.isArray(body.tags) ? JSON.stringify(body.tags) : undefined;
+  const defJson = JSON.stringify(body?.graph ?? {});
+  const receipt = await bridge.mutateCatalog({
+    op: "create",
+    workflowId: randomUUID(),
+    slug,
+    name,
+    description,
+    tagsJson,
+    defJson,
+  });
+  return { routedVia: "rust_hub_workflow_catalog", receipt };
 }
 
 /**
@@ -242,6 +289,13 @@ export function createFridayWorkflowRoutes(
       path: "/v1/workflows",
       auth: { public: true },
       async handler(ctx) {
+        if (deps.routeWorkflowsViaRust === true) {
+          assertWorkflowWritePrincipal(ctx.principal ?? null, "workflow.create");
+          return routeCreateViaRust(
+            requireRustWorkflowBridge(deps),
+            ctx.body as Record<string, unknown> | null,
+          );
+        }
         assertWorkflowCatalogMutationTestOracleAllowed(deps);
         assertWorkflowWritePrincipal(ctx.principal ?? null, "workflow.create");
         const body = ctx.body as Record<string, unknown> | null;
