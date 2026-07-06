@@ -299,6 +299,9 @@ export function createFridayRustHubWorkflowRunBridgeService(
     if (!principal) {
       throw new FridayDomainError("UNAUTHORIZED", "Authentication required", { httpStatus: 401 });
     }
+    if (principal.scopes.includes("hub.admin") || principal.role === "owner" || principal.role === "admin") {
+      return;
+    }
     if (metadata.ownerPrincipalId && metadata.ownerPrincipalId === principal.principalId) return;
     if (metadata.ownerUserId && principal.userId && metadata.ownerUserId === principal.userId) return;
     if (
