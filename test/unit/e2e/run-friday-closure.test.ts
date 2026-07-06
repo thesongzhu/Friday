@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 
 import {
+  buildDependentClosureBlockerDetails,
   buildClosureProviderCreateRequest,
   closeWritableStream,
   createLedger,
@@ -276,6 +277,68 @@ describe("run-friday-closure helpers", () => {
       notPass: true,
     });
     expect(snapshot.verdict).toBe("NO-GO");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("records deploy-export blockers as dependent gaps when workflow generation is already recorded", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-closure-dependent-gap-"));
+    const paths = {
+      runId: "dependent-gap-run",
+      root: dir,
+      state: join(dir, "state"),
+      skills: join(dir, "skills"),
+      artifacts: join(dir, "artifacts"),
+      logs: join(dir, "logs"),
+      exports: join(dir, "exports"),
+      responses: join(dir, "responses"),
+      transcripts: join(dir, "transcripts"),
+    };
+    for (const value of Object.values(paths)) {
+      if (typeof value === "string") {
+        fs.mkdirSync(value, { recursive: true });
+      }
+    }
+
+    const ledger = createLedger(paths);
+    ledger.entries.push({
+      id: "local.workflows.generator",
+      stage: "local.workflows",
+      description: "Generate, approve, and run a workflow through Friday's public workflow generator API",
+      startedAt: new Date("2026-07-06T09:00:00.000Z").toISOString(),
+      completedAt: new Date("2026-07-06T09:00:01.000Z").toISOString(),
+      durationMs: 1000,
+      status: FRIDAY_CLOSURE_STATUSES.FAIL,
+      evidence: {},
+      details: {
+        recordedGap: {
+          status: "recorded-gap",
+          reason: "ts_runtime_retired_fail_closed",
+          code: "TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED",
+          manifestSurfaceIds: ["workflows_generator_sessions_create"],
+          notPass: true,
+        },
+      },
+    });
+
+    const details = buildDependentClosureBlockerDetails(
+      ledger,
+      "local.workflows.generator",
+      "No generated workflow session is available for deploy/export template execution",
+    );
+
+    expect(details).toMatchObject({
+      reason: "No generated workflow session is available for deploy/export template execution",
+      upstreamEntryId: "local.workflows.generator",
+      recordedGap: {
+        status: "recorded-gap",
+        reason: "dependent_recorded_gap_fail_closed",
+        code: "DEPENDENT_ON_TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED",
+        upstreamCode: "TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED",
+        notPass: true,
+      },
+    });
+    expect(details.recordedGap.manifestSurfaceIds).toContain("workflows_generator_sessions_create");
 
     rmSync(dir, { recursive: true, force: true });
   });

@@ -573,6 +573,34 @@ function writeCommandEvidence(paths, id, payload) {
   return commandPath;
 }
 
+export function buildDependentClosureBlockerDetails(ledger, upstreamEntryId, reason) {
+  const upstreamEntry = [...(ledger?.entries ?? [])]
+    .reverse()
+    .find((entry) => entry?.id === upstreamEntryId);
+  const upstreamGap = upstreamEntry?.details?.recordedGap;
+  if (!upstreamGap?.code) {
+    return { reason };
+  }
+
+  return {
+    reason,
+    upstreamEntryId,
+    recordedGap: {
+      status: "recorded-gap",
+      reason: "dependent_recorded_gap_fail_closed",
+      code: `DEPENDENT_ON_${upstreamGap.code}`,
+      upstreamCode: upstreamGap.code,
+      ...(Array.isArray(upstreamGap.manifestSurfaceIds)
+        ? { manifestSurfaceIds: upstreamGap.manifestSurfaceIds }
+        : {}),
+      ...(typeof upstreamGap.acceptanceGroupId === "string"
+        ? { acceptanceGroupId: upstreamGap.acceptanceGroupId }
+        : {}),
+      notPass: true,
+    },
+  };
+}
+
 function formatReadinessReport(readiness) {
   const lines = [];
 
@@ -1854,9 +1882,11 @@ async function runLocalStage(ledger) {
       if (!workflowGeneratorResult?.sessionId) {
         return {
           status: FRIDAY_CLOSURE_STATUSES.BLOCKER,
-          details: {
-            reason: "No generated workflow session is available for deploy/export template execution",
-          },
+          details: buildDependentClosureBlockerDetails(
+            ledger,
+            "local.workflows.generator",
+            "No generated workflow session is available for deploy/export template execution",
+          ),
         };
       }
       const deploy = await apiFetch(baseUrl, token, "POST", "/v1/uix/templates/deploy-workflow/execute", {
