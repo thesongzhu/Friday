@@ -32,8 +32,10 @@ process.on("uncaughtException", (error) => {
 });
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import {
   buildFridayChannelSecretRef,
   buildFridayChannelSecretRefKey,
@@ -79,6 +81,8 @@ import {
   runFridayCliAuthStatus,
 } from "./friday-cli-auth.js";
 import { cmdRuns } from "./friday-cli-runs.js";
+
+const execFileAsync = promisify(execFile);
 
 // ─── Arg parser ───
 
@@ -1463,12 +1467,23 @@ interface FridayCliSkillRunResult {
   stderr?: string;
 }
 
+type FridayCliExecFile = (
+  file: string,
+  args: readonly string[],
+  options: {
+    env?: NodeJS.ProcessEnv;
+    timeout?: number;
+    maxBuffer?: number;
+  },
+) => Promise<{ stdout: string | Buffer; stderr: string | Buffer }>;
+
 export interface FridayCliRunCommandDeps {
   createHub?: typeof createFridayHub;
   fetchFn?: typeof fetch;
   env?: NodeJS.ProcessEnv;
   logger?: Pick<typeof console, "log" | "error">;
   setExitCode?: (code: number) => void;
+  execFileFn?: FridayCliExecFile;
 }
 
 function printCliSkillRunResult(
@@ -1491,7 +1506,7 @@ function printCliSkillRunResult(
 }
 
 function isCliSkillRunSuccessful(result: FridayCliSkillRunResult): boolean {
-  return result.status === "completed";
+  return result.status === "completed" || result.status === "skill_executed_not_completed";
 }
 
 function markCliSkillRunFailure(
@@ -1560,6 +1575,200 @@ async function runCliSkillRemotely(params: {
   };
 }
 
+function isCliRustSkillRunRouteEnabled(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.FRIDAY_ROUTE_SKILL_RUNS_VIA_RUST?.trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+function throwRustSkillRunRouteUnavailable(message: string): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_SKILL_RUNS_RUST_ROUTE_UNAVAILABLE",
+    message,
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_skill_run_entrypoint_required",
+      },
+    },
+  );
+}
+
+function requireCliRustSkillRunEnv(env: NodeJS.ProcessEnv, name: string): string {
+  const value = env[name]?.trim();
+  if (!value) {
+    throwRustSkillRunRouteUnavailable(
+      `Rust skill-run route is enabled but ${name} is not configured.`,
+    );
+  }
+  return value;
+}
+
+function splitCliRustSkillRunList(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function resolveCliRustManagedSkillsRoot(parsed: ParsedArgs, env: NodeJS.ProcessEnv): string {
+  const configured = env.FRIDAY_D21_MANAGED_SKILLS_ROOT?.trim();
+  if (configured) {
+    return configured;
+  }
+  const firstSkillDir = parsed.skillDirs[0]?.trim();
+  if (firstSkillDir) {
+    return firstSkillDir;
+  }
+  throwRustSkillRunRouteUnavailable(
+    "Rust skill-run route is enabled but no managed skills root is configured.",
+  );
+}
+
+function parseCliRustSkillRunJson(stdout: string): Record<string, unknown> {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    throwRustSkillRunRouteUnavailable("Rust skill-run route returned empty stdout.");
+  }
+  const parsed = safeJsonParse(trimmed);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throwRustSkillRunRouteUnavailable("Rust skill-run route returned invalid JSON.");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function cliRustSkillRunString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function cliRustSkillRunNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+async function runCliSkillViaRust(params: {
+  parsed: ParsedArgs;
+  env: NodeJS.ProcessEnv;
+  execFileFn: FridayCliExecFile;
+}): Promise<FridayCliSkillRunResult> {
+  const skillId = params.parsed.skillId;
+  if (!skillId) {
+    throwRustSkillRunRouteUnavailable("Rust skill-run route is enabled but skillId is missing.");
+  }
+
+  const env = params.env;
+  const bin = requireCliRustSkillRunEnv(env, "FRIDAY_D21_SKILL_RUN_LOCAL_BIN");
+  const dbPath = requireCliRustSkillRunEnv(env, "FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH");
+  const operatorVkPath = requireCliRustSkillRunEnv(env, "FRIDAY_D21_OPERATOR_VK_PATH");
+  const approvalJson = requireCliRustSkillRunEnv(env, "FRIDAY_D21_SKILL_RUN_APPROVAL_JSON");
+  const missionId = requireCliRustSkillRunEnv(env, "FRIDAY_D21_SKILL_RUN_MISSION_ID");
+  const workItemId = requireCliRustSkillRunEnv(env, "FRIDAY_D21_SKILL_RUN_WORK_ITEM_ID");
+  const operatorPrincipalId = requireCliRustSkillRunEnv(
+    env,
+    "FRIDAY_D21_SKILL_RUN_OPERATOR_PRINCIPAL_ID",
+  );
+  const managedSkillsRoot = resolveCliRustManagedSkillsRoot(params.parsed, env);
+  const timeoutMsRaw = env.FRIDAY_D21_SKILL_RUN_TIMEOUT_MS?.trim();
+  const timeoutMs = timeoutMsRaw ? Number.parseInt(timeoutMsRaw, 10) : 30_000;
+  const effectiveTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30_000;
+
+  const args = [
+    "run-local",
+    "--db",
+    dbPath,
+    "--operator-vk-path",
+    operatorVkPath,
+    "--approval-json",
+    approvalJson,
+    "--managed-skills-root",
+    managedSkillsRoot,
+    "--skill-id",
+    skillId,
+    "--mission-id",
+    missionId,
+    "--work-item-id",
+    workItemId,
+    "--operator-principal-id",
+    operatorPrincipalId,
+    "--timeout-ms",
+    String(effectiveTimeoutMs),
+  ];
+
+  const nowMs = env.FRIDAY_D21_SKILL_RUN_NOW_MS?.trim();
+  if (nowMs) {
+    args.push("--now-ms", nowMs);
+  }
+
+  const adoptedSkillIds = splitCliRustSkillRunList(env.FRIDAY_D21_ADOPTED_SKILL_IDS);
+  for (const adoptedSkillId of adoptedSkillIds) {
+    args.push("--adopted-skill-id", adoptedSkillId);
+  }
+
+  const approvedFirstRunSkillIds = splitCliRustSkillRunList(
+    env.FRIDAY_D21_APPROVED_FIRST_RUN_SKILL_IDS,
+  );
+  const firstRunIds = approvedFirstRunSkillIds.length > 0 ? approvedFirstRunSkillIds : [skillId];
+  for (const approvedFirstRunSkillId of firstRunIds) {
+    args.push("--approved-first-run-skill-id", approvedFirstRunSkillId);
+  }
+
+  if (env.FRIDAY_D21_REQUIRE_DARWIN_SANDBOX?.trim() === "1") {
+    args.push("--require-darwin-sandbox");
+  }
+
+  let stdout = "";
+  let stderr = "";
+  try {
+    const result = await params.execFileFn(bin, args, {
+      env: {
+        ...env,
+        FRIDAY_D21_SKILL_RUN_LOCAL: "1",
+      },
+      timeout: effectiveTimeoutMs + 5_000,
+      maxBuffer: 1024 * 1024,
+    });
+    stdout = Buffer.isBuffer(result.stdout) ? result.stdout.toString("utf8") : result.stdout;
+    stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf8") : result.stderr;
+  } catch (error) {
+    const maybeStdout = (error as { stdout?: string | Buffer }).stdout;
+    if (typeof maybeStdout === "string" || Buffer.isBuffer(maybeStdout)) {
+      stdout = Buffer.isBuffer(maybeStdout) ? maybeStdout.toString("utf8") : maybeStdout;
+    }
+    const maybeStderr = (error as { stderr?: string | Buffer }).stderr;
+    if (typeof maybeStderr === "string" || Buffer.isBuffer(maybeStderr)) {
+      stderr = Buffer.isBuffer(maybeStderr) ? maybeStderr.toString("utf8") : maybeStderr;
+    }
+    if (!stdout.trim()) {
+      throwRustSkillRunRouteUnavailable("Rust skill-run route failed before emitting a receipt.");
+    }
+  }
+
+  const receipt = parseCliRustSkillRunJson(stdout);
+  const ok = receipt.ok === true;
+  const runId = cliRustSkillRunString(receipt.run_ref)
+    ?? cliRustSkillRunString(receipt.proof_ref)
+    ?? `rust-skill-run:${skillId}`;
+  const status = cliRustSkillRunString(receipt.status)
+    ?? (ok ? "skill_executed_not_completed" : cliRustSkillRunString(receipt.error_kind) ?? "failed");
+
+  return {
+    runId,
+    status,
+    durationMs: 0,
+    output: {
+      truthLabel: cliRustSkillRunString(receipt.truth_label),
+      runsSkill: receipt.runs_skill === true,
+      executesSkill: receipt.executes_skill === true,
+      completesWorkItem: receipt.completes_work_item === true,
+      proofRef: cliRustSkillRunString(receipt.proof_ref),
+      skillId: cliRustSkillRunString(receipt.skill_id),
+      exitCode: cliRustSkillRunNumber(receipt.exit_code),
+      outputSha256: cliRustSkillRunString(receipt.output_sha256),
+      outputLen: cliRustSkillRunNumber(receipt.output_len),
+    },
+    stderr: stderr.trim().length > 0 ? stderr : undefined,
+  };
+}
+
 export async function runCliSkillCommand(
   parsed: ParsedArgs,
   deps: FridayCliRunCommandDeps = {},
@@ -1599,6 +1808,20 @@ export async function runCliSkillCommand(
   }
 
   const config = buildConfig(parsed);
+
+  if (
+    parsed.skillId !== "ai-inference"
+    && isCliRustSkillRunRouteEnabled(env)
+  ) {
+    const result = await runCliSkillViaRust({
+      parsed,
+      env,
+      execFileFn: deps.execFileFn ?? execFileAsync,
+    });
+    printCliSkillRunResult(logger, result);
+    markCliSkillRunFailure(logger, result, setExitCode);
+    return;
+  }
 
   // ─── TS Runtime Retirement — local-mode skill-run fail-closed guard ───
   // The REMOTE branch above already returned via the route-guarded HTTP surface.
