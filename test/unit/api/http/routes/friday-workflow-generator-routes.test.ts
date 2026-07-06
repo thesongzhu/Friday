@@ -300,6 +300,24 @@ describe("FridayWorkflowGeneratorRoutes", () => {
     expect(approved).toHaveProperty("workflowVersionId", "version-rust-1");
     expect(approved).toHaveProperty("publicationBoundary.proofBoundary", "crud_publish_only");
     expect(rustBridge.mutateCatalog).toHaveBeenCalledTimes(2);
+    const createInput = vi.mocked(rustBridge.mutateCatalog).mock.calls[0]?.[0] as { defJson?: string };
+    expect(createInput.defJson).toBeDefined();
+    const rustDefinition = JSON.parse(createInput.defJson!);
+    expect(rustDefinition).toMatchObject({
+      schema_version: 1,
+      name: "Build workflow",
+      steps: [
+        expect.objectContaining({
+          id: "emit_hello_world",
+          action: "read_file",
+          params: [["path", "README.md"]],
+          force_checkpoint: false,
+          evidence_required: false,
+        }),
+      ],
+    });
+    expect(rustDefinition).not.toHaveProperty("schemaVersion");
+    expect(rustDefinition).not.toHaveProperty("graph");
     expect(rustBridge.mutateCatalog).toHaveBeenNthCalledWith(1, expect.objectContaining({
       op: "create",
       workflowId: "workflow-rust-1",
