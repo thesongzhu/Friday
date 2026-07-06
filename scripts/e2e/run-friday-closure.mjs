@@ -851,8 +851,8 @@ function resolveClosureProviderConfig(env = process.env) {
   };
 }
 
-async function createClosureProvider(baseUrl, token, providerConfig) {
-  const createRes = await apiFetch(baseUrl, token, "POST", "/v1/providers", {
+export function buildClosureProviderCreateRequest(providerConfig) {
+  return {
     kind: providerConfig.kind,
     name: providerConfig.name,
     baseUrl: providerConfig.baseUrl,
@@ -863,7 +863,12 @@ async function createClosureProvider(baseUrl, token, providerConfig) {
     defaultModel: providerConfig.defaultModel,
     enabled: true,
     validateOnSave: false,
-  });
+    preserveEnvRef: true,
+  };
+}
+
+async function createClosureProvider(baseUrl, token, providerConfig) {
+  const createRes = await apiFetch(baseUrl, token, "POST", "/v1/providers", buildClosureProviderCreateRequest(providerConfig));
   if (createRes.status !== 200 || !createRes.json.ok) {
     throw new Error(`Provider create failed: ${JSON.stringify(createRes.json)}`);
   }
