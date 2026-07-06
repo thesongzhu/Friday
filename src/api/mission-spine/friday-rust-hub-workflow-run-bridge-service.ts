@@ -274,7 +274,45 @@ export function createFridayRustHubWorkflowRunBridgeService(
     workflowVersionId: string;
     triggerType: string;
     proofRequired?: boolean;
+    ownerPrincipalId?: string;
+    ownerUserId?: string;
+    ownerTenantId?: string;
+    ownerSatelliteId?: string;
   }>();
+
+  function principalTenantId(principal: FridayAuthPrincipal | null): string | undefined {
+    if (!principal) return undefined;
+    return typeof principal.tenantId === "string" && principal.tenantId.trim().length > 0
+      ? principal.tenantId.trim()
+      : principal.principalId;
+  }
+
+  function assertRunReadAuthorized(
+    metadata: {
+      ownerPrincipalId?: string;
+      ownerUserId?: string;
+      ownerTenantId?: string;
+      ownerSatelliteId?: string;
+    },
+    principal: FridayAuthPrincipal | null,
+  ): void {
+    if (!principal) {
+      throw new FridayDomainError("UNAUTHORIZED", "Authentication required", { httpStatus: 401 });
+    }
+    if (metadata.ownerPrincipalId && metadata.ownerPrincipalId === principal.principalId) return;
+    if (metadata.ownerUserId && principal.userId && metadata.ownerUserId === principal.userId) return;
+    if (
+      metadata.ownerSatelliteId
+      && principal.principalType === "satellite"
+      && metadata.ownerSatelliteId === principal.principalId
+    ) return;
+    if (metadata.ownerTenantId && principalTenantId(principal) === metadata.ownerTenantId) return;
+    throw new FridayDomainError(
+      "WORKFLOW_RUN_FORBIDDEN",
+      "You do not have permission to access this workflow run",
+      { httpStatus: 403 },
+    );
+  }
 
   function requireDbPath(): string {
     if (!dbPathRaw) {
@@ -299,7 +337,13 @@ export function createFridayRustHubWorkflowRunBridgeService(
   }
 
   return {
-    async startRun(input) {
+    async startRun(input, principal) {
+      if (input.dryRun === true) {
+        throw unavailable("Rust workflow-run bridge does not support dryRun requests.");
+      }
+      if (input.triggerType !== "manual") {
+        throw unavailable("Rust workflow-run bridge only supports manual trigger runs.");
+      }
       if (input.workflowVersionId) {
         throw unavailable("Rust workflow-run bridge does not accept TypeScript workflowVersionId values.");
       }
@@ -320,6 +364,10 @@ export function createFridayRustHubWorkflowRunBridgeService(
         workflowVersionId: refs.workflowVersionId,
         triggerType: input.triggerType ?? refs.triggerType,
         proofRequired: input.proofRequired,
+        ownerPrincipalId: principal?.principalId,
+        ownerUserId: principal?.userId,
+        ownerTenantId: principalTenantId(principal),
+        ownerSatelliteId: principal?.principalType === "satellite" ? principal.principalId : undefined,
       };
       metadataByRunId.set(refs.runId, metadata);
       const readback = await runJsonBin(readbackBin, [
@@ -330,11 +378,12 @@ export function createFridayRustHubWorkflowRunBridgeService(
       ], { cwd: repoRoot, timeoutMs });
       return { run: toRunEntity(parseProjection(readback, metadata)) };
     },
-    async getRun(runId) {
+    async getRun(runId, principal) {
       const metadata = metadataByRunId.get(runId);
       if (!metadata) {
         throw unavailable("Rust workflow-run readback requires start-run metadata in this runtime.");
       }
+      assertRunReadAuthorized(metadata, principal);
       const dbPath = requireDbPath();
       const parsed = await runJsonBin(readbackBin, [
         "--db",
