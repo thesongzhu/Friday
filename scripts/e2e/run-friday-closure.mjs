@@ -13,6 +13,7 @@ import {
   FRIDAY_CLOSURE_STATUSES,
   collectCloudBlockers,
   createClosureRunId,
+  classifyProviderEntitlementClosureFailure,
   classifyRetiredRuntimeClosureFailure,
   resolveReadinessReport,
   resolveClosureRoot,
@@ -541,7 +542,9 @@ export async function runStep(ledger, { id, stage, description }, fn) {
   } catch (error) {
     entry.status = FRIDAY_CLOSURE_STATUSES.FAIL;
     const errorText = error instanceof Error ? error.message : String(error);
-    const recordedGap = classifyRetiredRuntimeClosureFailure(errorText, TS_RUNTIME_RETIREMENT_MANIFEST);
+    const recordedGap =
+      classifyRetiredRuntimeClosureFailure(errorText, TS_RUNTIME_RETIREMENT_MANIFEST)
+      ?? classifyProviderEntitlementClosureFailure(errorText);
     entry.details = {
       ...(entry.details || {}),
       error: errorText,
