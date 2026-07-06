@@ -38,8 +38,6 @@ describe("FridayRustHubWorkflowRunBridgeService", () => {
         workflow_id: "wf-1",
         version: 1,
         status: "completed",
-        created_at_ms: 1_700_000_000_000,
-        updated_at_ms: 1_700_000_001_000,
       });
       writeJsonBin(readbackBin, {
         truth_label: "rust_wired_dev",
