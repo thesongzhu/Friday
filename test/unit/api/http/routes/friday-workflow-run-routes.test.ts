@@ -393,6 +393,91 @@ describe("FridayWorkflowRunRoutes", () => {
     );
   });
 
+  describe("DARK Rust workflow-run route bridge (routeWorkflowRunsViaRust)", () => {
+    function makeStubBridge() {
+      return {
+        startRun: vi.fn(async () => ({
+          run: { ...stubRun, id: "rust-run-1", status: "completed" as const },
+        })),
+        getRun: vi.fn(async () => ({
+          run: { ...stubRun, id: "rust-run-1", status: "completed" as const },
+        })),
+      };
+    }
+
+    it("flag-OFF is byte-identical to the normal route deps and never consults the bridge", async () => {
+      const bridge = makeStubBridge();
+      const startRun = vi.fn(async () => ({ run: stubRun }));
+      const localRoutes = createFridayWorkflowRunRoutes({
+        ...stubDeps,
+        startRun,
+        rustWorkflowRunBridge: bridge,
+      } as FridayWorkflowRunRoutesDeps & { rustWorkflowRunBridge: typeof bridge });
+      const route = localRoutes.find((r) => r.operationId === "runs.start")!;
+
+      await expect(route.handler(makeCtx({ params: {}, body: { workflowId: "wf-1" } })))
+        .resolves.toEqual({ run: stubRun });
+      expect(startRun).toHaveBeenCalledTimes(1);
+      expect(bridge.startRun).not.toHaveBeenCalled();
+    });
+
+    it("flag-ON routes start/get to the Rust bridge after auth", async () => {
+      const bridge = makeStubBridge();
+      const startRun = vi.fn(async () => ({ run: stubRun }));
+      const getRun = vi.fn(() => ({ run: stubRun }));
+      const localRoutes = createFridayWorkflowRunRoutes({
+        ...stubDeps,
+        startRun,
+        getRun,
+        routeWorkflowRunsViaRust: true,
+        rustWorkflowRunBridge: bridge,
+      } as FridayWorkflowRunRoutesDeps & {
+        routeWorkflowRunsViaRust: true;
+        rustWorkflowRunBridge: typeof bridge;
+      });
+
+      const startRoute = localRoutes.find((r) => r.operationId === "runs.start")!;
+      await expect(
+        startRoute.handler(makeCtx({ params: {}, body: { workflowId: "wf-1", triggerType: "manual" } })),
+      ).resolves.toMatchObject({ run: { id: "rust-run-1", status: "completed" } });
+      expect(startRun).not.toHaveBeenCalled();
+      expect(bridge.startRun).toHaveBeenCalledWith(
+        { workflowId: "wf-1", triggerType: "manual" },
+        expect.objectContaining({ principalId: "user-1" }),
+      );
+
+      const getRoute = localRoutes.find((r) => r.operationId === "runs.get")!;
+      await expect(
+        getRoute.handler(makeCtx({
+          params: { runId: "rust-run-1" },
+          principal: makePrincipal({ scopes: ["workflow.read"] }),
+        })),
+      ).resolves.toMatchObject({ run: { id: "rust-run-1", status: "completed" } });
+      expect(getRun).not.toHaveBeenCalled();
+      expect(bridge.getRun).toHaveBeenCalledWith(
+        "rust-run-1",
+        expect.objectContaining({ principalId: "user-1" }),
+      );
+    });
+
+    it("flag-ON without a bridge fails closed before falling back to TypeScript execution", async () => {
+      const startRun = vi.fn(async () => ({ run: stubRun }));
+      const localRoutes = createFridayWorkflowRunRoutes({
+        ...stubDeps,
+        startRun,
+        routeWorkflowRunsViaRust: true,
+      } as FridayWorkflowRunRoutesDeps & { routeWorkflowRunsViaRust: true });
+      const route = localRoutes.find((r) => r.operationId === "runs.start")!;
+
+      await expect(route.handler(makeCtx({ params: {}, body: { workflowId: "wf-1" } })))
+        .rejects.toMatchObject({
+          code: "TS_RUNTIME_WORKFLOW_RUN_RUST_BRIDGE_UNAVAILABLE",
+          httpStatus: 503,
+        });
+      expect(startRun).not.toHaveBeenCalled();
+    });
+  });
+
   it("POST /v1/workflow-runs/:runId/cancel requires workflow.write", () => {
     const route = routes.find((r) => r.operationId === "runs.cancel");
     expect(route).toBeDefined();

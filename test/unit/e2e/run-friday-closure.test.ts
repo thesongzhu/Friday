@@ -16,6 +16,7 @@ import {
   runStep,
   stopManagedChildProcess,
   writeClosureRustWorkflowCatalogBridgeBin,
+  writeClosureRustWorkflowRunBridgeBins,
 } from "../../../scripts/e2e/run-friday-closure.mjs";
 import { FRIDAY_CLOSURE_STATUSES } from "../../../scripts/e2e/friday-closure-lib.mjs";
 
@@ -85,6 +86,23 @@ describe("run-friday-closure helpers", () => {
     expect(script).toContain("cargo run -q -p friday-hub --bin hub_workflow_catalog");
     expect(script).toContain('exec cargo run -q -p friday-hub --bin hub_workflow_catalog -- "$@"');
     expect(fs.statSync(binPath).mode & 0o111).not.toBe(0);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("writes closure-local Rust workflow run bridge wrappers", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-closure-rust-run-bin-"));
+    const runBinPath = join(dir, "bin", "hub_workflow_run");
+    const readbackBinPath = join(dir, "bin", "hub_workflow_run_readback");
+
+    writeClosureRustWorkflowRunBridgeBins(runBinPath, readbackBinPath);
+
+    const runScript = readFileSync(runBinPath, "utf8");
+    const readbackScript = readFileSync(readbackBinPath, "utf8");
+    expect(runScript).toContain('exec cargo run -q -p friday-hub --bin hub_workflow_run -- "$@"');
+    expect(readbackScript).toContain('exec cargo run -q -p friday-hub --bin hub_workflow_run_readback -- "$@"');
+    expect(fs.statSync(runBinPath).mode & 0o111).not.toBe(0);
+    expect(fs.statSync(readbackBinPath).mode & 0o111).not.toBe(0);
 
     rmSync(dir, { recursive: true, force: true });
   });

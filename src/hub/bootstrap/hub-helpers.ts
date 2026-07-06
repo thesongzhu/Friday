@@ -1991,6 +1991,8 @@ export interface FridayHubConfig {
    * `FRIDAY_ROUTE_WORKFLOWS_VIA_RUST` env knob).
    */
   routeWorkflowsViaRust?: boolean;
+  /** Workflow-run start/read Rust bridge flag; default false / env fallback. */
+  routeWorkflowRunsViaRust?: boolean;
   /**
    * (Lane B-2) ORGANIC mission-spine POST routes bridge (DARK): "wire a real dispatch adapter into
    * `missionSpine.dispatch` so `/v1/mission-spine/intake|lifecycle|work-item-status` become CALLABLE"

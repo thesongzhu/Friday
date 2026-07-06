@@ -38,6 +38,7 @@ import type { FridayRustHubProvidersDetectService } from "../mission-spine/frida
 import type { FridayRustHubCapabilityDoctorService } from "../mission-spine/friday-rust-hub-capability-doctor-bridge-service.js";
 import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayRustHubWorkflowCatalogBridgeService } from "../mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
+import type { FridayRustHubWorkflowRunBridgeService } from "../mission-spine/friday-rust-hub-workflow-run-bridge-service.js";
 import type { FridayD20SignedBatchWorktreeService } from "../mission-spine/friday-rust-hub-d20-signed-batch-worktree-service.js";
 import type { FridayMediaUnderstandingRoutesDeps } from "../http/routes/friday-media-understanding-routes.js";
 import type { FridaySocialImportRoutesDeps } from "../http/routes/friday-social-import-routes.js";
@@ -251,6 +252,14 @@ export interface CreateFridayApiRuntimeDeps {
    * evidence-export truth.
    */
   allowTestOnlyWorkflowRunExecution?: boolean;
+  /**
+   * DARK workflow-run Rust bridge (DEFAULT-FALSE): routes POST/GET workflow-run
+   * start/read through the proof-only Rust `hub_workflow_run` +
+   * `hub_workflow_run_readback` bridge. Default/unset preserves the existing
+   * fail-closed TS-retirement path.
+   */
+  routeWorkflowRunsViaRust?: boolean;
+  rustWorkflowRunBridge?: FridayRustHubWorkflowRunBridgeService;
   /**
    * Test-oracle only: allows legacy TypeScript skill run execution in isolated
    * mock/unit validation. Production/runtime callers must leave this unset so

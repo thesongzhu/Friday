@@ -85,8 +85,12 @@ describe("friday closure lib", () => {
     expect(scratch.FRIDAY_CHANNELS_JSON).toBe('{"enabled":true,"instances":[]}');
     expect(scratch.FRIDAY_BROWSER_HEADLESS).toBe("true");
     expect(scratch.FRIDAY_ROUTE_WORKFLOWS_VIA_RUST).toBe("1");
+    expect(scratch.FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST).toBe("1");
     expect(scratch.FRIDAY_HUB_WORKFLOW_CATALOG_DB_PATH).toBe("/tmp/friday-state/friday.db");
     expect(scratch.FRIDAY_HUB_WORKFLOW_CATALOG_BIN).toBe("/tmp/friday-state/bin/hub_workflow_catalog");
+    expect(scratch.FRIDAY_HUB_WORKFLOW_RUN_DB_PATH).toBe("/tmp/friday-state/friday.db");
+    expect(scratch.FRIDAY_HUB_WORKFLOW_RUN_BIN).toBe("/tmp/friday-state/bin/hub_workflow_run");
+    expect(scratch.FRIDAY_HUB_WORKFLOW_RUN_READBACK_BIN).toBe("/tmp/friday-state/bin/hub_workflow_run_readback");
     expect(Object.keys(scratch)).not.toContain(`FRIDAY_ALLOW_LOCAL_${"BYPASS_LOGIN"}`);
 
     const explicit = buildClosureScratchEnv(

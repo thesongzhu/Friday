@@ -176,6 +176,7 @@ import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/fri
 import { createFridayRustHubProvidersDetectService } from "../mission-spine/friday-rust-hub-providers-detect-bridge-service.js";
 import { createFridayRustHubCapabilityDoctorService } from "../mission-spine/friday-rust-hub-capability-doctor-bridge-service.js";
 import { createFridayRustHubWorkflowCatalogBridgeService } from "../mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
+import { createFridayRustHubWorkflowRunBridgeService } from "../mission-spine/friday-rust-hub-workflow-run-bridge-service.js";
 import { createFridayD20SignedBatchWorktreeService } from "../mission-spine/friday-rust-hub-d20-signed-batch-worktree-service.js";
 import { resolveRustAgentRunWsClientX25519Secret } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
@@ -3127,6 +3128,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const rustWorkflowCatalogBridge = routeWorkflowsViaRust
     ? deps.rustWorkflowCatalogBridge ?? createFridayRustHubWorkflowCatalogBridgeService()
     : undefined;
+  const routeWorkflowRunsViaRust = deps.routeWorkflowRunsViaRust === true;
+  const rustWorkflowRunBridge = routeWorkflowRunsViaRust
+    ? deps.rustWorkflowRunBridge ?? createFridayRustHubWorkflowRunBridgeService()
+    : undefined;
 
   // Register workflow routes (real service wiring)
   for (const route of createFridayWorkflowRoutes({
@@ -3449,6 +3454,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register run routes (real service wiring)
   for (const route of createFridayWorkflowRunRoutes({
+    routeWorkflowRunsViaRust,
+    rustWorkflowRunBridge,
     startRun: async (input, principal) => {
       if (deps.allowTestOnlyWorkflowRunExecution !== true) {
         void input;

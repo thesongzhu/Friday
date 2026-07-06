@@ -1080,6 +1080,23 @@ export function resolveRouteWorkflowsViaRust(
 }
 
 /**
+ * Tier-2 WORKFLOW-RUN route bridge (DARK): single source of truth resolving the
+ * `routeWorkflowRunsViaRust` flag from explicit config or
+ * `FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST`. DEFAULT-FALSE so run start/read keep
+ * today's fail-closed TS-retirement behavior unless the operator opts in.
+ */
+export function resolveRouteWorkflowRunsViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_ROUTE_WORKFLOW_RUNS_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+/**
  * (Lane B-2) ORGANIC mission-spine POST routes bridge (DARK): single source of truth resolving the
  * `routeMissionSpineViaRust` flag from (1) an EXPLICIT {@link FridayHubConfig.routeMissionSpineViaRust}
  * and, only as a fallback, (2) the `FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST` env var — the operator knob
@@ -7543,6 +7560,7 @@ export async function createFridayHub(
     // else incl. unset → false). With nothing set (the default) this is `false`, so the
     // `=== true` gate is never satisfied → byte-identical to today's fail-closed retirement 503.
     routeWorkflowsViaRust: resolveRouteWorkflowsViaRust(config.routeWorkflowsViaRust),
+    routeWorkflowRunsViaRust: resolveRouteWorkflowRunsViaRust(config.routeWorkflowRunsViaRust),
     allowTestOnlyAgentRunControlExecution: config.allowTestOnlyAgentRunControlExecution,
     allowTestOnlyAutonomyLifecycleExecution: config.allowTestOnlyAutonomyLifecycleExecution,
     allowTestOnlyStandingAgendaExecution: config.allowTestOnlyStandingAgendaExecution,
