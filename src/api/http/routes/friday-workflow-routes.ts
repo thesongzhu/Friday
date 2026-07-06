@@ -145,40 +145,71 @@ function requireNonEmptyStringField(body: Record<string, unknown> | null, field:
   return trimmed;
 }
 
-function collectWorkflowGraphStepIds(graph: unknown): string[] {
+function throwUnsupportedWorkflowCreateGraph(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_WORKFLOW_CATALOG_GRAPH_UNSUPPORTED",
+    "Rust workflow catalog create route only accepts the current single-manual-trigger closure graph; richer TS workflow graphs require the Rust linear-only translator.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_linear_workflow_translation_required",
+      },
+    },
+  );
+}
+
+function collectSupportedClosureWorkflowGraphStepIds(graph: unknown): string[] {
   if (!graph || typeof graph !== "object") {
-    return [];
+    throwUnsupportedWorkflowCreateGraph();
   }
-  const nodes = Array.isArray((graph as { nodes?: unknown }).nodes)
-    ? (graph as { nodes: unknown[] }).nodes
-    : [];
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const node of nodes) {
-    if (!node || typeof node !== "object") {
-      continue;
+  const source = graph as {
+    graph?: { nodes?: unknown; edges?: unknown };
+    nodes?: unknown;
+    edges?: unknown;
+  };
+  const graphBody = source.graph && typeof source.graph === "object" ? source.graph : source;
+  const nodes = Array.isArray(graphBody.nodes) ? graphBody.nodes : [];
+  const edges = Array.isArray(graphBody.edges) ? graphBody.edges : [];
+  if (nodes.length !== 1 || edges.length !== 0) {
+    throwUnsupportedWorkflowCreateGraph();
+  }
+  const node = nodes[0];
+  if (!node || typeof node !== "object") {
+    throwUnsupportedWorkflowCreateGraph();
+  }
+  const rawType = (node as { type?: unknown; kind?: unknown }).type
+    ?? (node as { type?: unknown; kind?: unknown }).kind;
+  if (typeof rawType !== "string" || !["trigger", "start"].includes(rawType.trim())) {
+    throwUnsupportedWorkflowCreateGraph();
+  }
+  const config = (node as { config?: unknown }).config;
+  if (config && typeof config === "object") {
+    const triggerType = (config as { triggerType?: unknown }).triggerType;
+    if (typeof triggerType === "string" && !["", "manual"].includes(triggerType.trim())) {
+      throwUnsupportedWorkflowCreateGraph();
     }
+  }
+  for (const node of nodes) {
     const rawId = (node as { id?: unknown; nodeId?: unknown }).id
       ?? (node as { id?: unknown; nodeId?: unknown }).nodeId;
     if (typeof rawId !== "string") {
-      continue;
+      throwUnsupportedWorkflowCreateGraph();
     }
     const id = rawId.trim();
-    if (!id || seen.has(id)) {
-      continue;
+    if (!id) {
+      throwUnsupportedWorkflowCreateGraph();
     }
-    seen.add(id);
-    ids.push(id);
+    return [id];
   }
-  return ids;
+  throwUnsupportedWorkflowCreateGraph();
 }
 
 function buildRustStoredWorkflowDefinitionFromGraph(
   name: string,
   graph: unknown,
 ): FridayRustStoredWorkflowDefV1 {
-  const stepIds = collectWorkflowGraphStepIds(graph);
-  const ids = stepIds.length > 0 ? stepIds : ["workflow_step"];
+  const ids = collectSupportedClosureWorkflowGraphStepIds(graph);
   return {
     schema_version: 1,
     name,
