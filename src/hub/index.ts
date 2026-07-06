@@ -44,6 +44,7 @@ export {
   resolveRouteRunOutcomeLearningViaRust,
   resolveMissionAutoDispatch,
   resolveRouteProvidersViaRust,
+  resolveRouteWorkflowRunsViaRust,
   resolveRouteWorkflowsViaRust,
   sanitizeFridayChannelVisibleReply,
   shouldFailClosedForFridayWorkspaceContext,
