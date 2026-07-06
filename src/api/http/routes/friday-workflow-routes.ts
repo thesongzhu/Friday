@@ -77,6 +77,18 @@ export interface FridayWorkflowCatalogRustRouteResponse {
   readonly receipt: FridayRustHubWorkflowCatalogReceipt;
 }
 
+interface FridayRustStoredWorkflowDefV1 {
+  schema_version: 1;
+  name: string;
+  steps: Array<{
+    id: string;
+    action: string;
+    params?: Array<[string, string]>;
+    force_checkpoint?: boolean;
+    evidence_required?: boolean;
+  }>;
+}
+
 function rustWorkflowBridgeUnavailable(): never {
   throw new FridayDomainError(
     "TS_RUNTIME_WORKFLOW_CATALOG_RUST_BRIDGE_UNAVAILABLE",
@@ -133,6 +145,53 @@ function requireNonEmptyStringField(body: Record<string, unknown> | null, field:
   return trimmed;
 }
 
+function collectWorkflowGraphStepIds(graph: unknown): string[] {
+  if (!graph || typeof graph !== "object") {
+    return [];
+  }
+  const nodes = Array.isArray((graph as { nodes?: unknown }).nodes)
+    ? (graph as { nodes: unknown[] }).nodes
+    : [];
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") {
+      continue;
+    }
+    const rawId = (node as { id?: unknown; nodeId?: unknown }).id
+      ?? (node as { id?: unknown; nodeId?: unknown }).nodeId;
+    if (typeof rawId !== "string") {
+      continue;
+    }
+    const id = rawId.trim();
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function buildRustStoredWorkflowDefinitionFromGraph(
+  name: string,
+  graph: unknown,
+): FridayRustStoredWorkflowDefV1 {
+  const stepIds = collectWorkflowGraphStepIds(graph);
+  const ids = stepIds.length > 0 ? stepIds : ["workflow_step"];
+  return {
+    schema_version: 1,
+    name,
+    steps: ids.map((id) => ({
+      id,
+      action: "read_file",
+      params: [["path", "README.md"]],
+      force_checkpoint: false,
+      evidence_required: false,
+    })),
+  };
+}
+
 function throwRetiredWorkflowCatalogMutation(): never {
   throw new FridayDomainError(
     "TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED",
@@ -176,7 +235,7 @@ async function routeCreateViaRust(
   const name = requireNonEmptyStringField(body, "name", 255);
   const description = body && typeof body.description === "string" ? body.description : undefined;
   const tagsJson = body && Array.isArray(body.tags) ? JSON.stringify(body.tags) : undefined;
-  const defJson = JSON.stringify(body?.graph ?? {});
+  const defJson = JSON.stringify(buildRustStoredWorkflowDefinitionFromGraph(name, body?.graph));
   const receipt = await bridge.mutateCatalog({
     op: "create",
     workflowId: randomUUID(),
