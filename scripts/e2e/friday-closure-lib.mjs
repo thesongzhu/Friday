@@ -198,6 +198,27 @@ export function classifyRetiredRuntimeClosureFailure(errorText, manifest = null)
   };
 }
 
+export function classifyProviderEntitlementClosureFailure(errorText) {
+  const text = typeof errorText === "string" ? errorText : String(errorText ?? "");
+  if (!text.includes("PROVIDER_NO_CANDIDATES")) {
+    return null;
+  }
+  if (
+    !text.includes("No enabled providers available for routing")
+    && !text.includes("Authentication failed")
+  ) {
+    return null;
+  }
+
+  return {
+    status: "recorded-gap",
+    reason: "provider_entitlement_unavailable_fail_closed",
+    code: "PROVIDER_NO_CANDIDATES",
+    acceptanceGroupId: "provider_entitlement_matrix",
+    notPass: true,
+  };
+}
+
 function entryHasHiddenClosureFailure(entry) {
   if (!entry || typeof entry !== "object") {
     return false;
