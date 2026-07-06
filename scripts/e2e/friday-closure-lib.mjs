@@ -172,6 +172,26 @@ export function buildClosureScratchEnv(baseEnv = process.env, paths) {
       ?? path.join(paths.state, "bin", "hub_workflow_run"),
     FRIDAY_HUB_WORKFLOW_RUN_READBACK_BIN: baseEnv.FRIDAY_HUB_WORKFLOW_RUN_READBACK_BIN
       ?? path.join(paths.state, "bin", "hub_workflow_run_readback"),
+    FRIDAY_ROUTE_SKILL_RUNS_VIA_RUST: baseEnv.FRIDAY_ROUTE_SKILL_RUNS_VIA_RUST ?? "1",
+    FRIDAY_D21_SKILL_RUN_LOCAL_BIN: baseEnv.FRIDAY_D21_SKILL_RUN_LOCAL_BIN
+      ?? path.join(paths.state, "bin", "hub_skill_run_local"),
+    FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH: baseEnv.FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH
+      ?? path.join(paths.state, "skill-run-local.db"),
+    FRIDAY_D21_OPERATOR_VK_PATH: baseEnv.FRIDAY_D21_OPERATOR_VK_PATH
+      ?? path.join(paths.state, "operator.vk"),
+    FRIDAY_D21_SKILL_RUN_APPROVAL_JSON: baseEnv.FRIDAY_D21_SKILL_RUN_APPROVAL_JSON
+      ?? path.join(paths.state, "skill-run-approval.json"),
+    FRIDAY_D21_SKILL_RUN_MISSION_ID: baseEnv.FRIDAY_D21_SKILL_RUN_MISSION_ID
+      ?? "mission-closure-cli-skill-run",
+    FRIDAY_D21_SKILL_RUN_WORK_ITEM_ID: baseEnv.FRIDAY_D21_SKILL_RUN_WORK_ITEM_ID
+      ?? "work-closure-cli-skill-run",
+    FRIDAY_D21_SKILL_RUN_OPERATOR_PRINCIPAL_ID: baseEnv.FRIDAY_D21_SKILL_RUN_OPERATOR_PRINCIPAL_ID
+      ?? "operator",
+    FRIDAY_D21_APPROVED_FIRST_RUN_SKILL_IDS: baseEnv.FRIDAY_D21_APPROVED_FIRST_RUN_SKILL_IDS
+      ?? "output-current-date-time",
+    FRIDAY_D21_ADOPTED_SKILL_IDS: baseEnv.FRIDAY_D21_ADOPTED_SKILL_IDS
+      ?? "output-current-date-time",
+    FRIDAY_D21_SKILL_RUN_TIMEOUT_MS: baseEnv.FRIDAY_D21_SKILL_RUN_TIMEOUT_MS ?? "30000",
   };
 }
 

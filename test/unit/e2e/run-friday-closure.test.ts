@@ -160,13 +160,14 @@ describe("run-friday-closure helpers", () => {
 
     expect(env.FRIDAY_ROUTE_SKILL_RUNS_VIA_RUST).toBe("1");
     expect(env.FRIDAY_D21_SKILL_RUN_LOCAL_BIN).toBe(join(paths.state, "bin", "hub_skill_run_local"));
-    expect(env.FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH).toBe(join(paths.state, "friday.db"));
+    expect(env.FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH).toBe(join(paths.state, "skill-run-local.db"));
     expect(env.FRIDAY_D21_OPERATOR_VK_PATH).toBe(join(paths.state, "operator.vk"));
     expect(env.FRIDAY_D21_SKILL_RUN_APPROVAL_JSON).toBe(join(paths.state, "skill-run-approval.json"));
     expect(env.FRIDAY_D21_SKILL_RUN_MISSION_ID).toBe("mission-closure-cli-skill-run");
     expect(env.FRIDAY_D21_SKILL_RUN_WORK_ITEM_ID).toBe("work-closure-cli-skill-run");
     expect(env.FRIDAY_D21_SKILL_RUN_OPERATOR_PRINCIPAL_ID).toBe("operator");
     expect(env.FRIDAY_D21_APPROVED_FIRST_RUN_SKILL_IDS).toBe("output-current-date-time");
+    expect(env.FRIDAY_D21_ADOPTED_SKILL_IDS).toBe("output-current-date-time");
 
     rmSync(dir, { recursive: true, force: true });
   });
