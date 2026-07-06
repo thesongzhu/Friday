@@ -133,9 +133,10 @@ private func writeMobileApprovalApproveProofIfRequested(
     return
   }
 
-  let proof: [String: Any] = [
+  let proofStatus = result.accepted ? "pass" : "fail"
+  var proof: [String: Any] = [
     "truth_label": "ios_mobile_live_approval_approve_write_client_proof_signed_artifact_relay_not_sim_tap_not_endbar",
-    "status": "pass",
+    "status": proofStatus,
     "generated_at_utc": ISO8601DateFormatter().string(from: Date()),
     "run_id": result.runId,
     "approval_id": approvalId,
@@ -157,13 +158,16 @@ private func writeMobileApprovalApproveProofIfRequested(
         "screen": "approval",
         "action_id": "check",
         "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
-        "status": "pass",
+        "status": proofStatus,
         "evidence_ref": "proof://mobile/approval-approve/\(result.runId)",
         "truth_label": "explicit_mobile_approval_approve_runtime_evidence_from_live_swift_write_client",
       ],
     ],
     "caveat": "Mobile Swift write-client approve proof only. The signed artifact is supplied externally; the app never reads a signing key or mints a signature. Not a simulator tap, END-BAR, GO-LIVE, release, or adoption.",
   ]
+  if !result.accepted {
+    proof["failure_reason"] = result.status
+  }
 
   let data = try JSONSerialization.data(withJSONObject: proof, options: [.prettyPrinted, .sortedKeys])
   let url = URL(fileURLWithPath: rawPath)
@@ -296,7 +300,7 @@ private func appendMobileFridayChatApproveEvidenceIfRequested(
     "screen": "fridayChat",
     "action_id": "check",
     "capability_id": "security_approval_bound_principal_gate_cat10_netnew",
-    "status": "pass",
+    "status": result.accepted ? "pass" : "fail",
     "evidence_ref": "proof://mobile/fridaychat-approval-approve/\(result.runId)",
     "truth_label": "explicit_mobile_fridaychat_approve_runtime_evidence_from_view_model_relaying_signed_blob_verbatim",
   ])
