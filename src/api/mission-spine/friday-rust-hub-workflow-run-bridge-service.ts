@@ -116,9 +116,31 @@ function isoFromMs(ms: number): string {
 }
 
 function mapStatus(status: string): WorkflowRunStatus {
-  if (status === "completed" || status === "failed") return status;
+  if (status === "done" || status === "completed") return "completed";
+  if (status === "failed") return status;
   if (status === "awaiting_checkpoint") return "paused";
   throw unavailable("Rust workflow-run bridge returned an unsupported status.");
+}
+
+function parseStartRefs(payload: unknown): {
+  runId: string;
+  workflowId: string;
+  workflowVersionId: string;
+  triggerType: string;
+} {
+  const root = asRecord(payload);
+  if (!root) {
+    throw unavailable("Rust workflow-run bridge returned a non-object payload.");
+  }
+  if (root.ok !== true || root.truth_label !== "rust_wired_dev" || root.proof_only !== true) {
+    throw unavailable("Rust workflow-run bridge did not return an ok rust_wired_dev proof receipt.");
+  }
+  return {
+    runId: reqString(root, "run_id"),
+    workflowId: reqString(root, "workflow_id"),
+    workflowVersionId: `rust-version:${String(reqNumber(root, "version"))}`,
+    triggerType: "manual",
+  };
 }
 
 function parseProjection(
@@ -292,20 +314,21 @@ export function createFridayRustHubWorkflowRunBridgeService(
         input.workflowId,
       ];
       const parsed = await runJsonBin(runBin, args, { cwd: repoRoot, timeoutMs });
-      const run = toRunEntity(parseProjection(parsed, {
-        workflowId: input.workflowId,
-        triggerType: input.triggerType,
+      const refs = parseStartRefs(parsed);
+      const metadata = {
+        workflowId: refs.workflowId,
+        workflowVersionId: refs.workflowVersionId,
+        triggerType: input.triggerType ?? refs.triggerType,
         proofRequired: input.proofRequired,
-      }));
-      metadataByRunId.set(run.id, {
-        workflowId: run.workflowId,
-        workflowVersionId: run.workflowVersionId,
-        triggerType: run.triggerType,
-        proofRequired: run.proofRequired,
-      });
-      return {
-        run,
       };
+      metadataByRunId.set(refs.runId, metadata);
+      const readback = await runJsonBin(readbackBin, [
+        "--db",
+        dbPath,
+        "--run-id",
+        refs.runId,
+      ], { cwd: repoRoot, timeoutMs });
+      return { run: toRunEntity(parseProjection(readback, metadata)) };
     },
     async getRun(runId) {
       const metadata = metadataByRunId.get(runId);

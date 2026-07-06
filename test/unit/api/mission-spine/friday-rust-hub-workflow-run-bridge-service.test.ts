@@ -44,7 +44,7 @@ describe("FridayRustHubWorkflowRunBridgeService", () => {
         proof_only: true,
         ok: true,
         run_id: "rust-run-1",
-        run_state: "completed",
+        run_state: "done",
         created_at_ms: 1_700_000_000_000,
         updated_at_ms: 1_700_000_001_000,
         first_pending_seq: null,
