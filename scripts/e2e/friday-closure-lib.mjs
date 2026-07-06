@@ -157,6 +157,9 @@ export function buildClosureScratchEnv(baseEnv = process.env, paths) {
     FRIDAY_BROWSER_HEADLESS: "true",
     FRIDAY_SYSTEM_ENABLED: baseEnv.FRIDAY_SYSTEM_ENABLED ?? "true",
     FRIDAY_AUTOFIX_DISPATCHER_ENABLED: baseEnv.FRIDAY_AUTOFIX_DISPATCHER_ENABLED ?? "true",
+    FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: baseEnv.FRIDAY_ROUTE_WORKFLOWS_VIA_RUST ?? "1",
+    FRIDAY_HUB_WORKFLOW_CATALOG_DB_PATH: baseEnv.FRIDAY_HUB_WORKFLOW_CATALOG_DB_PATH
+      ?? path.join(paths.state, "friday.db"),
   };
 }
 
