@@ -121,6 +121,25 @@ export function writeClosureRustWorkflowRunBridgeBins(
   return { runBinPath, readbackBinPath };
 }
 
+export function writeClosureRustProvidersDetectBridgeBin(
+  binPath,
+  repoRoot = REPO_ROOT,
+) {
+  const rustCoreDir = path.join(repoRoot, "rust-core");
+  writeText(
+    binPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `cd ${shellSingleQuote(rustCoreDir)}`,
+      'exec cargo run -q -p friday-hub --bin hub_providers_detect -- "$@"',
+      "",
+    ].join("\n"),
+  );
+  fs.chmodSync(binPath, 0o755);
+  return binPath;
+}
+
 export async function closeWritableStream(stream, timeoutMs = 5_000) {
   if (!stream || stream.destroyed || stream.closed) {
     return;
@@ -1459,6 +1478,10 @@ async function runLocalStage(ledger) {
     && fridayEnv.FRIDAY_HUB_WORKFLOW_RUN_READBACK_BIN === defaultWorkflowRunReadbackBin
   ) {
     writeClosureRustWorkflowRunBridgeBins(defaultWorkflowRunBin, defaultWorkflowRunReadbackBin);
+  }
+  const defaultProvidersDetectBin = path.join(ledger.paths.state, "bin", "hub_providers_detect");
+  if (fridayEnv.FRIDAY_HUB_PROVIDERS_DETECT_BIN === defaultProvidersDetectBin) {
+    writeClosureRustProvidersDetectBridgeBin(defaultProvidersDetectBin);
   }
   const serverLogPath = path.join(ledger.paths.logs, "local-friday-server.log");
   const server = spawn(process.execPath, [
