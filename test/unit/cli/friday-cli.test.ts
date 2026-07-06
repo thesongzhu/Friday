@@ -874,6 +874,7 @@ describe("runCliSkillCommand", () => {
   it("routes a governed local skill run through the Rust skill-run bin when the Rust route flag and operator materials are present", async () => {
     const parsed = parseArgs(argv("run", "output-current-date-time", "--skills-dir", "/tmp/friday-managed-skills"));
     let createHubCalled = false;
+    let exitCode: number | undefined;
     const logs: string[] = [];
     const execFileFn = vi.fn(async () => ({
       stdout: JSON.stringify({
@@ -915,10 +916,14 @@ describe("runCliSkillCommand", () => {
         log: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
         error: (...args: unknown[]) => logs.push(args.map((value) => String(value)).join(" ")),
       },
+      setExitCode: (code) => {
+        exitCode = code;
+      },
       execFileFn,
     } as FridayCliRunCommandDeps & { execFileFn: typeof execFileFn });
 
     expect(createHubCalled).toBe(false);
+    expect(exitCode).toBeUndefined();
     expect(execFileFn).toHaveBeenCalledTimes(1);
     expect(execFileFn).toHaveBeenCalledWith(
       "/tmp/hub_skill_run_local",
