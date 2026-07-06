@@ -15,6 +15,41 @@ import Testing
 private let liveMobileApprovalApproveEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_APPROVAL_APPROVE_TEST"] == "1"
 
+@Test
+func mobileApprovalApproveProofMarksRefusedResumeAsFailure() throws {
+  let dir = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "friday-mobile-approval-approve-refused-\(UUID().uuidString)",
+    isDirectory: true)
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: dir) }
+
+  let proofURL = dir.appendingPathComponent("mobile-approval-approve-proof.json")
+  setenv("FRIDAY_MOBILE_APPROVAL_APPROVE_PROOF_OUT", proofURL.path, 1)
+  defer { unsetenv("FRIDAY_MOBILE_APPROVAL_APPROVE_PROOF_OUT") }
+
+  try writeMobileApprovalApproveProofIfRequested(
+    result: ResumeRelayResult(
+      runId: "run-refused",
+      op: "resume",
+      accepted: false,
+      status: "approval_refused",
+      auditRef: "run-refused:resume:receipt"),
+    approvalId: "approval-refused",
+    signedApprovalPath: dir.appendingPathComponent("signed-approval.json").path,
+    signedBlobByteCount: 439,
+    writeConfig: AgentRunServerConfig(host: "127.0.0.1", port: 48750))
+
+  let data = try Data(contentsOf: proofURL)
+  guard let proof = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+    Issue.record("proof JSON is not an object")
+    return
+  }
+  #expect(proof["status"] as? String != "pass")
+  let actions = proof["ui_actions"] as? [[String: Any]] ?? []
+  #expect(!actions.isEmpty)
+  #expect(actions.allSatisfy { ($0["status"] as? String) != "pass" })
+}
+
 @MainActor
 @Test(.enabled(if: liveMobileApprovalApproveEnabled))
 func liveMobileApprovalApproveRelaysOperatorSignedBlobVerbatim() async throws {
