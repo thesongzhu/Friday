@@ -121,6 +121,25 @@ export function writeClosureRustWorkflowRunBridgeBins(
   return { runBinPath, readbackBinPath };
 }
 
+export function writeClosureRustProvidersDetectBridgeBin(
+  binPath,
+  repoRoot = REPO_ROOT,
+) {
+  const rustCoreDir = path.join(repoRoot, "rust-core");
+  writeText(
+    binPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `cd ${shellSingleQuote(rustCoreDir)}`,
+      'exec cargo run -q -p friday-hub --bin hub_providers_detect -- "$@"',
+      "",
+    ].join("\n"),
+  );
+  fs.chmodSync(binPath, 0o755);
+  return binPath;
+}
+
 export async function closeWritableStream(stream, timeoutMs = 5_000) {
   if (!stream || stream.destroyed || stream.closed) {
     return;
@@ -945,6 +964,29 @@ export function buildClosureProviderCreateRequest(providerConfig) {
   };
 }
 
+export function assertClosureProviderValidationReady(validateJson) {
+  const validation = validateJson?.data?.validation;
+  if (validation?.status === "ok") {
+    return;
+  }
+
+  const data = validateJson?.data;
+  if (
+    data?.truthLabel === "rust_capability_doctor"
+    && data?.proofOnly === true
+    && data?.keyValidationProbed === false
+  ) {
+    throw new Error(
+      "Provider validate failed: TS_RUNTIME_PROVIDER_PROBE_RETIRED " +
+        "Rust capability doctor returned proof-only CLI status without key validation.",
+    );
+  }
+
+  throw new Error(
+    `Provider validation status is ${String(validation?.status ?? "missing")}: ${JSON.stringify(validation)}`,
+  );
+}
+
 async function createClosureProvider(baseUrl, token, providerConfig) {
   const createRes = await apiFetch(baseUrl, token, "POST", "/v1/providers", buildClosureProviderCreateRequest(providerConfig));
   if (createRes.status !== 200 || !createRes.json.ok) {
@@ -1460,6 +1502,10 @@ async function runLocalStage(ledger) {
   ) {
     writeClosureRustWorkflowRunBridgeBins(defaultWorkflowRunBin, defaultWorkflowRunReadbackBin);
   }
+  const defaultProvidersDetectBin = path.join(ledger.paths.state, "bin", "hub_providers_detect");
+  if (fridayEnv.FRIDAY_HUB_PROVIDERS_DETECT_BIN === defaultProvidersDetectBin) {
+    writeClosureRustProvidersDetectBridgeBin(defaultProvidersDetectBin);
+  }
   const serverLogPath = path.join(ledger.paths.logs, "local-friday-server.log");
   const server = spawn(process.execPath, [
     DIST_CLI,
@@ -1631,9 +1677,7 @@ async function runLocalStage(ledger) {
       if (validateResult.status !== 200 || !validateResult.json.ok) {
         throw new Error(`Provider validate failed: ${JSON.stringify(validateResult.json)}`);
       }
-      if (validateResult.json.data?.validation?.status !== "ok") {
-        throw new Error(`Provider validation status is ${String(validateResult.json.data?.validation?.status ?? "missing")}: ${JSON.stringify(validateResult.json.data?.validation)}`);
-      }
+      assertClosureProviderValidationReady(validateResult.json);
       if (budgetSet.status !== 200 || !budgetSet.json.ok) {
         throw new Error(`Budget set failed: ${JSON.stringify(budgetSet.json)}`);
       }
