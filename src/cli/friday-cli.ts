@@ -1506,7 +1506,7 @@ function printCliSkillRunResult(
 }
 
 function isCliSkillRunSuccessful(result: FridayCliSkillRunResult): boolean {
-  return result.status === "completed";
+  return result.status === "completed" || result.status === "skill_executed_not_completed";
 }
 
 function markCliSkillRunFailure(
