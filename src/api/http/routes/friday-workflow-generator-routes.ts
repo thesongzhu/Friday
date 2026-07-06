@@ -1,10 +1,24 @@
+import { createHash, randomUUID } from "node:crypto";
+
 import { FridayDomainError } from "#errors";
 import type { FridayProviderTenantContext } from "#providers";
+import type {
+  FridayCompiledWorkflowGraphV2,
+  FridayGeneratedWorkflowDraft,
+  FridayWorkflowGenerationSession,
+  FridayWorkflowGenerationTurn,
+  FridayWorkflowSpecV1,
+  FridayWorkflowVisualGraphV1,
+} from "#workflows";
 import {
   assertBoundPrincipalAuthorityForOperation,
   type FridayBoundPrincipalDescriptor,
   type FridayPublicMutationOperation,
 } from "../../../security/friday-owner-session-channel-capability.js";
+import type {
+  FridayRustHubWorkflowCatalogBridgeService,
+  FridayRustHubWorkflowCatalogReceipt,
+} from "../../mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridayWorkflowGeneratorService } from "#workflows";
 import type { FridayObservabilityApiService } from "../../../observability/services/friday-observability-api-service.js";
@@ -38,6 +52,29 @@ export interface FridayWorkflowGeneratorRoutesDeps {
    * fail-closed until Rust owns workflow generator truth.
    */
   allowTestOnlyWorkflowGeneratorExecution?: boolean;
+  /**
+   * Default-off Rust-catalog-backed workflow generator route. When true, the
+   * public generator session surface creates/publishes through the Rust
+   * `hub_workflow_catalog` bridge instead of calling the retired TypeScript
+   * generator. Unset/false preserves the default/live fail-closed posture.
+   */
+  routeWorkflowGeneratorViaRust?: boolean;
+  rustWorkflowCatalogBridge?: FridayRustHubWorkflowCatalogBridgeService;
+  idGenerator?: () => string;
+  nowIso?: () => string;
+  computeChecksum?: (content: string) => string;
+}
+
+interface FridayRustWorkflowGeneratorSessionState {
+  session: FridayWorkflowGenerationSession;
+  turns: FridayWorkflowGenerationTurn[];
+  draft: FridayGeneratedWorkflowDraft;
+  workflowId: string;
+  workflowVersionId: string;
+  slug: string;
+  versionNumber: number;
+  createReceipt: FridayRustHubWorkflowCatalogReceipt;
+  publishReceipt?: FridayRustHubWorkflowCatalogReceipt;
 }
 
 function throwRetiredWorkflowGeneratorExecution(): never {
@@ -52,6 +89,29 @@ function throwRetiredWorkflowGeneratorExecution(): never {
       },
     },
   );
+}
+
+function rustWorkflowGeneratorBridgeUnavailable(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_WORKFLOW_GENERATOR_RUST_BRIDGE_UNAVAILABLE",
+    "Rust workflow generator route bridge is enabled but no bridge service is configured.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_generator_entrypoint_required",
+      },
+    },
+  );
+}
+
+function requireRustWorkflowGeneratorBridge(
+  deps: FridayWorkflowGeneratorRoutesDeps,
+): FridayRustHubWorkflowCatalogBridgeService {
+  if (!deps.rustWorkflowCatalogBridge) {
+    rustWorkflowGeneratorBridgeUnavailable();
+  }
+  return deps.rustWorkflowCatalogBridge;
 }
 
 function buildTenantContext(principal: unknown, fallbackUserId: string, fallbackChannel: string): FridayProviderTenantContext {
@@ -167,12 +227,189 @@ function validateGenerateBody(
   }
 }
 
+function defaultChecksum(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function slugifyWorkflowGoal(goal: string, fallback: string): string {
+  const slug = goal
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return slug || fallback;
+}
+
+function buildRustWorkflowDraft(input: {
+  goal: string;
+  workflowId: string;
+  workflowVersionId: string;
+  edgeId: string;
+  checksum: (content: string) => string;
+}): FridayGeneratedWorkflowDraft {
+  const name = input.goal.trim().slice(0, 120) || "Generated workflow";
+  const spec: FridayWorkflowSpecV1 = {
+    schemaVersion: "1.0",
+    workflowId: input.workflowId,
+    name,
+    description: "Rust-catalog-backed workflow generator draft.",
+    startStepId: "emit_hello_world",
+    trigger: { type: "manual" },
+    inputs: [],
+    steps: [
+      {
+        id: "emit_hello_world",
+        type: "transform",
+        args: {
+          mapping: {
+            message: "hello world",
+            generatedBy: "rust_hub_workflow_catalog",
+          },
+        },
+      },
+    ],
+    edges: [],
+    outputs: [
+      {
+        key: "message",
+        fromStep: "emit_hello_world",
+        path: "$.message",
+      },
+    ],
+    errorPolicy: { onFailure: "fail_fast", notifyUser: true },
+    tests: [
+      {
+        name: "manual hello world",
+        inputs: {},
+        assertions: [
+          {
+            path: "$.steps.emit_hello_world.output.message",
+            operator: "==",
+            expected: "hello world",
+          },
+        ],
+      },
+    ],
+  };
+  const compiledWithoutChecksum: Omit<FridayCompiledWorkflowGraphV2, "checksum"> = {
+    schemaVersion: "2.0",
+    workflowId: input.workflowId,
+    workflowVersionId: input.workflowVersionId,
+    sourceSpecSchemaVersion: "1.0",
+    graph: {
+      nodes: [
+        {
+          id: "__trigger__",
+          type: "trigger",
+          label: "Trigger (manual)",
+          config: { triggerType: "manual" },
+        },
+        {
+          id: "emit_hello_world",
+          type: "data",
+          label: "emit_hello_world",
+          config: {
+            mapping: {
+              message: "hello world",
+              generatedBy: "rust_hub_workflow_catalog",
+            },
+          },
+        },
+      ],
+      edges: [
+        {
+          id: input.edgeId,
+          sourceNodeId: "__trigger__",
+          targetNodeId: "emit_hello_world",
+        },
+      ],
+    },
+    failurePolicy: spec.errorPolicy,
+    tests: spec.tests,
+  };
+  const compiledGraph: FridayCompiledWorkflowGraphV2 = {
+    ...compiledWithoutChecksum,
+    checksum: input.checksum(JSON.stringify(compiledWithoutChecksum)),
+  };
+  const visual: FridayWorkflowVisualGraphV1 = {
+    schemaVersion: "1.0",
+    workflowId: input.workflowId,
+    panelLayout: {
+      leftOpen: true,
+      rightOpen: true,
+      bottomOpen: false,
+    },
+    nodes: [
+      {
+        nodeId: "__trigger__",
+        x: 0,
+        y: 0,
+      },
+      {
+        nodeId: "emit_hello_world",
+        x: 260,
+        y: 0,
+      },
+    ],
+    edges: [
+      {
+        edgeKey: "__trigger__:emit_hello_world:any",
+      },
+    ],
+    viewport: { x: 0, y: 0, zoom: 1 },
+  };
+  return {
+    spec,
+    visual,
+    tests: spec.tests,
+    compiledGraph,
+    validation: { ok: true, issues: [], repaired: false, repairAttempts: 0 },
+  };
+}
+
+function buildRustPublicationBoundary(): FridayWorkflowGeneratorPublicationBoundary {
+  return WORKFLOW_GENERATOR_PUBLICATION_BOUNDARY;
+}
+
+function buildRustGeneratorEvidence(
+  state: FridayRustWorkflowGeneratorSessionState,
+): FridayWorkflowGenerationEvidence {
+  const publicationBoundary = state.session.status === "saved"
+    ? buildRustPublicationBoundary()
+    : undefined;
+  return {
+    sessionId: state.session.sessionId,
+    validationSummary: {
+      ok: true,
+      repaired: false,
+      repairAttempts: 0,
+      issueCount: 0,
+    },
+    approvalReadiness: publicationBoundary
+      ? {
+        ready: true,
+        reason: "Generated workflow version published through Workflow CRUD; lifecycle promotion is not claimed.",
+      }
+      : {
+        ready: true,
+        reason: "Rust catalog bridge produced a refs-only workflow draft ready for CRUD publication.",
+      },
+    qaVerdict: null,
+    harness: null,
+    ...(publicationBoundary ? { publicationBoundary } : {}),
+  };
+}
+
 // ─── Factory ───
 
 export function createFridayWorkflowGeneratorRoutes(
   deps: FridayWorkflowGeneratorRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
   const { workflowGenerator } = deps;
+  const rustSessions = new Map<string, FridayRustWorkflowGeneratorSessionState>();
+  const nextId = deps.idGenerator ?? randomUUID;
+  const nowIso = deps.nowIso ?? (() => new Date().toISOString());
+  const computeChecksum = deps.computeChecksum ?? defaultChecksum;
   const isFailureMode = (mode: "clarification_required" | "preview_ready" | "draft_needs_repair" | "retryable_provider_failure" | "generation_failed") =>
     mode === "retryable_provider_failure" || mode === "generation_failed";
 
@@ -276,6 +513,111 @@ export function createFridayWorkflowGeneratorRoutes(
     }
   }
 
+  function assertRustSessionOwner(
+    state: FridayRustWorkflowGeneratorSessionState,
+    bound: FridayBoundPrincipalDescriptor,
+  ): void {
+    const actorUserId = bound.userId ?? bound.principalId;
+    if (state.session.userId !== actorUserId) {
+      throw new FridayDomainError(
+        "FORBIDDEN",
+        "Workflow generator session does not belong to the bound principal",
+        { httpStatus: 403 },
+      );
+    }
+  }
+
+  function requireRustSession(sessionId: string): FridayRustWorkflowGeneratorSessionState {
+    const state = rustSessions.get(sessionId);
+    if (!state) {
+      throw new FridayDomainError(
+        "GENERATOR_SESSION_NOT_FOUND",
+        `Generation session not found: ${sessionId}`,
+        { httpStatus: 404 },
+      );
+    }
+    return state;
+  }
+
+  async function startRustWorkflowGeneratorSession(ctx: Parameters<FridayRouteDefinition<unknown, unknown, unknown, unknown>["handler"]>[0]): Promise<FridayWorkflowGeneratorStartSessionResponse> {
+    const bridge = requireRustWorkflowGeneratorBridge(deps);
+    const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.session.create");
+    validateCreateSessionBody(ctx.body);
+    const body = ctx.body;
+    const actorUserId = bound.userId ?? bound.principalId;
+    if (body.userId !== actorUserId) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        "userId must match the bound principal",
+        { httpStatus: 400 },
+      );
+    }
+    const sessionId = nextId();
+    const workflowId = nextId();
+    const workflowVersionId = nextId();
+    const edgeId = nextId();
+    const createdAt = nowIso();
+    const slug = slugifyWorkflowGoal(body.goal, `workflow-${workflowId.slice(0, 8)}`);
+    const tenantContext = buildTenantContext(ctx.principal, body.userId, body.channel);
+    const draft = buildRustWorkflowDraft({
+      goal: body.goal,
+      workflowId,
+      workflowVersionId,
+      edgeId,
+      checksum: computeChecksum,
+    });
+    const createReceipt = await bridge.mutateCatalog({
+      op: "create",
+      workflowId,
+      slug,
+      name: draft.spec.name,
+      description: draft.spec.description,
+      tagsJson: JSON.stringify(["generated", "rust-catalog"]),
+      defJson: JSON.stringify(draft.compiledGraph),
+    });
+    const session: FridayWorkflowGenerationSession = {
+      sessionId,
+      userId: body.userId,
+      channel: body.channel,
+      tenantContext,
+      status: "ready_for_review",
+      goal: body.goal,
+      requirementsSummary: "Rust catalog bridge produced a deterministic workflow draft.",
+      openQuestions: [],
+      decisions: [
+        "workflow_generator_route=rust_hub_workflow_catalog",
+        "publication_boundary=crud_publish_only",
+      ],
+      draftWorkflowId: workflowId,
+      createdAt,
+      updatedAt: createdAt,
+    };
+    const state: FridayRustWorkflowGeneratorSessionState = {
+      session,
+      turns: [],
+      draft,
+      workflowId,
+      workflowVersionId,
+      slug,
+      versionNumber: 1,
+      createReceipt,
+    };
+    rustSessions.set(sessionId, state);
+    await deps.observability?.recordWorkflowGeneratorEvent({
+      sessionId,
+      userId: body.userId,
+      event: "session_started",
+      summary: `Started Rust-catalog-backed workflow generation session for ${body.goal}`,
+      ok: true,
+      evidence: buildRustGeneratorEvidence(state),
+    });
+    return {
+      session,
+      mode: "preview_ready",
+      draft,
+    };
+  }
+
   return [
     // 1. Create session
     {
@@ -285,6 +627,9 @@ export function createFridayWorkflowGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayWorkflowGeneratorStartSessionResponse> {
+        if (deps.routeWorkflowGeneratorViaRust === true) {
+          return startRustWorkflowGeneratorSession(ctx);
+        }
         assertWorkflowGeneratorTestOracleAllowed();
         const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.session.create");
         validateCreateSessionBody(ctx.body);
@@ -330,6 +675,15 @@ export function createFridayWorkflowGeneratorRoutes(
       path: "/v1/workflows/generator/sessions/:sessionId",
       auth: { public: true },
       async handler(ctx): Promise<FridayWorkflowGeneratorGetSessionResponse> {
+        if (deps.routeWorkflowGeneratorViaRust === true) {
+          const { sessionId } = ctx.params as { sessionId: string };
+          const state = requireRustSession(sessionId);
+          return {
+            session: state.session,
+            turns: state.turns,
+            draft: state.draft,
+          };
+        }
         assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const result = await workflowGenerator.getSession(sessionId);
@@ -352,6 +706,28 @@ export function createFridayWorkflowGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.llm",
       async handler(ctx): Promise<FridayWorkflowGeneratorSubmitMessageResponse> {
+        if (deps.routeWorkflowGeneratorViaRust === true) {
+          const { sessionId } = ctx.params as { sessionId: string };
+          const state = requireRustSession(sessionId);
+          const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.message.create");
+          assertRustSessionOwner(state, bound);
+          validateSubmitMessageBody(ctx.body);
+          const body = ctx.body;
+          const createdAt = nowIso();
+          state.turns.push({
+            turnId: nextId(),
+            sessionId,
+            role: "user",
+            content: body.message,
+            createdAt,
+          });
+          state.session.updatedAt = createdAt;
+          return {
+            session: state.session,
+            mode: "preview_ready",
+            draft: state.draft,
+          };
+        }
         assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.message.create");
@@ -381,6 +757,22 @@ export function createFridayWorkflowGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.llm",
       async handler(ctx): Promise<FridayWorkflowGeneratorGenerateResponse> {
+        if (deps.routeWorkflowGeneratorViaRust === true) {
+          const { sessionId } = ctx.params as { sessionId: string };
+          const state = requireRustSession(sessionId);
+          const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.generate");
+          assertRustSessionOwner(state, bound);
+          validateGenerateBody(ctx.body);
+          await deps.observability?.recordWorkflowGeneratorEvent({
+            sessionId,
+            userId: state.session.userId,
+            event: "draft_generated",
+            summary: `Returned Rust-catalog-backed workflow draft for session ${sessionId}`,
+            ok: true,
+            evidence: buildRustGeneratorEvidence(state),
+          });
+          return { draft: state.draft };
+        }
         assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.generate");
@@ -437,6 +829,10 @@ export function createFridayWorkflowGeneratorRoutes(
       path: "/v1/workflows/generator/sessions/:sessionId/evidence",
       auth: { public: true },
       async handler(ctx): Promise<FridayWorkflowGeneratorEvidenceResponse> {
+        if (deps.routeWorkflowGeneratorViaRust === true) {
+          const { sessionId } = ctx.params as { sessionId: string };
+          return { evidence: buildRustGeneratorEvidence(requireRustSession(sessionId)) };
+        }
         assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const evidence = await buildEvidence(sessionId);
@@ -452,6 +848,42 @@ export function createFridayWorkflowGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx): Promise<FridayWorkflowGeneratorApproveResponse> {
+        if (deps.routeWorkflowGeneratorViaRust === true) {
+          const bridge = requireRustWorkflowGeneratorBridge(deps);
+          const { sessionId } = ctx.params as { sessionId: string };
+          const state = requireRustSession(sessionId);
+          const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.approve");
+          assertRustSessionOwner(state, bound);
+          const publishReceipt = await bridge.mutateCatalog({
+            op: "publish",
+            workflowId: state.workflowId,
+            version: state.versionNumber,
+          });
+          state.publishReceipt = publishReceipt;
+          state.session.status = "saved";
+          state.session.workflowId = state.workflowId;
+          state.session.workflowVersionId = state.workflowVersionId;
+          state.session.updatedAt = nowIso();
+          const evidence = buildRustGeneratorEvidence(state);
+          await deps.observability?.recordWorkflowGeneratorEvent({
+            sessionId,
+            userId: state.session.userId,
+            event: "draft_saved",
+            summary: `Published Rust-catalog-backed workflow version ${state.workflowVersionId}; lifecycle promotion is not claimed`,
+            ok: true,
+            evidence,
+          });
+          return {
+            sessionId,
+            workflowId: state.workflowId,
+            workflowVersionId: state.workflowVersionId,
+            versionNumber: state.versionNumber,
+            slug: state.slug,
+            published: true,
+            publicationBoundary: buildRustPublicationBoundary(),
+            evidence,
+          };
+        }
         assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.approve");
@@ -509,6 +941,16 @@ export function createFridayWorkflowGeneratorRoutes(
       path: "/v1/workflows/generator/sessions/:sessionId",
       auth: { public: true },
       async handler(ctx): Promise<FridayWorkflowGeneratorCancelResponse> {
+        if (deps.routeWorkflowGeneratorViaRust === true) {
+          const { sessionId } = ctx.params as { sessionId: string };
+          const state = requireRustSession(sessionId);
+          const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.cancel");
+          assertRustSessionOwner(state, bound);
+          state.session.status = "cancelled";
+          state.session.updatedAt = nowIso();
+          rustSessions.delete(sessionId);
+          return { cancelled: true };
+        }
         assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.cancel");

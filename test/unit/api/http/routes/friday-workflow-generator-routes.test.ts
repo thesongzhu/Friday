@@ -4,6 +4,7 @@ import { createFridayWorkflowGeneratorRoutes } from "#api";
 import type { FridayAuthPrincipal } from "#api";
 import type { FridayWorkflowGeneratorService } from "#workflows";
 import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
+import type { FridayRustHubWorkflowCatalogBridgeService } from "../../../../../src/api/mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 
@@ -105,6 +106,32 @@ function makeMockService(): FridayWorkflowGeneratorService {
     getQaVerdict: vi.fn(async () => null),
     getHarnessSummary: vi.fn(async () => null),
     cancelSession: vi.fn(async () => undefined),
+  };
+}
+
+function makeMockRustCatalogBridge(): FridayRustHubWorkflowCatalogBridgeService {
+  return {
+    mutateCatalog: vi.fn(async (input) => ({
+      truthLabel: "rust_wired_dev" as const,
+      proofOnly: true,
+      op: input.op,
+      workflowId: input.workflowId,
+      slugSha256: "slug-sha",
+      slugLen: "slug" in input ? input.slug.length : 12,
+      nameSha256: "name-sha",
+      nameLen: "name" in input ? input.name.length : 18,
+      descriptionSha256: null,
+      descriptionLen: null,
+      tagsJsonSha256: "tags-sha",
+      tagsJsonLen: 2,
+      isArchived: false,
+      revision: input.op === "publish" ? 2 : 1,
+      etag: "etag-sha",
+      deployedVersion: null,
+      createdAtMs: 1_767_225_600_000,
+      updatedAtMs: 1_767_225_600_000,
+      ...(input.op === "publish" ? { publishedVersion: input.version } : {}),
+    })),
   };
 }
 
@@ -237,6 +264,54 @@ describe("FridayWorkflowGeneratorRoutes", () => {
       },
     });
     expect(result).toBeDefined();
+  });
+
+  it("routes workflow generator create and approve through the Rust catalog bridge when the Rust route is enabled", async () => {
+    const localService = makeMockService();
+    const rustBridge = makeMockRustCatalogBridge();
+    const localRoutes = createFridayWorkflowGeneratorRoutes({
+      workflowGenerator: localService,
+      routeWorkflowGeneratorViaRust: true,
+      rustWorkflowCatalogBridge: rustBridge,
+      idGenerator: vi.fn()
+        .mockReturnValueOnce("session-rust-1")
+        .mockReturnValueOnce("workflow-rust-1")
+        .mockReturnValueOnce("version-rust-1")
+        .mockReturnValueOnce("edge-rust-1"),
+      nowIso: () => NOW,
+      computeChecksum: () => "checksum-rust-1",
+    } as never);
+    const createRoute = localRoutes.find((r) => r.operationId === "workflows.generator.sessions.create")!;
+    const approveRoute = localRoutes.find((r) => r.operationId === "workflows.generator.sessions.approve")!;
+
+    const started = await createRoute.handler(
+      makeCtx({
+        body: { goal: "Build workflow", userId: "u-1", channel: "test" },
+      }) as never,
+    );
+    expect(started).toHaveProperty("session.sessionId", "session-rust-1");
+    expect(started).toHaveProperty("mode", "preview_ready");
+    expect(started).toHaveProperty("draft.validation.ok", true);
+
+    const approved = await approveRoute.handler(
+      makeCtx({ params: { sessionId: "session-rust-1" } }) as never,
+    );
+    expect(approved).toHaveProperty("workflowId", "workflow-rust-1");
+    expect(approved).toHaveProperty("workflowVersionId", "version-rust-1");
+    expect(approved).toHaveProperty("publicationBoundary.proofBoundary", "crud_publish_only");
+    expect(rustBridge.mutateCatalog).toHaveBeenCalledTimes(2);
+    expect(rustBridge.mutateCatalog).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      op: "create",
+      workflowId: "workflow-rust-1",
+    }));
+    expect(rustBridge.mutateCatalog).toHaveBeenNthCalledWith(2, {
+      op: "publish",
+      workflowId: "workflow-rust-1",
+      version: 1,
+    });
+    expect(localService.startSession).not.toHaveBeenCalled();
+    expect(localService.generateDraft).not.toHaveBeenCalled();
+    expect(localService.approveAndSave).not.toHaveBeenCalled();
   });
 
   it.each([
