@@ -150,8 +150,8 @@ desktop_bytes="$(file_bytes "$desktop")"
 channel_bytes="$(file_bytes "$channel")"
 timeline_bytes="$(file_bytes "$timeline")"
 
-negative_evidence_json="$(mktemp "${TMPDIR:-/tmp}/friday-ui-negative-evidence.XXXXXX.json")"
-extra_evidence_json="$(mktemp "${TMPDIR:-/tmp}/friday-ui-extra-evidence.XXXXXX.json")"
+negative_evidence_json="$(mktemp "${TMPDIR:-/tmp}/friday-ui-negative-evidence.XXXXXX")"
+extra_evidence_json="$(mktemp "${TMPDIR:-/tmp}/friday-ui-extra-evidence.XXXXXX")"
 printf '[]\n' >"$negative_evidence_json"
 printf '[]\n' >"$extra_evidence_json"
 cleanup_evidence_json() {
