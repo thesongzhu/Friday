@@ -8,6 +8,7 @@ import fs from "node:fs";
 import {
   buildDependentClosureBlockerDetails,
   buildClosureProviderCreateRequest,
+  assertClosureProviderValidationReady,
   closeWritableStream,
   createLedger,
   describeCommandFailure,
@@ -120,6 +121,18 @@ describe("run-friday-closure helpers", () => {
     expect(fs.statSync(binPath).mode & 0o111).not.toBe(0);
 
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("records Rust capability-doctor proof-only validation as a retired provider probe gap", () => {
+    expect(() => assertClosureProviderValidationReady({
+      ok: true,
+      data: {
+        truthLabel: "rust_capability_doctor",
+        proofOnly: true,
+        keyValidationProbed: false,
+        keyValidation: null,
+      },
+    })).toThrow(/TS_RUNTIME_PROVIDER_PROBE_RETIRED/);
   });
 
   it("runStep persists an in-progress active step before completion", async () => {
