@@ -15,6 +15,7 @@ import {
   persistLedger,
   runStep,
   stopManagedChildProcess,
+  writeClosureRustWorkflowCatalogBridgeBin,
 } from "../../../scripts/e2e/run-friday-closure.mjs";
 import { FRIDAY_CLOSURE_STATUSES } from "../../../scripts/e2e/friday-closure-lib.mjs";
 
@@ -72,6 +73,20 @@ describe("run-friday-closure helpers", () => {
     await stopManagedChildProcess(child, { graceMs: 150, forceKillMs: 150 });
 
     expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+  });
+
+  it("writes a closure-local Rust workflow catalog bridge wrapper", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-closure-rust-bin-"));
+    const binPath = join(dir, "bin", "hub_workflow_catalog");
+
+    writeClosureRustWorkflowCatalogBridgeBin(binPath);
+
+    const script = readFileSync(binPath, "utf8");
+    expect(script).toContain("cargo run -q -p friday-hub --bin hub_workflow_catalog");
+    expect(script).toContain('exec cargo run -q -p friday-hub --bin hub_workflow_catalog -- "$@"');
+    expect(fs.statSync(binPath).mode & 0o111).not.toBe(0);
+
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("runStep persists an in-progress active step before completion", async () => {
