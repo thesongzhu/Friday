@@ -754,7 +754,7 @@ impl WorkItem {
         }
         let requirements = self.outcome_requirement_specs();
         if requirements.is_empty() {
-            return true;
+            return false;
         }
         requirements.iter().all(|requirement| {
             self.proof_receipts.iter().any(|receipt| {
@@ -1569,9 +1569,14 @@ mod tests {
 
     #[test]
     fn legacy_requirements_remain_floor_only_for_outcome_predicate() {
-        let done = work("wi-legacy", WorkItemStatus::CompletedWithProof);
+        let mut done = work("wi-legacy", WorkItemStatus::CompletedWithProof);
+        done.proof_receipts = vec!["proof://provider/free-text-receipt".into()];
         assert!(!done.has_outcome_proof_requirements());
-        assert!(done.completion_outcome_is_proven());
+        assert!(done.completion_is_proven());
+        assert!(
+            !done.completion_outcome_is_proven(),
+            "outcome-specific proof must not be true when there are no typed outcome requirements"
+        );
         assert!(outcome_checked_proof_enabled_from(Some("1")));
         assert!(!outcome_checked_proof_enabled_from(Some("true")));
         assert!(!outcome_checked_proof_enabled_from(None));
