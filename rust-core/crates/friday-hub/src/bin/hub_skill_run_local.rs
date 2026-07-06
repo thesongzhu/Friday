@@ -20,11 +20,19 @@ use serde_json::json;
 
 struct CliError {
     kind: &'static str,
+    detail: Option<String>,
 }
 
 impl CliError {
     fn new(kind: &'static str) -> Self {
-        Self { kind }
+        Self { kind, detail: None }
+    }
+
+    fn with_detail(kind: &'static str, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: Some(detail.into()),
+        }
     }
 }
 
@@ -51,6 +59,7 @@ fn main() {
                 "executes_skill": false,
                 "completes_work_item": false,
                 "error_kind": err.kind,
+                "blocked_reason": err.detail,
             });
             let rendered = payload.to_string();
             if reject_forbidden_output(&rendered).is_ok() {
@@ -110,7 +119,7 @@ fn run() -> Result<String, CliError> {
         &operator_vk,
         true,
     )
-    .map_err(|err| CliError::new(skill_error_kind(&err)))?;
+    .map_err(map_skill_error)?;
 
     let payload = json!({
         "truth_label": "d21_skill_run_local",
@@ -219,6 +228,16 @@ fn skill_error_kind(err: &SkillExecutionError) -> &'static str {
         SkillExecutionError::Storage(_) => "storage_failed",
         SkillExecutionError::Catalog(_) => "catalog_failed",
         SkillExecutionError::Runner(_) => "runner_failed",
+    }
+}
+
+fn map_skill_error(err: SkillExecutionError) -> CliError {
+    match err {
+        SkillExecutionError::Blocked(reason) => CliError::with_detail("run_blocked", reason),
+        SkillExecutionError::Catalog(err) => {
+            CliError::with_detail("catalog_failed", err.to_string())
+        }
+        other => CliError::new(skill_error_kind(&other)),
     }
 }
 

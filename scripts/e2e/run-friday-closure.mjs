@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import net from "node:net";
 import { spawn, spawnSync } from "node:child_process";
-import { createSign, generateKeyPairSync } from "node:crypto";
+import { createHash, createSign, generateKeyPairSync } from "node:crypto";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -22,6 +23,7 @@ import {
 import { acquireWorkspaceRunLock, releaseWorkspaceRunLock } from "../quality/workspace-run-lock.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const DIST_CLI = path.join(REPO_ROOT, "dist", "cli", "friday-cli.js");
 const TS_RUNTIME_RETIREMENT_MANIFEST = (() => {
@@ -140,6 +142,339 @@ export function writeClosureRustProvidersDetectBridgeBin(
   return binPath;
 }
 
+export function writeClosureRustSkillRunBridgeBin(
+  binPath,
+  repoRoot = REPO_ROOT,
+) {
+  const rustCoreDir = path.join(repoRoot, "rust-core");
+  writeText(
+    binPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `cd ${shellSingleQuote(rustCoreDir)}`,
+      'exec cargo run -q -p friday-hub --bin hub_skill_run_local -- "$@"',
+      "",
+    ].join("\n"),
+  );
+  fs.chmodSync(binPath, 0o755);
+  return binPath;
+}
+
+function putU64Le(chunks, value) {
+  const buffer = Buffer.alloc(8);
+  buffer.writeBigUInt64LE(BigInt(value));
+  chunks.push(buffer);
+}
+
+function putBytes(chunks, value) {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(String(value), "utf8");
+  putU64Le(chunks, buffer.length);
+  chunks.push(buffer);
+}
+
+function putString(chunks, value) {
+  putBytes(chunks, String(value));
+}
+
+function putOptionalString(chunks, value) {
+  if (value === undefined || value === null) {
+    chunks.push(Buffer.from([0]));
+    return;
+  }
+  chunks.push(Buffer.from([1]));
+  putString(chunks, String(value));
+}
+
+function closureSkillRunActionDigest({
+  skillId,
+  missionId,
+  workItemId,
+  operatorPrincipalId,
+}) {
+  const chunks = [];
+  putBytes(chunks, Buffer.from("friday.mutating_action.v1", "utf8"));
+  putString(chunks, "run_skill");
+  putString(chunks, "owner");
+  putString(chunks, operatorPrincipalId);
+  putOptionalString(chunks, operatorPrincipalId);
+  putString(chunks, "friday_hub_skill_catalog");
+  chunks.push(Buffer.from([1]));
+  putString(chunks, "file");
+  putOptionalString(chunks, skillId);
+  putOptionalString(chunks, null);
+  chunks.push(Buffer.from([1]));
+  putString(chunks, "high");
+  putOptionalString(chunks, `skill_id=${skillId};mission_id=${missionId};work_item_id=${workItemId}`);
+  putOptionalString(chunks, null);
+  putOptionalString(chunks, `skill-run:${skillId}:${missionId}:${workItemId}`);
+  return createHash("sha256").update(Buffer.concat(chunks)).digest("hex");
+}
+
+function runClosureCargo(args, { timeoutMs = 120_000 } = {}) {
+  const result = spawnSync("cargo", args, {
+    cwd: path.join(REPO_ROOT, "rust-core"),
+    env: process.env,
+    encoding: "utf8",
+    timeout: timeoutMs,
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw new Error(`cargo ${args.join(" ")} failed (${result.status ?? "signal"}): ${result.stderr || result.stdout}`);
+  }
+  return result.stdout;
+}
+
+function initializeClosureCliSkillRunDb(fridayEnv, skillId = "output-current-date-time") {
+  const result = spawnSync("cargo", [
+    "run",
+    "-q",
+    "-p",
+    "friday-hub",
+    "--bin",
+    "hub_skill_run_local",
+    "--",
+    "run-local",
+    "--db",
+    fridayEnv.FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH,
+    "--operator-vk-path",
+    fridayEnv.FRIDAY_D21_OPERATOR_VK_PATH,
+    "--approval-json",
+    fridayEnv.FRIDAY_D21_SKILL_RUN_APPROVAL_JSON,
+    "--managed-skills-root",
+    path.join(REPO_ROOT, "managed-skills"),
+    "--skill-id",
+    skillId,
+    "--mission-id",
+    fridayEnv.FRIDAY_D21_SKILL_RUN_MISSION_ID,
+    "--work-item-id",
+    fridayEnv.FRIDAY_D21_SKILL_RUN_WORK_ITEM_ID,
+    "--operator-principal-id",
+    fridayEnv.FRIDAY_D21_SKILL_RUN_OPERATOR_PRINCIPAL_ID,
+    "--timeout-ms",
+    "5000",
+  ], {
+    cwd: path.join(REPO_ROOT, "rust-core"),
+    env: {
+      ...process.env,
+      FRIDAY_D21_SKILL_RUN_LOCAL: "1",
+    },
+    encoding: "utf8",
+    timeout: 120_000,
+    maxBuffer: 1024 * 1024,
+  });
+  const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+  if (result.status !== 2 || !output.includes('"truth_label":"d21_skill_run_local"')) {
+    throw new Error(`skill-run DB schema initialization failed unexpectedly (${result.status ?? "signal"}): ${output}`);
+  }
+  if (!fs.existsSync(fridayEnv.FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH)) {
+    throw new Error(`skill-run DB schema initialization did not create ${fridayEnv.FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH}`);
+  }
+}
+
+function prepareClosureCliSkillRunApprovalMaterial(fridayEnv, ledgerPaths, skillId = "output-current-date-time") {
+  const missionId = fridayEnv.FRIDAY_D21_SKILL_RUN_MISSION_ID;
+  const workItemId = fridayEnv.FRIDAY_D21_SKILL_RUN_WORK_ITEM_ID;
+  const operatorPrincipalId = fridayEnv.FRIDAY_D21_SKILL_RUN_OPERATOR_PRINCIPAL_ID;
+  const keyPath = path.join(ledgerPaths.state, "skill-run-operator.key");
+  const pendingPath = path.join(ledgerPaths.state, "skill-run-pending-request.json");
+  const vkPath = fridayEnv.FRIDAY_D21_OPERATOR_VK_PATH;
+  const approvalPath = fridayEnv.FRIDAY_D21_SKILL_RUN_APPROVAL_JSON;
+  ensureDir(path.dirname(keyPath));
+  fs.rmSync(keyPath, { force: true });
+
+  const publicKeyJson = runClosureCargo([
+    "run",
+    "-q",
+    "-p",
+    "friday-operator-cli",
+    "--bin",
+    "friday-operator-approve",
+    "--",
+    "keygen",
+    "--out",
+    keyPath,
+  ]);
+  const publicKey = JSON.parse(publicKeyJson);
+  if (publicKey?.scheme !== "ed25519" || typeof publicKey.verifying_key !== "string") {
+    throw new Error(`operator keygen returned malformed public key: ${publicKeyJson}`);
+  }
+  writeText(vkPath, `${publicKey.verifying_key}\n`);
+
+  const pendingRequest = {
+    decision: "approved",
+    approval_id: `closure-cli-skill-run-${skillId}`,
+    action_digest: closureSkillRunActionDigest({
+      skillId,
+      missionId,
+      workItemId,
+      operatorPrincipalId,
+    }),
+    expires_at: Date.now() + 3_600_000,
+    issuer: "friday_canonical_gate",
+    principal: operatorPrincipalId,
+    action: "run_skill",
+    surface: "friday_hub_skill_catalog",
+  };
+  writeJson(pendingPath, pendingRequest);
+  const signedApproval = runClosureCargo([
+    "run",
+    "-q",
+    "-p",
+    "friday-operator-cli",
+    "--bin",
+    "friday-operator-approve",
+    "--",
+    "sign",
+    "--key",
+    keyPath,
+    "--request",
+    pendingPath,
+  ]);
+  writeText(approvalPath, signedApproval.endsWith("\n") ? signedApproval : `${signedApproval}\n`);
+  fs.rmSync(keyPath, { force: true });
+  initializeClosureCliSkillRunDb(fridayEnv, skillId);
+  return { pendingPath, vkPath, approvalPath };
+}
+
+async function waitForClosureCliSkillRunTables(dbPath, timeoutMs = 30_000) {
+  const Database = require("better-sqlite3");
+  const deadline = Date.now() + timeoutMs;
+  const required = new Set(["friday_conversation", "mission", "work_item"]);
+  let lastError = "";
+  while (Date.now() <= deadline) {
+    if (!fs.existsSync(dbPath)) {
+      await sleepMs(250);
+      continue;
+    }
+    try {
+      const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+      try {
+        const rows = db.prepare(`
+          SELECT name FROM sqlite_master
+          WHERE type = 'table' AND name IN ('friday_conversation', 'mission', 'work_item')
+        `).all();
+        const found = new Set(rows.map((row) => row.name));
+        if ([...required].every((name) => found.has(name))) {
+          return;
+        }
+        lastError = `missing tables: ${[...required].filter((name) => !found.has(name)).join(",")}`;
+      } finally {
+        db.close();
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await sleepMs(250);
+  }
+  throw new Error(`Timed out waiting for closure skill-run DB schema at ${dbPath}: ${lastError || "db unavailable"}`);
+}
+
+async function seedClosureCliSkillRunScratchDb(fridayEnv) {
+  await waitForClosureCliSkillRunTables(fridayEnv.FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH);
+  const Database = require("better-sqlite3");
+  const db = new Database(fridayEnv.FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH);
+  try {
+    db.pragma("busy_timeout = 5000");
+    const missionId = fridayEnv.FRIDAY_D21_SKILL_RUN_MISSION_ID;
+    const workItemId = fridayEnv.FRIDAY_D21_SKILL_RUN_WORK_ITEM_ID;
+    const operatorPrincipalId = fridayEnv.FRIDAY_D21_SKILL_RUN_OPERATOR_PRINCIPAL_ID;
+    const nowMs = Date.now();
+    const empty = "[]";
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO friday_conversation
+          (friday_conversation_id, owner_principal, title, current_focus_summary,
+           active_mission_ids, surface_thread_ids, memory_scope_ref, truth_status,
+           proof_refs, created_at_ms, updated_at_ms)
+        VALUES
+          ('fconv_closure_cli_skill_run', ?, 'Closure CLI skill run',
+           'Governed local CLI skill-run smoke', ?, ?, NULL, 'proven', ?, ?, ?)
+        ON CONFLICT(friday_conversation_id) DO UPDATE SET
+          owner_principal = excluded.owner_principal,
+          active_mission_ids = excluded.active_mission_ids,
+          updated_at_ms = excluded.updated_at_ms
+      `).run(operatorPrincipalId, JSON.stringify([missionId]), empty, empty, nowMs, nowMs);
+
+      db.prepare(`
+        INSERT INTO mission
+          (mission_id, friday_conversation_id, title, intent, status, why_now,
+           decision_path_summary, considered_options, deferred_options, known_pitfalls,
+           handoff_inheritance, work_item_ids, memory_candidate_refs, context_passport_refs,
+           proof_refs, created_at_ms, updated_at_ms)
+        VALUES
+          (?, 'fconv_closure_cli_skill_run', 'Closure CLI skill run mission',
+           'Exercise friday run through the governed Rust local skill runner.',
+           'active', 'END-BAR local CLI closure proof',
+           'Verify Rust runner after operator approval without marking completion.',
+           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(mission_id) DO UPDATE SET
+          status = excluded.status,
+          work_item_ids = excluded.work_item_ids,
+          updated_at_ms = excluded.updated_at_ms
+      `).run(
+        missionId,
+        empty,
+        JSON.stringify(["legacy TypeScript runner"]),
+        JSON.stringify(["run receipt is not completion"]),
+        JSON.stringify(["Hub verifies, operator signs"]),
+        JSON.stringify([workItemId]),
+        empty,
+        empty,
+        empty,
+        nowMs,
+        nowMs,
+      );
+
+      db.prepare(`
+        INSERT INTO work_item
+          (work_item_id, mission_id, lane, target_provider_or_agent, status,
+           owner_claim_ids, workspace_refs, capability_id, risk_level, approval_state,
+           blocking_reason, input_refs, output_refs, proof_requirements, proof_receipts,
+           judgment_task, judgment_current_blocker, judgment_target_lane_thread_agent_provider,
+           judgment_read_first_files, judgment_required_output, judgment_done_criteria,
+           judgment_red_lines, judgment_why_this_route, judgment_considered_options,
+           judgment_deferred_options, judgment_previous_pitfalls, judgment_inheritable_context,
+           judgment_proof_requirements, judgment_ownership_claim_ids, created_at_ms, updated_at_ms)
+        VALUES
+          (?, ?, 'friday_hub', 'skill:run', 'ready_to_dispatch',
+           ?, ?, 'skill.run.local', 'high', 'required', NULL,
+           ?, ?, ?, ?,
+           'Run a governed local skill', NULL, 'friday_hub/skill-run',
+           ?, 'refs-only execution receipt', ?,
+           ?, 'D21 closure needs a governed local execution leg.',
+           ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(work_item_id) DO UPDATE SET
+          mission_id = excluded.mission_id,
+          status = excluded.status,
+          updated_at_ms = excluded.updated_at_ms
+      `).run(
+        workItemId,
+        missionId,
+        empty,
+        empty,
+        JSON.stringify(["friday://body/closure-cli-skill-run"]),
+        empty,
+        JSON.stringify(["skill local run receipt"]),
+        empty,
+        JSON.stringify(["rust-core/crates/friday-hub/src/bin/hub_skill_run_local.rs"]),
+        JSON.stringify(["local runner invoked after Ed25519 approval"]),
+        JSON.stringify(["Hub must not self-mint operator approval"]),
+        JSON.stringify(["legacy direct shell"]),
+        JSON.stringify(["live skill product route"]),
+        JSON.stringify(["run receipt mistaken for completion"]),
+        JSON.stringify(["verify-only governance"]),
+        JSON.stringify(["CLI execution test"]),
+        empty,
+        nowMs,
+        nowMs,
+      );
+    })();
+  } finally {
+    db.close();
+  }
+}
+
 export async function closeWritableStream(stream, timeoutMs = 5_000) {
   if (!stream || stream.destroyed || stream.closed) {
     return;
@@ -252,6 +587,10 @@ function createCleanupRegistry() {
 
 function sanitizeName(value) {
   return value.replace(/[^a-z0-9._-]+/gi, "-");
+}
+
+async function sleepMs(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function findFreePort() {
@@ -1523,6 +1862,11 @@ async function runLocalStage(ledger) {
   if (fridayEnv.FRIDAY_HUB_PROVIDERS_DETECT_BIN === defaultProvidersDetectBin) {
     writeClosureRustProvidersDetectBridgeBin(defaultProvidersDetectBin);
   }
+  const defaultSkillRunBin = path.join(ledger.paths.state, "bin", "hub_skill_run_local");
+  if (fridayEnv.FRIDAY_D21_SKILL_RUN_LOCAL_BIN === defaultSkillRunBin) {
+    writeClosureRustSkillRunBridgeBin(defaultSkillRunBin);
+  }
+  const cliSkillRunApprovalMaterial = prepareClosureCliSkillRunApprovalMaterial(fridayEnv, ledger.paths);
   const serverLogPath = path.join(ledger.paths.logs, "local-friday-server.log");
   const server = spawn(process.execPath, [
     DIST_CLI,
@@ -1715,6 +2059,7 @@ async function runLocalStage(ledger) {
       stage: `${stage}.cli`,
       description: "Exercise friday convert/import/pack/run through the compiled CLI",
     }, async () => {
+      await seedClosureCliSkillRunScratchDb(fridayEnv);
       const convertOut = path.join(ledger.paths.exports, "converted-skills");
       const packedSkill = path.join(ledger.paths.exports, "output-current-date-time.friday.tgz");
       const importTarget = path.join(ledger.paths.skills, "imported");
@@ -1832,6 +2177,9 @@ async function runLocalStage(ledger) {
           importLogPath: importRun.logPath,
           runLogPath: runSkill.logPath,
           packedSkill,
+          rustSkillRunPendingRequestPath: cliSkillRunApprovalMaterial.pendingPath,
+          rustSkillRunApprovalPath: cliSkillRunApprovalMaterial.approvalPath,
+          rustSkillRunOperatorVkPath: cliSkillRunApprovalMaterial.vkPath,
         },
         details: {
           importRefusalVerified: true,
