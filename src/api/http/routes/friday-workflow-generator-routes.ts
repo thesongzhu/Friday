@@ -77,6 +77,18 @@ interface FridayRustWorkflowGeneratorSessionState {
   publishReceipt?: FridayRustHubWorkflowCatalogReceipt;
 }
 
+interface FridayRustStoredWorkflowDefV1 {
+  schema_version: 1;
+  name: string;
+  steps: Array<{
+    id: string;
+    action: string;
+    params?: Array<[string, string]>;
+    force_checkpoint?: boolean;
+    evidence_required?: boolean;
+  }>;
+}
+
 function throwRetiredWorkflowGeneratorExecution(): never {
   throw new FridayDomainError(
     "TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED",
@@ -367,6 +379,24 @@ function buildRustWorkflowDraft(input: {
   };
 }
 
+function buildRustStoredWorkflowDefinition(
+  draft: FridayGeneratedWorkflowDraft,
+): FridayRustStoredWorkflowDefV1 {
+  return {
+    schema_version: 1,
+    name: draft.spec.name,
+    steps: [
+      {
+        id: "emit_hello_world",
+        action: "read_file",
+        params: [["path", "README.md"]],
+        force_checkpoint: false,
+        evidence_required: false,
+      },
+    ],
+  };
+}
+
 function buildRustPublicationBoundary(): FridayWorkflowGeneratorPublicationBoundary {
   return WORKFLOW_GENERATOR_PUBLICATION_BOUNDARY;
 }
@@ -573,7 +603,7 @@ export function createFridayWorkflowGeneratorRoutes(
       name: draft.spec.name,
       description: draft.spec.description,
       tagsJson: JSON.stringify(["generated", "rust-catalog"]),
-      defJson: JSON.stringify(draft.compiledGraph),
+      defJson: JSON.stringify(buildRustStoredWorkflowDefinition(draft)),
     });
     const session: FridayWorkflowGenerationSession = {
       sessionId,
