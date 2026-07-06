@@ -870,6 +870,7 @@ function resolveClosureProviderConfig(env = process.env) {
       name: "Closure DeepSeek",
       baseUrl: readEnvValue(env, "FRIDAY_CLOSURE_DEEPSEEK_BASE_URL") ?? "https://api.deepseek.com",
       api: "openai-completions",
+      authMode: "bearer-token",
       supportedModels: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
       defaultModel: explicitModel ?? "deepseek-v4-flash",
       generationModel: explicitModel ?? "deepseek-v4-pro",
@@ -881,6 +882,7 @@ function resolveClosureProviderConfig(env = process.env) {
       name: "Closure DeepSeek",
       baseUrl: readEnvValue(env, "FRIDAY_CLOSURE_DEEPSEEK_BASE_URL") ?? "https://api.deepseek.com",
       api: "openai-completions",
+      authMode: "bearer-token",
       supportedModels: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
       defaultModel: explicitModel ?? "deepseek-v4-flash",
       generationModel: explicitModel ?? "deepseek-v4-pro",
@@ -894,6 +896,7 @@ function resolveClosureProviderConfig(env = process.env) {
         ? readEnvValue(env, "FRIDAY_CLOSURE_DEEPSEEK_BASE_URL") ?? "https://api.deepseek.com"
         : readEnvValue(env, "E2E_OPENAI_BASE_URL") ?? "https://api.openai.com",
       api: isDeepSeekStyleApiKey(readEnvValue(env, "OPENAI_API_KEY")) ? "openai-completions" : "openai-responses",
+      authMode: "bearer-token",
       supportedModels: isDeepSeekStyleApiKey(readEnvValue(env, "OPENAI_API_KEY"))
         ? ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"]
         : ["gpt-4o-mini", "gpt-4o"],
@@ -907,6 +910,7 @@ function resolveClosureProviderConfig(env = process.env) {
       name: "Closure OpenAI",
       baseUrl: readEnvValue(env, "E2E_OPENAI_BASE_URL") ?? "https://api.openai.com",
       api: "openai-responses",
+      authMode: "bearer-token",
       supportedModels: ["gpt-4o-mini", "gpt-4o"],
       defaultModel: explicitModel ?? "gpt-4o-mini",
       generationModel: explicitModel ?? "gpt-4o",
@@ -948,12 +952,25 @@ function resolveClosureProviderConfig(env = process.env) {
   };
 }
 
+function resolveClosureProviderAuthMode(providerConfig) {
+  if (typeof providerConfig.authMode === "string" && providerConfig.authMode.trim() !== "") {
+    return providerConfig.authMode;
+  }
+  if (providerConfig.api === "anthropic-messages" || providerConfig.api === "google-generative-ai") {
+    return "api-key";
+  }
+  if (providerConfig.api === "ollama") {
+    return "none";
+  }
+  return "bearer-token";
+}
+
 export function buildClosureProviderCreateRequest(providerConfig) {
   return {
     kind: providerConfig.kind,
     name: providerConfig.name,
     baseUrl: providerConfig.baseUrl,
-    authMode: "api-key",
+    authMode: resolveClosureProviderAuthMode(providerConfig),
     api: providerConfig.api,
     apiKey: `$${providerConfig.envVar}`,
     supportedModels: providerConfig.supportedModels,
