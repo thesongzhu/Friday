@@ -77,6 +77,18 @@ export interface FridayWorkflowCatalogRustRouteResponse {
   readonly receipt: FridayRustHubWorkflowCatalogReceipt;
 }
 
+interface FridayRustStoredWorkflowDefV1 {
+  schema_version: 1;
+  name: string;
+  steps: Array<{
+    id: string;
+    action: string;
+    params?: Array<[string, string]>;
+    force_checkpoint?: boolean;
+    evidence_required?: boolean;
+  }>;
+}
+
 function rustWorkflowBridgeUnavailable(): never {
   throw new FridayDomainError(
     "TS_RUNTIME_WORKFLOW_CATALOG_RUST_BRIDGE_UNAVAILABLE",
@@ -133,6 +145,84 @@ function requireNonEmptyStringField(body: Record<string, unknown> | null, field:
   return trimmed;
 }
 
+function throwUnsupportedWorkflowCreateGraph(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_WORKFLOW_CATALOG_GRAPH_UNSUPPORTED",
+    "Rust workflow catalog create route only accepts the current single-manual-trigger closure graph; richer TS workflow graphs require the Rust linear-only translator.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_linear_workflow_translation_required",
+      },
+    },
+  );
+}
+
+function collectSupportedClosureWorkflowGraphStepIds(graph: unknown): string[] {
+  if (!graph || typeof graph !== "object") {
+    throwUnsupportedWorkflowCreateGraph();
+  }
+  const source = graph as {
+    graph?: { nodes?: unknown; edges?: unknown };
+    nodes?: unknown;
+    edges?: unknown;
+  };
+  const graphBody = source.graph && typeof source.graph === "object" ? source.graph : source;
+  const nodes = Array.isArray(graphBody.nodes) ? graphBody.nodes : [];
+  const edges = Array.isArray(graphBody.edges) ? graphBody.edges : [];
+  if (nodes.length !== 1 || edges.length !== 0) {
+    throwUnsupportedWorkflowCreateGraph();
+  }
+  const node = nodes[0];
+  if (!node || typeof node !== "object") {
+    throwUnsupportedWorkflowCreateGraph();
+  }
+  const rawType = (node as { type?: unknown; kind?: unknown }).type
+    ?? (node as { type?: unknown; kind?: unknown }).kind;
+  if (typeof rawType !== "string" || !["trigger", "start"].includes(rawType.trim())) {
+    throwUnsupportedWorkflowCreateGraph();
+  }
+  const config = (node as { config?: unknown }).config;
+  if (config && typeof config === "object") {
+    const triggerType = (config as { triggerType?: unknown }).triggerType;
+    if (typeof triggerType === "string" && !["", "manual"].includes(triggerType.trim())) {
+      throwUnsupportedWorkflowCreateGraph();
+    }
+  }
+  for (const node of nodes) {
+    const rawId = (node as { id?: unknown; nodeId?: unknown }).id
+      ?? (node as { id?: unknown; nodeId?: unknown }).nodeId;
+    if (typeof rawId !== "string") {
+      throwUnsupportedWorkflowCreateGraph();
+    }
+    const id = rawId.trim();
+    if (!id) {
+      throwUnsupportedWorkflowCreateGraph();
+    }
+    return [id];
+  }
+  throwUnsupportedWorkflowCreateGraph();
+}
+
+function buildRustStoredWorkflowDefinitionFromGraph(
+  name: string,
+  graph: unknown,
+): FridayRustStoredWorkflowDefV1 {
+  const ids = collectSupportedClosureWorkflowGraphStepIds(graph);
+  return {
+    schema_version: 1,
+    name,
+    steps: ids.map((id) => ({
+      id,
+      action: "read_file",
+      params: [["path", "README.md"]],
+      force_checkpoint: false,
+      evidence_required: false,
+    })),
+  };
+}
+
 function throwRetiredWorkflowCatalogMutation(): never {
   throw new FridayDomainError(
     "TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED",
@@ -176,7 +266,7 @@ async function routeCreateViaRust(
   const name = requireNonEmptyStringField(body, "name", 255);
   const description = body && typeof body.description === "string" ? body.description : undefined;
   const tagsJson = body && Array.isArray(body.tags) ? JSON.stringify(body.tags) : undefined;
-  const defJson = JSON.stringify(body?.graph ?? {});
+  const defJson = JSON.stringify(buildRustStoredWorkflowDefinitionFromGraph(name, body?.graph));
   const receipt = await bridge.mutateCatalog({
     op: "create",
     workflowId: randomUUID(),

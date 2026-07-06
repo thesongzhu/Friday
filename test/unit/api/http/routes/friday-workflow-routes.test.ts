@@ -321,9 +321,54 @@ describe("FridayWorkflowRoutes", () => {
         slug: "wf",
         name: "Workflow",
         description: "Closure workflow",
-        defJson: JSON.stringify(graph),
         tagsJson: JSON.stringify(["closure", "rust"]),
       });
+      const createInput = bridge.calls[0] as { defJson?: string };
+      expect(createInput.defJson).toBeDefined();
+      const rustDefinition = JSON.parse(createInput.defJson!);
+      expect(rustDefinition).toMatchObject({
+        schema_version: 1,
+        name: "Workflow",
+        steps: [
+          expect.objectContaining({
+            id: "trigger1",
+            action: "read_file",
+            params: [["path", "README.md"]],
+            force_checkpoint: false,
+            evidence_required: false,
+          }),
+        ],
+      });
+      expect(rustDefinition).not.toHaveProperty("schemaVersion");
+      expect(rustDefinition).not.toHaveProperty("graph");
+    });
+
+    it("flag-ON create rejects unsupported workflow graphs instead of flattening them", async () => {
+      const bridge = makeStubBridge();
+      const route = flagOnRoutes(bridge).find((r) => r.operationId === "workflows.create")!;
+      await expect(
+        route.handler(makeCtx({
+          body: {
+            slug: "wf",
+            name: "Workflow",
+            graph: {
+              nodes: [
+                { id: "trigger1", type: "trigger", config: { triggerType: "manual" } },
+                { id: "collect", type: "data", config: { mapping: { message: "hello" } } },
+              ],
+              edges: [{ id: "edge-trigger-collect", sourceNodeId: "trigger1", targetNodeId: "collect" }],
+            },
+          },
+        })),
+      ).rejects.toMatchObject({
+        code: "TS_RUNTIME_WORKFLOW_CATALOG_GRAPH_UNSUPPORTED",
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_linear_workflow_translation_required",
+        },
+      });
+      expect(bridge.mutateCatalog).not.toHaveBeenCalled();
     });
   });
 });
