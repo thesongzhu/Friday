@@ -20,7 +20,10 @@ import {
   writeClosureRustWorkflowCatalogBridgeBin,
   writeClosureRustWorkflowRunBridgeBins,
 } from "../../../scripts/e2e/run-friday-closure.mjs";
-import { FRIDAY_CLOSURE_STATUSES } from "../../../scripts/e2e/friday-closure-lib.mjs";
+import {
+  buildClosureScratchEnv,
+  FRIDAY_CLOSURE_STATUSES,
+} from "../../../scripts/e2e/friday-closure-lib.mjs";
 
 describe("run-friday-closure helpers", () => {
   it("keeps closure provider env refs out of scratch secret storage", () => {
@@ -141,6 +144,29 @@ describe("run-friday-closure helpers", () => {
     expect(script).toContain("cargo run -q -p friday-hub --bin hub_providers_detect");
     expect(script).toContain('exec cargo run -q -p friday-hub --bin hub_providers_detect -- "$@"');
     expect(fs.statSync(binPath).mode & 0o111).not.toBe(0);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("routes closure CLI skill runs through the governed Rust runner instead of the retired TS sink", () => {
+    const dir = mkdtempSync(join(tmpdir(), "friday-closure-skill-run-env-"));
+    const paths = {
+      state: join(dir, "state"),
+      skills: join(dir, "skills"),
+      artifacts: join(dir, "artifacts"),
+    };
+
+    const env = buildClosureScratchEnv({}, paths);
+
+    expect(env.FRIDAY_ROUTE_SKILL_RUNS_VIA_RUST).toBe("1");
+    expect(env.FRIDAY_D21_SKILL_RUN_LOCAL_BIN).toBe(join(paths.state, "bin", "hub_skill_run_local"));
+    expect(env.FRIDAY_D21_SKILL_RUN_LOCAL_DB_PATH).toBe(join(paths.state, "friday.db"));
+    expect(env.FRIDAY_D21_OPERATOR_VK_PATH).toBe(join(paths.state, "operator.vk"));
+    expect(env.FRIDAY_D21_SKILL_RUN_APPROVAL_JSON).toBe(join(paths.state, "skill-run-approval.json"));
+    expect(env.FRIDAY_D21_SKILL_RUN_MISSION_ID).toBe("mission-closure-cli-skill-run");
+    expect(env.FRIDAY_D21_SKILL_RUN_WORK_ITEM_ID).toBe("work-closure-cli-skill-run");
+    expect(env.FRIDAY_D21_SKILL_RUN_OPERATOR_PRINCIPAL_ID).toBe("operator");
+    expect(env.FRIDAY_D21_APPROVED_FIRST_RUN_SKILL_IDS).toBe("output-current-date-time");
 
     rmSync(dir, { recursive: true, force: true });
   });
