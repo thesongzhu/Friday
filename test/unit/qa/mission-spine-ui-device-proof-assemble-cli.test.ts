@@ -149,6 +149,12 @@ function runAssembler(files: ReturnType<typeof writeEvidenceFiles>, manifestPath
 }
 
 describe("mission-spine-ui-device-proof-assemble", () => {
+  it("uses portable mktemp templates without a suffix after XXXXXX", () => {
+    const script = readFileSync("rust-core/scripts/mission-spine-ui-device-proof-assemble.sh", "utf8");
+
+    expect(script).not.toMatch(/mktemp\s+"[^"\n]*XXXXXX\.[^"\n]+"/u);
+  });
+
   it("carries workbench and transcript browser evidence into the final proof", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-assemble-"));
     try {
