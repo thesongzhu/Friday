@@ -548,6 +548,31 @@ describe("friday-ui-device-proof-readiness", () => {
     expect(source).not.toContain("check-mission-workbench-live-readiness.mjs\" --expect-not-ready");
   });
 
+  it("can explicitly skip repeated gate self-tests for unit-test wrapper invocations", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-skip-self-test-"));
+    try {
+      const stdout = execFileSync("bash", [
+        "scripts/ops/friday-ui-device-proof-readiness.sh",
+        "--evidence-dir",
+        tempDir,
+      ], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          FRIDAY_UI_DEVICE_READINESS_SKIP_SELF_TEST_FOR_TESTS: "1",
+        },
+        encoding: "utf8",
+      });
+      const result = JSON.parse(stdout.slice(stdout.indexOf("{"))) as {
+        notes?: string[];
+      };
+
+      expect(result.notes).toContain("ui_device_gate_self_test:skipped_explicit_for_tests");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("discovers a complete evidence dir and delegates to the strict assembler", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-"));
     try {
