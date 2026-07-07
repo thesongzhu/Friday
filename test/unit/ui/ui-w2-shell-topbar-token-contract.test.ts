@@ -8,10 +8,16 @@ const topBarPath = path.join(
 );
 
 describe("UI-W2 shell top bar token contract", () => {
+  it("rejects the bare retired accent alias", () => {
+    const retiredAccentSource = 'style={{ color: "var(--accent)" }}';
+
+    expect(retiredAccentSource).toMatch(/--surface-|--ink-|--accent-soft|--accent\b|--rust-500/);
+  });
+
   it("uses selected color tokens instead of retired shell aliases", () => {
     const source = readFileSync(topBarPath, "utf8");
 
-    expect(source).not.toMatch(/--surface-|--ink-|--accent-soft|--accent\\b|--rust-500/);
+    expect(source).not.toMatch(/--surface-|--ink-|--accent-soft|--accent\b|--rust-500/);
     expect(source).not.toContain("rgba(15, 125, 140");
 
     expect(source).toContain("--color-bg-chrome");
