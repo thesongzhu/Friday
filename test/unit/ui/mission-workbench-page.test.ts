@@ -87,6 +87,13 @@ const SNAPSHOT = {
       grantsMemoryAuthority: false,
       evidenceRef: "proof://memory/ui-candidate",
     },
+    {
+      id: "memory_other_candidate",
+      preview: "Keep the unrelated memory candidate clean.",
+      state: "candidate_review_only",
+      grantsMemoryAuthority: false,
+      evidenceRef: "proof://memory/other-candidate",
+    },
   ],
   capabilityStates: [],
   transcriptSections: [],
@@ -242,6 +249,8 @@ describe("MissionWorkbenchPage", () => {
     });
 
     expect(container?.textContent).toContain("memory spine decide refused");
+    const occurrences = container?.textContent?.match(/memory spine decide refused/g)?.length ?? 0;
+    expect(occurrences).toBe(1);
   });
 
   it("labels Mission intake as an idempotent ensure action", async () => {
