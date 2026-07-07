@@ -66,7 +66,8 @@ pub use mission::{
     MissionSurfaceProjection, OutcomeProofReceipt, ProofRequirementKind, ProofRequirementSpec,
     RouteActionItem, RouteActionReversibility, RouteActionTargetKind, RouteDecisionCard,
     RouteDecisionProjection, SurfaceEvent, SurfaceEventKind, SurfaceKind, SurfaceThread,
-    TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane, OUTCOME_CHECKED_PROOF_FLAG,
+    TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
+    MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION, OUTCOME_CHECKED_PROOF_FLAG,
 };
 pub use offline::OfflineQueueState;
 pub use pairing::{

@@ -187,6 +187,9 @@ export function MissionWorkbenchPage() {
       facet: facetFilter,
     });
   }, [facetFilter, groupFilter, query, snapshot?.transcriptSections, stateFilter, surfaceFilter]);
+  const memoryDecisionError = memoryDecisionMutation.error instanceof Error
+    ? memoryDecisionMutation.error.message
+    : "memory decision blocked";
 
   if (!snapshot) {
     return (
@@ -262,7 +265,7 @@ export function MissionWorkbenchPage() {
               onClick={() => missionIntakeMutation.mutate()}
             >
               <Send className="h-4 w-4" aria-hidden="true" />
-              Create Mission
+              Ensure Mission
             </ActionButton>
             {missionIntakeMutation.data ? (
               <StatusPill tone="success">{missionIntakeMutation.data.status}</StatusPill>
@@ -526,6 +529,11 @@ export function MissionWorkbenchPage() {
                   </div>
                   <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{candidate.preview}</p>
                   <RefDetails label="Memory evidence" refs={[["evidence", candidate.evidenceRef]]} />
+                  {memoryDecisionMutation.isError ? (
+                    <div className="mt-3">
+                      <StatusPill tone="danger">{memoryDecisionError}</StatusPill>
+                    </div>
+                  ) : null}
                   <div className="mt-3 flex flex-wrap gap-2">
                     <ActionButton
                       tone="secondary"
