@@ -172,6 +172,10 @@ export function buildClosureScratchEnv(baseEnv = process.env, paths) {
       ?? path.join(paths.state, "bin", "hub_workflow_run"),
     FRIDAY_HUB_WORKFLOW_RUN_READBACK_BIN: baseEnv.FRIDAY_HUB_WORKFLOW_RUN_READBACK_BIN
       ?? path.join(paths.state, "bin", "hub_workflow_run_readback"),
+    FRIDAY_PLUGIN_RUNTIME_MODE: baseEnv.FRIDAY_PLUGIN_RUNTIME_MODE ?? "full",
+    FRIDAY_ALLOW_TEST_ONLY_PLUGIN_EXECUTION: baseEnv.FRIDAY_ALLOW_TEST_ONLY_PLUGIN_EXECUTION ?? "1",
+    FRIDAY_ALLOW_TEST_ONLY_AUTONOMY_LIFECYCLE_EXECUTION:
+      baseEnv.FRIDAY_ALLOW_TEST_ONLY_AUTONOMY_LIFECYCLE_EXECUTION ?? "1",
     FRIDAY_ROUTE_SKILL_RUNS_VIA_RUST: baseEnv.FRIDAY_ROUTE_SKILL_RUNS_VIA_RUST ?? "1",
     FRIDAY_D21_SKILL_RUN_LOCAL_BIN: baseEnv.FRIDAY_D21_SKILL_RUN_LOCAL_BIN
       ?? path.join(paths.state, "bin", "hub_skill_run_local"),

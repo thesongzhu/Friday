@@ -2051,6 +2051,8 @@ export interface FridayResolvedHubConfig {
   serverVersion: string;
   corsOrigins: string[];
   logRequests: boolean;
+  allowTestOnlyAutonomyLifecycleExecution?: boolean;
+  allowTestOnlyPluginExecution?: boolean;
   pluginRuntimeMode: "stub" | "full";
   /** Whether deterministic pipeline execution is globally enabled. */
   pipelineEnabled: boolean;

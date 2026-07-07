@@ -93,6 +93,9 @@ describe("friday closure lib", () => {
     expect(scratch.FRIDAY_HUB_WORKFLOW_RUN_DB_PATH).toBe("/tmp/friday-state/friday.db");
     expect(scratch.FRIDAY_HUB_WORKFLOW_RUN_BIN).toBe("/tmp/friday-state/bin/hub_workflow_run");
     expect(scratch.FRIDAY_HUB_WORKFLOW_RUN_READBACK_BIN).toBe("/tmp/friday-state/bin/hub_workflow_run_readback");
+    expect(scratch.FRIDAY_PLUGIN_RUNTIME_MODE).toBe("full");
+    expect(scratch.FRIDAY_ALLOW_TEST_ONLY_PLUGIN_EXECUTION).toBe("1");
+    expect(scratch.FRIDAY_ALLOW_TEST_ONLY_AUTONOMY_LIFECYCLE_EXECUTION).toBe("1");
     expect(Object.keys(scratch)).not.toContain(`FRIDAY_ALLOW_LOCAL_${"BYPASS_LOGIN"}`);
 
     const explicit = buildClosureScratchEnv(
