@@ -12,6 +12,10 @@ import type {
   FridayProviderUsageSummary,
 } from "@/lib/api/types";
 
+const USAGE_INPUT_BAR_COLOR = "var(--color-accent)";
+const USAGE_OUTPUT_BAR_COLOR = "var(--color-coral)";
+const USAGE_PROVIDER_BAR_COLOR = "var(--color-accent)";
+
 // ─── Types ───
 
 interface ProviderHealthItem {
@@ -414,7 +418,7 @@ export function UsagePage() {
               <div className="flex items-center gap-3">
                 <span className="w-14 text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "输入", "Input")}</span>
                 <div className="flex-1">
-                  <PercentBar value={estimatedInputTokens} max={estimatedTotalTokens} color="#6366f1" />
+                  <PercentBar value={estimatedInputTokens} max={estimatedTotalTokens} color={USAGE_INPUT_BAR_COLOR} />
                 </div>
                 <span className="w-10 text-right text-xs text-[color:var(--color-text-secondary)]">
                   {formatTokenSharePercent(estimatedInputTokens, estimatedTotalTokens)}
@@ -423,7 +427,7 @@ export function UsagePage() {
               <div className="flex items-center gap-3">
                 <span className="w-14 text-xs text-[color:var(--color-text-secondary)]">{localize(locale, "输出", "Output")}</span>
                 <div className="flex-1">
-                  <PercentBar value={estimatedOutputTokens} max={estimatedTotalTokens} color="#8b5cf6" />
+                  <PercentBar value={estimatedOutputTokens} max={estimatedTotalTokens} color={USAGE_OUTPUT_BAR_COLOR} />
                 </div>
                 <span className="w-10 text-right text-xs text-[color:var(--color-text-secondary)]">
                   {formatTokenSharePercent(estimatedOutputTokens, estimatedTotalTokens)}
@@ -504,7 +508,7 @@ export function UsagePage() {
                           {formatNumber(row.tokens)}
                         </td>
                         <td className="w-32 py-2.5 pr-4">
-                          <PercentBar value={row.tokens} max={maxTokensInRow} color="#6366f1" />
+                          <PercentBar value={row.tokens} max={maxTokensInRow} color={USAGE_PROVIDER_BAR_COLOR} />
                         </td>
                         <td className="py-2.5 text-right font-medium text-[color:var(--color-text-primary)]">
                           {formatUsd(row.costUsd)}
