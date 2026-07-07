@@ -115,6 +115,13 @@ describe("Friday production advance script", () => {
     expect(result.stderr).toContain("git rollback is not sufficient");
   });
 
+  it("keeps the fail-closed recovery assertion on the dry-run path", () => {
+    const source = readFileSync(import.meta.filename, "utf8");
+    const match = source.match(/it\("prints recovery steps on fail-closed deployment exits"[\s\S]*?expect\(result\.stderr\)\.toContain\("git rollback is not sufficient"\);/);
+
+    expect(match?.[0]).toContain('"--dry-run"');
+  });
+
   it("dry-runs the same signed deployment sequence without touching launchd or production state", () => {
     const signedSha = currentOriginMain();
     const result = spawnSync(
