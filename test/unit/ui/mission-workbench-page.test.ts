@@ -227,13 +227,32 @@ describe("MissionWorkbenchPage", () => {
     });
   });
 
-  it("creates a Mission through a Mission Workbench UI action", async () => {
+  it("renders Memory Spine decision errors as a visible status pill", async () => {
+    mocks.decideMemoryCandidate.mockRejectedValueOnce(new Error("memory spine decide refused"));
+    await renderPage();
+
+    const confirm = container?.querySelector<HTMLButtonElement>(
+      "[data-testid=\"mission-memory-confirm-memory_ui_candidate\"]",
+    );
+    expect(confirm).not.toBeNull();
+
+    await act(async () => {
+      confirm!.click();
+      await flushCycles();
+    });
+
+    expect(container?.textContent).toContain("memory spine decide refused");
+  });
+
+  it("labels Mission intake as an idempotent ensure action", async () => {
     await renderPage();
 
     const createMission = container?.querySelector<HTMLButtonElement>(
       "[data-testid=\"mission-spine-create-from-workbench\"]",
     );
     expect(createMission).not.toBeNull();
+    expect(createMission?.textContent).toContain("Ensure Mission");
+    expect(createMission?.textContent).not.toContain("Create Mission");
 
     await act(async () => {
       createMission!.click();
