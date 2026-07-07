@@ -12,6 +12,7 @@ describe("UI-W1 Memory Passport screen contract", () => {
     expect(routerSource).toContain("<MemoryPage />");
     expect(navSource).toContain('path: "/memory"');
     expect(navSource).toContain("Memory Passport");
+    expect(navSource).not.toContain("revoke, and review");
   });
 
   it("renders passport identity, authority, and candidate-review boundaries", () => {
@@ -20,7 +21,7 @@ describe("UI-W1 Memory Passport screen contract", () => {
     expect(source).toContain('data-ui-screen="desktop-memory-passport"');
     expect(source).toContain('data-ui-component="memory-passport-header"');
     expect(source).toContain('data-ui-component="memory-authority-boundaries"');
-    expect(source).toContain('data-ui-component="memory-candidate-review"');
+    expect(source).toContain('data-ui-component="memory-candidate-review-boundary"');
     expect(source).toContain("memory_review_no_silent_write_decide_candidate");
     expect(source).toContain("no silent memory write");
     expect(source).toContain("candidate_review_only");
@@ -32,8 +33,9 @@ describe("UI-W1 Memory Passport screen contract", () => {
 
     expect(source).toContain('data-ui-component="memory-passport-search"');
     expect(source).toContain('data-ui-component="memory-passport-store"');
-    expect(source).toContain('data-ui-component="memory-passport-revoke"');
-    expect(source).toContain('data-ui-component="memory-passport-export"');
+    expect(source).toContain('data-ui-component="memory-passport-delete-request"');
+    expect(source).toContain('data-ui-component="memory-passport-export-boundary"');
+    expect(source).not.toContain('data-ui-component="memory-passport-revoke"');
     expect(source).toContain("stored memory !== automatic recall PASS");
     expect(source).toContain("runtime recall proof required");
   });
