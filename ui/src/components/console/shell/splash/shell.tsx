@@ -57,7 +57,7 @@ export function SplashShell(props: SplashShellProps) {
         {eyebrow ? (
           <p
             className="text-[11px] font-semibold uppercase tracking-[0.18em]"
-            style={{ color: accentColor ?? "var(--accent)" }}
+            style={{ color: accentColor ?? "var(--color-accent)" }}
           >
             {eyebrow}
           </p>
