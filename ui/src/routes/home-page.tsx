@@ -966,17 +966,19 @@ export function HomePage() {
               </div>
 
               <div className="flex flex-wrap gap-2 xl:justify-end">
-                <ActionButton
-                  data-testid="operations-submit-intent"
-                  data-action="mission_intake_submit"
-                  data-cap="mission_intake"
-                  data-truth="wired_registry"
-                  data-result="opens-friday-chat-intake"
-                  onClick={() => navigate("/chat")}
-                >
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  {localize(locale, "提交意图", "Submit Intent")}
-                </ActionButton>
+                <span data-testid="operations-submit-intent" className="contents">
+                  <ActionButton
+                    data-testid="home-start-task"
+                    data-action="mission_intake_submit"
+                    data-cap="mission_intake"
+                    data-truth="wired_registry"
+                    data-result="opens-friday-chat-intake"
+                    onClick={() => navigate("/chat")}
+                  >
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    {localize(locale, "提交意图", "Submit Intent")}
+                  </ActionButton>
+                </span>
                 <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
                   <Bot className="mr-2 h-4 w-4" />
                   {localize(locale, "继续去 Assistant", "Continue to Assistant")}
