@@ -61,25 +61,35 @@ describe("FridayProviderService Lifecycle (Integration)", () => {
 
   describe("create provider", () => {
     it("creates a provider with env-ref key", async () => {
-      const profile = await service.createProvider({
-        kind: "openai",
-        name: "OpenAI",
-        baseUrl: "https://api.openai.com",
-        authMode: "api-key",
-        api: "openai-completions",
-        apiKey: "$OPENAI_API_KEY",
-        supportedModels: ["gpt-4o"],
-        defaultModel: "gpt-4o",
-        validateOnSave: false,
-      });
+      const previousOpenAiApiKey = process.env.OPENAI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      try {
+        const profile = await service.createProvider({
+          kind: "openai",
+          name: "OpenAI",
+          baseUrl: "https://api.openai.com",
+          authMode: "api-key",
+          api: "openai-completions",
+          apiKey: "$OPENAI_API_KEY",
+          supportedModels: ["gpt-4o"],
+          defaultModel: "gpt-4o",
+          validateOnSave: false,
+        });
 
-      expect(profile.id).toBeTruthy();
-      expect(profile.kind).toBe("openai");
-      expect(profile.name).toBe("OpenAI");
-      expect(profile.config.keySource).toEqual({
-        kind: "env-ref",
-        envVar: "OPENAI_API_KEY",
-      });
+        expect(profile.id).toBeTruthy();
+        expect(profile.kind).toBe("openai");
+        expect(profile.name).toBe("OpenAI");
+        expect(profile.config.keySource).toEqual({
+          kind: "env-ref",
+          envVar: "OPENAI_API_KEY",
+        });
+      } finally {
+        if (previousOpenAiApiKey === undefined) {
+          delete process.env.OPENAI_API_KEY;
+        } else {
+          process.env.OPENAI_API_KEY = previousOpenAiApiKey;
+        }
+      }
     });
 
     it("creates a provider with raw key (encrypted secret)", async () => {
