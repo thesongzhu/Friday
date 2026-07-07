@@ -55,6 +55,11 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: localizedText("查看真实插件库存、启停状态和本地安装入口。", "Inspect live plugin inventory, enablement state, and local install entry."),
   },
   {
+    label: localizedText("提供方", "Providers & auth"),
+    path: "/providers",
+    description: localizedText("查看提供方认证、能力 parity、队列和路由真值。", "Inspect provider auth, capability parity, queues, and routing truth."),
+  },
+  {
     label: localizedText("工作流", "Workflows"),
     path: "/workflows",
     description: localizedText("部署、编辑和监控自动化工作流。", "Deploy, edit, and monitor automation workflows."),
@@ -149,6 +154,9 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   }
   if (pathname.startsWith("/plugins")) {
     return localizedText("插件", "Plugins");
+  }
+  if (pathname.startsWith("/providers")) {
+    return localizedText("提供方", "Providers & auth");
   }
   if (pathname.startsWith("/skills")) {
     return localizedText("能力包", "Skills");

@@ -29,6 +29,7 @@ const ObservabilityPage = lazy(async () => import("@/routes/observability-page")
 const OnboardingPage = lazy(async () => import("@/routes/onboarding-page").then((module) => ({ default: module.OnboardingPage })));
 const PacksPage = lazy(async () => import("@/routes/packs-page").then((module) => ({ default: module.PacksPage })));
 const PluginsPage = lazy(async () => import("@/routes/plugins-page").then((module) => ({ default: module.PluginsPage })));
+const ProvidersPage = lazy(async () => import("@/routes/providers-page").then((module) => ({ default: module.ProvidersPage })));
 const CrossBorderPackSetupPage = lazy(async () => import("@/routes/cross-border-pack-setup-page").then((module) => ({ default: module.CrossBorderPackSetupPage })));
 const ReflexPage = lazy(async () => import("@/routes/reflex-page").then((module) => ({ default: module.ReflexPage })));
 const SettingsPage = lazy(async () => import("@/routes/settings-page").then((module) => ({ default: module.SettingsPage })));
@@ -464,6 +465,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载插件", "Loading plugins")} detail={localizedText("Friday 正在准备插件库存和运行时状态。", "Friday is preparing the plugin inventory and runtime status.")}>
                 <PluginsPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "providers",
+            element: (
+              <RouteSuspense title={localizedText("加载提供方", "Loading providers")} detail={localizedText("Friday 正在准备提供方认证、能力和路由真值。", "Friday is preparing provider auth, capability, and routing truth.")}>
+                <ProvidersPage />
               </RouteSuspense>
             ),
           },
