@@ -115,7 +115,7 @@ export interface FridayRustSessionLifecycleBridge {
   appendMessage(input: {
     sessionKey: string;
     role: FridaySessionMessageRecord["role"];
-    content: string;
+    content: unknown;
     metadata?: Record<string, unknown>;
     principal?: FridayAuthPrincipal | null;
   }): Promise<FridaySessionMessageCreateResponse>;
