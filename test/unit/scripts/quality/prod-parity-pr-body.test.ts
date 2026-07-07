@@ -40,7 +40,7 @@ describe("prod parity PR body gate", () => {
     const ok = runGate(
       [
         "Native module build proof: npm ci completed and better-sqlite3.node exists.",
-        "Deployment restart required: Rust services.",
+        "Deployment restart required: Rust services; restart rust-ws and read-projection before hub.",
       ].join("\n"),
       ["pnpm-lock.yaml", "rust-core/crates/friday-storage/src/schema.rs"],
     );
@@ -48,5 +48,24 @@ describe("prod parity PR body gate", () => {
 
     const irrelevant = runGate("Docs only.", ["docs/readme.md"]);
     expect(irrelevant.status).toBe(0);
+  });
+
+  it("treats Rust Cargo.lock as a lockfile that requires native module build proof", () => {
+    const cargoLockMissing = runGate("Rust dependency update.", ["rust-core/Cargo.lock"]);
+    expect(cargoLockMissing.status).toBe(1);
+    expect(cargoLockMissing.stderr).toContain("Native module build proof");
+  });
+
+  it("rejects placeholder prod-parity declarations", () => {
+    const placeholderProof = runGate(
+      [
+        "Native module build proof: TODO",
+        "Deployment restart required: Rust services",
+      ].join("\n"),
+      ["pnpm-lock.yaml", "rust-core/crates/friday-storage/src/schema.rs"],
+    );
+    expect(placeholderProof.status).toBe(1);
+    expect(placeholderProof.stderr).toContain("Native module build proof");
+    expect(placeholderProof.stderr).toContain("Deployment restart required: Rust services");
   });
 });
