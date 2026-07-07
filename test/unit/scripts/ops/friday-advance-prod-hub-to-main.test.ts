@@ -9,6 +9,15 @@ const advanceScript = resolve(
   "scripts/ops/friday-advance-prod-hub-to-main.sh",
 );
 
+function currentOriginMain(): string {
+  const result = spawnSync("git", ["rev-parse", "origin/main"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  expect(result.status, result.stderr).toBe(0);
+  return result.stdout.trim();
+}
+
 function orderedIndexes(haystack: string, needles: string[]): number[] {
   return needles.map((needle) => {
     const index = haystack.indexOf(needle);
@@ -106,6 +115,7 @@ describe("Friday production advance script", () => {
   });
 
   it("dry-runs the same signed deployment sequence without touching launchd or production state", () => {
+    const signedSha = currentOriginMain();
     const result = spawnSync(
       "bash",
       [
@@ -114,7 +124,7 @@ describe("Friday production advance script", () => {
         "--repo",
         repoRoot,
         "--signed-sha",
-        "c47ab5e4a1662c3b02b68987953d34342aef938a",
+        signedSha,
       ],
       {
         cwd: repoRoot,
@@ -128,14 +138,13 @@ describe("Friday production advance script", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("DRY-RUN");
-    expect(result.stdout).toContain("signed target SHA: c47ab5e4a1662c3b02b68987953d34342aef938a");
+    expect(result.stdout).toContain(`signed target SHA: ${signedSha}`);
 
     const indexes = orderedIndexes(result.stdout, [
       "git fetch origin main",
       "git switch main",
-      "git checkout c47ab5e4a1662c3b02b68987953d34342aef938a",
       "verify checked out signed target",
-      "git checkout c47ab5e4a1662c3b02b68987953d34342aef938a",
+      `git checkout ${signedSha}`,
       "pnpm install --frozen-lockfile",
       "verify better_sqlite3.node",
       "cargo build --release",
