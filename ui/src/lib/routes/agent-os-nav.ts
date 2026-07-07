@@ -126,7 +126,11 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     path: "/sessions",
     description: localizedText("浏览和导出 Friday 的会话与对话历史。", "Browse and export Friday session and transcript history."),
   },
-  // Settings is in the sidebar — not duplicated here.
+  {
+    label: localizedText("安全设置", "Settings Security"),
+    path: "/settings",
+    description: localizedText("集中查看提供方认证、桌面权限、安全发现和 operator 门边界。", "Review provider auth, desktop permissions, security findings, and operator-gated boundaries."),
+  },
 ];
 
 /** Full list for backward compat. */
@@ -188,7 +192,7 @@ export function resolvePageTitle(pathname: string): LocalizedText {
     return localizedText("渠道", "Channels");
   }
   if (pathname.startsWith("/settings")) {
-    return localizedText("设置", "Settings");
+    return localizedText("安全设置", "Settings Security");
   }
   if (pathname.startsWith("/memory")) {
     return localizedText("记忆", "Memory");

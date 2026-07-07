@@ -433,7 +433,7 @@ export function SettingsPage() {
 
   const { data: systemState } = useQuery({
     queryKey: systemKeys.state(),
-    queryFn: () => systemApi.getState(),
+    queryFn: () => systemApi.getCurrentState(),
     retry: 0,
     refetchInterval: 10_000,
   });
@@ -938,6 +938,28 @@ export function SettingsPage() {
     },
   });
 
+  const revokeTokenMutation = useMutation({
+    mutationFn: (tokenId: string) => securityApi.revokeToken(tokenId),
+    onSuccess: async (result) => {
+      toast.success(localize(locale, `令牌 ${result.tokenId} 已撤销`, `Token ${result.tokenId} revoked`));
+      await queryClient.invalidateQueries({ queryKey: ["settings", "security"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法撤销令牌。", "Could not revoke token."));
+    },
+  });
+
+  const revokeSatelliteMutation = useMutation({
+    mutationFn: (satelliteId: string) => securityApi.revokeSatellite(satelliteId, "Revoked from Settings Security"),
+    onSuccess: async (result) => {
+      toast.success(localize(locale, `执行节点 ${result.satelliteId} 已撤销`, `Satellite ${result.satelliteId} revoked`));
+      await queryClient.invalidateQueries({ queryKey: ["settings", "security"] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : localize(locale, "无法撤销执行节点。", "Could not revoke satellite."));
+    },
+  });
+
   const preview = buildPersonaPreview(draft.settings, locale, draft.mbti || null);
   const mcpStates = assistantDiagnostics?.mcpServerStates ?? [];
   const loadedMcpCount = mcpStates.filter((state) => state.state === "loaded").length;
@@ -951,7 +973,7 @@ export function SettingsPage() {
   const runtimeMatrix = health?.capabilities?.runtime;
 
   return (
-    <div className="space-y-6">
+    <div data-ui-screen="desktop-settings-security" className="space-y-6">
       {/* ── Advanced Ops quick links ── */}
       <div className="grid gap-4 sm:grid-cols-3">
         <Link to="/command-center" className="group flex flex-col justify-between rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-5 transition hover:border-[color:var(--color-border-strong)] hover:shadow-[var(--shadow-card-hover)]">
@@ -992,6 +1014,35 @@ export function SettingsPage() {
           "这个页面混合了 operator-only、环境依赖和仅当前机器可见的状态。空卡片、降级或未配置不代表 Friday 对所有用户都可用或不可用，只代表当前 runtime 的真实快照。",
           "This page mixes operator-only, env-gated, and machine-local surfaces. Empty cards, degraded states, or missing config describe the current runtime snapshot only; they are not universal product promises.",
         )}
+      </div>
+
+      <div
+        data-ui-component="settings-security-header"
+        className="rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-5 py-4"
+      >
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
+              {localize(locale, "Settings Security", "Settings Security")}
+            </p>
+            <p className="mt-1 text-sm leading-6 text-[color:var(--color-text-secondary)]">
+              {localize(
+                locale,
+                "提供方认证、桌面权限、安全发现、能力运行态和 operator 门在同一屏呈现；每个状态只代表当前 runtime 快照。",
+                "Provider auth, desktop permissions, security findings, runtime guards, and operator-gated boundaries are shown together; each status describes only the current runtime snapshot.",
+              )}
+            </p>
+          </div>
+          <StatusPill tone="warning">NO-GO</StatusPill>
+        </div>
+        <div
+          data-ui-component="settings-security-operator-boundary"
+          className="mt-4 grid gap-3 md:grid-cols-3"
+        >
+          <DiagnosticRow label="operator" value="settings security != operator SIGN" />
+          <DiagnosticRow label="deploy" value="UI status != prod deploy" />
+          <DiagnosticRow label="runtime" value="settings snapshot != END-BAR" />
+        </div>
       </div>
 
     <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
@@ -1109,6 +1160,7 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
+        <div data-ui-component="settings-security-provider-auth">
         <ShellCard eyebrow={localize(locale, "提供商", "Providers")} title={localize(locale, "模型路由基础", "Model Routing Basics")}>
           <div className="mb-4 rounded-[22px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -1456,6 +1508,7 @@ export function SettingsPage() {
             }}
           />
         </ShellCard>
+        </div>
 
         <ShellCard eyebrow={localize(locale, "运维", "Operator")} title={localize(locale, "路由可解释性", "Routing Explainability")}>
           <div className="space-y-4">
@@ -1685,6 +1738,7 @@ export function SettingsPage() {
       </div>
 
       <div className="space-y-4">
+        <div data-ui-component="settings-security-permissions">
         <ShellCard eyebrow={localize(locale, "Agent OS 会话", "Agent OS Session")} title={localize(locale, "伴侣与权限", "Companion And Permissions")}>
           {systemSession && systemState ? (
             <div className="space-y-4">
@@ -1740,6 +1794,7 @@ export function SettingsPage() {
             <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "Agent OS 路由尚未响应。", "Agent OS routes are not responding yet.")}</p>
           )}
         </ShellCard>
+        </div>
 
         <ShellCard eyebrow={localize(locale, "伴侣状态", "Companion State")} title={localize(locale, "桌面面板", "Desktop Surfaces")}>
           {systemState ? (
@@ -1913,12 +1968,26 @@ export function SettingsPage() {
           )}
         </ShellCard>
 
+        <div data-ui-component="settings-security-command-center">
         <ShellCard eyebrow={localize(locale, "安全", "Security")} title={localize(locale, "安全中心", "Security Center")}>
           {securityCenter ? (
             <div className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
                 <DiagnosticTile icon={<Shield className="h-4 w-4" />} label={localize(locale, "活跃令牌", "Active Tokens")} value={String(securityCenter.tokens.active)} />
                 <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label={localize(locale, "高权限", "High Privilege")} value={String(securityCenter.tokens.highPrivilegeActive)} />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-4">
+                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label={localize(locale, "受限节点", "Restricted")} value={String(securityCenter.satellites.restricted)} />
+                <DiagnosticTile icon={<Shield className="h-4 w-4" />} label={localize(locale, "可信节点", "Trusted")} value={String(securityCenter.satellites.trusted)} />
+                <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label={localize(locale, "已撤销令牌", "Revoked Tokens")} value={String(securityCenter.tokens.revoked24h)} />
+                <DiagnosticTile icon={<KeyRound className="h-4 w-4" />} label={localize(locale, "待配对", "Pending Pairings")} value={String(securityCenter.satellites.pendingPairings)} />
+              </div>
+              <div className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                {localize(
+                  locale,
+                  "NO-GO: settings security != operator SIGN；UI status != prod deploy；安全发现清零也不等于 END-BAR 或真实外部采用。",
+                  "NO-GO: settings security != operator SIGN; UI status != prod deploy; zero findings does not equal END-BAR or real external adoption.",
+                )}
               </div>
               {securityCenter.findings.length > 0 ? (
                 <div className="space-y-2">
@@ -1934,6 +2003,30 @@ export function SettingsPage() {
                           {finding.severity}
                         </StatusPill>
                       </div>
+                      {(finding.tokenId || finding.satelliteId) ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {finding.tokenId ? (
+                            <ActionButton
+                              data-ui-component="settings-security-token-revoke"
+                              tone="danger"
+                              disabled={revokeTokenMutation.isPending}
+                              onClick={() => revokeTokenMutation.mutate(finding.tokenId!)}
+                            >
+                              {localize(locale, "撤销令牌", "Revoke token")}
+                            </ActionButton>
+                          ) : null}
+                          {finding.satelliteId ? (
+                            <ActionButton
+                              data-ui-component="settings-security-satellite-revoke"
+                              tone="danger"
+                              disabled={revokeSatelliteMutation.isPending}
+                              onClick={() => revokeSatelliteMutation.mutate(finding.satelliteId!)}
+                            >
+                              {localize(locale, "撤销执行节点", "Revoke satellite")}
+                            </ActionButton>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -1945,6 +2038,7 @@ export function SettingsPage() {
             <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "安全数据待连接。", "Security data is waiting for data.")}</p>
           )}
         </ShellCard>
+        </div>
 
         <ShellCard eyebrow={localize(locale, "能力管理", "Capability Management")} title={localize(locale, "MCP 与通道面板", "MCP And Channel Surfaces")}>
           <div className="space-y-4">
@@ -2052,6 +2146,7 @@ export function SettingsPage() {
           </div>
         </ShellCard>
 
+        <div data-ui-component="settings-security-runtime-guards">
         <ShellCard eyebrow={localize(locale, "能力", "Capabilities")} title={localize(locale, "能力矩阵", "Capability Matrix")}>
           {health ? (
             <div className="space-y-3">
@@ -2177,6 +2272,7 @@ export function SettingsPage() {
             <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "正在加载工具状态…", "Loading tool status...")}</p>
           )}
         </ShellCard>
+        </div>
 
         <ShellCard eyebrow={localize(locale, "Agent 循环", "Agent Loop")} title={localize(locale, "自动化策略", "Automation Policy")}>
           {agentLoopPolicy ? (
