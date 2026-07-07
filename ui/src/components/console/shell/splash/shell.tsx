@@ -31,16 +31,16 @@ export interface SplashShellProps {
 }
 
 const PILL_STYLE: Record<NonNullable<SplashPill["tone"]>, { background: string; color: string }> = {
-  neutral: { background: "var(--surface-2)", color: "var(--ink-700)" },
-  warn: { background: "var(--warn-soft)", color: "var(--warn)" },
-  ok: { background: "var(--ok-soft)", color: "var(--ok)" },
-  danger: { background: "var(--danger-soft)", color: "var(--danger)" },
+  neutral: { background: "var(--color-bg-surface-strong)", color: "var(--color-text-secondary)" },
+  warn: { background: "var(--color-bg-warning-subtle)", color: "var(--color-text-warning)" },
+  ok: { background: "var(--color-bg-success-subtle)", color: "var(--color-text-success)" },
+  danger: { background: "var(--color-bg-danger-subtle)", color: "var(--color-text-danger)" },
 };
 
 const STEP_DOT: Record<NonNullable<SplashStep["status"]>, string> = {
-  done: "var(--ok)",
-  active: "var(--accent)",
-  todo: "var(--ink-300)",
+  done: "var(--color-text-success)",
+  active: "var(--color-accent)",
+  todo: "var(--color-text-faint)",
 };
 
 export function SplashShell(props: SplashShellProps) {
@@ -49,7 +49,7 @@ export function SplashShell(props: SplashShellProps) {
   return (
     <div
       className="flex min-h-screen items-center justify-center px-6"
-      style={{ background: "var(--surface-0)" }}
+      style={{ background: "var(--color-bg-base)" }}
     >
       <div className="w-full max-w-xl text-center">
         {visual ? <div className="mb-4 flex justify-center">{visual}</div> : null}
@@ -65,13 +65,13 @@ export function SplashShell(props: SplashShellProps) {
 
         <h1
           className="mt-3 text-2xl font-semibold tracking-tight"
-          style={{ color: "var(--ink-900)", fontFamily: "var(--font-serif-sc)" }}
+          style={{ color: "var(--color-text-primary)", fontFamily: "var(--font-serif-sc)" }}
         >
           {title}
         </h1>
 
         {body ? (
-          <p className="mt-3 text-sm leading-6" style={{ color: "var(--ink-500)" }}>
+          <p className="mt-3 text-sm leading-6" style={{ color: "var(--color-text-tertiary)" }}>
             {body}
           </p>
         ) : null}
@@ -96,7 +96,7 @@ export function SplashShell(props: SplashShellProps) {
         {steps && steps.length > 0 ? (
           <ol className="mt-6 flex flex-col items-start gap-3 text-left">
             {steps.map((step) => (
-              <li key={step.label} className="flex items-start gap-3 text-sm" style={{ color: "var(--ink-700)" }}>
+              <li key={step.label} className="flex items-start gap-3 text-sm" style={{ color: "var(--color-text-secondary)" }}>
                 <span
                   aria-hidden="true"
                   className="mt-1.5 h-2 w-2 shrink-0 rounded-full"
@@ -115,11 +115,11 @@ export function SplashShell(props: SplashShellProps) {
             {actions.map((action) => {
               const isPrimary = action.tone !== "secondary";
               const style = isPrimary
-                ? { background: accentColor ?? "var(--accent)", color: "var(--surface-2)" }
+                ? { background: accentColor ?? "var(--color-accent)", color: "var(--color-bg-surface-strong)" }
                 : {
                     background: "transparent",
-                    color: "var(--ink-700)",
-                    border: "1px solid rgba(15, 125, 140, 0.22)",
+                    color: "var(--color-text-secondary)",
+                    border: "1px solid var(--color-border-strong)",
                   };
               const className = "inline-flex min-h-[40px] items-center gap-2 rounded-[var(--radius-md)] px-4 text-sm font-medium transition-opacity hover:opacity-90";
               if (action.href) {
