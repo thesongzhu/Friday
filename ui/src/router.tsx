@@ -51,6 +51,7 @@ const StudioPage = lazy(async () => import("@/routes/studio-page").then((module)
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 const ChannelsPage = lazy(async () => import("@/routes/channels-page").then((module) => ({ default: module.ChannelsPage })));
 const TaskWorkflowsPage = lazy(async () => import("@/routes/task-workflows-page").then((module) => ({ default: module.TaskWorkflowsPage })));
+const EvidencePage = lazy(async () => import("@/routes/evidence-page").then((module) => ({ default: module.EvidencePage })));
 const CloudWorkersPage = lazy(async () => import("@/routes/cloud-workers-page").then((module) => ({ default: module.CloudWorkersPage })));
 
 /**
@@ -514,6 +515,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载工作流", "Loading workflows")} detail={localizedText("Friday 正在准备工作流部署和可视化面板。", "Friday is preparing workflow deploy and visualization surfaces.")}>
                 <WorkflowsPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "evidence",
+            element: (
+              <RouteSuspense title={localizedText("加载证据", "Loading evidence")} detail={localizedText("Friday 正在准备证据搜索、回执车道和脱敏检查器。", "Friday is preparing evidence search, receipt lanes, and the redacted inspector.")}>
+                <EvidencePage />
               </RouteSuspense>
             ),
           },

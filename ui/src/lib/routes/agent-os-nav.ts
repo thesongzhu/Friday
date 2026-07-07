@@ -102,6 +102,11 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: localizedText("查看运行事件、告警、审计和恢复证据。", "Review runtime events, alerts, audit trails, and recovery evidence."),
   },
   {
+    label: localizedText("证据", "Evidence"),
+    path: "/evidence",
+    description: localizedText("搜索证据引用、检查回执车道和服务端脱敏原文。", "Search evidence refs, inspect receipt lanes, and review server-redacted raw refs."),
+  },
+  {
     label: localizedText("任务工作台", "Mission Workbench"),
     path: "/mission-workbench",
     description: localizedText("查看任务、工作项、证据引用和受限时间线。", "Inspect Missions, WorkItems, proof refs, and bounded timeline rows."),
@@ -172,6 +177,9 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   }
   if (pathname.startsWith("/observability")) {
     return localizedText("可观测性", "Observability");
+  }
+  if (pathname.startsWith("/evidence")) {
+    return localizedText("证据", "Evidence");
   }
   if (pathname.startsWith("/mission-workbench")) {
     return localizedText("任务工作台", "Mission Workbench");
