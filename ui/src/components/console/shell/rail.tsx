@@ -94,28 +94,28 @@ export function Rail({ collapsed, onToggleCollapse }: RailProps) {
       <div
         className="flex h-full flex-col border-r px-3 py-4"
         style={{
-          background: "var(--surface-1)",
-          borderColor: "var(--ink-300)",
-          borderRightColor: "rgba(18, 40, 45, 0.10)",
+          background: "var(--color-bg-chrome)",
+          borderColor: "var(--color-text-faint)",
+          borderRightColor: "var(--color-border-soft)",
         }}
       >
         <div className={cn("flex items-center gap-2 px-1 pb-3", collapsed ? "justify-center" : "justify-between")}>
           {collapsed ? (
             <p
               className="text-base font-semibold tracking-tight"
-              style={{ color: "var(--ink-900)" }}
+              style={{ color: "var(--color-text-primary)" }}
               aria-label="Friday"
             >
               F
             </p>
           ) : (
             <div className="min-w-0">
-              <p className="text-base font-semibold tracking-tight" style={{ color: "var(--ink-900)" }}>
+              <p className="text-base font-semibold tracking-tight" style={{ color: "var(--color-text-primary)" }}>
                 Friday
               </p>
               <p
                 className="mt-0.5 text-xs italic"
-                style={{ fontFamily: "var(--font-serif-sc)", color: "var(--ink-500)" }}
+                style={{ fontFamily: "var(--font-serif-sc)", color: "var(--color-text-tertiary)" }}
               >
                 Console
               </p>
@@ -126,8 +126,8 @@ export function Rail({ collapsed, onToggleCollapse }: RailProps) {
             onClick={onToggleCollapse}
             aria-label={localize(locale, collapsed ? "展开导航" : "收起导航", collapsed ? "Expand rail" : "Collapse rail")}
             aria-pressed={collapsed}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] transition-colors hover:bg-[color:var(--accent-soft)]"
-            style={{ color: "var(--ink-500)" }}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] transition-colors hover:bg-[color:var(--color-accent-soft)]"
+            style={{ color: "var(--color-text-tertiary)" }}
           >
             {collapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
           </button>
@@ -141,7 +141,7 @@ export function Rail({ collapsed, onToggleCollapse }: RailProps) {
 
         <div
           className="mt-4 border-t pt-3"
-          style={{ borderColor: "var(--surface-border)" }}
+          style={{ borderColor: "var(--color-border-soft)" }}
           aria-label="Advanced surfaces"
         >
           <nav className="space-y-1">
@@ -153,7 +153,7 @@ export function Rail({ collapsed, onToggleCollapse }: RailProps) {
 
         <div
           className="mt-auto border-t pt-3"
-          style={{ borderColor: "var(--surface-border)" }}
+          style={{ borderColor: "var(--color-border-soft)" }}
         >
           <RailNavItem
             item={{
@@ -170,7 +170,7 @@ export function Rail({ collapsed, onToggleCollapse }: RailProps) {
             onClick={() => setLocale(locale === "zh" ? "en" : "zh")}
             className="mt-2 flex w-full items-center gap-2 rounded-[var(--radius-md)] px-3 py-2 text-sm transition-colors"
             style={{
-              color: "var(--ink-700)",
+              color: "var(--color-text-secondary)",
               background: "transparent",
             }}
             aria-label={localize(locale, "切换语言", "Toggle language")}
@@ -203,8 +203,8 @@ function RailNavItem(props: {
         collapsed ? "justify-center" : "",
       )}
       style={({ isActive }) => ({
-        color: isActive ? "var(--ink-900)" : "var(--ink-700)",
-        background: isActive ? "var(--accent-soft)" : "transparent",
+        color: isActive ? "var(--color-text-primary)" : "var(--color-text-secondary)",
+        background: isActive ? "var(--color-accent-soft)" : "transparent",
       })}
     >
       <Icon className="h-4 w-4 shrink-0" />
@@ -229,8 +229,8 @@ export function MobileNav(props: { onOpenMore: () => void }) {
       aria-label="Mobile navigation"
       className="fixed inset-x-0 bottom-0 z-30 border-t lg:hidden"
       style={{
-        background: "var(--surface-1)",
-        borderColor: "var(--surface-border)",
+        background: "var(--color-bg-chrome)",
+        borderColor: "var(--color-border-soft)",
         height: "var(--shell-mobile-nav-h)",
       }}
     >
@@ -241,8 +241,8 @@ export function MobileNav(props: { onOpenMore: () => void }) {
             to={item.path}
             className="flex flex-col items-center justify-center rounded-[var(--radius-md)] text-[11px] font-medium transition-colors"
             style={({ isActive }) => ({
-              color: isActive ? "var(--ink-900)" : "var(--ink-500)",
-              background: isActive ? "var(--accent-soft)" : "transparent",
+              color: isActive ? "var(--color-text-primary)" : "var(--color-text-tertiary)",
+              background: isActive ? "var(--color-accent-soft)" : "transparent",
             })}
           >
             <item.Icon className="mb-1 h-4 w-4" />
@@ -253,7 +253,7 @@ export function MobileNav(props: { onOpenMore: () => void }) {
           type="button"
           onClick={props.onOpenMore}
           className="flex flex-col items-center justify-center rounded-[var(--radius-md)] text-[11px] font-medium"
-          style={{ color: "var(--ink-500)" }}
+          style={{ color: "var(--color-text-tertiary)" }}
           aria-label={localize(locale, "更多", "More")}
         >
           <BarChart3 className="mb-1 h-4 w-4" />
