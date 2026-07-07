@@ -68,4 +68,17 @@ describe("prod parity PR body gate", () => {
     expect(placeholderProof.stderr).toContain("Native module build proof");
     expect(placeholderProof.stderr).toContain("Deployment restart required: Rust services");
   });
+
+  it("rejects negated prod-parity declarations", () => {
+    const negatedProof = runGate(
+      [
+        "Native module build proof: I did not build native modules for this lockfile update.",
+        "Deployment restart required: Rust services do not need restart for this schema change.",
+      ].join("\n"),
+      ["pnpm-lock.yaml", "src/state/sqlite/migrations/v100-new.ts"],
+    );
+    expect(negatedProof.status).toBe(1);
+    expect(negatedProof.stderr).toContain("Native module build proof");
+    expect(negatedProof.stderr).toContain("Deployment restart required: Rust services");
+  });
 });
