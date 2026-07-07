@@ -10,7 +10,7 @@ describe("UI-W2 usage page token drift", () => {
 
     expect(forbiddenLegacyProgressColors.filter((fragment) => source.includes(fragment))).toEqual([]);
     expect(source).toContain('const USAGE_INPUT_BAR_COLOR = "var(--color-accent)"');
-    expect(source).toContain('const USAGE_OUTPUT_BAR_COLOR = "var(--color-coral)"');
+    expect(source).toContain('const USAGE_OUTPUT_BAR_COLOR = "var(--coral)"');
     expect(source).toContain('const USAGE_PROVIDER_BAR_COLOR = "var(--color-accent)"');
   });
 });
