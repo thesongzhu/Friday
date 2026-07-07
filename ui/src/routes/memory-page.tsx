@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Brain, Plus, Search, Tag, Trash2 } from "lucide-react";
+import { Brain, FileDown, Plus, Search, ShieldCheck, Tag, Trash2 } from "lucide-react";
 import { SkeletonList } from "@/components/core/primitives";
 import { toast } from "sonner";
 import { ActionButton, ConfirmDialog, ShellCard, StatusPill } from "@/components/core/primitives";
@@ -99,16 +99,20 @@ export function MemoryPage() {
   const searchResultById = new Map((searchResults ?? []).map((result) => [result.item.id, result]));
 
   return (
-    <div className="space-y-4">
-      {/* Teach Friday quick action */}
-      <div className="rounded-2xl border border-[color:var(--color-accent-soft)] bg-[color:var(--color-accent-muted)] p-5">
+    <div data-ui-screen="desktop-memory-passport" className="space-y-4">
+      <section data-ui-component="memory-passport-header" className="rounded-2xl border border-[color:var(--color-accent-soft)] bg-[color:var(--color-accent-muted)] p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--color-text-tertiary)]">Memory Passport</p>
             <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">
               {localize(locale, "教 Friday 记住你需要的", "Teach Friday what you need")}
             </p>
             <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
-              {localize(locale, "主动告诉 Friday 需要记住的信息，让它更了解你的工作方式。", "Tell Friday what to remember so it understands your workflow better.")}
+              {localize(
+                locale,
+                "主动告诉 Friday 需要记住的信息；no silent memory write，保存和召回都要经过可见边界。",
+                "Tell Friday what to remember; no silent memory write, and stored memory / recall stay behind visible boundaries.",
+              )}
             </p>
           </div>
           <ActionButton onClick={() => setShowAddForm(true)}>
@@ -116,7 +120,43 @@ export function MemoryPage() {
             {localize(locale, "添加记忆", "Add Memory")}
           </ActionButton>
         </div>
-      </div>
+      </section>
+
+      <section data-ui-component="memory-authority-boundaries" className="grid gap-3 lg:grid-cols-3">
+        <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4">
+          <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[color:var(--color-text-primary)]">
+            <ShieldCheck className="h-4 w-4 text-[color:var(--color-accent)]" aria-hidden="true" />
+            {localize(locale, "写入权限", "Write authority")}
+          </div>
+          <p className="text-xs leading-5 text-[color:var(--color-text-secondary)]">
+            memory_review_no_silent_write_decide_candidate · no silent memory write · candidate_review_only.
+          </p>
+        </div>
+        <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4">
+          <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{localize(locale, "召回边界", "Recall boundary")}</p>
+          <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+            stored memory !== automatic recall PASS; runtime recall proof required before any task claims it used memory.
+          </p>
+        </div>
+        <div className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4">
+          <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{localize(locale, "缺口状态", "Gap state")}</p>
+          <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+            NO-GO for hidden learning, background writes, and unproven automatic recall.
+          </p>
+        </div>
+      </section>
+
+      <section data-ui-component="memory-candidate-review" className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{localize(locale, "候选记忆审查", "Candidate memory review")}</p>
+            <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+              Candidate rows must stay candidate_review_only until the Memory Spine decision route records explicit approval or rejection.
+            </p>
+          </div>
+          <StatusPill tone="warning">NO-GO</StatusPill>
+        </div>
+      </section>
 
       <ShellCard eyebrow={localize(locale, "记忆存储", "Memory Store")} title={localize(locale, "已记忆的知识", "Stored Knowledge")}>
         <div className="space-y-4">
@@ -128,7 +168,7 @@ export function MemoryPage() {
             )}
           </p>
 
-          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_180px_auto_auto]">
+          <div data-ui-component="memory-passport-search" className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_180px_auto_auto]">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--color-text-faint)]" aria-hidden="true" />
               <input
@@ -190,7 +230,7 @@ export function MemoryPage() {
                   ? localize(locale, `"${activeSearch}" 的 ${String(displayItems.length)} 条结果`, `${String(displayItems.length)} results for "${activeSearch}"`)
                   : localize(locale, `共 ${String(displayItems.length)} 条记忆`, `${String(displayItems.length)} items total`)}
             </p>
-            <div className="flex gap-2">
+            <div data-ui-component="memory-passport-store" className="flex gap-2">
               <ActionButton tone="secondary" onClick={() => setShowAddForm(!showAddForm)}>
                 <Plus className="mr-1 h-3 w-3" aria-hidden="true" />
                 {localize(locale, "添加记忆", "Add Memory")}
@@ -265,6 +305,7 @@ export function MemoryPage() {
                     onClick={() => setDeleteConfirmId(item.id)}
                     disabled={deleteMutation.isPending}
                     aria-label={localize(locale, "删除此记忆", "Delete this memory")}
+                    data-ui-component="memory-passport-revoke"
                     className="shrink-0 rounded-xl p-2 text-[color:var(--color-text-faint)] transition-colors hover:bg-[color:var(--color-bg-contrast)] hover:text-[color:var(--color-text-primary)]"
                   >
                     <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -295,6 +336,20 @@ export function MemoryPage() {
           ))}
         </div>
       )}
+      <section data-ui-component="memory-passport-export" className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{localize(locale, "导出与证明", "Export and proof")}</p>
+            <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+              Export is a review surface; stored memory !== automatic recall PASS, and runtime recall proof required before closing any memory-backed claim.
+            </p>
+          </div>
+          <ActionButton tone="secondary" disabled>
+            <FileDown className="mr-2 h-4 w-4" aria-hidden="true" />
+            {localize(locale, "导出待证明", "Export pending proof")}
+          </ActionButton>
+        </div>
+      </section>
       <ConfirmDialog
         open={deleteConfirmId !== null}
         title={localize(locale, "确认删除记忆", "Delete Memory")}

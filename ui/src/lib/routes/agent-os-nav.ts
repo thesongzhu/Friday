@@ -73,7 +73,7 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
   {
     label: localizedText("记忆", "Memory"),
     path: "/memory",
-    description: localizedText("查看、搜索并管理 Friday 记住了什么。", "View, search, and manage what Friday remembers about you."),
+    description: localizedText("Memory Passport：查看、搜索、撤销并审查 Friday 记住了什么。", "Memory Passport: view, search, revoke, and review what Friday remembers about you."),
   },
   {
     label: localizedText("成长中心", "Reflex"),
