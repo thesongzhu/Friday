@@ -11,7 +11,7 @@ describe("UI-W2 console shell token contract", () => {
   it("keeps console shell chrome on selected color tokens", () => {
     const source = readFileSync(consoleShellPath, "utf8");
 
-    expect(source).not.toMatch(/var\(--(?:surface|ink|accent|accent-soft|rust|ok|danger)[^)]*\)/);
+    expect(source).not.toMatch(/var\(--(?:surface|ink|accent|accent-soft|rust|ok|danger|paper|line|bg|hair|faint|muted)[^)]*\)/);
     expect(source).not.toContain("rgba(15, 125, 140");
 
     expect(source).toContain("var(--color-bg-base)");
