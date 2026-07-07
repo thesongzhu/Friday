@@ -19,6 +19,25 @@ function readChangedFiles(path) {
     .filter(Boolean);
 }
 
+function declarationValue(body, label) {
+  const prefix = `${label}:`;
+  const line = body
+    .split(/\r?\n/u)
+    .map((entry) => entry.trim())
+    .find((entry) => entry.toLowerCase().startsWith(prefix.toLowerCase()));
+  if (!line) return null;
+  return line.slice(prefix.length).trim();
+}
+
+function hasConcreteDeclaration(body, label, predicate) {
+  const value = declarationValue(body, label);
+  if (!value) return false;
+  if (/\b(todo|tbd|placeholder|unknown|none|n\/a|not applicable|pending|later|skip|skipped)\b/iu.test(value)) {
+    return false;
+  }
+  return predicate(value);
+}
+
 const eventPath = argValue("--event") ?? process.env.GITHUB_EVENT_PATH;
 const changedFilesPath = argValue("--changed-files");
 
@@ -44,7 +63,7 @@ const body = typeof pullRequest.body === "string" ? pullRequest.body : "";
 const changedFiles = readChangedFiles(resolve(changedFilesPath));
 
 const lockfileChanged = changedFiles.some((file) => (
-  file === "pnpm-lock.yaml" || file === "package-lock.json"
+  file === "pnpm-lock.yaml" || file === "package-lock.json" || file === "rust-core/Cargo.lock"
 ));
 
 const schemaChanged = changedFiles.some((file) => (
@@ -59,12 +78,30 @@ const schemaChanged = changedFiles.some((file) => (
 
 const missing = [];
 
-if (lockfileChanged && !/Native module build proof:\s*\S/i.test(body)) {
-  missing.push("Native module build proof: <how this PR proved native modules such as better-sqlite3 can build>");
+const hasNativeModuleBuildProof = hasConcreteDeclaration(
+  body,
+  "Native module build proof",
+  (value) => (
+    value.length >= 20
+    && /\b(build|built|rebuild|rebuilt|compile|compiled|install|installed|npm ci|pnpm install|pnpm rebuild|better-sqlite3|native modules?|\.node|node-gyp|prebuild)\b/iu.test(value)
+  ),
+);
+
+const hasRustRestartDeclaration = hasConcreteDeclaration(
+  body,
+  "Deployment restart required",
+  (value) => (
+    /\bRust services\b/u.test(value)
+    && /\b(restart|restarted|kickstart|kickstarted|redeploy|roll|bounce)\b/iu.test(value)
+  ),
+);
+
+if (lockfileChanged && !hasNativeModuleBuildProof) {
+  missing.push("Native module build proof: <concrete native-module build command/result, not TODO or placeholder>");
 }
 
-if (schemaChanged && !/Deployment restart required:\s*Rust services\b/i.test(body)) {
-  missing.push("Deployment restart required: Rust services");
+if (schemaChanged && !hasRustRestartDeclaration) {
+  missing.push("Deployment restart required: Rust services; <concrete restart/kickstart sequence>");
 }
 
 if (missing.length > 0) {
