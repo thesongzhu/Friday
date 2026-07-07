@@ -330,8 +330,13 @@ export function EvidencePage() {
   );
 
   const refresh = () => {
+    const nextWorkflowId = workflowId.trim();
     setSubmittedQuery(query);
-    setSubmittedWorkflowId(workflowId);
+    if (nextWorkflowId === submittedWorkflowId) {
+      void evidenceQuery.refetch();
+      return;
+    }
+    setSubmittedWorkflowId(nextWorkflowId);
   };
 
   const inspect = async (entry: TaskWorkflowEvidenceExplorerEntry) => {
