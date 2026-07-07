@@ -3952,9 +3952,19 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     },
     revokeSatellite: (satelliteId, reason) => {
       deps.db.withWriteTransaction((db) => {
-        db.prepare(
+        const satelliteUpdate = db.prepare(
           "UPDATE satellites SET pairing_status = 'revoked', updated_at = ? WHERE id = ?",
         ).run(deps.nowIso(), satelliteId);
+        if (satelliteUpdate.changes === 0) {
+          throw new FridayDomainError(
+            "SATELLITE_NOT_FOUND",
+            "Security satellite revoke did not match any satellite",
+            {
+              httpStatus: 404,
+              details: { satelliteId },
+            },
+          );
+        }
       });
       return { revoked: true, satelliteId };
     },
