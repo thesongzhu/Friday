@@ -242,12 +242,21 @@ export function MemoryPage() {
           </div>
 
           {showAddForm && (
-            <AddMemoryForm
-              locale={locale}
-              onSubmit={(input) => storeMutation.mutate(input)}
-              pending={storeMutation.isPending}
-              onCancel={() => setShowAddForm(false)}
-            />
+            <div data-ui-component="memory-passport-user-write" className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
+              <p className="mb-3 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                {localize(
+                  locale,
+                  "user_initiated_explicit_write：Add Memory is not silent learning；background candidates stay candidate_review_only，直到 Memory Spine 决策路由记录批准或拒绝。",
+                  "user_initiated_explicit_write: Add Memory is not silent learning; background candidates stay candidate_review_only until the Memory Spine decision route records approval or rejection.",
+                )}
+              </p>
+              <AddMemoryForm
+                locale={locale}
+                onSubmit={(input) => storeMutation.mutate(input)}
+                pending={storeMutation.isPending}
+                onCancel={() => setShowAddForm(false)}
+              />
+            </div>
           )}
         </div>
       </ShellCard>
