@@ -9,13 +9,18 @@ const advanceScript = resolve(
   "scripts/ops/friday-advance-prod-hub-to-main.sh",
 );
 
-function currentOriginMain(): string {
-  const result = spawnSync("git", ["rev-parse", "origin/main"], {
+function revParse(ref: string): string | null {
+  const result = spawnSync("git", ["rev-parse", "--verify", ref], {
     cwd: repoRoot,
     encoding: "utf8",
   });
-  expect(result.status, result.stderr).toBe(0);
-  return result.stdout.trim();
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function currentOriginMain(): string {
+  const signedSha = revParse("origin/main") ?? revParse("HEAD");
+  expect(signedSha, "expected a local signed target SHA").toBeTruthy();
+  return signedSha!;
 }
 
 function orderedIndexes(haystack: string, needles: string[]): number[] {
