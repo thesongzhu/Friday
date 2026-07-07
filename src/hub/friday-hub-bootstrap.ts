@@ -857,9 +857,17 @@ export function resolveFridayHubConfig(
     logRequests = true;
   }
 
+  const allowTestOnlyPluginExecution = resolveTestOnlyFlagFromEnv(
+    input.allowTestOnlyPluginExecution,
+    env.FRIDAY_ALLOW_TEST_ONLY_PLUGIN_EXECUTION,
+  );
+  const allowTestOnlyAutonomyLifecycleExecution = resolveTestOnlyFlagFromEnv(
+    input.allowTestOnlyAutonomyLifecycleExecution,
+    env.FRIDAY_ALLOW_TEST_ONLY_AUTONOMY_LIFECYCLE_EXECUTION,
+  );
   const pluginRuntimeModeRaw = input.pluginRuntimeMode ?? env.FRIDAY_PLUGIN_RUNTIME_MODE ?? "stub";
   const pluginRuntimeMode = pluginRuntimeModeRaw === "full"
-    && (input.allowTestOnlyPluginExecution === true || input.allowTestOnlyAutonomyLifecycleExecution === true)
+    && (allowTestOnlyPluginExecution === true || allowTestOnlyAutonomyLifecycleExecution === true)
     ? "full"
     : "stub";
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(env);
@@ -888,6 +896,8 @@ export function resolveFridayHubConfig(
     serverVersion,
     corsOrigins,
     logRequests,
+    allowTestOnlyAutonomyLifecycleExecution,
+    allowTestOnlyPluginExecution,
     pluginRuntimeMode,
     pipelineEnabled: pipelineRuntimeConfig.enabled,
     pipelineMode: pipelineRuntimeConfig.mode,
@@ -899,6 +909,20 @@ export function resolveFridayHubConfig(
 function isFridayCanonicalGateProtectedProfile(env: NodeJS.ProcessEnv): boolean {
   return env.NODE_ENV?.trim().toLowerCase() === "production"
     || Boolean(env.FRIDAY_RELEASE_TAG?.trim());
+}
+
+function resolveTestOnlyFlagFromEnv(
+  configValue: boolean | undefined,
+  envValue: string | undefined,
+): boolean | undefined {
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (envValue ?? "").trim().toLowerCase();
+  if (raw === "") {
+    return undefined;
+  }
+  return raw === "1" || raw === "true";
 }
 
 export function resolveFridayCanonicalMutatingActionGate(
@@ -1477,13 +1501,24 @@ export async function createFridayHub(
   const capabilityGates = resolveFridayCapabilityGates(process.env);
   const crossChannelIdentityEnabled = process.env.FRIDAY_CROSS_CHANNEL_IDENTITY_ENABLED === "true";
   const crossChannelIdentityMap = parseFridayChannelIdentityMap(process.env.FRIDAY_CHANNEL_IDENTITY_MAP);
+  const configuredAllowTestOnlyPluginExecution = resolveTestOnlyFlagFromEnv(
+    config.allowTestOnlyPluginExecution,
+    process.env.FRIDAY_ALLOW_TEST_ONLY_PLUGIN_EXECUTION,
+  );
+  const configuredAllowTestOnlyAutonomyLifecycleExecution = resolveTestOnlyFlagFromEnv(
+    config.allowTestOnlyAutonomyLifecycleExecution,
+    process.env.FRIDAY_ALLOW_TEST_ONLY_AUTONOMY_LIFECYCLE_EXECUTION,
+  );
   const configuredPluginRuntimeModeRaw = (
     config.pluginRuntimeMode ??
     process.env.FRIDAY_PLUGIN_RUNTIME_MODE ??
     "stub"
   );
   const configuredPluginRuntimeMode = configuredPluginRuntimeModeRaw === "full"
-    && (config.allowTestOnlyPluginExecution === true || config.allowTestOnlyAutonomyLifecycleExecution === true)
+    && (
+      configuredAllowTestOnlyPluginExecution === true
+      || configuredAllowTestOnlyAutonomyLifecycleExecution === true
+    )
     ? "full"
     : "stub";
 
@@ -7562,7 +7597,7 @@ export async function createFridayHub(
     routeWorkflowsViaRust: resolveRouteWorkflowsViaRust(config.routeWorkflowsViaRust),
     routeWorkflowRunsViaRust: resolveRouteWorkflowRunsViaRust(config.routeWorkflowRunsViaRust),
     allowTestOnlyAgentRunControlExecution: config.allowTestOnlyAgentRunControlExecution,
-    allowTestOnlyAutonomyLifecycleExecution: config.allowTestOnlyAutonomyLifecycleExecution,
+    allowTestOnlyAutonomyLifecycleExecution: configuredAllowTestOnlyAutonomyLifecycleExecution,
     allowTestOnlyStandingAgendaExecution: config.allowTestOnlyStandingAgendaExecution,
     allowTestOnlyAutonomyPolicyMutation: config.allowTestOnlyAutonomyPolicyMutation,
     allowTestOnlyCapabilityAcquisitionExecution: config.allowTestOnlyCapabilityAcquisitionExecution,
@@ -7571,7 +7606,7 @@ export async function createFridayHub(
     allowTestOnlySessionMemoryExtractionExecution: config.allowTestOnlySessionMemoryExtractionExecution,
     allowTestOnlyRealtimeExecution: config.allowTestOnlyRealtimeExecution,
     allowTestOnlySkillConverterExecution: config.allowTestOnlySkillConverterExecution,
-    allowTestOnlyPluginExecution: config.allowTestOnlyPluginExecution,
+    allowTestOnlyPluginExecution: configuredAllowTestOnlyPluginExecution,
     allowTestOnlyProviderDetectExecution: config.allowTestOnlyProviderDetectExecution,
     allowTestOnlyProviderProbeExecution: config.allowTestOnlyProviderProbeExecution,
     allowTestOnlyProviderRoutingControlsExecution: config.allowTestOnlyProviderRoutingControlsExecution,
