@@ -16,13 +16,13 @@ export function UsageRightRailSlot() {
       <header>
         <p
           className="text-[10px] font-semibold uppercase tracking-[0.16em]"
-          style={{ color: "var(--ink-300)" }}
+          style={{ color: "var(--color-text-faint)" }}
         >
           {localize(locale, "用量", "Usage")}
         </p>
         <h3
           className="mt-1 text-sm font-semibold"
-          style={{ color: "var(--ink-900)", fontFamily: "var(--font-serif-sc)" }}
+          style={{ color: "var(--color-text-primary)", fontFamily: "var(--font-serif-sc)" }}
         >
           {localize(locale, "今日花费", "Today's cost")}
         </h3>
@@ -57,24 +57,24 @@ function Row(props: { to: string; Icon: typeof Gauge; title: string; hint: strin
     <li>
       <NavLink
         to={props.to}
-        className="group flex items-start gap-3 rounded-[var(--radius-md)] border px-3 py-3 transition-colors hover:bg-[color:var(--accent-soft)]"
+        className="group flex items-start gap-3 rounded-[var(--radius-md)] border px-3 py-3 transition-colors hover:bg-[color:var(--color-accent-soft)]"
         style={{
-          borderColor: "var(--surface-border)",
-          background: "var(--surface-2)",
+          borderColor: "var(--color-border-soft)",
+          background: "var(--color-bg-subtle)",
         }}
       >
-        <props.Icon className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--accent)" }} />
+        <props.Icon className="mt-0.5 h-4 w-4 shrink-0" style={{ color: "var(--color-accent)" }} />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium" style={{ color: "var(--ink-900)" }}>
+          <p className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>
             {props.title}
           </p>
-          <p className="mt-0.5 text-xs" style={{ color: "var(--ink-500)" }}>
+          <p className="mt-0.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
             {props.hint}
           </p>
         </div>
         <ChevronRight
           className="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-          style={{ color: "var(--ink-500)" }}
+          style={{ color: "var(--color-text-secondary)" }}
         />
       </NavLink>
     </li>
