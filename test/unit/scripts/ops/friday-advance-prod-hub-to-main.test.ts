@@ -36,6 +36,8 @@ describe("Friday production advance script", () => {
     expect(source).toContain("operator must compare this SHA to the military SIGN report");
     expect(source).not.toContain('TARGET_REF="${TARGET_REF:-origin/main}"');
     expect(source).not.toContain("git reset --hard origin/main");
+    expect(source).not.toContain("git pull --ff-only origin main");
+    expect(source).toContain("verify_checked_out_signed_target");
   });
 
   it("hardens the deploy order from checkout through native, Rust, services, and health gates", () => {
@@ -51,13 +53,24 @@ describe("Friday production advance script", () => {
     expect(source).toContain("/v1/health");
     expect(source).toContain("verify_schema_handshake");
     expect(source).toContain("CURRENT_SCHEMA_VERSION");
+    expect(source).toContain("check-read-projection-runtime-freshness.mjs");
+    expect(source).toContain("--require-current-schema");
+    expect(source).toContain("--require-running-current");
     expect(source).toContain("lockfile/schema changed");
     expect(source).toContain("git rollback is not sufficient");
+    expect(source).not.toContain("Deployment order manifest");
+    expect(source).not.toContain("grep -q \"CURRENT_SCHEMA_VERSION\"");
 
-    const indexes = orderedIndexes(source, [
+    const executableSource = source
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
+
+    const indexes = orderedIndexes(executableSource, [
       "git -C \"${REPO_DIR}\" fetch origin main",
       "git -C \"${REPO_DIR}\" switch main",
       "git -C \"${REPO_DIR}\" checkout \"${SIGNED_SHA}\"",
+      "verify_checked_out_signed_target",
       "pnpm install --frozen-lockfile",
       "verify_better_sqlite3_native_binding",
       "--bin hub_agent_run_server --bin hub_read_projection_server",
@@ -69,6 +82,27 @@ describe("Friday production advance script", () => {
     ]);
 
     expect(indexes).toEqual([...indexes].sort((a, b) => a - b));
+  });
+
+  it("prints recovery steps on fail-closed deployment exits", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        advanceScript,
+        "--repo",
+        repoRoot,
+        "--signed-sha",
+        "0000000",
+      ],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(73);
+    expect(result.stderr).toContain("Recovery checklist");
+    expect(result.stderr).toContain("git rollback is not sufficient");
   });
 
   it("dry-runs the same signed deployment sequence without touching launchd or production state", () => {
@@ -100,6 +134,8 @@ describe("Friday production advance script", () => {
       "git fetch origin main",
       "git switch main",
       "git checkout c47ab5e4a1662c3b02b68987953d34342aef938a",
+      "verify checked out signed target",
+      "git checkout c47ab5e4a1662c3b02b68987953d34342aef938a",
       "pnpm install --frozen-lockfile",
       "verify better_sqlite3.node",
       "cargo build --release",
@@ -111,5 +147,6 @@ describe("Friday production advance script", () => {
     ]);
 
     expect(indexes).toEqual([...indexes].sort((a, b) => a - b));
+    expect(result.stdout).not.toContain("git pull --ff-only origin main");
   });
 });
