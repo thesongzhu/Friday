@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import {
@@ -61,6 +61,65 @@ const ACTIVE_RUN_STATUSES = new Set([
   "testing",
   "fixing",
 ]);
+
+type FridayPetStageRuntime = {
+  destroy: () => void;
+};
+
+type FridayPetStageApi = {
+  createStage: (
+    stage: HTMLElement,
+    options: {
+      surface: string;
+      height: number;
+      behavior: string;
+      ecoAllowlist: string[];
+      interactive?: boolean;
+      autoSchedule?: boolean;
+    },
+  ) => Promise<FridayPetStageRuntime>;
+};
+
+declare global {
+  interface Window {
+    FridayPetStage?: FridayPetStageApi;
+    __fridayMobileWebHeroPetReady?: boolean;
+    __fridayMobileWebHeroPetError?: string | null;
+  }
+}
+
+let fridayPetStageEnginePromise: Promise<void> | null = null;
+
+function loadFridayPetStageEngine(): Promise<void> {
+  if (window.FridayPetStage) {
+    return Promise.resolve();
+  }
+  if (fridayPetStageEnginePromise) {
+    return fridayPetStageEnginePromise;
+  }
+  fridayPetStageEnginePromise = new Promise((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>('script[data-friday-pet-stage-engine="mobile-web"]');
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(), { once: true });
+      existingScript.addEventListener("error", () => reject(new Error("pet-stage-engine load failed")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "/pet-stage-engine.js?v=mobile-web-v9-20260706";
+    script.async = true;
+    script.dataset.fridayPetStageEngine = "mobile-web";
+    script.onload = () => {
+      if (window.FridayPetStage) {
+        resolve();
+        return;
+      }
+      reject(new Error("FridayPetStage unavailable after script load"));
+    };
+    script.onerror = () => reject(new Error("pet-stage-engine load failed"));
+    document.head.appendChild(script);
+  });
+  return fridayPetStageEnginePromise;
+}
 
 type ConsoleScheduledAutomation = Pick<
   AgentAutomationRecord,
@@ -245,6 +304,166 @@ function runtimeChipParts(status: SystemHealthStatus, locale: "zh" | "en") {
   };
 }
 
+function MobileWebHeroPetStage(props: { locale: "zh" | "en" }) {
+  const { locale } = props;
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [petError, setPetError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let runtime: FridayPetStageRuntime | null = null;
+    const stage = stageRef.current;
+    window.__fridayMobileWebHeroPetReady = false;
+    window.__fridayMobileWebHeroPetError = null;
+
+    if (!stage) {
+      return () => {};
+    }
+
+    stage.querySelectorAll(".friday-pet-actor").forEach((node) => node.remove());
+    loadFridayPetStageEngine()
+      .then(() => {
+        if (cancelled || !window.FridayPetStage) {
+          return undefined;
+        }
+        return window.FridayPetStage.createStage(stage, {
+          surface: "mobile",
+          height: 168,
+          behavior: "locked-core-only",
+          ecoAllowlist: [],
+          interactive: true,
+          autoSchedule: true,
+        });
+      })
+      .then((nextRuntime) => {
+        if (!nextRuntime) {
+          return;
+        }
+        if (cancelled) {
+          nextRuntime.destroy();
+          return;
+        }
+        runtime = nextRuntime;
+        window.__fridayMobileWebHeroPetReady = true;
+        window.__fridayMobileWebHeroPetError = null;
+        setPetError(null);
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        window.__fridayMobileWebHeroPetError = message;
+        if (!cancelled) {
+          setPetError(message);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      runtime?.destroy();
+      runtime = null;
+    };
+  }, []);
+
+  return (
+    <div
+      data-testid="mobile-web-hero-pet"
+      data-friday-pet-stage="mobile-web"
+      data-friday-pet-render="v9-canvas"
+      data-friday-pet-engine="pet-stage-engine"
+      data-friday-mobile-strategy="design-truth-aligned"
+      className="relative min-h-[168px] overflow-hidden rounded-[8px] border"
+      style={{
+        background: "#eef3e8",
+        borderColor: "var(--color-border-soft)",
+      }}
+    >
+      <style>{`
+        .friday-mobile-web-pet-stage .friday-pet-actor {
+          --face: 1;
+          --foot-css-x: 50%;
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 190px;
+          height: 160px;
+          transform-origin: var(--foot-css-x) 100%;
+          transform: scaleX(var(--face));
+          will-change: left, transform;
+        }
+        .friday-mobile-web-pet-stage .friday-pet-actor canvas {
+          position: absolute;
+          inset: 0;
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+        .friday-mobile-web-pet-stage .friday-pet-actor.boing {
+          animation: fridayMobileWebPetBoing .36s ease-out;
+        }
+        @keyframes fridayMobileWebPetBoing {
+          0% { transform: scaleX(var(--face)) scaleY(1); }
+          30% { transform: scaleX(var(--face)) scaleY(1.05); }
+          100% { transform: scaleX(var(--face)) scaleY(1); }
+        }
+        .friday-mobile-web-pet-stage .friday-pet-fx {
+          position: absolute;
+          left: 50%;
+          top: 4px;
+          width: 120px;
+          height: 82px;
+          transform: translateX(-50%);
+          pointer-events: none;
+          color: #e33131;
+        }
+        .friday-mobile-web-pet-stage .friday-pet-fx span {
+          position: absolute;
+          left: 50%;
+          bottom: 0;
+          font-size: 18px;
+          line-height: 1;
+          color: #e33131;
+          text-shadow: 0 1px 0 #fff5f2, 0 2px 5px rgba(165,35,35,.18);
+          opacity: 0;
+          transform: translate(-50%, 8px) scale(.55);
+        }
+        .friday-mobile-web-pet-stage .friday-pet-fx.go span {
+          animation: fridayMobileWebPetHeartFloat 1.15s ease-out both;
+        }
+        .friday-mobile-web-pet-stage .friday-pet-fx.go span:nth-child(2) { animation-delay: .05s; }
+        .friday-mobile-web-pet-stage .friday-pet-fx.go span:nth-child(3) { animation-delay: .11s; }
+        .friday-mobile-web-pet-stage .friday-pet-fx.go span:nth-child(4) { animation-delay: .17s; }
+        .friday-mobile-web-pet-stage .friday-pet-fx.go span:nth-child(5) { animation-delay: .23s; }
+        @keyframes fridayMobileWebPetHeartFloat {
+          0% { opacity: 0; transform: translate(-50%, 8px) scale(.55); }
+          18% { opacity: 1; }
+          100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), var(--dy)) scale(var(--s)); }
+        }
+      `}</style>
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,#f8faf2_0%,#e5efdd_100%)]" aria-hidden="true" />
+      <div
+        ref={stageRef}
+        aria-label={localize(locale, "Friday v9 交互宠物", "Friday v9 interactive pet")}
+        className="friday-mobile-web-pet-stage friday-pet-stage absolute bottom-1 right-0 h-[160px] w-[188px] overflow-hidden"
+      />
+      <div className="relative max-w-[210px] p-4">
+        <p className="text-xs font-semibold text-[color:var(--color-text-faint)]">
+          Friday Home
+        </p>
+        <h2 className="mt-2 text-2xl font-semibold leading-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+          {localize(locale, "状态先行", "Status first")}
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">
+          {localize(locale, "Chat 与 Status 同屏，Friday 随时可开。", "Chat and Status share the home surface so Friday is always one tap away.")}
+        </p>
+        {petError ? (
+          <p className="mt-2 text-[11px] font-semibold text-[color:var(--danger)]" data-friday-pet-status="NO-GO">
+            {localize(locale, "NO-GO：v9 pet canvas 未渲染", "NO-GO: v9 pet canvas did not render")}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function OpsMasthead(props: {
   locale: "zh" | "en";
   activeCount: number;
@@ -314,35 +533,7 @@ function MobileWebHomeSurface(props: {
       className="mb-5 lg:hidden"
     >
       <div className="grid gap-4">
-        <div
-          data-testid="mobile-web-hero-pet"
-          data-friday-pet-stage="mobile-web"
-          data-friday-mobile-strategy="design-truth-aligned"
-          className="relative min-h-[168px] overflow-hidden rounded-[8px] border"
-          style={{
-            background: "#eef3e8",
-            borderColor: "var(--color-border-soft)",
-          }}
-        >
-          <div className="absolute inset-0 bg-[linear-gradient(180deg,#f8faf2_0%,#e5efdd_100%)]" aria-hidden="true" />
-          <img
-            src="/source/pet/g-idle.png"
-            alt={localize(locale, "Friday mobile hero pet", "Friday mobile hero pet")}
-            className="absolute bottom-3 right-4 h-[132px] w-[132px] object-contain"
-            loading="eager"
-          />
-          <div className="relative max-w-[210px] p-4">
-            <p className="text-xs font-semibold text-[color:var(--color-text-faint)]">
-              Friday Home
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold leading-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, "状态先行", "Status first")}
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">
-              {localize(locale, "Chat 与 Status 同屏，Friday 随时可开。", "Chat and Status share the home surface so Friday is always one tap away.")}
-            </p>
-          </div>
-        </div>
+        <MobileWebHeroPetStage locale={locale} />
 
         <div className="grid grid-cols-2 gap-2">
           <button
