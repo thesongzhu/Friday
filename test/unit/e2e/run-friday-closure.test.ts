@@ -184,6 +184,21 @@ describe("run-friday-closure helpers", () => {
     })).toThrow(/TS_RUNTIME_PROVIDER_PROBE_RETIRED/);
   });
 
+  it("accepts Rust capability-doctor validation when the selected OpenAI key is confirmed valid", () => {
+    expect(() => assertClosureProviderValidationReady({
+      ok: true,
+      data: {
+        truthLabel: "rust_capability_doctor",
+        proofOnly: true,
+        keyValidationProbed: true,
+        keyValidation: [
+          { provider: "openai", label: "valid", status: null, detail: null },
+        ],
+        confirmedValidKeys: ["openai"],
+      },
+    })).not.toThrow();
+  });
+
   it("runStep persists an in-progress active step before completion", async () => {
     const dir = mkdtempSync(join(tmpdir(), "friday-closure-ledger-"));
     const paths = {
