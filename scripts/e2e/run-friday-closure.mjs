@@ -2053,6 +2053,9 @@ async function runLocalStage(ledger) {
       }
       modelProviderId = await createClosureProvider(baseUrl, token, closureProvider);
       const validateResult = await apiFetch(baseUrl, token, "POST", `/v1/providers/${modelProviderId}/validate`);
+      const capabilityDoctor = await apiFetch(baseUrl, token, "POST", "/v1/capabilities/doctor", {
+        validateKeys: true,
+      }, { timeoutMs: 180_000 });
       const budgetSet = await apiFetch(baseUrl, token, "PUT", "/v1/providers/budget", {
         monthlyLimitUsd: 25,
       });
@@ -2064,6 +2067,7 @@ async function runLocalStage(ledger) {
         providerKind: closureProvider.kind,
         providerEnvVar: closureProvider.envVar,
         validateResult,
+        capabilityDoctor,
         budgetSet,
         budgetGet,
         usageGet,
@@ -2072,7 +2076,10 @@ async function runLocalStage(ledger) {
       if (validateResult.status !== 200 || !validateResult.json.ok) {
         throw new Error(`Provider validate failed: ${JSON.stringify(validateResult.json)}`);
       }
-      assertClosureProviderValidationReady(validateResult.json, closureProvider.kind);
+      if (capabilityDoctor.status !== 200 || !capabilityDoctor.json.ok) {
+        throw new Error(`Capability doctor failed: ${JSON.stringify(capabilityDoctor.json)}`);
+      }
+      assertClosureProviderValidationReady(capabilityDoctor.json, closureProvider.kind);
       if (budgetSet.status !== 200 || !budgetSet.json.ok) {
         throw new Error(`Budget set failed: ${JSON.stringify(budgetSet.json)}`);
       }
