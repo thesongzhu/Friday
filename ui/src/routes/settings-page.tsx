@@ -65,6 +65,10 @@ type PendingDefaultProviderChoice = {
   defaultModel?: string;
 };
 
+type PendingSecurityRevoke =
+  | { kind: "token"; id: string; message: string }
+  | { kind: "satellite"; id: string; message: string };
+
 type LearnedFactBoundary = {
   trustLevel: string;
   memoryBoundary: string;
@@ -371,6 +375,7 @@ export function SettingsPage() {
   const [connectApiKey, setConnectApiKey] = useState("");
   const [connectOAuth, setConnectOAuth] = useState<OpenAICodexDeviceOAuthState>({ status: "idle" });
   const [pendingDefaultProviderChoice, setPendingDefaultProviderChoice] = useState<PendingDefaultProviderChoice | null>(null);
+  const [pendingSecurityRevoke, setPendingSecurityRevoke] = useState<PendingSecurityRevoke | null>(null);
   const [routingUpdatePending, setRoutingUpdatePending] = useState(false);
 
   const { data: health } = useQuery({
@@ -939,7 +944,7 @@ export function SettingsPage() {
   });
 
   const revokeTokenMutation = useMutation({
-    mutationFn: (tokenId: string) => securityApi.revokeToken(tokenId),
+    mutationFn: (tokenId: string) => securityApi.revokeToken(tokenId.trim()),
     onSuccess: async (result) => {
       toast.success(localize(locale, `令牌 ${result.tokenId} 已撤销`, `Token ${result.tokenId} revoked`));
       await queryClient.invalidateQueries({ queryKey: ["settings", "security"] });
@@ -950,7 +955,7 @@ export function SettingsPage() {
   });
 
   const revokeSatelliteMutation = useMutation({
-    mutationFn: (satelliteId: string) => securityApi.revokeSatellite(satelliteId, "Revoked from Settings Security"),
+    mutationFn: (satelliteId: string) => securityApi.revokeSatellite(satelliteId.trim(), "Revoked from Settings Security"),
     onSuccess: async (result) => {
       toast.success(localize(locale, `执行节点 ${result.satelliteId} 已撤销`, `Satellite ${result.satelliteId} revoked`));
       await queryClient.invalidateQueries({ queryKey: ["settings", "security"] });
@@ -959,6 +964,25 @@ export function SettingsPage() {
       toast.error(error instanceof Error ? error.message : localize(locale, "无法撤销执行节点。", "Could not revoke satellite."));
     },
   });
+
+  function requestSecurityRevoke(input: PendingSecurityRevoke): void {
+    const id = input.id.trim();
+    if (!id) {
+      toast.error(localize(locale, "撤销目标为空。", "Revoke target is empty."));
+      return;
+    }
+    setPendingSecurityRevoke({ ...input, id });
+  }
+
+  function confirmSecurityRevoke(): void {
+    if (!pendingSecurityRevoke) return;
+    if (pendingSecurityRevoke.kind === "token") {
+      revokeTokenMutation.mutate(pendingSecurityRevoke.id);
+    } else {
+      revokeSatelliteMutation.mutate(pendingSecurityRevoke.id);
+    }
+    setPendingSecurityRevoke(null);
+  }
 
   const preview = buildPersonaPreview(draft.settings, locale, draft.mbti || null);
   const mcpStates = assistantDiagnostics?.mcpServerStates ?? [];
@@ -2010,9 +2034,13 @@ export function SettingsPage() {
                               data-ui-component="settings-security-token-revoke"
                               tone="danger"
                               disabled={revokeTokenMutation.isPending}
-                              onClick={() => revokeTokenMutation.mutate(finding.tokenId!)}
+                              onClick={() => requestSecurityRevoke({
+                                kind: "token",
+                                id: finding.tokenId!,
+                                message: finding.message,
+                              })}
                             >
-                              {localize(locale, "撤销令牌", "Revoke token")}
+                              {localize(locale, "准备撤销令牌", "Review token revoke")}
                             </ActionButton>
                           ) : null}
                           {finding.satelliteId ? (
@@ -2020,9 +2048,13 @@ export function SettingsPage() {
                               data-ui-component="settings-security-satellite-revoke"
                               tone="danger"
                               disabled={revokeSatelliteMutation.isPending}
-                              onClick={() => revokeSatelliteMutation.mutate(finding.satelliteId!)}
+                              onClick={() => requestSecurityRevoke({
+                                kind: "satellite",
+                                id: finding.satelliteId!,
+                                message: finding.message,
+                              })}
                             >
-                              {localize(locale, "撤销执行节点", "Revoke satellite")}
+                              {localize(locale, "准备撤销执行节点", "Review satellite revoke")}
                             </ActionButton>
                           ) : null}
                         </div>
@@ -2037,6 +2069,26 @@ export function SettingsPage() {
           ) : (
             <p className="text-sm text-[color:var(--color-text-secondary)]">{localize(locale, "安全数据待连接。", "Security data is waiting for data.")}</p>
           )}
+          <ConfirmDialog
+            open={pendingSecurityRevoke !== null}
+            title={pendingSecurityRevoke?.kind === "token"
+              ? localize(locale, "确认撤销令牌", "Confirm revoke token")
+              : localize(locale, "确认撤销执行节点", "Confirm revoke satellite")}
+            description={pendingSecurityRevoke
+              ? localize(
+                locale,
+                `目标: ${pendingSecurityRevoke.id}。原因: ${pendingSecurityRevoke.message}`,
+                `Target: ${pendingSecurityRevoke.id}. Reason: ${pendingSecurityRevoke.message}`,
+              )
+              : undefined}
+            confirmLabel={pendingSecurityRevoke?.kind === "token"
+              ? localize(locale, "撤销令牌", "Revoke token")
+              : localize(locale, "撤销执行节点", "Revoke satellite")}
+            cancelLabel={localize(locale, "取消", "Cancel")}
+            loading={revokeTokenMutation.isPending || revokeSatelliteMutation.isPending}
+            onCancel={() => setPendingSecurityRevoke(null)}
+            onConfirm={confirmSecurityRevoke}
+          />
         </ShellCard>
         </div>
 
