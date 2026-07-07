@@ -6,20 +6,34 @@ import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitive
 import { providersApi } from "@/lib/api/providers";
 import type {
   FridayProviderCapabilityHealthSnapshotItem,
+  FridayProviderCapabilityHealthState,
   FridayProviderHealthSnapshotItem,
   FridayProviderProfile,
+  FridayRuntimeCapabilityId,
 } from "@/lib/api/types";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
 
-const PARITY_CAPABILITIES = [
-  "send",
-  "stream",
-  "tools",
-  "diff",
-  "attach",
-  "history",
-] as const;
+const PARITY_CAPABILITIES: FridayRuntimeCapabilityId[] = [
+  "text",
+  "vision",
+  "file_read",
+  "file_write",
+  "browser",
+  "skills",
+];
+
+type ProviderCapabilityMatrixCell = {
+  providerId: string;
+  providerName: string;
+  state: FridayProviderCapabilityHealthState;
+  label: string;
+};
+
+type ProviderCapabilityMatrixRow = {
+  capability: FridayRuntimeCapabilityId;
+  cells: ProviderCapabilityMatrixCell[];
+};
 
 function laneTone(lane?: FridayProviderHealthSnapshotItem["lane"]): "neutral" | "success" | "warning" | "danger" {
   if (lane === "primary") return "success";
@@ -45,6 +59,99 @@ function capabilityStateLabel(item: FridayProviderCapabilityHealthSnapshotItem |
   const available = item.capabilities.filter((capability) => capability.state === "available").length;
   const total = item.capabilities.length;
   return total > 0 ? `${available}/${total} available` : "no capability proofs";
+}
+
+function capabilityTone(state: FridayProviderCapabilityHealthState): "neutral" | "success" | "warning" | "danger" {
+  if (state === "available") return "success";
+  if (state === "setup_needed" || state === "proof_pending") return "warning";
+  if (state === "disabled" || state === "unsupported") return "danger";
+  return "neutral";
+}
+
+function capabilityLabel(state: FridayProviderCapabilityHealthState): string {
+  if (state === "available") return "available";
+  if (state === "setup_needed") return "setup needed";
+  if (state === "proof_pending") return "proof pending";
+  return state;
+}
+
+function fallbackProviderRows(): FridayProviderProfile[] {
+  return [
+    {
+      id: "codex",
+      kind: "openai-codex",
+      name: "Codex",
+      baseUrl: "provider://codex",
+      enabled: false,
+      config: {
+        api: "openai-codex-responses",
+        authMode: "oauth",
+        keySource: { kind: "external-session" },
+        supportedModels: [],
+      },
+      createdAt: "",
+      updatedAt: "",
+    },
+    {
+      id: "claude",
+      kind: "anthropic",
+      name: "Claude",
+      baseUrl: "provider://claude",
+      enabled: false,
+      config: {
+        api: "anthropic-messages",
+        authMode: "oauth",
+        keySource: { kind: "external-session" },
+        supportedModels: [],
+      },
+      createdAt: "",
+      updatedAt: "",
+    },
+    {
+      id: "deepseek",
+      kind: "deepseek",
+      name: "DeepSeek",
+      baseUrl: "provider://deepseek",
+      enabled: false,
+      config: {
+        api: "openai-completions",
+        authMode: "api-key",
+        keySource: { kind: "env-ref", envVar: "FRIDAY_DEEPSEEK_API_KEY" },
+        supportedModels: [],
+      },
+      createdAt: "",
+      updatedAt: "",
+    },
+  ];
+}
+
+export function deriveProviderCapabilityMatrix(
+  providers: FridayProviderProfile[],
+  capabilityByProvider: Map<string, FridayProviderCapabilityHealthSnapshotItem>,
+): ProviderCapabilityMatrixRow[] {
+  const visibleProviders = providers.slice(0, 3);
+  const capabilities = new Set<FridayRuntimeCapabilityId>();
+  for (const provider of visibleProviders) {
+    const snapshot = capabilityByProvider.get(provider.id);
+    for (const capability of snapshot?.capabilities ?? []) {
+      capabilities.add(capability.capability);
+    }
+  }
+  const rows = Array.from(capabilities);
+  return rows.map((capability) => ({
+    capability,
+    cells: visibleProviders.map((provider) => {
+      const snapshot = capabilityByProvider.get(provider.id);
+      const item = snapshot?.capabilities.find((candidate) => candidate.capability === capability);
+      const state = item?.state ?? "unsupported";
+      return {
+        providerId: provider.id,
+        providerName: provider.name,
+        state,
+        label: capabilityLabel(state),
+      };
+    }),
+  }));
 }
 
 function ProviderAuthRow(props: {
@@ -101,7 +208,44 @@ function ProviderAuthRow(props: {
   );
 }
 
-function CapabilityMatrix(props: { providers: FridayProviderProfile[] }) {
+function TruthChip(props: {
+  cap: string;
+  truth: "NO-GO" | "external_blocked" | "wired_registry" | "operator_gated";
+  children: string;
+  tone?: "neutral" | "success" | "warning" | "danger";
+  disabled?: boolean;
+}) {
+  return (
+    <span
+      role={props.disabled ? "button" : undefined}
+      aria-disabled={props.disabled ? true : undefined}
+      data-cap={props.cap}
+      data-truth={props.truth}
+      className="inline-flex min-h-[30px] items-center rounded-[var(--radius-sm)] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[color:var(--color-text-secondary)] data-[truth=NO-GO]:border-[color:var(--color-border-danger)] data-[truth=NO-GO]:text-[color:var(--color-text-danger)] data-[truth=external_blocked]:border-[color:var(--color-border-warning)] data-[truth=external_blocked]:text-[color:var(--color-text-warning)]"
+    >
+      <StatusPill tone={props.tone ?? (props.truth === "wired_registry" ? "success" : props.truth === "operator_gated" ? "warning" : "danger")}>{props.children}</StatusPill>
+    </span>
+  );
+}
+
+function CapabilityMatrix(props: {
+  providers: FridayProviderProfile[];
+  capabilityByProvider: Map<string, FridayProviderCapabilityHealthSnapshotItem>;
+}) {
+  const visibleProviders = props.providers.slice(0, 3);
+  const providers = visibleProviders.length > 0 ? visibleProviders : fallbackProviderRows();
+  const rows = visibleProviders.length > 0
+    ? deriveProviderCapabilityMatrix(visibleProviders, props.capabilityByProvider)
+    : PARITY_CAPABILITIES.map((capability) => ({
+        capability,
+        cells: providers.map((provider) => ({
+          providerId: provider.id,
+          providerName: provider.name,
+          state: "unsupported" as const,
+          label: "NO-GO",
+        })),
+      }));
+
   return (
     <div
       data-ui-component="capabilityMatrixAndQueues"
@@ -109,21 +253,27 @@ function CapabilityMatrix(props: { providers: FridayProviderProfile[] }) {
     >
       <div className="grid min-w-[620px] grid-cols-[180px_repeat(3,minmax(120px,1fr))] bg-[color:var(--color-bg-subtle)] text-xs font-semibold text-[color:var(--color-text-secondary)]">
         <div className="border-r border-[color:var(--color-border-soft)] p-3">Capability</div>
-        {(props.providers.slice(0, 3).length ? props.providers.slice(0, 3) : [{ id: "codex", name: "Codex" }, { id: "claude", name: "Claude" }, { id: "deepseek", name: "DeepSeek" }]).map((provider) => (
+        {providers.map((provider) => (
           <div key={provider.id} className="border-r border-[color:var(--color-border-soft)] p-3 last:border-r-0">
             {provider.name}
           </div>
         ))}
       </div>
-      {PARITY_CAPABILITIES.map((capability) => (
+      {rows.map((row) => (
         <div
-          key={capability}
+          key={row.capability}
           className="grid min-w-[620px] grid-cols-[180px_repeat(3,minmax(120px,1fr))] border-t border-[color:var(--color-border-soft)] text-xs"
         >
-          <div className="border-r border-[color:var(--color-border-soft)] p-3 font-medium text-[color:var(--color-text-primary)]">{capability}</div>
-          {(props.providers.slice(0, 3).length ? props.providers.slice(0, 3) : [{ id: "codex" }, { id: "claude" }, { id: "deepseek" }]).map((provider) => (
-            <div key={`${provider.id}:${capability}`} className="border-r border-[color:var(--color-border-soft)] p-3 last:border-r-0">
-              <StatusPill tone="danger">NO-GO</StatusPill>
+          <div className="border-r border-[color:var(--color-border-soft)] p-3 font-medium text-[color:var(--color-text-primary)]">{row.capability}</div>
+          {row.cells.map((cell) => (
+            <div key={`${cell.providerId}:${row.capability}`} className="border-r border-[color:var(--color-border-soft)] p-3 last:border-r-0">
+              {cell.state === "available" ? (
+                <TruthChip cap={`provider_capability:${row.capability}`} truth="wired_registry" tone="success">available</TruthChip>
+              ) : (
+                <TruthChip cap={`provider_capability:${row.capability}`} truth="NO-GO" tone={capabilityTone(cell.state)} disabled>
+                  {cell.label === "unsupported" ? "NO-GO" : cell.label}
+                </TruthChip>
+              )}
             </div>
           ))}
         </div>
@@ -259,9 +409,9 @@ export function ProvidersPage() {
           title="capabilityMatrixAndQueues"
           aside={<StatusPill tone="danger">provider_adapter_parity · NO-GO</StatusPill>}
         >
-          <CapabilityMatrix providers={providers} />
+          <CapabilityMatrix providers={providers} capabilityByProvider={capabilityByProvider} />
           <p className="mt-3 text-xs leading-5 text-[color:var(--color-text-secondary)]">
-            Cells are registry-derived truth chips. Auth readiness never upgrades send / stream / tools / diff / attach / history parity.
+            Cells are registry-derived truth chips. Auth readiness never upgrades provider_adapter_parity into runtime parity.
           </p>
         </ShellCard>
 
@@ -314,6 +464,36 @@ export function ProvidersPage() {
                 <Waypoints className="mr-2 h-4 w-4" />
                 Routing
               </ActionButton>
+            </div>
+          </ShellCard>
+
+          <ShellCard
+            eyebrow={localize(locale, "Explicit NO-GO", "Explicit NO-GO")}
+            title={localize(locale, "Session control and parity blockers", "Session control and parity blockers")}
+            aside={<StatusPill tone="danger">shown disabled</StatusPill>}
+          >
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-[color:var(--color-text-primary)]">Session control</p>
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">start / pause / resume / stop remain provider_adapter_parity NO-GO until runtime parity is proven.</p>
+                </div>
+                <TruthChip cap="session_control_native_set" truth="NO-GO" disabled>Controls</TruthChip>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-[color:var(--color-text-primary)]">Approvals</p>
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">Only approval gate truth is wired through the registry in this surface.</p>
+                </div>
+                <TruthChip cap="security_approval_bound_principal_gate" truth="wired_registry" tone="success">wired</TruthChip>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-[color:var(--color-text-primary)]">provider_native_synced</p>
+                  <p className="text-xs text-[color:var(--color-text-secondary)]">Native session mirroring is visible and disabled, never hidden.</p>
+                </div>
+                <TruthChip cap="provider_native_synced" truth="NO-GO" disabled>Enable</TruthChip>
+              </div>
             </div>
           </ShellCard>
         </div>
