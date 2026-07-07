@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_OS_NAV_ITEMS, AGENT_OS_NAV_PRIMARY, AGENT_OS_NAV_ADVANCED, resolvePageTitle } from "../../../ui/src/lib/routes/agent-os-nav";
+import { AVAILABLE_COMMANDS } from "../../../ui/src/components/core/command-palette";
 
 describe("agent os navigation", () => {
   it("primary nav reflects the task-first shell surfaces", () => {
@@ -36,6 +37,10 @@ describe("agent os navigation", () => {
 
   it("AGENT_OS_NAV_ITEMS combines primary and advanced", () => {
     expect(AGENT_OS_NAV_ITEMS).toEqual([...AGENT_OS_NAV_PRIMARY, ...AGENT_OS_NAV_ADVANCED]);
+  });
+
+  it("does not add rail-only Settings as a duplicate command palette nav target", () => {
+    expect(AVAILABLE_COMMANDS.map((item) => item.path)).not.toContain("/settings");
   });
 
   it("maps routes to the correct page titles", () => {
