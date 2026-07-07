@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const missionId = "mission_cli_ui_device_readiness";
+process.env.FRIDAY_UI_DEVICE_READINESS_SKIP_SELF_TEST_FOR_TESTS = "1";
 
 function currentGitHead() {
   return execFileSync("git", ["rev-parse", "HEAD"], { cwd: process.cwd(), encoding: "utf8" }).trim();

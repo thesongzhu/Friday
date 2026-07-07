@@ -30,6 +30,7 @@ DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS=()
 if [ -n "${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS:-}" ]; then
   IFS=':' read -r -a DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS <<<"${FRIDAY_DESIGN_ACTION_RUNTIME_EVIDENCE_DIRS}"
 fi
+SKIP_GATE_SELF_TEST_FOR_TESTS="${FRIDAY_UI_DEVICE_READINESS_SKIP_SELF_TEST_FOR_TESTS:-0}"
 
 usage() {
   cat <<'EOF'
@@ -1009,21 +1010,25 @@ if [ "${MODE}" = "require-proof" ]; then
   EXPECT_NOT_READY_ARGS=()
 fi
 
-run_note_step "ui_device_gate_self_test" env \
-  -u MISSION_ID \
-  -u MOBILE_EVIDENCE \
-  -u DESKTOP_EVIDENCE \
-  -u CHANNEL_EVIDENCE \
-  -u TIMELINE_EVIDENCE \
-  -u OBSERVATIONS_MANIFEST \
-  -u MISSION_SPINE_UI_DEVICE_PROOF \
-  -u MOBILE_EXTRA_EVIDENCE \
-  -u DESKTOP_EXTRA_EVIDENCE \
-  -u CHANNEL_EXTRA_EVIDENCE \
-  -u TIMELINE_EXTRA_EVIDENCE \
-  -u SHARED_EXTRA_EVIDENCE \
-  -u NEGATIVE_CONTROL_EVIDENCE_FILES \
-  bash "${RUST_SCRIPTS_DIR}/mission-spine-ui-device-proof-gate-self-test.sh"
+if [ "${SKIP_GATE_SELF_TEST_FOR_TESTS}" = "1" ]; then
+  notes+=("ui_device_gate_self_test:skipped_explicit_for_tests")
+else
+  run_note_step "ui_device_gate_self_test" env \
+    -u MISSION_ID \
+    -u MOBILE_EVIDENCE \
+    -u DESKTOP_EVIDENCE \
+    -u CHANNEL_EVIDENCE \
+    -u TIMELINE_EVIDENCE \
+    -u OBSERVATIONS_MANIFEST \
+    -u MISSION_SPINE_UI_DEVICE_PROOF \
+    -u MOBILE_EXTRA_EVIDENCE \
+    -u DESKTOP_EXTRA_EVIDENCE \
+    -u CHANNEL_EXTRA_EVIDENCE \
+    -u TIMELINE_EXTRA_EVIDENCE \
+    -u SHARED_EXTRA_EVIDENCE \
+    -u NEGATIVE_CONTROL_EVIDENCE_FILES \
+    bash "${RUST_SCRIPTS_DIR}/mission-spine-ui-device-proof-gate-self-test.sh"
+fi
 
 if [ "${RUN_LIVE_READINESS}" = "1" ]; then
   run_step "mission_workbench_live_readiness" \
