@@ -245,6 +245,58 @@ function runtimeChipParts(status: SystemHealthStatus, locale: "zh" | "en") {
   };
 }
 
+function OpsMasthead(props: {
+  locale: "zh" | "en";
+  activeCount: number;
+  needsCount: number;
+  scheduledCount: number;
+  runtimeLabel: string;
+  runtimeColor: string;
+}) {
+  const { locale, activeCount, needsCount, scheduledCount, runtimeLabel, runtimeColor } = props;
+
+  return (
+    <div
+      data-ui-component="ops-masthead"
+      className="rounded-[16px] border px-4 py-3"
+      style={{
+        background: "linear-gradient(120deg, rgba(15,125,140,.12), var(--surface) 64%)",
+        borderColor: "var(--hair)",
+      }}
+    >
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="h-[9px] w-[9px] rounded-full"
+              style={{ background: runtimeColor }}
+            />
+            <p className="text-[15px] font-bold text-[color:var(--ink)]">
+              {localize(locale, "Operations", "Operations")}
+            </p>
+          </div>
+          <p className="mt-1 font-mono text-[11.5px] text-[color:var(--muted)]">
+            {runtimeLabel} · source-of-truth projection · proof-first actions
+          </p>
+        </div>
+        <div className="grid min-w-[260px] grid-cols-3 gap-4 border-t pt-3 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0" style={{ borderColor: "var(--hair)" }}>
+          {[
+            { value: needsCount, label: "Needs Me" },
+            { value: activeCount, label: "Running" },
+            { value: scheduledCount, label: "Scheduled" },
+          ].map((item) => (
+            <div key={item.label}>
+              <p className="text-[21px] font-bold leading-none text-[color:var(--ink)]">{item.value}</p>
+              <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.07em] text-[color:var(--faint)]">{item.label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MobileWebHomeSurface(props: {
   locale: "zh" | "en";
   systemLabel: string;
@@ -598,7 +650,7 @@ export function HomePage() {
   const kbdLabel = navigatorMetaKeyLabel();
 
   return (
-    <div className="space-y-5 pb-6">
+    <div data-ui-screen="desktop-operations" className="space-y-5 pb-6">
       {showSetupReadiness ? (
         <FridayReadinessSummaryPanel
           health={capabilityHealthQuery.data}
@@ -624,6 +676,14 @@ export function HomePage() {
         />
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(390px,430px)] xl:items-start">
           <div className="min-w-0">
+            <OpsMasthead
+              locale={locale}
+              activeCount={activeRuns.length}
+              needsCount={pendingApprovals.length}
+              scheduledCount={scheduledAutomations.length}
+              runtimeLabel={runtimeChip.label}
+              runtimeColor={runtimeChip.color}
+            />
             <div className="flex flex-wrap items-center gap-3">
               <StatusPill tone={systemTone}>
                 {systemLabel}
@@ -636,17 +696,17 @@ export function HomePage() {
                 )}
               </span>
             </div>
-            <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
-              {localize(locale, "Friday Home", "Friday Home")}
+            <p className="mt-5 text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
+              {localize(locale, "Operations", "Operations")}
             </p>
             <h2 className="mt-1 text-3xl font-semibold tracking-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, "状态先行，聊天随时可开", "Status first, chat always one tap away")}
+              {localize(locale, "运行、待决与排期在同一个控制台", "Running work, decisions, and cadence in one console")}
             </h2>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-[color:var(--color-text-secondary)]">
               {localize(
                 locale,
-                "首页保持 Chat + Status：先看 Friday 真实运行状态、需要你决定的事和 provider 真路由；要开新任务，点顶部聊天或命令面板进入完整 Friday Chat。",
-                "Home stays Chat + Status: see Friday's live state, decisions waiting on you, and the real provider route; start new work from top chat or the command sheet into full Friday Chat.",
+                "Operations 先展示 Friday 的真实运行状态、需要你决定的事、provider 真路由和已排进队列的节奏；新任务仍从 Friday Chat 的 mission intake 进入。",
+                "Operations surfaces Friday's live state, decisions waiting on you, the real provider route, and queued cadence; new work still enters through Friday Chat mission intake.",
               )}
             </p>
 
@@ -715,9 +775,16 @@ export function HomePage() {
               </div>
 
               <div className="flex flex-wrap gap-2 xl:justify-end">
-                <ActionButton data-testid="home-start-task" onClick={() => navigate("/chat")}>
+                <ActionButton
+                  data-testid="operations-submit-intent"
+                  data-action="mission_intake_submit"
+                  data-cap="mission_intake"
+                  data-truth="wired_registry"
+                  data-result="opens-friday-chat-intake"
+                  onClick={() => navigate("/chat")}
+                >
                   <Sparkles className="mr-2 h-4 w-4" />
-                  {localize(locale, "开始新任务", "Start a new task")}
+                  {localize(locale, "提交意图", "Submit Intent")}
                 </ActionButton>
                 <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
                   <Bot className="mr-2 h-4 w-4" />
@@ -798,7 +865,7 @@ export function HomePage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-3xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, `正在进行中 (${activeRuns.length})`, `In Flight (${activeRuns.length})`)}
+              {localize(locale, `Running (${activeRuns.length})`, `Running (${activeRuns.length})`)}
             </h3>
             <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
               {localize(locale, "只显示真正还在跑的任务，不混进静态入口。", "Only live runs appear here; static entry points stay out of the way.")}
@@ -851,7 +918,7 @@ export function HomePage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-3xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, "等你决定", "Waiting on you")}
+              {localize(locale, "Needs Me", "Needs Me")}
             </h3>
             <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
               {localize(locale, "先处理会改变边界、预算、模型或风险口径的东西。", "Handle anything that changes boundaries, budget, models, or risk posture first.")}
@@ -972,7 +1039,7 @@ export function HomePage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-3xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, "接下来会自动发生", "What happens next automatically")}
+              {localize(locale, "Scheduled", "Scheduled")}
             </h3>
             <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
               {localize(locale, "这里看的是已经接到真实自动化队列里的节奏，不是占位提醒。", "This is the real automation cadence coming from the live queue, not placeholder reminders.")}
@@ -1026,6 +1093,37 @@ export function HomePage() {
             })}
           </div>
         )}
+      </section>
+
+      <section className="grid gap-3 lg:grid-cols-3" aria-label={localize(locale, "Operations endpoint queues", "Operations endpoint queues")}>
+        {[
+          {
+            label: "Standing goals",
+            detail: localize(locale, "读取长期目标入口；写入和暂停动作须等待真实回执。", "Long-running goals stay visible here; writes and pauses require real receipts."),
+            path: "/automations",
+          },
+          {
+            label: "Agenda",
+            detail: localize(locale, "议程批准与运行会回到 Needs Me，不把未证明项装成完成。", "Agenda approvals and runs return to Needs Me; unproven items are never shown as complete."),
+            path: "/assistant",
+          },
+          {
+            label: "Scheduled",
+            detail: localize(locale, "已排队节奏来自真实自动化投影，空态保持诚实。", "Cadence comes from the live automation projection, with honest empty state."),
+            path: "/automations",
+          },
+        ].map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            onClick={() => navigate(item.path)}
+            className="rounded-[15px] border px-4 py-4 text-left transition hover:border-[color:var(--color-border-strong)]"
+            style={{ borderColor: "var(--hair)", background: "var(--surface-2)" }}
+          >
+            <p className="text-sm font-semibold text-[color:var(--ink)]">{item.label}</p>
+            <p className="mt-2 text-xs leading-5 text-[color:var(--muted)]">{item.detail}</p>
+          </button>
+        ))}
       </section>
 
       <div className="flex flex-wrap gap-3">
