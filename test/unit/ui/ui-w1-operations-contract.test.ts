@@ -21,6 +21,7 @@ describe("UI-W1 operations screen contract", () => {
     const source = homeSource();
 
     expect(source).toContain('data-testid="operations-submit-intent"');
+    expect(source).toContain('data-testid="home-start-task"');
     expect(source).toContain('data-action="mission_intake_submit"');
     expect(source).toContain('data-cap="mission_intake"');
     expect(source).toContain('data-truth="wired_registry"');
