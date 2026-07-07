@@ -966,9 +966,9 @@ export function HomePage() {
               </div>
 
               <div className="flex flex-wrap gap-2 xl:justify-end">
-                <span data-testid="operations-submit-intent" className="contents">
+                <span data-testid="home-start-task" className="inline-flex">
                   <ActionButton
-                    data-testid="home-start-task"
+                    data-testid="operations-submit-intent"
                     data-action="mission_intake_submit"
                     data-cap="mission_intake"
                     data-truth="wired_registry"
