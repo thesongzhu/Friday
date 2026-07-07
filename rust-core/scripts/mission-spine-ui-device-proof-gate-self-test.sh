@@ -8,6 +8,7 @@ gate="scripts/mission-spine-ui-device-proof-gate.sh"
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/friday-ui-proof-gate-self-test.XXXXXX")"
 selftest_out="$tmpdir/expect.out"
 selftest_err="$tmpdir/expect.err"
+current_head="$(git rev-parse HEAD)"
 
 expect_exit() {
   local expected="$1"
@@ -72,7 +73,7 @@ write_proof() {
 {
   "proof": "mission_spine_ui_device_consumption",
   "proof_source": "$source",
-  "head": "ui-proof-gate-self-test-head",
+  "head": "$current_head",
   "fixture": $fixture,
   "captured_at_utc": "2026-06-04T21:00:00Z",
   "capture_run_id": "ui-proof-gate-self-test-run",
@@ -426,6 +427,7 @@ fixture="$tmpdir/fixture.json"
 organic="$tmpdir/organic.json"
 placeholder="$tmpdir/placeholder.json"
 pending_marker="$tmpdir/pending-marker.json"
+stale_head="$tmpdir/stale-head.json"
 missing_evidence="$tmpdir/missing-evidence.json"
 missing_metadata="$tmpdir/missing-metadata.json"
 missing_observations="$tmpdir/missing-observations.json"
@@ -518,6 +520,12 @@ expect_exit 4 env \
 echo "[mission-spine-ui-self-test] valid real-consumption-shaped proof passes"
 write_proof "$valid" "$mobile" "$desktop" "$channel" "$timeline"
 env MISSION_SPINE_UI_DEVICE_PROOF="$valid" "$gate" >"$selftest_out"
+
+echo "[mission-spine-ui-self-test] stale current-head proof is rejected"
+write_proof "$stale_head" "$mobile" "$desktop" "$channel" "$timeline"
+jq '.head = "stale-ui-proof-head"' "$stale_head" >"$stale_head.tmp"
+mv "$stale_head.tmp" "$stale_head"
+expect_exit 10 env MISSION_SPINE_UI_DEVICE_PROOF="$stale_head" "$gate"
 
 echo "[mission-spine-ui-self-test] negative-control segment proof passes without polluting happy path"
 negative_sha="$(file_sha256 "$negative")"
@@ -645,7 +653,7 @@ expect_exit 64 env \
   OUT="$assembled" \
   scripts/mission-spine-ui-device-proof-assemble.sh
 
-rm -f "$valid" "$segmented_valid" "$segmented_missing_main" "$assembled" "$observations_manifest" "$template_manifest" "$fixture" "$organic" "$placeholder" "$pending_marker" "$missing_evidence" "$missing_metadata" "$missing_observations" "$missing_stress" "$missing_workbench" "$hash_mismatch" "$bytes_mismatch" "$secret_evidence" "$template_assembled" "$mobile" "$desktop" "$channel" "$timeline" "$negative" "$secret_mobile" "$selftest_out" "$selftest_err" "$tmpdir/assembler.out" "$tmpdir/template.out"
+rm -f "$valid" "$segmented_valid" "$segmented_missing_main" "$assembled" "$observations_manifest" "$template_manifest" "$fixture" "$organic" "$placeholder" "$pending_marker" "$stale_head" "$missing_evidence" "$missing_metadata" "$missing_observations" "$missing_stress" "$missing_workbench" "$hash_mismatch" "$bytes_mismatch" "$secret_evidence" "$template_assembled" "$mobile" "$desktop" "$channel" "$timeline" "$negative" "$secret_mobile" "$selftest_out" "$selftest_err" "$tmpdir/assembler.out" "$tmpdir/template.out"
 rmdir "$tmpdir"
 
 echo "[mission-spine-ui-self-test] PASS"
