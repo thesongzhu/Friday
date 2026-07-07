@@ -40,4 +40,11 @@ describe("UI-W1 Evidence screen contract", () => {
     expect(source).toContain("same SHA != runtime PASS");
     expect(source).toContain("receipt hash is not execution proof");
   });
+
+  it("refreshes the evidence query when the workflow filter has not changed", () => {
+    const source = read("ui/src/routes/evidence-page.tsx");
+
+    expect(source).toContain("submittedWorkflowId");
+    expect(source).toContain("void evidenceQuery.refetch()");
+  });
 });
