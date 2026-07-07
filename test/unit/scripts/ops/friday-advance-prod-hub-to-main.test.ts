@@ -70,7 +70,8 @@ describe("Friday production advance script", () => {
     expect(source).not.toContain("Deployment order manifest");
     expect(source).not.toContain("grep -q \"CURRENT_SCHEMA_VERSION\"");
 
-    const executableSource = source
+    const mainExecutionSource = source.slice(source.indexOf('log "starting signed production advance"'));
+    const executableSource = mainExecutionSource
       .split("\n")
       .filter((line) => !line.trimStart().startsWith("#"))
       .join("\n");
@@ -143,8 +144,8 @@ describe("Friday production advance script", () => {
     const indexes = orderedIndexes(result.stdout, [
       "git fetch origin main",
       "git switch main",
-      "verify checked out signed target",
       `git checkout ${signedSha}`,
+      "verify checked out signed target",
       "pnpm install --frozen-lockfile",
       "verify better_sqlite3.node",
       "cargo build --release",
