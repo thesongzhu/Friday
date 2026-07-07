@@ -6,12 +6,11 @@ describe("UI-W1 Settings Security screen contract", () => {
 
   it("keeps Settings Security on the authenticated desktop settings route", () => {
     const routerSource = read("ui/src/router.tsx");
-    const navSource = read("ui/src/lib/routes/agent-os-nav.ts");
+    const settingsSource = read("ui/src/routes/settings-page.tsx");
 
     expect(routerSource).toContain('path: "settings"');
     expect(routerSource).toContain("<SettingsPage />");
-    expect(navSource).toContain('path: "/settings"');
-    expect(navSource).toContain("Settings Security");
+    expect(settingsSource).toContain("Settings Security");
   });
 
   it("renders the security workbench from existing provider, system, and security APIs", () => {
