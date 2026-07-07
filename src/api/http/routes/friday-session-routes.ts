@@ -60,6 +60,8 @@ export interface FridaySessionRoutesDeps {
   extractionService?: FridaySessionMemoryExtractionService;
   channelRegistry?: FridayChannelRegistry;
   nowIso?: () => string;
+  routeSessionsViaRust?: boolean;
+  rustSessionLifecycleBridge?: FridayRustSessionLifecycleBridge;
   runSession?: (input: {
     sessionKey: string;
     task: string;
@@ -99,6 +101,28 @@ export interface FridaySessionRoutesDeps {
    * the session memory extraction entrypoint.
    */
   allowTestOnlySessionMemoryExtractionExecution?: boolean;
+}
+
+export interface FridayRustSessionLifecycleBridge {
+  createSession(input: {
+    channel: string;
+    chatId: string;
+    userId?: string;
+    accountId?: string;
+    chatKind?: FridaySessionChatKind;
+    principal?: FridayAuthPrincipal | null;
+  }): Promise<FridaySessionCreateResponse>;
+  appendMessage(input: {
+    sessionKey: string;
+    role: FridaySessionMessageRecord["role"];
+    content: string;
+    metadata?: Record<string, unknown>;
+    principal?: FridayAuthPrincipal | null;
+  }): Promise<FridaySessionMessageCreateResponse>;
+  getMemoryNamespace(input: {
+    sessionKey: string;
+    principal: FridayAuthPrincipal;
+  }): Promise<FridaySessionMemoryNamespaceResponse>;
 }
 
 // ─── Metadata sanitization (VULN-1: Prototype Pollution DoS) ───
@@ -773,6 +797,19 @@ function assertSessionTestOracleAllowed(deps: FridaySessionRoutesDeps): void {
   }
 }
 
+function rustSessionLifecycleBridgeOrRetired(
+  deps: FridaySessionRoutesDeps,
+): FridayRustSessionLifecycleBridge {
+  if (deps.routeSessionsViaRust === true && deps.rustSessionLifecycleBridge) {
+    return deps.rustSessionLifecycleBridge;
+  }
+  throwRetiredSession(
+    "TS_RUNTIME_SESSION_RETIRED",
+    "TypeScript session execution",
+    "session_lifecycle",
+  );
+}
+
 function assertSessionRunTestOracleAllowed(deps: FridaySessionRoutesDeps): void {
   if (deps.allowTestOnlySessionRunExecution !== true) {
     throwRetiredSession(
@@ -859,6 +896,16 @@ export function createFridaySessionRoutes(
         validateCreateSessionBody(ctx.body);
         const body = ctx.body;
         const metadata = sanitizeMetadata(body.metadata);
+        if (deps.routeSessionsViaRust === true) {
+          return rustSessionLifecycleBridgeOrRetired(deps).createSession({
+            channel: body.channel,
+            chatId: body.chatId,
+            userId: body.userId,
+            accountId: body.accountId,
+            chatKind: body.chatKind,
+            principal: (ctx.principal as FridayAuthPrincipal | null | undefined) ?? null,
+          });
+        }
         assertSessionTestOracleAllowed(deps);
         let session = await deps.sessionService.createSession({
           channel: body.channel,
@@ -1087,6 +1134,15 @@ export function createFridaySessionRoutes(
         const key = decodeSessionKeyParam(sessionKey);
         validateCreateMessageBody(ctx.body);
         const body = ctx.body;
+        if (deps.routeSessionsViaRust === true) {
+          return rustSessionLifecycleBridgeOrRetired(deps).appendMessage({
+            sessionKey: key,
+            role: body.role,
+            content: body.content,
+            metadata: sanitizeMetadata(body.metadata),
+            principal: (ctx.principal as FridayAuthPrincipal | null | undefined) ?? null,
+          });
+        }
         assertSessionTestOracleAllowed(deps);
         await deps.sessionService.getOrCreateSession(key).catch(() => undefined);
         await alignSessionWithPrincipalContext(deps.sessionService, key, ctx.principal).catch(() => undefined);
@@ -1295,6 +1351,12 @@ export function createFridaySessionRoutes(
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
         const principal = assertSessionReadPrincipal(ctx.principal ?? null, "sessions.memory.namespace.get");
+        if (deps.routeSessionsViaRust === true) {
+          return rustSessionLifecycleBridgeOrRetired(deps).getMemoryNamespace({
+            sessionKey: key,
+            principal,
+          });
+        }
         await assertSessionReadableIfPresent(deps.sessionService, key, principal, "sessions.memory.namespace.get");
         const namespace = await deps.sessionService.getSessionMemoryNamespace(key);
         return { namespace };
