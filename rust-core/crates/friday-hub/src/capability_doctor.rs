@@ -12,8 +12,8 @@
 //! so they are kept as DISTINCT sections rather than fused per provider:
 //! - `Codex` has a CLI login but NO HTTP key-validation path → it appears ONLY in the
 //!   CLI-detect section (no synthesized key verdict — there is nothing to validate).
-//! - `DeepSeek` has an API key but is NOT a CLI provider → it appears ONLY in the
-//!   key-validation section (no CLI-detect signal).
+//! - `DeepSeek` / `OpenAI` have API keys but are NOT CLI providers → they appear
+//!   ONLY in the key-validation section (no CLI-detect signal).
 //! - `Claude` (CLI subscription login) and `Anthropic` (API key) are DISTINCT
 //!   credentials. They are reported SEPARATELY — the CLI signal in the CLI-detect
 //!   section, the key signal in the key-validation section — and are NEVER folded into
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn composite_covers_both_taxonomies_in_canonical_order_no_collapse() {
         // CLI: codex logged-in, claude logged-out. Keys: deepseek valid, anthropic
-        // invalid. The composite must carry BOTH sets, each per-provider, side by
+        // invalid, openai valid. The composite must carry BOTH sets, each per-provider, side by
         // side — never merging claude-CLI with anthropic-key.
         let cli = MockCliProbe::new()
             .set(Provider::Codex, "Logged in using ChatGPT")
@@ -192,7 +192,8 @@ mod tests {
             .with(
                 KeyProvider::Anthropic,
                 KeyValidationOutcome::Invalid { status: 401 },
-            );
+            )
+            .with(KeyProvider::OpenAi, KeyValidationOutcome::Valid);
 
         let doc = CapabilityDoctor::run(&cli, &keys);
 
@@ -203,14 +204,20 @@ mod tests {
         assert_eq!(doc.cli_statuses[1].provider, Provider::Claude);
         assert!(!doc.cli_statuses[1].authenticated);
 
-        // Key section: 2 credentials in KeyProvider::all() order, each its own outcome.
-        assert_eq!(doc.key_signals.len(), 2);
+        // Key section: 3 credentials in KeyProvider::all() order, each its own outcome.
+        assert_eq!(doc.key_signals.len(), 3);
         assert_eq!(doc.key_signals[0].provider, KeyProvider::DeepSeek);
         assert_eq!(doc.key_signals[0].outcome, KeyValidationOutcome::Valid);
         assert_eq!(doc.key_signals[1].provider, KeyProvider::Anthropic);
         assert_eq!(
             doc.key_signals[1].outcome,
             KeyValidationOutcome::Invalid { status: 401 }
+        );
+        assert_eq!(doc.key_signals[2].provider, KeyProvider::OpenAi);
+        assert_eq!(doc.key_signals[2].outcome, KeyValidationOutcome::Valid);
+        assert_eq!(
+            doc.confirmed_valid_keys(),
+            vec![KeyProvider::DeepSeek, KeyProvider::OpenAi]
         );
     }
 

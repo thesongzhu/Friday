@@ -552,7 +552,8 @@ mod tests {
             .with(
                 KeyProvider::Anthropic,
                 KeyValidationOutcome::Invalid { status: 401 },
-            );
+            )
+            .with(KeyProvider::OpenAi, KeyValidationOutcome::Valid);
         let rendered = render_composite(&cli, &keys).expect("renders");
         let v = parse(&rendered);
 
@@ -579,7 +580,7 @@ mod tests {
 
         // Key section: exactly the four safe keys per entry, in KeyProvider::all() order.
         let keys_arr = v["key_validation"].as_array().expect("key array");
-        assert_eq!(keys_arr.len(), 2);
+        assert_eq!(keys_arr.len(), 3);
         for entry in keys_arr {
             let obj = entry.as_object().unwrap();
             assert_eq!(obj.len(), 4, "key entry must carry exactly 4 safe keys");
@@ -597,11 +598,16 @@ mod tests {
         assert_eq!(keys_arr[1]["label"], "invalid");
         assert_eq!(keys_arr[1]["status"], 401);
         assert!(keys_arr[1]["detail"].is_null());
+        // openai valid: label valid, no status/detail.
+        assert_eq!(keys_arr[2]["provider"], "openai");
+        assert_eq!(keys_arr[2]["label"], "valid");
+        assert!(keys_arr[2]["status"].is_null());
+        assert!(keys_arr[2]["detail"].is_null());
 
-        // Confirmed-valid: only deepseek (anthropic invalid).
+        // Confirmed-valid: deepseek and openai (anthropic invalid).
         assert_eq!(
             v["confirmed_valid_keys"].as_array().unwrap(),
-            &vec![serde_json::json!("deepseek")]
+            &vec![serde_json::json!("deepseek"), serde_json::json!("openai")]
         );
         let route_readiness = v["route_readiness"]
             .as_array()

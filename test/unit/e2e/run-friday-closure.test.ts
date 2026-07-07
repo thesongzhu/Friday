@@ -196,7 +196,38 @@ describe("run-friday-closure helpers", () => {
         ],
         confirmedValidKeys: ["openai"],
       },
-    })).not.toThrow();
+    }, "openai")).not.toThrow();
+  });
+
+  it("rejects Rust capability-doctor key validation when no key is confirmed valid", () => {
+    expect(() => assertClosureProviderValidationReady({
+      ok: true,
+      data: {
+        truthLabel: "rust_capability_doctor",
+        proofOnly: true,
+        keyValidationProbed: true,
+        keyValidation: [
+          { provider: "openai", label: "invalid", status: 401, detail: null },
+        ],
+        confirmedValidKeys: [],
+      },
+    }, "openai")).toThrow(/did not confirm openai key valid/);
+  });
+
+  it("rejects Rust capability-doctor key validation when only a different provider key is confirmed", () => {
+    expect(() => assertClosureProviderValidationReady({
+      ok: true,
+      data: {
+        truthLabel: "rust_capability_doctor",
+        proofOnly: true,
+        keyValidationProbed: true,
+        keyValidation: [
+          { provider: "openai", label: "invalid", status: 401, detail: null },
+          { provider: "deepseek", label: "valid", status: null, detail: null },
+        ],
+        confirmedValidKeys: ["deepseek"],
+      },
+    }, "openai")).toThrow(/did not confirm openai key valid/);
   });
 
   it("runStep persists an in-progress active step before completion", async () => {
