@@ -87,6 +87,13 @@ const SNAPSHOT = {
       grantsMemoryAuthority: false,
       evidenceRef: "proof://memory/ui-candidate",
     },
+    {
+      id: "memory_other_candidate",
+      preview: "Keep the unrelated memory candidate clean.",
+      state: "candidate_review_only",
+      grantsMemoryAuthority: false,
+      evidenceRef: "proof://memory/other-candidate",
+    },
   ],
   capabilityStates: [],
   transcriptSections: [],
@@ -227,13 +234,34 @@ describe("MissionWorkbenchPage", () => {
     });
   });
 
-  it("creates a Mission through a Mission Workbench UI action", async () => {
+  it("renders Memory Spine decision errors as a visible status pill", async () => {
+    mocks.decideMemoryCandidate.mockRejectedValueOnce(new Error("memory spine decide refused"));
+    await renderPage();
+
+    const confirm = container?.querySelector<HTMLButtonElement>(
+      "[data-testid=\"mission-memory-confirm-memory_ui_candidate\"]",
+    );
+    expect(confirm).not.toBeNull();
+
+    await act(async () => {
+      confirm!.click();
+      await flushCycles();
+    });
+
+    expect(container?.textContent).toContain("memory spine decide refused");
+    const occurrences = container?.textContent?.match(/memory spine decide refused/g)?.length ?? 0;
+    expect(occurrences).toBe(1);
+  });
+
+  it("labels Mission intake as an idempotent ensure action", async () => {
     await renderPage();
 
     const createMission = container?.querySelector<HTMLButtonElement>(
       "[data-testid=\"mission-spine-create-from-workbench\"]",
     );
     expect(createMission).not.toBeNull();
+    expect(createMission?.textContent).toContain("Ensure Mission");
+    expect(createMission?.textContent).not.toContain("Create Mission");
 
     await act(async () => {
       createMission!.click();

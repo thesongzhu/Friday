@@ -15,7 +15,7 @@ use friday_core::{
     MissionSurfaceProjection, ProofRequirementKind, RouteActionItem, RouteActionReversibility,
     RouteActionTargetKind, RouteDecisionCard, RouteDecisionProjection, SurfaceEvent,
     SurfaceEventKind, SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem,
-    WorkItemStatus, WorkLane,
+    WorkItemStatus, WorkLane, MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
@@ -1353,7 +1353,7 @@ fn route_decision_requires_materialized_follow_up(decision: &RouteDecisionCard) 
 fn deferred_option_requires_materialized_follow_up(option: &str) -> bool {
     !option
         .trim()
-        .eq_ignore_ascii_case("native UI implementation")
+        .eq_ignore_ascii_case(MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION)
 }
 
 fn deferred_route_decision_materialized(
@@ -3250,7 +3250,8 @@ mod tests {
         let _flag = EnvVarGuard::set(OUTCOME_CHECKED_PROOF_FLAG, "0");
         let db = Db::open_hub(&tmp("b1-native-ui-deferred-autoclose")).unwrap();
         let mut item = seed_graph(&db, WorkItemStatus::ProviderWaiting, Vec::new());
-        item.judgment_memory.deferred_options = vec!["native UI implementation".into()];
+        item.judgment_memory.deferred_options =
+            vec![MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION.into()];
         upsert_work_item(db.conn(), &item).unwrap();
         upsert_route_decision(
             db.conn(),

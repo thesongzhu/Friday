@@ -17,6 +17,10 @@
 use crate::error::CoreError;
 use crate::tool_policy::Risk;
 
+/// Canonical deferred-option label for native UI work that is already represented
+/// by the product UI layer and must not be treated as a materializable follow-up.
+pub const MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION: &str = "native UI implementation";
+
 /// Truth label for Mission Spine projections. This mirrors Friday's product
 /// honesty vocabulary: a projection may be designed or wired without being a
 /// proven runtime-ready surface.

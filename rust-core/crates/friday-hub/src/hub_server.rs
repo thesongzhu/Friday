@@ -19,6 +19,7 @@
 //! auth material, raw private reasoning, cwd, or external urls on the wire. The answer +
 //! usage live Hub-side in the token_ledger / Activity receipt. No UI code here.
 
+use friday_core::MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION;
 use friday_crypto::{open, DataKey, Sealed};
 use friday_deepseek::{DeepSeekClient, Transport};
 use friday_protocol::{
@@ -337,7 +338,7 @@ fn intake_route_selection(
             target_provider_or_agent: target,
             why_this_route: "Surface input must resolve to a canonical Mission.".into(),
             considered_options: vec!["surface-local chat".into(), "Mission Spine".into()],
-            deferred_options: vec!["native UI implementation".into()],
+            deferred_options: vec![MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION.into()],
         });
     }
 
@@ -441,7 +442,7 @@ fn auto_route_for_intake(intent: &str, capability_id: &str) -> AutoRouteDecision
             deferred_options: vec![
                 "Claude synthesis follow-up after the Codex work item produces a proof receipt"
                     .into(),
-                "native UI implementation".into(),
+                MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION.into(),
             ],
         };
     }
@@ -450,7 +451,7 @@ fn auto_route_for_intake(intent: &str, capability_id: &str) -> AutoRouteDecision
             lane: friday_core::WorkLane::Codex,
             reason: "Codex for code, repo, and workspace execution strength",
             considered_options: base_options(),
-            deferred_options: vec!["native UI implementation".into()],
+            deferred_options: vec![MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION.into()],
         };
     }
     if claude_signal {
@@ -458,14 +459,14 @@ fn auto_route_for_intake(intent: &str, capability_id: &str) -> AutoRouteDecision
             lane: friday_core::WorkLane::Claude,
             reason: "Claude for synthesis, writing, and explanation strength",
             considered_options: base_options(),
-            deferred_options: vec!["native UI implementation".into()],
+            deferred_options: vec![MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION.into()],
         };
     }
     AutoRouteDecision {
         lane: friday_core::WorkLane::DeepSeek,
         reason: "DeepSeek for general fast-response strength",
         considered_options: base_options(),
-        deferred_options: vec!["native UI implementation".into()],
+        deferred_options: vec![MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION.into()],
     }
 }
 
@@ -4380,7 +4381,7 @@ mod tests {
             why_now: "The user should not manage separate chat truth.".into(),
             decision_path_summary: "Project one Mission into different surfaces.".into(),
             considered_options: vec!["provider chat as source".into(), "Mission Spine".into()],
-            deferred_options: vec!["native UI implementation".into()],
+            deferred_options: vec![MISSION_NATIVE_UI_IMPLEMENTATION_DEFERRED_OPTION.into()],
             known_pitfalls: vec!["provider ack is not completion".into()],
             handoff_inheritance: vec!["carry judgment path".into()],
             work_item_ids: vec!["work-hub-route".into()],
