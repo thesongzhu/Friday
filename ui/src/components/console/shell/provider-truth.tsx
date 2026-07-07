@@ -34,7 +34,7 @@ function statusDot(status: ProviderTruthStatus): string {
   if (status === "degraded" || status === "unavailable") {
     return "var(--color-accent)";
   }
-  return "var(--ok)";
+  return "var(--color-text-success)";
 }
 
 function backendLabel(backendKind: string | undefined, locale: AppLocale): string {
@@ -239,7 +239,7 @@ export function ProviderTruthCard(props: {
           </p>
           <div className="mt-2 flex items-center gap-2">
             {currentProviderStatus === "healthy" ? (
-              <ShieldCheck className="h-4 w-4 shrink-0" style={{ color: "var(--ok)" }} />
+              <ShieldCheck className="h-4 w-4 shrink-0" style={{ color: "var(--color-text-success)" }} />
             ) : (
               <ShieldAlert
                 className="h-4 w-4 shrink-0"
