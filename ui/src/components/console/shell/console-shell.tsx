@@ -128,8 +128,8 @@ export function ConsoleShell() {
     <div
       className="min-h-screen"
       style={{
-        background: "var(--surface-0)",
-        color: "var(--ink-900)",
+        background: "var(--color-bg-base)",
+        color: "var(--color-text-primary)",
       }}
     >
       <div
@@ -139,8 +139,8 @@ export function ConsoleShell() {
         <div
           className="flex min-h-screen w-full flex-col overflow-hidden lg:min-h-0 lg:flex-1 lg:rounded-[16px] lg:shadow-[var(--shadow-device)]"
           style={{
-            background: "var(--paper)",
-            borderColor: "var(--line)",
+            background: "var(--color-bg-surface)",
+            borderColor: "var(--color-border-soft)",
           }}
         >
           <TopBar
@@ -167,25 +167,25 @@ export function ConsoleShell() {
               <div
                 className="absolute inset-x-0 bottom-0 max-h-[82vh] overflow-y-auto rounded-t-[22px] border px-4 pb-5 pt-2 shadow-[0_-12px_44px_rgba(0,0,0,0.22)]"
                 style={{
-                  borderColor: "var(--surface-border)",
-                  background: "var(--surface-2)",
+                  borderColor: "var(--color-border-soft)",
+                  background: "var(--color-bg-subtle)",
                 }}
               >
                 <div
                   aria-hidden="true"
                   className="mx-auto mb-3 h-1.5 w-11 rounded-full"
-                  style={{ background: "rgba(15, 125, 140, 0.22)" }}
+                  style={{ background: "var(--color-accent-strong)" }}
                 />
-              <div className="flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: "var(--surface-border)" }}>
+              <div className="flex items-center justify-between gap-3 border-b pb-3" style={{ borderColor: "var(--color-border-soft)" }}>
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--ink-300)" }}>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--color-text-faint)" }}>
                     {localize(locale, "命令面板", "Command Sheet")}
                   </p>
-                  <p className="mt-0.5 text-sm" style={{ color: "var(--ink-700)" }}>
+                  <p className="mt-0.5 text-sm" style={{ color: "var(--color-text-secondary)" }}>
                     {localize(locale, "搜索、跳转、让 Friday 处理", "Search, jump, ask Friday")}
                   </p>
                 </div>
-                <p className="text-xs" style={{ color: "var(--ink-500)" }}>
+                <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
                   {localize(locale, "Hub 投影", "Hub projected")}
                 </p>
               </div>
@@ -198,14 +198,14 @@ export function ConsoleShell() {
                     onClick={() => setShowMobileMore(false)}
                     className="min-h-[88px] rounded-[var(--radius-md)] border px-3 py-3"
                     style={{
-                      borderColor: "var(--surface-border)",
-                      background: "var(--surface-2)",
+                      borderColor: "var(--color-border-soft)",
+                      background: "var(--color-bg-subtle)",
                     }}
                   >
-                    <p className="text-sm font-medium" style={{ color: "var(--ink-900)" }}>
+                    <p className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>
                       {item.labelText}
                     </p>
-                    <p className="mt-0.5 text-xs leading-5" style={{ color: "var(--ink-500)" }}>
+                    <p className="mt-0.5 text-xs leading-5" style={{ color: "var(--color-text-tertiary)" }}>
                       {item.descriptionText}
                     </p>
                   </NavLink>
@@ -242,7 +242,7 @@ export function ConsoleShell() {
                 isOnChatPage ? "overflow-hidden" : "overflow-y-auto",
               )}
               style={{
-                background: "var(--bg)",
+                background: "var(--color-bg-base)",
               }}
             >
               <main
@@ -287,9 +287,9 @@ function DesktopHubStrip(props: { locale: "zh" | "en"; onOpenPalette: () => void
       data-ui-shell="hubstrip"
       className="hidden items-center gap-2 border-b px-4 py-2 text-xs lg:flex"
       style={{
-        background: "var(--surface-glass)",
-        borderColor: "var(--surface-border)",
-        color: "var(--ink-700)",
+        background: "var(--color-bg-chrome)",
+        borderColor: "var(--color-border-soft)",
+        color: "var(--color-text-secondary)",
         backdropFilter: "blur(16px) saturate(1.35)",
       }}
     >
@@ -298,25 +298,25 @@ function DesktopHubStrip(props: { locale: "zh" | "en"; onOpenPalette: () => void
         aria-hidden="true"
         className="grid h-6 w-6 shrink-0 place-items-center rounded-[var(--radius-sm)] border"
         style={{
-          borderColor: "rgba(15, 125, 140, 0.16)",
-          background: "rgba(15, 125, 140, 0.08)",
-          color: hubOnline ? "var(--ok)" : "var(--danger)",
+          borderColor: "var(--color-border-soft)",
+          background: "var(--color-accent-muted)",
+          color: hubOnline ? "var(--color-text-success)" : "var(--color-text-danger)",
         }}
       >
-        <span className="h-2 w-2 rounded-full" style={{ background: hubOnline ? "var(--ok)" : "var(--danger)" }} />
+        <span className="h-2 w-2 rounded-full" style={{ background: hubOnline ? "var(--color-text-success)" : "var(--color-text-danger)" }} />
       </span>
-      <strong style={{ color: "var(--ink-900)" }}>Friday Hub</strong>
-      <span data-friday-ui="chip" className="rounded-full px-2 py-1" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+      <strong style={{ color: "var(--color-text-primary)" }}>Friday Hub</strong>
+      <span data-friday-ui="chip" className="rounded-full px-2 py-1" style={{ background: "var(--color-accent-soft)", color: "var(--color-accent)" }}>
         {localize(locale, "真相源投影", "source-of-truth projection")}
       </span>
-      <span data-friday-ui="filter" className="rounded-full border px-2 py-1" style={{ borderColor: "rgba(15, 125, 140, 0.22)", color: "var(--ink-500)" }}>
+      <span data-friday-ui="filter" className="rounded-full border px-2 py-1" style={{ borderColor: "var(--color-border-strong)", color: "var(--color-text-tertiary)" }}>
         {localize(locale, "证据优先", "Proof first")}
       </span>
       <button
         type="button"
         data-friday-ui="button-primary"
         className="rounded-full px-3 py-1 font-semibold"
-        style={{ background: "var(--accent)", color: "white" }}
+        style={{ background: "var(--color-accent)", color: "white" }}
         onClick={onOpenPalette}
       >
         {localize(locale, "命令", "Command")}
@@ -340,18 +340,18 @@ function DesktopBottomDock(props: { locale: "zh" | "en" }) {
       data-testid="desktop-proof-timeline"
       className="hidden border-t px-[15px] pb-[11px] pt-[9px] lg:block"
       style={{
-        background: "var(--surface-2)",
-        borderColor: "var(--hair)",
+        background: "var(--color-bg-subtle)",
+        borderColor: "var(--color-border-soft)",
       }}
       aria-label={localize(locale, "证明时间线", "Proof timeline")}
     >
-      <div className="flex items-center gap-2 text-[11px] font-bold uppercase" style={{ color: "var(--ink-soft)" }}>
+      <div className="flex items-center gap-2 text-[11px] font-bold uppercase" style={{ color: "var(--color-text-secondary)" }}>
         <span>{localize(locale, "证明时间线", "Proof timeline")}</span>
-        <span className="ml-auto text-[10.5px] font-medium normal-case" style={{ color: "var(--faint)" }}>
+        <span className="ml-auto text-[10.5px] font-medium normal-case" style={{ color: "var(--color-text-faint)" }}>
           {localize(locale, "当前 surface", "current surface")}
         </span>
       </div>
-      <div className="mt-[7px] flex flex-col gap-[3px] font-mono text-[11px]" style={{ color: "var(--muted)" }}>
+      <div className="mt-[7px] flex flex-col gap-[3px] font-mono text-[11px]" style={{ color: "var(--color-text-tertiary)" }}>
         <span>receipt.chain · live-observation · operator-gate</span>
         <span>pending-review · proof-inspector-right · no-claim-without-evidence</span>
       </div>
