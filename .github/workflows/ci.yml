@@ -26,6 +26,9 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Check pnpm native build allowlist
+        run: node scripts/quality/check-pnpm-native-build-allowlist.mjs
+
       - name: Install dependencies
         env:
           npm_config_fetch_retries: 5
