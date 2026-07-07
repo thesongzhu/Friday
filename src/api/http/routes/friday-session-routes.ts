@@ -50,7 +50,10 @@ import type { FridayProviderTenantContext } from "#providers";
 import type { FridayChannelRegistry } from "#channels";
 import type { FridayAgentRunConstraints } from "../../../agent/model/friday-agent.types.js";
 import type { FridayAuthPrincipal } from "../../model/friday-api-auth.types.js";
-import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
+import {
+  assertBoundPrincipalAuthorityForOperation,
+  isUnauthenticatedPublicPrincipal,
+} from "../../../security/friday-owner-session-channel-capability.js";
 import { buildPublicV1AgentRunIsolation } from "./friday-public-v1-agent-isolation.js";
 
 // ─── Dependencies ───
@@ -110,14 +113,21 @@ export interface FridayRustSessionLifecycleBridge {
     userId?: string;
     accountId?: string;
     chatKind?: FridaySessionChatKind;
-    principal?: FridayAuthPrincipal | null;
+    metadata?: Record<string, unknown>;
+    principal: FridayAuthPrincipal;
   }): Promise<FridaySessionCreateResponse>;
   appendMessage(input: {
     sessionKey: string;
     role: FridaySessionMessageRecord["role"];
     content: unknown;
+    contentText?: string;
+    toolCalls?: unknown[];
+    tokenCount?: number;
+    idempotencyKey?: string;
+    parentMessageId?: string;
     metadata?: Record<string, unknown>;
-    principal?: FridayAuthPrincipal | null;
+    timestamp?: string;
+    principal: FridayAuthPrincipal;
   }): Promise<FridaySessionMessageCreateResponse>;
   getMemoryNamespace(input: {
     sessionKey: string;
@@ -810,6 +820,17 @@ function rustSessionLifecycleBridgeOrRetired(
   );
 }
 
+function assertSessionWritePrincipal(
+  principal: FridayAuthPrincipal | null | undefined,
+  operation: Parameters<typeof assertBoundPrincipalAuthorityForOperation>[1],
+): FridayAuthPrincipal {
+  assertBoundPrincipalAuthorityForOperation(principal, operation, "api", {
+    anyOfScopes: ["hub.admin", "session.write"],
+    anyOfRoles: ["owner", "admin", "operator"],
+  });
+  return principal as FridayAuthPrincipal;
+}
+
 function assertSessionRunTestOracleAllowed(deps: FridaySessionRoutesDeps): void {
   if (deps.allowTestOnlySessionRunExecution !== true) {
     throwRetiredSession(
@@ -897,13 +918,15 @@ export function createFridaySessionRoutes(
         const body = ctx.body;
         const metadata = sanitizeMetadata(body.metadata);
         if (deps.routeSessionsViaRust === true) {
+          const principal = assertSessionWritePrincipal(ctx.principal ?? null, "sessions.create");
           return rustSessionLifecycleBridgeOrRetired(deps).createSession({
             channel: body.channel,
             chatId: body.chatId,
             userId: body.userId,
             accountId: body.accountId,
             chatKind: body.chatKind,
-            principal: (ctx.principal as FridayAuthPrincipal | null | undefined) ?? null,
+            metadata,
+            principal,
           });
         }
         assertSessionTestOracleAllowed(deps);
@@ -1135,12 +1158,19 @@ export function createFridaySessionRoutes(
         validateCreateMessageBody(ctx.body);
         const body = ctx.body;
         if (deps.routeSessionsViaRust === true) {
+          const principal = assertSessionWritePrincipal(ctx.principal ?? null, "sessions.messages.create");
           return rustSessionLifecycleBridgeOrRetired(deps).appendMessage({
             sessionKey: key,
             role: body.role,
             content: body.content,
+            contentText: body.contentText,
+            toolCalls: body.toolCalls,
+            tokenCount: body.tokenCount,
+            idempotencyKey: body.idempotencyKey,
+            parentMessageId: body.parentMessageId,
             metadata: sanitizeMetadata(body.metadata),
-            principal: (ctx.principal as FridayAuthPrincipal | null | undefined) ?? null,
+            timestamp: body.timestamp,
+            principal,
           });
         }
         assertSessionTestOracleAllowed(deps);
