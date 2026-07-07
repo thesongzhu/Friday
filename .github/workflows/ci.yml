@@ -153,7 +153,8 @@ jobs:
 
       - name: Initialize changed files for push
         if: ${{ github.event_name != 'pull_request' }}
-        run: : > "$RUNNER_TEMP/prod-parity-changed-files.txt"
+        run: |
+          : > "$RUNNER_TEMP/prod-parity-changed-files.txt"
 
       - name: Check prod-parity PR body declarations
         run: node scripts/quality/check-prod-parity-pr-body.mjs --event "$GITHUB_EVENT_PATH" --changed-files "$RUNNER_TEMP/prod-parity-changed-files.txt"
