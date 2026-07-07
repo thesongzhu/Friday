@@ -82,6 +82,76 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday mobile viewport (375px, mock hub br
     expect(await mobileHeroPet.getAttribute("data-friday-pet-stage")).toBe("mobile-web");
     expect(await mobileHeroPet.getAttribute("data-friday-mobile-strategy")).toBe("design-truth-aligned");
 
+    const petRenderProof = await mobileHeroPet.evaluate(async (stage) => {
+      function wait(ms: number): Promise<void> {
+        return new Promise((resolve) => window.setTimeout(resolve, ms));
+      }
+
+      function canvasFingerprint(canvas: HTMLCanvasElement): { nonBlank: boolean; hash: number } {
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) {
+          return { nonBlank: false, hash: 0 };
+        }
+        const width = Math.max(1, canvas.width);
+        const height = Math.max(1, canvas.height);
+        const data = context.getImageData(0, 0, width, height).data;
+        let nonBlank = false;
+        let hash = 2166136261;
+        for (let index = 0; index < data.length; index += 4) {
+          const alpha = data[index + 3] ?? 0;
+          const red = data[index] ?? 0;
+          const green = data[index + 1] ?? 0;
+          const blue = data[index + 2] ?? 0;
+          if (alpha > 0 && (red !== 0 || green !== 0 || blue !== 0)) {
+            nonBlank = true;
+          }
+          hash ^= red + green * 3 + blue * 5 + alpha * 7 + index;
+          hash = Math.imul(hash, 16777619);
+        }
+        return { nonBlank, hash: hash >>> 0 };
+      }
+
+      const staticPetImages = Array.from(stage.querySelectorAll("img"))
+        .map((image) => image.getAttribute("src") ?? "")
+        .filter((source) => source.includes("/source/pet/g-idle.png"));
+      const deadline = Date.now() + 5_000;
+      let latestProof = {
+        hasCanvas: false,
+        canvasNonBlank: false,
+        frameChanged: false,
+        staticPetImages,
+      };
+      while (Date.now() < deadline) {
+        const canvas = stage.querySelector("canvas");
+        if (canvas instanceof HTMLCanvasElement) {
+          const before = canvasFingerprint(canvas);
+          const pointerDown = typeof PointerEvent === "function"
+            ? new PointerEvent("pointerdown", { bubbles: true, cancelable: true })
+            : new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+          stage.dispatchEvent(pointerDown);
+          stage.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+          await wait(350);
+          const after = canvasFingerprint(canvas);
+          latestProof = {
+            hasCanvas: true,
+            canvasNonBlank: before.nonBlank || after.nonBlank,
+            frameChanged: before.hash !== after.hash,
+            staticPetImages,
+          };
+          if (latestProof.canvasNonBlank && latestProof.frameChanged) {
+            return latestProof;
+          }
+        }
+        await wait(100);
+      }
+      return latestProof;
+    });
+
+    expect(petRenderProof.staticPetImages).toEqual([]);
+    expect(petRenderProof.hasCanvas).toBe(true);
+    expect(petRenderProof.canvasNonBlank).toBe(true);
+    expect(petRenderProof.frameChanged).toBe(true);
+
     const mobileHome = pageHandle.page.getByTestId("mobile-web-home-surface");
     await mobileHome.waitFor({ state: "visible", timeout: 5_000 });
     expect(await mobileHome.isVisible()).toBe(true);
