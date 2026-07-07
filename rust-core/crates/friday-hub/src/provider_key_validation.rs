@@ -20,6 +20,9 @@
 //!   ([`friday_anthropic::ClaudeClient::chat`]). Anthropic has no `/models` discovery
 //!   in-crate, so this spends a tiny amount of quota (~one or two tokens). Documented
 //!   in the live harness run-doc.
+//! - **OpenAI** — an authenticated `GET /v1/models` against `OPENAI_API_KEY` (or
+//!   `FRIDAY_OPENAI_API_KEY`) and `E2E_OPENAI_BASE_URL`/`https://api.openai.com`.
+//!   Authenticated but spends no completion quota.
 //!
 //! ## No-fallback + honesty mapping (the core of this module)
 //! The mapping deliberately partitions a genuinely-bad credential from a transient
@@ -52,6 +55,17 @@
 use friday_anthropic::{ClaudeClient, ClaudeError, DEFAULT_MODEL as CLAUDE_DEFAULT_MODEL};
 use friday_deepseek::{DeepSeekClient, DeepSeekError};
 use friday_providers::{KeyProvider, KeyValidationOutcome, KeyValidationProbe};
+
+const OPENAI_ENV_KEY: &str = "OPENAI_API_KEY";
+const FRIDAY_OPENAI_ENV_KEY: &str = "FRIDAY_OPENAI_API_KEY";
+const OPENAI_BASE_URL_ENV_KEY: &str = "E2E_OPENAI_BASE_URL";
+const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
+
+fn read_env_non_empty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
 
 /// Map a DeepSeek `discover_models` result into a typed key-validation outcome.
 /// PURE (no network) so every arm is unit-tested directly.
@@ -109,6 +123,29 @@ pub fn map_claude_result<T>(result: Result<T, ClaudeError>) -> KeyValidationOutc
     }
 }
 
+/// Map an OpenAI-compatible `/v1/models` HTTP status into a typed
+/// key-validation outcome. PURE (no network): only 401/403 are a bad key, 429 and
+/// 5xx/408 are unavailable, and other client errors are not confirmed.
+pub fn map_openai_status(status: Result<u16, &'static str>) -> KeyValidationOutcome {
+    match status {
+        Ok(code) if (200..=299).contains(&code) => KeyValidationOutcome::Valid,
+        Ok(code @ (401 | 403)) => KeyValidationOutcome::Invalid { status: code },
+        Ok(429) => KeyValidationOutcome::Unavailable {
+            detail: "rate_limited",
+        },
+        Ok(408) => KeyValidationOutcome::Unavailable {
+            detail: "provider_unavailable",
+        },
+        Ok(code) if (500..=599).contains(&code) => KeyValidationOutcome::Unavailable {
+            detail: "provider_unavailable",
+        },
+        Ok(_) => KeyValidationOutcome::Unavailable {
+            detail: "client_error",
+        },
+        Err(detail) => KeyValidationOutcome::Unavailable { detail },
+    }
+}
+
 /// The real, secret-bearing key-validation probe. Constructs the provider client
 /// `from_env` (FAILS CLOSED to [`KeyValidationOutcome::CredentialMissing`] if the
 /// key is absent — never a fallback) and runs ONE minimal authenticated round-trip,
@@ -145,6 +182,29 @@ impl LiveKeyValidationProbe {
             }
         }
     }
+
+    /// Validate OpenAI via an authenticated `GET /v1/models` (no completion quota).
+    fn validate_openai(&self) -> KeyValidationOutcome {
+        let Some(api_key) = read_env_non_empty(OPENAI_ENV_KEY)
+            .or_else(|| read_env_non_empty(FRIDAY_OPENAI_ENV_KEY))
+        else {
+            return KeyValidationOutcome::CredentialMissing;
+        };
+        let base_url = read_env_non_empty(OPENAI_BASE_URL_ENV_KEY)
+            .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string());
+        let url = format!("{}/v1/models", base_url.trim_end_matches('/'));
+        let result = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .get(&url)
+            .set("Authorization", &format!("Bearer {api_key}"))
+            .call();
+        match result {
+            Ok(response) => map_openai_status(Ok(response.status())),
+            Err(ureq::Error::Status(code, _)) => map_openai_status(Ok(code)),
+            Err(ureq::Error::Transport(_)) => map_openai_status(Err("transport")),
+        }
+    }
 }
 
 impl KeyValidationProbe for LiveKeyValidationProbe {
@@ -152,6 +212,7 @@ impl KeyValidationProbe for LiveKeyValidationProbe {
         match provider {
             KeyProvider::DeepSeek => self.validate_deepseek(),
             KeyProvider::Anthropic => self.validate_anthropic(),
+            KeyProvider::OpenAi => self.validate_openai(),
         }
     }
 }
@@ -317,5 +378,39 @@ mod tests {
         // probe and never calls validate.
         let _probe = LiveKeyValidationProbe::new();
         let _probe2 = LiveKeyValidationProbe;
+    }
+
+    #[test]
+    fn openai_status_mapping_partitions_auth_from_transient_without_network() {
+        assert_eq!(map_openai_status(Ok(200)), KeyValidationOutcome::Valid);
+        assert_eq!(
+            map_openai_status(Ok(401)),
+            KeyValidationOutcome::Invalid { status: 401 }
+        );
+        assert_eq!(
+            map_openai_status(Ok(403)),
+            KeyValidationOutcome::Invalid { status: 403 }
+        );
+        for (status, detail) in [
+            (408, "provider_unavailable"),
+            (429, "rate_limited"),
+            (500, "provider_unavailable"),
+            (503, "provider_unavailable"),
+            (400, "client_error"),
+            (404, "client_error"),
+        ] {
+            let outcome = map_openai_status(Ok(status));
+            assert_eq!(outcome, KeyValidationOutcome::Unavailable { detail });
+            assert!(
+                !matches!(outcome, KeyValidationOutcome::Invalid { .. }),
+                "non-auth OpenAI status must never be branded Invalid"
+            );
+        }
+        assert_eq!(
+            map_openai_status(Err("transport")),
+            KeyValidationOutcome::Unavailable {
+                detail: "transport"
+            }
+        );
     }
 }

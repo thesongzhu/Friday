@@ -31,7 +31,8 @@
 //! that contract, so this module ships ONLY the call-free seam: the
 //! [`KeyValidationProbe`] trait + the provider-agnostic typed [`KeyValidationOutcome`]
 //! + a [`MockKeyValidationProbe`] for tests. The REAL, secret-bearing,
-//! quota-touching impl (driving `friday-anthropic`/`friday-deepseek`) lives in
+//! quota-touching impl (driving `friday-anthropic`/`friday-deepseek` and OpenAI
+//! `/v1/models`) lives in
 //! `friday-hub`, where provider secrets already live — mirroring how R6's
 //! `ProviderDoctor` lives in the hub and composes this crate's `detect`.
 //!
@@ -63,6 +64,9 @@ pub enum KeyProvider {
     /// NOTE: this is a DIFFERENT credential than the `claude` CLI login that
     /// [`crate::detect`] checks for [`crate::Provider::Claude`].
     Anthropic,
+    /// OpenAI API route key (`OPENAI_API_KEY` / `FRIDAY_OPENAI_API_KEY`). Validated
+    /// by authenticated `GET /v1/models` — spends no completion quota.
+    OpenAi,
 }
 
 impl KeyProvider {
@@ -71,6 +75,7 @@ impl KeyProvider {
         match self {
             KeyProvider::DeepSeek => "deepseek",
             KeyProvider::Anthropic => "anthropic",
+            KeyProvider::OpenAi => "openai",
         }
     }
 
@@ -80,14 +85,19 @@ impl KeyProvider {
         match self {
             KeyProvider::DeepSeek => "FRIDAY_DEEPSEEK_API_KEY",
             KeyProvider::Anthropic => "FRIDAY_ANTHROPIC_API_KEY",
+            KeyProvider::OpenAi => "OPENAI_API_KEY",
         }
     }
 
     /// The canonical, ordered set of every credential that has a key-validation
     /// path. The composite capability-doctor iterates this. Order is stable
-    /// (`deepseek`, `anthropic`) so a doctor result is deterministic.
+    /// (`deepseek`, `anthropic`, `openai`) so a doctor result is deterministic.
     pub fn all() -> &'static [KeyProvider] {
-        &[KeyProvider::DeepSeek, KeyProvider::Anthropic]
+        &[
+            KeyProvider::DeepSeek,
+            KeyProvider::Anthropic,
+            KeyProvider::OpenAi,
+        ]
     }
 }
 
@@ -160,6 +170,7 @@ pub trait KeyValidationProbe {
 pub struct MockKeyValidationProbe {
     deepseek: Option<KeyValidationOutcome>,
     anthropic: Option<KeyValidationOutcome>,
+    openai: Option<KeyValidationOutcome>,
 }
 
 impl MockKeyValidationProbe {
@@ -172,6 +183,7 @@ impl MockKeyValidationProbe {
         match provider {
             KeyProvider::DeepSeek => self.deepseek = Some(outcome),
             KeyProvider::Anthropic => self.anthropic = Some(outcome),
+            KeyProvider::OpenAi => self.openai = Some(outcome),
         }
         self
     }
@@ -184,6 +196,7 @@ impl KeyValidationProbe for MockKeyValidationProbe {
         match provider {
             KeyProvider::DeepSeek => self.deepseek,
             KeyProvider::Anthropic => self.anthropic,
+            KeyProvider::OpenAi => self.openai,
         }
         .unwrap_or(KeyValidationOutcome::CredentialMissing)
     }
@@ -197,14 +210,24 @@ mod tests {
     fn key_provider_all_is_stable_complete_and_labeled() {
         assert_eq!(
             KeyProvider::all(),
-            &[KeyProvider::DeepSeek, KeyProvider::Anthropic]
+            &[
+                KeyProvider::DeepSeek,
+                KeyProvider::Anthropic,
+                KeyProvider::OpenAi,
+            ]
         );
         assert_eq!(KeyProvider::DeepSeek.as_str(), "deepseek");
         assert_eq!(KeyProvider::Anthropic.as_str(), "anthropic");
+        assert_eq!(KeyProvider::OpenAi.as_str(), "openai");
         assert_eq!(KeyProvider::DeepSeek.env_key(), "FRIDAY_DEEPSEEK_API_KEY");
         assert_eq!(KeyProvider::Anthropic.env_key(), "FRIDAY_ANTHROPIC_API_KEY");
+        assert_eq!(KeyProvider::OpenAi.env_key(), "OPENAI_API_KEY");
         // Every variant the match in `as_str` knows about is present in `all()`.
-        for p in [KeyProvider::DeepSeek, KeyProvider::Anthropic] {
+        for p in [
+            KeyProvider::DeepSeek,
+            KeyProvider::Anthropic,
+            KeyProvider::OpenAi,
+        ] {
             assert!(KeyProvider::all().contains(&p));
         }
     }
@@ -254,6 +277,11 @@ mod tests {
             probe.validate(KeyProvider::Anthropic),
             KeyValidationOutcome::CredentialMissing,
             "an unset provider must NOT inherit another provider's Valid"
+        );
+        assert_eq!(
+            probe.validate(KeyProvider::OpenAi),
+            KeyValidationOutcome::CredentialMissing,
+            "an unset OpenAI provider must NOT inherit another provider's Valid"
         );
     }
 }

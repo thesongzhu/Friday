@@ -28,7 +28,7 @@ import { FridayDomainError } from "#errors";
  * ## SURFACE-SHAPE NOTE (deliberate, not a fabrication)
  * The legacy TS `providers.validate`/`providers.doctor` are per-`:providerId` probes;
  * `capabilities.doctor` accepts a providerIds filter. `hub_capability_doctor` has NO
- * providerId input — it is a fixed codex/claude (CLI) + deepseek/anthropic (key)
+ * providerId input — it is a fixed codex/claude (CLI) + deepseek/anthropic/openai (key)
  * doctor. When the flag is ON the routes return THIS refs-only composite — they do NOT
  * synthesize the old per-providerId shapes. That contract change is surfaced (PR body +
  * operator question), not blind-filled.
@@ -56,7 +56,7 @@ export interface FridayRustCapabilityCliEntry {
 
 /** One per-credential refs-only key-validation entry — the coarse safe fields ONLY. */
 export interface FridayRustCapabilityKeyEntry {
-  /** Safe credential label (`deepseek` | `anthropic`). */
+  /** Safe credential label (`deepseek` | `anthropic` | `openai`). */
   readonly provider: string;
   /** Coarse outcome label: `valid` | `invalid` | `unavailable` | `credential_missing`. */
   readonly label: string;

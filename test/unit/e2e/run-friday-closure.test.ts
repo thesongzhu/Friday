@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 
@@ -182,6 +183,68 @@ describe("run-friday-closure helpers", () => {
         keyValidation: null,
       },
     })).toThrow(/TS_RUNTIME_PROVIDER_PROBE_RETIRED/);
+  });
+
+  it("accepts Rust capability-doctor validation when the selected OpenAI key is confirmed valid", () => {
+    expect(() => assertClosureProviderValidationReady({
+      ok: true,
+      data: {
+        truthLabel: "rust_capability_doctor",
+        proofOnly: true,
+        keyValidationProbed: true,
+        keyValidation: [
+          { provider: "openai", label: "valid", status: null, detail: null },
+        ],
+        confirmedValidKeys: ["openai"],
+      },
+    }, "openai")).not.toThrow();
+  });
+
+  it("rejects Rust capability-doctor key validation when no key is confirmed valid", () => {
+    expect(() => assertClosureProviderValidationReady({
+      ok: true,
+      data: {
+        truthLabel: "rust_capability_doctor",
+        proofOnly: true,
+        keyValidationProbed: true,
+        keyValidation: [
+          { provider: "openai", label: "invalid", status: 401, detail: null },
+        ],
+        confirmedValidKeys: [],
+      },
+    }, "openai")).toThrow(/did not confirm openai key valid/);
+  });
+
+  it("rejects Rust capability-doctor key validation when only a different provider key is confirmed", () => {
+    expect(() => assertClosureProviderValidationReady({
+      ok: true,
+      data: {
+        truthLabel: "rust_capability_doctor",
+        proofOnly: true,
+        keyValidationProbed: true,
+        keyValidation: [
+          { provider: "openai", label: "invalid", status: 401, detail: null },
+          { provider: "deepseek", label: "valid", status: null, detail: null },
+        ],
+        confirmedValidKeys: ["deepseek"],
+      },
+    }, "openai")).toThrow(/did not confirm openai key valid/);
+  });
+
+  it("routes closure provider lifecycle validation through key-validating capability doctor", () => {
+    const source = readFileSync(
+      join(fileURLToPath(new URL(".", import.meta.url)), "../../../scripts/e2e/run-friday-closure.mjs"),
+      "utf8",
+    );
+    const lifecycleBlock = source.slice(
+      source.indexOf('id: "local.providers.lifecycle"'),
+      source.indexOf('id: "local.cli.convert-import-pack-run"'),
+    );
+
+    expect(lifecycleBlock).toContain('"/v1/capabilities/doctor"');
+    expect(lifecycleBlock).toContain("validateKeys: true");
+    expect(lifecycleBlock).toContain("assertClosureProviderValidationReady(capabilityDoctor.json");
+    expect(lifecycleBlock).not.toContain("assertClosureProviderValidationReady(validateResult.json");
   });
 
   it("runStep persists an in-progress active step before completion", async () => {

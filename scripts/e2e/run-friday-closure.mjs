@@ -1320,7 +1320,21 @@ export function buildClosureProviderCreateRequest(providerConfig) {
   };
 }
 
-export function assertClosureProviderValidationReady(validateJson) {
+function closureProviderKeyValidationLabel(providerKind) {
+  const normalized = String(providerKind ?? "").trim().toLowerCase();
+  if (normalized === "deepseek" || normalized === "deepseek-pro") {
+    return "deepseek";
+  }
+  if (normalized === "openai" || normalized === "openai-compatible") {
+    return "openai";
+  }
+  if (normalized === "anthropic" || normalized === "claude") {
+    return "anthropic";
+  }
+  return normalized;
+}
+
+export function assertClosureProviderValidationReady(validateJson, selectedProviderKind) {
   const validation = validateJson?.data?.validation;
   if (validation?.status === "ok") {
     return;
@@ -1334,7 +1348,27 @@ export function assertClosureProviderValidationReady(validateJson) {
   ) {
     throw new Error(
       "Provider validate failed: TS_RUNTIME_PROVIDER_PROBE_RETIRED " +
-        "Rust capability doctor returned proof-only CLI status without key validation.",
+      "Rust capability doctor returned proof-only CLI status without key validation.",
+    );
+  }
+
+  if (
+    data?.truthLabel === "rust_capability_doctor"
+    && data?.proofOnly === true
+    && data?.keyValidationProbed === true
+  ) {
+    const confirmed = Array.isArray(data.confirmedValidKeys) ? data.confirmedValidKeys : [];
+    const requiredProvider = closureProviderKeyValidationLabel(selectedProviderKind);
+    if (
+      requiredProvider
+      && confirmed.some((provider) => String(provider).trim().toLowerCase() === requiredProvider)
+    ) {
+      return;
+    }
+    const suffix = requiredProvider ? `${requiredProvider} key valid` : "selected provider key valid";
+    throw new Error(
+      "Provider validate failed: TS_RUNTIME_PROVIDER_PROBE_RETIRED " +
+        `Rust capability doctor did not confirm ${suffix}.`,
     );
   }
 
@@ -2019,6 +2053,9 @@ async function runLocalStage(ledger) {
       }
       modelProviderId = await createClosureProvider(baseUrl, token, closureProvider);
       const validateResult = await apiFetch(baseUrl, token, "POST", `/v1/providers/${modelProviderId}/validate`);
+      const capabilityDoctor = await apiFetch(baseUrl, token, "POST", "/v1/capabilities/doctor", {
+        validateKeys: true,
+      }, { timeoutMs: 180_000 });
       const budgetSet = await apiFetch(baseUrl, token, "PUT", "/v1/providers/budget", {
         monthlyLimitUsd: 25,
       });
@@ -2030,6 +2067,7 @@ async function runLocalStage(ledger) {
         providerKind: closureProvider.kind,
         providerEnvVar: closureProvider.envVar,
         validateResult,
+        capabilityDoctor,
         budgetSet,
         budgetGet,
         usageGet,
@@ -2038,7 +2076,10 @@ async function runLocalStage(ledger) {
       if (validateResult.status !== 200 || !validateResult.json.ok) {
         throw new Error(`Provider validate failed: ${JSON.stringify(validateResult.json)}`);
       }
-      assertClosureProviderValidationReady(validateResult.json);
+      if (capabilityDoctor.status !== 200 || !capabilityDoctor.json.ok) {
+        throw new Error(`Capability doctor failed: ${JSON.stringify(capabilityDoctor.json)}`);
+      }
+      assertClosureProviderValidationReady(capabilityDoctor.json, closureProvider.kind);
       if (budgetSet.status !== 200 || !budgetSet.json.ok) {
         throw new Error(`Budget set failed: ${JSON.stringify(budgetSet.json)}`);
       }
