@@ -9,7 +9,9 @@ describe("UI-W2 shell splash token contract", () => {
     const files = [
       "ui/src/components/console/shell/splash/shell.tsx",
       "ui/src/components/console/shell/splash/auth-error.tsx",
+      "ui/src/components/console/shell/splash/loading.tsx",
       "ui/src/components/console/shell/splash/network-error.tsx",
+      "ui/src/components/console/shell/splash/setup-gate.tsx",
     ];
     const source = files.map((file) => readRepoFile(file)).join("\n");
 
@@ -20,6 +22,8 @@ describe("UI-W2 shell splash token contract", () => {
       "var(--ink-700)",
       "var(--ink-500)",
       "var(--ink-300)",
+      "var(--accent)",
+      "var(--accent-soft)",
       "var(--rust-500)",
       "rgba(176, 80, 58, 0.14)",
       "rgba(15, 125, 140, 0.22)",
@@ -38,6 +42,8 @@ describe("UI-W2 shell splash token contract", () => {
       "var(--color-text-faint)",
       "var(--color-text-danger)",
       "var(--color-bg-danger-subtle)",
+      "var(--color-accent)",
+      "var(--color-accent-soft)",
       "var(--color-border-strong)",
     ];
 
