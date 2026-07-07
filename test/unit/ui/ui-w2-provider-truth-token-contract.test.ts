@@ -17,6 +17,6 @@ describe("UI-W2 provider truth token contract", () => {
     expect(source).toContain("var(--color-bg-subtle)");
     expect(source).toContain("var(--color-text-secondary)");
     expect(source).toContain("var(--color-accent)");
-    expect(source).toContain("var(--color-status-danger)");
+    expect(source).toContain("var(--color-text-danger)");
   });
 });

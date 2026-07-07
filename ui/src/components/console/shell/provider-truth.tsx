@@ -29,10 +29,10 @@ function statusLabel(status: ProviderTruthStatus, locale: AppLocale): string {
 
 function statusDot(status: ProviderTruthStatus): string {
   if (status === "offline") {
-    return "var(--rust-500)";
+    return "var(--color-text-danger)";
   }
   if (status === "degraded" || status === "unavailable") {
-    return "var(--accent)";
+    return "var(--color-accent)";
   }
   return "var(--ok)";
 }
@@ -132,9 +132,9 @@ export function ProviderTruthCompact(props: {
         className,
       )}
       style={{
-        borderColor: "rgba(15, 125, 140, 0.22)",
-        background: "var(--surface-2)",
-        color: "var(--ink-700)",
+        borderColor: "var(--color-border-soft)",
+        background: "var(--color-bg-subtle)",
+        color: "var(--color-text-secondary)",
       }}
     >
       <span
@@ -147,8 +147,8 @@ export function ProviderTruthCompact(props: {
         <span
           className="shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px]"
           style={{
-            borderColor: "rgba(15, 125, 140, 0.20)",
-            color: "var(--ink-300)",
+            borderColor: "var(--color-accent-strong)",
+            color: "var(--color-text-faint)",
             fontFamily: "var(--font-mono-jb)",
           }}
         >
@@ -159,8 +159,8 @@ export function ProviderTruthCompact(props: {
         <span
           className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold"
           style={{
-            background: "var(--accent-soft)",
-            color: "var(--accent)",
+            background: "var(--color-accent-soft)",
+            color: "var(--color-accent)",
           }}
         >
           {localize(locale, `${truth.alertCount} 告警`, `${truth.alertCount} alerts`)}
@@ -243,7 +243,7 @@ export function ProviderTruthCard(props: {
             ) : (
               <ShieldAlert
                 className="h-4 w-4 shrink-0"
-                style={{ color: currentProviderStatus === "offline" ? "var(--rust-500)" : "var(--accent)" }}
+                style={{ color: currentProviderStatus === "offline" ? "var(--color-text-danger)" : "var(--color-accent)" }}
               />
             )}
             <p className="text-sm font-medium text-[color:var(--color-text-primary)]">
