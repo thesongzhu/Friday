@@ -27,4 +27,13 @@ describe("UI-W1 operations screen contract", () => {
     expect(source).toContain('data-truth="wired_registry"');
     expect(source).toContain("Submit Intent");
   });
+
+  it("keeps the Operations marker on the actionable truth-labelled button", () => {
+    const source = homeSource();
+    const buttonMatch = source.match(
+      /<ActionButton[\s\S]*?data-testid="operations-submit-intent"[\s\S]*?data-action="mission_intake_submit"[\s\S]*?data-cap="mission_intake"[\s\S]*?data-truth="wired_registry"[\s\S]*?>/,
+    );
+
+    expect(buttonMatch?.[0]).toBeTruthy();
+  });
 });
