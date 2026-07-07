@@ -35,6 +35,18 @@ function hasConcreteDeclaration(body, label, predicate) {
   if (/\b(todo|tbd|placeholder|unknown|none|n\/a|not applicable|pending|later|skip|skipped)\b/iu.test(value)) {
     return false;
   }
+  if (/\b(did|do|does|was|were|is|are|has|have)\s+not\b/iu.test(value)) {
+    return false;
+  }
+  if (/\bnot\s+(required|needed|necessary|run|built|compiled|installed|restarted|kickstarted)\b/iu.test(value)) {
+    return false;
+  }
+  if (/\b(no|without)\s+(build|rebuild|compile|install|native|native modules?|restart|kickstart|proof)\b/iu.test(value)) {
+    return false;
+  }
+  if (/\b(failed|failure|unable|cannot|can't)\b/iu.test(value)) {
+    return false;
+  }
   return predicate(value);
 }
 
