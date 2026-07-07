@@ -18,8 +18,14 @@ function revParse(ref: string): string | null {
 }
 
 function currentOriginMain(): string {
-  const signedSha = revParse("origin/main") ?? revParse("HEAD");
+  const originMain = revParse("origin/main");
+  if (originMain !== null) {
+    return originMain;
+  }
+
+  const signedSha = revParse("HEAD");
   expect(signedSha, "expected a local signed target SHA").toBeTruthy();
+  updateRef("refs/remotes/origin/main", signedSha);
   return signedSha!;
 }
 
