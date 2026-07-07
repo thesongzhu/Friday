@@ -2611,3 +2611,80 @@ describe("TS runtime retirement — session mutations fail-close by default", ()
     expect(result).toHaveProperty("delivery");
   });
 });
+
+describe("Rust session lifecycle bridge", () => {
+  it("routes create/message/namespace through the Rust-owned bridge when enabled", async () => {
+    const sessionService = createMockService();
+    const rustSessionLifecycleBridge = {
+      createSession: vi.fn().mockResolvedValue({
+        session: makeMockSession({
+          key: "closure:default:closure-chat",
+          channel: "closure",
+          accountId: "00000000-0000-0000-0000-000000000101",
+          userId: "00000000-0000-0000-0000-000000000102",
+          chatId: "closure-chat",
+        }),
+      }),
+      appendMessage: vi.fn().mockResolvedValue({
+        message: makeMockMessage({
+          sessionKey: "closure:default:closure-chat",
+          role: "user",
+          content: "Remember that my favorite color is teal.",
+          contentText: "Remember that my favorite color is teal.",
+        }),
+      }),
+      getMemoryNamespace: vi.fn().mockResolvedValue({
+        namespace:
+          "tenant.00000000-0000-0000-0000-000000000101.channel.closure.user.00000000-0000-0000-0000-000000000102.shared",
+      }),
+    };
+
+    const routes = createFridaySessionRoutes({
+      sessionService,
+      routeSessionsViaRust: true,
+      rustSessionLifecycleBridge,
+      allowTestOnlySessionExecution: false,
+    });
+
+    const create = routes.find((r) => r.operationId === "sessions.create")!;
+    const createResult = await create.handler(
+      makeMockCtx({
+        body: { channel: "closure", chatId: "closure-chat" },
+        principal: makeBoundPrincipal(),
+      }) as never,
+    );
+    expect((createResult as { session: { key: string } }).session.key).toBe(
+      "closure:default:closure-chat",
+    );
+    expect(sessionService.createSession).not.toHaveBeenCalled();
+
+    const message = routes.find((r) => r.operationId === "sessions.messages.create")!;
+    await message.handler(
+      makeMockCtx({
+        params: { sessionKey: "closure:default:closure-chat" },
+        body: { role: "user", content: "Remember that my favorite color is teal." },
+        principal: makeBoundPrincipal(),
+      }) as never,
+    );
+    expect(rustSessionLifecycleBridge.appendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: "closure:default:closure-chat",
+        role: "user",
+      }),
+    );
+    expect(sessionService.addMessage).not.toHaveBeenCalled();
+
+    const namespace = routes.find((r) => r.operationId === "sessions.memory.namespace.get")!;
+    const namespaceResult = await namespace.handler(
+      makeMockCtx({
+        params: { sessionKey: "closure:default:closure-chat" },
+        principal: makeBoundPrincipal(),
+      }) as never,
+    );
+    expect(namespaceResult).toEqual({
+      namespace:
+        "tenant.00000000-0000-0000-0000-000000000101.channel.closure.user.00000000-0000-0000-0000-000000000102.shared",
+    });
+    expect(sessionService.getSessionMemoryNamespace).not.toHaveBeenCalled();
+  });
+});
