@@ -39,4 +39,13 @@ describe("UI-W1 Memory Passport screen contract", () => {
     expect(source).toContain("stored memory !== automatic recall PASS");
     expect(source).toContain("runtime recall proof required");
   });
+
+  it("distinguishes user-initiated Add Memory writes from background candidate review", () => {
+    const source = read("ui/src/routes/memory-page.tsx");
+
+    expect(source).toContain('data-ui-component="memory-passport-user-write"');
+    expect(source).toContain("user_initiated_explicit_write");
+    expect(source).toContain("background candidates stay candidate_review_only");
+    expect(source).toContain("Add Memory is not silent learning");
+  });
 });
