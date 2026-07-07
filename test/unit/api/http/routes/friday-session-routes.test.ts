@@ -2649,12 +2649,22 @@ describe("Rust session lifecycle bridge", () => {
     const create = routes.find((r) => r.operationId === "sessions.create")!;
     const createResult = await create.handler(
       makeMockCtx({
-        body: { channel: "closure", chatId: "closure-chat" },
+        body: {
+          channel: "closure",
+          chatId: "closure-chat",
+          metadata: { source: "new79-reviewer-refute" },
+        },
         principal: makeBoundPrincipal(),
       }) as never,
     );
     expect((createResult as { session: { key: string } }).session.key).toBe(
       "closure:default:closure-chat",
+    );
+    expect(rustSessionLifecycleBridge.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: { source: "new79-reviewer-refute" },
+        principal: expect.objectContaining({ principalId: "user:bound-1" }),
+      }),
     );
     expect(sessionService.createSession).not.toHaveBeenCalled();
 
@@ -2662,7 +2672,17 @@ describe("Rust session lifecycle bridge", () => {
     await message.handler(
       makeMockCtx({
         params: { sessionKey: "closure:default:closure-chat" },
-        body: { role: "user", content: "Remember that my favorite color is teal." },
+        body: {
+          role: "user",
+          content: { text: "Remember that my favorite color is teal." },
+          contentText: "Remember that my favorite color is teal.",
+          toolCalls: [{ name: "memory.remember", arguments: { color: "teal" } }],
+          tokenCount: 8,
+          idempotencyKey: "idem-new79",
+          parentMessageId: "msg-parent",
+          metadata: { reviewer: "linnaeus" },
+          timestamp: "2026-07-07T10:10:00.000Z",
+        },
         principal: makeBoundPrincipal(),
       }) as never,
     );
@@ -2670,6 +2690,15 @@ describe("Rust session lifecycle bridge", () => {
       expect.objectContaining({
         sessionKey: "closure:default:closure-chat",
         role: "user",
+        content: { text: "Remember that my favorite color is teal." },
+        contentText: "Remember that my favorite color is teal.",
+        toolCalls: [{ name: "memory.remember", arguments: { color: "teal" } }],
+        tokenCount: 8,
+        idempotencyKey: "idem-new79",
+        parentMessageId: "msg-parent",
+        metadata: { reviewer: "linnaeus" },
+        timestamp: "2026-07-07T10:10:00.000Z",
+        principal: expect.objectContaining({ principalId: "user:bound-1" }),
       }),
     );
     expect(sessionService.addMessage).not.toHaveBeenCalled();
@@ -2686,5 +2715,46 @@ describe("Rust session lifecycle bridge", () => {
         "tenant.00000000-0000-0000-0000-000000000101.channel.closure.user.00000000-0000-0000-0000-000000000102.shared",
     });
     expect(sessionService.getSessionMemoryNamespace).not.toHaveBeenCalled();
+  });
+
+  it("rejects Rust bridge writes without a bound session.write principal", async () => {
+    const sessionService = createMockService();
+    const rustSessionLifecycleBridge = {
+      createSession: vi.fn(),
+      appendMessage: vi.fn(),
+      getMemoryNamespace: vi.fn(),
+    };
+
+    const routes = createFridaySessionRoutes({
+      sessionService,
+      routeSessionsViaRust: true,
+      rustSessionLifecycleBridge,
+      allowTestOnlySessionExecution: false,
+    });
+
+    const create = routes.find((r) => r.operationId === "sessions.create")!;
+    await expectRouteError(
+      create.handler(
+        makeMockCtx({
+          body: { channel: "closure", chatId: "closure-chat" },
+          principal: null,
+        }) as never,
+      ),
+      "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+    );
+    expect(rustSessionLifecycleBridge.createSession).not.toHaveBeenCalled();
+
+    const message = routes.find((r) => r.operationId === "sessions.messages.create")!;
+    await expectRouteError(
+      message.handler(
+        makeMockCtx({
+          params: { sessionKey: "closure:default:closure-chat" },
+          body: { role: "user", content: "hello" },
+          principal: makeBoundPrincipal({ scopes: ["session.read"], role: "viewer" }),
+        }) as never,
+      ),
+      "OWNER_SESSION_CHANNEL_AUTHORITY_REQUIRED",
+    );
+    expect(rustSessionLifecycleBridge.appendMessage).not.toHaveBeenCalled();
   });
 });
