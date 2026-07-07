@@ -13,7 +13,7 @@ import type {
 } from "@/lib/api/types";
 
 const USAGE_INPUT_BAR_COLOR = "var(--color-accent)";
-const USAGE_OUTPUT_BAR_COLOR = "var(--color-coral)";
+const USAGE_OUTPUT_BAR_COLOR = "var(--coral)";
 const USAGE_PROVIDER_BAR_COLOR = "var(--color-accent)";
 
 // ─── Types ───
