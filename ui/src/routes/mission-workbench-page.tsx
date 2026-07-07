@@ -95,6 +95,7 @@ export function MissionWorkbenchPage() {
   const [facetFilter, setFacetFilter] = useState<MissionTranscriptFacetFilter>("all");
   const [routeControlReason, setRouteControlReason] = useState("operator workbench route control");
   const [routeOverrideLane, setRouteOverrideLane] = useState("codex");
+  const [memoryDecisionErrors, setMemoryDecisionErrors] = useState<Record<string, string>>({});
 
   const routeControlMutation = useMutation({
     mutationFn: (input: { controlKind: "veto" | "override" }) => {
@@ -171,7 +172,25 @@ export function MissionWorkbenchPage() {
         ownerPrincipal: "operator:mission-workbench",
         decision: input.decision,
       }),
-    onSuccess: () => {
+    onMutate: (input) => {
+      setMemoryDecisionErrors((current) => {
+        const next = { ...current };
+        delete next[input.memoryId];
+        return next;
+      });
+    },
+    onError: (error, input) => {
+      setMemoryDecisionErrors((current) => ({
+        ...current,
+        [input.memoryId]: error instanceof Error ? error.message : "memory decision blocked",
+      }));
+    },
+    onSuccess: (_result, input) => {
+      setMemoryDecisionErrors((current) => {
+        const next = { ...current };
+        delete next[input.memoryId];
+        return next;
+      });
       void queryClient.invalidateQueries({
         queryKey: ["mission-spine", "workbench", "snapshot", targetMissionId ?? "latest"],
       });
@@ -187,10 +206,6 @@ export function MissionWorkbenchPage() {
       facet: facetFilter,
     });
   }, [facetFilter, groupFilter, query, snapshot?.transcriptSections, stateFilter, surfaceFilter]);
-  const memoryDecisionError = memoryDecisionMutation.error instanceof Error
-    ? memoryDecisionMutation.error.message
-    : "memory decision blocked";
-
   if (!snapshot) {
     return (
       <div className="mx-auto max-w-7xl px-6 py-8">
@@ -529,9 +544,9 @@ export function MissionWorkbenchPage() {
                   </div>
                   <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">{candidate.preview}</p>
                   <RefDetails label="Memory evidence" refs={[["evidence", candidate.evidenceRef]]} />
-                  {memoryDecisionMutation.isError ? (
+                  {memoryDecisionErrors[candidate.id] ? (
                     <div className="mt-3">
-                      <StatusPill tone="danger">{memoryDecisionError}</StatusPill>
+                      <StatusPill tone="danger">{memoryDecisionErrors[candidate.id]}</StatusPill>
                     </div>
                   ) : null}
                   <div className="mt-3 flex flex-wrap gap-2">
