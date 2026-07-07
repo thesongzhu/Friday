@@ -99,6 +99,7 @@ describe("Friday production advance script", () => {
       "bash",
       [
         advanceScript,
+        "--dry-run",
         "--repo",
         repoRoot,
         "--signed-sha",
