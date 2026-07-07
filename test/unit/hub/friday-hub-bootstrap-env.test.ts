@@ -316,6 +316,18 @@ describe("resolveFridayHubConfig", () => {
     expect(resolved.pluginRuntimeMode).toBe("full");
   });
 
+  it("maps closure scratch plugin lifecycle test-oracle env to explicit config flags", () => {
+    const resolved = resolveFridayHubConfig(makeConfig(), {
+      FRIDAY_PLUGIN_RUNTIME_MODE: "full",
+      FRIDAY_ALLOW_TEST_ONLY_PLUGIN_EXECUTION: "1",
+      FRIDAY_ALLOW_TEST_ONLY_AUTONOMY_LIFECYCLE_EXECUTION: "1",
+    });
+
+    expect(resolved.allowTestOnlyPluginExecution).toBe(true);
+    expect(resolved.allowTestOnlyAutonomyLifecycleExecution).toBe(true);
+    expect(resolved.pluginRuntimeMode).toBe("full");
+  });
+
   // ─── Deterministic pipeline mode ───
 
   it("defaults deterministic pipeline to enabled enforce mode", () => {
