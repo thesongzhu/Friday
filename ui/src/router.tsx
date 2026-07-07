@@ -29,6 +29,7 @@ const ObservabilityPage = lazy(async () => import("@/routes/observability-page")
 const OnboardingPage = lazy(async () => import("@/routes/onboarding-page").then((module) => ({ default: module.OnboardingPage })));
 const PacksPage = lazy(async () => import("@/routes/packs-page").then((module) => ({ default: module.PacksPage })));
 const PluginsPage = lazy(async () => import("@/routes/plugins-page").then((module) => ({ default: module.PluginsPage })));
+const ProvidersPage = lazy(async () => import("@/routes/providers-page").then((module) => ({ default: module.ProvidersPage })));
 const CrossBorderPackSetupPage = lazy(async () => import("@/routes/cross-border-pack-setup-page").then((module) => ({ default: module.CrossBorderPackSetupPage })));
 const ReflexPage = lazy(async () => import("@/routes/reflex-page").then((module) => ({ default: module.ReflexPage })));
 const SettingsPage = lazy(async () => import("@/routes/settings-page").then((module) => ({ default: module.SettingsPage })));
@@ -41,6 +42,7 @@ const WorkflowGeneratorPage = lazy(async () => import("@/routes/workflow-generat
 const McpPage = lazy(async () => import("@/routes/mcp-page").then((module) => ({ default: module.McpPage })));
 const UsagePage = lazy(async () => import("@/routes/usage-page").then((module) => ({ default: module.UsagePage })));
 const SessionsPage = lazy(async () => import("@/routes/sessions-page").then((module) => ({ default: module.SessionsPage })));
+const SessionDetailPage = lazy(async () => import("@/routes/session-detail-page").then((module) => ({ default: module.SessionDetailPage })));
 const ChatPage = lazy(async () => import("@/routes/chat-page").then((module) => ({ default: module.ChatPage })));
 const MemoryPage = lazy(async () => import("@/routes/memory-page").then((module) => ({ default: module.MemoryPage })));
 const MissionWorkbenchPage = lazy(async () => import("@/routes/mission-workbench-page").then((module) => ({ default: module.MissionWorkbenchPage })));
@@ -49,6 +51,7 @@ const StudioPage = lazy(async () => import("@/routes/studio-page").then((module)
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
 const ChannelsPage = lazy(async () => import("@/routes/channels-page").then((module) => ({ default: module.ChannelsPage })));
 const TaskWorkflowsPage = lazy(async () => import("@/routes/task-workflows-page").then((module) => ({ default: module.TaskWorkflowsPage })));
+const EvidencePage = lazy(async () => import("@/routes/evidence-page").then((module) => ({ default: module.EvidencePage })));
 const CloudWorkersPage = lazy(async () => import("@/routes/cloud-workers-page").then((module) => ({ default: module.CloudWorkersPage })));
 
 /**
@@ -468,6 +471,14 @@ export const router = createBrowserRouter([
             ),
           },
           {
+            path: "providers",
+            element: (
+              <RouteSuspense title={localizedText("加载提供方", "Loading providers")} detail={localizedText("Friday 正在准备提供方认证、能力和路由真值。", "Friday is preparing provider auth, capability, and routing truth.")}>
+                <ProvidersPage />
+              </RouteSuspense>
+            ),
+          },
+          {
             path: "automations",
             element: (
               <RouteSuspense title={localizedText("加载自动化", "Loading automations")} detail={localizedText("Friday 正在准备自动化队列。", "Friday is preparing the automation queue.")}>
@@ -504,6 +515,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载工作流", "Loading workflows")} detail={localizedText("Friday 正在准备工作流部署和可视化面板。", "Friday is preparing workflow deploy and visualization surfaces.")}>
                 <WorkflowsPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "evidence",
+            element: (
+              <RouteSuspense title={localizedText("加载证据", "Loading evidence")} detail={localizedText("Friday 正在准备证据搜索、回执车道和脱敏检查器。", "Friday is preparing evidence search, receipt lanes, and the redacted inspector.")}>
+                <EvidencePage />
               </RouteSuspense>
             ),
           },
@@ -571,6 +590,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载会话", "Loading sessions")} detail={localizedText("Friday 正在准备会话浏览器。", "Friday is preparing the session browser.")}>
                 <SessionsPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "sessions/:sessionKey",
+            element: (
+              <RouteSuspense title={localizedText("加载会话详情", "Loading session detail")} detail={localizedText("Friday 正在准备会话生命周期、证明和控制真值。", "Friday is preparing session lifecycle, proof, and control truth.")}>
+                <SessionDetailPage />
               </RouteSuspense>
             ),
           },

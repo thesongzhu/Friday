@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, MessageSquarePlus, Trash2, X } from "lucide-react";
+import { ArrowRight, Database, HelpCircle, MessageSquarePlus, ShieldCheck, Trash2, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useChatSession } from "@/hooks/use-chat-session";
@@ -34,6 +34,55 @@ function formatUsage(sessionUsage: SessionUsageResponse, locale: "zh" | "en"): s
     return `${tokenCount}K tokens`;
   }
   return `${tokenCount}K tokens`;
+}
+
+function ChatProofPreviews() {
+  return (
+    <div className="space-y-3">
+      <div
+        data-ui-component="chat-approval-proof-card"
+        data-cap="security_approval_bound_principal_gate_cat10_netnew"
+        data-truth="wired_registry"
+        className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4"
+      >
+        <div className="flex items-center gap-2 text-sm font-semibold text-[color:var(--color-text-primary)]">
+          <ShieldCheck className="h-4 w-4 text-[color:var(--color-accent)]" />
+          Approval proof
+        </div>
+        <p className="mt-2 font-mono text-xs text-[color:var(--color-text-secondary)]">
+          command digest + reviewer proof + bound principal gate. wired_registry !== runtime PASS.
+        </p>
+      </div>
+      <div
+        data-ui-component="chat-memory-candidate-card"
+        data-cap="memory_review_no_silent_write_decide_candidate"
+        data-truth="wired_registry"
+        className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4"
+      >
+        <div className="flex items-center gap-2 text-sm font-semibold text-[color:var(--color-text-primary)]">
+          <Database className="h-4 w-4 text-[color:var(--color-accent)]" />
+          Memory candidate
+        </div>
+        <p className="mt-2 font-mono text-xs text-[color:var(--color-text-secondary)]">
+          no silent write; keep/edit/reject must go through memory_review_no_silent_write_decide_candidate.
+        </p>
+      </div>
+      <div
+        data-ui-component="chat-clarify-card"
+        data-cap="agent_loop_planning_clarify_approval_dangerous_action"
+        data-truth="wired_registry"
+        className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4"
+      >
+        <div className="flex items-center gap-2 text-sm font-semibold text-[color:var(--color-text-primary)]">
+          <HelpCircle className="h-4 w-4 text-[color:var(--color-accent)]" />
+          Clarify before risky action
+        </div>
+        <p className="mt-2 font-mono text-xs text-[color:var(--color-text-secondary)]">
+          agent_loop_planning_clarify_approval_dangerous_action asks before destructive targets or unclear intent.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 export function ChatPage() {
@@ -270,7 +319,7 @@ export function ChatPage() {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
+    <div data-ui-screen="desktop-friday-chat" className="flex h-full min-h-0 flex-col gap-3">
       <section className="flex shrink-0 flex-col gap-3 rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-4 py-4 shadow-[var(--shadow-floating)] lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
@@ -300,6 +349,9 @@ export function ChatPage() {
                 "输入框固定在底部；历史记录向上翻看，不会一直占着视线。",
                 "The composer stays pinned to the bottom; history only appears when you scroll up.",
               )}
+          </p>
+          <p className="mt-2 text-xs font-medium text-[color:var(--color-text-tertiary)]">
+            one workbench area, not chat-first · private by default · ask_friday_chat_compose_send wired_registry !== runtime PASS
           </p>
           {pendingHandoff ? (
             <div className="mt-3 rounded-[20px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] px-4 py-3">
@@ -378,7 +430,8 @@ export function ChatPage() {
         </div>
       </section>
 
-      <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[30px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] shadow-[var(--shadow-floating)]">
+      <div className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <section data-ui-component="friday-chat-workbench" className="relative flex min-h-0 flex-col overflow-hidden rounded-[30px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] shadow-[var(--shadow-floating)]">
         {showTopFade ? (
           <div
             aria-hidden="true"
@@ -432,6 +485,8 @@ export function ChatPage() {
                   </div>
                 ) : null}
 
+                <ChatProofPreviews />
+
                 <button
                   type="button"
                   onClick={() => navigate("/packs")}
@@ -484,7 +539,13 @@ export function ChatPage() {
           </div>
         </div>
 
-        <div className="shrink-0 border-t border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-base)] px-4 py-4">
+        <div
+          data-ui-component="friday-chat-sticky-composer"
+          data-action="send_to_friday"
+          data-cap="ask_friday_chat_compose_send"
+          data-truth="wired_registry"
+          className="shrink-0 border-t border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-base)] px-4 py-4"
+        >
           {activePack ? (
             <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
               <span className="rounded-full border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-2.5 py-1">
@@ -533,8 +594,29 @@ export function ChatPage() {
               {localize(locale, `已排队 ${queuedMessageCount} 条消息`, `${queuedMessageCount} message${queuedMessageCount === 1 ? "" : "s"} queued`)}
             </p>
           ) : null}
+          <p className="mt-2 px-1 text-xs text-[color:var(--color-text-tertiary)]">
+            Sent to Hub, not executed · Hub gate + ledger required before runtime proof.
+          </p>
         </div>
-      </section>
+        </section>
+        <aside
+          data-ui-component="friday-chat-inspector"
+          className="hidden min-h-0 overflow-y-auto rounded-[24px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4 shadow-[var(--shadow-floating)] xl:block"
+        >
+          <h3 className="text-sm font-semibold text-[color:var(--color-text-primary)]">Proof inspector</h3>
+          <div className="mt-3 space-y-3 text-xs text-[color:var(--color-text-secondary)]">
+            <p className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
+              turn: Friday Chat · private by default · no provider leak before Friday routes the provider.
+            </p>
+            <p className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
+              ask_friday_chat_compose_send / wired_registry !== runtime PASS.
+            </p>
+            <p className="rounded-2xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
+              Inline proof cards show approval, memory, and clarify gates as Hub truth surfaces, not completed execution.
+            </p>
+          </div>
+        </aside>
+      </div>
 
       <PackQuickSheet
         open={Boolean(selectedPack)}

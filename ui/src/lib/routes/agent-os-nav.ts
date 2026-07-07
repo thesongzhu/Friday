@@ -55,6 +55,11 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: localizedText("查看真实插件库存、启停状态和本地安装入口。", "Inspect live plugin inventory, enablement state, and local install entry."),
   },
   {
+    label: localizedText("提供方", "Providers & auth"),
+    path: "/providers",
+    description: localizedText("查看提供方认证、能力 parity、队列和路由真值。", "Inspect provider auth, capability parity, queues, and routing truth."),
+  },
+  {
     label: localizedText("工作流", "Workflows"),
     path: "/workflows",
     description: localizedText("部署、编辑和监控自动化工作流。", "Deploy, edit, and monitor automation workflows."),
@@ -68,7 +73,7 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
   {
     label: localizedText("记忆", "Memory"),
     path: "/memory",
-    description: localizedText("查看、搜索并管理 Friday 记住了什么。", "View, search, and manage what Friday remembers about you."),
+    description: localizedText("Memory Passport：查看、搜索并管理 Friday 记住了什么；候选和召回证明保持边界态。", "Memory Passport: view, search, and manage stored memory; candidate and recall proof stay boundary-only."),
   },
   {
     label: localizedText("成长中心", "Reflex"),
@@ -97,6 +102,11 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     description: localizedText("查看运行事件、告警、审计和恢复证据。", "Review runtime events, alerts, audit trails, and recovery evidence."),
   },
   {
+    label: localizedText("证据", "Evidence"),
+    path: "/evidence",
+    description: localizedText("搜索证据引用、检查回执车道和服务端脱敏原文。", "Search evidence refs, inspect receipt lanes, and review server-redacted raw refs."),
+  },
+  {
     label: localizedText("任务工作台", "Mission Workbench"),
     path: "/mission-workbench",
     description: localizedText("查看任务、工作项、证据引用和受限时间线。", "Inspect Missions, WorkItems, proof refs, and bounded timeline rows."),
@@ -116,7 +126,6 @@ export const AGENT_OS_NAV_ADVANCED: AgentOsNavItem[] = [
     path: "/sessions",
     description: localizedText("浏览和导出 Friday 的会话与对话历史。", "Browse and export Friday session and transcript history."),
   },
-  // Settings is in the sidebar — not duplicated here.
 ];
 
 /** Full list for backward compat. */
@@ -150,6 +159,9 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   if (pathname.startsWith("/plugins")) {
     return localizedText("插件", "Plugins");
   }
+  if (pathname.startsWith("/providers")) {
+    return localizedText("提供方", "Providers & auth");
+  }
   if (pathname.startsWith("/skills")) {
     return localizedText("能力包", "Skills");
   }
@@ -164,6 +176,9 @@ export function resolvePageTitle(pathname: string): LocalizedText {
   }
   if (pathname.startsWith("/observability")) {
     return localizedText("可观测性", "Observability");
+  }
+  if (pathname.startsWith("/evidence")) {
+    return localizedText("证据", "Evidence");
   }
   if (pathname.startsWith("/mission-workbench")) {
     return localizedText("任务工作台", "Mission Workbench");

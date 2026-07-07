@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import {
@@ -61,6 +61,65 @@ const ACTIVE_RUN_STATUSES = new Set([
   "testing",
   "fixing",
 ]);
+
+type FridayPetStageRuntime = {
+  destroy: () => void;
+};
+
+type FridayPetStageApi = {
+  createStage: (
+    stage: HTMLElement,
+    options: {
+      surface: string;
+      height: number;
+      behavior: string;
+      ecoAllowlist: string[];
+      interactive?: boolean;
+      autoSchedule?: boolean;
+    },
+  ) => Promise<FridayPetStageRuntime>;
+};
+
+declare global {
+  interface Window {
+    FridayPetStage?: FridayPetStageApi;
+    __fridayMobileWebHeroPetReady?: boolean;
+    __fridayMobileWebHeroPetError?: string | null;
+  }
+}
+
+let fridayPetStageEnginePromise: Promise<void> | null = null;
+
+function loadFridayPetStageEngine(): Promise<void> {
+  if (window.FridayPetStage) {
+    return Promise.resolve();
+  }
+  if (fridayPetStageEnginePromise) {
+    return fridayPetStageEnginePromise;
+  }
+  fridayPetStageEnginePromise = new Promise((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>('script[data-friday-pet-stage-engine="mobile-web"]');
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(), { once: true });
+      existingScript.addEventListener("error", () => reject(new Error("pet-stage-engine load failed")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "/pet-stage-engine.js?v=mobile-web-v9-20260706";
+    script.async = true;
+    script.dataset.fridayPetStageEngine = "mobile-web";
+    script.onload = () => {
+      if (window.FridayPetStage) {
+        resolve();
+        return;
+      }
+      reject(new Error("FridayPetStage unavailable after script load"));
+    };
+    script.onerror = () => reject(new Error("pet-stage-engine load failed"));
+    document.head.appendChild(script);
+  });
+  return fridayPetStageEnginePromise;
+}
 
 type ConsoleScheduledAutomation = Pick<
   AgentAutomationRecord,
@@ -245,6 +304,218 @@ function runtimeChipParts(status: SystemHealthStatus, locale: "zh" | "en") {
   };
 }
 
+function MobileWebHeroPetStage(props: { locale: "zh" | "en" }) {
+  const { locale } = props;
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [petError, setPetError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let runtime: FridayPetStageRuntime | null = null;
+    const stage = stageRef.current;
+    window.__fridayMobileWebHeroPetReady = false;
+    window.__fridayMobileWebHeroPetError = null;
+
+    if (!stage) {
+      return () => {};
+    }
+
+    stage.querySelectorAll(".friday-pet-actor").forEach((node) => node.remove());
+    loadFridayPetStageEngine()
+      .then(() => {
+        if (cancelled || !window.FridayPetStage) {
+          return undefined;
+        }
+        return window.FridayPetStage.createStage(stage, {
+          surface: "mobile",
+          height: 168,
+          behavior: "locked-core-only",
+          ecoAllowlist: [],
+          interactive: true,
+          autoSchedule: true,
+        });
+      })
+      .then((nextRuntime) => {
+        if (!nextRuntime) {
+          return;
+        }
+        if (cancelled) {
+          nextRuntime.destroy();
+          return;
+        }
+        runtime = nextRuntime;
+        window.__fridayMobileWebHeroPetReady = true;
+        window.__fridayMobileWebHeroPetError = null;
+        setPetError(null);
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        window.__fridayMobileWebHeroPetError = message;
+        if (!cancelled) {
+          setPetError(message);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      runtime?.destroy();
+      runtime = null;
+    };
+  }, []);
+
+  return (
+    <div
+      data-testid="mobile-web-hero-pet"
+      data-friday-pet-stage="mobile-web"
+      data-friday-pet-render="v9-canvas"
+      data-friday-pet-engine="pet-stage-engine"
+      data-friday-mobile-strategy="design-truth-aligned"
+      className="relative min-h-[168px] overflow-hidden rounded-[8px] border"
+      style={{
+        background: "#eef3e8",
+        borderColor: "var(--color-border-soft)",
+      }}
+    >
+      <style>{`
+        .friday-mobile-web-pet-stage .friday-pet-actor {
+          --face: 1;
+          --foot-css-x: 50%;
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 190px;
+          height: 160px;
+          transform-origin: var(--foot-css-x) 100%;
+          transform: scaleX(var(--face));
+          will-change: left, transform;
+        }
+        .friday-mobile-web-pet-stage .friday-pet-actor canvas {
+          position: absolute;
+          inset: 0;
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+        .friday-mobile-web-pet-stage .friday-pet-actor.boing {
+          animation: fridayMobileWebPetBoing .36s ease-out;
+        }
+        @keyframes fridayMobileWebPetBoing {
+          0% { transform: scaleX(var(--face)) scaleY(1); }
+          30% { transform: scaleX(var(--face)) scaleY(1.05); }
+          100% { transform: scaleX(var(--face)) scaleY(1); }
+        }
+        .friday-mobile-web-pet-stage .friday-pet-fx {
+          position: absolute;
+          left: 50%;
+          top: 4px;
+          width: 120px;
+          height: 82px;
+          transform: translateX(-50%);
+          pointer-events: none;
+          color: #e33131;
+        }
+        .friday-mobile-web-pet-stage .friday-pet-fx span {
+          position: absolute;
+          left: 50%;
+          bottom: 0;
+          font-size: 18px;
+          line-height: 1;
+          color: #e33131;
+          text-shadow: 0 1px 0 #fff5f2, 0 2px 5px rgba(165,35,35,.18);
+          opacity: 0;
+          transform: translate(-50%, 8px) scale(.55);
+        }
+        .friday-mobile-web-pet-stage .friday-pet-fx.go span {
+          animation: fridayMobileWebPetHeartFloat 1.15s ease-out both;
+        }
+        .friday-mobile-web-pet-stage .friday-pet-fx.go span:nth-child(2) { animation-delay: .05s; }
+        .friday-mobile-web-pet-stage .friday-pet-fx.go span:nth-child(3) { animation-delay: .11s; }
+        .friday-mobile-web-pet-stage .friday-pet-fx.go span:nth-child(4) { animation-delay: .17s; }
+        .friday-mobile-web-pet-stage .friday-pet-fx.go span:nth-child(5) { animation-delay: .23s; }
+        @keyframes fridayMobileWebPetHeartFloat {
+          0% { opacity: 0; transform: translate(-50%, 8px) scale(.55); }
+          18% { opacity: 1; }
+          100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), var(--dy)) scale(var(--s)); }
+        }
+      `}</style>
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,#f8faf2_0%,#e5efdd_100%)]" aria-hidden="true" />
+      <div
+        ref={stageRef}
+        aria-label={localize(locale, "Friday v9 交互宠物", "Friday v9 interactive pet")}
+        className="friday-mobile-web-pet-stage friday-pet-stage absolute bottom-1 right-0 h-[160px] w-[188px] overflow-hidden"
+      />
+      <div className="relative max-w-[210px] p-4">
+        <p className="text-xs font-semibold text-[color:var(--color-text-faint)]">
+          Friday Home
+        </p>
+        <h2 className="mt-2 text-2xl font-semibold leading-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
+          {localize(locale, "状态先行", "Status first")}
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">
+          {localize(locale, "Chat 与 Status 同屏，Friday 随时可开。", "Chat and Status share the home surface so Friday is always one tap away.")}
+        </p>
+        {petError ? (
+          <p className="mt-2 text-[11px] font-semibold text-[color:var(--danger)]" data-friday-pet-status="NO-GO">
+            {localize(locale, "NO-GO：v9 pet canvas 未渲染", "NO-GO: v9 pet canvas did not render")}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function OpsMasthead(props: {
+  locale: "zh" | "en";
+  activeCount: number;
+  needsCount: number;
+  scheduledCount: number;
+  runtimeLabel: string;
+  runtimeColor: string;
+}) {
+  const { locale, activeCount, needsCount, scheduledCount, runtimeLabel, runtimeColor } = props;
+
+  return (
+    <div
+      data-ui-component="ops-masthead"
+      className="rounded-[16px] border px-4 py-3"
+      style={{
+        background: "linear-gradient(120deg, rgba(15,125,140,.12), var(--surface) 64%)",
+        borderColor: "var(--hair)",
+      }}
+    >
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="h-[9px] w-[9px] rounded-full"
+              style={{ background: runtimeColor }}
+            />
+            <p className="text-[15px] font-bold text-[color:var(--ink)]">
+              {localize(locale, "Operations", "Operations")}
+            </p>
+          </div>
+          <p className="mt-1 font-mono text-[11.5px] text-[color:var(--muted)]">
+            {runtimeLabel} · source-of-truth projection · proof-first actions
+          </p>
+        </div>
+        <div className="grid min-w-[260px] grid-cols-3 gap-4 border-t pt-3 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0" style={{ borderColor: "var(--hair)" }}>
+          {[
+            { value: needsCount, label: "Needs Me" },
+            { value: activeCount, label: "Running" },
+            { value: scheduledCount, label: "Scheduled" },
+          ].map((item) => (
+            <div key={item.label}>
+              <p className="text-[21px] font-bold leading-none text-[color:var(--ink)]">{item.value}</p>
+              <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.07em] text-[color:var(--faint)]">{item.label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MobileWebHomeSurface(props: {
   locale: "zh" | "en";
   systemLabel: string;
@@ -262,35 +533,7 @@ function MobileWebHomeSurface(props: {
       className="mb-5 lg:hidden"
     >
       <div className="grid gap-4">
-        <div
-          data-testid="mobile-web-hero-pet"
-          data-friday-pet-stage="mobile-web"
-          data-friday-mobile-strategy="design-truth-aligned"
-          className="relative min-h-[168px] overflow-hidden rounded-[8px] border"
-          style={{
-            background: "#eef3e8",
-            borderColor: "var(--color-border-soft)",
-          }}
-        >
-          <div className="absolute inset-0 bg-[linear-gradient(180deg,#f8faf2_0%,#e5efdd_100%)]" aria-hidden="true" />
-          <img
-            src="/source/pet/g-idle.png"
-            alt={localize(locale, "Friday mobile hero pet", "Friday mobile hero pet")}
-            className="absolute bottom-3 right-4 h-[132px] w-[132px] object-contain"
-            loading="eager"
-          />
-          <div className="relative max-w-[210px] p-4">
-            <p className="text-xs font-semibold text-[color:var(--color-text-faint)]">
-              Friday Home
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold leading-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, "状态先行", "Status first")}
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-[color:var(--color-text-secondary)]">
-              {localize(locale, "Chat 与 Status 同屏，Friday 随时可开。", "Chat and Status share the home surface so Friday is always one tap away.")}
-            </p>
-          </div>
-        </div>
+        <MobileWebHeroPetStage locale={locale} />
 
         <div className="grid grid-cols-2 gap-2">
           <button
@@ -598,7 +841,7 @@ export function HomePage() {
   const kbdLabel = navigatorMetaKeyLabel();
 
   return (
-    <div className="space-y-5 pb-6">
+    <div data-ui-screen="desktop-operations" className="space-y-5 pb-6">
       {showSetupReadiness ? (
         <FridayReadinessSummaryPanel
           health={capabilityHealthQuery.data}
@@ -624,6 +867,14 @@ export function HomePage() {
         />
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(390px,430px)] xl:items-start">
           <div className="min-w-0">
+            <OpsMasthead
+              locale={locale}
+              activeCount={activeRuns.length}
+              needsCount={pendingApprovals.length}
+              scheduledCount={scheduledAutomations.length}
+              runtimeLabel={runtimeChip.label}
+              runtimeColor={runtimeChip.color}
+            />
             <div className="flex flex-wrap items-center gap-3">
               <StatusPill tone={systemTone}>
                 {systemLabel}
@@ -636,17 +887,17 @@ export function HomePage() {
                 )}
               </span>
             </div>
-            <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
-              {localize(locale, "Friday Home", "Friday Home")}
+            <p className="mt-5 text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--color-text-faint)]">
+              {localize(locale, "Operations", "Operations")}
             </p>
             <h2 className="mt-1 text-3xl font-semibold tracking-tight text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, "状态先行，聊天随时可开", "Status first, chat always one tap away")}
+              {localize(locale, "运行、待决与排期在同一个控制台", "Running work, decisions, and cadence in one console")}
             </h2>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-[color:var(--color-text-secondary)]">
               {localize(
                 locale,
-                "首页保持 Chat + Status：先看 Friday 真实运行状态、需要你决定的事和 provider 真路由；要开新任务，点顶部聊天或命令面板进入完整 Friday Chat。",
-                "Home stays Chat + Status: see Friday's live state, decisions waiting on you, and the real provider route; start new work from top chat or the command sheet into full Friday Chat.",
+                "Operations 先展示 Friday 的真实运行状态、需要你决定的事、provider 真路由和已排进队列的节奏；新任务仍从 Friday Chat 的 mission intake 进入。",
+                "Operations surfaces Friday's live state, decisions waiting on you, the real provider route, and queued cadence; new work still enters through Friday Chat mission intake.",
               )}
             </p>
 
@@ -715,10 +966,19 @@ export function HomePage() {
               </div>
 
               <div className="flex flex-wrap gap-2 xl:justify-end">
-                <ActionButton data-testid="home-start-task" onClick={() => navigate("/chat")}>
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  {localize(locale, "开始新任务", "Start a new task")}
-                </ActionButton>
+                <span data-testid="home-start-task" className="inline-flex">
+                  <ActionButton
+                    data-testid="operations-submit-intent"
+                    data-action="mission_intake_submit"
+                    data-cap="mission_intake"
+                    data-truth="wired_registry"
+                    data-result="opens-friday-chat-intake"
+                    onClick={() => navigate("/chat")}
+                  >
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    {localize(locale, "提交意图", "Submit Intent")}
+                  </ActionButton>
+                </span>
                 <ActionButton tone="secondary" onClick={() => navigate("/assistant")}>
                   <Bot className="mr-2 h-4 w-4" />
                   {localize(locale, "继续去 Assistant", "Continue to Assistant")}
@@ -798,7 +1058,7 @@ export function HomePage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-3xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, `正在进行中 (${activeRuns.length})`, `In Flight (${activeRuns.length})`)}
+              {localize(locale, `Running (${activeRuns.length})`, `Running (${activeRuns.length})`)}
             </h3>
             <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
               {localize(locale, "只显示真正还在跑的任务，不混进静态入口。", "Only live runs appear here; static entry points stay out of the way.")}
@@ -851,7 +1111,7 @@ export function HomePage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-3xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, "等你决定", "Waiting on you")}
+              {localize(locale, "Needs Me", "Needs Me")}
             </h3>
             <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
               {localize(locale, "先处理会改变边界、预算、模型或风险口径的东西。", "Handle anything that changes boundaries, budget, models, or risk posture first.")}
@@ -972,7 +1232,7 @@ export function HomePage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-3xl font-semibold text-[color:var(--color-text-primary)]" style={{ fontFamily: "var(--font-serif)" }}>
-              {localize(locale, "接下来会自动发生", "What happens next automatically")}
+              {localize(locale, "Scheduled", "Scheduled")}
             </h3>
             <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
               {localize(locale, "这里看的是已经接到真实自动化队列里的节奏，不是占位提醒。", "This is the real automation cadence coming from the live queue, not placeholder reminders.")}
@@ -1026,6 +1286,37 @@ export function HomePage() {
             })}
           </div>
         )}
+      </section>
+
+      <section className="grid gap-3 lg:grid-cols-3" aria-label={localize(locale, "Operations endpoint queues", "Operations endpoint queues")}>
+        {[
+          {
+            label: "Standing goals",
+            detail: localize(locale, "读取长期目标入口；写入和暂停动作须等待真实回执。", "Long-running goals stay visible here; writes and pauses require real receipts."),
+            path: "/automations",
+          },
+          {
+            label: "Agenda",
+            detail: localize(locale, "议程批准与运行会回到 Needs Me，不把未证明项装成完成。", "Agenda approvals and runs return to Needs Me; unproven items are never shown as complete."),
+            path: "/assistant",
+          },
+          {
+            label: "Scheduled",
+            detail: localize(locale, "已排队节奏来自真实自动化投影，空态保持诚实。", "Cadence comes from the live automation projection, with honest empty state."),
+            path: "/automations",
+          },
+        ].map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            onClick={() => navigate(item.path)}
+            className="rounded-[15px] border px-4 py-4 text-left transition hover:border-[color:var(--color-border-strong)]"
+            style={{ borderColor: "var(--hair)", background: "var(--surface-2)" }}
+          >
+            <p className="text-sm font-semibold text-[color:var(--ink)]">{item.label}</p>
+            <p className="mt-2 text-xs leading-5 text-[color:var(--muted)]">{item.detail}</p>
+          </button>
+        ))}
       </section>
 
       <div className="flex flex-wrap gap-3">

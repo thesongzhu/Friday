@@ -49,17 +49,7 @@ function toNavCommand(item: AgentOsNavItem, section: LocalizedText): CommandItem
 function buildNavCommands(): CommandItem[] {
   const primary = AGENT_OS_NAV_PRIMARY.map((item) => toNavCommand(item, SECTION_NAV_PRIMARY));
   const advanced = AGENT_OS_NAV_ADVANCED.map((item) => toNavCommand(item, SECTION_NAV_ADVANCED));
-  const all: CommandItem[] = [...primary, ...advanced];
-  // Settings lives in the rail but is often searched from Cmd+K too.
-  all.push({
-    id: "nav:/settings",
-    kind: "nav",
-    label: localizedText("设置", "Settings"),
-    section: SECTION_NAV_ADVANCED,
-    path: "/settings",
-    hint: localizedText("/settings", "/settings"),
-  });
-  return all;
+  return [...primary, ...advanced];
 }
 
 function buildActionCommands(): CommandItem[] {

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { sessionsApi } from "@/lib/api/sessions";
 import { toast } from "sonner";
 import { MarkdownContent } from "@/components/chat/chat-message";
@@ -128,25 +129,31 @@ export function SessionsPage() {
           ) : (
             <div className="space-y-2">
               {sessions.map((session) => (
-                <button
+                <div
                   key={session.key}
-                  type="button"
-                  onClick={() => setSelectedSession(session.key)}
                   className={`w-full rounded-xl border p-3 text-left transition-all ${
                     selectedSession === session.key
                       ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]"
                       : "border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] hover:border-[color:var(--color-border-strong)] hover:shadow-[var(--shadow-floating)]"
                   }`}
                 >
-                  <p className="text-sm font-medium text-[color:var(--color-text-primary)] truncate">
-                    {session.key}
-                  </p>
-                  <div className="mt-1 flex items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
-                    <span>{session.status}</span>
-                    {session.channel ? <span>{localize(locale, "通过", "via")} {session.channel}</span> : null}
-                    <span>{formatDate(session.createdAt)}</span>
-                  </div>
-                </button>
+                  <button type="button" onClick={() => setSelectedSession(session.key)} className="block w-full text-left">
+                    <p className="truncate text-sm font-medium text-[color:var(--color-text-primary)]">
+                      {session.key}
+                    </p>
+                    <div className="mt-1 flex items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
+                      <span>{session.status}</span>
+                      {session.channel ? <span>{localize(locale, "通过", "via")} {session.channel}</span> : null}
+                      <span>{formatDate(session.createdAt)}</span>
+                    </div>
+                  </button>
+                  <Link
+                    to={`/sessions/${encodeURIComponent(session.key)}`}
+                    className="mt-2 inline-flex rounded-lg border border-[color:var(--color-border-soft)] px-2.5 py-1 text-xs font-medium text-[color:var(--color-text-secondary)] hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text-primary)]"
+                  >
+                    {localize(locale, "打开详情", "Open detail")}
+                  </Link>
+                </div>
               ))}
             </div>
           )}

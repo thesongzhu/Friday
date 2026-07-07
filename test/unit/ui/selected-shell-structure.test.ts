@@ -40,12 +40,13 @@ describe("selected shell structure", () => {
     expect(rightRailSource).not.toContain("Review current proof");
   });
 
-  it("keeps Friday Home on the selected Chat/Status baseline without the old debug hero stage", () => {
+  it("keeps Friday Home on the selected Operations baseline without the old debug hero stage", () => {
     const homeSource = readFileSync("ui/src/routes/home-page.tsx", "utf8");
 
-    expect(homeSource).toContain("Friday Home");
-    expect(homeSource).toContain("Chat + Status");
-    expect(homeSource).toContain("Status first, chat always one tap away");
+    expect(homeSource).toContain('data-ui-screen="desktop-operations"');
+    expect(homeSource).toContain('data-ui-component="ops-masthead"');
+    expect(homeSource).toContain("Operations");
+    expect(homeSource).toContain("Submit Intent");
     expect(homeSource).toContain("ProviderTruthCard");
     expect(homeSource).toContain("ProviderTruthCompact");
     expect(homeSource).not.toContain("function HeroPetStage");
