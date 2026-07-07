@@ -146,7 +146,7 @@ export function MemoryPage() {
         </div>
       </section>
 
-      <section data-ui-component="memory-candidate-review" className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4">
+      <section data-ui-component="memory-candidate-review-boundary" className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{localize(locale, "候选记忆审查", "Candidate memory review")}</p>
@@ -305,7 +305,7 @@ export function MemoryPage() {
                     onClick={() => setDeleteConfirmId(item.id)}
                     disabled={deleteMutation.isPending}
                     aria-label={localize(locale, "删除此记忆", "Delete this memory")}
-                    data-ui-component="memory-passport-revoke"
+                    data-ui-component="memory-passport-delete-request"
                     className="shrink-0 rounded-xl p-2 text-[color:var(--color-text-faint)] transition-colors hover:bg-[color:var(--color-bg-contrast)] hover:text-[color:var(--color-text-primary)]"
                   >
                     <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -336,7 +336,7 @@ export function MemoryPage() {
           ))}
         </div>
       )}
-      <section data-ui-component="memory-passport-export" className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4">
+      <section data-ui-component="memory-passport-export-boundary" className="rounded-xl border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold text-[color:var(--color-text-primary)]">{localize(locale, "导出与证明", "Export and proof")}</p>
