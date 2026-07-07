@@ -105,6 +105,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint --fix src",
     "check:migrations": "node scripts/quality/check-migrations.mjs",
+    "check:prod-parity-pr-body": "node scripts/quality/check-prod-parity-pr-body.mjs",
     "check:adversarial": "node scripts/quality/check-adversarial-suite.mjs",
     "check:ssd": "node scripts/quality/check-ssd-markers.mjs",
     "check:alignment": "node scripts/quality/check-openclaw-alignment-guard.mjs",

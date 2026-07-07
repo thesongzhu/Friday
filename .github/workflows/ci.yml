@@ -124,6 +124,40 @@ jobs:
       - name: Check migration chain integrity
         run: node scripts/quality/check-migrations.mjs
 
+  # ── DEPLOY-PARITY: lockfile/schema PR body declarations ──
+  # Lockfile changes must carry native-module build proof, and schema changes
+  # must declare that Rust services require restart during deploy.
+  prod-parity-pr-body:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Collect PR changed files
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          git diff --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > "$RUNNER_TEMP/prod-parity-changed-files.txt"
+
+      - name: Initialize changed files for push
+        if: ${{ github.event_name != 'pull_request' }}
+        run: : > "$RUNNER_TEMP/prod-parity-changed-files.txt"
+
+      - name: Check prod-parity PR body declarations
+        run: node scripts/quality/check-prod-parity-pr-body.mjs --event "$GITHUB_EVENT_PATH" --changed-files "$RUNNER_TEMP/prod-parity-changed-files.txt"
+
   # ── MECHANISM-3: Gate 4 — Security Regression Gate ──
   security:
     runs-on: ubuntu-latest
@@ -506,7 +540,7 @@ jobs:
   quality-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [build, test, migrations, security, contracts, ssd-lint, proof-no-mock-leaks, alignment-guard, agent-parity, secrets, ts-runtime-retirement, prod-flag-tests, mechanism-wiring, client-ship-gate]
+    needs: [build, test, migrations, prod-parity-pr-body, security, contracts, ssd-lint, proof-no-mock-leaks, alignment-guard, agent-parity, secrets, ts-runtime-retirement, prod-flag-tests, mechanism-wiring, client-ship-gate]
     if: ${{ always() }}
 
     steps:
@@ -515,6 +549,7 @@ jobs:
           echo "Build:              ${{ needs.build.result }}"
           echo "Test:               ${{ needs.test.result }}"
           echo "Migrations:         ${{ needs.migrations.result }}"
+          echo "Prod Parity Body:   ${{ needs.prod-parity-pr-body.result }}"
           echo "Security:           ${{ needs.security.result }}"
           echo "Contracts:          ${{ needs.contracts.result }}"
           echo "SSD Lint:           ${{ needs.ssd-lint.result }}"
@@ -533,6 +568,7 @@ jobs:
             "${{ needs.build.result }}" \
             "${{ needs.test.result }}" \
             "${{ needs.migrations.result }}" \
+            "${{ needs.prod-parity-pr-body.result }}" \
             "${{ needs.security.result }}" \
             "${{ needs.contracts.result }}" \
             "${{ needs.ssd-lint.result }}" \
