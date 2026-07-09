@@ -68,6 +68,7 @@ describe("FridayProviderService Lifecycle (Integration)", () => {
         authMode: "api-key",
         api: "openai-completions",
         apiKey: "$OPENAI_API_KEY",
+        preserveEnvRef: true,
         supportedModels: ["gpt-4o"],
         defaultModel: "gpt-4o",
         validateOnSave: false,
