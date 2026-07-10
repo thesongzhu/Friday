@@ -19,6 +19,20 @@ const repoRoot = resolve(__dirname, "../../..");
 const readRepoFile = (path: string) => readFileSync(resolve(repoRoot, path), "utf8");
 
 describe("ui truth regressions", () => {
+  it("keeps activity timeline dot colors on selected Friday tokens without Tailwind fallbacks", () => {
+    const source = readRepoFile("ui/src/components/core/activity-timeline.tsx");
+
+    expect(source).not.toContain("#34d399");
+    expect(source).not.toContain("#fbbf24");
+    expect(source).not.toContain("#60a5fa");
+    expect(source).not.toContain("#9ca3af");
+
+    expect(source).toContain("bg-[color:var(--color-text-success)]");
+    expect(source).toContain("bg-[color:var(--color-text-warning)]");
+    expect(source).toContain("bg-[color:var(--color-accent)]");
+    expect(source).toContain("bg-[color:var(--color-text-tertiary)]");
+  });
+
   it("keeps operator console discoverable in the command palette", () => {
     expect(AVAILABLE_COMMANDS.some((item) => item.path === "/command-center")).toBe(true);
   });

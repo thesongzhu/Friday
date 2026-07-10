@@ -9,13 +9,33 @@ const advanceScript = resolve(
   "scripts/ops/friday-advance-prod-hub-to-main.sh",
 );
 
+function revParse(ref: string): string | null {
+  const result = spawnSync("git", ["rev-parse", "--verify", ref], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
 function currentOriginMain(): string {
-  const result = spawnSync("git", ["rev-parse", "origin/main"], {
+  const originMain = revParse("origin/main");
+  if (originMain !== null) {
+    return originMain;
+  }
+
+  const signedSha = revParse("HEAD");
+  expect(signedSha, "expected a local signed target SHA").toBeTruthy();
+  updateRef("refs/remotes/origin/main", signedSha);
+  return signedSha!;
+}
+
+function updateRef(ref: string, sha: string | null): void {
+  const args = sha === null ? ["update-ref", "-d", ref] : ["update-ref", ref, sha];
+  const result = spawnSync("git", args, {
     cwd: repoRoot,
     encoding: "utf8",
   });
   expect(result.status, result.stderr).toBe(0);
-  return result.stdout.trim();
 }
 
 function orderedIndexes(haystack: string, needles: string[]): number[] {
@@ -99,6 +119,7 @@ describe("Friday production advance script", () => {
       "bash",
       [
         advanceScript,
+        "--dry-run",
         "--repo",
         repoRoot,
         "--signed-sha",
@@ -113,6 +134,30 @@ describe("Friday production advance script", () => {
     expect(result.status).toBe(73);
     expect(result.stderr).toContain("Recovery checklist");
     expect(result.stderr).toContain("git rollback is not sufficient");
+  });
+
+  it("keeps the fail-closed recovery assertion on the dry-run path", () => {
+    const source = readFileSync(import.meta.filename, "utf8");
+    const match = source.match(/it\("prints recovery steps on fail-closed deployment exits"[\s\S]*?expect\(result\.stderr\)\.toContain\("git rollback is not sufficient"\);/);
+
+    expect(match?.[0]).toContain('"--dry-run"');
+  });
+
+  it("materializes origin/main when CI checkout omits the remote ref", () => {
+    const originalOriginMain = revParse("refs/remotes/origin/main");
+    try {
+      if (originalOriginMain !== null) {
+        updateRef("refs/remotes/origin/main", null);
+      }
+
+      const signedSha = currentOriginMain();
+
+      expect(revParse("origin/main")).toBe(signedSha);
+    } finally {
+      if (originalOriginMain !== null) {
+        updateRef("refs/remotes/origin/main", originalOriginMain);
+      }
+    }
   });
 
   it("dry-runs the same signed deployment sequence without touching launchd or production state", () => {
