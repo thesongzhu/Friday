@@ -163,6 +163,13 @@ const INTEGRATION_MODE_OPTIONS = [
 const NODE_LIBRARY_DND_MIME = "application/friday-workflow-node-type";
 
 const CANVAS_GRID_SIZE = 28;
+const WORKFLOW_BUILDER_EDGE_COLORS = {
+  active: "var(--color-accent)",
+  danger: "var(--color-text-danger)",
+  neutral: "var(--color-border-soft)",
+  selected: "var(--color-accent)",
+  warning: "var(--color-text-warning)",
+} as const;
 
 function describePaletteEntry(type: Exclude<WorkflowNodeType, "trigger">) {
   return BUILDER_NODE_PALETTE.find((entry) => entry.type === type) ?? null;
@@ -322,8 +329,8 @@ function toFlowEdges(edges: FridayWorkflowEditorEdge[], selectedEdgeIds: string[
     ...edge,
     type: "workflow_edge",
     selected: selected.has(edge.id),
-    markerEnd: { type: MarkerType.ArrowClosed, color: "rgba(236, 245, 255, 0.8)" },
-    style: { stroke: "rgba(236, 245, 255, 0.65)", strokeWidth: 1.6 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: WORKFLOW_BUILDER_EDGE_COLORS.neutral },
+    style: { stroke: WORKFLOW_BUILDER_EDGE_COLORS.neutral, strokeWidth: 1.6 },
   }));
 }
 
@@ -474,10 +481,10 @@ function issueToneToStatusTone(tone?: BuilderValidationTone): "warning" | "dange
 }
 
 function issueToneToEdgeStroke(tone?: BuilderValidationTone, selected?: boolean): string {
-  if (tone === "danger") return "rgba(251, 113, 133, 0.9)";
-  if (tone === "warning") return "rgba(251, 191, 36, 0.9)";
-  if (selected) return "rgba(110, 231, 183, 0.92)";
-  return "rgba(236, 245, 255, 0.65)";
+  if (tone === "danger") return WORKFLOW_BUILDER_EDGE_COLORS.danger;
+  if (tone === "warning") return WORKFLOW_BUILDER_EDGE_COLORS.warning;
+  if (selected) return WORKFLOW_BUILDER_EDGE_COLORS.selected;
+  return WORKFLOW_BUILDER_EDGE_COLORS.neutral;
 }
 
 function createCompactCanvasNode(node: FlowNode): FlowNode {
@@ -716,7 +723,7 @@ function WorkflowCanvasEdgeInner(props: EdgeProps<FlowEdge>) {
     targetPosition,
   });
   const edgeStroke = isActiveIssue
-    ? "rgba(125, 211, 252, 0.96)"
+    ? WORKFLOW_BUILDER_EDGE_COLORS.active
     : issueToneToEdgeStroke(data?.issueTone, selected);
   const compactMode = interaction?.compactMode === true && !selected && !isActiveIssue && !data?.primaryIssueMessage;
 
@@ -2351,8 +2358,8 @@ function WorkflowBuilderEditor() {
           branch,
         }),
       },
-      markerEnd: { type: MarkerType.ArrowClosed, color: "rgba(236, 245, 255, 0.8)" },
-      style: { stroke: "rgba(236, 245, 255, 0.65)", strokeWidth: 1.6 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: WORKFLOW_BUILDER_EDGE_COLORS.neutral },
+      style: { stroke: WORKFLOW_BUILDER_EDGE_COLORS.neutral, strokeWidth: 1.6 },
     } satisfies FlowEdge;
     const nextEdges = [...edges, nextEdge];
     updateGraph({
