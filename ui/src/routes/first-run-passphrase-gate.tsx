@@ -83,9 +83,9 @@ export function FirstRunPassphraseGate() {
     >
       <div style={{ width: "100%", maxWidth: "380px", display: "flex", flexDirection: "column", gap: "16px" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-          <span style={{ fontSize: "13px", letterSpacing: "0.08em", textTransform: "uppercase", color: "#888" }}>Friday</span>
+          <span style={{ fontSize: "13px", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--faint)" }}>Friday</span>
           <h1 style={{ margin: 0, fontSize: "22px" }}>{localize(locale, "创建本机口令", "Create local passphrase")}</h1>
-          <p style={{ margin: 0, color: "#666", fontSize: "14px", lineHeight: 1.5 }}>
+          <p style={{ margin: 0, color: "var(--muted)", fontSize: "14px", lineHeight: 1.5 }}>
             {localize(
               locale,
               "这是本机 Friday 的一次性本地安全设置，不是连接失败。设置口令后即可继续完成 setup。",
@@ -102,7 +102,7 @@ export function FirstRunPassphraseGate() {
             autoFocus
             autoComplete="new-password"
             aria-label={localize(locale, "本机口令", "Local passphrase")}
-            style={{ padding: "10px 12px", borderRadius: "8px", border: "1px solid #ccc", fontSize: "14px" }}
+            style={{ padding: "10px 12px", borderRadius: "8px", border: "1px solid var(--line)", fontSize: "14px" }}
           />
           <input
             type="password"
@@ -111,10 +111,10 @@ export function FirstRunPassphraseGate() {
             placeholder={localize(locale, "确认本机口令", "Confirm passphrase")}
             autoComplete="new-password"
             aria-label={localize(locale, "确认本机口令", "Confirm passphrase")}
-            style={{ padding: "10px 12px", borderRadius: "8px", border: "1px solid #ccc", fontSize: "14px" }}
+            style={{ padding: "10px 12px", borderRadius: "8px", border: "1px solid var(--line)", fontSize: "14px" }}
           />
           {tooShort ? (
-            <p style={{ margin: 0, color: "#c0392b", fontSize: "13px" }}>
+            <p style={{ margin: 0, color: "var(--danger)", fontSize: "13px" }}>
               {localize(
                 locale,
                 `本机口令至少需要 ${String(MIN_PASSPHRASE_LENGTH)} 个字符。`,
@@ -123,11 +123,11 @@ export function FirstRunPassphraseGate() {
             </p>
           ) : null}
           {mismatch ? (
-            <p style={{ margin: 0, color: "#c0392b", fontSize: "13px" }}>
+            <p style={{ margin: 0, color: "var(--danger)", fontSize: "13px" }}>
               {localize(locale, "两次输入的口令不一致。", "The passphrases do not match.")}
             </p>
           ) : null}
-          {error ? <p style={{ margin: 0, color: "#c0392b", fontSize: "13px" }}>{error}</p> : null}
+          {error ? <p style={{ margin: 0, color: "var(--danger)", fontSize: "13px" }}>{error}</p> : null}
           <button
             type="submit"
             disabled={!canSubmit}
@@ -135,8 +135,8 @@ export function FirstRunPassphraseGate() {
               padding: "10px 12px",
               borderRadius: "8px",
               border: "none",
-              background: "#111",
-              color: "#fff",
+              background: "var(--ink)",
+              color: "var(--paper-strong)",
               fontSize: "14px",
               cursor: canSubmit ? "pointer" : "not-allowed",
               opacity: canSubmit ? 1 : 0.6,
