@@ -261,6 +261,8 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Plugin Self Upgrade Live (${FR
     env = await createFridayDeepProofHubEnv({
       hubConfig: {
         tokenSecret: PLUGIN_LIFECYCLE_SIGNING_MATERIAL,
+        pluginRuntimeMode: "full",
+        allowTestOnlyPluginExecution: true,
       },
     });
     pluginRootDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-plugin-self-upgrade-"));
