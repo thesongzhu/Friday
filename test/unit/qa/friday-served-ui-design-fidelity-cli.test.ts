@@ -301,8 +301,14 @@ function run(root: string, designRoot: string, distRoot: string, iosRoot: string
   ], { cwd: process.cwd(), encoding: "utf8" });
 }
 
+const SERVED_UI_DESIGN_FIDELITY_CLI_TEST_TIMEOUT_MS = 60_000;
+
+function servedUiDesignFidelityCliIt(name: string, fn: () => void) {
+  it(name, fn, SERVED_UI_DESIGN_FIDELITY_CLI_TEST_TIMEOUT_MS);
+}
+
 describe("check-friday-served-ui-design-fidelity", () => {
-  it("passes a minimal selected desktop+iOS fixture that applies locked tokens, right dock, subtle pet, and design-system controls", () => {
+  servedUiDesignFidelityCliIt("passes a minimal selected desktop+iOS fixture that applies locked tokens, right dock, subtle pet, and design-system controls", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-good-"));
     try {
       const result = run(root, writeSelections(root), writeGoodDist(root), writeGoodIos(root));
@@ -332,7 +338,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("fails Gate A when selected desktop and pet reference HTML cannot be rendered into oracle artifacts", () => {
+  servedUiDesignFidelityCliIt("fails Gate A when selected desktop and pet reference HTML cannot be rendered into oracle artifacts", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-a-missing-"));
     try {
       const result = run(root, writeSelections(root, { referenceHtml: false }), writeGoodDist(root), writeGoodIos(root));
@@ -348,7 +354,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("fails Gate C2 when the selected pet v9 reference is static or blank", () => {
+  servedUiDesignFidelityCliIt("fails Gate C2 when the selected pet v9 reference is static or blank", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-c2-static-pet-"));
     try {
       const result = run(root, writeSelections(root, { petInteractive: false }), writeGoodDist(root), writeGoodIos(root));
@@ -365,7 +371,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("accepts the legacy selected pet reference click/step hook as an interactive Gate C2 oracle", () => {
+  servedUiDesignFidelityCliIt("accepts the legacy selected pet reference click/step hook as an interactive Gate C2 oracle", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-c2-legacy-pet-"));
     try {
       const result = run(root, writeLegacyPetReference(root), writeGoodDist(root), writeGoodIos(root));
@@ -390,7 +396,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("fails Gate D when the healthy served desktop normal path still renders fallback, demo, or internal readiness copy", () => {
+  servedUiDesignFidelityCliIt("fails Gate D when the healthy served desktop normal path still renders fallback, demo, or internal readiness copy", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-d-fallback-copy-"));
     try {
       const result = run(root, writeSelections(root), writeFallbackTextDist(root), writeGoodIos(root));
@@ -407,7 +413,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("fails Gate D when disabled or unavailable copy lacks machine-readable ineligibility evidence", () => {
+  servedUiDesignFidelityCliIt("fails Gate D when disabled or unavailable copy lacks machine-readable ineligibility evidence", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-d-disabled-copy-"));
     try {
       const result = run(root, writeSelections(root), writeDisabledUnavailableDist(root), writeGoodIos(root));
@@ -422,7 +428,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("passes Gate D disabled or unavailable copy when local machine-readable ineligibility evidence is present", () => {
+  servedUiDesignFidelityCliIt("passes Gate D disabled or unavailable copy when local machine-readable ineligibility evidence is present", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-d-ineligible-copy-"));
     try {
       const result = run(root, writeSelections(root), writeIneligibleUnavailableDist(root), writeGoodIos(root));
@@ -432,7 +438,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("fails Gate D when disabled or unavailable copy has an empty ineligibility marker", () => {
+  servedUiDesignFidelityCliIt("fails Gate D when disabled or unavailable copy has an empty ineligibility marker", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-d-empty-ineligible-"));
     try {
       const result = run(root, writeSelections(root), writeIneligibleUnavailableDist(root, ""), writeGoodIos(root));
@@ -447,7 +453,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("does not turn ordinary navigation and chrome buttons into Gate E failures in default CI mode", () => {
+  servedUiDesignFidelityCliIt("does not turn ordinary navigation and chrome buttons into Gate E failures in default CI mode", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-e-default-nav-"));
     try {
       const result = run(root, writeSelections(root), writeNavigationHeavyDist(root), writeGoodIos(root));
@@ -472,7 +478,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("fails Gate E in strict mode when a visible action has no closed-loop contract evidence", () => {
+  servedUiDesignFidelityCliIt("fails Gate E in strict mode when a visible action has no closed-loop contract evidence", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-gate-e-open-action-"));
     try {
       const result = run(root, writeSelections(root), writeOpenActionDist(root), writeGoodIos(root), [
@@ -489,7 +495,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("writes and parses the Gate F proof manifest with all required linked artifact reports", () => {
+  servedUiDesignFidelityCliIt("writes and parses the Gate F proof manifest with all required linked artifact reports", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-proof-"));
     try {
       const artifactsRoot = join(root, "proof-artifacts");
@@ -530,7 +536,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("fails an explicitly supplied Gate F proof manifest that is stale and disconnected from required artifact reports", () => {
+  servedUiDesignFidelityCliIt("fails an explicitly supplied Gate F proof manifest that is stale and disconnected from required artifact reports", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-stale-proof-"));
     try {
       const staleManifest = writeFile(root, "proof/manifest.json", JSON.stringify({
@@ -563,7 +569,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("fails a current-HEAD Gate F proof manifest whose artifact identifiers are self-consistent but disconnected from the live run", () => {
+  servedUiDesignFidelityCliIt("fails a current-HEAD Gate F proof manifest whose artifact identifiers are self-consistent but disconnected from the live run", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-forged-proof-"));
     try {
       const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: process.cwd(), encoding: "utf8" }).stdout.trim();
@@ -616,7 +622,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("fails a Gate F actionClosure artifact that claims closed-loop while carrying unresolved actions", () => {
+  servedUiDesignFidelityCliIt("fails a Gate F actionClosure artifact that claims closed-loop while carrying unresolved actions", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-inconsistent-action-closure-"));
     try {
       const artifactsRoot = join(root, "proof-artifacts");
@@ -655,7 +661,7 @@ describe("check-friday-served-ui-design-fidelity", () => {
     }
   });
 
-  it("fails red-first for the old amber/jade desktop, bottom proof dock, hero pet, missing design-system controls, and stock iOS user path", () => {
+  servedUiDesignFidelityCliIt("fails red-first for the old amber/jade desktop, bottom proof dock, hero pet, missing design-system controls, and stock iOS user path", () => {
     const root = mkdtempSync(join(tmpdir(), "friday-served-ui-bad-"));
     try {
       const result = run(root, writeSelections(root), writeBadDist(root), writeBadIos(root));

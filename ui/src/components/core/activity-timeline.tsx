@@ -157,10 +157,10 @@ const STATUS_LABELS: Record<string, { zh: string; en: string; tone: "success" | 
 // ─── Dot color map ───
 
 const DOT_COLORS: Record<TimelineTone, string> = {
-  success: "bg-[color:var(--color-text-success,#34d399)]",
-  warning: "bg-[color:var(--color-text-warning,#fbbf24)]",
-  info: "bg-[color:var(--color-accent,#60a5fa)]",
-  neutral: "bg-[color:var(--color-text-tertiary,#9ca3af)]",
+  success: "bg-[color:var(--color-text-success)]",
+  warning: "bg-[color:var(--color-text-warning)]",
+  info: "bg-[color:var(--color-accent)]",
+  neutral: "bg-[color:var(--color-text-tertiary)]",
 };
 
 // ─── Component ───

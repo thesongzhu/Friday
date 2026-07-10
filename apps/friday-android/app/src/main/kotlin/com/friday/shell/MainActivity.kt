@@ -1,7 +1,7 @@
 // Friday — native Android app, operator-selected design baseline (file 17 §3 / 06).
 //
 // Native Cousin of the iOS baseline (not pixel-perfect): Cyan+Coral palette,
-// Glass-ish rounded cards, Retro-LCD Hero Pet (custom Canvas view), Command-Sheet
+// Glass-ish rounded cards, v9 dog Hero Pet (custom Canvas view), Command-Sheet
 // menu (Friday/Platform/Workflows/Activity/Settings), Friday-first launch,
 // Friday Home = Hero Pet + Status + Needs-Me, Platform = Cards+Queues, Activity
 // urgency-first with the REAL mark-done write, Workflows = Memory Review, Settings
@@ -34,36 +34,46 @@ import uniffi.friday_ffi.sampleActivityInbox
 import uniffi.friday_ffi.sampleMemoryReview
 
 private object Palette {
-    val cyan = Color.rgb(26, 176, 194)
-    val coral = Color.rgb(242, 115, 91)
-    val lcd = Color.rgb(140, 242, 178)
-    val lcdBg = Color.rgb(15, 26, 23)
+    val cyan = Color.rgb(15, 125, 140)
+    val coral = Color.rgb(216, 99, 77)
+    val warn = Color.rgb(168, 106, 29)
+    val ok = Color.rgb(39, 122, 93)
+    val dogStage = Color.rgb(238, 243, 232)
+    val dogFur = Color.rgb(246, 213, 166)
+    val dogShadow = Color.rgb(139, 82, 46)
     val ink = Color.rgb(28, 30, 34)
     val sub = Color.rgb(120, 128, 134)
     val bg = Color.rgb(247, 248, 247)
     val card = Color.WHITE
     fun risk(s: String) = when (s) {
-        "done", "direct", "success" -> cyan
-        "running", "pending", "warning" -> Color.rgb(230, 150, 30)
+        "done", "success" -> ok
+        "direct" -> cyan
+        "running", "pending", "warning" -> warn
         "failed", "fallback", "danger" -> coral
         else -> sub
     }
 }
 
-// Retro-LCD Hero Pet: a pixel cat face on an LCD panel (mood companion).
-private class LcdPet(ctx: Activity) : View(ctx) {
-    private val face = listOf(
-        "X..XX..X", ".XXXXXX.", "X.XOXO.X", "X.XXXX.X", "X.X..X.X", ".XXXXXX."
-    )
-    private val on = Paint().apply { color = Palette.lcd; isAntiAlias = true }
-    private val dim = Paint().apply { color = Color.argb(90, 140, 242, 178); isAntiAlias = true }
+// v9 dog Hero Pet: a small friendly companion; decorative only, never truth state.
+private class V9DogPet(ctx: Activity) : View(ctx) {
+    private val fur = Paint().apply { color = Palette.dogFur; isAntiAlias = true }
+    private val shadow = Paint().apply { color = Palette.dogShadow; isAntiAlias = true }
+    private val ink = Paint().apply { color = Palette.ink; isAntiAlias = true }
+    private val blush = Paint().apply { color = Color.argb(90, 216, 99, 77); isAntiAlias = true }
     override fun onDraw(c: Canvas) {
-        val cell = minOf(width / 8f, height / face.size.toFloat())
-        for ((r, line) in face.withIndex()) for ((col, ch) in line.withIndex()) {
-            if (ch == '.') continue
-            val p = if (ch == 'X') on else dim
-            c.drawRoundRect(col * cell + 2, r * cell + 2, (col + 1) * cell - 2, (r + 1) * cell - 2, 2f, 2f, p)
-        }
+        val cx = width / 2f
+        val cy = height / 2f
+        val s = minOf(width, height) / 120f
+        c.drawOval(cx - 44 * s, cy - 18 * s, cx - 18 * s, cy + 32 * s, fur)
+        c.drawOval(cx + 18 * s, cy - 18 * s, cx + 44 * s, cy + 32 * s, fur)
+        c.drawOval(cx - 36 * s, cy - 30 * s, cx + 36 * s, cy + 38 * s, fur)
+        c.drawOval(cx - 25 * s, cy - 4 * s, cx - 15 * s, cy + 6 * s, ink)
+        c.drawOval(cx + 15 * s, cy - 4 * s, cx + 25 * s, cy + 6 * s, ink)
+        c.drawOval(cx - 8 * s, cy + 8 * s, cx + 8 * s, cy + 20 * s, shadow)
+        c.drawCircle(cx - 26 * s, cy + 16 * s, 6 * s, blush)
+        c.drawCircle(cx + 26 * s, cy + 16 * s, 6 * s, blush)
+        c.drawOval(cx - 28 * s, cy + 36 * s, cx - 8 * s, cy + 62 * s, fur)
+        c.drawOval(cx + 8 * s, cy + 36 * s, cx + 28 * s, cy + 62 * s, fur)
     }
 }
 
@@ -146,8 +156,8 @@ class MainActivity : Activity() {
         // Hero Pet
         content.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
-            addView(LcdPet(this@MainActivity).apply {
-                background = rounded(Palette.lcdBg, Palette.lcd, 14)
+            addView(V9DogPet(this@MainActivity).apply {
+                background = rounded(Palette.dogStage, Color.argb(45, 15, 125, 140), 14)
                 layoutParams = LinearLayout.LayoutParams(360, 260).apply { topMargin = 8 }
                 setPadding(16, 16, 16, 16)
             })

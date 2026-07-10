@@ -282,7 +282,7 @@ function RouteErrorBoundary() {
       <h2 style={{ margin: 0, fontSize: "20px" }}>
         {localize(locale, "Friday 暂时卡住了", "Friday hit a snag")}
       </h2>
-      <p style={{ margin: 0, color: "#666", maxWidth: "400px", textAlign: "center" }}>
+      <p style={{ margin: 0, color: "var(--muted)", maxWidth: "400px", textAlign: "center" }}>
         {localize(
           locale,
           "页面加载时遇到意外问题。刷新后 Friday 会重新进入 setup、解锁或首页。",
@@ -292,7 +292,7 @@ function RouteErrorBoundary() {
       <button
         type="button"
         onClick={() => window.location.reload()}
-        style={{ padding: "8px 20px", borderRadius: "6px", border: "1px solid #ccc", cursor: "pointer", background: "#fff" }}
+        style={{ padding: "8px 20px", borderRadius: "6px", border: "1px solid var(--line)", cursor: "pointer", background: "var(--paper-strong)" }}
       >
         {localize(locale, "刷新页面", "Reload page")}
       </button>
