@@ -47,7 +47,7 @@ function ContextPackageCard({ overview }: SupervisorPanelProps) {
   const summary = overview.contextPackageSummary;
   return (
     <ShellCard title={localize(locale, "上下文包摘要", "Context package summary")}>
-      <p style={{ fontSize: "12px", color: "#666", marginBottom: "8px" }}>
+      <p style={{ fontSize: "12px", color: "var(--color-text-secondary)", marginBottom: "8px" }}>
         {localize(
           locale,
           "仅展示边界与基数信息。整库内容默认不暴露。",
@@ -56,26 +56,26 @@ function ContextPackageCard({ overview }: SupervisorPanelProps) {
       </p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "12px" }}>
         <div>
-          <div style={{ fontSize: "12px", color: "#666" }}>
+          <div style={{ fontSize: "12px", color: "var(--color-text-secondary)" }}>
             {localize(locale, "允许文件数", "Allowed files")}
           </div>
           <div style={{ fontSize: "20px", fontWeight: 600 }}>{summary.allowedFilesCount}</div>
         </div>
         <div>
-          <div style={{ fontSize: "12px", color: "#666" }}>
+          <div style={{ fontSize: "12px", color: "var(--color-text-secondary)" }}>
             {localize(locale, "允许工具数", "Allowed tools")}
           </div>
           <div style={{ fontSize: "20px", fontWeight: 600 }}>{summary.allowedToolsCount}</div>
         </div>
         <div>
-          <div style={{ fontSize: "12px", color: "#666" }}>
+          <div style={{ fontSize: "12px", color: "var(--color-text-secondary)" }}>
             {localize(locale, "允许 API 数", "Allowed APIs")}
           </div>
           <div style={{ fontSize: "20px", fontWeight: 600 }}>{summary.allowedApisCount}</div>
         </div>
       </div>
       <div style={{ marginTop: "12px" }}>
-        <div style={{ fontSize: "12px", color: "#666" }}>
+        <div style={{ fontSize: "12px", color: "var(--color-text-secondary)" }}>
           {localize(locale, "边界引用", "Boundary refs")}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "4px" }}>
@@ -84,7 +84,7 @@ function ContextPackageCard({ overview }: SupervisorPanelProps) {
               {ref}
             </StatusPill>
           ))}
-          {overview.boundaryRefs.length === 0 ? <span style={{ color: "#999" }}>—</span> : null}
+          {overview.boundaryRefs.length === 0 ? <span style={{ color: "var(--color-text-tertiary)" }}>—</span> : null}
         </div>
       </div>
     </ShellCard>
@@ -95,7 +95,7 @@ function GatePlanCard({ overview }: SupervisorPanelProps) {
   const { locale } = useAppLocale();
   return (
     <ShellCard title={localize(locale, "门禁计划", "Gate plan")}>
-      <p style={{ fontSize: "12px", color: "#666", marginBottom: "8px" }}>
+      <p style={{ fontSize: "12px", color: "var(--color-text-secondary)", marginBottom: "8px" }}>
         {localize(
           locale,
           "必选确定性门禁不能被模式或用户配置关闭。",
@@ -141,7 +141,7 @@ function GatePlanCard({ overview }: SupervisorPanelProps) {
           })}
           {overview.gatePlan.length === 0 ? (
             <tr>
-              <td colSpan={3} style={{ padding: "8px", color: "#999" }}>
+              <td colSpan={3} style={{ padding: "8px", color: "var(--color-text-tertiary)" }}>
                 {localize(locale, "未规划门禁", "No gates planned")}
               </td>
             </tr>
@@ -157,7 +157,7 @@ function ClaimMatrixCard({ overview }: SupervisorPanelProps) {
   const counts = overview.claimMatrix.counts;
   return (
     <ShellCard title={localize(locale, "声明矩阵", "Claim matrix")}>
-      <p style={{ fontSize: "12px", color: "#666", marginBottom: "8px" }}>
+      <p style={{ fontSize: "12px", color: "var(--color-text-secondary)", marginBottom: "8px" }}>
         {localize(
           locale,
           "Verified 必须有证据引用 + 验证员裁定。",
@@ -220,7 +220,7 @@ function BlockersCard({ overview }: SupervisorPanelProps) {
   const { locale } = useAppLocale();
   return (
     <ShellCard title={localize(locale, "阻塞与游标", "Blockers & cursor")}>
-      <p style={{ fontSize: "12px", color: "#666", marginBottom: "8px" }}>
+      <p style={{ fontSize: "12px", color: "var(--color-text-secondary)", marginBottom: "8px" }}>
         {localize(
           locale,
           "聚合监督员游标、声明、车道与门禁阻塞。",
@@ -232,7 +232,7 @@ function BlockersCard({ overview }: SupervisorPanelProps) {
         <code>{overview.supervisorCursor?.currentStage ?? overview.workflow.stage}</code>
       </div>
       {overview.blockers.length === 0 ? (
-        <div style={{ color: "#999" }}>
+        <div style={{ color: "var(--color-text-tertiary)" }}>
           {localize(locale, "暂无阻塞。", "No blockers.")}
         </div>
       ) : (
@@ -254,7 +254,7 @@ function LaneSummaryCard({ overview }: SupervisorPanelProps) {
   const ver = overview.laneSummary.verifier;
   return (
     <ShellCard title={localize(locale, "执行/验证车道摘要", "Executor / Verifier lane summary")}>
-      <p style={{ fontSize: "12px", color: "#666", marginBottom: "8px" }}>
+      <p style={{ fontSize: "12px", color: "var(--color-text-secondary)", marginBottom: "8px" }}>
         {localize(
           locale,
           "Provider fallback 仅记录可用性,不替代独立验证。",
@@ -294,7 +294,7 @@ function ChannelCommandSummaryCard({ overview }: SupervisorPanelProps) {
   const s = overview.channelCommandSummary;
   return (
     <ShellCard title={localize(locale, "渠道命令摘要", "Channel command summary")}>
-      <p style={{ fontSize: "12px", color: "#666", marginBottom: "8px" }}>
+      <p style={{ fontSize: "12px", color: "var(--color-text-secondary)", marginBottom: "8px" }}>
         {localize(
           locale,
           "仅记录哈希身份与命令意图,不持久化原始消息文本。",
@@ -318,7 +318,7 @@ function CloseoutReceiptCard({ overview }: SupervisorPanelProps) {
   if (!receipt) {
     return (
       <ShellCard title={localize(locale, "结算回执", "Closeout receipt")}>
-        <div style={{ color: "#999", fontSize: "13px" }}>
+        <div style={{ color: "var(--color-text-tertiary)", fontSize: "13px" }}>
           {localize(locale, "尚未结算。", "Not yet closed out.")}
         </div>
       </ShellCard>
@@ -326,7 +326,7 @@ function CloseoutReceiptCard({ overview }: SupervisorPanelProps) {
   }
   return (
     <ShellCard title={localize(locale, "结算回执", "Closeout receipt")}>
-      <p style={{ fontSize: "12px", color: "#666", marginBottom: "8px" }}>
+      <p style={{ fontSize: "12px", color: "var(--color-text-secondary)", marginBottom: "8px" }}>
         {localize(
           locale,
           "声明矩阵 + 门禁裁定快照",
@@ -345,7 +345,7 @@ function CloseoutReceiptCard({ overview }: SupervisorPanelProps) {
         >
           {receipt.status}
         </StatusPill>{" "}
-        <small style={{ color: "#666" }}>
+        <small style={{ color: "var(--color-text-secondary)" }}>
           {formatTimestamp(receipt.createdAt)} · spec {receipt.specHash.slice(0, 12)}…
         </small>
       </div>
@@ -414,7 +414,7 @@ function EvidenceExplorerCard() {
 
   return (
     <ShellCard title={localize(locale, "全局证据浏览器 (v1)", "Global Evidence Explorer (v1)")}>
-      <p style={{ fontSize: "12px", color: "#666", marginBottom: "8px" }}>
+      <p style={{ fontSize: "12px", color: "var(--color-text-secondary)", marginBottom: "8px" }}>
         {localize(
           locale,
           "证据引用元数据索引;原始内容需显式门禁确认。",
@@ -462,7 +462,7 @@ function EvidenceExplorerCard() {
           ))}
           {(evidenceQuery.data ?? []).length === 0 ? (
             <tr>
-              <td colSpan={5} style={{ padding: "8px", color: "#999" }}>
+              <td colSpan={5} style={{ padding: "8px", color: "var(--color-text-tertiary)" }}>
                 {localize(locale, "暂无证据引用。", "No evidence refs indexed.")}
               </td>
             </tr>
@@ -470,7 +470,7 @@ function EvidenceExplorerCard() {
         </tbody>
       </table>
       {selectedRefId ? (
-        <div style={{ marginTop: "12px", padding: "12px", border: "1px solid #ccc", fontSize: "13px" }}>
+        <div style={{ marginTop: "12px", padding: "12px", border: "1px solid var(--color-border-soft)", fontSize: "13px" }}>
           <div style={{ fontWeight: 600 }}>
             {localize(locale, "原始证据(已脱敏)", "Raw evidence (redacted)")}
           </div>
@@ -502,7 +502,7 @@ function WorkflowSelector({ workflows, selectedId, onSelect }: WorkflowSelectorP
   const { locale } = useAppLocale();
   if (workflows.length === 0) {
     return (
-      <div style={{ color: "#999", fontSize: "13px" }}>
+      <div style={{ color: "var(--color-text-tertiary)", fontSize: "13px" }}>
         {localize(locale, "暂无任务工作流。", "No task workflows yet.")}
       </div>
     );
@@ -570,7 +570,7 @@ export function TaskWorkflowsPage() {
         </>
       ) : (
         <ShellCard title={localize(locale, "选择一个任务工作流以查看监督员视图", "Select a task workflow to load the supervisor view")}>
-          <p style={{ color: "#666", fontSize: "13px" }}>
+          <p style={{ color: "var(--color-text-secondary)", fontSize: "13px" }}>
             {localize(
               locale,
               "下拉框选择工作流后,将加载监督员视图。",
