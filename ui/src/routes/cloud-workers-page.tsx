@@ -20,7 +20,7 @@ const BLOCKED_ENV_STATUS: CloudWorkerProvider["liveCertification"] = `blocked_${
 function PolicyBanner(props: { catalog?: CloudWorkerCatalog }) {
   const { locale } = useAppLocale();
   return (
-    <section style={{ padding: 16, border: "1px solid var(--color-border-soft, #ddd)", borderRadius: 12, marginBottom: 24 }}>
+    <section style={{ padding: 16, border: "1px solid var(--line)", borderRadius: 12, marginBottom: 24 }}>
       <h2 style={{ marginTop: 0, fontSize: 18 }}>
         {localize(locale, "用户自有云 Worker 安全边界", "User-owned cloud worker safety boundary")}
       </h2>
@@ -38,7 +38,7 @@ function PolicyBanner(props: { catalog?: CloudWorkerCatalog }) {
         </li>
       </ul>
       {props.catalog ? (
-        <p style={{ fontSize: 12, color: "var(--color-text-tertiary, #666)", marginTop: 12, marginBottom: 0 }}>
+        <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 12, marginBottom: 0 }}>
           {props.catalog.liveCertificationBlockReason}
         </p>
       ) : null}
@@ -62,18 +62,18 @@ function ProviderCatalogList(props: {
           style={{
             textAlign: "left",
             padding: 12,
-            border: provider.providerId === props.selectedId ? "2px solid var(--color-accent, #1f6feb)" : "1px solid #ddd",
+            border: provider.providerId === props.selectedId ? "2px solid var(--accent)" : "1px solid var(--line)",
             borderRadius: 10,
             background: "transparent",
             cursor: "pointer",
           }}
         >
           <div style={{ fontWeight: 600 }}>{provider.displayName}</div>
-          <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
             {provider.region} · {provider.machineType} · TTL {provider.ttlHours}h
           </div>
-          <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>{provider.costNote}</div>
-          <div style={{ fontSize: 11, color: "#a04141", marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>{provider.costNote}</div>
+          <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 4 }}>
             {localize(locale, "认证状态：", "Certification:")} {provider.liveCertification === BLOCKED_ENV_STATUS
               ? localize(locale, "等待受保护环境", "Waiting for protected environment")
               : provider.liveCertification}
@@ -88,7 +88,7 @@ function PreviewCard(props: { preview?: CloudWorkerDeploymentPreview }) {
   const { locale } = useAppLocale();
   if (!props.preview) return null;
   return (
-    <section style={{ padding: 16, borderRadius: 12, border: "1px solid #ddd", marginBottom: 16 }}>
+    <section style={{ padding: 16, borderRadius: 12, border: "1px solid var(--line)", marginBottom: 16 }}>
       <h3 style={{ marginTop: 0 }}>{localize(locale, "部署预览", "Deployment preview")} · {props.preview.displayName}</h3>
       <p style={{ fontSize: 13 }}>{props.preview.httpsRequirement}</p>
       <p style={{ fontSize: 13 }}>{props.preview.dnsRequirement}</p>
@@ -133,7 +133,7 @@ function GeneratePackageForm(props: {
   });
 
   return (
-    <section style={{ padding: 16, borderRadius: 12, border: "1px solid #ddd", marginBottom: 16 }}>
+    <section style={{ padding: 16, borderRadius: 12, border: "1px solid var(--line)", marginBottom: 16 }}>
       <h3 style={{ marginTop: 0 }}>{localize(locale, "生成部署包", "Generate deployment package")}</h3>
       <div style={{ display: "grid", gap: 8 }}>
         <label style={{ fontSize: 13 }}>
@@ -162,13 +162,13 @@ function GeneratePackageForm(props: {
           ? localize(locale, "生成中…", "Generating…")
           : localize(locale, "生成部署包", "Generate package")}
       </button>
-      {error ? <p style={{ color: "#a04141", fontSize: 12, marginTop: 8 }}>{error}</p> : null}
+      {error ? <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{error}</p> : null}
       {bundle ? (
         <div style={{ marginTop: 12 }}>
           <p style={{ fontSize: 13 }}>
             {localize(locale, "包 ID：", "Bundle id: ")}{bundle.bundleId} · {bundle.leakageScanStatus}
           </p>
-          <p style={{ fontSize: 12, color: "#666" }}>{bundle.internalRuntimeSecretsNote}</p>
+          <p style={{ fontSize: 12, color: "var(--muted)" }}>{bundle.internalRuntimeSecretsNote}</p>
           <details>
             <summary style={{ cursor: "pointer", fontSize: 13 }}>
               {localize(locale, "查看生成的文件清单（仅占位符，无真实秘钥）", "Inspect generated files (placeholders only, no real secrets)")}
@@ -210,7 +210,7 @@ function DoctorPanel(props: {
   });
 
   return (
-    <section style={{ padding: 16, borderRadius: 12, border: "1px solid #ddd", marginBottom: 16 }}>
+    <section style={{ padding: 16, borderRadius: 12, border: "1px solid var(--line)", marginBottom: 16 }}>
       <h3 style={{ marginTop: 0 }}>{localize(locale, "云 Worker 体检", "Cloud worker doctor")}</h3>
       <div style={{ display: "grid", gap: 8 }}>
         <input value={httpsHost} onChange={(e) => setHttpsHost(e.target.value)} style={{ padding: 6 }} />
@@ -266,9 +266,9 @@ function TeardownPanel(props: {
   });
 
   return (
-    <section style={{ padding: 16, borderRadius: 12, border: "1px solid #ddd", marginBottom: 16 }}>
+    <section style={{ padding: 16, borderRadius: 12, border: "1px solid var(--line)", marginBottom: 16 }}>
       <h3 style={{ marginTop: 0 }}>{localize(locale, "拆机回执", "Teardown receipt")}</h3>
-      <p style={{ fontSize: 12, color: "#a04141" }}>
+      <p style={{ fontSize: 12, color: "var(--danger)" }}>
         {localize(locale, "当前回执用于准备和校验；真实云端拆机需要受保护环境连接后才会执行。", "Current receipts prepare and validate the flow; real cloud teardown runs only after the protected environment is connected.")}
       </p>
       <div style={{ display: "grid", gap: 8 }}>
@@ -321,7 +321,7 @@ export function CloudWorkersPage() {
       <h1 style={{ marginTop: 0 }}>
         {localize(locale, "云端 Worker 设置（用户自有云）", "Cloud Workers (user-owned cloud)")}
       </h1>
-      <p style={{ fontSize: 13, color: "#555" }}>
+      <p style={{ fontSize: 13, color: "var(--ink-soft)" }}>
         {localize(
           locale,
           "Friday 提供用户自有云 Worker 的设置体验。下方目录、预览、部署包、DNS 校验、体检和拆机回执会先帮助你安全准备；真实云端认证需要受保护环境连接后才会执行。",
