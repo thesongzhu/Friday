@@ -15,6 +15,8 @@ import type { FridayAuthPrincipal, FridayRole, FridayScope } from "../api/model/
 
 export type FridayPublicMutationOperation =
   | "capability.grant.revoke"
+  | "sessions.create"
+  | "sessions.messages.create"
   | "workflow.create"
   | "workflow.update"
   | "workflow.archive"
