@@ -283,6 +283,7 @@ export async function createDeepSeekProvider(
     authMode: "bearer-token",
     api: "openai-completions",
     apiKey: opts.apiKeyEnvRef ?? "$DEEPSEEK_API_KEY",
+    preserveEnvRef: true,
     supportedModels: opts.models,
     defaultModel: opts.defaultModel,
     enabled: true,

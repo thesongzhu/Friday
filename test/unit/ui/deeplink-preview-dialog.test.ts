@@ -1,11 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { parseHTML } from "linkedom";
+import { readFileSync } from "node:fs";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DeepLinkPreviewDialog } from "../../../ui/src/components/deeplink/deeplink-preview-dialog";
+
+const DEEPLINK_DIALOG_SOURCE = "ui/src/components/deeplink/deeplink-preview-dialog.tsx";
 
 const mocks = vi.hoisted(() => ({
   post: vi.fn(),
@@ -135,6 +138,18 @@ describe("DeepLinkPreviewDialog", () => {
     defineGlobal("navigator", previousNavigator as typeof globalThis.navigator);
     defineGlobal("HTMLElement", previousHTMLElement as typeof globalThis.HTMLElement);
     defineGlobal("Event", previousEvent as typeof globalThis.Event);
+  });
+
+  it("keeps advisory and inline-code chrome on selected Friday tokens", () => {
+    const source = readFileSync(DEEPLINK_DIALOG_SOURCE, "utf8");
+
+    expect(source).not.toContain("bg-blue-100");
+    expect(source).not.toContain("text-blue-600");
+    expect(source).not.toContain("bg-zinc-100");
+
+    expect(source).toContain("bg-[color:var(--color-accent-soft)]");
+    expect(source).toContain("text-[color:var(--color-accent)]");
+    expect(source).toContain("bg-[color:var(--color-bg-subtle)]");
   });
 
   it("imports a workflow-template draft and navigates to the returned builder route", async () => {
