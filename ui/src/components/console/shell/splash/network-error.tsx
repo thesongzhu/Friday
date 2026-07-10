@@ -7,12 +7,12 @@ import { SplashShell, type SplashShellProps } from "./shell";
 export function NetworkErrorSplash(props: Omit<SplashShellProps, "visual">) {
   return (
     <SplashShell
-      accentColor="var(--rust-500)"
+      accentColor="var(--color-text-danger)"
       visual={
         <span
           aria-hidden="true"
           className="inline-flex h-10 w-10 items-center justify-center rounded-full"
-          style={{ background: "rgba(176, 80, 58, 0.14)", color: "var(--rust-500)" }}
+          style={{ background: "var(--color-bg-danger-subtle)", color: "var(--color-text-danger)" }}
         >
           <WifiOff className="h-5 w-5" />
         </span>

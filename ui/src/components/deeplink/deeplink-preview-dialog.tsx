@@ -55,7 +55,7 @@ function checkLevelBadge(level: string) {
     case "warning":
       return <span className="rounded-full bg-[color:var(--warn-soft)] px-2 py-0.5 text-xs font-medium text-[color:var(--warn)]">Warning</span>;
     default:
-      return <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-600 ">Advisory</span>;
+      return <span className="rounded-full bg-[color:var(--color-accent-soft)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-accent)]">Advisory</span>;
   }
 }
 
@@ -99,7 +99,7 @@ export function DeepLinkPreviewDialog(props: { onClose: () => void; onApplied?: 
       >
         <h2 className="text-lg font-semibold text-[color:var(--color-text-primary)]">Import from URL</h2>
         <p className="mt-1 text-sm text-[color:var(--color-text-secondary)]">
-          Paste a <code className="rounded bg-zinc-100 px-1 ">friday://</code> deep link or a JSON payload to preview it before importing.
+          Paste a <code className="rounded bg-[color:var(--color-bg-subtle)] px-1 text-[color:var(--color-text-primary)]">friday://</code> deep link or a JSON payload to preview it before importing.
         </p>
 
         <textarea
