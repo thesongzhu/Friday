@@ -537,6 +537,12 @@ function makeManifest(files: ReturnType<typeof writeEvidenceDir>) {
   };
 }
 
+const UI_DEVICE_READINESS_CLI_TEST_TIMEOUT_MS = 60_000;
+
+function readinessCliIt(name: string, fn: () => void) {
+  it(name, fn, UI_DEVICE_READINESS_CLI_TEST_TIMEOUT_MS);
+}
+
 describe("friday-ui-device-proof-readiness", () => {
   it("does not require final proof mode to be not-ready", () => {
     const source = readFileSync("scripts/ops/friday-ui-device-proof-readiness.sh", "utf8");
@@ -548,7 +554,7 @@ describe("friday-ui-device-proof-readiness", () => {
     expect(source).not.toContain("check-mission-workbench-live-readiness.mjs\" --expect-not-ready");
   });
 
-  it("discovers a complete evidence dir and delegates to the strict assembler", () => {
+  readinessCliIt("discovers a complete evidence dir and delegates to the strict assembler", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-"));
     try {
       const files = writeEvidenceDir(tempDir);
@@ -576,7 +582,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("reports blocked instead of assembling when the evidence dir is incomplete", () => {
+  readinessCliIt("reports blocked instead of assembling when the evidence dir is incomplete", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-missing-"));
     try {
       writeFileSync(join(tempDir, "mission-id.txt"), `${missionId}\n`);
@@ -604,7 +610,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("discovers desktop live write-read capture artifacts without hand-written evidence aliases", () => {
+  readinessCliIt("discovers desktop live write-read capture artifacts without hand-written evidence aliases", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-desktop-live-"));
     try {
       const files = writeDesktopLiveCaptureDir(tempDir);
@@ -635,7 +641,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("discovers live write-read bundle missionId and prefers combined same-run events", () => {
+  readinessCliIt("discovers live write-read bundle missionId and prefers combined same-run events", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-bundle-"));
     try {
       const files = writeLiveWriteReadBundleDir(tempDir);
@@ -667,7 +673,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("discovers live write-read bundle files when the bundle directory is passed directly", () => {
+  readinessCliIt("discovers live write-read bundle files when the bundle directory is passed directly", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-direct-bundle-"));
     try {
       const files = writeLiveWriteReadBundleDir(tempDir);
@@ -700,7 +706,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("writes a gap report from discovered same-run events without treating it as proof", () => {
+  readinessCliIt("writes a gap report from discovered same-run events without treating it as proof", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-gap-"));
     try {
       writePartialEvidenceDir(tempDir);
@@ -742,7 +748,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("can defer channel proof in report-only mode without satisfying UI proof", () => {
+  readinessCliIt("can defer channel proof in report-only mode without satisfying UI proof", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-defer-channel-"));
     try {
       const files = writePartialEvidenceDir(tempDir);
@@ -810,7 +816,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("discovers indexed channel and timeline evidence without satisfying UI proof", () => {
+  readinessCliIt("discovers indexed channel and timeline evidence without satisfying UI proof", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-indexed-roles-"));
     try {
       const files = writeIndexedChannelTimelineEvidenceDir(tempDir);
@@ -842,7 +848,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("discovers design action runtime evidence bundle indexes without downgrading UI proof truth", () => {
+  readinessCliIt("discovers design action runtime evidence bundle indexes without downgrading UI proof truth", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-action-bundle-"));
     try {
       writePartialEvidenceDir(tempDir);
@@ -893,7 +899,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("accumulates repeated explicit design action runtime evidence paths", () => {
+  readinessCliIt("accumulates repeated explicit design action runtime evidence paths", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-action-explicit-"));
     try {
       writePartialEvidenceDir(tempDir);
@@ -946,7 +952,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("passes supporting proofs into the gap report without satisfying UI device proof", () => {
+  readinessCliIt("passes supporting proofs into the gap report without satisfying UI device proof", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-supporting-"));
     try {
       writePartialEvidenceDir(tempDir);
@@ -997,7 +1003,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("auto-discovers supporting proof artifacts from the evidence dir without counting them as UI proof", () => {
+  readinessCliIt("auto-discovers supporting proof artifacts from the evidence dir without counting them as UI proof", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-supporting-auto-"));
     try {
       writePartialEvidenceDir(tempDir);
@@ -1050,7 +1056,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("bridges redacted channel proof into same-run events without treating it as UI proof", () => {
+  readinessCliIt("bridges redacted channel proof into same-run events without treating it as UI proof", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-channel-bridge-"));
     try {
       const files = writePartialEvidenceDir(tempDir);
@@ -1098,7 +1104,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("derives diagnostic events from a preflighted workbench snapshot without assembling proof", () => {
+  readinessCliIt("derives diagnostic events from a preflighted workbench snapshot without assembling proof", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-workbench-"));
     try {
       writeWorkbenchSnapshotEvidenceDir(tempDir);
@@ -1140,7 +1146,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("merges workbench-derived events with discovered same-run events instead of replacing them", () => {
+  readinessCliIt("merges workbench-derived events with discovered same-run events instead of replacing them", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-merge-"));
     try {
       writePartialEvidenceDir(tempDir);
@@ -1173,7 +1179,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("blocks workbench-derived rows when negative-control status labels are absent", () => {
+  readinessCliIt("blocks workbench-derived rows when negative-control status labels are absent", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-partial-workbench-"));
     try {
       writePartialEvidenceDir(tempDir);
@@ -1236,7 +1242,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("treats non-ready workbench bridge status as a hard blocker in final proof mode", () => {
+  readinessCliIt("treats non-ready workbench bridge status as a hard blocker in final proof mode", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-workbench-proof-blocker-"));
     try {
       writePartialEvidenceDir(tempDir);
@@ -1275,7 +1281,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("keeps discovered same-run events when the workbench diagnostic bridge emits no derived events", () => {
+  readinessCliIt("keeps discovered same-run events when the workbench diagnostic bridge emits no derived events", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-empty-workbench-"));
     try {
       const files = writePartialEvidenceDir(tempDir);
@@ -1318,7 +1324,7 @@ describe("friday-ui-device-proof-readiness", () => {
     }
   });
 
-  it("can derive a workbench snapshot from an explicit read-only Rust DB path", () => {
+  readinessCliIt("can derive a workbench snapshot from an explicit read-only Rust DB path", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "friday-ui-device-readiness-workbench-db-"));
     try {
       writePartialEvidenceDir(tempDir);

@@ -1095,7 +1095,7 @@ export function SettingsPage() {
           {guideLensState ? (
             <div className="space-y-4 text-sm text-[color:var(--color-text-secondary)]">
               <div className="flex items-center gap-4 rounded-[18px] border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-4">
-                <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-[#c4c7c5] text-xl font-semibold text-white">
+                <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-[color:var(--color-bg-surface-strong)] text-xl font-semibold text-[color:var(--color-accent)]">
                   {guideLensState.preferences.avatar.kind === "default_f" ? (guideLensState.preferences.avatar.initials ?? "F") : "F"}
                 </div>
                 <div className="min-w-0 flex-1">

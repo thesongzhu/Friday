@@ -3,7 +3,7 @@
 // Goal: prove the device-pairing + Hub<->phone sync FLOW runs on the Android
 // emulator. It mirrors the design intent of apps/friday-ios at a MINIMAL level:
 // Cyan+Coral palette, warm off-white bg, glass cards, light theme, a small
-// retro-LCD pet, Home = Status + a chat-entry affordance.
+// v9 dog pet, Home = Status + a chat-entry affordance.
 //
 // HONEST SCOPE (do not mistake this for the real app):
 //  - Pairing (QR/passkey) and Hub<->phone sync are MOCKED — a deterministic
@@ -411,8 +411,7 @@ private fun DrawScope.drawRectAt(r: Int, c: Int, cell: Float) {
     )
 }
 
-// Retro-LCD Hero Pet — minimal pixel cat face on an LCD panel (mood companion,
-// not a status source of truth). Mirrors the iOS HeroPet at a minimal level.
+// v9 dog Hero Pet — decorative companion, not a status source of truth.
 @Composable
 private fun HeroPet(online: Boolean) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -421,36 +420,31 @@ private fun HeroPet(online: Boolean) {
                 .padding(top = 6.dp)
                 .size(width = 150.dp, height = 110.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(Theme.lcdBg)
-                .border(1.dp, Theme.lcd.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
+                .background(Theme.dogStage)
+                .border(1.dp, Theme.cyan.copy(alpha = 0.18f), RoundedCornerShape(14.dp))
                 .padding(12.dp),
         ) {
-            Canvas(Modifier.fillMaxSize()) { drawPet() }
+            Canvas(Modifier.fillMaxSize()) { drawV9Dog() }
         }
         Spacer(Modifier.height(6.dp))
         Text(if (online) "Friday is here" else "Friday is offline", color = Theme.sub, fontSize = 12.sp)
     }
 }
 
-private val petFace = listOf(
-    "X..XX..X", ".XXXXXX.", "X.XOXO.X", "X.XXXX.X", "X.X..X.X", ".XXXXXX.",
-)
-
-private fun DrawScope.drawPet() {
-    val cols = 8
-    val rows = petFace.size
-    val cell = minOf(size.width / cols, size.height / rows)
-    petFace.forEachIndexed { r, line ->
-        line.forEachIndexed { c, ch ->
-            if (ch == '.') return@forEachIndexed
-            val on = ch == 'X'
-            drawRect(
-                color = if (on) Theme.lcd else Theme.lcd.copy(alpha = 0.35f),
-                topLeft = Offset(c * cell + 1f, r * cell + 1f),
-                size = Size(cell - 2f, cell - 2f),
-            )
-        }
-    }
+private fun DrawScope.drawV9Dog() {
+    val cx = size.width / 2f
+    val cy = size.height / 2f
+    val s = size.minDimension / 100f
+    drawOval(color = Theme.dogFur, topLeft = Offset(cx - 38 * s, cy - 16 * s), size = Size(24 * s, 42 * s))
+    drawOval(color = Theme.dogFur, topLeft = Offset(cx + 14 * s, cy - 16 * s), size = Size(24 * s, 42 * s))
+    drawOval(color = Theme.dogFur, topLeft = Offset(cx - 32 * s, cy - 28 * s), size = Size(64 * s, 58 * s))
+    drawCircle(color = Theme.ink, radius = 4 * s, center = Offset(cx - 16 * s, cy - 5 * s))
+    drawCircle(color = Theme.ink, radius = 4 * s, center = Offset(cx + 16 * s, cy - 5 * s))
+    drawOval(color = Theme.dogShadow, topLeft = Offset(cx - 7 * s, cy + 6 * s), size = Size(14 * s, 10 * s))
+    drawCircle(color = Theme.coral.copy(alpha = 0.30f), radius = 5 * s, center = Offset(cx - 24 * s, cy + 12 * s))
+    drawCircle(color = Theme.coral.copy(alpha = 0.30f), radius = 5 * s, center = Offset(cx + 24 * s, cy + 12 * s))
+    drawOval(color = Theme.dogFur, topLeft = Offset(cx - 22 * s, cy + 28 * s), size = Size(18 * s, 24 * s))
+    drawOval(color = Theme.dogFur, topLeft = Offset(cx + 4 * s, cy + 28 * s), size = Size(18 * s, 24 * s))
 }
 
 // A tiny no-ripple clickable for the top-bar tabs (keeps deps minimal).
