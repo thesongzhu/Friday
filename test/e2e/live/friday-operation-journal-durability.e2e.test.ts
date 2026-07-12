@@ -40,7 +40,7 @@ import { createFridayHub, type FridayHub } from "#hub";
 import { createFridayHttpServer, type FridayHttpServer } from "#api";
 import { FridaySqliteOperationJournalStore } from "../../../src/api/http/persistence/friday-operation-journal-repository.js";
 
-const LOCAL_PASSPHRASE = "friday-op-journal-durability-passphrase-123";
+const LOCAL_PASSPHRASE = "friday-op-journal-durability-passphrase-123"; // pragma: allowlist secret
 
 interface DurabilityHubEnv {
   hub: FridayHub;
