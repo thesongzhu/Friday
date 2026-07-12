@@ -122,6 +122,14 @@ function validateSchema(value: JsonValue, schema: JsonObject, path: string = "")
   // type check
   if (schema["type"] !== undefined) {
     const expectedType = schema["type"] as string;
+    if (!isKnownSchemaType(expectedType)) {
+      // Fail closed: an unrecognized / unsupported `type` keyword must never be
+      // treated as "matches anything". Accepting it silently let a schema such
+      // as `{ type: "frobnicate" }` (or a typo like "str") pass validation on
+      // the true Hub acceptance path (SEC-ACCEPTANCE-UNKNOWN-KEYWORD-001).
+      errors.push(`${prefix}unsupported schema type "${expectedType}"`);
+      return errors; // short-circuit — cannot validate against an unknown type
+    }
     if (!matchesType(value, expectedType)) {
       errors.push(`${prefix}expected type "${expectedType}", got "${actualType(value)}"`);
       return errors; // short-circuit on type mismatch
@@ -210,6 +218,22 @@ function validateSchema(value: JsonValue, schema: JsonObject, path: string = "")
   return errors;
 }
 
+/** JSON Schema `type` keywords this lightweight validator can enforce. */
+const KNOWN_SCHEMA_TYPES = new Set<string>([
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "null",
+  "array",
+  "object",
+]);
+
+/** Whether `type` is a schema type keyword this validator recognizes. */
+function isKnownSchemaType(type: string): boolean {
+  return KNOWN_SCHEMA_TYPES.has(type);
+}
+
 /** Check if a value matches a JSON Schema type string. */
 function matchesType(value: JsonValue, type: string): boolean {
   switch (type) {
@@ -220,7 +244,10 @@ function matchesType(value: JsonValue, type: string): boolean {
     case "null": return value === null;
     case "array": return Array.isArray(value);
     case "object": return value !== null && typeof value === "object" && !Array.isArray(value);
-    default: return true;
+    // Fail closed on any keyword not recognized above. `validateSchema` guards
+    // this with `isKnownSchemaType`, so the default is unreachable in practice;
+    // it stays defensive so an unknown type can never silently "match anything".
+    default: return false;
   }
 }
 
@@ -654,6 +681,24 @@ export function evaluateAssertion(
       return evaluateQualityAssertion(checkId, content, config);
     case "custom":
       return evaluateCustomAssertion(checkId, content, config);
+    default: {
+      // Defense-in-depth: a corrupted or forward-incompatible check config must
+      // fail closed with a typed verdict rather than fall through to `undefined`,
+      // which previously caused an uncaught TypeError in the suite runner
+      // (SEC-ACCEPTANCE-UNKNOWN-KEYWORD-001).
+      const unknownCheckType = (config as { checkType?: unknown }).checkType;
+      return {
+        verdict: "fail",
+        severity: "critical",
+        evidence: [{
+          checkId,
+          checkType: "custom",
+          message: `Unsupported acceptance checkType "${String(unknownCheckType)}"`,
+          expected: null,
+          actual: null,
+        }],
+      };
+    }
   }
 }
 
