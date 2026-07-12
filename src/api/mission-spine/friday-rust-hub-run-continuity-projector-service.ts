@@ -1,6 +1,10 @@
 import type Database from "better-sqlite3";
 
 import { FridayDomainError } from "#errors";
+import {
+  hashIdempotencyPayload,
+  throwIdempotencyConflict,
+} from "../http/routes/friday-route-idempotency.js";
 
 /**
  * WIRED into the production read-only Rust agent-run route (`routeStartRun` →
@@ -272,10 +276,31 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
       // type-lie; the per-run token totals already live on usage_input/usage_output and in
       // the projected ledger row. Leave it null rather than fabricate a conforming summary.
 
+      // A sha ref over the WHOLE refs-only receipt (never a body). Two projections of the
+      // same run_id that carry the SAME receipt share this digest and stay idempotent; a
+      // projection that reuses the run_id with a DIFFERENT receipt diverges here.
+      const payloadDigest = hashIdempotencyPayload(receipt);
+
       // ── (1) ONE TS agent_run row — idempotent on run_id (PK). ──
-      // INSERT OR IGNORE: a second projection of the same run_id is a no-op (no dup, no
-      // throw). `create()` in the agent-run repo is a plain INSERT hardcoded to
-      // 'pending', so it cannot be reused for an idempotent terminal projected row.
+      // INSERT OR IGNORE: a second projection of the same run_id with the SAME receipt is a
+      // no-op (no dup, no throw). `create()` in the agent-run repo is a plain INSERT hardcoded
+      // to 'pending', so it cannot be reused for an idempotent terminal projected row.
+      //
+      // Digest guard: a pre-existing row whose stored digest DIFFERS is a genuine cross-store
+      // idempotency conflict (the same run_id projected from a divergent receipt), NOT a
+      // replay. INSERT OR IGNORE alone would silently drop the divergent projection; instead
+      // surface the SAME typed 409 the HTTP idempotency layer raises.
+      const existingAgentRunDigest = db
+        .prepare("SELECT payload_digest FROM friday_agent_runs WHERE id = ?")
+        .get(runId) as { payload_digest: string | null } | undefined;
+      if (
+        existingAgentRunDigest
+        && existingAgentRunDigest.payload_digest !== null
+        && existingAgentRunDigest.payload_digest !== payloadDigest
+      ) {
+        throwIdempotencyConflict(runId, "mission_spine.rust_continuity_projection");
+      }
+
       const agentRunInsert = db
         .prepare(
           `INSERT OR IGNORE INTO friday_agent_runs (
@@ -283,8 +308,8 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
              attempt, max_attempts, created_at, started_at, completed_at,
              duration_ms, usage_input, usage_output,
              error_code, response_text, summary,
-             metadata_json
-           ) VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             metadata_json, payload_digest
+           ) VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           runId,
@@ -305,6 +330,7 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
           responseTextRef,
           summary,
           metadataJson,
+          payloadDigest,
         );
 
       // ── (2) ONE TS-visible usage/cost ledger row — idempotent + no double-count. ──
@@ -323,14 +349,28 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
         // wiring is deferred), so pricing is unresolved by definition.
         pricingResolved: false,
       });
+      // Digest guard (companion to the agent_run guard): a pre-existing usage row for this
+      // run whose stored digest DIFFERS is the same divergent-receipt conflict — surface the
+      // typed 409 rather than silently dropping via INSERT OR IGNORE.
+      const existingUsageDigest = db
+        .prepare("SELECT payload_digest FROM llm_usage_records WHERE id = ?")
+        .get(usageLedgerId) as { payload_digest: string | null } | undefined;
+      if (
+        existingUsageDigest
+        && existingUsageDigest.payload_digest !== null
+        && existingUsageDigest.payload_digest !== payloadDigest
+      ) {
+        throwIdempotencyConflict(runId, "mission_spine.rust_continuity_projection");
+      }
+
       const usageInsert = db
         .prepare(
           `INSERT OR IGNORE INTO llm_usage_records (
              id, occurred_at, usage_day, usage_month, provider_id, provider_kind,
              provider_api, model, route_strategy, task_complexity,
              input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-             total_tokens, cost_usd, currency, metadata_json, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'configured', 'medium', ?, ?, 0, 0, ?, 0, 'USD', ?, ?)`,
+             total_tokens, cost_usd, currency, metadata_json, created_at, payload_digest
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'configured', 'medium', ?, ?, 0, 0, ?, 0, 'USD', ?, ?, ?)`,
         )
         .run(
           usageLedgerId,
@@ -350,6 +390,7 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
           receipt.usageTotalTokens,
           usageMetadataJson,
           completedAtIso,
+          payloadDigest,
         );
 
       return {

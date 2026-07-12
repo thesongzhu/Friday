@@ -7,7 +7,19 @@ import type {
 } from "../model/friday-outbox.types.js";
 
 export interface FridayOutboxMessageRepository {
-  insertMessage(db: Database.Database, id: string, input: FridayOutboxEnqueueInput, nowIso: string): void;
+  insertMessage(
+    db: Database.Database,
+    id: string,
+    input: FridayOutboxEnqueueInput,
+    nowIso: string,
+    /**
+     * sha ref over the stable message identity, recorded so a later enqueue that reuses the
+     * same `(satellite_id, idempotency_key)` with a DIFFERENT identity can be surfaced as a
+     * typed conflict instead of silently resolving to the existing id. Optional/null for
+     * legacy callers that do not compute a digest (guard simply does not fire).
+     */
+    payloadDigest?: string | null,
+  ): void;
   leaseBatch(
     db: Database.Database,
     satelliteId: string,
@@ -36,13 +48,13 @@ export interface FridayOutboxMessageRepository {
 
 export function createFridayOutboxMessageRepository(): FridayOutboxMessageRepository {
   return {
-    insertMessage(db, id, input, nowIso) {
+    insertMessage(db, id, input, nowIso, payloadDigest = null) {
       db.prepare(
         `INSERT OR IGNORE INTO outbox_messages (
           id, satellite_id, queue_key, message_type, payload_ciphertext,
           nonce, key_id, idempotency_key, status, max_attempts,
-          deliver_after, expires_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+          deliver_after, expires_at, created_at, updated_at, payload_digest
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         input.satelliteId,
@@ -57,6 +69,7 @@ export function createFridayOutboxMessageRepository(): FridayOutboxMessageReposi
         input.expiresAt ?? null,
         nowIso,
         nowIso,
+        payloadDigest,
       );
     },
 

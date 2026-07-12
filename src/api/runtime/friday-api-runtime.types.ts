@@ -114,6 +114,13 @@ export type FridayAgentRouteStartRun = (input: {
 }) => Promise<unknown>;
 
 export interface FridayApiRuntime {
+  /**
+   * The app SQLite layer backing the HTTP routes. Exposed so the CLI run loop can
+   * construct the durable HTTP idempotency/operation journal store from the SAME db
+   * (no second db is invented). Optional so lightweight test doubles that build a
+   * partial runtime literal stay valid; the real runtime always sets it.
+   */
+  db?: FridaySqliteLayer;
   auth: FridayAuthService;
   tokenValidator: FridayTokenValidator;
   rateLimiter: FridayRateLimitService;
