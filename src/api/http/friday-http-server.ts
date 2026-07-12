@@ -806,6 +806,22 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         const idempotencyLookupKey = `${principalId}:${route.operationId}:${idempotencyKey}`;
         const existing = idempotencyStore.get(idempotencyLookupKey);
         if (existing) {
+          // Crash-orphaned reservation (marked indeterminate at boot): the prior request may
+          // have committed its side-effect but never wrote its completed receipt. Fail closed —
+          // never auto-retry, never re-execute. Non-retryable 409 takes precedence over every
+          // other existing-entry outcome below.
+          if (existing.status === "indeterminate") {
+            sendJsonWithHeaders(res, 409, {
+              ok: false,
+              error: {
+                code: "SECURITY_IDEMPOTENCY_INDETERMINATE",
+                message: "a prior request with this Idempotency-Key did not complete; its outcome is indeterminate and will not be auto-retried.",
+                retryable: false,
+              },
+              requestId,
+            }, { ...corsHeaders, ...middlewareHeaders }, isHead);
+            return;
+          }
           if (existing.payloadHash !== payloadHash || existing.operationId !== route.operationId) {
             sendJsonWithHeaders(res, 409, {
               ok: false,

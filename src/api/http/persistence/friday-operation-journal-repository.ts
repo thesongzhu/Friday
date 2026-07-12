@@ -36,9 +36,11 @@ export interface FridayHttpIdempotencyEntry {
   /**
    * "in_flight" = a request with this key is currently executing (reservation set
    * before the handler runs). "completed" = the handler finished and `data` holds
-   * the replayable response.
+   * the replayable response. "indeterminate" = a reservation orphaned by a crash: the
+   * handler may have committed its side-effect but never wrote its completed receipt, so
+   * the outcome is unknown — fail-closed, never auto-retried, never TTL-pruned.
    */
-  status: "in_flight" | "completed";
+  status: "in_flight" | "completed" | "indeterminate";
   data: unknown;
   expiresAtMs: number;
 }
@@ -78,8 +80,20 @@ export interface FridayHttpIdempotencyStore {
   complete(key: string, input: FridayHttpIdempotencyCompleteInput): void;
   /** Drop the entry for this key (release an unfinished reservation). */
   release(key: string): void;
-  /** Prune all entries whose TTL has elapsed at `nowMs`. */
+  /**
+   * Prune expired entries. ONLY `completed` replay entries are pruned — an `in_flight`
+   * or `indeterminate` reservation is NEVER TTL-deleted, because deleting it would let a
+   * retry miss the journal and re-execute a possibly-committed side-effect.
+   */
   pruneExpired(nowMs: number): void;
+  /**
+   * Reconcile reservations orphaned by a crash. Called once at process boot, BEFORE the
+   * server accepts requests: a freshly-booted process has zero live in-flight requests, so
+   * any `in_flight` row is the residue of a crash between side-effect commit and the
+   * completed receipt. Such rows are marked `indeterminate` (fail-closed) rather than
+   * released, so a retry is refused instead of re-executing.
+   */
+  reconcileOrphanedReservations(): void;
 }
 
 // ─── In-memory implementation (default; byte-for-byte the previous behavior) ───
@@ -118,11 +132,18 @@ export class FridayInMemoryOperationJournalStore implements FridayHttpIdempotenc
   }
 
   pruneExpired(nowMs: number): void {
+    // Only prune completed replay entries — never a reservation, matching the durable
+    // store's fail-closed contract.
     for (const [key, entry] of this.entries.entries()) {
-      if (entry.expiresAtMs <= nowMs) {
+      if (entry.status === "completed" && entry.expiresAtMs <= nowMs) {
         this.entries.delete(key);
       }
     }
+  }
+
+  reconcileOrphanedReservations(): void {
+    // No-op: a volatile in-memory store starts empty on every boot, so there are no
+    // durable orphaned reservations to reconcile.
   }
 }
 
@@ -133,7 +154,7 @@ interface OperationJournalRow {
   operation_id: string;
   idempotency_key: string;
   payload_digest: string;
-  status: "in_flight" | "completed";
+  status: "in_flight" | "completed" | "indeterminate";
   response_json: string | null;
   expires_at_ms: number;
   created_at_ms: number;
@@ -216,6 +237,14 @@ export class FridaySqliteOperationJournalStore implements FridayHttpIdempotencyS
       // A concurrent request won the reservation between our get() and this reserve().
       const existing = this.get(key);
       if (existing) {
+        if (existing.status === "indeterminate") {
+          // A crash-orphaned reservation: fail closed, non-retryable, never re-execute.
+          throw new FridayDomainError(
+            "SECURITY_IDEMPOTENCY_INDETERMINATE",
+            "a prior request with this Idempotency-Key did not complete; its outcome is indeterminate and will not be auto-retried.",
+            { httpStatus: 409, retryable: false },
+          );
+        }
         if (existing.payloadHash !== input.payloadHash || existing.operationId !== input.operationId) {
           throwIdempotencyConflict(idempotencyKey, input.operationId);
         }
@@ -270,8 +299,24 @@ export class FridaySqliteOperationJournalStore implements FridayHttpIdempotencyS
   }
 
   pruneExpired(nowMs: number): void {
+    // Only completed replay entries are TTL-pruned. An in_flight/indeterminate reservation is
+    // NEVER deleted here: dropping it would let a retry miss the journal and re-execute a
+    // possibly-committed side-effect.
     this.sqlite.withWriteTransaction((db) => {
-      db.prepare("DELETE FROM http_operation_journal WHERE expires_at_ms <= ?").run(nowMs);
+      db.prepare(
+        "DELETE FROM http_operation_journal WHERE status = 'completed' AND expires_at_ms <= ?",
+      ).run(nowMs);
+    });
+  }
+
+  reconcileOrphanedReservations(): void {
+    // Boot-time reconciliation: any in_flight row in a freshly-booted process is orphaned by
+    // a crash (no request is live yet). Mark them indeterminate so a retry is refused rather
+    // than re-executing a side-effect that may already have committed.
+    this.sqlite.withWriteTransaction((db) => {
+      db.prepare(
+        "UPDATE http_operation_journal SET status = 'indeterminate' WHERE status = 'in_flight'",
+      ).run();
     });
   }
 }

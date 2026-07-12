@@ -62,6 +62,10 @@ export function runFridayCliLoop(deps: FridayCliRunLoopDeps): Promise<void> {
   const idempotencyStore = idempotencyDb
     ? new FridaySqliteOperationJournalStore(idempotencyDb)
     : undefined;
+  // Reconcile crash-orphaned reservations BEFORE the server accepts requests: any in_flight
+  // row from a previous process is marked indeterminate (fail-closed), so a retry is refused
+  // rather than re-executing a side-effect that may already have committed.
+  idempotencyStore?.reconcileOrphanedReservations();
 
   const httpServer = createFridayHttpServer({
     routes: hub.apiRuntime.routes,

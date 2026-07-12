@@ -82,8 +82,11 @@ async function bootDurabilityHub(stateDir: string): Promise<DurabilityHubEnv> {
   await hub.start();
 
   // Wire the DURABLE cross-store operation journal exactly as the production CLI run
-  // loop does — this is the fix under test.
+  // loop does — this is the fix under test. Reconcile crash-orphaned reservations at boot
+  // (before the server listens) so an in_flight row left by a crash becomes indeterminate
+  // rather than being re-executed.
   const idempotencyStore = new FridaySqliteOperationJournalStore(hub.apiRuntime.db!);
+  idempotencyStore.reconcileOrphanedReservations();
 
   const port = await findFreePort();
   const httpServer = createFridayHttpServer({
@@ -229,6 +232,83 @@ describe("Friday HTTP operation journal — idempotency survives a process resta
         expect(replayRes.headers.get("idempotency-replayed")).toBe("true");
 
         // The side-effect happened EXACTLY ONCE across the restart.
+        expect(countAutomations(env)).toBe(1);
+      } finally {
+        await shutdownDurabilityHub(env);
+      }
+    },
+  );
+
+  it(
+    "fails closed (indeterminate 409) after a crash BETWEEN effect-commit and completed-receipt — never re-executes",
+    { timeout: 120_000 },
+    async () => {
+      stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-op-journal-boundary-e2e-"));
+      const idempotencyKey = `op-journal-boundary-${Date.now()}`;
+      const body = JSON.stringify({
+        name: "Boundary Proof Automation",
+        taskTemplate: "echo boundary",
+        schedule: { type: "cron", cron: "0 9 * * *", timezone: "UTC" },
+        enabled: false,
+      });
+
+      // ── Boot 1: commit the side-effect, then SIMULATE a crash between the effect commit
+      // and the journal's completed receipt by forcing the journal row back to an in_flight
+      // reservation with a PAST TTL (exactly the state a crash-before-complete leaves behind:
+      // effect committed + reservation never upgraded to completed). ──
+      let env = await bootDurabilityHub(stateDir);
+      try {
+        const firstRes = await fetch(`${env.baseUrl}/v1/agent/automations`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${env.accessToken}`,
+            "Idempotency-Key": idempotencyKey,
+          },
+          body,
+        });
+        expect(firstRes.status).toBe(200);
+        expect(countAutomations(env)).toBe(1);
+
+        const changed = env.hub.apiRuntime.db!.withWriteTransaction((db) =>
+          db
+            .prepare(
+              "UPDATE http_operation_journal SET status = 'in_flight', response_json = NULL, expires_at_ms = ? WHERE idempotency_key = ?",
+            )
+            .run(Date.now() - 60_000, idempotencyKey).changes,
+        );
+        expect(changed).toBe(1);
+      } finally {
+        await shutdownDurabilityHub(env);
+      }
+
+      // ── Boot 2: reboot from the SAME state dir. Boot-time reconciliation marks the orphaned
+      // in_flight reservation as indeterminate; a retry must be refused (never re-executed). ──
+      env = await bootDurabilityHub(stateDir);
+      try {
+        expect(countAutomations(env)).toBe(1);
+
+        const retryRes = await fetch(`${env.baseUrl}/v1/agent/automations`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${env.accessToken}`,
+            "Idempotency-Key": idempotencyKey,
+          },
+          body,
+        });
+
+        // FAIL-CLOSED: non-retryable indeterminate 409, NOT a 200 re-execution.
+        expect(retryRes.status).toBe(409);
+        const retryJson = (await retryRes.json()) as {
+          ok: boolean;
+          error?: { code?: string; retryable?: boolean };
+        };
+        expect(retryJson.ok).toBe(false);
+        expect(retryJson.error?.code).toBe("SECURITY_IDEMPOTENCY_INDETERMINATE");
+        expect(retryJson.error?.retryable).toBe(false);
+
+        // The possibly-committed side-effect was NOT duplicated.
         expect(countAutomations(env)).toBe(1);
       } finally {
         await shutdownDurabilityHub(env);

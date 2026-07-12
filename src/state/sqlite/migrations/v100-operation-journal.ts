@@ -15,7 +15,11 @@ CREATE TABLE IF NOT EXISTS http_operation_journal (
   operation_id TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   payload_digest TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('in_flight', 'completed')),
+  -- 'indeterminate' = a reservation that was in_flight when the process died: the handler
+  -- MAY have committed its durable side-effect but never wrote its 'completed' receipt. It is
+  -- fail-closed (never auto-retried) and is NEVER TTL-pruned, so a possibly-committed effect
+  -- can never be silently re-executed.
+  status TEXT NOT NULL CHECK (status IN ('in_flight', 'completed', 'indeterminate')),
   response_json TEXT,
   expires_at_ms INTEGER NOT NULL,
   created_at_ms INTEGER NOT NULL,
