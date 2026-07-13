@@ -116,8 +116,65 @@ export interface FridayLlmUsageRecord {
   totalTokens: number;
   costUsd: number;
   currency: "USD";
+  // The provider response's own request identifier (x-request-id header or
+  // response body id). Present for calls whose provider surfaced one; NULL for
+  // legacy/local calls. When present it is the idempotency key: recording the
+  // same requestId twice yields one row / one charge.
+  requestId?: string | null;
+  // Agent run/turn linkage (nullable).
+  runId?: string | null;
+  turnId?: string | null;
+  // Deterministic receipt hash bound to the call. Recomputable for tamper
+  // detection. NULL when there is no requestId to bind a receipt to.
+  receipt?: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
+}
+
+// ─── Provider-call receipt (durable, request-id-bound) ───
+
+export interface FridayProviderCallReceipt {
+  requestId: string;
+  providerId: string;
+  providerKind: FridayProviderKind | "unknown";
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  currency: "USD";
+  runId: string | null;
+  turnId: string | null;
+  occurredAt: string;
+  /** The deterministic receipt hash persisted with the record. */
+  receipt: string;
+}
+
+// ─── Receipt readback (record + tamper verdict) ───
+
+export interface FridayProviderCallReceiptLookup {
+  receipt: FridayProviderCallReceipt;
+  /**
+   * True when the persisted receipt hash matches a recomputation over the
+   * stored fields — i.e. the row has not been tampered with since recording.
+   */
+  receiptValid: boolean;
+}
+
+// ─── Result of a recordUsage write (idempotency-aware) ───
+
+export interface FridayRecordUsageResult {
+  /** True when this call inserted a new durable row. */
+  recorded: boolean;
+  /**
+   * True when a row for this requestId already existed and the write was a
+   * no-op (idempotent replay). Always false when there is no requestId.
+   */
+  duplicate: boolean;
+  /** The requestId the row is keyed by, when one was supplied. */
+  requestId?: string | null;
+  /** The receipt hash bound to the row, when a requestId was supplied. */
+  receipt?: string | null;
 }
 
 // ─── Usage summary row ───

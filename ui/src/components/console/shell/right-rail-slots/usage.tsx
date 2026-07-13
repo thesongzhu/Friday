@@ -2,14 +2,28 @@ import { NavLink } from "react-router-dom";
 import { BarChart3, ChevronRight, DollarSign, Gauge } from "lucide-react";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
+import { useUsageRail } from "@/hooks/use-usage-rail";
+import { formatRailUsd } from "@/lib/usage/usage-rail-view";
 
 /**
- * Right-rail preset for `/usage`. Ships the frame with static hint rows; Phase
- * 2 wires a `useTodayUsageQuery()` to replace placeholder copy with real
- * token/cost figures without changing the rail shape.
+ * Right-rail preset for `/usage`. Figures are read from recorded usage data via
+ * `useUsageRail()` (/v1/providers/usage) — never fabricated. Before load, on
+ * error, or when nothing has been recorded, it shows the truthful zero state
+ * ($0.00 / 0 tokens).
  */
 export function UsageRightRailSlot() {
   const { locale } = useAppLocale();
+  const usage = useUsageRail();
+
+  const todayCost = formatRailUsd(usage.todayUsd);
+  const cumulativeCost = formatRailUsd(usage.cumulativeUsd);
+  const tokenHint = usage.loading
+    ? localize(locale, "读取中…", "Loading…")
+    : localize(
+        locale,
+        `${usage.totalTokens.toLocaleString()} tokens · ${usage.callCount} 次调用`,
+        `${usage.totalTokens.toLocaleString()} tokens · ${usage.callCount} calls`,
+      );
 
   return (
     <div className="flex flex-col gap-3 p-4">
@@ -24,7 +38,8 @@ export function UsageRightRailSlot() {
           className="mt-1 text-sm font-semibold"
           style={{ color: "var(--color-text-primary)", fontFamily: "var(--font-serif-sc)" }}
         >
-          {localize(locale, "今日花费", "Today's cost")}
+          {localize(locale, "今日花费", "Today's cost")}{" "}
+          <span style={{ color: "var(--color-accent)" }}>{usage.loading ? "" : todayCost}</span>
         </h3>
       </header>
 
@@ -33,13 +48,15 @@ export function UsageRightRailSlot() {
           to="/usage"
           Icon={Gauge}
           title={localize(locale, "Token 消耗", "Token spend")}
-          hint={localize(locale, "按模型拆分的用量", "Breakdown by model")}
+          hint={tokenHint}
         />
         <Row
           to="/usage"
           Icon={DollarSign}
           title={localize(locale, "累计费用", "Cumulative cost")}
-          hint={localize(locale, "本月至今的支出", "Month-to-date")}
+          hint={usage.loading
+            ? localize(locale, "本月至今的支出", "Month-to-date")
+            : localize(locale, `本月至今 ${cumulativeCost}`, `${cumulativeCost} month-to-date`)}
         />
         <Row
           to="/observability"

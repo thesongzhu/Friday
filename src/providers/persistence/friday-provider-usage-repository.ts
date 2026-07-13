@@ -26,6 +26,10 @@ interface UsageRecordRow {
   total_tokens: number;
   cost_usd: number;
   currency: string;
+  request_id: string | null;
+  run_id: string | null;
+  turn_id: string | null;
+  receipt: string | null;
   metadata_json: string;
   created_at: string;
 }
@@ -68,6 +72,14 @@ CREATE TABLE IF NOT EXISTS llm_usage_records (
   total_tokens INTEGER NOT NULL DEFAULT 0 CHECK (total_tokens >= 0),
   cost_usd REAL NOT NULL DEFAULT 0 CHECK (cost_usd >= 0),
   currency TEXT NOT NULL DEFAULT 'USD',
+  -- V102: provider request-id (idempotency key), run/turn linkage, receipt hash.
+  -- Nullable so legacy/local calls that never surfaced a request-id keep prior
+  -- behavior. Kept in sync with migration v102-provider-call-receipt for the
+  -- fresh-table path (this DDL) vs. the ALTER path (existing prod DBs).
+  request_id TEXT,
+  run_id TEXT,
+  turn_id TEXT,
+  receipt TEXT,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL
 );
@@ -78,6 +90,9 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_day ON llm_usage_records(usage_day);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_month ON llm_usage_records(usage_month);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_provider_day ON llm_usage_records(provider_id, usage_day);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_model_day ON llm_usage_records(model, usage_day);
+-- Partial unique index = the exactly-once identity for request-id-bound calls.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_usage_request_id
+  ON llm_usage_records(request_id) WHERE request_id IS NOT NULL;
 `;
 
 // ─── Repository interface ───
@@ -85,7 +100,15 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_model_day ON llm_usage_records(model, u
 export interface FridayProviderUsageRepository {
   /** Ensures the llm_usage_records table and indexes exist. */
   ensureTable(db: Database.Database): void;
-  insert(db: Database.Database, record: FridayLlmUsageRecord): void;
+  /**
+   * Persists a usage record. When record.requestId is present the write is
+   * idempotent on that request-id (ON CONFLICT DO NOTHING via the partial
+   * unique index) — recording the same call twice yields one row / one charge.
+   * Returns whether a new row was actually inserted.
+   */
+  insert(db: Database.Database, record: FridayLlmUsageRecord): { inserted: boolean };
+  /** Reads a single record back by the provider request-id, or null. */
+  getByRequestId(db: Database.Database, requestId: string): FridayLlmUsageRecord | null;
   sumCostForMonth(db: Database.Database, usageMonth: string): number;
   querySummary(db: Database.Database, params: {
     from: string;
@@ -114,13 +137,22 @@ export function createFridayProviderUsageRepository(): FridayProviderUsageReposi
     },
     insert(db, record) {
       ensureTable(db);
-      db.prepare(
+      const requestId = record.requestId ?? null;
+      // When a request-id is present, the write is idempotent: a duplicate
+      // request-id collides on the partial unique index and DO NOTHING makes it
+      // a no-op (no double-count). NULL request-ids are outside the index and
+      // insert normally, preserving legacy/local-call behavior.
+      const conflictClause = requestId !== null
+        ? " ON CONFLICT(request_id) WHERE request_id IS NOT NULL DO NOTHING"
+        : "";
+      const result = db.prepare(
         `INSERT INTO llm_usage_records
          (id, occurred_at, usage_day, usage_month, provider_id, provider_kind,
           provider_api, model, route_strategy, task_complexity,
           input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-          total_tokens, cost_usd, currency, metadata_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          total_tokens, cost_usd, currency, request_id, run_id, turn_id, receipt,
+          metadata_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)${conflictClause}`,
       ).run(
         record.id,
         record.occurredAt,
@@ -139,9 +171,49 @@ export function createFridayProviderUsageRepository(): FridayProviderUsageReposi
         record.totalTokens,
         record.costUsd,
         record.currency,
+        requestId,
+        record.runId ?? null,
+        record.turnId ?? null,
+        record.receipt ?? null,
         JSON.stringify(record.metadata),
         record.createdAt,
       );
+      return { inserted: result.changes > 0 };
+    },
+
+    getByRequestId(db, requestId) {
+      ensureTable(db);
+      const row = db
+        .prepare(
+          `SELECT * FROM llm_usage_records WHERE request_id = ? LIMIT 1`,
+        )
+        .get(requestId) as UsageRecordRow | undefined;
+      if (!row) return null;
+      return {
+        id: row.id,
+        occurredAt: row.occurred_at,
+        usageDay: row.usage_day,
+        usageMonth: row.usage_month,
+        providerId: row.provider_id,
+        providerKind: row.provider_kind as FridayLlmUsageRecord["providerKind"],
+        providerApi: row.provider_api as FridayLlmUsageRecord["providerApi"],
+        model: row.model,
+        routeStrategy: row.route_strategy as FridayLlmUsageRecord["routeStrategy"],
+        taskComplexity: row.task_complexity as FridayLlmUsageRecord["taskComplexity"],
+        inputTokens: row.input_tokens,
+        outputTokens: row.output_tokens,
+        cacheReadTokens: row.cache_read_tokens,
+        cacheWriteTokens: row.cache_write_tokens,
+        totalTokens: row.total_tokens,
+        costUsd: row.cost_usd,
+        currency: row.currency as "USD",
+        requestId: row.request_id,
+        runId: row.run_id,
+        turnId: row.turn_id,
+        receipt: row.receipt,
+        metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
+        createdAt: row.created_at,
+      };
     },
 
     sumCostForMonth(db, usageMonth) {

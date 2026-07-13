@@ -28,9 +28,11 @@ import type {
   FridayCostRoutingDecision,
   FridayLlmBudgetConfig,
   FridayLlmBudgetStatus,
+  FridayProviderCallReceiptLookup,
   FridayProviderNormalizedUsage,
   FridayProviderRouteStrategy,
   FridayProviderUsageSummary,
+  FridayRecordUsageResult,
   FridayTaskComplexity,
 } from "../model/friday-provider-cost.types.js";
 
@@ -191,8 +193,24 @@ export interface FridayProviderService {
     taskComplexity: FridayTaskComplexity;
     usage: FridayProviderNormalizedUsage;
     costUsd: number;
+    /**
+     * The provider's own request identifier for this call. When present the
+     * write is idempotent on it (same request-id twice ⇒ one row / one charge)
+     * and a durable, tamper-detectable receipt is bound to it.
+     */
+    requestId?: string | null;
+    /** Optional agent run/turn linkage. */
+    runId?: string | null;
+    turnId?: string | null;
     metadata?: Record<string, unknown>;
-  }): Promise<void>;
+  }): Promise<FridayRecordUsageResult>;
+
+  /**
+   * Reads back the durable receipt for a completed provider call by its
+   * request-id, along with a tamper verdict (receiptValid). Returns null when
+   * no request-id-bound record exists.
+   */
+  getCallReceipt(requestId: string): Promise<FridayProviderCallReceiptLookup | null>;
 
   getUsageSummary(input: {
     from: string;

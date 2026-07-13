@@ -36,7 +36,13 @@ import {
 import type {
   FridayCostRoutingDecision,
   FridayLlmUsageRecord,
+  FridayProviderCallReceiptLookup,
 } from "../model/friday-provider-cost.types.js";
+import {
+  buildProviderCallReceipt,
+  projectProviderCallReceipt,
+  verifyProviderCallReceipt,
+} from "../cost/friday-provider-call-receipt.js";
 
 import type {
   CreateFridayProviderServiceDeps,
@@ -3540,6 +3546,27 @@ export function createFridayProviderService(
       const usageDay = now.slice(0, 10);
       const usageMonth = now.slice(0, 7);
 
+      // A receipt is bound to the provider's own request-id, so it can only be
+      // minted when one was surfaced. Calls without a request-id (local/legacy)
+      // are recorded without a receipt rather than with a fabricated one.
+      const requestId =
+        typeof input.requestId === "string" && input.requestId.trim().length > 0
+          ? input.requestId
+          : null;
+      const receipt = requestId
+        ? buildProviderCallReceipt({
+            requestId,
+            providerId: input.providerId,
+            providerKind,
+            model: input.model,
+            inputTokens: input.usage.input,
+            outputTokens: input.usage.output,
+            totalTokens: input.usage.total,
+            costUsd: input.costUsd,
+            occurredAt: now,
+          })
+        : null;
+
       const record: FridayLlmUsageRecord = {
         id: deps.idGenerator(),
         occurredAt: now,
@@ -3558,15 +3585,44 @@ export function createFridayProviderService(
         totalTokens: input.usage.total,
         costUsd: input.costUsd,
         currency: "USD",
+        requestId,
+        runId: input.runId ?? null,
+        turnId: input.turnId ?? null,
+        receipt,
         // Computed marker goes LAST so a caller-supplied metadata.pricingResolved
         // cannot spoof the ledger's truth signal.
         metadata: { ...(input.metadata ?? {}), pricingResolved },
         createdAt: now,
       };
 
-      deps.db.withWriteTransaction((db) => {
-        usageRepo.insert(db, record);
-      });
+      // Idempotent on request-id: the insert is a no-op when a row for this
+      // request-id already exists (retry/replay), so it never double-counts.
+      const { inserted } = deps.db.withWriteTransaction((db) =>
+        usageRepo.insert(db, record),
+      );
+
+      return {
+        recorded: inserted,
+        duplicate: requestId !== null && !inserted,
+        requestId,
+        receipt,
+      };
+    },
+
+    async getCallReceipt(requestId): Promise<FridayProviderCallReceiptLookup | null> {
+      if (!requestId || requestId.trim().length === 0) {
+        return null;
+      }
+      const record = deps.db.withReadConnection((db) =>
+        usageRepo.getByRequestId(db, requestId),
+      );
+      if (!record) return null;
+      const receipt = projectProviderCallReceipt(record);
+      if (!receipt) return null;
+      return {
+        receipt,
+        receiptValid: verifyProviderCallReceipt(record),
+      };
     },
 
     async getUsageSummary(input) {
