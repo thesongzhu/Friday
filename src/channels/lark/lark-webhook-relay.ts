@@ -5,7 +5,7 @@
  * owns HTTP webhook ingress state and challenge/event dispatch semantics.
  */
 
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createDecipheriv, createHash, timingSafeEqual } from "node:crypto";
 
 export interface LarkWebhookRelayResult {
   accepted: boolean;
@@ -19,7 +19,8 @@ export interface LarkWebhookRelayResult {
     | "LARK_TOKEN_MISSING"
     | "LARK_TOKEN_INVALID"
     | "LARK_SIGNATURE_MISSING"
-    | "LARK_SIGNATURE_INVALID";
+    | "LARK_SIGNATURE_INVALID"
+    | "LARK_DECRYPT_FAILED";
 }
 
 export interface LarkWebhookRelayService {
@@ -68,6 +69,87 @@ export function validateLarkWebhookSignature(
   } catch {
     return false;
   }
+}
+
+/**
+ * Decrypt a Lark/Feishu event-encryption envelope.
+ *
+ * When an "Encrypt Key" is configured on the Lark app, the platform POSTs
+ * `{"encrypt":"<base64>"}` instead of the plaintext payload. The scheme
+ * (per Lark/Feishu event subscription docs) is:
+ *   - AES-256-CBC with PKCS7 padding
+ *   - key    = sha256(encryptKey)                       (32 bytes)
+ *   - buffer = base64_decode(encrypt)
+ *   - iv     = buffer[0..16], ciphertext = buffer[16..]
+ *   - plaintext = JSON string of the real event / url_verification payload
+ *
+ * Returns the parsed plaintext object, or null if the envelope is malformed,
+ * undecryptable, or does not decode to a JSON object (never throws).
+ */
+function decryptLarkEnvelope(
+  encrypted: string,
+  encryptKey: string,
+): Record<string, unknown> | null {
+  try {
+    const aesKey = createHash("sha256").update(encryptKey, "utf8").digest();
+    const buffer = Buffer.from(encrypted, "base64");
+    if (buffer.length <= 16) {
+      return null;
+    }
+    const iv = buffer.subarray(0, 16);
+    const ciphertext = buffer.subarray(16);
+    const decipher = createDecipheriv("aes-256-cbc", aesKey, iv);
+    const plaintext = Buffer.concat([
+      decipher.update(ciphertext),
+      decipher.final(),
+    ]).toString("utf8");
+    const parsed = JSON.parse(plaintext) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+type LarkPayloadResolution =
+  | { ok: true; payload: Record<string, unknown>; encryptMode: boolean }
+  | { ok: false; result: LarkWebhookRelayResult };
+
+/**
+ * Resolve the effective payload for dispatch.
+ *
+ * In encrypt mode (an Encrypt Key is configured AND the body carries an
+ * `encrypt` envelope) the signature — computed over the RAW encrypted body — is
+ * verified FIRST, then the envelope is decrypted so the real event flows through
+ * the same downstream token + dispatch checks. Non-encrypt mode (no encryptKey
+ * OR no `encrypt` field) returns the parsed body unchanged with encryptMode
+ * false, preserving the legacy path byte-for-byte.
+ */
+function resolveLarkPayload(
+  payload: Record<string, unknown>,
+  encryptKey: string | null,
+  rawBody: string,
+  signatureHeader?: string,
+  timestampHeader?: string,
+  nonceHeader?: string,
+): LarkPayloadResolution {
+  const encryptEnvelope = typeof payload.encrypt === "string" ? payload.encrypt : null;
+  if (encryptKey === null || encryptEnvelope === null) {
+    return { ok: true, payload, encryptMode: false };
+  }
+  if (!signatureHeader || !timestampHeader || !nonceHeader) {
+    return { ok: false, result: { accepted: false, statusCode: 401, code: "LARK_SIGNATURE_MISSING" } };
+  }
+  if (!validateLarkWebhookSignature(timestampHeader, nonceHeader, encryptKey, rawBody, signatureHeader)) {
+    return { ok: false, result: { accepted: false, statusCode: 403, code: "LARK_SIGNATURE_INVALID" } };
+  }
+  const decrypted = decryptLarkEnvelope(encryptEnvelope, encryptKey);
+  if (decrypted === null) {
+    return { ok: false, result: { accepted: false, statusCode: 400, code: "LARK_DECRYPT_FAILED" } };
+  }
+  return { ok: true, payload: decrypted, encryptMode: true };
 }
 
 function constantTimeStringEqual(left: string, right: string): boolean {
@@ -131,6 +213,23 @@ export function createLarkWebhookRelayService(): LarkWebhookRelayService {
         };
       }
 
+      // Encrypt mode (Encrypt Key configured + `{"encrypt":...}` envelope):
+      // verify the signature over the raw body, decrypt, and continue with the
+      // decrypted payload. Non-encrypt mode is passed through unchanged.
+      const resolution = resolveLarkPayload(
+        payload,
+        encryptKey,
+        rawBody,
+        signatureHeader,
+        timestampHeader,
+        nonceHeader,
+      );
+      if (!resolution.ok) {
+        return resolution.result;
+      }
+      payload = resolution.payload;
+      const encryptMode = resolution.encryptMode;
+
       const payloadToken = extractPayloadToken(payload);
 
       if (payload.type === "url_verification") {
@@ -184,7 +283,7 @@ export function createLarkWebhookRelayService(): LarkWebhookRelayService {
         };
       }
 
-      if (encryptKey) {
+      if (encryptKey && !encryptMode) {
         if (!signatureHeader || !timestampHeader || !nonceHeader) {
           return {
             accepted: false,
