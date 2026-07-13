@@ -56,8 +56,16 @@ export function buildFridayAgentRunHealthSnapshot(input: {
 
   const runStatus = String(run.status);
 
-  if (runStatus === "awaiting_plan_approval" || runStatus === "awaiting_tool_approval") {
-    reasonCodes.push(runStatus === "awaiting_tool_approval" ? "tool_approval_required" : "plan_approval_required");
+  if (
+    runStatus === "awaiting_plan_approval"
+    || runStatus === "awaiting_tool_approval"
+    || runStatus === "awaiting_clarification"
+  ) {
+    const reasonCode =
+      runStatus === "awaiting_tool_approval" ? "tool_approval_required"
+      : runStatus === "awaiting_clarification" ? "clarification_required"
+      : "plan_approval_required";
+    reasonCodes.push(reasonCode);
     return {
       state: "needs_approval",
       rollbackAvailable: false,
