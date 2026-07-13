@@ -3010,6 +3010,43 @@ export function createFridayAgentRuntime(
               continue;
             }
 
+            // PolicyExtensionChain gate: extensions run AFTER core policy gates, so they
+            // only ever see core-allowed tools and can only tighten (deny), never loosen.
+            // On deny we must remove the tool from execution (not merely emit telemetry):
+            // synthesize a typed denied record and `continue` so the tool is never pushed
+            // to executableToolUses and therefore never executes (SEC-POLICY-DENY-ZERO).
+            const policyExtensions: PolicyExtension[] = deps.policyExtensions ?? [];
+            if (policyExtensions.length > 0) {
+              const policyResult = evaluatePolicyExtensionChain(
+                "allow",
+                policyExtensions,
+                { principalId: principalId ?? "system", resource: "tool", action: "execute", resourceId: toolUse.name },
+              );
+              if (policyResult.decision === "deny") {
+                handleTrackedEvent("agent.run.capability_grant_denied", {
+                  runId,
+                  grantId: `policy-deny-${toolUse.id}`,
+                  toolCallId: toolUse.id,
+                  toolName: toolUse.name,
+                  reason: `Policy extension "${policyResult.decidedBy ?? "unknown"}" denied tool execution`,
+                  principalId,
+                  sessionKey,
+                });
+                toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
+                  toolUse,
+                  runId,
+                  nowIso,
+                  emitRunEvent: (name, payload) => handleTrackedEvent(name, payload),
+                  routeId: "agent.execute.tool.policy_extension",
+                  correlationId: runId,
+                  message: `Tool '${toolUse.name}' denied by policy extension "${policyResult.decidedBy ?? "unknown"}".`,
+                  readOnly: isReadOnly,
+                  operationalMode: runOperationalMode,
+                }));
+                continue;
+              }
+            }
+
             const approvalRequiredReason = getApprovalRequiredReasonForToolCall(toolUse.name, toolUse.input);
             if (toolCallIsMutating && !canonicalMutatingActionGate) {
               toolCallRecordsByIndex.set(toolIndex, emitImmediateToolCallResult({
@@ -3343,29 +3380,6 @@ export function createFridayAgentRuntime(
               console.info(
                 `[friday][marker] tool_batch_executed runId=${runId} groups=${String(groups.length)} tools=${String(executableToolUses.length)}`,
               );
-            }
-            // PolicyExtensionChain gate: evaluate extensions before tool execution.
-            // Extensions can only tighten (deny); they cannot override core policy.
-            const policyExtensions: PolicyExtension[] = deps.policyExtensions ?? [];
-            if (policyExtensions.length > 0) {
-              for (const toolUse of executableBlocks) {
-                const policyResult = evaluatePolicyExtensionChain(
-                  "allow",
-                  policyExtensions as PolicyExtension[],
-                  { principalId: principalId ?? "system", resource: "tool", action: "execute", resourceId: toolUse.name },
-                );
-                if (policyResult.decision === "deny") {
-                  handleTrackedEvent("agent.run.capability_grant_denied", {
-                    runId,
-                    grantId: `policy-deny-${toolUse.id}`,
-                    toolCallId: toolUse.id,
-                    toolName: toolUse.name,
-                    reason: `Policy extension "${policyResult.decidedBy ?? "unknown"}" denied tool execution`,
-                    principalId,
-                    sessionKey,
-                  });
-                }
-              }
             }
 
             const executedRecords = await executeToolBatch(

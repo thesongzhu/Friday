@@ -10,6 +10,7 @@ import {
   clearCustomHandlers,
 } from "../../../../src/acceptance/engine/assertion-engine.js";
 import type {
+  FridayAcceptanceCheckConfig,
   FridayAcceptanceSchemaCheckConfig,
   FridayAcceptanceQuantCheckConfig,
   FridayAcceptanceQualityCheckConfig,
@@ -163,6 +164,29 @@ describe("validateSchema", () => {
     const schema = { type: "boolean" };
     expect(validateSchema(true, schema)).toEqual([]);
     expect(validateSchema("true", schema)).toHaveLength(1);
+  });
+
+  // ─── Fail-closed on unrecognized `type` keyword (SEC-ACCEPTANCE-UNKNOWN-KEYWORD-001) ───
+  // Regression guard for the silent false-pass: an unknown/unsupported JSON-schema
+  // `type` keyword must produce a validation error rather than being accepted.
+
+  it("fails closed for an unrecognized schema type keyword", () => {
+    const errors = validateSchema(42, { type: "frobnicate" });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('unsupported schema type "frobnicate"');
+  });
+
+  it("fails closed for a typo'd schema type keyword", () => {
+    // "str" is a common typo for "string" — it must NOT silently pass.
+    const errors = validateSchema("hello", { type: "str" });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("unsupported schema type");
+  });
+
+  it("leaves type-less and empty schemas unaffected (no-degrade)", () => {
+    // A schema with no `type` keyword and an empty schema still validate anything.
+    expect(validateSchema(42, { minimum: 0 })).toEqual([]);
+    expect(validateSchema({ any: "thing" }, {})).toEqual([]);
   });
 });
 
@@ -332,6 +356,33 @@ describe("evaluateAssertion — schema", () => {
     const result = evaluateAssertion("check-5", { name: "test" }, config);
     expect(result.verdict).toBe("fail");
     expect(result.severity).toBe("major");
+  });
+
+  it("fails closed for an unrecognized schema type keyword (no silent pass)", () => {
+    const badConfig: FridayAcceptanceSchemaCheckConfig = {
+      checkType: "schema",
+      schema: { type: "frobnicate" },
+    };
+    // Content that would trivially match any real type — the ONLY reason this
+    // could pass is the unrecognized-keyword false-pass being fixed here.
+    const result = evaluateAssertion("check-unknown-type", { name: "test", score: 85 }, badConfig);
+    expect(result.verdict).toBe("fail");
+    expect(result.evidence[0].message).toContain("unsupported schema type");
+  });
+});
+
+// ─── evaluateAssertion: unknown checkType (defense-in-depth default) ───
+
+describe("evaluateAssertion — unknown checkType", () => {
+  it("returns a critical fail verdict for an unrecognized checkType instead of returning undefined", () => {
+    // Simulates a corrupted/forward-incompatible check config reaching the engine.
+    // Previously the switch had no default, so this returned `undefined` and caused
+    // an uncaught TypeError in the suite runner. It must now fail closed.
+    const bogusConfig = { checkType: "not-a-real-check" } as unknown as FridayAcceptanceCheckConfig;
+    const result = evaluateAssertion("check-bogus", { data: 1 }, bogusConfig);
+    expect(result).toBeDefined();
+    expect(result.verdict).toBe("fail");
+    expect(result.severity).toBe("critical");
   });
 });
 
