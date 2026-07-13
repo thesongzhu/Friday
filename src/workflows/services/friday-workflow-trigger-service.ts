@@ -154,7 +154,7 @@ async function resolveWebhookSigningSecret(
 // ─── Shared fire helper (F7: avoids DB vs in-memory divergence) ───
 
 async function fireCronRegistration(
-  reg: { workflowId: string; workflowVersionId: string; cronExpression?: string },
+  reg: { workflowId: string; workflowVersionId: string; cronExpression?: string; cronTimezone?: string },
   nowIso: string,
   executionService: FridayWorkflowExecutionService,
   triggerRepo: FridayWorkflowTriggerRepository | undefined,
@@ -187,7 +187,7 @@ async function fireCronRegistration(
 
     // Update DB trigger state if available
     if (triggerRepo && regId && reg.cronExpression) {
-      const nextFire = computeNextCronFire(reg.cronExpression, new Date(nowIso));
+      const nextFire = computeNextCronFire(reg.cronExpression, new Date(nowIso), 525_600, reg.cronTimezone);
       triggerRepo.markFired(regId, nowIso, nextFire?.toISOString());
     }
 
@@ -256,7 +256,7 @@ export function createFridayWorkflowTriggerService(
           if (limit != null && started >= limit) break;
 
           const fired = await fireCronRegistration(
-            { workflowId: reg.workflowId, workflowVersionId: reg.workflowVersionId, cronExpression: reg.cronExpression },
+            { workflowId: reg.workflowId, workflowVersionId: reg.workflowVersionId, cronExpression: reg.cronExpression, cronTimezone: reg.cronTimezone },
             nowIso,
             deps.executionService,
             deps.triggerRepo,
@@ -283,10 +283,10 @@ export function createFridayWorkflowTriggerService(
         if (!reg.enabled || reg.trigger.type !== "schedule") continue;
 
         const schedule = reg.trigger;
-        if (!matchesCron(schedule.cron, tickDate)) continue;
+        if (!matchesCron(schedule.cron, tickDate, schedule.timezone)) continue;
 
         const fired = await fireCronRegistration(
-          { workflowId: reg.workflowId, workflowVersionId: reg.workflowVersionId, cronExpression: schedule.cron },
+          { workflowId: reg.workflowId, workflowVersionId: reg.workflowVersionId, cronExpression: schedule.cron, cronTimezone: schedule.timezone },
           nowIso,
           deps.executionService,
           undefined,
@@ -405,7 +405,7 @@ export function createFridayWorkflowTriggerService(
           if (triggerType === "schedule") {
             const cronExpr = config.cron as string;
             try {
-              const next = computeNextCronFire(cronExpr, new Date(nowIso));
+              const next = computeNextCronFire(cronExpr, new Date(nowIso), 525_600, config.timezone as string | undefined);
               if (next) {
                 nextFireAt = next.toISOString();
               }
