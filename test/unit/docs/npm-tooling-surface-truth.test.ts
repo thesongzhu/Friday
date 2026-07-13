@@ -36,6 +36,8 @@ const CONSUMER_FACING_DOCS = [
   "docs/getting-started.md",
   "docs/public-v1-local-candidate.md",
   "docs/ops/friday-cross-platform-downloads.md",
+  "docs/open-source-release-review.md",
+  "docs/RELEASE_NOTES_TEMPLATE.md",
 ];
 
 // Present-tense availability claims that are NOT true yet (Friday.app is not
@@ -100,6 +102,26 @@ describe("DIST-NPM-CONSUMER-001: npm = tooling/non-consumer surface", () => {
       // Every npm-install mention here is a developer/tooling fallback, never
       // a consumer vehicle.
       expect(doc.toLowerCase()).toContain("developer");
+      expect(doc).toContain(EN_MARKER);
+    });
+
+    it("open-source release review does not call npm the installable runtime artifact", () => {
+      const doc = readRepoFile("docs/open-source-release-review.md");
+      // The old twin of the public-v1 sentence must be relabeled, not left as a
+      // bare "installable runtime artifact" (which reads as a consumer install).
+      expect(doc).not.toContain("The npm package is the installable runtime artifact");
+      expect(doc).toContain("developer/build/tooling runtime artifact");
+      expect(doc.toLowerCase()).toContain("not the consumer install vehicle");
+    });
+
+    it("release-notes template qualifies the npm upgrade path as non-consumer", () => {
+      const doc = readRepoFile("docs/RELEASE_NOTES_TEMPLATE.md");
+      // The npm global-install upgrade line must carry the non-consumer
+      // qualifier while keeping the source-rebuild alternative.
+      expect(doc).toMatch(
+        /npm install -g @thesongzhu\/friday@X\.Y\.Z[^\n]*not a consumer install/i,
+      );
+      expect(doc).toContain("or source rebuild");
       expect(doc).toContain(EN_MARKER);
     });
   });
