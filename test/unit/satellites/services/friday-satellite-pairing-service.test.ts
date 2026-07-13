@@ -39,7 +39,7 @@ describe("FridaySatellitePairingService", () => {
   const LATER = "2025-01-15T10:05:00.000Z";
 
   const satelliteRepo = createFridaySatelliteRepository();
-  const pairingRequestRepo = createFridaySatellitePairingRequestRepository();
+  const pairingRequestRepo = createFridaySatellitePairingRequestRepository({ masterKey: Buffer.alloc(32, 7) }); // SEC-CREDENTIAL-INGRESS: fixed test key (insertRequest fail-closes without one)
   const capabilityRepo = createFridaySatelliteCapabilityRepository();
   const apiTokenRepo = createFridayApiTokenRepository();
   const checkpointRepo = createFridayStreamCheckpointRepository();

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { randomBytes } from "node:crypto";
 
 import type { FridaySqliteLayer } from "#state";
 import { FridayDomainError } from "#errors";
@@ -24,6 +25,10 @@ import { createTestDb, createTestIdGenerator } from "../_helpers/create-test-db.
 
 const RETIRED_CODE = "TS_RUNTIME_SATELLITE_PAIRING_RETIRED";
 const NOW = "2026-06-10T00:00:00.000Z";
+// SEC-CREDENTIAL-INGRESS: insertRequest fail-closes without a master key; inject
+// a fixed test key via the repo's additive `options.masterKey` seam so the
+// legacy-path-preserved register() case can encrypt the pairing code at rest.
+const TEST_MASTER_KEY = randomBytes(32);
 
 const baseInput: FridaySatelliteRegistrationInput = {
   type: "phone",
@@ -48,7 +53,7 @@ describe("FridaySatelliteRegistrationService TS-retirement method guard", () => 
     return createFridaySatelliteRegistrationService({
       db,
       satelliteRepo: createFridaySatelliteRepository(),
-      pairingRequestRepo: createFridaySatellitePairingRequestRepository(),
+      pairingRequestRepo: createFridaySatellitePairingRequestRepository({ masterKey: TEST_MASTER_KEY }),
       capabilityRepo: createFridaySatelliteCapabilityRepository(),
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { randomBytes } from "node:crypto";
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySatelliteRegistrationInput } from "#satellites";
 import { createFridaySatelliteRepository } from "#satellites";
@@ -6,6 +7,11 @@ import { createFridaySatellitePairingRequestRepository } from "#satellites";
 import { createFridaySatelliteCapabilityRepository } from "#satellites";
 import { createFridaySatelliteRegistrationService } from "#satellites";
 import { createTestDb, createTestIdGenerator } from "../_helpers/create-test-db.helper.js";
+
+// SEC-CREDENTIAL-INGRESS: insertRequest now fail-closes without a master key.
+// Inject a fixed test key via the repo's additive `options.masterKey` seam so
+// the pairing `code` is encrypted at rest during these unit tests.
+const TEST_MASTER_KEY = randomBytes(32);
 
 describe("FridaySatelliteRegistrationService", () => {
   let db: FridaySqliteLayer;
@@ -37,7 +43,7 @@ describe("FridaySatelliteRegistrationService", () => {
     return createFridaySatelliteRegistrationService({
       db,
       satelliteRepo: createFridaySatelliteRepository(),
-      pairingRequestRepo: createFridaySatellitePairingRequestRepository(),
+      pairingRequestRepo: createFridaySatellitePairingRequestRepository({ masterKey: TEST_MASTER_KEY }),
       capabilityRepo: createFridaySatelliteCapabilityRepository(),
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
@@ -105,7 +111,7 @@ describe("FridaySatelliteRegistrationService", () => {
     const service = createFridaySatelliteRegistrationService({
       db,
       satelliteRepo: createFridaySatelliteRepository(),
-      pairingRequestRepo: createFridaySatellitePairingRequestRepository(),
+      pairingRequestRepo: createFridaySatellitePairingRequestRepository({ masterKey: TEST_MASTER_KEY }),
       capabilityRepo: createFridaySatelliteCapabilityRepository(),
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
