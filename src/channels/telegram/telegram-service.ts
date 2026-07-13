@@ -9,8 +9,44 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { FridayDomainError } from "#errors";
 import {
   createInMemoryTelegramInboxStore,
+  TELEGRAM_INBOX_RETENTION_MS,
   type TelegramInboxStore,
 } from "./telegram-inbox-store.js";
+
+/**
+ * How often the durable inbox's bounded-retention reaper is allowed to run. The prune itself is
+ * a cheap terminal-row DELETE, but throttling it to at most once per interval keeps a fast poll
+ * loop / high webhook rate from opening a write transaction every cycle. This follows the
+ * repo's opportunistic-prune convention (e.g. the HTTP operation journal prunes inline from the
+ * request path) rather than a central retention scheduler, which this codebase does not have.
+ */
+export const TELEGRAM_INBOX_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * Creates a throttled, non-blocking reaper closure shared by the poll loop and the webhook
+ * handler. It reaps TERMINAL inbox rows older than {@link TELEGRAM_INBOX_RETENTION_MS} at most
+ * once per {@link TELEGRAM_INBOX_PRUNE_INTERVAL_MS}, and swallows any error so a prune failure
+ * can never disrupt inbound delivery. 'pending' rows are never touched (that gate lives in the
+ * store's `pruneTerminalOlderThan`).
+ */
+function createInboxRetentionReaper(
+  inbox: TelegramInboxStore,
+  channelId: string,
+): (nowMs: number) => void {
+  let lastPruneAtMs = 0;
+  return (nowMs: number): void => {
+    if (nowMs - lastPruneAtMs < TELEGRAM_INBOX_PRUNE_INTERVAL_MS) return;
+    lastPruneAtMs = nowMs;
+    try {
+      inbox.pruneTerminalOlderThan(channelId, nowMs - TELEGRAM_INBOX_RETENTION_MS);
+    } catch (err) {
+      console.warn(
+        "[friday][telegram-inbox] retention prune failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  };
+}
 
 // ─── Types ───
 
@@ -270,6 +306,9 @@ export function createTelegramPollingService(
   const inbox = options.inbox ?? createInMemoryTelegramInboxStore();
   const channelId = options.channelId ?? "telegram";
   const transport = options.transport ?? createFetchGetUpdatesTransport();
+  // Bounded-retention reaper: opportunistically prunes OLD terminal inbox rows once per poll
+  // cycle (throttled), so the durable inbox does not grow unbounded. Never prunes 'pending'.
+  const maybePruneInbox = createInboxRetentionReaper(inbox, channelId);
 
   let polling = false;
   let abortController: AbortController | null = null;
@@ -311,6 +350,8 @@ export function createTelegramPollingService(
     while (polling) {
       const controller = abortController;
       if (!controller) break;
+      // Opportunistic, throttled, non-blocking retention prune once per poll cycle.
+      maybePruneInbox(Date.now());
       try {
         const updates = await transport({
           botToken,
@@ -334,6 +375,13 @@ export function createTelegramPollingService(
           // 5. Dispatch ONLY when the durable row is not already `processed` (exactly-once). A
           //    dispatch failure leaves the row `pending` → redelivered from the inbox on
           //    recovery; a duplicate `update_id` is deduped and never re-dispatched.
+          //
+          // DEFERRED (follow-up, not this change): this status-gated dispatch is safe today
+          // because Telegram enforces webhook XOR polling — only one transport is ever live — and
+          // recovery RELIES on re-driving existing `pending`/`delivery_unknown` rows through this
+          // same gate. A per-row atomic claim (compare-and-set pending→processing) would be the
+          // hardening IF a future change ever ran both transports live concurrently; until then a
+          // CAS would break recovery, so it is intentionally NOT introduced here.
           if (commit.shouldDeliver) {
             try {
               await deliver(onUpdate, update);
@@ -418,6 +466,9 @@ export function createTelegramWebhookService(
 ): TelegramWebhookService {
   const inbox = options.inbox ?? createInMemoryTelegramInboxStore();
   const channelId = options.channelId ?? "telegram";
+  // Bounded-retention reaper: opportunistically prunes OLD terminal inbox rows on inbound
+  // webhook traffic (throttled, non-blocking). Never prunes 'pending'.
+  const maybePruneInbox = createInboxRetentionReaper(inbox, channelId);
   let listening = false;
   let storedOnUpdate: ((update: TelegramUpdate) => void) | null = null;
   let storedToken: string | null = null;
@@ -578,9 +629,19 @@ export function createTelegramWebhookService(
         };
       }
 
+      // Opportunistic, throttled, non-blocking retention prune on inbound webhook traffic.
+      maybePruneInbox(Date.now());
+
       // Durably COMMIT before ACK. The 200 that ACKs Telegram is returned ONLY after the update
       // is safely in the inbox, so a crash after ACK cannot lose it (recovered from the inbox).
       // A resent update_id (Telegram retry) is deduped here and never re-dispatched.
+      //
+      // DEFERRED (follow-up, not this change): this status-gated dispatch is safe today because
+      // Telegram enforces webhook XOR polling — only one transport is ever live — and recovery
+      // RELIES on re-driving existing `pending`/`delivery_unknown` rows through this same gate. A
+      // per-row atomic claim (compare-and-set pending→processing) would be the hardening IF a
+      // future change ever ran both transports live concurrently; until then a CAS would break
+      // recovery, so it is intentionally NOT introduced here.
       const commit = inbox.commitInbound(channelId, payload);
       if (commit.shouldDeliver) {
         try {
