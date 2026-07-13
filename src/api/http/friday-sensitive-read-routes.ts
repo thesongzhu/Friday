@@ -48,6 +48,12 @@
  *   - /v1/system/remote/sessions  remote session inventory / posture (GET list) — gated
  *                    2026-06-24 (operator-authorized). POST create / POST heartbeat / DELETE
  *                    under this prefix are mutations (unaffected by this read floor).
+ *   - /v1/system/state, /v1/system/approvals, /v1/system/events, /v1/system/session  the sibling
+ *                    systemService control-plane reads — gated 2026-07-13 (SEC-NET-PRINCIPAL-001).
+ *                    Same trust boundary/service as /v1/system/remote/* above; /v1/system/state in
+ *                    particular aggregates approvals + remote device/session posture, so leaving it
+ *                    anonymous bypassed the /v1/system/remote/* floor. Mutations under /v1/system
+ *                    (POST intents, PATCH approvals) are separately fenced and unaffected here.
  *   - /v1/uix/user-profile and /v1/uix/learned-facts  personal UX profile / learned preference
  *                    facts. These are already fail-closed at the route requireUserId helper
  *                    (cr02-03 / #1450); exact-path floor entries keep the central read
@@ -83,6 +89,24 @@ export const FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES: readonly string[] = [
   "/v1/providers/budget",
   "/v1/system/remote/devices",
   "/v1/system/remote/sessions",
+  // SEC-NET-PRINCIPAL-001 (2026-07-13): extend the /v1/system read floor to the sibling
+  // systemService-backed control-plane reads that #1200 left anonymous. These sit at the SAME
+  // trust boundary as /v1/system/remote/devices + /v1/system/remote/sessions (same systemService,
+  // same file) and each is served to the shared synthetic public principal (leaking owner
+  // control-plane posture network-wide):
+  //   - /v1/system/state    getState() snapshot — AGGREGATES approvals + remoteDevices +
+  //                         remoteSessions + permissions/health. Leaving it anonymous was a BYPASS
+  //                         of the /v1/system/remote/* floor (the same posture readable via state).
+  //   - /v1/system/approvals  approval RULES (auto-approve/deny per app/action) — security posture.
+  //   - /v1/system/events   system event log / stream — audit-adjacent forensic data.
+  //   - /v1/system/session  getSession() — owner workspace path + companion/remote/health posture.
+  // GET/HEAD read floor only; the POST /v1/system/intents + PATCH /v1/system/approvals/:id
+  // mutations are separately fenced (retired test-oracle / canonical-approval gate). Bare
+  // /v1/system has no other anonymous GET surface, so these exact sub-paths do not over-floor.
+  "/v1/system/state",
+  "/v1/system/approvals",
+  "/v1/system/events",
+  "/v1/system/session",
   "/v1/uix/user-profile",
   "/v1/uix/learned-facts",
 ];
