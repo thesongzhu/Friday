@@ -124,9 +124,11 @@ must stay out of the public source tree. Current public docs must point users to
 
 ## Public Download Hygiene
 
-The npm package is the installable runtime artifact. The GitHub source archive
-is the public source download. Both surfaces must stay free of private local
-paths, local state, internal operator control folders, and real secrets.
+The npm package is the developer/build/tooling runtime artifact — it is
+not the consumer install vehicle (the native Friday.app is the consumer release
+vehicle, and it is not yet publicly released). The GitHub source archive is the
+public source download. Both surfaces must stay free of private local paths,
+local state, internal operator control folders, and real secrets.
 
 The development repository may retain tests and public maintainer docs. Internal
 audit reports, benchmark comparisons, handoffs, release-control packages, local

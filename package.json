@@ -2,7 +2,7 @@
   "name": "@thesongzhu/friday",
   "version": "1.0.3",
   "type": "module",
-  "description": "Trusted local-first AI agent application layer for supervised automation",
+  "description": "Developer/build/tooling runtime for Friday, the local-first AI agent control plane — a source/CI/tooling surface, not a consumer install (the native Friday.app is the consumer release vehicle, not yet publicly released)",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -17,7 +17,10 @@
     "llm",
     "skills",
     "memory",
-    "visual-editor"
+    "visual-editor",
+    "developer-tooling",
+    "build-tooling",
+    "non-consumer"
   ],
   "engines": {
     "node": ">=22"
