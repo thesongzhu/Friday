@@ -31,6 +31,7 @@ import {
   createFridayProviderPromptCacheAdapter,
   createFridayProviderTokenEstimator,
   createFridayProviderUsageNormalizer,
+  extractProviderRequestId,
 } from "#providers";
 
 // ─── Deps ───
@@ -583,6 +584,9 @@ export function createFridayProviderInferenceClient(
             model,
             usage,
           });
+          // Capture the provider's own request-id from the completed response
+          // so the usage record is idempotent on it and carries a receipt.
+          const requestId = extractProviderRequestId(api, response.headers, responseBody);
 
           return {
             rawText,
@@ -592,6 +596,7 @@ export function createFridayProviderInferenceClient(
             providerKind: provider.kind,
             usage,
             costUsd,
+            requestId,
           };
         },
       });
@@ -614,6 +619,9 @@ export function createFridayProviderInferenceClient(
           taskComplexity: complexity,
           usage: result.usage,
           costUsd: result.costUsd,
+          // Provider request-id: makes the write idempotent (no double-count on
+          // retry/replay) and binds a durable receipt to the call.
+          requestId: result.requestId,
           // Distinguish this runtime path truthfully in usage artifacts
           // (hub-agent callers tag source="agent-runtime").
           metadata: { source: "generator-llm" },

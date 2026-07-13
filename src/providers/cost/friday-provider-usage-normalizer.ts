@@ -131,6 +131,66 @@ function normalizeOllama(body: Record<string, unknown>): FridayProviderNormalize
   };
 }
 
+// ─── Request-id extraction ───
+
+/**
+ * A response's HTTP headers, tolerant of the shapes we actually see:
+ *  - a real `Headers` instance (production `fetch`) — has `.get()`
+ *  - a plain object of header pairs (some test doubles)
+ *  - `undefined` (test doubles that mock only `{ ok, json }`)
+ */
+export type FridayProviderResponseHeaders =
+  | { get(name: string): string | null }
+  | Record<string, string | undefined>
+  | undefined
+  | null;
+
+function readHeader(
+  headers: FridayProviderResponseHeaders,
+  name: string,
+): string | null {
+  if (!headers) return null;
+  if (typeof (headers as { get?: unknown }).get === "function") {
+    return (headers as { get(n: string): string | null }).get(name) ?? null;
+  }
+  const rec = headers as Record<string, string | undefined>;
+  return rec[name] ?? rec[name.toLowerCase()] ?? null;
+}
+
+function safeString(val: unknown): string | null {
+  return typeof val === "string" && val.trim().length > 0 ? val : null;
+}
+
+/**
+ * Extracts the provider's own request identifier for a completed call. Prefers
+ * the transport header (`x-request-id` / `request-id`) that OpenAI and
+ * Anthropic emit, then falls back to the response body id the provider echoes
+ * (`id` for OpenAI chat/responses and Anthropic messages; `responseId` for
+ * Google). Returns null for providers that surface none (e.g. local Ollama) —
+ * such a call is recorded without a receipt rather than with a fabricated one.
+ */
+export function extractProviderRequestId(
+  api: FridayProviderApi,
+  headers: FridayProviderResponseHeaders,
+  responseBody: Record<string, unknown>,
+): string | null {
+  const headerId =
+    readHeader(headers, "x-request-id") ?? readHeader(headers, "request-id");
+  if (headerId) return headerId;
+
+  switch (api) {
+    case "openai-completions":
+    case "openai-responses":
+    case "openai-codex-responses":
+    case "anthropic-messages":
+      return safeString(responseBody["id"]);
+    case "google-generative-ai":
+      return safeString(responseBody["responseId"]);
+    case "ollama":
+      return null;
+  }
+}
+
 // ─── Helpers ───
 
 function safeNumber(val: unknown): number {

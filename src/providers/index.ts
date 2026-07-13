@@ -138,6 +138,14 @@ export type { FridayProviderBudgetService } from "./cost/friday-provider-budget-
 export { createFridayProviderBudgetService } from "./cost/friday-provider-budget-service.js";
 export type { FridayProviderUsageNormalizer } from "./cost/friday-provider-usage-normalizer.js";
 export { createFridayProviderUsageNormalizer } from "./cost/friday-provider-usage-normalizer.js";
+export { extractProviderRequestId } from "./cost/friday-provider-usage-normalizer.js";
+export type { FridayProviderResponseHeaders } from "./cost/friday-provider-usage-normalizer.js";
+export {
+  buildProviderCallReceipt,
+  projectProviderCallReceipt,
+  verifyProviderCallReceipt,
+} from "./cost/friday-provider-call-receipt.js";
+export type { FridayProviderCallReceiptFields } from "./cost/friday-provider-call-receipt.js";
 export type { FridayProviderCostCalculator } from "./cost/friday-provider-cost-calculator.js";
 export { createFridayProviderCostCalculator } from "./cost/friday-provider-cost-calculator.js";
 
