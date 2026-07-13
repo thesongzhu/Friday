@@ -602,6 +602,70 @@ describe("FridayAgentRoutes", () => {
     expect(route!.auth).toEqual({ public: true });
   });
 
+  it("GET /v1/agent/runs?status=awaiting_approval filters to awaiting_approval runs instead of returning ALL", async () => {
+    const approvalRun = createStubRun({ id: "run-approval", status: "awaiting_approval" });
+    const completedRun = createStubRun({ id: "run-done", status: "completed" });
+    // Honor the status filter the way the real store does, so an unrecognized
+    // status (dropped to undefined) would return BOTH runs — the bug this guards.
+    stubDeps.listRuns = vi.fn((opts?: { status?: string }) =>
+      [approvalRun, completedRun].filter((r) => !opts?.status || r.status === opts.status));
+
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.list")!;
+
+    const response = await route.handler({
+      body: {},
+      params: {},
+      query: { status: "awaiting_approval" },
+      headers: {},
+      principal: createStubPrincipal(),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    }) as { items: Array<{ id: string; unifiedTaskState: { state: string; requiredAction: string } }> };
+
+    // The status must reach the store filter (not be silently dropped to undefined).
+    expect(stubDeps.listRuns).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "awaiting_approval" }),
+    );
+    // Only the awaiting_approval run is returned; the completed run is excluded.
+    expect(response.items.map((item) => item.id)).toEqual(["run-approval"]);
+    expect(response.items[0]!.unifiedTaskState.state).toBe("awaiting_approval");
+    expect(response.items[0]!.unifiedTaskState.requiredAction).toBe("approve_or_reject");
+  });
+
+  it("GET /v1/agent/runs/summary buckets awaiting_approval runs into awaitingApprovalCount", async () => {
+    stubDeps.listRuns = vi.fn().mockReturnValue([
+      createStubRun({ id: "run-approval", status: "awaiting_approval" }),
+      createStubRun({ id: "run-done", status: "completed" }),
+      createStubRun({ id: "run-fail", status: "failed" }),
+    ]);
+
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.summary")!;
+
+    const response = await route.handler({
+      body: {},
+      params: {},
+      query: {},
+      headers: {},
+      principal: createStubPrincipal(),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    }) as {
+      totalRuns: number;
+      completedCount: number;
+      failedCount: number;
+      cancelledCount: number;
+      awaitingApprovalCount: number;
+    };
+
+    expect(response.totalRuns).toBe(3);
+    expect(response.awaitingApprovalCount).toBe(1);
+    expect(response.completedCount).toBe(1);
+    expect(response.failedCount).toBe(1);
+    expect(response.cancelledCount).toBe(0);
+  });
+
   it("GET /v1/agent/runs/:runId requires agent.read scope with workflow.run compatibility", () => {
     const routes = createFridayAgentRoutes(stubDeps);
     const route = routes.find((r) => r.operationId === "agent.runs.get");

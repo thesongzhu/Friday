@@ -7,7 +7,26 @@ This document summarizes the public v1 local candidate claim for the published
 This source tree is staged as a `1.0.3` package candidate for a future
 operator-authorized publish, but `1.0.3` is not yet on npm. It is a release
 truth summary, not a universal product promise. Distribution mode is
-**npm/source only**.
+**npm/source only**, and that npm/source surface is a developer/build/tooling
+surface — not a consumer install vehicle (see the disposition below).
+
+## Distribution Disposition (DIST-NPM-CONSUMER-001)
+
+- **npm = tooling / non-consumer surface.** The published `@thesongzhu/friday`
+  npm package (and the source checkout it is built from) is a
+  developer/build/tooling surface for running Friday from source, in CI, and for
+  internal tooling. It is **not a consumer install path**. `npm install` does
+  not install the full Friday product and provides no signed/notarized native
+  app, no managed native-app Hub lifecycle, no native mobile apps, no formal
+  auto-updates, and no Endbar release guarantees.
+- **native Friday.app = the consumer release vehicle.**
+  The native Friday.app is the consumer release vehicle, and it is not yet
+  publicly released. There is no "download the official app" step yet; do not
+  present npm, the source tree, or any current artifact as a signed/notarized,
+  App-Store, Play-Production, or Endbar-approved consumer release.
+- **product_status remains NO_GO.** This is a docs-truth relabel only. A docs
+  fix does not close any release parent: `product_status` remains **NO_GO** and
+  no release gate is satisfied by this change.
 
 ## Safe Claim
 
@@ -205,7 +224,8 @@ above.
 
 Public release surfaces are split intentionally:
 
-- npm package: the installable runtime artifact.
+- npm package: the developer/build/tooling runtime artifact (not the consumer
+  install vehicle; see the disposition above).
 - GitHub source archive: the clean public source download.
 - development repository: source, tests, and public docs for maintainers.
 

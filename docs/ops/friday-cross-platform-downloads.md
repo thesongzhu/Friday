@@ -2,6 +2,12 @@
 
 Friday is moving from a source-first developer tool to a downloadable Agent OS product.
 
+> **npm stays a developer/build/tooling surface, not a consumer install path.**
+> Every `npm install` entry below is a developer/build/tooling surface for
+> source/CI/internal-tooling use; it does not install the consumer product. The
+> native Friday.app is the consumer release vehicle, and it is not yet publicly
+> released, so no row below should be read as a shipped consumer download.
+
 The release strategy is intentionally phased:
 
 1. `macOS` is the first formal release-baseline target, with real
@@ -27,7 +33,7 @@ Supported release baselines for this milestone:
 | `macOS` | Source install and launchd today; GitHub Releases after a tagged artifact is produced | `DMG` + `zip` | `Swift/AppKit` | Local/CI beta packaging baseline; real signed/notarized evidence and clean-machine smoke remain missing |
 | `iOS` | browser fallback today | TestFlight beta planned | mobile remote console planned | Not yet shipped for this milestone |
 | `Android` | browser fallback today | Play internal or closed beta planned | mobile remote console planned | Not yet shipped for this milestone |
-| `Windows` | source install (`npm install -g @thesongzhu/friday`) | signed installer planned | `.NET` scaffold | Scaffolded, not release-complete |
+| `Windows` | developer/tooling install (`npm install -g @thesongzhu/friday`, not a consumer install) | signed installer planned | `.NET` scaffold | Scaffolded, not release-complete |
 
 ## Release Channels
 
@@ -38,7 +44,9 @@ Supported release baselines for this milestone:
 3. `Homebrew Cask`
    - required macOS install and upgrade channel generated from the DMG metadata
 4. `npm`
-   - required cross-platform developer fallback while Windows remains on the native-installer track
+   - cross-platform developer/build/tooling surface (source/CI/internal-tooling),
+     not a consumer install path; a developer fallback while Windows remains on
+     the native-installer track
 5. `TestFlight`
    - planned iOS beta distribution channel for the mobile trusted-device app
 6. `Play internal or closed beta`

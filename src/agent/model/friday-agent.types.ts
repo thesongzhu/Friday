@@ -18,6 +18,9 @@ export type FridayAgentRunStatus =
   | "planning"
   | "awaiting_clarification"
   | "awaiting_plan_approval"
+  // Non-terminal: a run paused for the OWNER's explicit approval to continue
+  // (projected from loopStatus "Paused"). Resumable, never a terminal failure.
+  | "awaiting_approval"
   | "executing"
   | "testing"
   | "fixing"

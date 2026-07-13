@@ -600,6 +600,12 @@ Open the terminal dashboard against the current Friday API binding.
   console.log(`
 friday — Friday AI automation CLI
 
+This is a developer/build/tooling CLI, not a consumer install. \`npm install\`
+gives you this dev/tooling runtime, not the full Friday product (no signed
+native app, managed native Hub lifecycle, native mobile, formal updates, or
+Endbar release guarantees). The native Friday.app is the consumer release
+vehicle, and it is not yet publicly released.
+
 Usage:
   friday start  [--skills-dir <path>] [--port <n>] [--host <addr>]
       Boot the hub, load skills, and keep the process running.

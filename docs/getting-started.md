@@ -21,20 +21,17 @@ npm --version
 
 ## Install And Start
 
-### Option A - npm package
+> **npm is a developer / build / tooling surface, not a consumer install path.**
+> The npm package is a developer/build/tooling surface for running Friday from
+> source, in CI, and for internal tooling; it is not a consumer install path.
+> `npm install` does **not** install the full Friday product: it does not ship a
+> signed/notarized native macOS app, the managed native-app Hub lifecycle,
+> native mobile apps, formal auto-updates, or Endbar release guarantees.
+> The native Friday.app is the consumer release vehicle, and it is
+> not yet publicly released — so there is no "download the official app" step
+> yet. Until then, developers and maintainers run Friday from source (below).
 
-```bash
-npm install -g @thesongzhu/friday
-friday start
-```
-
-Open:
-
-```text
-http://localhost:3141
-```
-
-### Option B - source checkout
+### Option A - source checkout (developer path)
 
 ```bash
 git clone https://github.com/thesongzhu/Friday.git
@@ -50,7 +47,7 @@ Open:
 http://localhost:3141
 ```
 
-### Option C - Docker from source
+### Option B - Docker from source (developer path)
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build
@@ -61,6 +58,34 @@ Open:
 ```text
 http://localhost:3141
 ```
+
+### Option C - npm package (developer / tooling only, not a consumer install)
+
+The published `@thesongzhu/friday` npm package is a developer/tooling runtime.
+Installing it globally gives you the `friday` CLI for local development, CI, and
+internal tooling — **not** the consumer Friday product.
+
+```bash
+npm install -g @thesongzhu/friday
+friday start
+```
+
+Open:
+
+```text
+http://localhost:3141
+```
+
+**What the npm package can do today:** run a local hub for development via
+`friday start` / `friday daemon`, exercise skills (`friday list`, `friday run`),
+and drive the source build/test pipeline (`npm run build`, `npm test`,
+`npm run lint`, `npm run typecheck`) from a source checkout — aimed at
+developers, maintainers, and CI.
+
+**What it cannot do:** it is not a signed/notarized native app, provides no
+managed native-app Hub lifecycle, no native mobile apps, no formal
+auto-updates, and no Endbar release guarantee. For the consumer experience,
+wait for the native Friday.app release.
 
 ## First-Run Setup
 

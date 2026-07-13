@@ -1699,6 +1699,7 @@ export function createFridayAgentRoutes(
 
         const VALID_RUN_STATUSES: Set<string> = new Set([
           "pending", "planning", "awaiting_clarification", "awaiting_plan_approval",
+          "awaiting_approval",
           "executing", "testing", "fixing", "completed", "failed", "failed_tests", "cancelled",
         ]);
         const rawStatus = query.status as string | undefined;
@@ -1737,12 +1738,14 @@ export function createFridayAgentRoutes(
         let completedCount = 0;
         let failedCount = 0;
         let cancelledCount = 0;
+        let awaitingApprovalCount = 0;
 
         for (const run of recentRuns) {
           totalCostUsd += run.costUsd ?? 0;
           if (run.status === "completed") completedCount++;
           else if (run.status === "failed" || run.status === "failed_tests") failedCount++;
           else if (run.status === "cancelled") cancelledCount++;
+          else if (run.status === "awaiting_approval") awaitingApprovalCount++;
         }
 
         return {
@@ -1751,6 +1754,7 @@ export function createFridayAgentRoutes(
           completedCount,
           failedCount,
           cancelledCount,
+          awaitingApprovalCount,
           totalCostUsd: Math.round(totalCostUsd * 10000) / 10000,
           runs: recentRuns.slice(0, 20).map((r) => ({
             id: r.id,
