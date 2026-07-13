@@ -314,6 +314,22 @@ export function buildFridayAgentUnifiedTaskState(
     });
   }
 
+  if (input.run.status === "awaiting_approval") {
+    return buildBase({
+      run: input.run,
+      events,
+      state: "awaiting_approval",
+      // Reuse the existing "run_status" source; the pause is carried by the run
+      // status (projected from loopStatus "Paused"), not a planning-gate event.
+      source: "run_status",
+      requiredAction: "approve_or_reject",
+      summary: "Friday is waiting for your approval to continue this task.",
+      statePointer: pointerForRun(input.run),
+      recovery: { retryable: false },
+      replayReceipt: input.replayReceipt,
+    });
+  }
+
   if (ACTIVE_STATUSES.has(input.run.status)) {
     const activeEvent = latestEvent(events, new Set([
       "agent.run.executing",
