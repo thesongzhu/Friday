@@ -25,10 +25,12 @@ export {
   createTelegramWebhookService,
   createTelegramApiService,
   createFetchGetUpdatesTransport,
+  TELEGRAM_INBOX_PRUNE_INTERVAL_MS,
 } from "./telegram-service.js";
 export {
   createInMemoryTelegramInboxStore,
   FridaySqliteTelegramInboxStore,
+  TELEGRAM_INBOX_RETENTION_MS,
 } from "./telegram-inbox-store.js";
 export type {
   TelegramInboxStore,
