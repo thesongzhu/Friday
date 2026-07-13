@@ -12,6 +12,10 @@ export type {
   TelegramChat,
   TelegramSendMessagePayload,
   TelegramSendMessageResponse,
+  TelegramPollingServiceOptions,
+  TelegramWebhookServiceOptions,
+  TelegramGetUpdatesTransport,
+  TelegramGetUpdatesTransportInput,
 } from "./telegram-service.js";
 export {
   createTelegramPollingServiceStub,
@@ -20,4 +24,15 @@ export {
   createTelegramPollingService,
   createTelegramWebhookService,
   createTelegramApiService,
+  createFetchGetUpdatesTransport,
 } from "./telegram-service.js";
+export {
+  createInMemoryTelegramInboxStore,
+  FridaySqliteTelegramInboxStore,
+} from "./telegram-inbox-store.js";
+export type {
+  TelegramInboxStore,
+  TelegramInboxStatus,
+  TelegramInboxRow,
+  TelegramInboxCommitResult,
+} from "./telegram-inbox-store.js";

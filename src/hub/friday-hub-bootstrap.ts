@@ -287,6 +287,7 @@ import {
   createWhatsappWebhookService,
   FRIDAY_CHANNEL_SECRET_SCOPE,
   FRIDAY_SUPPORTED_CHANNEL_KINDS,
+  FridaySqliteTelegramInboxStore,
   isControlCapableChannelKind,
   isFridayChannelKindSupported,
   isFridayChannelModeSupported,
@@ -5781,7 +5782,10 @@ export async function createFridayHub(
   const lineWebhookRelay = createLineWebhookListenerService();
   const whatsappWebhookRelay = createWhatsappWebhookService();
   const larkWebhookRelay = createLarkWebhookRelayService();
-  const telegramWebhookRelay = createTelegramWebhookService();
+  // CHAN-TELEGRAM-INBOX-001: durable inbox shared by the polling + webhook transports so the
+  // poll offset survives restart and inbound updates are committed exactly-once before ACK.
+  const telegramInboxStore = new FridaySqliteTelegramInboxStore(stateRuntime!.sqlite);
+  const telegramWebhookRelay = createTelegramWebhookService({ inbox: telegramInboxStore });
 
   const updateConversationFocus = (
     sessionKey: string,
@@ -5884,7 +5888,7 @@ export async function createFridayHub(
         rest: createDiscordRestService(),
       }),
       telegram: () => createFridayTelegramChannel({
-        polling: createTelegramPollingService(),
+        polling: createTelegramPollingService({ inbox: telegramInboxStore }),
         webhook: telegramWebhookRelay,
         api: createTelegramApiService(),
       }),

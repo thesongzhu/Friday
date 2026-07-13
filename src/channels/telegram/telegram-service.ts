@@ -7,6 +7,10 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
 import { FridayDomainError } from "#errors";
+import {
+  createInMemoryTelegramInboxStore,
+  type TelegramInboxStore,
+} from "./telegram-inbox-store.js";
 
 // ─── Types ───
 
@@ -177,70 +181,170 @@ export function createTelegramApiServiceStub(): TelegramApiService {
 
 // ─── Real Implementations ───
 
+// ─── Durable-inbox getUpdates transport ───
+
+export interface TelegramGetUpdatesTransportInput {
+  botToken: string;
+  offset: number;
+  timeoutSec: number;
+  signal: AbortSignal;
+}
+
 /**
- * Creates a real Telegram polling service that long-polls the getUpdates
- * endpoint. Uses AbortController to cancel in-flight requests on stop.
+ * Fetches one batch of updates from the Bot API. Injectable so the durable poll loop
+ * (offset persistence, commit-before-advance, exactly-once dedupe) can be exercised
+ * end-to-end without a real bot token or network.
+ */
+export type TelegramGetUpdatesTransport = (
+  input: TelegramGetUpdatesTransportInput,
+) => Promise<TelegramUpdate[]>;
+
+/** The default transport: long-polls `https://api.telegram.org/bot{token}/getUpdates`. */
+export function createFetchGetUpdatesTransport(): TelegramGetUpdatesTransport {
+  return async ({ botToken, offset, timeoutSec, signal }) => {
+    const url = botUrl(botToken, "getUpdates");
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ offset, timeout: timeoutSec }),
+      signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new FridayDomainError(
+        "INTERNAL_ERROR",
+        `Telegram getUpdates failed: HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`,
+        { httpStatus: 500 },
+      );
+    }
+
+    const json = (await res.json()) as {
+      ok: boolean;
+      result: TelegramUpdate[];
+      description?: string;
+    };
+
+    if (!json.ok) {
+      throw new FridayDomainError(
+        "INTERNAL_ERROR",
+        `Telegram getUpdates returned ok=false: ${json.description ?? "unknown error"}`,
+        { httpStatus: 500 },
+      );
+    }
+
+    return json.result;
+  };
+}
+
+export interface TelegramPollingServiceOptions {
+  /** Telegram server-side long-poll timeout (default 30s). */
+  pollingTimeoutSec?: number;
+  /**
+   * Durable inbox. Defaults to a volatile in-memory store so a db-less caller keeps working
+   * (behaves like today for a fresh process, minus the offset-before-commit bug).
+   */
+  inbox?: TelegramInboxStore;
+  /** Inbox identity namespace for this channel (default "telegram"). */
+  channelId?: string;
+  /** Injectable getUpdates transport (default: real Bot API fetch). */
+  transport?: TelegramGetUpdatesTransport;
+}
+
+/**
+ * Creates a real Telegram polling service that long-polls the getUpdates endpoint through a
+ * DURABLE inbox: the poll offset is persisted (survives restart, never resets to 0), each
+ * update is committed to the inbox BEFORE the offset advances, dispatch is exactly-once
+ * (duplicate `update_id`s are deduped), and un-processed rows are recovered on (re)start.
  *
- * @param pollingTimeoutSec  Telegram server-side long-poll timeout (default 30s).
+ * Accepts either a plain long-poll timeout (legacy positional arg) or an options object.
  */
 export function createTelegramPollingService(
-  pollingTimeoutSec = 30,
+  optionsOrTimeout: number | TelegramPollingServiceOptions = {},
 ): TelegramPollingService {
+  const options: TelegramPollingServiceOptions =
+    typeof optionsOrTimeout === "number"
+      ? { pollingTimeoutSec: optionsOrTimeout }
+      : optionsOrTimeout;
+  const pollingTimeoutSec = options.pollingTimeoutSec ?? 30;
+  const inbox = options.inbox ?? createInMemoryTelegramInboxStore();
+  const channelId = options.channelId ?? "telegram";
+  const transport = options.transport ?? createFetchGetUpdatesTransport();
+
   let polling = false;
   let abortController: AbortController | null = null;
+
+  // Dispatch to the handler, tolerating both sync and async handlers and turning a synchronous
+  // throw into a rejected promise so the loop can react to a dispatch failure uniformly.
+  async function deliver(
+    onUpdate: (update: TelegramUpdate) => void,
+    update: TelegramUpdate,
+  ): Promise<void> {
+    await Promise.resolve(onUpdate(update));
+  }
+
+  // Re-drive inbox rows left un-processed by a crash BEFORE polling for new updates. Orphaned
+  // `pending` rows are first reconciled to `delivery_unknown`, then re-driven through the same
+  // dedupe path — never a blind re-insert.
+  async function recoverPending(onUpdate: (update: TelegramUpdate) => void): Promise<void> {
+    inbox.reconcileOrphaned(channelId);
+    for (const row of inbox.listUnprocessed(channelId)) {
+      if (!polling) break;
+      try {
+        await deliver(onUpdate, row.update);
+        inbox.markProcessed(channelId, row.updateId);
+      } catch {
+        // Leave the row un-processed; the next recovery pass re-drives it. Never lost.
+      }
+    }
+  }
 
   async function pollLoop(
     botToken: string,
     onUpdate: (update: TelegramUpdate) => void,
   ): Promise<void> {
-    let offset = 0;
+    // 1. Recover in-flight rows from a previous (possibly crashed) run.
+    await recoverPending(onUpdate);
+    // 2. Resume from the DURABLE offset — a restart never resets to 0.
+    let offset = inbox.loadOffset(channelId);
 
     while (polling) {
-      const url = botUrl(botToken, "getUpdates");
+      const controller = abortController;
+      if (!controller) break;
       try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            offset,
-            timeout: pollingTimeoutSec,
-          }),
-          signal: abortController!.signal,
+        const updates = await transport({
+          botToken,
+          offset,
+          timeoutSec: pollingTimeoutSec,
+          signal: controller.signal,
         });
 
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          throw new FridayDomainError(
-            "INTERNAL_ERROR",
-            `Telegram getUpdates failed: HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`,
-            { httpStatus: 500 },
-          );
-        }
-
-        const json = (await res.json()) as {
-          ok: boolean;
-          result: TelegramUpdate[];
-          description?: string;
-        };
-
-        if (!json.ok) {
-          throw new FridayDomainError(
-            "INTERNAL_ERROR",
-            `Telegram getUpdates returned ok=false: ${json.description ?? "unknown error"}`,
-            { httpStatus: 500 },
-          );
-        }
-
         let processedUpdateCount = 0;
-        for (const update of json.result) {
+        for (const update of updates) {
           if (update.update_id < offset) {
             continue;
           }
+          // 3. Durably COMMIT before advancing the offset. If this throws, the offset is NOT
+          //    advanced, so Telegram redelivers the update (nothing was durably captured).
+          const commit = inbox.commitInbound(channelId, update);
+          // 4. Advance + persist the offset ONLY after the durable commit succeeded.
           offset = update.update_id + 1;
+          inbox.saveOffset(channelId, offset);
           processedUpdateCount += 1;
-          onUpdate(update);
+          // 5. Dispatch ONLY when the durable row is not already `processed` (exactly-once). A
+          //    dispatch failure leaves the row `pending` → redelivered from the inbox on
+          //    recovery; a duplicate `update_id` is deduped and never re-dispatched.
+          if (commit.shouldDeliver) {
+            try {
+              await deliver(onUpdate, update);
+              inbox.markProcessed(channelId, update.update_id);
+            } catch {
+              // Row stays pending/delivery_unknown; recovery re-drives it. The offset already
+              // advanced past it, but the durable inbox owns redelivery.
+            }
+          }
         }
-        if (polling && json.result.length > 0 && processedUpdateCount === 0) {
+        if (polling && updates.length > 0 && processedUpdateCount === 0) {
           await new Promise((r) => setTimeout(r, 1_000));
         }
       } catch (err: unknown) {
@@ -255,11 +359,10 @@ export function createTelegramPollingService(
         ) {
           break;
         }
-        // For transient network errors, wait briefly before retrying.
-        // Re-throw programming / non-transient errors so the caller
-        // can surface them (e.g. invalid token → 401).
+        // For transient network errors, wait briefly before retrying. Because the offset only
+        // advances after a durable commit, a mid-batch failure re-fetches the same updates and
+        // the inbox dedupe keeps dispatch exactly-once.
         if (polling) {
-          // Brief back-off before retry
           await new Promise((r) => setTimeout(r, 3_000));
         }
       }
@@ -300,11 +403,39 @@ export function createTelegramPollingService(
  *
  * `stopWebhook` calls `deleteWebhook` to deregister.
  */
-export function createTelegramWebhookService(): TelegramWebhookService {
+export interface TelegramWebhookServiceOptions {
+  /**
+   * Durable inbox. Defaults to a volatile in-memory store so a db-less caller keeps working
+   * (behaves like today for a fresh process, minus the ACK-before-commit bug).
+   */
+  inbox?: TelegramInboxStore;
+  /** Inbox identity namespace for this channel (default "telegram"). */
+  channelId?: string;
+}
+
+export function createTelegramWebhookService(
+  options: TelegramWebhookServiceOptions = {},
+): TelegramWebhookService {
+  const inbox = options.inbox ?? createInMemoryTelegramInboxStore();
+  const channelId = options.channelId ?? "telegram";
   let listening = false;
   let storedOnUpdate: ((update: TelegramUpdate) => void) | null = null;
   let storedToken: string | null = null;
   let storedWebhookSecretToken: string | null = null;
+
+  // Re-drive inbox rows left un-processed by a crash. Called on startWebhook so a restart
+  // recovers in-flight rows before accepting new POSTs.
+  const recoverPending = (onUpdate: (update: TelegramUpdate) => void): void => {
+    inbox.reconcileOrphaned(channelId);
+    for (const row of inbox.listUnprocessed(channelId)) {
+      try {
+        onUpdate(row.update);
+        inbox.markProcessed(channelId, row.updateId);
+      } catch {
+        // Leave the row un-processed; the next recovery pass re-drives it. Never lost.
+      }
+    }
+  };
 
   return {
     async startWebhook(botToken, webhookUrl, webhookSecretToken, onUpdate) {
@@ -350,6 +481,8 @@ export function createTelegramWebhookService(): TelegramWebhookService {
       storedWebhookSecretToken = normalizedSecretToken;
       storedOnUpdate = onUpdate;
       listening = true;
+      // Recover any rows a previous run committed but did not finish dispatching.
+      recoverPending(onUpdate);
     },
 
     async stopWebhook() {
@@ -423,13 +556,9 @@ export function createTelegramWebhookService(): TelegramWebhookService {
         };
       }
 
+      let payload: TelegramUpdate;
       try {
-        const payload = JSON.parse(rawBody) as TelegramUpdate;
-        storedOnUpdate(payload);
-        return {
-          accepted: true,
-          statusCode: 200,
-        };
+        payload = JSON.parse(rawBody) as TelegramUpdate;
       } catch (err) {
         console.warn("[friday][telegram-webhook] invalid payload:", err instanceof Error ? err.message : String(err));
         return {
@@ -438,6 +567,38 @@ export function createTelegramWebhookService(): TelegramWebhookService {
           code: "TELEGRAM_PAYLOAD_INVALID",
         };
       }
+
+      // A well-formed update MUST carry a numeric update_id — it is the inbox dedupe identity.
+      // Without it we cannot dedupe, so reject (Telegram will resend) rather than swallow.
+      if (!payload || typeof payload.update_id !== "number") {
+        return {
+          accepted: false,
+          statusCode: 400,
+          code: "TELEGRAM_PAYLOAD_INVALID",
+        };
+      }
+
+      // Durably COMMIT before ACK. The 200 that ACKs Telegram is returned ONLY after the update
+      // is safely in the inbox, so a crash after ACK cannot lose it (recovered from the inbox).
+      // A resent update_id (Telegram retry) is deduped here and never re-dispatched.
+      const commit = inbox.commitInbound(channelId, payload);
+      if (commit.shouldDeliver) {
+        try {
+          storedOnUpdate(payload);
+          inbox.markProcessed(channelId, payload.update_id);
+        } catch (err) {
+          // Handler threw: leave the row pending for recovery. Still ACK 200 — the update is
+          // durably captured and will be re-driven, so a redelivery is not needed.
+          console.warn(
+            "[friday][telegram-webhook] handler error:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+      return {
+        accepted: true,
+        statusCode: 200,
+      };
     },
   };
 }

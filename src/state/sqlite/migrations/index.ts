@@ -99,6 +99,7 @@ import { V097_WORKFLOW_GENERATOR_REHOME_MIGRATION } from "./v097-workflow-genera
 import { V098_TEMPLATE_HARNESS_REHOME_MIGRATION } from "./v098-template-harness-rehome.js";
 import { V099_AGENT_RUN_ORGANIC_PROVENANCE_MIGRATION } from "./v099-agent-run-organic-provenance.js";
 import { V100_OPERATION_JOURNAL_MIGRATION } from "./v100-operation-journal.js";
+import { V101_TELEGRAM_INBOX_MIGRATION } from "./v101-telegram-inbox.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -204,6 +205,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V098_TEMPLATE_HARNESS_REHOME_MIGRATION,
   V099_AGENT_RUN_ORGANIC_PROVENANCE_MIGRATION,
   V100_OPERATION_JOURNAL_MIGRATION,
+  V101_TELEGRAM_INBOX_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };
@@ -302,3 +304,4 @@ export { V097_WORKFLOW_GENERATOR_REHOME_MIGRATION };
 export { V098_TEMPLATE_HARNESS_REHOME_MIGRATION };
 export { V099_AGENT_RUN_ORGANIC_PROVENANCE_MIGRATION };
 export { V100_OPERATION_JOURNAL_MIGRATION };
+export { V101_TELEGRAM_INBOX_MIGRATION };
