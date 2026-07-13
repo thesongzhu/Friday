@@ -38,7 +38,7 @@ Use this template when preparing a release tag `vX.Y.Z`.
 
 ## Upgrade Notes
 
-1. `npm install -g @thesongzhu/friday@X.Y.Z` (or source rebuild)
+1. `npm install -g @thesongzhu/friday@X.Y.Z` (or source rebuild) — developer/build/tooling surface, not a consumer install path
 2. Verify config/env changes
 3. Run `npm run release:verify:repo` for repo-ready verification
 4. Run `npm run release:verify` for live proof plus truth-audit artifacts

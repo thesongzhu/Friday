@@ -118,6 +118,38 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
   let stopped = false;
   const webhookRelay = deps.webhookRelay;
 
+  // Inbound attachment temp files written by saveAttachmentBytes. The saved
+  // localPath escapes this channel: normalizeAsync returns it on the message,
+  // the registry hands it to a fire-and-forget `(msg) => void` handler, and the
+  // hub launches an UNBOUNDED async engine run that reads the file later (image
+  // -> base64 at LLM-request time; audio/file -> agent tool mid-run). The
+  // channel gets no run-completion signal, so unlinking right after save/handoff
+  // would be a use-after-unlink. The only cleanup point that cannot race a
+  // legitimate consumer is the channel lifecycle boundary (disconnect/stop),
+  // by which time the session's runs have completed or been torn down. Tracking
+  // the exact paths (rather than wiping the shared tmp dir) avoids disturbing a
+  // concurrent channel instance.
+  const savedAttachmentFiles = new Set<string>();
+
+  async function cleanupSavedAttachmentFiles(): Promise<void> {
+    const paths = [...savedAttachmentFiles];
+    savedAttachmentFiles.clear();
+    await Promise.all(
+      paths.map(async (filePath) => {
+        try {
+          await fs.unlink(filePath);
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT") {
+            console.warn(
+              `[friday][lark-channel] attachment cleanup failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      }),
+    );
+  }
+
   function apiBase(): string {
     return config!.useFeishu ? FEISHU_API_BASE : LARK_API_BASE;
   }
@@ -390,6 +422,7 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
     await fs.mkdir(dir, { recursive: true });
     const filePath = path.join(dir, `${safeFilename(basename)}-${digest}${extension}`);
     await fs.writeFile(filePath, input.bytes);
+    savedAttachmentFiles.add(filePath);
     return filePath;
   }
 
@@ -869,9 +902,16 @@ export function createFridayLarkChannel(deps: LarkChannelDeps = {}): FridayChann
       connectionStatus = "disconnected";
       lastConnectionError = undefined;
 
-      if (wsClient) { wsClient.close({ force: true }); wsClient = null; }
-      if (webhookRelay?.isListening()) {
-        await webhookRelay.stop();
+      try {
+        if (wsClient) { wsClient.close({ force: true }); wsClient = null; }
+        if (webhookRelay?.isListening()) {
+          await webhookRelay.stop();
+        }
+      } finally {
+        // Remove any inbound attachment temp files this channel wrote. Runs on
+        // the complete path and the error/cancel path (transport teardown may
+        // throw); the registry always calls disconnect() on shutdown.
+        await cleanupSavedAttachmentFiles();
       }
     },
   };
