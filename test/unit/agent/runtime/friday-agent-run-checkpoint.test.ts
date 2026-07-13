@@ -70,6 +70,115 @@ describe("createFridayRunCheckpoint (B2 retention)", () => {
     expect(fs.existsSync(beforeRollbackBackups[0]!)).toBe(false);
   });
 
+  it("truthful flag: an EXISTING file whose backup capture FAILS at snapshot time is NOT marked rollbackAvailable (no over-claim)", () => {
+    // SAFE-ROLLBACK-PRECONDITION: when snapshotBeforeWrite cannot capture a
+    // usable backup for an existing file, the checkpoint entry must NOT claim
+    // the mutation is reversible. Otherwise the run receipt / rollback_available
+    // health state tells the user a lie: it advertises a rollback that will
+    // fail-close at rollback() time.
+    const stateDir = makeStateDir();
+    const targetPath = path.join(stateDir, "target.txt");
+    fs.writeFileSync(targetPath, "ORIGINAL", "utf-8");
+
+    // Force the backup capture to fail deterministically & offline: place a
+    // FILE where `snapshotDir = stateDir/agent-snapshots/<runId>` must be
+    // created, so `mkdirSync(snapshotDir, { recursive: true })` throws ENOTDIR
+    // (its `agent-snapshots` path segment is a file, not a directory) and the
+    // catch at snapshot time fires → backupPath === undefined.
+    fs.writeFileSync(path.join(stateDir, "agent-snapshots"), "block", "utf-8");
+
+    const checkpoint = createFridayRunCheckpoint({
+      runId: "run-nobackup",
+      stateDir,
+      db: makeDb(),
+      nowIso: () => "2026-03-24T00:00:00.000Z",
+    });
+
+    checkpoint.snapshotBeforeWrite(targetPath);
+
+    const entry = checkpoint.entries()[0]!;
+    // Preconditions for this scenario: file existed, but backup was not captured.
+    expect(entry.existed).toBe(true);
+    expect(entry.backupPath).toBeUndefined();
+
+    // THE FIX: the reversibility claim must be honest → false.
+    // (Before the fix this was hardcoded `true` → real AssertionError here.)
+    expect(entry.rollbackAvailable).toBe(false);
+
+    // Receipt truth: hasRollbackCheckpoint(runtime.ts) computes exactly this
+    // predicate — it must NOT advertise availability for this run.
+    expect(checkpoint.entries().some((e) => e.rollbackAvailable)).toBe(false);
+
+    // Tie the claim to reality: rollback genuinely does NOT restore the file.
+    fs.writeFileSync(targetPath, "MUTATED", "utf-8");
+    const result = checkpoint.rollback();
+    expect(result.restoredCount).toBe(0);
+    // File stays in its post-mutation state — the mutation is truly irreversible,
+    // exactly as the (now honest) flag reports. No garbage restore either.
+    expect(fs.readFileSync(targetPath, "utf-8")).toBe("MUTATED");
+  });
+
+  it("no-degrade: an EXISTING file WITH a successful backup stays rollbackAvailable === true and restores", () => {
+    const stateDir = makeStateDir();
+    const targetPath = path.join(stateDir, "target.txt");
+    fs.writeFileSync(targetPath, "ORIGINAL", "utf-8");
+
+    const checkpoint = createFridayRunCheckpoint({
+      runId: "run-ok",
+      stateDir,
+      db: makeDb(),
+      nowIso: () => "2026-03-24T00:00:00.000Z",
+    });
+
+    checkpoint.snapshotBeforeWrite(targetPath);
+
+    const entry = checkpoint.entries()[0]!;
+    expect(entry.existed).toBe(true);
+    expect(entry.backupPath).toBeDefined();
+    // The happy path is unchanged: a captured backup ⇒ reversible ⇒ true.
+    expect(entry.rollbackAvailable).toBe(true);
+
+    fs.writeFileSync(targetPath, "MUTATED", "utf-8");
+    const result = checkpoint.rollback();
+    expect(result.restoredCount).toBe(1);
+    expect(result.errors).toEqual([]);
+    expect(fs.readFileSync(targetPath, "utf-8")).toBe("ORIGINAL");
+  });
+
+  it("no-degrade: a NEWLY-CREATED file (did not exist) stays rollbackAvailable === true and rollback reverses by deleting it", () => {
+    // Verifies the `!existed` branch of rollback() truly reverses the mutation
+    // by DELETING the created file — which is why keeping `true` for
+    // existed === false is honest (the fix intentionally does not touch it).
+    const stateDir = makeStateDir();
+    const targetPath = path.join(stateDir, "created.txt");
+    // Note: file does NOT exist at snapshot time.
+
+    const checkpoint = createFridayRunCheckpoint({
+      runId: "run-new",
+      stateDir,
+      db: makeDb(),
+      nowIso: () => "2026-03-24T00:00:00.000Z",
+    });
+
+    checkpoint.snapshotBeforeWrite(targetPath);
+
+    const entry = checkpoint.entries()[0]!;
+    expect(entry.existed).toBe(false);
+    expect(entry.backupPath).toBeUndefined();
+    // A file that did not exist is reversible by deletion ⇒ honestly true.
+    expect(entry.rollbackAvailable).toBe(true);
+
+    // Simulate the write that created the file.
+    fs.writeFileSync(targetPath, "NEW-CONTENT", "utf-8");
+    expect(fs.existsSync(targetPath)).toBe(true);
+
+    const result = checkpoint.rollback();
+    expect(result.restoredCount).toBe(1);
+    expect(result.errors).toEqual([]);
+    // Reversal for a created file == deletion.
+    expect(fs.existsSync(targetPath)).toBe(false);
+  });
+
   it("B2 fail-closed: rollback returns an error when the backup file has been deleted between snapshot and rollback", () => {
     const stateDir = makeStateDir();
     const targetPath = path.join(stateDir, "target.txt");
