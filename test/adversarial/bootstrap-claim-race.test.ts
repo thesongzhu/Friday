@@ -39,7 +39,7 @@ function makeAuthService(db: FridaySqliteLayer) {
     db,
     idGenerator: createTestIdGenerator(),
     nowIso: () => "2026-07-12T00:00:00.000Z",
-    tokenSecret: "test-secret-key-bootstrap-race",
+    tokenSecret: "test-secret-key-bootstrap-race", // pragma: allowlist secret
     accessTokenTtlSec: 900,
     refreshTokenTtlSec: 604_800,
   });
