@@ -1730,10 +1730,11 @@ async function composeRustReadOnlyAgentRun(args: {
   //
   // We MUST NOT route a paused outcome through the delivered-body readback (it has no body ⇒ it would
   // fail-close at the readback gate before projecting). Instead we BRANCH EARLY: project an HONEST
-  // non-Finished continuity row via `loopStatus:"Paused"` (the projector maps it to the terminal
-  // "cancelled" status — a non-error resumable stop, never a fake "finished"; INV-5 refs-only — the
-  // row stores only the pause refs, NEVER the answer/summary body). The returned result carries an
-  // EMPTY `response` (no body exists yet — the run paused pending approval) and a 0 tool count.
+  // non-Finished continuity row via `loopStatus:"Paused"` (the projector maps it to the NONTERMINAL
+  // "awaiting_approval" status — a resumable, non-error stop pending approval, never a fake "finished"
+  // and never a terminal "cancelled"; INV-5 refs-only — the row stores only the pause refs, NEVER the
+  // answer/summary body). The returned result carries an EMPTY `response` (no body exists yet — the
+  // run paused pending approval) and a 0 tool count.
   if (isPausedDispatchOutcome(wsResult)) {
     const pausedAtIso = args.nowIso();
     const pausedProjection = args.db.withWriteTransaction((db) => {
@@ -1742,15 +1743,16 @@ async function composeRustReadOnlyAgentRun(args: {
         proofOnly: true,
         // `ok` is the receipt-well-formed flag (a fixed `true` on the receipt type — the same value
         // every non-finished mapping uses, e.g. Bounded/Errored); the NON-finished semantics of a
-        // pause are carried by `loopStatus:"Paused"` → the projector's "cancelled" status mapping,
-        // NOT by this flag.
+        // pause are carried by `loopStatus:"Paused"` → the projector's nonterminal "awaiting_approval"
+        // status mapping, NOT by this flag.
         ok: true,
         runId: args.runId,
         routeId: `${args.providerId}:${args.model}`,
         providerId: args.providerId,
         model: args.model,
-        // HONEST non-Finished status: the projector maps "Paused" → the terminal "cancelled" run
-        // status (a resumable, non-error stop) — NEVER a fabricated "completed"/"finished".
+        // HONEST non-Finished status: the projector maps "Paused" → the NONTERMINAL "awaiting_approval"
+        // run status (a resumable, non-error stop pending approval) — NEVER a fabricated
+        // "completed"/"finished", and NEVER a terminal "cancelled".
         loopStatus: "Paused",
         // A paused run executed reads (turns/tools) up to the pause; surface the carried counts when
         // present (absent ⇒ 0, an old server). Counts are refs, never a body.
@@ -1786,7 +1788,8 @@ async function composeRustReadOnlyAgentRun(args: {
     );
     return {
       runId: args.runId,
-      // The projected status is the HONEST terminal mapping of a pause ("cancelled") — NOT Finished.
+      // The projected status is the HONEST nonterminal mapping of a pause ("awaiting_approval") — NOT
+      // Finished, and NOT a terminal "cancelled". The run is awaiting approval and stays resumable.
       status: pausedProjection.status as FridayAgentRuntimeResult["status"],
       // No body exists for a paused run — the empty response keeps the owner-sealed summary OUT of
       // plaintext (INV-5 refs-only). A LATER PR's resume leg delivers the answer after approval.

@@ -380,7 +380,7 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     expect(countRows(db, "llm_usage_records", RUN_ID)).toBe(1);
   });
 
-  it("(a-paused) (A3 courier) a PAUSED dispatch → HONEST non-Finished row (cancelled), refs-only, readback SKIPPED", async () => {
+  it("(a-paused) (A3 courier) a PAUSED dispatch → HONEST non-Finished row (awaiting_approval, nonterminal), refs-only, readback SKIPPED", async () => {
     db = createTestDb();
     const ws = makeStubPausedWsClient();
     const readback = makeStubReadback(OWNER_PRINCIPAL);
@@ -404,8 +404,9 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     expect(readback.calls).toHaveLength(0);
 
     // The continuity row is projected HONESTLY: NOT "completed"/Finished — the projector maps the
-    // "Paused" loop status to the terminal "cancelled" run status (a resumable, non-error stop).
-    expect(result.status).toBe("cancelled");
+    // "Paused" loop status to the NONTERMINAL "awaiting_approval" run status (a resumable, non-error
+    // stop pending approval), never a terminal "cancelled" (ENDBAR RUN-AWAITING-APPROVAL-001).
+    expect(result.status).toBe("awaiting_approval");
     // No body exists for a paused run — the response is empty (the owner-sealed summary is kept OUT
     // of the plaintext response; INV-5 refs-only). A LATER PR's resume leg delivers the answer. The
     // route omits an empty `finalResponse` (`result.finalResponse ? {...} : {}`), so it is undefined.
@@ -413,12 +414,14 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     expect(result.finalResponse).toBeUndefined();
     expect(result.toolCallCount).toBe(0);
 
-    // Exactly ONE TS continuity row was projected (idempotent on run_id), with the cancelled status.
+    // Exactly ONE TS continuity row was projected (idempotent on run_id), with the nonterminal
+    // awaiting_approval status — the retention reaper (terminal completed/failed/cancelled only)
+    // never deletes it, so the run survives for its later resume.
     expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(1);
     const rowStatus = db.withReadConnection((d) =>
       (d.prepare("SELECT status FROM friday_agent_runs WHERE id = ?").get(RUN_ID) as { status: string }).status,
     );
-    expect(rowStatus).toBe("cancelled");
+    expect(rowStatus).toBe("awaiting_approval");
     // The projected row stores a body REF over the pause refs (the action digest) — NEVER the body.
     const rowResponse = db.withReadConnection((d) =>
       (d.prepare("SELECT response_text FROM friday_agent_runs WHERE id = ?").get(RUN_ID) as
@@ -488,7 +491,8 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     expect(readback.calls).toHaveLength(1);
 
     // NO 503: the honest non-Finished terminal is surfaced as the projector's "failed" status —
-    // NEVER "completed", NEVER "cancelled" (cancelled is the resumable Paused mapping; this is not).
+    // NEVER "completed", NEVER "awaiting_approval" (awaiting_approval is the resumable Paused
+    // mapping; this errored terminal is not that).
     expect(result.status).toBe("failed");
     // NO fabricated body — the response is empty and the route omits the empty finalResponse.
     expect(result.response).toBe("");
@@ -1095,9 +1099,9 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     // Before the fix this was the hardcoded { readOnly: true }, which would block the write tool in
     // Rust before it could pause. (No disabled-tools / max-turns asserted on this route → absent.)
     expect(ws.calls[0].constraints).toEqual({ readOnly: false });
-    // And the organic outcome is the operator-gated PAUSE (projected as the terminal "cancelled"),
-    // never a 503 — which is the whole point of the B4 fix.
-    expect(result.status).toBe("cancelled");
+    // And the organic outcome is the operator-gated PAUSE (projected as the nonterminal
+    // "awaiting_approval"), never a 503 — which is the whole point of the B4 fix.
+    expect(result.status).toBe("awaiting_approval");
   });
 
   it("(b4-b) read-only qualifying run → compose STILL dispatches constraints.readOnly:TRUE (no degrade)", async () => {
