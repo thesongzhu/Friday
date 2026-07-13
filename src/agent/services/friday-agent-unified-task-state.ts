@@ -11,6 +11,7 @@ export type FridayAgentUnifiedTaskState =
   | "awaiting_clarification"
   | "awaiting_plan_approval"
   | "awaiting_tool_approval"
+  | "awaiting_approval"
   | "executing"
   | "verified_receipt"
   | "blocked_recoverable";
@@ -19,6 +20,7 @@ export type FridayAgentUnifiedTaskRequiredAction =
   | "answer_clarification"
   | "approve_or_reject_plan"
   | "approve_or_reject_tool"
+  | "approve_or_reject"
   | "wait_for_execution"
   | "read_verified_receipt"
   | "review_blocker_or_retry";
@@ -308,6 +310,22 @@ export function buildFridayAgentUnifiedTaskState(
         ...(readString(payload, "toolName") ? { toolName: readString(payload, "toolName") } : {}),
         eventPointer: pointerForEvent(openToolApproval),
       },
+      replayReceipt: input.replayReceipt,
+    });
+  }
+
+  if (input.run.status === "awaiting_approval") {
+    return buildBase({
+      run: input.run,
+      events,
+      state: "awaiting_approval",
+      // Reuse the existing "run_status" source; the pause is carried by the run
+      // status (projected from loopStatus "Paused"), not a planning-gate event.
+      source: "run_status",
+      requiredAction: "approve_or_reject",
+      summary: "Friday is waiting for your approval to continue this task.",
+      statePointer: pointerForRun(input.run),
+      recovery: { retryable: false },
       replayReceipt: input.replayReceipt,
     });
   }

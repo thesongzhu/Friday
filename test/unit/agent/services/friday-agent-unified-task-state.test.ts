@@ -206,4 +206,23 @@ describe("buildFridayAgentUnifiedTaskState", () => {
     expect(verified.proofBoundary).toContain("not channel live proof");
     expect(verified.proofBoundary).toContain("same-SHA Real Green Gate");
   });
+
+  it("surfaces an owner-approval pause as an approval-waiting state, not a terminal blocker", () => {
+    const snapshot = buildFridayAgentUnifiedTaskState({
+      run: run({ status: "awaiting_approval" }),
+    });
+
+    expect(snapshot).toMatchObject({
+      state: "awaiting_approval",
+      requiredAction: "approve_or_reject",
+      run: {
+        runId: "run-1",
+        runStatus: "awaiting_approval",
+      },
+      recovery: { retryable: false },
+    });
+    // It must NOT be surfaced as the terminal "review the blocker and retry" failure.
+    expect(snapshot.requiredAction).not.toBe("review_blocker_or_retry");
+    expect(snapshot.summary).not.toMatch(/review the blocker/i);
+  });
 });
