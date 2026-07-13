@@ -1,5 +1,9 @@
 import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
+import {
+  hashIdempotencyPayload,
+  throwIdempotencyConflict,
+} from "../../api/http/routes/friday-route-idempotency.js";
 import type {
   FridayOutboxEnqueueInput,
   FridayOutboxLeasedItem,
@@ -57,18 +61,38 @@ export function createFridayOutboxQueueService(
     enqueue(input) {
       const id = deps.idGenerator();
       const nowIso = deps.nowIso();
+      // Digest over the STABLE message identity only. The transport ciphertext/nonce carry a
+      // per-dispatch timestamp (see the workflow satellite dispatch payload's `requestedAt`),
+      // so digesting them would false-positive on a legitimate same-key re-dispatch — which
+      // MUST stay an idempotent no-op (no-degrade). Divergence in the routing identity, on the
+      // other hand, is a genuine reuse-of-key-for-a-different-message conflict.
+      const payloadDigest = hashIdempotencyPayload({
+        satelliteId: input.satelliteId,
+        queueKey: input.queueKey,
+        messageType: input.messageType,
+        keyId: input.keyId,
+      });
       return deps.db.withWriteTransaction((db) => {
-        deps.outboxRepo.insertMessage(db, id, input, nowIso);
-
-        // INSERT OR IGNORE may have been a no-op if idempotency_key already exists.
-        // Check if our id was actually inserted; if not, look up the existing row.
+        // A pre-existing row for this (satellite_id, idempotency_key) with a DIFFERENT stored
+        // digest is the same key reused for a DIFFERENT message identity: surface the typed 409
+        // conflict rather than silently resolving to the existing id.
         const existing = db
           .prepare(
-            "SELECT id FROM outbox_messages WHERE satellite_id = ? AND idempotency_key = ?",
+            "SELECT id, payload_digest FROM outbox_messages WHERE satellite_id = ? AND idempotency_key = ?",
           )
-          .get(input.satelliteId, input.idempotencyKey) as { id: string } | undefined;
+          .get(input.satelliteId, input.idempotencyKey) as
+          | { id: string; payload_digest: string | null }
+          | undefined;
+        if (existing) {
+          if (existing.payload_digest !== null && existing.payload_digest !== payloadDigest) {
+            throwIdempotencyConflict(input.idempotencyKey, "outbox.enqueue");
+          }
+          // Same identity (idempotent retry) → resolve to the existing id, unchanged behavior.
+          return { id: existing.id };
+        }
 
-        return { id: existing?.id ?? id };
+        deps.outboxRepo.insertMessage(db, id, input, nowIso, payloadDigest);
+        return { id };
       });
     },
 

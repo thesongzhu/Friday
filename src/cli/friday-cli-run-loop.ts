@@ -11,6 +11,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FridayHub } from "#hub";
 import { createFridayHttpServer } from "../api/http/friday-http-server.js";
+import { FridaySqliteOperationJournalStore } from "../api/http/persistence/friday-operation-journal-repository.js";
 import type { FridayHttpTrustProxyMode } from "../api/http/friday-http-client-ip.js";
 import { buildOpenBrowserUrlCommand } from "./friday-cli-open-url.js";
 
@@ -53,12 +54,26 @@ export function runFridayCliLoop(deps: FridayCliRunLoopDeps): Promise<void> {
   const listenHost = host ?? "127.0.0.1";
   const uiStaticDir = deps.uiStaticDir ?? resolveBundledUiStaticDir();
 
+  // Durable HTTP idempotency / operation journal: build the SQLite-backed store from the
+  // app db so a completed idempotent response survives a process restart (a retry with the
+  // same Idempotency-Key replays instead of re-executing + duplicating the side-effect).
+  // Falls back to the in-memory default inside createFridayHttpServer if the db is absent.
+  const idempotencyDb = hub.apiRuntime.db;
+  const idempotencyStore = idempotencyDb
+    ? new FridaySqliteOperationJournalStore(idempotencyDb)
+    : undefined;
+  // Reconcile crash-orphaned reservations BEFORE the server accepts requests: any in_flight
+  // row from a previous process is marked indeterminate (fail-closed), so a retry is refused
+  // rather than re-executing a side-effect that may already have committed.
+  idempotencyStore?.reconcileOrphanedReservations();
+
   const httpServer = createFridayHttpServer({
     routes: hub.apiRuntime.routes,
     wsGateway: hub.apiRuntime.wsGateway,
     eventBus: hub.apiRuntime.eventBus,
     middleware: hub.apiRuntime.middleware,
     webchatWsService: hub.webchatWsService,
+    idempotencyStore,
     port,
     host: listenHost,
     corsOrigins,
