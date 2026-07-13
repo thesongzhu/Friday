@@ -140,11 +140,12 @@ export { createFridayTelegramChannel, normalizeTelegramUpdate } from "./telegram
 export type { TelegramChannelDeps } from "./telegram/friday-telegram-channel.js";
 export { FridayTelegramChannelConfigSchema } from "./telegram/telegram-config.schema.js";
 export type { FridayTelegramChannelConfig } from "./telegram/telegram-config.schema.js";
-export { createTelegramPollingService, createTelegramWebhookService, createTelegramApiService } from "./telegram/telegram-service.js";
+export { createTelegramPollingService, createTelegramWebhookService, createTelegramApiService, TELEGRAM_INBOX_PRUNE_INTERVAL_MS } from "./telegram/telegram-service.js";
 export type { TelegramWebhookRelayResult, TelegramWebhookService } from "./telegram/telegram-service.js";
 export {
   createInMemoryTelegramInboxStore,
   FridaySqliteTelegramInboxStore,
+  TELEGRAM_INBOX_RETENTION_MS,
 } from "./telegram/telegram-inbox-store.js";
 export type {
   TelegramInboxStore,
