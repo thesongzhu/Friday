@@ -105,4 +105,45 @@ describe("Cron Utils", () => {
       expect(next!.getUTCDate()).toBe(16); // next day
     });
   });
+
+  // TIME-CLOCK-SEMANTICS-001: schedule triggers carry a required `timezone`
+  // (FridayScheduleTrigger.timezone) that is persisted as cron_timezone and
+  // surfaced to users. The cron matcher/next-fire computation MUST interpret
+  // the cron wall-clock in that timezone, not silently in UTC.
+  describe("timezone-aware evaluation", () => {
+    it("computeNextCronFire honors a non-UTC IANA timezone (daily 9am NY)", () => {
+      // Winter → America/New_York is EST (UTC-5). 09:00 EST == 14:00 UTC.
+      const after = new Date("2025-01-15T00:00:00Z");
+      const next = computeNextCronFire("0 9 * * *", after, 525_600, "America/New_York");
+      expect(next).not.toBeNull();
+      expect(next!.toISOString()).toBe("2025-01-15T14:00:00.000Z");
+    });
+
+    it("computeNextCronFire tracks the DST offset shift for the same cron", () => {
+      // Summer → America/New_York is EDT (UTC-4). 09:00 EDT == 13:00 UTC.
+      // Same cron "0 9 * * *" must resolve to a DIFFERENT UTC instant than winter.
+      const after = new Date("2025-07-15T00:00:00Z");
+      const next = computeNextCronFire("0 9 * * *", after, 525_600, "America/New_York");
+      expect(next).not.toBeNull();
+      expect(next!.toISOString()).toBe("2025-07-15T13:00:00.000Z");
+    });
+
+    it("matchesCron evaluates cron fields in the given timezone", () => {
+      // 14:00 UTC == 09:00 America/New_York (EST).
+      const d = new Date("2025-01-15T14:00:00Z");
+      expect(matchesCron("0 9 * * *", d, "America/New_York")).toBe(true);
+      // 14 is the UTC hour, not the NY hour — must NOT match under NY tz.
+      expect(matchesCron("0 14 * * *", d, "America/New_York")).toBe(false);
+    });
+
+    it("UTC / omitted timezone behaves exactly as before (no-degrade)", () => {
+      const after = new Date("2025-01-15T00:00:00Z");
+      expect(computeNextCronFire("0 9 * * *", after)!.toISOString()).toBe(
+        "2025-01-15T09:00:00.000Z",
+      );
+      expect(computeNextCronFire("0 9 * * *", after, 525_600, "UTC")!.toISOString()).toBe(
+        "2025-01-15T09:00:00.000Z",
+      );
+    });
+  });
 });
