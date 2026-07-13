@@ -16,10 +16,11 @@ describe("setup provider regressions", () => {
   it("saves the detected provider kind instead of overwriting the first existing provider", () => {
     const setupSource = readFileSync("ui/src/routes/setup-page.tsx", "utf8");
 
-    expect(setupSource).toContain("buildProviderSaveDraftFromDetection");
+    // The setup save now routes through the shared validate-before-persist
+    // helper, resolving an existing provider by kind (not overwriting the first).
+    expect(setupSource).toContain("saveProviderWithValidation(providersApi, existingSameKind,");
     expect(setupSource).toContain("existingProviders.find((provider) => provider.kind === draft.kind)");
-    expect(setupSource).toContain("saveProviderMutation.mutate(");
-    expect(setupSource).toContain("buildProviderSaveDraftFromDetection(result)");
+    expect(setupSource).toContain("saveProviderMutation.mutate(buildCurrentProviderSaveDraft()");
     expect(setupSource).not.toContain("const existing = existingProviders[0]");
   });
 
