@@ -274,7 +274,14 @@ function driveFrames(
       finish();
     });
     const timer = setTimeout(finish, waitMs);
-    for (const fr of frames) socket.write(fr);
+    try {
+      for (const fr of frames) {
+        if (socket.destroyed) break;
+        socket.write(fr);
+      }
+    } catch {
+      // Peer may tear down mid-write (expected for flood / oversize cases).
+    }
   });
 }
 
@@ -432,6 +439,34 @@ describe("FridayHttpServer realtime WS — RFC 6455 inbound frame validation", (
     ]);
     expect(res.closeCode).toBeNull();
     expect(gateway.received).toEqual([JSON.parse(whole)]);
+  });
+
+  // ── Defect #6 (DoS): bound the reassembly accumulation ────────────────────────
+  it("[#6-dos] tears down a zero-length continuation flood within a bounded frame count (1009)", async () => {
+    const socket = await wsHandshake(port);
+    // Start a fragmented text message, then stream empty continuations. Each adds
+    // 0 bytes (never trips the size cap) but MUST be bounded by the fragment count.
+    const frames: Buffer[] = [buildFrame({ opcode: 0x1, payload: Buffer.alloc(0), fin: false })];
+    // Comfortably past MAX_WS_FRAGMENTS (1024) so the count cap must fire.
+    for (let i = 0; i < 1100; i++) {
+      frames.push(buildFrame({ opcode: 0x0, payload: Buffer.alloc(0), fin: false }));
+    }
+    const res = await driveFrames(socket, frames, 1500);
+    expect(res.closeCode).toBe(1009);
+    expect(gateway.received).toHaveLength(0); // message never completes
+  });
+
+  it("[#6-dos] tears down when accumulated fragments exceed the 4MB message cap (1009)", async () => {
+    const socket = await wsHandshake(port);
+    const chunk = Buffer.alloc(1_000_000, 0x61); // 1MB, under the 1MB single-frame cap
+    const frames: Buffer[] = [buildFrame({ opcode: 0x1, payload: chunk, fin: false })];
+    // 1 start + 4 continuations = 5MB > 4MB assembled ceiling.
+    for (let i = 0; i < 4; i++) {
+      frames.push(buildFrame({ opcode: 0x0, payload: chunk, fin: false }));
+    }
+    const res = await driveFrames(socket, frames, 1500);
+    expect(res.closeCode).toBe(1009);
+    expect(gateway.received).toHaveLength(0);
   });
 });
 

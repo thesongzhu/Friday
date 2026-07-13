@@ -495,7 +495,17 @@ interface WsFrameReaderState {
   fragmentedChunks: Buffer[];
   /** Total bytes accumulated for the in-progress message. */
   fragmentedSize: number;
+  /** Number of frames accumulated for the in-progress message (bounds empty-fragment floods). */
+  fragmentedCount: number;
 }
+
+/**
+ * Maximum frames a single fragmented message may span. A legitimate client
+ * splits a message into a handful of fragments; this bound tears down a
+ * connection that streams unbounded (e.g. zero-length) continuation frames —
+ * which do not advance the byte-size cap — within a fixed number of frames.
+ */
+const MAX_WS_FRAGMENTS = 1024;
 
 /** An event surfaced by {@link readWsClientFrames} for the connection loop to act on. */
 type WsClientFrameEvent =
@@ -553,15 +563,19 @@ function assembleWsDataFrame(
     if (state.fragmentedOpcode === null) return { errorCode: 1002 };
     state.fragmentedChunks.push(Buffer.from(payload));
     state.fragmentedSize += payload.length;
-    if (state.fragmentedSize > maxMessageSize) return { errorCode: 1009 };
+    state.fragmentedCount += 1;
+    // Bound BOTH assembled bytes AND fragment COUNT. A zero-length continuation
+    // adds 0 bytes, so the size cap alone would never trip on an empty-fragment
+    // flood — the count cap tears the connection down within MAX_WS_FRAGMENTS.
+    if (state.fragmentedSize > maxMessageSize || state.fragmentedCount > MAX_WS_FRAGMENTS) {
+      return { errorCode: 1009 };
+    }
     if (!fin) return {}; // more fragments to come
     const done = {
       opcode: state.fragmentedOpcode,
       payload: Buffer.concat(state.fragmentedChunks),
     };
-    state.fragmentedOpcode = null;
-    state.fragmentedChunks = [];
-    state.fragmentedSize = 0;
+    resetWsFragmentState(state);
     return { done };
   }
   // New data frame — MUST NOT arrive while a message is being assembled.
@@ -571,8 +585,17 @@ function assembleWsDataFrame(
   state.fragmentedOpcode = opcode;
   state.fragmentedChunks = [Buffer.from(payload)];
   state.fragmentedSize = payload.length;
+  state.fragmentedCount = 1;
   if (state.fragmentedSize > maxMessageSize) return { errorCode: 1009 };
   return {};
+}
+
+/** Clear a connection's in-progress fragmentation state (on completion or teardown). */
+function resetWsFragmentState(state: WsFrameReaderState): void {
+  state.fragmentedOpcode = null;
+  state.fragmentedChunks = [];
+  state.fragmentedSize = 0;
+  state.fragmentedCount = 0;
 }
 
 /**
@@ -1336,6 +1359,8 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       clearInterval(pingInterval);
       unsubscribe?.();
       wsConnections.delete(socket);
+      // Drop any in-progress fragmentation buffers so they cannot leak past teardown.
+      resetWsFragmentState(frameState);
     }
 
     // Inbound frame state: accumulated bytes + RFC 6455 §5.4 reassembly cursor.
@@ -1344,6 +1369,7 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       fragmentedOpcode: null,
       fragmentedChunks: [],
       fragmentedSize: 0,
+      fragmentedCount: 0,
     };
     const MAX_WS_FRAME_SIZE = 1_048_576; // 1 MB — single frame ceiling (§7.4.1 → 1009)
     const MAX_WS_MESSAGE_SIZE = 4_194_304; // 4 MB — assembled (multi-fragment) message ceiling
