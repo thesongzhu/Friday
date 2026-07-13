@@ -5439,6 +5439,10 @@ export async function createFridayHub(
           total: usage.inputTokens + usage.outputTokens,
         },
         costUsd: usage.costUsd ?? 0,
+        // Provider request-id (when the turn surfaced one): makes the write
+        // idempotent on it (no double-count on retry/replay) and binds a durable
+        // receipt to the agent turn. Null/absent ⇒ recorded without a receipt.
+        requestId: usage.requestId,
         metadata: { source: "agent-runtime" },
       });
 	    },
@@ -5718,6 +5722,10 @@ export async function createFridayHub(
               total: usage.inputTokens + usage.outputTokens,
             },
             costUsd: usage.costUsd ?? 0,
+            // Provider request-id (when the turn surfaced one): makes the write
+            // idempotent on it (no double-count on retry/replay) and binds a
+            // durable receipt to the child agent turn. Null/absent ⇒ no receipt.
+            requestId: usage.requestId,
             metadata: { source: "agent-runtime" },
           });
         },

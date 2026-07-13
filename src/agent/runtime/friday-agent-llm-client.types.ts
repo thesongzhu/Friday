@@ -47,6 +47,14 @@ export interface FridayAgentLlmMessageEndEvent {
   backendKind?: FridayProviderBackendKind;
   /** Estimated cost in USD for this turn. */
   costUsd?: number;
+  /**
+   * The provider's own request identifier for the completed turn (x-request-id /
+   * request-id header, or the response body id). Surfaced so the agent-runtime
+   * usage record is idempotent on it and carries a tamper-detectable receipt.
+   * Null/absent for providers that surface none (e.g. local Ollama) or backends
+   * with no HTTP response (CLI) — those record without a receipt, as before.
+   */
+  requestId?: string | null;
   /** Ordered failed attempts before the successful route, if any. */
   attempts?: FridayProviderAttempt[];
   routingDecisionReason?: string;

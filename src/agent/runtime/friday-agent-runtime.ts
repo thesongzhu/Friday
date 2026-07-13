@@ -2407,6 +2407,10 @@ export function createFridayAgentRuntime(
                 costUsd: turnMeta.costUsd,
                 cacheReadInputTokens: turnMeta.cacheReadInputTokens,
                 cacheCreationInputTokens: turnMeta.cacheCreationInputTokens,
+                // Bind the provider's request-id when the turn surfaced one so the
+                // usage write is idempotent + receipt-backed. Omitted entirely when
+                // absent, preserving the prior (request-id-less) call shape.
+                ...(turnMeta.requestId ? { requestId: turnMeta.requestId } : {}),
               });
             } catch (err) {
               // Non-fatal: usage persistence should not break run execution.
@@ -7138,6 +7142,7 @@ interface TurnMeta {
   actualProviderApi?: string;
   backendKind?: FridayProviderBackendKind;
   costUsd?: number;
+  requestId?: string | null;
   attempts?: FridayProviderAttempt[];
   routingDecisionReason?: string;
   learningAdjusted?: boolean;
@@ -7212,6 +7217,7 @@ async function streamLlmResponse(
             actualProviderApi: event.actualProviderApi,
             backendKind: event.backendKind,
             costUsd: event.costUsd,
+            requestId: event.requestId,
             attempts: event.attempts,
             routingDecisionReason: event.routingDecisionReason,
             learningAdjusted: event.learningAdjusted,

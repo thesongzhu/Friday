@@ -12,7 +12,7 @@ import type {
   FridayProviderAuthMode,
   FridayProviderBackendKind,
 } from "#providers";
-import { createFridayProviderPromptCacheAdapter } from "#providers";
+import { createFridayProviderPromptCacheAdapter, extractProviderRequestId } from "#providers";
 
 import { validateGatewayUrl } from "../tools/friday-agent-gateway-validation.js";
 import { FRIDAY_AGENT_ERROR_CODES } from "../friday-agent.constants.js";
@@ -190,6 +190,26 @@ export function createFridayAgentLlmClient(
   };
 }
 
+/**
+ * Attaches the provider's request-id to the terminal `message_end` event of a
+ * streamed turn so downstream usage recording can bind an idempotent, verifiable
+ * receipt to the call. Purely additive: non-`message_end` events pass through
+ * untouched, and a null request-id leaves `message_end` exactly as before (no
+ * receipt — the prior behavior for calls that surface no request identifier).
+ */
+async function* attachRequestIdToMessageEnd(
+  events: AsyncIterable<FridayAgentLlmStreamEvent>,
+  requestId: string | null,
+): AsyncIterable<FridayAgentLlmStreamEvent> {
+  for await (const event of events) {
+    if (event.type === "message_end" && requestId) {
+      yield { ...event, requestId };
+    } else {
+      yield event;
+    }
+  }
+}
+
 // ─── Anthropic handler ───
 
 async function* handleAnthropicStream(
@@ -271,7 +291,11 @@ async function* handleAnthropicStream(
     );
   }
 
-  yield* parseAnthropicSSEStream(response.body);
+  // Capture the provider's own request-id from the completed response's
+  // transport headers (`request-id` / `x-request-id`) and bind it to the turn's
+  // message_end so the usage record is idempotent + receipt-backed.
+  const requestId = extractProviderRequestId("anthropic-messages", response.headers, {});
+  yield* attachRequestIdToMessageEnd(parseAnthropicSSEStream(response.body), requestId);
 }
 
 // ─── Ollama handler (non-streaming, tool support via function calling) ───
@@ -503,11 +527,13 @@ async function* handleOpenAIStream(
     );
   }
 
-  if (api === "openai-responses" || api === "openai-codex-responses") {
-    yield* parseOpenAIResponsesSSEStream(response.body);
-  } else {
-    yield* parseOpenAISSEStream(response.body);
-  }
+  // Capture the provider's own request-id (`x-request-id` header) and bind it to
+  // the turn's message_end so the usage record is idempotent + receipt-backed.
+  const requestId = extractProviderRequestId(api, response.headers, {});
+  const parsed = api === "openai-responses" || api === "openai-codex-responses"
+    ? parseOpenAIResponsesSSEStream(response.body)
+    : parseOpenAISSEStream(response.body);
+  yield* attachRequestIdToMessageEnd(parsed, requestId);
 }
 
 function shouldIncludeOpenAiStreamUsage(_baseUrl: string): boolean {
