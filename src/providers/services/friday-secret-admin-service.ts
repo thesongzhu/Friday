@@ -2,7 +2,7 @@ import type { FridaySqliteLayer } from "#state";
 import { FridayDomainError } from "#errors";
 
 import type { FridaySecretEntity } from "../persistence/friday-secret-repository.js";
-import { createFridaySecretRepository } from "../persistence/friday-secret-repository.js";
+import { createFridaySecretRepository, fridaySecretAadContext } from "../persistence/friday-secret-repository.js";
 import { encryptSecret, getStrictMasterKey } from "../security/friday-secret-crypto.js";
 
 export interface FridaySecretSummary {
@@ -104,10 +104,15 @@ export function createFridaySecretAdminService(
         );
       }
 
-      const envelope = encryptSecret(input.value, getStrictMasterKey());
+      const secretId = deps.idGenerator();
+      const envelope = encryptSecret(
+        input.value,
+        getStrictMasterKey(),
+        fridaySecretAadContext({ scope: input.scope.trim(), id: secretId }),
+      );
       deps.db.withWriteTransaction((db) => {
         secretRepo.upsert(db, {
-          id: deps.idGenerator(),
+          id: secretId,
           scope: input.scope.trim(),
           refKey: input.refKey.trim(),
           encryptedValue: JSON.stringify(envelope),
@@ -157,7 +162,15 @@ export function createFridaySecretAdminService(
       let encryptedValue: string | undefined;
       if (input.value !== undefined) {
         assertNonEmptyString(input.value, "value");
-        encryptedValue = JSON.stringify(encryptSecret(input.value, getStrictMasterKey()));
+        // Bind the STABLE row id (not the possibly-renamed refKey) so a value
+        // update or a refKey rename never mismatches the reader's AAD.
+        encryptedValue = JSON.stringify(
+          encryptSecret(
+            input.value,
+            getStrictMasterKey(),
+            fridaySecretAadContext({ scope: existing.scope, id: secretId }),
+          ),
+        );
       }
 
       const updated = deps.db.withWriteTransaction((db) =>

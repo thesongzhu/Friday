@@ -8,7 +8,8 @@ import type { FridaySqliteLayer } from "#state";
 import {
   createFridaySecretAdminService,
   createFridaySecretRepository,
-  decryptSecret,
+  decryptSecretWithMigration,
+  fridaySecretAadContext,
   getStrictMasterKey,
 } from "#providers";
 import type { FridayEncryptedEnvelope, FridayProviderTenantContext } from "#providers";
@@ -886,7 +887,27 @@ function createWorkflowWebhookSecretResolver(
         );
         if (!entity) continue;
         const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
-        return decryptSecret(envelope, getStrictMasterKey());
+        const { plaintext, rewrapped } = decryptSecretWithMigration(
+          envelope,
+          getStrictMasterKey(),
+          fridaySecretAadContext(entity),
+        );
+        if (rewrapped) {
+          // Read-repair (SEC-SECRET-AAD-001): persist v2 re-wrap; best-effort.
+          try {
+            db.withWriteTransaction((conn) => {
+              secretRepo.updateById(conn, {
+                secretId: entity.id,
+                encryptedValue: JSON.stringify(rewrapped),
+                keyId: "master-v1",
+                nowIso: new Date().toISOString(),
+              });
+            });
+          } catch {
+            // Non-fatal: the read already succeeded.
+          }
+        }
+        return plaintext;
       }
       return null;
     } catch (error) {

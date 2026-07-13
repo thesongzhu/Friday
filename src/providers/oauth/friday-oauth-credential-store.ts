@@ -14,11 +14,41 @@ import type {
 import { FRIDAY_GLOBAL_OAUTH_OWNER_USER_ID } from "../model/friday-provider.types.js";
 
 import {
-  decryptSecret,
+  decryptSecretWithMigration,
   encryptSecret,
   getStrictMasterKey,
 } from "../security/friday-secret-crypto.js";
-import type { FridayEncryptedEnvelope } from "../security/friday-secret-crypto.js";
+import type {
+  FridayEncryptedEnvelope,
+  FridaySecretAadContext,
+} from "../security/friday-secret-crypto.js";
+
+/** Logical store namespace bound into every OAuth-credential AAD context. */
+const FRIDAY_OAUTH_AAD_STORE = "friday-oauth";
+
+/**
+ * Canonical AAD binding context for one encrypted OAuth token column.
+ *
+ * Binds the STABLE natural key of the row — `(owner_user_id, provider_profile_id,
+ * oauth_provider)` (the `ON CONFLICT` upsert key) — plus the token `field`, so a
+ * ciphertext cannot be transplanted across owners, provider profiles, oauth
+ * providers, or between the access/refresh columns. The natural key is stable
+ * across upsert-on-conflict, so writer and reader reconstruct identical AAD.
+ */
+function oauthCredentialAadContext(parts: {
+  readonly ownerUserId: string;
+  readonly providerProfileId: string;
+  readonly oauthProvider: string;
+  readonly field: "access" | "refresh";
+}): FridaySecretAadContext {
+  return {
+    store: FRIDAY_OAUTH_AAD_STORE,
+    owner: parts.ownerUserId,
+    scope: parts.providerProfileId,
+    tenant: parts.oauthProvider,
+    field: parts.field,
+  };
+}
 
 // ─── Store interface ───
 
@@ -57,10 +87,34 @@ function parseEnvelope(raw: string, field: string): FridayEncryptedEnvelope {
   }
 }
 
-function rowToCredential(row: FridayOAuthCredentialRow): FridayOAuthCredential {
+interface RowToCredentialResult {
+  credential: FridayOAuthCredential;
+  /**
+   * Present when either token column was a legacy v1 envelope and has been
+   * re-wrapped to v2. The caller persists these so no unbound envelope survives.
+   */
+  rewrap: { access: FridayEncryptedEnvelope; refresh: FridayEncryptedEnvelope } | null;
+}
+
+function rowToCredential(row: FridayOAuthCredentialRow): RowToCredentialResult {
   const masterKey = getStrictMasterKey();
   const accessEnvelope = parseEnvelope(row.access_token_encrypted, "access_token_encrypted");
   const refreshEnvelope = parseEnvelope(row.refresh_token_encrypted, "refresh_token_encrypted");
+  const commonParts = {
+    ownerUserId: row.owner_user_id,
+    providerProfileId: row.provider_profile_id,
+    oauthProvider: row.oauth_provider,
+  };
+  const accessResult = decryptSecretWithMigration(
+    accessEnvelope,
+    masterKey,
+    oauthCredentialAadContext({ ...commonParts, field: "access" }),
+  );
+  const refreshResult = decryptSecretWithMigration(
+    refreshEnvelope,
+    masterKey,
+    oauthCredentialAadContext({ ...commonParts, field: "refresh" }),
+  );
   let metadata: Record<string, unknown> = {};
   if (row.metadata_json) {
     try {
@@ -73,13 +127,13 @@ function rowToCredential(row: FridayOAuthCredentialRow): FridayOAuthCredential {
     }
   }
 
-  return {
+  const credential: FridayOAuthCredential = {
     id: row.id,
     providerProfileId: row.provider_profile_id,
     ownerUserId: row.owner_user_id,
     oauthProvider: row.oauth_provider as FridayOAuthProviderId,
-    accessToken: decryptSecret(accessEnvelope, masterKey),
-    refreshToken: decryptSecret(refreshEnvelope, masterKey),
+    accessToken: accessResult.plaintext,
+    refreshToken: refreshResult.plaintext,
     tokenType: row.token_type,
     scope: row.scope,
     expiresAt: row.expires_at,
@@ -87,6 +141,16 @@ function rowToCredential(row: FridayOAuthCredentialRow): FridayOAuthCredential {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+
+  const rewrap =
+    accessResult.rewrapped || refreshResult.rewrapped
+      ? {
+          access: accessResult.rewrapped ?? accessEnvelope,
+          refresh: refreshResult.rewrapped ?? refreshEnvelope,
+        }
+      : null;
+
+  return { credential, rewrap };
 }
 
 // ─── Factory ───
@@ -113,20 +177,57 @@ export function createFridayOAuthCredentialStore(
           .get(providerProfileId, ownerUserId, oauthProvider ?? null, oauthProvider ?? null) as FridayOAuthCredentialRow | undefined,
       );
       if (!row) return null;
-      return rowToCredential(row);
+      const { credential, rewrap } = rowToCredential(row);
+      if (rewrap) {
+        // Read-repair (SEC-SECRET-AAD-001): persist v2 re-wraps in place; the
+        // logical token is unchanged so updated_at is intentionally preserved.
+        try {
+          deps.db.withWriteTransaction((db) => {
+            db.prepare(
+              `UPDATE oauth_credentials
+                 SET access_token_encrypted = ?, refresh_token_encrypted = ?
+               WHERE id = ?`,
+            ).run(JSON.stringify(rewrap.access), JSON.stringify(rewrap.refresh), row.id);
+          });
+        } catch (err) {
+          console.warn(
+            "[friday][oauth-credential-store] AAD read-repair failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+      return credential;
     },
 
     upsert(input) {
       const masterKey = getStrictMasterKey();
+      const ownerUserId = input.ownerUserId?.trim() || FRIDAY_GLOBAL_OAUTH_OWNER_USER_ID;
       const accessEncrypted = JSON.stringify(
-        encryptSecret(input.tokenSet.accessToken, masterKey),
+        encryptSecret(
+          input.tokenSet.accessToken,
+          masterKey,
+          oauthCredentialAadContext({
+            ownerUserId,
+            providerProfileId: input.providerProfileId,
+            oauthProvider: input.oauthProvider,
+            field: "access",
+          }),
+        ),
       );
       const refreshEncrypted = JSON.stringify(
-        encryptSecret(input.tokenSet.refreshToken, masterKey),
+        encryptSecret(
+          input.tokenSet.refreshToken,
+          masterKey,
+          oauthCredentialAadContext({
+            ownerUserId,
+            providerProfileId: input.providerProfileId,
+            oauthProvider: input.oauthProvider,
+            field: "refresh",
+          }),
+        ),
       );
       const now = deps.nowIso();
       const id = deps.idGenerator();
-      const ownerUserId = input.ownerUserId?.trim() || FRIDAY_GLOBAL_OAUTH_OWNER_USER_ID;
       const metadataJson = JSON.stringify(input.tokenSet.metadata ?? {});
 
       deps.db.withWriteTransaction((db) => {

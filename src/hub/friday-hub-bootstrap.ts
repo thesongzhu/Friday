@@ -52,7 +52,8 @@ import {
   createFridayProviderService,
   createFridaySecretAdminService,
   createFridaySecretRepository,
-  decryptSecret,
+  decryptSecretWithMigration,
+  fridaySecretAadContext,
   getFridayProviderPreset,
   getStrictMasterKey,
   normalizeFridayProviderSupportedModels,
@@ -2070,7 +2071,27 @@ export async function createFridayHub(
         );
         if (!entity) continue;
         const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
-        return decryptSecret(envelope, getStrictMasterKey());
+        const { plaintext, rewrapped } = decryptSecretWithMigration(
+          envelope,
+          getStrictMasterKey(),
+          fridaySecretAadContext(entity),
+        );
+        if (rewrapped) {
+          // Read-repair (SEC-SECRET-AAD-001): persist v2 re-wrap; best-effort.
+          try {
+            stateRuntime!.sqlite.withWriteTransaction((db) => {
+              workflowWebhookSecretRepository.updateById(db, {
+                secretId: entity.id,
+                encryptedValue: JSON.stringify(rewrapped),
+                keyId: "master-v1",
+                nowIso: new Date().toISOString(),
+              });
+            });
+          } catch {
+            // Non-fatal: the read already succeeded.
+          }
+        }
+        return plaintext;
       }
       return null;
     } catch (error) {
@@ -5872,7 +5893,27 @@ export async function createFridayHub(
         return null;
       }
       const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
-      return decryptSecret(envelope, getStrictMasterKey());
+      const { plaintext, rewrapped } = decryptSecretWithMigration(
+        envelope,
+        getStrictMasterKey(),
+        fridaySecretAadContext(entity),
+      );
+      if (rewrapped) {
+        // Read-repair (SEC-SECRET-AAD-001): persist v2 re-wrap; best-effort.
+        try {
+          stateRuntime.sqlite.withWriteTransaction((db) => {
+            channelSecretRepository.updateById(db, {
+              secretId: entity.id,
+              encryptedValue: JSON.stringify(rewrapped),
+              keyId: "master-v1",
+              nowIso: new Date().toISOString(),
+            });
+          });
+        } catch {
+          // Non-fatal: the read already succeeded.
+        }
+      }
+      return plaintext;
     } catch (err) {
       warnHubBootstrapOperationFailureOnce(err);
       return null;
