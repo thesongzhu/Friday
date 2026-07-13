@@ -44,6 +44,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { createFridayLarkChannel } from "#channels";
 import type { FridayChannelPlugin } from "#channels";
+import { createFridayChannelEntryAdapter } from "#engine";
+import type { FridayEngineRunResult } from "#engine";
 
 // Non-secret test credentials for the mocked Lark app (no live auth occurs —
 // token refresh + resource download are stubbed by createMockFetch below).
@@ -404,5 +406,58 @@ describe("Lark/Feishu inbound attachment disk cleanup", () => {
     // … but the foreign / non-owned file is untouched (no dir-wipe).
     expect(fs.existsSync(foreignPath)).toBe(true);
     expect(fs.readFileSync(foreignPath, "utf8")).toBe(foreignMarker);
+  });
+
+  // ── PER-RUN (FULL closure): unlink at the engine-entry seam on run-terminal ──
+  // The strongest variant: drive the REAL save path (normalizeAsync writes a real
+  // file with a unique marker), hand that exact msg.attachments to the shared
+  // engine-entry adapter's handleMessage, stub executeRun to FIRST read the bytes
+  // mid-run (proves NO use-after-unlink / no-degrade) then resolve terminal, and
+  // assert the exact owned path is unlinked SECONDS after run-terminal — not held
+  // until channel teardown. This is PRIV-RAW-AUDIO-PER-RUN-CLEANUP.
+  it("per-run: unlinks the owned audio temp path immediately on run-terminal via the engine-entry adapter", async () => {
+    const marker = "FRIDAY_LARK_PERRUN_SENTINEL_AUDIO_c7a1d0";
+    pushToken(fetchMock.responses, "t-token-perrun");
+    pushAudioResource(fetchMock.responses, "om_perrun", "audio_key_perrun", marker);
+
+    // Real download → saveAttachmentBytes → normalize → owned localPath on disk.
+    const inboundMsg = await plugin.adapters!.inbound!.normalizeAsync!(
+      audioEvent("om_perrun", "audio_key_perrun"),
+    );
+    expect(inboundMsg).not.toBeNull();
+    const localPath = inboundMsg!.attachments?.[0]?.localPath;
+    expect(typeof localPath).toBe("string");
+    expect(fs.existsSync(localPath!)).toBe(true);
+
+    // Stub the engine to READ the bytes DURING the run, then resolve terminal.
+    let bytesDuringRun: string | undefined;
+    const executeRun = vi.fn(async (): Promise<FridayEngineRunResult> => {
+      bytesDuringRun = fs.readFileSync(localPath!, "utf8");
+      return { runId: "run-perrun", status: "completed", toolCallCount: 0, durationMs: 3 };
+    });
+    const adapter = createFridayChannelEntryAdapter({
+      engine: { executeRun },
+      idGenerator: () => "run-perrun",
+      resolveSessionKey: () => "feishu:perrun",
+    });
+
+    const result = await adapter.handleMessage({
+      id: "msg-perrun",
+      channelKind: "feishu",
+      senderId: "ou_perrun",
+      chatId: "oc_perrun",
+      chatType: "direct",
+      text: "please transcribe this voice note",
+      attachments: inboundMsg!.attachments,
+    });
+
+    // NO-DEGRADE: the exact marker bytes were readable DURING the run.
+    expect(bytesDuringRun).toContain(marker);
+    expect(result.status).toBe("completed");
+
+    // Per-run cleanup: the exact owned path is gone right after run-terminal —
+    // no marker survives anywhere under the attachment root.
+    expect(fs.existsSync(localPath!)).toBe(false);
+    expect(filesContainingMarker(attachmentDir, marker)).toEqual([]);
   });
 });

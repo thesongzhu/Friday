@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createFridayChannelEntryAdapter,
@@ -6,6 +9,11 @@ import {
   FRIDAY_CHANNEL_CONTROL_ROUTE,
 } from "../../../../src/engine/adapters/friday-channel-entry-adapter.js";
 import { FRIDAY_SUPPORTED_CHANNEL_KINDS } from "../../../../src/channels/friday-channel-config.js";
+import type { FridayChannelAttachment } from "../../../../src/channels/friday-channel.types.js";
+import type {
+  FridayEngineRunResult,
+  FridayRunTerminalStatus,
+} from "../../../../src/engine/friday-orchestration-engine.types.js";
 
 describe("FridayChannelEntryAdapter", () => {
   it("derives tenantContext from inbound channel messages", async () => {
@@ -267,5 +275,225 @@ describe("FridayChannelEntryAdapter", () => {
       task: "Analyze the attached media.",
       taskPrompt: expect.stringContaining("/tmp/friday-channel-attachments/report.pdf"),
     }));
+  });
+});
+
+// ─── PRIV-RAW-AUDIO per-run cleanup (unlink owned temp files on run-terminal) ───
+//
+// The channel-entry adapter is the single shared seam for every channel: it
+// awaits engine.executeRun and holds both msg.attachments[].localPath and the
+// terminal run status. These tests write REAL files to disk, hand them to
+// handleMessage as owned attachments, and assert the exact localPath is unlinked
+// on genuinely-terminal statuses / reject, kept on suspended statuses, and that
+// cleanup never touches a foreign file sharing the same dir.
+describe("FridayChannelEntryAdapter per-run attachment cleanup", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-perrun-cleanup-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Write a real temp file carrying `marker` and return an owned attachment for it. */
+  function writeOwnedAttachment(
+    marker: string,
+    overrides: Partial<FridayChannelAttachment> = {},
+  ): FridayChannelAttachment {
+    const localPath = path.join(dir, `${marker}.bin`);
+    fs.writeFileSync(localPath, marker);
+    return {
+      id: `att-${marker}`,
+      kind: "audio",
+      filename: "voice.mp3",
+      contentType: "audio/mpeg",
+      localPath,
+      status: "resolved",
+      ...overrides,
+    };
+  }
+
+  function makeAdapter(executeRun: ReturnType<typeof vi.fn>) {
+    return createFridayChannelEntryAdapter({
+      engine: { executeRun },
+      idGenerator: () => "run-cleanup",
+      resolveSessionKey: (message) => `${message.channelKind}:${message.chatId}`,
+    });
+  }
+
+  function inbound(attachments: FridayChannelAttachment[]) {
+    return {
+      id: "msg-cleanup",
+      channelKind: "feishu",
+      senderId: "user-c",
+      chatId: "chat-c",
+      chatType: "direct" as const,
+      text: "transcribe this",
+      attachments,
+    };
+  }
+
+  const TERMINAL_DELETE: FridayRunTerminalStatus[] = [
+    "completed",
+    "failed",
+    "cancelled",
+    "failed_tests",
+    "timeout",
+  ];
+  const SUSPENDED_KEEP: FridayRunTerminalStatus[] = [
+    "awaiting_plan_approval",
+    "awaiting_clarification",
+  ];
+
+  it.each(TERMINAL_DELETE)(
+    "unlinks the owned attachment localPath on terminal status %s",
+    async (status) => {
+      const marker = `TERMINAL_${status}`;
+      const attachment = writeOwnedAttachment(marker);
+      expect(fs.existsSync(attachment.localPath!)).toBe(true);
+
+      const executeRun = vi.fn(async (): Promise<FridayEngineRunResult> => ({
+        runId: "run-cleanup",
+        status,
+        toolCallCount: 0,
+        durationMs: 5,
+      }));
+      const adapter = makeAdapter(executeRun);
+
+      const result = await adapter.handleMessage(inbound([attachment]));
+
+      expect(result.status).toBe(status);
+      // Exact owned path unlinked immediately on terminal.
+      expect(fs.existsSync(attachment.localPath!)).toBe(false);
+    },
+  );
+
+  it("reads the file DURING the run then unlinks it (no use-after-unlink / no-degrade)", async () => {
+    const marker = "NO_DEGRADE_READ_DURING_RUN";
+    const attachment = writeOwnedAttachment(marker);
+
+    let bytesSeenDuringRun: string | undefined;
+    const executeRun = vi.fn(async (): Promise<FridayEngineRunResult> => {
+      // The run must still be able to READ the file mid-execution.
+      bytesSeenDuringRun = fs.readFileSync(attachment.localPath!, "utf8");
+      return { runId: "run-cleanup", status: "completed", toolCallCount: 0, durationMs: 5 };
+    });
+    const adapter = makeAdapter(executeRun);
+
+    await adapter.handleMessage(inbound([attachment]));
+
+    expect(bytesSeenDuringRun).toContain(marker); // proves the file was live during the run
+    expect(fs.existsSync(attachment.localPath!)).toBe(false); // and gone after terminal
+  });
+
+  it.each(SUSPENDED_KEEP)(
+    "keeps the owned attachment file on suspended status %s (resume needs it)",
+    async (status) => {
+      const marker = `SUSPENDED_${status}`;
+      const attachment = writeOwnedAttachment(marker);
+
+      const executeRun = vi.fn(async (): Promise<FridayEngineRunResult> => ({
+        runId: "run-cleanup",
+        status,
+        toolCallCount: 0,
+        durationMs: 5,
+      }));
+      const adapter = makeAdapter(executeRun);
+
+      await adapter.handleMessage(inbound([attachment]));
+
+      // File SURVIVES — deleting it would break engine.resumeRun (use-after-unlink).
+      expect(fs.existsSync(attachment.localPath!)).toBe(true);
+      expect(fs.readFileSync(attachment.localPath!, "utf8")).toBe(marker);
+    },
+  );
+
+  it("deletes the owned file AND re-throws the original error when the run rejects", async () => {
+    const marker = "REJECT_THEN_DELETE";
+    const attachment = writeOwnedAttachment(marker);
+    const boom = new Error("engine blew up mid-run");
+
+    const executeRun = vi.fn(async (): Promise<FridayEngineRunResult> => {
+      throw boom;
+    });
+    const adapter = makeAdapter(executeRun);
+
+    // Original error propagates (never swallowed).
+    await expect(adapter.handleMessage(inbound([attachment]))).rejects.toBe(boom);
+    // Uncertain-terminal reject → privacy-safe delete still happened.
+    expect(fs.existsSync(attachment.localPath!)).toBe(false);
+  });
+
+  it("is correlation-safe: never touches a foreign file sharing the same dir", async () => {
+    const ownedMarker = "OWNED_ONLY";
+    const attachment = writeOwnedAttachment(ownedMarker);
+
+    // A foreign file NOT on msg.attachments, in the SAME directory.
+    const foreignPath = path.join(dir, "foreign-not-owned.bin");
+    fs.writeFileSync(foreignPath, "FOREIGN_NOT_ON_MESSAGE");
+
+    const executeRun = vi.fn(async (): Promise<FridayEngineRunResult> => ({
+      runId: "run-cleanup",
+      status: "completed",
+      toolCallCount: 0,
+      durationMs: 5,
+    }));
+    const adapter = makeAdapter(executeRun);
+
+    await adapter.handleMessage(inbound([attachment]));
+
+    expect(fs.existsSync(attachment.localPath!)).toBe(false); // owned removed …
+    expect(fs.existsSync(foreignPath)).toBe(true); // … foreign untouched (no dir scan)
+    expect(fs.readFileSync(foreignPath, "utf8")).toBe("FOREIGN_NOT_ON_MESSAGE");
+  });
+
+  it("is idempotent on double-invoke (ENOENT no-op, no throw)", async () => {
+    const marker = "DOUBLE_INVOKE";
+    const attachment = writeOwnedAttachment(marker);
+
+    const executeRun = vi.fn(async (): Promise<FridayEngineRunResult> => ({
+      runId: "run-cleanup",
+      status: "completed",
+      toolCallCount: 0,
+      durationMs: 5,
+    }));
+    const adapter = makeAdapter(executeRun);
+
+    await adapter.handleMessage(inbound([attachment]));
+    expect(fs.existsSync(attachment.localPath!)).toBe(false);
+
+    // Second invoke with the same (now-stale) attachment must not throw.
+    const second = await adapter.handleMessage(inbound([attachment]));
+    expect(second.status).toBe("completed");
+    expect(fs.existsSync(attachment.localPath!)).toBe(false);
+  });
+
+  it("skips non-owned paths: unresolved status and http sourceUrl-style paths are left alone", async () => {
+    // (a) status !== "resolved" → not successfully saved → do not unlink.
+    const deferredMarker = "DEFERRED_STATUS";
+    const deferred = writeOwnedAttachment(deferredMarker, { status: "deferred" });
+    // (b) an http(s) localPath is a remote ref, not an owned local temp file.
+    const httpAttachment: FridayChannelAttachment = {
+      id: "att-http",
+      kind: "file",
+      status: "resolved",
+      localPath: "https://example.invalid/remote-file.bin",
+    };
+
+    const executeRun = vi.fn(async (): Promise<FridayEngineRunResult> => ({
+      runId: "run-cleanup",
+      status: "completed",
+      toolCallCount: 0,
+      durationMs: 5,
+    }));
+    const adapter = makeAdapter(executeRun);
+
+    // Must not throw despite the http "path", and must leave the deferred file alone.
+    const result = await adapter.handleMessage(inbound([deferred, httpAttachment]));
+    expect(result.status).toBe("completed");
+    expect(fs.existsSync(deferred.localPath!)).toBe(true);
+    expect(fs.readFileSync(deferred.localPath!, "utf8")).toBe(deferredMarker);
   });
 });

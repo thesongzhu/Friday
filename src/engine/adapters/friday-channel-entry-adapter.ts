@@ -9,10 +9,13 @@
  * inbound → engine → result translation.
  */
 
+import { unlink } from "node:fs/promises";
+
 import type {
   FridayEngineRunInput,
   FridayEngineRunResult,
   FridayOrchestrationEngine,
+  FridayRunTerminalStatus,
 } from "../friday-orchestration-engine.types.js";
 import type { FridayChannelAttachment } from "../../channels/friday-channel.types.js";
 
@@ -65,6 +68,78 @@ export const FRIDAY_CHANNEL_CONTROL_ROUTE = "full_agent";
 
 function resolvedAttachmentPath(attachment: FridayChannelAttachment): string | undefined {
   return attachment.localPath ?? attachment.sourceUrl;
+}
+
+// ─── Per-run raw-attachment cleanup (PRIV-RAW-AUDIO per-run slice) ───
+//
+// Inbound channel attachments (raw audio/image/file bytes) are saved to a temp
+// file by the channel layer, with the path on `attachment.localPath`. The run
+// reads that file DURING execution (image -> base64 at LLM-request time;
+// audio/file -> agent tool mid-run), so the file MUST survive until the run
+// reaches a terminal state. This helper unlinks the owned temp files right after
+// the run resolves/rejects (seconds after run-terminal) instead of waiting for
+// the channel lifecycle boundary (the #1570 disconnect/stop backstop), which
+// held raw audio for the whole session.
+
+/**
+ * Suspended runs resume via `engine.resumeRun` and still need to read the file,
+ * so their attachments must NOT be deleted (deleting = use-after-unlink bug).
+ */
+const FRIDAY_SUSPENDED_RUN_STATUSES: ReadonlySet<FridayRunTerminalStatus> = new Set<FridayRunTerminalStatus>([
+  "awaiting_clarification",
+  "awaiting_plan_approval",
+]);
+
+/**
+ * Whether the given attachment.localPath is an owned, on-disk temp path this
+ * processing may unlink: present/non-empty, successfully saved (status
+ * "resolved"), and a real local fs path (not an http(s) sourceUrl).
+ */
+function isOwnedLocalAttachmentPath(attachment: FridayChannelAttachment): attachment is FridayChannelAttachment & { localPath: string } {
+  const localPath = attachment.localPath;
+  return (
+    attachment.status === "resolved" &&
+    typeof localPath === "string" &&
+    localPath.length > 0 &&
+    !/^https?:\/\//i.test(localPath)
+  );
+}
+
+/**
+ * Unlink the raw temp files owned by THIS message's attachments once the run is
+ * genuinely terminal (or on an uncertain-terminal reject). Correlation-safe:
+ * touches only the exact `attachment.localPath` values on THIS message — never a
+ * directory scan, never another run's path. Idempotent: tolerates ENOENT (the
+ * #1570 disconnect() backstop or a double-invoke may have already removed it).
+ *
+ * @param terminalStatus the resolved run status, or `undefined` when the run
+ *   REJECTED/threw (uncertain-terminal → privacy-safe default is to delete).
+ */
+async function cleanupOwnedAttachments(
+  attachments: readonly FridayChannelAttachment[] | undefined,
+  terminalStatus: FridayRunTerminalStatus | undefined,
+): Promise<void> {
+  if (!attachments || attachments.length === 0) return;
+  // Suspended run: the file is still needed on resume — do not delete.
+  if (terminalStatus !== undefined && FRIDAY_SUSPENDED_RUN_STATUSES.has(terminalStatus)) return;
+  await Promise.all(
+    attachments.map(async (attachment) => {
+      if (!isOwnedLocalAttachmentPath(attachment)) return;
+      try {
+        await unlink(attachment.localPath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") {
+          // Best-effort privacy cleanup: never turn a completed run into a
+          // failure because a temp unlink hit EPERM/EBUSY/etc. The #1570
+          // lifecycle backstop remains as a second sweep.
+          console.warn(
+            `[friday][channel-entry] attachment cleanup failed for ${attachment.localPath}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    }),
+  );
 }
 
 function buildAttachmentPrompt(attachments: readonly FridayChannelAttachment[] | undefined): string | undefined {
@@ -153,7 +228,21 @@ export function createFridayChannelEntryAdapter(deps: FridayChannelEntryAdapterD
       idempotencyPrefix: `channel-${msg.channelKind}`,
     };
 
-    return engine.executeRun(input);
+    // Run the engine, then reap this message's owned raw-attachment temp files.
+    // Cleanup runs ONLY after executeRun resolves or rejects — never before, so
+    // the run can still READ the file DURING execution (no-degrade requirement).
+    let result: FridayEngineRunResult;
+    try {
+      result = await engine.executeRun(input);
+    } catch (err) {
+      // REJECT / thrown error → uncertain-terminal. Privacy-safe default: unlink
+      // the owned localPath (this processing owns it and it won't be reused),
+      // then re-throw the ORIGINAL error (never swallow it).
+      await cleanupOwnedAttachments(msg.attachments, undefined);
+      throw err;
+    }
+    await cleanupOwnedAttachments(msg.attachments, result.status);
+    return result;
   }
 
   return { handleMessage };
