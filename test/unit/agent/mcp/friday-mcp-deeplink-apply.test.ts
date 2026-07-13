@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 
 import { createFridayDeepLinkApplyService } from "../../../../src/api/runtime/friday-deep-link-apply-service.js";
 import { createFridayMcpConfigStore } from "../../../../src/agent/mcp/friday-mcp-config-store.js";
+import { resetMasterKeyCache } from "../../../../src/security/friday-secret-crypto.js";
 import { isForbiddenEnvVar, isSecretShapedEnvKey } from "../../../../src/agent/mcp/friday-mcp-adapter.js";
 import {
   createFridayMutatingActionGate,
@@ -21,14 +22,24 @@ const NOW = "2026-05-14T00:00:00.000Z";
 const TOKEN_SECRET = "test-secret"; // pragma: allowlist secret
 
 let testDir: string;
+let savedMasterKeyEnv: string | undefined;
 
 beforeEach(() => {
   testDir = join(tmpdir(), `friday-mcp-apply-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(testDir, { recursive: true });
+  // The MCP config store now encrypts env/header secret values at rest and
+  // FAILS CLOSED without a master key. Provision a fixed hub key (as prod does
+  // via FRIDAY_MASTER_KEY) so persisted env vars encrypt and round-trip.
+  savedMasterKeyEnv = process.env.FRIDAY_MASTER_KEY;
+  process.env.FRIDAY_MASTER_KEY = "a".repeat(64); // 32 bytes hex // pragma: allowlist secret
+  resetMasterKeyCache();
 });
 
 afterEach(() => {
   rmSync(testDir, { recursive: true, force: true });
+  if (savedMasterKeyEnv !== undefined) process.env.FRIDAY_MASTER_KEY = savedMasterKeyEnv;
+  else delete process.env.FRIDAY_MASTER_KEY;
+  resetMasterKeyCache();
 });
 
 function makeProviderService(): FridayProviderService {
