@@ -14,6 +14,8 @@
  * the default. The batch executor is an opt-in enhancement.
  */
 
+import { normalize } from "node:path";
+
 import { isMutatingToolCall } from "./friday-agent-tool-mutation.js";
 
 // ─── Types ───
@@ -105,6 +107,42 @@ export function extractFilePaths(toolName: string, args: Record<string, unknown>
   return paths;
 }
 
+// ─── Conflict-key canonicalization ───
+
+/**
+ * Canonicalize a file path for use as a CONFLICT-DETECTION KEY only.
+ *
+ * Two same-turn mutating tools can target the SAME underlying file via
+ * different path spellings (`/tmp/a.txt` vs `/tmp/./a.txt`, trailing slash,
+ * `..` segments, and — on macOS — case variants). If the conflict graph keys
+ * on the raw string, those spellings hash to distinct keys, the tools are
+ * judged non-conflicting, and they run concurrently — corrupting the file
+ * with a lost/interleaved write.
+ *
+ * This function collapses those spellings so equivalent paths share a key:
+ * - `normalize(p)` folds `.`, `..`, and duplicate separators.
+ * - a trailing separator is stripped (except a bare root) so `/d/` == `/d`.
+ * - on darwin only, the key is lowercased because the filesystem is
+ *   case-insensitive there; on Linux the FS is case-sensitive so distinct-case
+ *   paths intentionally remain distinct.
+ *
+ * IMPORTANT: this affects ONLY the conflict key. The literal path passed to
+ * the tool executor is never rewritten. Canonicalization can only make MORE
+ * paths compare equal, so it can only ADD serialization — it never removes a
+ * real conflict and never wrongly parallelizes two genuinely-different files.
+ */
+export function canonicalizeConflictKey(p: string): string {
+  let key = normalize(p);
+  // Strip a trailing separator (but keep a bare root like "/").
+  if (key.length > 1 && (key.endsWith("/") || key.endsWith("\\"))) {
+    key = key.slice(0, -1);
+  }
+  if (process.platform === "darwin") {
+    key = key.toLowerCase();
+  }
+  return key;
+}
+
 // ─── Dependency classification ───
 
 /**
@@ -137,7 +175,7 @@ export function classifyToolBatchDependencies(
     // Check for conflicts with current group
     let hasConflict = false;
     for (const p of paths) {
-      const existingMutating = groupPaths.get(p);
+      const existingMutating = groupPaths.get(canonicalizeConflictKey(p));
       if (existingMutating !== undefined) {
         // Path overlap — conflict if either side is mutating
         if (existingMutating || isMutating) {
@@ -156,8 +194,11 @@ export function classifyToolBatchDependencies(
 
     currentGroup.push(toolUse);
     for (const p of paths) {
-      // Mark as mutating if this tool or a previous tool on same path is mutating
-      groupPaths.set(p, (groupPaths.get(p) ?? false) || isMutating);
+      // Mark as mutating if this tool or a previous tool on same path is mutating.
+      // Key on the canonicalized path so different spellings of the same file
+      // (`./`, `..`, trailing slash, darwin case) share one conflict entry.
+      const key = canonicalizeConflictKey(p);
+      groupPaths.set(key, (groupPaths.get(key) ?? false) || isMutating);
     }
   }
 

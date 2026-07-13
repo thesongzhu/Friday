@@ -149,13 +149,25 @@ export function createFridayRunCheckpoint(deps: CreateRunCheckpointDeps): Friday
       }
     }
 
+    // Truthful reversibility: never claim rollback is available when it is not.
+    //   - A newly-created file (!existed) is reversible by deletion — always true.
+    //   - An EXISTING file is reversible ONLY if its pre-mutation backup was
+    //     actually captured above. If the backup read/write threw (catch at
+    //     the try above → backupPath === undefined), rollback() would
+    //     fail-close with "backup unavailable", so advertising availability
+    //     here would be an over-claim surfaced to the user via the run
+    //     receipt / rollback_available health state.
+    // Computed once and used at BOTH persistence sites (in-memory entry and
+    // the manifest row) so the claim can never diverge between them.
+    const rollbackAvailable = existed ? backupPath !== undefined : true;
+
     const entry: FridayRunCheckpointEntry = {
       filePath: canonicalPath,
       originalPath: filePath,
       existed,
       backupPath,
       snapshotAt: deps.nowIso(),
-      rollbackAvailable: true,
+      rollbackAvailable,
     };
 
     snapshots.set(canonicalPath, entry);
@@ -166,7 +178,7 @@ export function createFridayRunCheckpoint(deps: CreateRunCheckpointDeps): Friday
       existedBefore: existed,
       backupPath,
       snapshotAt: entry.snapshotAt,
-      rollbackAvailable: true,
+      rollbackAvailable,
       updatedAt: entry.snapshotAt,
     } satisfies FridayAgentRunCheckpointManifestEntry);
   }
