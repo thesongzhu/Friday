@@ -2,9 +2,18 @@
 
 import type { FridaySqliteLayer } from "#state";
 import { safeJsonParse } from "#utilities";
-import { decryptSecret, encryptSecret, getStrictMasterKey } from "#providers";
-import type { FridayEncryptedEnvelope } from "#providers";
+import { decryptSecret, decryptSecretWithMigration, encryptSecret, getStrictMasterKey } from "#providers";
+import type { FridayEncryptedEnvelope, FridaySecretAadContext } from "#providers";
 import { xhsRandomUserAgent } from "./friday-xhs-stealth.js";
+
+/**
+ * Canonical AAD binding context for an xhs session's encrypted cookies.
+ * Binds the session's stable primary key (`id`), so a cookie blob cannot be
+ * transplanted to another session row.
+ */
+function xhsCookiesAadContext(sessionId: string): FridaySecretAadContext {
+  return { store: "friday-xhs", ref: sessionId, field: "cookies" };
+}
 
 // ─── Types ───
 
@@ -62,7 +71,9 @@ export function createXhsSessionManager(deps: CreateXhsSessionManagerDeps): XhsS
     const now = nowIso();
     const userAgent = xhsRandomUserAgent();
     const plaintext = JSON.stringify(cookies);
-    const encrypted = JSON.stringify(encryptSecret(plaintext, getStrictMasterKey()));
+    const encrypted = JSON.stringify(
+      encryptSecret(plaintext, getStrictMasterKey(), xhsCookiesAadContext(sessionId)),
+    );
 
     sqlite.withWriteTransaction((db) => {
       db.prepare(`
@@ -78,22 +89,39 @@ export function createXhsSessionManager(deps: CreateXhsSessionManagerDeps): XhsS
   }
 
   function loadCookies(sessionId: string): XhsCookie[] | undefined {
-    return sqlite.withReadConnection((db) => {
-      const row = db.prepare(`
+    const row = sqlite.withReadConnection((db) =>
+      db.prepare(`
         SELECT cookies_encrypted FROM xhs_sessions WHERE id = ?
-      `).get(sessionId) as { cookies_encrypted: string | null } | undefined;
+      `).get(sessionId) as { cookies_encrypted: string | null } | undefined,
+    );
 
-      if (!row?.cookies_encrypted) return undefined;
+    if (!row?.cookies_encrypted) return undefined;
 
-      try {
-        const envelope = safeJsonParse(row.cookies_encrypted) as FridayEncryptedEnvelope;
-        const plaintext = decryptSecret(envelope, getStrictMasterKey());
-        return safeJsonParse(plaintext) as XhsCookie[];
-      } catch (err) {
-        console.warn("[friday][xhs-session] cookie decryption failed:", err instanceof Error ? err.message : String(err));
-        return undefined;
+    try {
+      const envelope = safeJsonParse(row.cookies_encrypted) as FridayEncryptedEnvelope;
+      const { plaintext, rewrapped } = decryptSecretWithMigration(
+        envelope,
+        getStrictMasterKey(),
+        xhsCookiesAadContext(sessionId),
+      );
+      if (rewrapped) {
+        // Read-repair (SEC-SECRET-AAD-001): migrate legacy v1 cookies to v2.
+        try {
+          sqlite.withWriteTransaction((db) => {
+            db.prepare(`UPDATE xhs_sessions SET cookies_encrypted = ? WHERE id = ?`).run(
+              JSON.stringify(rewrapped),
+              sessionId,
+            );
+          });
+        } catch {
+          // Non-fatal: the read already succeeded.
+        }
       }
-    });
+      return safeJsonParse(plaintext) as XhsCookie[];
+    } catch (err) {
+      console.warn("[friday][xhs-session] cookie decryption failed:", err instanceof Error ? err.message : String(err));
+      return undefined;
+    }
   }
 
   function isSessionValid(sessionId: string): boolean {
@@ -112,7 +140,7 @@ export function createXhsSessionManager(deps: CreateXhsSessionManagerDeps): XhsS
       let cookies: XhsCookie[];
       try {
         const envelope = safeJsonParse(row.cookies_encrypted) as FridayEncryptedEnvelope;
-        const plaintext = decryptSecret(envelope, getStrictMasterKey());
+        const plaintext = decryptSecret(envelope, getStrictMasterKey(), xhsCookiesAadContext(sessionId));
         cookies = safeJsonParse(plaintext) as XhsCookie[];
       } catch (err) {
         console.warn("[friday][xhs-session] session validation cookie parse failed:", err instanceof Error ? err.message : String(err));

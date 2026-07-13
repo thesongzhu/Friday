@@ -51,6 +51,7 @@ import type { FridayHubConfig } from "#hub";
 import {
   createFridaySecretRepository,
   encryptSecret,
+  fridaySecretAadContext,
   getProvisionedMasterKey,
 } from "#providers";
 import {
@@ -1119,9 +1120,14 @@ function persistMigratedChannels(
   if (secretWrites.length > 0) {
     const masterKey = getProvisionedMasterKey();
     for (const write of secretWrites) {
-      const envelope = encryptSecret(write.plaintext, masterKey);
+      const secretId = `channel-secret:${write.refKey}`; // pragma: allowlist secret
+      const envelope = encryptSecret(
+        write.plaintext,
+        masterKey,
+        fridaySecretAadContext({ scope: "channel", id: secretId }),
+      );
       channelSecretRepository.upsert(db, {
-        id: `channel-secret:${write.refKey}`,
+        id: secretId,
         scope: "channel",
         refKey: write.refKey,
         encryptedValue: JSON.stringify(envelope),

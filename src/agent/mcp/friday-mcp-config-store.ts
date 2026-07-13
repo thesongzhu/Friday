@@ -4,9 +4,10 @@ import { dirname, join } from "node:path";
 
 import type { FridayMcpServerConfig } from "./friday-mcp-adapter.types.js";
 import {
-  decryptSecret,
+  decryptSecretWithMigration,
   encryptSecret,
   type FridayEncryptedEnvelope,
+  type FridaySecretAadContext,
   getStrictMasterKey,
 } from "../../security/friday-secret-crypto.js";
 import {
@@ -17,6 +18,20 @@ import {
 const CONFIG_FILENAME = "mcp-servers.json";
 const VAULT_FILENAME = "mcp-secrets.json";
 const VAULT_VERSION = 1;
+
+/** Logical store namespace bound into every MCP vault-entry AAD context. */
+const FRIDAY_MCP_VAULT_AAD_STORE = "friday-mcp-vault";
+
+/**
+ * Canonical AAD binding context for one MCP secret-vault entry.
+ *
+ * The vault map key (`refKey`) is the entry's stable identity, so binding it
+ * prevents a ciphertext being transplanted to a different vault key. Writer
+ * (save) and reader (load) both key off the same `refKey`.
+ */
+function mcpVaultAadContext(refKey: string): FridaySecretAadContext {
+  return { store: FRIDAY_MCP_VAULT_AAD_STORE, ref: refKey };
+}
 
 const SECRET_FIELDS = ["env", "headers"] as const;
 type SecretField = (typeof SECRET_FIELDS)[number];
@@ -129,6 +144,7 @@ export function createFridayMcpConfigStore(
     if (configs.length === 0) return configs;
 
     const vault = readVault();
+    let vaultDirty = false;
     const residue: FridayMcpSecretResidueEntry[] = [];
 
     // Resolve the master key lazily: only if at least one secret ref needs
@@ -159,7 +175,18 @@ export function createFridayMcpConfigStore(
               const activeKey = getKey();
               if (activeKey) {
                 try {
-                  record[key] = decryptSecret(envelope, activeKey);
+                  const { plaintext, rewrapped } = decryptSecretWithMigration(
+                    envelope,
+                    activeKey,
+                    mcpVaultAadContext(input.refKey),
+                  );
+                  record[key] = plaintext;
+                  if (rewrapped) {
+                    // Read-repair (SEC-SECRET-AAD-001): migrate the legacy v1
+                    // vault entry to v2 in place; flushed below.
+                    vault.entries[input.refKey] = rewrapped;
+                    vaultDirty = true;
+                  }
                   continue;
                 } catch {
                   // fall through to residue below (leave opaque ref in place)
@@ -173,6 +200,19 @@ export function createFridayMcpConfigStore(
           // server stays usable, but flag it so it does not silently persist.
           residue.push({ serverId: config.id, field, key, reason: "legacy-plaintext" });
         }
+      }
+    }
+
+    if (vaultDirty) {
+      // Best-effort persist of the AAD re-wrap so no legacy v1 entry survives.
+      try {
+        mkdirSync(dirname(vaultPath), { recursive: true });
+        writeFileSync(vaultPath, JSON.stringify(vault, null, 2), { encoding: "utf8", mode: 0o600 });
+      } catch (err) {
+        console.warn(
+          "[friday][mcp-config-store] AAD vault read-repair flush failed:",
+          err instanceof Error ? err.message : String(err),
+        );
       }
     }
 
@@ -224,7 +264,11 @@ export function createFridayMcpConfigStore(
           const refKey = randomBytes(16).toString("hex");
           // masterKey is guaranteed present here: `needsKey` is true whenever a
           // non-secret-ref value exists.
-          nextVault.entries[refKey] = encryptSecret(value, masterKey as Buffer);
+          nextVault.entries[refKey] = encryptSecret(
+            value,
+            masterKey as Buffer,
+            mcpVaultAadContext(refKey),
+          );
           rewritten[key] = buildFridaySecretRef(refKey);
         }
         next = { ...next, [field]: rewritten };

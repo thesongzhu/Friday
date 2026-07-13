@@ -1,6 +1,28 @@
 import type Database from "better-sqlite3";
 
 import type { FridaySecretRow } from "../model/friday-provider.types.js";
+import type { FridaySecretAadContext } from "../security/friday-secret-crypto.js";
+
+// ─── AAD context binding (SEC-SECRET-AAD-001) ───
+
+/** Logical store namespace bound into every `secrets`-table AAD context. */
+export const FRIDAY_SECRETS_AAD_STORE = "friday-secrets"; // pragma: allowlist secret
+
+/**
+ * Canonical AAD binding context for a `secrets` table row.
+ *
+ * Binds the STABLE primary key (`id`) and `scope`. The `id` is durable across
+ * `ref_key` renames and (because every writer's `id` is either insert-only or a
+ * deterministic function of its ref) always equals the persisted row's `id`, so
+ * writer and reader reconstruct byte-identical AAD. A ciphertext moved to a
+ * different row (different `id`) therefore fails to decrypt (fail-closed).
+ */
+export function fridaySecretAadContext(entity: {
+  readonly scope: string;
+  readonly id: string;
+}): FridaySecretAadContext {
+  return { store: FRIDAY_SECRETS_AAD_STORE, scope: entity.scope, ref: entity.id };
+}
 
 // ─── Repository interface ───
 

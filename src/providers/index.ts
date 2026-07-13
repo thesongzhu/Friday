@@ -74,7 +74,21 @@ export {
 } from "./cli/friday-provider-cli-backend.js";
 
 // Security
-export { encryptSecret, decryptSecret, getMasterKey, getProvisionedMasterKey, getStrictMasterKey, resetMasterKeyCache } from "./security/friday-secret-crypto.js";
+export {
+  encryptSecret,
+  decryptSecret,
+  decryptSecretWithMigration,
+  getMasterKey,
+  getProvisionedMasterKey,
+  getStrictMasterKey,
+  resetMasterKeyCache,
+  FRIDAY_SECRET_ENVELOPE_V2,
+  FRIDAY_SECRET_AAD_SCHEMA_VERSION,
+} from "./security/friday-secret-crypto.js";
+export type {
+  FridaySecretAadContext,
+  FridaySecretMigrationResult,
+} from "./security/friday-secret-crypto.js";
 export type {
   CreateFridayEphemeralSecretHandleRegistryDeps,
   FridayEphemeralSecretHandle,
@@ -88,7 +102,7 @@ export { createFridayProviderProfileRepository } from "./persistence/friday-prov
 export type { FridayAuthProfileRepository } from "./persistence/friday-auth-profile-repository.js";
 export { createFridayAuthProfileRepository } from "./persistence/friday-auth-profile-repository.js";
 export type { FridaySecretRepository, FridaySecretEntity } from "./persistence/friday-secret-repository.js";
-export { createFridaySecretRepository } from "./persistence/friday-secret-repository.js";
+export { createFridaySecretRepository, fridaySecretAadContext, FRIDAY_SECRETS_AAD_STORE } from "./persistence/friday-secret-repository.js";
 export type { FridayProviderUsageRepository } from "./persistence/friday-provider-usage-repository.js";
 export { createFridayProviderUsageRepository } from "./persistence/friday-provider-usage-repository.js";
 

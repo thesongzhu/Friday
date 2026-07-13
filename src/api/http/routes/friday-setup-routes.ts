@@ -4,7 +4,7 @@ import type { FridayRouteDefinition } from "../../model/friday-api-common.types.
 import type { FridaySqliteLayer } from "#state";
 import {
   createFridaySecretRepository,
-  decryptSecret,
+  decryptSecretWithMigration,
   detectFridayProviderKindFromApiKey,
   encryptSecret,
   FRIDAY_PROVIDER_KIND_SET,
@@ -12,6 +12,7 @@ import {
   type FridayProviderAuthMode,
   type FridayProviderKind,
   type FridayProviderService,
+  fridaySecretAadContext,
   getFridayProviderAuthModesForBackend,
   getFridayProviderCapability,
   getFridayProviderPreset,
@@ -1420,7 +1421,27 @@ function resolveSetupChannelSecretValue(deps: Pick<FridaySetupRoutesDeps, "db">,
     );
     if (!entity) return undefined;
     const envelope = JSON.parse(entity.encryptedValue) as FridayEncryptedEnvelope;
-    return decryptSecret(envelope, getStrictMasterKey());
+    const { plaintext, rewrapped } = decryptSecretWithMigration(
+      envelope,
+      getStrictMasterKey(),
+      fridaySecretAadContext(entity),
+    );
+    if (rewrapped) {
+      // Read-repair (SEC-SECRET-AAD-001): persist the v2 re-wrap; best-effort.
+      try {
+        deps.db.withWriteTransaction((db) => {
+          channelSecretRepository.updateById(db, {
+            secretId: entity.id,
+            encryptedValue: JSON.stringify(rewrapped),
+            keyId: "master-v1",
+            nowIso: new Date().toISOString(),
+          });
+        });
+      } catch {
+        // Non-fatal: the read already succeeded.
+      }
+    }
+    return plaintext;
   } catch (error) {
     console.warn("[friday][setup-routes] could not resolve channel secret for setup welcome:", error instanceof Error ? error.message : String(error));
     return undefined;
@@ -2780,9 +2801,14 @@ export function createFridaySetupRoutes(
           const masterKey = getStrictMasterKey();
           deps.db.withWriteTransaction((db) => {
             for (const write of secretWrites) {
-              const envelope = encryptSecret(write.plaintext, masterKey);
+              const secretId = `channel-secret:${write.refKey}`; // pragma: allowlist secret
+              const envelope = encryptSecret(
+                write.plaintext,
+                masterKey,
+                fridaySecretAadContext({ scope: FRIDAY_CHANNEL_SECRET_SCOPE, id: secretId }),
+              );
               channelSecretRepository.upsert(db, {
-                id: `channel-secret:${write.refKey}`,
+                id: secretId,
                 scope: FRIDAY_CHANNEL_SECRET_SCOPE,
                 refKey: write.refKey,
                 encryptedValue: JSON.stringify(envelope),

@@ -5,8 +5,10 @@ import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import {
   createFridaySecretRepository,
-  decryptSecret,
+  decryptSecretWithMigration,
   encryptSecret,
+  type FridayEncryptedEnvelope,
+  fridaySecretAadContext,
   getStrictMasterKey,
 } from "#providers";
 import type {
@@ -1069,14 +1071,35 @@ export function createFridayObservabilityApiService(
     if (!secret) {
       return null;
     }
-    const envelope = parseStoredJson<Parameters<typeof decryptSecret>[0] | null>(
+    const envelope = parseStoredJson<FridayEncryptedEnvelope | null>(
       secret.encryptedValue,
       null,
     );
     if (!envelope) {
       return null;
     }
-    return decryptSecret(envelope, getStrictMasterKey());
+    const { plaintext, rewrapped } = decryptSecretWithMigration(
+      envelope,
+      getStrictMasterKey(),
+      fridaySecretAadContext(secret),
+    );
+    if (rewrapped) {
+      // Read-repair (SEC-SECRET-AAD-001): persist the v2 re-wrap; best-effort.
+      try {
+        const now = deps.nowIso();
+        deps.db.withWriteTransaction((db) => {
+          secretRepo.updateById(db, {
+            secretId: secret.id,
+            encryptedValue: JSON.stringify(rewrapped),
+            keyId: "master-v1",
+            nowIso: now,
+          });
+        });
+      } catch {
+        // Non-fatal: the read already succeeded.
+      }
+    }
+    return plaintext;
   }
 
   function storeSecret(refKey: string, value: string): void {
@@ -1085,12 +1108,19 @@ export function createFridayObservabilityApiService(
       return;
     }
     const now = deps.nowIso();
+    const secretId = `${refKey}-secret`;
     deps.db.withWriteTransaction((db) => {
       secretRepo.upsert(db, {
-        id: `${refKey}-secret`,
+        id: secretId,
         scope: ALERT_DESTINATION_CREDENTIAL_SCOPE,
         refKey,
-        encryptedValue: JSON.stringify(encryptSecret(value, getStrictMasterKey())),
+        encryptedValue: JSON.stringify(
+          encryptSecret(
+            value,
+            getStrictMasterKey(),
+            fridaySecretAadContext({ scope: ALERT_DESTINATION_CREDENTIAL_SCOPE, id: secretId }),
+          ),
+        ),
         keyId: "master-v1",
         nowIso: now,
       });
