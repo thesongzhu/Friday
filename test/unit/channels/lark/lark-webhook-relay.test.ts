@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   createLarkWebhookRelayService,
@@ -9,6 +9,18 @@ function sign(timestamp: string, nonce: string, encryptKey: string, rawBody: str
   return createHash("sha256")
     .update(`${timestamp}${nonce}${encryptKey}${rawBody}`, "utf-8")
     .digest("hex");
+}
+
+/**
+ * Encrypt a plaintext payload with the exact Lark/Feishu event-encryption
+ * scheme the relay must decrypt: AES-256-CBC, key = sha256(encryptKey),
+ * random 16-byte IV prepended to the ciphertext, base64-encoded.
+ */
+function larkEncrypt(plaintext: string, encryptKey: string, iv = randomBytes(16)): string {
+  const key = createHash("sha256").update(encryptKey, "utf8").digest();
+  const cipher = createCipheriv("aes-256-cbc", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return Buffer.concat([iv, ciphertext]).toString("base64");
 }
 
 describe("lark-webhook-relay", () => {
@@ -150,6 +162,152 @@ describe("lark-webhook-relay", () => {
       accepted: false,
       statusCode: 403,
       code: "LARK_TOKEN_INVALID",
+    });
+  });
+
+  describe("encrypt mode (Encrypt Key configured)", () => {
+    it("decrypts and dispatches an encrypted im.message.receive_v1 event", async () => {
+      const relay = createLarkWebhookRelayService();
+      const received: Array<Record<string, unknown>> = [];
+      relay.setVerificationToken("vt");
+      relay.setEncryptKey("ek");
+      await relay.start((payload) => {
+        received.push(payload);
+      });
+
+      const event = {
+        schema: "2.0",
+        header: { event_type: "im.message.receive_v1", token: "vt" },
+        event: { message: { message_id: "om_enc_1" } },
+      };
+      const rawBody = JSON.stringify({ encrypt: larkEncrypt(JSON.stringify(event), "ek") });
+      const signature = sign("1700000000", "nonce-enc", "ek", rawBody);
+
+      // RED anchor: today the token check runs on the still-encrypted envelope
+      // (no header.token) → 401 LARK_TOKEN_MISSING and the handler never fires.
+      expect(
+        relay.handleHttpWebhook(rawBody, signature, "1700000000", "nonce-enc"),
+      ).toEqual({
+        accepted: true,
+        statusCode: 200,
+      });
+      expect(received).toHaveLength(1);
+      expect(received[0]).toEqual(event);
+    });
+
+    it("decrypts and answers an encrypted url_verification challenge", async () => {
+      const relay = createLarkWebhookRelayService();
+      relay.setVerificationToken("vt");
+      relay.setEncryptKey("ek");
+      await relay.start(() => {});
+
+      const challenge = {
+        type: "url_verification",
+        challenge: "enc-challenge-1",
+        token: "vt",
+      };
+      const rawBody = JSON.stringify({ encrypt: larkEncrypt(JSON.stringify(challenge), "ek") });
+      const signature = sign("1700000001", "nonce-enc2", "ek", rawBody);
+
+      expect(
+        relay.handleHttpWebhook(rawBody, signature, "1700000001", "nonce-enc2"),
+      ).toEqual({
+        accepted: true,
+        statusCode: 200,
+        challenge: "enc-challenge-1",
+      });
+    });
+
+    it("rejects an encrypted event whose signature is invalid (no-degrade)", async () => {
+      const relay = createLarkWebhookRelayService();
+      const received: Array<Record<string, unknown>> = [];
+      relay.setVerificationToken("vt");
+      relay.setEncryptKey("ek");
+      await relay.start((payload) => {
+        received.push(payload);
+      });
+
+      const event = {
+        schema: "2.0",
+        header: { event_type: "im.message.receive_v1", token: "vt" },
+        event: {},
+      };
+      const rawBody = JSON.stringify({ encrypt: larkEncrypt(JSON.stringify(event), "ek") });
+      const wrongSignature = sign("1700000000", "nonce-enc", "different-key", rawBody);
+
+      expect(
+        relay.handleHttpWebhook(rawBody, wrongSignature, "1700000000", "nonce-enc"),
+      ).toEqual({
+        accepted: false,
+        statusCode: 403,
+        code: "LARK_SIGNATURE_INVALID",
+      });
+      expect(received).toHaveLength(0);
+    });
+
+    it("rejects an encrypted event missing signature headers (no-degrade)", async () => {
+      const relay = createLarkWebhookRelayService();
+      relay.setVerificationToken("vt");
+      relay.setEncryptKey("ek");
+      await relay.start(() => {});
+
+      const event = {
+        schema: "2.0",
+        header: { event_type: "im.message.receive_v1", token: "vt" },
+        event: {},
+      };
+      const rawBody = JSON.stringify({ encrypt: larkEncrypt(JSON.stringify(event), "ek") });
+
+      expect(relay.handleHttpWebhook(rawBody)).toEqual({
+        accepted: false,
+        statusCode: 401,
+        code: "LARK_SIGNATURE_MISSING",
+      });
+    });
+
+    it("fails closed on a signature-valid but undecryptable envelope", async () => {
+      const relay = createLarkWebhookRelayService();
+      const received: Array<Record<string, unknown>> = [];
+      relay.setVerificationToken("vt");
+      relay.setEncryptKey("ek");
+      await relay.start((payload) => {
+        received.push(payload);
+      });
+
+      // Valid base64, correct signature over rawBody, but the ciphertext block
+      // is malformed (16-byte IV + a non-block-aligned tail) → cannot decrypt.
+      const tampered = Buffer.concat([Buffer.alloc(16, 7), Buffer.from("garbage-xx", "utf8")]).toString("base64");
+      const rawBody = JSON.stringify({ encrypt: tampered });
+      const signature = sign("1700000002", "nonce-enc3", "ek", rawBody);
+
+      const result = relay.handleHttpWebhook(rawBody, signature, "1700000002", "nonce-enc3");
+      expect(result.accepted).toBe(false);
+      expect(result.statusCode).toBeGreaterThanOrEqual(400);
+      expect(result.statusCode).toBeLessThan(500);
+      expect(result.code).toBe("LARK_DECRYPT_FAILED");
+      expect(received).toHaveLength(0);
+    });
+
+    it("leaves the non-encrypt plaintext path unchanged (regression)", async () => {
+      const relay = createLarkWebhookRelayService();
+      const received: Array<Record<string, unknown>> = [];
+      relay.setVerificationToken("vt");
+      // No encrypt key: plaintext delivery, no signature headers required.
+      await relay.start((payload) => {
+        received.push(payload);
+      });
+
+      const rawBody = JSON.stringify({
+        schema: "2.0",
+        header: { event_type: "im.message.receive_v1", token: "vt" },
+        event: { message: { message_id: "om_plain_1" } },
+      });
+
+      expect(relay.handleHttpWebhook(rawBody)).toEqual({
+        accepted: true,
+        statusCode: 200,
+      });
+      expect(received).toHaveLength(1);
     });
   });
 });
