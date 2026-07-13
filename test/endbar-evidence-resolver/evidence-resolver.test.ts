@@ -92,7 +92,7 @@ describe("evidence resolver — positive", () => {
 
 describe("evidence resolver — hardening controls", () => {
   it("EVIDENCE_PATH_ESCAPE: rejects a relative path that escapes root", () => {
-    const secret = "outside-secret";
+    const secret = "outside-secret"; // pragma: allowlist secret
     writeFileSync(join(workspace, "escape.txt"), secret);
     const manifest: EvidenceManifest = {
       root,
@@ -112,7 +112,7 @@ describe("evidence resolver — hardening controls", () => {
   });
 
   it("EVIDENCE_PATH_ESCAPE: rejects an absolute path outside root", () => {
-    const secret = "abs-outside-secret";
+    const secret = "abs-outside-secret"; // pragma: allowlist secret
     const absOutside = join(workspace, "abs.txt");
     writeFileSync(absOutside, secret);
     const manifest: EvidenceManifest = {
@@ -128,7 +128,7 @@ describe("evidence resolver — hardening controls", () => {
   });
 
   it("EVIDENCE_SYMLINK_REJECTED: rejects a symlink component pointing outside root", () => {
-    const secret = "symlink-target-secret";
+    const secret = "symlink-target-secret"; // pragma: allowlist secret
     const outsideTarget = join(workspace, "secret.txt");
     writeFileSync(outsideTarget, secret);
     symlinkSync(outsideTarget, join(root, "link.txt"));
