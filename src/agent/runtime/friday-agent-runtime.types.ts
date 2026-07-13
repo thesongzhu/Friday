@@ -295,6 +295,13 @@ export interface FridayAgentUsageTurn {
   inputTokens: number;
   outputTokens: number;
   costUsd?: number;
+  /**
+   * The provider's own request identifier for this turn, when the completed
+   * provider response surfaced one. Threaded into recordUsage so the write is
+   * idempotent on it and binds a durable receipt. Absent/null when no request-id
+   * was surfaced — recorded without a receipt, as before (back-compat).
+   */
+  requestId?: string | null;
   /** Anthropic prompt cache: tokens read from cache. */
   cacheReadInputTokens?: number;
   /** Anthropic prompt cache: tokens written to cache. */
