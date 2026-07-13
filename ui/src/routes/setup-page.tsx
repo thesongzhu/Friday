@@ -6,6 +6,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
 import { providersApi } from "@/lib/api/providers";
+import { saveProviderWithValidation } from "@/lib/providers";
 import { setupApi } from "@/lib/api/setup";
 import { discoveryApi } from "@/lib/api/discovery";
 import type { DiscoveredProgram, IntegrationRecommendation } from "@/lib/api/discovery";
@@ -18,7 +19,6 @@ import {
 } from "@/lib/assistant/starter-tasks";
 import type {
   AuthMode,
-  DetectProviderResponse,
   ProviderApi,
   ProviderKind,
   SetupStepId,
@@ -626,38 +626,6 @@ export function SetupPage() {
     };
   }
 
-  function buildProviderSaveDraftFromDetection(result: DetectProviderResponse): ProviderSaveDraft {
-    const detectedKind = result.kind as ProviderKind;
-    return {
-      kind: detectedKind,
-      name: `${providerDisplayName(detectedKind)} Provider`,
-      baseUrl: result.baseUrl,
-      authMode: result.authMode,
-      api: result.api,
-      apiKey: providerApiKey.trim() || undefined,
-      supportedModels: result.availableModels,
-      defaultModel: result.defaultModel ?? result.availableModels[0] ?? undefined,
-    };
-  }
-
-  function applyDetectedProvider(result: DetectProviderResponse): void {
-    const detectedKind = result.kind as ProviderKind;
-    setProviderKind(detectedKind);
-    const tpl = providerTemplates.find((t) => t.providerKind === detectedKind);
-    if (tpl?.regionTag === "china" && providerRegion !== "china") {
-      setProviderRegion("china");
-    } else if (tpl?.regionTag !== "china" && providerRegion !== "international") {
-      setProviderRegion("international");
-    }
-    setProviderName(`${providerDisplayName(detectedKind)} Provider`);
-    setProviderBaseUrl(result.baseUrl);
-    setProviderApi(result.api);
-    setProviderAuthMode(result.authMode);
-    setProviderModels(result.availableModels);
-    setProviderDefaultModel(result.defaultModel ?? result.availableModels[0] ?? "");
-    setProviderValidated(result.validated);
-  }
-
   async function saveProviderDraft(
     draft: ProviderSaveDraft,
   ): Promise<{ validation: FridayProviderValidationState | undefined }> {
@@ -673,12 +641,13 @@ export function SetupPage() {
       enabled: true,
     };
 
-    const response = existingSameKind
-      ? await providersApi.update(existingSameKind.id, commonPayload)
-      : await providersApi.create({
-        kind: draft.kind,
-        ...commonPayload,
-      });
+    // Validate-before-persist via the same live create/update path the Settings
+    // page uses (validateOnSave: true). This is NOT the retired
+    // POST /v1/providers/detect route.
+    const response = await saveProviderWithValidation(providersApi, existingSameKind, {
+      kind: draft.kind,
+      ...commonPayload,
+    });
     const provider = response.provider;
 
     await providersApi.setRouting({
@@ -816,19 +785,10 @@ export function SetupPage() {
     }
   }
 
-  // ── Mutations (all kept intact) ──
+  // ── Mutations ──
 
-  const detectProviderMutation = useMutation({
-    mutationFn: () => {
-      // Validate the provider the user selected. This avoids surprising switches
-      // between OpenAI-compatible providers that share similar key prefixes.
-      return setupApi.detectProvider({
-        kind: providerKind,
-        apiKey: providerApiKey.trim() || undefined,
-        baseUrl: providerBaseUrl.trim() || undefined,
-        authMode: providerAuthMode,
-      });
-    },
+  const saveProviderMutation = useMutation({
+    mutationFn: (draft?: ProviderSaveDraft) => saveProviderDraft(draft ?? buildCurrentProviderSaveDraft()),
     onMutate: () => {
       setProviderFeedback({
         status: "checking",
@@ -836,31 +796,6 @@ export function SetupPage() {
         warnings: [],
       });
     },
-    onSuccess: (result) => {
-      applyDetectedProvider(result);
-
-      const detectedName = providerDisplayName(result.kind as ProviderKind);
-      if (result.warnings.length > 0) {
-        toast.warning(result.warnings.join(" · "));
-      } else {
-        toast.success(localize(locale, `${detectedName} 已验证`, `${detectedName} validated`));
-      }
-    },
-    onError: (error) => {
-      setProviderValidated(false);
-      const message = error instanceof Error ? error.message : localize(locale, "提供方检测失败", "Provider detection failed");
-      setProviderFeedback({
-        status: "error",
-        kind: providerKind,
-        message,
-        warnings: [],
-      });
-      toast.error(message);
-    },
-  });
-
-  const saveProviderMutation = useMutation({
-    mutationFn: (draft?: ProviderSaveDraft) => saveProviderDraft(draft ?? buildCurrentProviderSaveDraft()),
     onSuccess: () => {
       toast.success(localize(locale, "提供方已保存", "Provider saved"));
       setProviderValidated(true);
@@ -868,7 +803,17 @@ export function SetupPage() {
       void queryClient.invalidateQueries({ queryKey: ["shell", "provider-truth"] });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : localize(locale, "保存提供方失败", "Failed to save provider"));
+      // Validate-before-persist rejected the key (e.g. invalid / unreachable):
+      // it was NOT persisted. Surface the invalid state, do not advance.
+      setProviderValidated(false);
+      const message = error instanceof Error ? error.message : localize(locale, "保存提供方失败", "Failed to save provider");
+      setProviderFeedback({
+        status: "error",
+        kind: providerKind,
+        message,
+        warnings: [],
+      });
+      toast.error(message);
     },
   });
 
@@ -1227,44 +1172,43 @@ export function SetupPage() {
     }
   }, [enabledChannels, expandedChannel, feishuRegistration.status]);
 
-  function detectProviderThenSave(options: { advance: boolean }): void {
+  function validateAndSaveProvider(options: { advance: boolean }): void {
     if (!providerApiKey.trim()) {
       toast.error(localize(locale, "请先输入 API 密钥", "Please enter an API key first"));
       return;
     }
-    detectProviderMutation.mutate(undefined, {
-      onSuccess: (result) => {
-        saveProviderMutation.mutate(
-          buildProviderSaveDraftFromDetection(result),
-          {
-            onSuccess: ({ validation }) => {
-              const verdict = classifyFridaySaveProviderValidation(validation);
-              const detectedProviderName = providerDisplayName(result.kind as ProviderKind);
-              if (verdict === "validation_failed") {
-                setProviderFeedback({
-                  status: "error",
-                  kind: result.kind as ProviderKind,
-                  message: localize(
-                    locale,
-                    `${detectedProviderName} 已保存，但后端验证未通过。请到设置中重新验证；详情可通过 doctor 检查。`,
-                    `${detectedProviderName} was saved, but backend validation did not pass. Re-validate from Settings; check the doctor report for details.`,
-                  ),
-                  warnings: result.warnings,
-                });
-              } else {
-                setProviderFeedback({
-                  status: "saved",
-                  kind: result.kind as ProviderKind,
-                  defaultModel: result.defaultModel ?? result.availableModels[0],
-                  warnings: result.warnings,
-                });
-              }
-              if (options.advance) {
-                goNext();
-              }
-            },
-          },
-        );
+    // Validate-before-persist via the SAME live create path the Settings page
+    // uses (providersApi.create/update with validateOnSave:true). Friday
+    // validates the selected provider and will not switch to another provider
+    // automatically; this no longer depends on the retired /v1/providers/detect
+    // route (which is fail-closed 503 in the default runtime). An invalid key is
+    // rejected here (handled by the mutation's onError) and never persisted.
+    saveProviderMutation.mutate(buildCurrentProviderSaveDraft(), {
+      onSuccess: ({ validation }) => {
+        const verdict = classifyFridaySaveProviderValidation(validation);
+        const savedProviderName = providerDisplayName(providerKind);
+        if (verdict === "validation_failed") {
+          setProviderFeedback({
+            status: "error",
+            kind: providerKind,
+            message: localize(
+              locale,
+              `${savedProviderName} 已保存，但后端验证未通过。请到设置中重新验证；详情可通过 doctor 检查。`,
+              `${savedProviderName} was saved, but backend validation did not pass. Re-validate from Settings; check the doctor report for details.`,
+            ),
+            warnings: [],
+          });
+        } else {
+          setProviderFeedback({
+            status: "saved",
+            kind: providerKind,
+            defaultModel: providerDefaultModel.trim() || providerModels[0],
+            warnings: [],
+          });
+        }
+        if (options.advance) {
+          goNext();
+        }
       },
     });
   }
@@ -1700,15 +1644,13 @@ export function SetupPage() {
 
     const providerKinds = providerRegion === "china" ? chinaKinds : internationalKinds;
     const selectedProviderName = providerDisplayName(providerKind);
-    const providerBusy = detectProviderMutation.isPending || saveProviderMutation.isPending;
+    const providerBusy = saveProviderMutation.isPending;
     const useMyPlanAvailable = supportsUseMyPlan(providerKind, selectedTemplate);
     const keyConnectionAvailable = supportsKeyConnection(selectedTemplate);
     const oauthBusy = openAICodexOAuth.status === "starting" || openAICodexOAuth.status === "completing" || routingUpdatePending;
     const isUseMyPlanMode = providerConnectionMode === "use-my-plan" && useMyPlanAvailable;
     const providerPrimaryLabel = providerBusy
-      ? (detectProviderMutation.isPending
-        ? localize(locale, "正在验证", "Validating")
-        : localize(locale, "正在保存", "Saving"))
+      ? localize(locale, "正在验证并保存", "Validating & saving")
       : isUseMyPlanMode
         ? oauthBusy
           ? (openAICodexOAuth.status === "completing" ? localize(locale, "正在完成授权", "Completing authorization") : localize(locale, "正在连接", "Connecting"))
@@ -2040,7 +1982,7 @@ export function SetupPage() {
                 void startOpenAICodexDeviceOAuth();
               }
             } else if (providerApiKey.trim() && !providerValidated) {
-              detectProviderThenSave({ advance: false });
+              validateAndSaveProvider({ advance: false });
             } else if (providerValidated) {
               goNext();
             } else {
