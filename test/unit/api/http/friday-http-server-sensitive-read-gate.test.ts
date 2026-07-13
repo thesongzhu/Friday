@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createFridayHttpRouteRegistry,
   createFridayHttpServer,
+  createFridaySystemRoutes,
   type FridayAuthMiddlewareFactory,
   type FridayHttpServer,
   type FridayRealtimeWsGateway,
@@ -65,6 +66,75 @@ function makeBearerStubMiddleware(
     enforceRateLimit: () => ({ passed: true as const }),
   };
 }
+
+// SEC-NET-PRINCIPAL-001: build the REAL `/v1/system` control-plane read routes
+// (createFridaySystemRoutes) backed by counting stub services, so the sensitive-read
+// floor is exercised against the actual route handlers. `calls` records whether a
+// handler body executed (must stay 0 for anonymous callers — no owner data leaks).
+interface SystemReadCalls {
+  session: number;
+  state: number;
+  approvals: number;
+  events: number;
+}
+
+function makeCountingSystemReadRoutes(calls: SystemReadCalls) {
+  const deps = {
+    session: {
+      get: async () => {
+        calls.session += 1;
+        // getSession() exposes the owner workspace path + companion/remote posture.
+        return { session: { id: "sess-1", workspaceRoot: "/home/owner/workspace" } };
+      },
+    },
+    state: {
+      get: async () => {
+        calls.state += 1;
+        // getState() aggregates approvals + remote devices + remote sessions — the exact
+        // posture the /v1/system/remote/* floor (#1200) gates. Leaving it anonymous is a bypass.
+        return {
+          snapshot: {
+            approvals: [{ id: "appr-1" }],
+            remoteDevices: [{ id: "dev-1" }],
+            remoteSessions: [{ id: "rsess-1" }],
+          },
+        };
+      },
+    },
+    approvals: {
+      list: () => {
+        calls.approvals += 1;
+        return { items: [{ id: "appr-1", action: "*", decision: "allow" }] };
+      },
+      update: () => {
+        throw new Error("unused in sensitive-read floor test");
+      },
+    },
+    events: {
+      list: () => {
+        calls.events += 1;
+        return { items: [{ seq: 1, kind: "system.event" }] };
+      },
+      subscribe: () => () => {},
+    },
+  };
+  const wantedReadOps = new Set([
+    "system.session.get",
+    "system.state.get",
+    "system.approvals.list",
+    "system.events.stream",
+  ]);
+  return createFridaySystemRoutes(
+    deps as unknown as Parameters<typeof createFridaySystemRoutes>[0],
+  ).filter((route) => wantedReadOps.has(route.operationId));
+}
+
+const SYSTEM_READ_PATHS: readonly string[] = [
+  "/v1/system/state",
+  "/v1/system/approvals",
+  "/v1/system/events?stream=false",
+  "/v1/system/session",
+];
 
 describe("isFridaySensitiveReadRoute", () => {
   it("matches the sensitive prefixes and their sub-paths", () => {
@@ -144,6 +214,34 @@ describe("isFridaySensitiveReadRoute", () => {
     expect(isFridaySensitiveReadRoute("/v1/providers/budgetx")).toBe(false);
     expect(isFridaySensitiveReadRoute("/v1/system/remote/devicesx")).toBe(false);
     expect(isFridaySensitiveReadRoute("/v1/system/remote/sessionsx")).toBe(false);
+  });
+
+  it("SEC-NET-PRINCIPAL-001: classifies the sibling /v1/system control-plane reads (state/approvals/events/session)", () => {
+    // These are the systemService-backed reads at the SAME trust boundary as the already-floored
+    // /v1/system/remote/devices + /v1/system/remote/sessions (#1200). They were left anonymous;
+    // /v1/system/state in particular aggregates approvals + remoteDevices + remoteSessions, which
+    // anonymously bypasses the remote/* floor.
+    for (const path of [
+      "/v1/system/state",
+      "/v1/system/approvals",
+      "/v1/system/events",
+      "/v1/system/session",
+    ]) {
+      expect(FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES).toContain(path);
+      expect(isFridaySensitiveReadRoute(path)).toBe(true);
+      expect(isFridaySensitiveReadRoute(`${path}/:id`)).toBe(true);
+    }
+
+    // Trailing-slash boundary: textual-prefix siblings must NOT be over-floored.
+    for (const sibling of [
+      "/v1/system/statex",
+      "/v1/system/approvalsx",
+      "/v1/system/eventsx",
+      "/v1/system/sessionx",
+      "/v1/system/sessions",
+    ]) {
+      expect(isFridaySensitiveReadRoute(sibling)).toBe(false);
+    }
   });
 });
 
@@ -517,5 +615,74 @@ describe("FridayHttpServer sensitive-read floor", () => {
     const response = await fetch(`${baseUrl}/v1/agent/runs`);
     expect(response.status).toBe(200);
     expect(handlerCalls).toBe(1);
+  });
+
+  it("SEC-NET-PRINCIPAL-001 negative: anonymous GET on /v1/system control-plane reads → 401 before the REAL handlers run", async () => {
+    const calls: SystemReadCalls = { session: 0, state: 0, approvals: 0, events: 0 };
+    await startWith((routes) => {
+      for (const route of makeCountingSystemReadRoutes(calls)) {
+        routes.register(route);
+      }
+    });
+
+    for (const path of SYSTEM_READ_PATHS) {
+      const response = await fetch(`${baseUrl}${path}`);
+      expect(response.status).toBe(401);
+      const body = (await response.json()) as { ok: false; error: { code: string } };
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
+    }
+    // Critical: none of the real system read handlers executed for an anonymous caller.
+    expect(calls).toEqual({ session: 0, state: 0, approvals: 0, events: 0 });
+  });
+
+  it("SEC-NET-PRINCIPAL-001 bypass: anonymous GET /v1/system/state must not leak remote-device/approvals posture", async () => {
+    const calls: SystemReadCalls = { session: 0, state: 0, approvals: 0, events: 0 };
+    await startWith((routes) => {
+      for (const route of makeCountingSystemReadRoutes(calls)) {
+        routes.register(route);
+      }
+    });
+
+    // getState() aggregates approvals + remoteDevices + remoteSessions (the exact posture
+    // /v1/system/remote/* already gates). The floor must deny it before the handler builds
+    // the snapshot — otherwise an anonymous caller reads that posture via /v1/system/state.
+    const response = await fetch(`${baseUrl}/v1/system/state`);
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as { ok: false; error: { code: string } };
+    expect(body.error.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
+    expect(calls.state).toBe(0);
+  });
+
+  it("SEC-NET-PRINCIPAL-001 no-degrade: a bound bearer still reaches the REAL /v1/system read handlers → 200 with owner data", async () => {
+    const calls: SystemReadCalls = { session: 0, state: 0, approvals: 0, events: 0 };
+    await startWith(
+      (routes) => {
+        for (const route of makeCountingSystemReadRoutes(calls)) {
+          routes.register(route);
+        }
+      },
+      {
+        "real-token-abc": {
+          principalId: "user:alice",
+          userId: "11111111-1111-1111-1111-111111111111",
+          tenantId: "22222222-2222-2222-2222-222222222222",
+          role: "viewer",
+          scopes: ["session.read"],
+          tokenId: "33333333-3333-3333-3333-333333333333",
+        },
+      },
+    );
+
+    for (const path of SYSTEM_READ_PATHS) {
+      const response = await fetch(`${baseUrl}${path}`, {
+        headers: { Authorization: "Bearer real-token-abc" },
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { ok: true; data: Record<string, unknown> };
+      expect(body.ok).toBe(true);
+    }
+    // Every real system read handler executed exactly once for the bound owner — access unchanged.
+    expect(calls).toEqual({ session: 1, state: 1, approvals: 1, events: 1 });
   });
 });
