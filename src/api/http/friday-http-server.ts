@@ -453,6 +453,236 @@ function isOriginAllowed(origin: string, allowedOrigins: readonly string[]): boo
 }
 
 /**
+ * Decide whether a WebSocket upgrade carrying this `Origin` may proceed.
+ *
+ * Browsers always attach an `Origin`; native / non-browser clients never do.
+ * A cross-site browser origin is a cross-site WebSocket hijacking attempt and
+ * MUST be rejected even when the CORS allowlist is empty (the production
+ * default) — but without breaking the legitimate local UI or native app. So an
+ * Origin, when present, is trusted only if it is (in order):
+ *   1. an explicit allowlist match (or "*"),
+ *   2. the same host as the request's `Host` header (true same-origin), or
+ *   3. a loopback origin (localhost / 127.0.0.1 / ::1) — the local UI or a dev
+ *      server on this machine, never a remote attacker.
+ * An absent Origin is decided by the caller (allowed: non-browser client).
+ */
+function isTrustedWsOrigin(
+  origin: string,
+  hostHeader: string | undefined,
+  allowedOrigins: readonly string[],
+): boolean {
+  if (isOriginAllowed(origin, allowedOrigins)) return true;
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (hostHeader && parsed.host === hostHeader.toLowerCase()) return true;
+  const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+  return LOOPBACK_HOSTNAMES.has(parsed.hostname);
+}
+
+// ─── RFC 6455 inbound (client→server) frame decoding ─────────────────────────
+
+/** Reassembly cursor for a single realtime WebSocket connection (RFC 6455 §5.4). */
+interface WsFrameReaderState {
+  /** Bytes received but not yet fully parsed into frames. */
+  buffer: Buffer;
+  /** Opcode (0x1 text / 0x2 binary) of the in-progress fragmented message, or null. */
+  fragmentedOpcode: number | null;
+  /** Payload chunks accumulated for the in-progress message. */
+  fragmentedChunks: Buffer[];
+  /** Total bytes accumulated for the in-progress message. */
+  fragmentedSize: number;
+  /** Number of frames accumulated for the in-progress message (bounds empty-fragment floods). */
+  fragmentedCount: number;
+}
+
+/**
+ * Maximum frames a single fragmented message may span. A legitimate client
+ * splits a message into a handful of fragments; this bound tears down a
+ * connection that streams unbounded (e.g. zero-length) continuation frames —
+ * which do not advance the byte-size cap — within a fixed number of frames.
+ */
+const MAX_WS_FRAGMENTS = 1024;
+
+/** An event surfaced by {@link readWsClientFrames} for the connection loop to act on. */
+type WsClientFrameEvent =
+  | { type: "message"; opcode: number; payload: Buffer } // complete data message (0x1/0x2)
+  | { type: "ping"; payload: Buffer }
+  | { type: "pong" }
+  | { type: "close" }
+  | { type: "protocol-error"; code: number } // close with `code` then drop
+  | { type: "drop" }; // silently destroy (oversized frame)
+
+/**
+ * Validate a client frame header against RFC 6455. Returns the close code to
+ * fail the connection with, or null when the header is well-formed.
+ */
+function wsClientFrameHeaderViolation(
+  fin: boolean,
+  rsv: number,
+  opcode: number,
+  masked: boolean,
+  payloadLen: number,
+): number | null {
+  // §5.2 reserved bits must be zero when no extension is negotiated.
+  if (rsv !== 0) return 1002;
+  // §5.2 opcodes 0x3-0x7 and 0xb-0xf are reserved.
+  const known =
+    opcode === 0x0 ||
+    opcode === 0x1 ||
+    opcode === 0x2 ||
+    opcode === 0x8 ||
+    opcode === 0x9 ||
+    opcode === 0xa;
+  if (!known) return 1002;
+  // §5.1 client→server frames MUST be masked.
+  if (!masked) return 1002;
+  // §5.5 control frames MUST be ≤125 bytes and MUST NOT be fragmented.
+  if (opcode >= 0x8 && (payloadLen > 125 || !fin)) return 1002;
+  return null;
+}
+
+/**
+ * Fold a data frame (0x0 continuation / 0x1 text / 0x2 binary) into the
+ * reassembly `state`. Returns the completed message when this frame finished
+ * one, an `errorCode` on a fragmentation protocol violation, or `{}` while more
+ * fragments are still expected.
+ */
+function assembleWsDataFrame(
+  state: WsFrameReaderState,
+  opcode: number,
+  fin: boolean,
+  payload: Buffer,
+  maxMessageSize: number,
+): { done?: { opcode: number; payload: Buffer }; errorCode?: number } {
+  if (opcode === 0x0) {
+    // Continuation — a data message MUST already be in progress.
+    if (state.fragmentedOpcode === null) return { errorCode: 1002 };
+    state.fragmentedChunks.push(Buffer.from(payload));
+    state.fragmentedSize += payload.length;
+    state.fragmentedCount += 1;
+    // Bound BOTH assembled bytes AND fragment COUNT. A zero-length continuation
+    // adds 0 bytes, so the size cap alone would never trip on an empty-fragment
+    // flood — the count cap tears the connection down within MAX_WS_FRAGMENTS.
+    if (state.fragmentedSize > maxMessageSize || state.fragmentedCount > MAX_WS_FRAGMENTS) {
+      return { errorCode: 1009 };
+    }
+    if (!fin) return {}; // more fragments to come
+    const done = {
+      opcode: state.fragmentedOpcode,
+      payload: Buffer.concat(state.fragmentedChunks),
+    };
+    resetWsFragmentState(state);
+    return { done };
+  }
+  // New data frame — MUST NOT arrive while a message is being assembled.
+  if (state.fragmentedOpcode !== null) return { errorCode: 1002 };
+  if (fin) return { done: { opcode, payload } };
+  // Begin a fragmented message.
+  state.fragmentedOpcode = opcode;
+  state.fragmentedChunks = [Buffer.from(payload)];
+  state.fragmentedSize = payload.length;
+  state.fragmentedCount = 1;
+  if (state.fragmentedSize > maxMessageSize) return { errorCode: 1009 };
+  return {};
+}
+
+/** Clear a connection's in-progress fragmentation state (on completion or teardown). */
+function resetWsFragmentState(state: WsFrameReaderState): void {
+  state.fragmentedOpcode = null;
+  state.fragmentedChunks = [];
+  state.fragmentedSize = 0;
+  state.fragmentedCount = 0;
+}
+
+/**
+ * Pull every fully-buffered client frame out of `state.buffer`, unmasking and
+ * reassembling per RFC 6455 §5. Consumes parsed bytes from `state.buffer` and
+ * yields one {@link WsClientFrameEvent} per frame/message. Stops (returns) when
+ * only a partial frame remains, leaving it buffered for the next chunk.
+ */
+function* readWsClientFrames(
+  state: WsFrameReaderState,
+  maxFrameSize: number,
+  maxMessageSize: number,
+): Generator<WsClientFrameEvent> {
+  while (state.buffer.length >= 2) {
+    const buffer = state.buffer;
+    const firstByte = buffer[0]!;
+    const secondByte = buffer[1]!;
+    const fin = (firstByte & 0x80) !== 0;
+    const rsv = firstByte & 0x70;
+    const opcode = firstByte & 0x0f;
+    const masked = (secondByte & 0x80) !== 0;
+    let payloadLen = secondByte & 0x7f;
+    let offset = 2;
+
+    if (payloadLen === 126) {
+      if (buffer.length < 4) return; // wait for more data
+      payloadLen = buffer.readUInt16BE(2);
+      offset = 4;
+    } else if (payloadLen === 127) {
+      if (buffer.length < 10) return;
+      payloadLen = Number(buffer.readBigUInt64BE(2));
+      offset = 10;
+    }
+
+    // Reject malformed/hostile headers before buffering the (possibly large) payload.
+    const violation = wsClientFrameHeaderViolation(fin, rsv, opcode, masked, payloadLen);
+    if (violation !== null) {
+      yield { type: "protocol-error", code: violation };
+      return;
+    }
+
+    // Guard against oversized frames (RFC 6455 §7.4.1). Prior behavior: silent drop.
+    if (payloadLen > maxFrameSize) {
+      yield { type: "drop" };
+      return;
+    }
+
+    // Client frames are always masked (validated above) → 4-byte masking key.
+    const totalLen = offset + 4 + payloadLen;
+    if (buffer.length < totalLen) return; // wait for the full frame
+
+    const maskKey = buffer.subarray(offset, offset + 4);
+    const payload = buffer.subarray(offset + 4, totalLen);
+    for (let i = 0; i < payload.length; i++) {
+      payload[i] = payload[i]! ^ maskKey[i % 4]!;
+    }
+
+    // Consume the frame from the buffer.
+    state.buffer = buffer.subarray(totalLen);
+
+    // Control frames are handled independently of fragmentation state.
+    if (opcode === 0x8) {
+      yield { type: "close" };
+      return;
+    }
+    if (opcode === 0x9) {
+      yield { type: "ping", payload };
+      continue;
+    }
+    if (opcode === 0xa) {
+      yield { type: "pong" };
+      continue;
+    }
+
+    // Data frame (0x0 / 0x1 / 0x2): reassemble.
+    const res = assembleWsDataFrame(state, opcode, fin, payload, maxMessageSize);
+    if (res.errorCode !== undefined) {
+      yield { type: "protocol-error", code: res.errorCode };
+      return;
+    }
+    if (res.done) {
+      yield { type: "message", opcode: res.done.opcode, payload: res.done.payload };
+    }
+  }
+}
+
+/**
  * Build CORS headers for the given origin.
  */
 function buildCorsHeaders(
@@ -1046,9 +1276,14 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       return;
     }
 
-    // Validate Origin header to prevent cross-site WebSocket hijacking
-    const origin = req.headers.origin ?? "";
-    if (corsOrigins.length > 0 && origin && !isOriginAllowed(origin, corsOrigins)) {
+    // Reject cross-site WebSocket hijacking. A browser always sends `Origin`;
+    // native / non-browser clients never do. When an Origin IS present it must
+    // be trusted (allowlist / same-origin / loopback) — this holds even for the
+    // DEFAULT empty allowlist, where the previous `corsOrigins.length > 0` guard
+    // let ANY hostile cross-site page through. A missing Origin is a non-browser
+    // client and is allowed, so the local UI and native app keep working.
+    const origin = req.headers.origin;
+    if (origin && !isTrustedWsOrigin(origin, req.headers.host, corsOrigins)) {
       socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
@@ -1124,114 +1359,117 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       clearInterval(pingInterval);
       unsubscribe?.();
       wsConnections.delete(socket);
+      // Drop any in-progress fragmentation buffers so they cannot leak past teardown.
+      resetWsFragmentState(frameState);
     }
 
-    // Process any data that arrived during the upgrade (head buffer)
-    let buffer = head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
+    // Inbound frame state: accumulated bytes + RFC 6455 §5.4 reassembly cursor.
+    const frameState: WsFrameReaderState = {
+      buffer: head.length > 0 ? Buffer.from(head) : Buffer.alloc(0),
+      fragmentedOpcode: null,
+      fragmentedChunks: [],
+      fragmentedSize: 0,
+      fragmentedCount: 0,
+    };
+    const MAX_WS_FRAME_SIZE = 1_048_576; // 1 MB — single frame ceiling (§7.4.1 → 1009)
+    const MAX_WS_MESSAGE_SIZE = 4_194_304; // 4 MB — assembled (multi-fragment) message ceiling
+    const MAX_WS_BUFFER_SIZE = 4_194_304; // 4 MB — accumulated un-parsed buffer ceiling
+
+    /**
+     * Dispatch a complete TEXT message: rate-limit, strict-UTF-8 decode (§8.1),
+     * then JSON-parse and forward to the gateway. Returns true when the
+     * connection was torn down (the caller must then stop reading).
+     */
+    function handleCompletedTextMessage(payload: Buffer): boolean {
+      // Rate limit: drop connection if client sends too many frames.
+      if (!checkWsRateLimit()) {
+        console.warn(`[friday][http-server] WebSocket rate limit exceeded for conn ${connId}`);
+        const errFrame: FridayRealtimeServerFrame = {
+          type: "error",
+          code: "RATE_LIMITED",
+          message: "Too many frames per second",
+          retryable: true,
+        };
+        socket.write(encodeWsTextFrame(JSON.stringify(errFrame)));
+        sendWsClose(socket, 1008); // Policy Violation
+        cleanup();
+        socket.destroy();
+        return true;
+      }
+
+      // §8.1 text frames MUST be valid UTF-8. Reject (1007) before JSON.parse
+      // rather than silently substituting U+FFFD.
+      let text: string;
+      try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(payload);
+      } catch {
+        sendWsClose(socket, 1007); // Invalid frame payload data
+        cleanup();
+        socket.destroy();
+        return true;
+      }
+
+      try {
+        const clientFrame = JSON.parse(text) as FridayRealtimeClientFrame;
+        const responses = deps.wsGateway.handleClientFrame(conn, clientFrame);
+        sendFrames(responses);
+      } catch (err) {
+        console.warn("[friday][http-server] operation failed:", err instanceof Error ? err.message : String(err));
+        // Malformed JSON — send error frame (connection stays open, prior behavior).
+        const errFrame: FridayRealtimeServerFrame = {
+          type: "error",
+          code: "INVALID_FRAME",
+          message: "Failed to parse client frame as JSON",
+          retryable: false,
+        };
+        socket.write(encodeWsTextFrame(JSON.stringify(errFrame)));
+      }
+      return false;
+    }
 
     socket.on("data", (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk]);
+      frameState.buffer = Buffer.concat([frameState.buffer, chunk]);
 
       // Guard against accumulated buffer exceeding max size (prevents DoS via fragmented frames)
-      const MAX_WS_BUFFER_SIZE = 4_194_304; // 4 MB
-      if (buffer.length > MAX_WS_BUFFER_SIZE) {
+      if (frameState.buffer.length > MAX_WS_BUFFER_SIZE) {
         socket.destroy();
         return;
       }
 
-      // Parse WebSocket frames
-      while (buffer.length >= 2) {
-        const firstByte = buffer[0]!;
-        const secondByte = buffer[1]!;
-        const opcode = firstByte & 0x0f;
-        const masked = (secondByte & 0x80) !== 0;
-        let payloadLen = secondByte & 0x7f;
-        let offset = 2;
-
-        if (payloadLen === 126) {
-          if (buffer.length < 4) return; // wait for more data
-          payloadLen = buffer.readUInt16BE(2);
-          offset = 4;
-        } else if (payloadLen === 127) {
-          if (buffer.length < 10) return;
-          payloadLen = Number(buffer.readBigUInt64BE(2));
-          offset = 10;
-        }
-
-        // Guard against oversized frames to prevent memory exhaustion (RFC 6455 §7.4.1 code 1009)
-        const MAX_WS_FRAME_SIZE = 1_048_576; // 1 MB
-        if (payloadLen > MAX_WS_FRAME_SIZE) {
+      for (const ev of readWsClientFrames(frameState, MAX_WS_FRAME_SIZE, MAX_WS_MESSAGE_SIZE)) {
+        if (ev.type === "drop") {
+          // Oversized frame — silent teardown (matches prior behavior).
           socket.destroy();
           return;
         }
-
-        const maskSize = masked ? 4 : 0;
-        const totalLen = offset + maskSize + payloadLen;
-        if (buffer.length < totalLen) return; // wait for more data
-
-        const maskKey = masked ? buffer.subarray(offset, offset + 4) : undefined;
-        const payloadData = buffer.subarray(offset + maskSize, totalLen);
-
-        // Unmask if masked (client→server frames are always masked per RFC 6455)
-        if (maskKey) {
-          for (let i = 0; i < payloadData.length; i++) {
-            payloadData[i] = payloadData[i]! ^ maskKey[i % 4]!;
-          }
+        if (ev.type === "protocol-error") {
+          sendWsClose(socket, ev.code); // RFC 6455 §7.1.7
+          cleanup();
+          socket.destroy();
+          return;
         }
-
-        // Consume the frame from the buffer
-        buffer = buffer.subarray(totalLen);
-
-        // Handle by opcode
-        if (opcode === 0x1) {
-          // Rate limit: drop connection if client sends too many frames
-          if (!checkWsRateLimit()) {
-            console.warn(`[friday][http-server] WebSocket rate limit exceeded for conn ${connId}`);
-            const errFrame: FridayRealtimeServerFrame = {
-              type: "error",
-              code: "RATE_LIMITED",
-              message: "Too many frames per second",
-              retryable: true,
-            };
-            socket.write(encodeWsTextFrame(JSON.stringify(errFrame)));
-            sendWsClose(socket, 1008); // Policy Violation
-            cleanup();
-            socket.destroy();
-            return;
-          }
-
-          // Text frame → parse as client frame and forward to gateway
-          try {
-            const clientFrame = JSON.parse(payloadData.toString("utf-8")) as FridayRealtimeClientFrame;
-            const responses = deps.wsGateway.handleClientFrame(conn, clientFrame);
-            sendFrames(responses);
-          } catch (err) {
-        console.warn("[friday][http-server] operation failed:", err instanceof Error ? err.message : String(err));
-            // Malformed JSON — send error frame
-            const errFrame: FridayRealtimeServerFrame = {
-              type: "error",
-              code: "INVALID_FRAME",
-              message: "Failed to parse client frame as JSON",
-              retryable: false,
-            };
-            socket.write(encodeWsTextFrame(JSON.stringify(errFrame)));
-          }
-        } else if (opcode === 0x8) {
-          // Close frame
+        if (ev.type === "close") {
           sendWsClose(socket, 1000);
           cleanup();
           socket.destroy();
           return;
-        } else if (opcode === 0x9) {
-          // Ping → respond with pong
-          const pong = Buffer.alloc(2 + payloadData.length);
-          pong[0] = 0x8a; // FIN + pong
-          pong[1] = payloadData.length;
-          payloadData.copy(pong, 2);
-          socket.write(pong);
-        } else if (opcode === 0xa) {
-          // Pong — no action needed
         }
+        if (ev.type === "ping") {
+          // Ping → respond with pong echoing the (≤125B, validated) payload.
+          const pong = Buffer.alloc(2 + ev.payload.length);
+          pong[0] = 0x8a; // FIN + pong
+          pong[1] = ev.payload.length; // ≤125 by the control-frame cap
+          ev.payload.copy(pong, 2);
+          socket.write(pong);
+          continue;
+        }
+        if (ev.type === "pong") {
+          continue; // no action needed
+        }
+        // ev.type === "message": a complete data message.
+        if (ev.opcode === 0x1 && handleCompletedTextMessage(ev.payload)) return;
+        // Binary messages (opcode 0x2) are not part of the realtime protocol;
+        // they are ignored, preserving the prior silent-drop behavior.
       }
     });
 
