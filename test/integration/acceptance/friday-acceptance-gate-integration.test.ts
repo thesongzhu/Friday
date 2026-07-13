@@ -126,6 +126,60 @@ describe("Acceptance Gate Integration", () => {
       expect(result.errorMessage).toContain("Acceptance gate failed");
     });
 
+    it("fails when a schema check uses an unrecognized type keyword (fail-closed, SEC-ACCEPTANCE-UNKNOWN-KEYWORD-001)", async () => {
+      const registry = new InMemoryTestRegistry();
+      // Schema gate whose schema uses an unknown/unsupported JSON-schema `type`
+      // keyword. Historically this silently PASSED because matchesType() returned
+      // true by default — a silent false-pass on the true Hub acceptance path.
+      registry.register(makeAcceptanceTest({
+        id: "schema-unknown-type-gate" as UUID,
+        name: "Schema Unknown Type Gate",
+        priority: 0,
+        checkConfig: {
+          checkType: "schema",
+          schema: { type: "frobnicate" },
+        },
+      }));
+      // Satisfy the other mandatory gate classes with PASSING checks so the only
+      // failing signal is the unrecognized-type schema gate.
+      registry.register(makeAcceptanceTest({
+        id: "quant-gate" as UUID,
+        name: "Quant Gate",
+        priority: 1,
+        checkConfig: {
+          checkType: "quantitative",
+          metricPath: "score",
+          operator: "gte",
+          threshold: 50,
+        },
+      }));
+      registry.register(makeAcceptanceTest({
+        id: "quality-gate" as UUID,
+        name: "Quality Gate",
+        priority: 2,
+        checkConfig: {
+          checkType: "quality",
+          dimension: "completeness",
+          minScore: 0,
+        },
+      }));
+
+      const runner = new AcceptanceTestSuiteRunner({ registry });
+      const gate = createAcceptanceGate({ enabled: true, runner });
+      const context = makePipelineContext();
+
+      const result = await gate.evaluate(context);
+
+      expect(result.passed).toBe(false);
+      expect(result.errorMessage).toContain("Acceptance gate failed");
+      // Typed schema-fail evidence surfaces the unsupported keyword.
+      const messages = (result.pipelineResult?.runs ?? [])
+        .flatMap((r) => r.checks)
+        .flatMap((c) => c.evidence ?? [])
+        .map((e) => e.message);
+      expect(messages.some((m) => m.includes("unsupported schema type"))).toBe(true);
+    });
+
     it("passes when all registered acceptance tests pass", async () => {
       const registry = new InMemoryTestRegistry();
       // Register all three mandatory gate classes with passing thresholds

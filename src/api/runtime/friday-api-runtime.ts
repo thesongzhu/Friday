@@ -5489,6 +5489,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }
 
   return {
+    // Exposed so the CLI run loop can build the durable HTTP idempotency journal store
+    // from the SAME app db (no second db invented).
+    db: deps.db,
     auth: authService,
     tokenValidator,
     rateLimiter,

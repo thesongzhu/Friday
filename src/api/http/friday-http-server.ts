@@ -25,6 +25,10 @@ import { isFridayHttpRawTextResponse } from "./friday-http-raw-response.js";
 import { buildFridayApiError, FRIDAY_API_ERROR_CODES } from "../model/friday-api-error-codes.js";
 import { type FridayHttpTrustProxyMode, resolveFridayClientIp } from "./friday-http-client-ip.js";
 import { hashIdempotencyPayload, readIdempotencyKeyHeader } from "./routes/friday-route-idempotency.js";
+import {
+  type FridayHttpIdempotencyStore,
+  FridayInMemoryOperationJournalStore,
+} from "./persistence/friday-operation-journal-repository.js";
 import { createFridayDefaultPublicHttpPrincipal } from "./friday-default-public-principal.js";
 import { isFridaySensitiveReadRoute } from "./friday-sensitive-read-routes.js";
 import {
@@ -56,6 +60,14 @@ export interface FridayHttpServerDeps {
   webchatWsService?: WebchatWsService;
   /** Optional cleanup callback invoked during server close (e.g. rate limiter dispose). */
   onClose?: () => void;
+  /**
+   * Durable store backing the generic non-GET idempotency guard. Defaults to an
+   * in-memory store (byte-for-byte the previous volatile behavior) so callers that
+   * build a server without a db keep working. Production wires a SQLite-backed store
+   * (see the CLI run loop) so a completed idempotent response survives a restart
+   * instead of the handler re-executing and duplicating its side-effect.
+   */
+  idempotencyStore?: FridayHttpIdempotencyStore;
 }
 
 export interface FridayHttpServer {
@@ -69,18 +81,6 @@ export interface FridayHttpServer {
 const FRIDAY_METHODS_WITH_BODY: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const FRIDAY_HTTP_MAX_BODY_BYTES = 1_048_576; // 1MB
 const FRIDAY_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
-
-interface FridayHttpIdempotencyEntry {
-  operationId: string;
-  principalId: string;
-  payloadHash: string;
-  // "in_flight" = a request with this key is currently executing (reservation set before the
-  // handler runs, so concurrent same-key requests are rejected instead of double-executing).
-  // "completed" = the handler finished and `data` holds the replayable response.
-  status: "in_flight" | "completed";
-  data: unknown;
-  expiresAtMs: number;
-}
 
 /** Base security headers applied to every response. */
 const FRIDAY_BASE_SECURITY_HEADERS: Readonly<Record<string, string>> = {
@@ -480,14 +480,13 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
   const hasObservabilityRoutes = routes
     .getRoutes()
     .some((route) => route.path.startsWith("/v1/observability"));
-  const idempotencyStore = new Map<string, FridayHttpIdempotencyEntry>();
+  // Durable-by-default in production (SQLite journal survives restarts); falls back to an
+  // in-memory store (byte-for-byte the previous behavior) when no db-backed store is injected.
+  const idempotencyStore: FridayHttpIdempotencyStore =
+    deps.idempotencyStore ?? new FridayInMemoryOperationJournalStore();
 
   function pruneExpiredIdempotencyEntries(nowMs: number): void {
-    for (const [key, entry] of idempotencyStore.entries()) {
-      if (entry.expiresAtMs <= nowMs) {
-        idempotencyStore.delete(key);
-      }
-    }
+    idempotencyStore.pruneExpired(nowMs);
   }
 
   // Track active connections so close() can destroy keep-alive sockets
@@ -804,9 +803,25 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
           query,
           body,
         });
-        idempotencyStoreKey = `${principalId}:${route.operationId}:${idempotencyKey}`;
-        const existing = idempotencyStore.get(idempotencyStoreKey);
+        const idempotencyLookupKey = `${principalId}:${route.operationId}:${idempotencyKey}`;
+        const existing = idempotencyStore.get(idempotencyLookupKey);
         if (existing) {
+          // Crash-orphaned reservation (marked indeterminate at boot): the prior request may
+          // have committed its side-effect but never wrote its completed receipt. Fail closed —
+          // never auto-retry, never re-execute. Non-retryable 409 takes precedence over every
+          // other existing-entry outcome below.
+          if (existing.status === "indeterminate") {
+            sendJsonWithHeaders(res, 409, {
+              ok: false,
+              error: {
+                code: "SECURITY_IDEMPOTENCY_INDETERMINATE",
+                message: "a prior request with this Idempotency-Key did not complete; its outcome is indeterminate and will not be auto-retried.",
+                retryable: false,
+              },
+              requestId,
+            }, { ...corsHeaders, ...middlewareHeaders }, isHead);
+            return;
+          }
           if (existing.payloadHash !== payloadHash || existing.operationId !== route.operationId) {
             sendJsonWithHeaders(res, 409, {
               ok: false,
@@ -862,14 +877,17 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
 
         // Reserve the key BEFORE running the handler so a concurrent same-key request sees
         // `in_flight` and is rejected above, rather than both requests executing the handler.
-        idempotencyStore.set(idempotencyStoreKey, {
+        // The durable store's reserve is atomic: on a cross-process race it throws a typed 409
+        // (mapped by the catch below) instead of silently overwriting. `idempotencyStoreKey` is
+        // only set AFTER a successful reserve, so a reserve that loses the race does NOT let the
+        // release paths delete the winner's reservation.
+        idempotencyStore.reserve(idempotencyLookupKey, {
           operationId: route.operationId,
           principalId,
           payloadHash,
-          status: "in_flight",
-          data: undefined,
           expiresAtMs: Date.now() + FRIDAY_IDEMPOTENCY_TTL_MS,
         });
+        idempotencyStoreKey = idempotencyLookupKey;
       }
 
       // Inject raw response reference for SSE streaming routes
@@ -882,14 +900,14 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       // The handler owns the response, so there is no replayable JSON body to cache — drop the
       // in-flight reservation so the key is not wedged until TTL.
       if (res.headersSent || res.writableEnded) {
-        if (idempotencyStoreKey) idempotencyStore.delete(idempotencyStoreKey);
+        if (idempotencyStoreKey) idempotencyStore.release(idempotencyStoreKey);
         return;
       }
 
       if (isFridayHttpRawTextResponse(result)) {
         // Raw-text responses are not cached for replay (original behavior); release the
         // reservation so a later same-key request is not rejected against a never-completed entry.
-        if (idempotencyStoreKey) idempotencyStore.delete(idempotencyStoreKey);
+        if (idempotencyStoreKey) idempotencyStore.release(idempotencyStoreKey);
         const responseBody = result.body;
         const responseHeaders: Record<string, string | number> = {
           "Content-Type": result.contentType ?? "text/plain; charset=utf-8",
@@ -912,7 +930,7 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
 
       if (idempotencyStoreKey) {
         // Upgrade the in-flight reservation to a completed, replayable entry.
-        idempotencyStore.set(idempotencyStoreKey, {
+        idempotencyStore.complete(idempotencyStoreKey, {
           operationId: route.operationId,
           principalId: ctx.principal?.principalId ?? "anonymous",
           payloadHash: hashIdempotencyPayload({
@@ -922,7 +940,6 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
             query,
             body,
           }),
-          status: "completed",
           data: result,
           expiresAtMs: Date.now() + FRIDAY_IDEMPOTENCY_TTL_MS,
         });
@@ -950,8 +967,10 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       }
     } catch (error: unknown) {
       // The handler threw, so no completed entry was written. Release the in-flight reservation
-      // so this idempotency key is retryable rather than wedged in_flight until TTL.
-      if (idempotencyStoreKey) idempotencyStore.delete(idempotencyStoreKey);
+      // so this idempotency key is retryable rather than wedged in_flight until TTL. Only set when
+      // THIS request won the reservation, so a lost cross-process reserve race never releases the
+      // winner's row.
+      if (idempotencyStoreKey) idempotencyStore.release(idempotencyStoreKey);
       // If headers were already sent (e.g. SSE stream errored mid-flight), we cannot send JSON
       if (res.headersSent || res.writableEnded) {
         res.end();
