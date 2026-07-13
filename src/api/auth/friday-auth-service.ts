@@ -435,12 +435,25 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
 
       const now = deps.nowIso();
       const hashed = hashPasswordScrypt(passphrase);
+      // Compare-and-set: the pre-check above reads outside the write transaction,
+      // so a concurrent claimant (second hub process or hostile local process on the
+      // shared SQLite DB) can commit its own passphrase inside the TOCTOU window after
+      // we observed NULL. Guard the write with `AND password_hash IS NULL` and require
+      // exactly one affected row, so the losing claim fails closed with ZERO state
+      // change instead of clobbering the legitimate owner (SEC-SETUP-BOOTSTRAP-001).
       deps.db.withWriteTransaction((db) => {
-        db.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?").run(
-          hashed,
-          now,
-          localUser.id,
-        );
+        const res = db
+          .prepare(
+            "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ? AND password_hash IS NULL",
+          )
+          .run(hashed, now, localUser.id);
+        if (res.changes !== 1) {
+          throw new FridayDomainError(
+            "AUTH_BOOTSTRAP_ALREADY_DONE",
+            "Local bootstrap has already been completed.",
+            { httpStatus: 409 },
+          );
+        }
       });
 
       return {
