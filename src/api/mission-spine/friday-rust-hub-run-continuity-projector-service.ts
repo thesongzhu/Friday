@@ -163,17 +163,23 @@ export function usageLedgerIdForRun(runId: string): string {
 }
 
 /**
- * Map a Rust `LoopStatus` debug token to a TERMINAL TS run status. The TS projection is
- * a completed Rust run, so only terminal statuses are produced (never an active one).
+ * Map a Rust `LoopStatus` debug token to a TS run status. Every GENUINELY-terminal loop
+ * status maps to a terminal TS status (Finished→completed; Bounded/Blocked/Errored/default
+ * →failed). The ONE exception is `Paused`: an owner-approval pause is NONTERMINAL — the run
+ * is AWAITING APPROVAL, not finished — so it maps to the nonterminal `awaiting_approval`
+ * (ENDBAR RUN-AWAITING-APPROVAL-001). Surfacing a paused run as `cancelled`/terminal would
+ * wrongly make a resumable run look done and expose it to the terminal-only retention reaper.
  */
 export function mapLoopStatusToTsStatus(loopStatus: string): string {
   switch (loopStatus) {
     case "Finished":
       return "completed";
     case "Paused":
-      // Owner-approval pause: the loop stopped resumably, but the projected TS row is a
-      // terminal snapshot of THIS receipt — surface it as cancelled (non-error stop).
-      return "cancelled";
+      // Owner-approval pause: the loop stopped RESUMABLY pending approval. This is NONTERMINAL —
+      // the run is awaiting approval, not cancelled/completed — so it maps to `awaiting_approval`
+      // (the reaper deletes only terminal completed/failed/cancelled rows, so a paused run is
+      // preserved for its later resume). NEVER a terminal cancelled here.
+      return "awaiting_approval";
     case "Bounded":
       // max_turns reached without finishing — an incomplete terminal stop.
       return "failed";
