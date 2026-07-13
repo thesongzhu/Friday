@@ -11,6 +11,7 @@ export type FridayAgentUnifiedTaskState =
   | "awaiting_clarification"
   | "awaiting_plan_approval"
   | "awaiting_tool_approval"
+  | "awaiting_approval"
   | "executing"
   | "verified_receipt"
   | "blocked_recoverable";
@@ -19,6 +20,7 @@ export type FridayAgentUnifiedTaskRequiredAction =
   | "answer_clarification"
   | "approve_or_reject_plan"
   | "approve_or_reject_tool"
+  | "approve_or_reject"
   | "wait_for_execution"
   | "read_verified_receipt"
   | "review_blocker_or_retry";
