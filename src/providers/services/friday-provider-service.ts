@@ -48,7 +48,7 @@ import { safeJsonParse } from "#utilities";
 import { createFridayPreferenceFactRepository } from "../../learning/persistence/friday-preference-fact-repository.js";
 import { createFridayAuthProfileRepository } from "../persistence/friday-auth-profile-repository.js";
 import { createFridayProviderProfileRepository } from "../persistence/friday-provider-profile-repository.js";
-import { createFridaySecretRepository } from "../persistence/friday-secret-repository.js";
+import { createFridaySecretRepository, fridaySecretAadContext } from "../persistence/friday-secret-repository.js";
 import { createFridayProviderUsageRepository } from "../persistence/friday-provider-usage-repository.js";
 import {
   assertAllowedCliBinaryPath,
@@ -56,7 +56,7 @@ import {
   runFridayCliBackendTextCompletion,
 } from "../cli/friday-provider-cli-backend.js";
 import {
-  decryptSecret,
+  decryptSecretWithMigration,
   encryptSecret,
   getStrictMasterKey,
 } from "../security/friday-secret-crypto.js";
@@ -543,11 +543,16 @@ export function createFridayProviderService(
       return keySource;
     }
     const refKey = secretRefKey(providerId);
+    const secretId = `secret:${refKey}`; // pragma: allowlist secret
     const masterKey = getStrictMasterKey();
-    const envelope = encryptSecret(apiKey, masterKey);
+    const envelope = encryptSecret(
+      apiKey,
+      masterKey,
+      fridaySecretAadContext({ scope: SECRET_SCOPE, id: secretId }),
+    );
     deps.db.withWriteTransaction((db) => {
       secretRepo.upsert(db, {
-        id: `secret:${refKey}`,
+        id: secretId,
         scope: SECRET_SCOPE,
         refKey,
         encryptedValue: JSON.stringify(envelope),
@@ -556,6 +561,29 @@ export function createFridayProviderService(
       });
     });
     return { kind: "secret-ref", refKey };
+  }
+
+  /**
+   * Read-repair (SEC-SECRET-AAD-001): persists a v2 re-wrap produced while
+   * reading a legacy v1 secret row so no unbound envelope survives at rest.
+   * Best-effort — a failed repair never blocks the read.
+   */
+  function rewrapPersistedSecret(secretId: string, rewrapped: FridayEncryptedEnvelope): void {
+    try {
+      deps.db.withWriteTransaction((db) => {
+        secretRepo.updateById(db, {
+          secretId,
+          encryptedValue: JSON.stringify(rewrapped),
+          keyId: "master-v1",
+          nowIso: deps.nowIso(),
+        });
+      });
+    } catch (err) {
+      console.warn(
+        "[friday][provider-service] secret AAD read-repair failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   async function resolveCredential(
@@ -619,7 +647,15 @@ export function createFridayProviderService(
         }
         const masterKey = getStrictMasterKey();
         const envelope = JSON.parse(secret.encryptedValue) as FridayEncryptedEnvelope;
-        return decryptSecret(envelope, masterKey);
+        const { plaintext, rewrapped } = decryptSecretWithMigration(
+          envelope,
+          masterKey,
+          fridaySecretAadContext(secret),
+        );
+        if (rewrapped) {
+          rewrapPersistedSecret(secret.id, rewrapped);
+        }
+        return plaintext;
       },
     });
 
@@ -2132,7 +2168,15 @@ export function createFridayProviderService(
         }
         const masterKey = getStrictMasterKey();
         const envelope = JSON.parse(secret.encryptedValue) as FridayEncryptedEnvelope;
-        return decryptSecret(envelope, masterKey);
+        const { plaintext, rewrapped } = decryptSecretWithMigration(
+          envelope,
+          masterKey,
+          fridaySecretAadContext(secret),
+        );
+        if (rewrapped) {
+          rewrapPersistedSecret(secret.id, rewrapped);
+        }
+        return plaintext;
       },
     });
     if (!resolved.ok) {

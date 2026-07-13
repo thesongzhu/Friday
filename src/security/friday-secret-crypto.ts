@@ -8,10 +8,65 @@ import { FridayDomainError } from "#errors";
 
 // ─── Encrypted envelope ───
 
+/**
+ * On-disk AES-256-GCM envelope.
+ *
+ * Version semantics ({@link FridayEncryptedEnvelope.v}):
+ *  - `undefined` (field absent) → **v1 legacy**: ciphertext produced WITHOUT
+ *    additional-authenticated-data (AAD) context binding. Decryptable for
+ *    backward compatibility ONLY; every v1 caller is unbound so a ciphertext is
+ *    transplantable across owner/scope/field rows. New writes are never v1.
+ *  - `2` → **v2 AAD-bound**: the GCM tag also authenticates a canonical binding
+ *    context ({@link FridaySecretAadContext}). Decryption requires the SAME
+ *    context or the GCM authentication fails closed (throws). This makes a
+ *    ciphertext transplanted across owner/provider/field rows undecryptable.
+ *
+ * Stripping `v` from a v2 envelope does NOT downgrade it: a v2 tag was computed
+ * over the AAD, so verifying it as v1 (no AAD) fails the GCM check. Likewise
+ * forging `v: 2` onto a v1 envelope fails the check. Both directions fail closed.
+ */
 export interface FridayEncryptedEnvelope {
   ciphertext: string;
   iv: string;
   tag: string;
+  /** Envelope schema version. Absent = v1 legacy (no AAD); 2 = AAD-bound. */
+  v?: number;
+}
+
+/**
+ * Canonical binding context authenticated as GCM AAD for v2 envelopes.
+ *
+ * Every field must be derivable from the STABLE identity of the row/entry the
+ * ciphertext belongs to (a primary key, a natural key, or a durable ref) so
+ * that the writer and every reader reconstruct byte-identical AAD. Binding a
+ * mutable column would brick the secret on rename; callers therefore bind
+ * durable identifiers.
+ */
+export interface FridaySecretAadContext {
+  /** Logical store namespace, e.g. `"friday-secrets"`, `"friday-oauth"`. Required, non-empty. */
+  readonly store: string;
+  /** Owner principal (e.g. owner user id) when the row is owner-scoped. */
+  readonly owner?: string;
+  /** Tenant / provider-profile discriminator when applicable. */
+  readonly tenant?: string;
+  /** Logical scope of the row (e.g. secret scope, provider-profile id). */
+  readonly scope?: string;
+  /** Durable per-row reference (primary key / natural key / vault ref). */
+  readonly ref?: string;
+  /** Sub-field discriminator when one row holds multiple secrets (e.g. access/refresh). */
+  readonly field?: string;
+}
+
+/** Result of {@link decryptSecretWithMigration}. */
+export interface FridaySecretMigrationResult {
+  /** Recovered plaintext. */
+  readonly plaintext: string;
+  /**
+   * A freshly AAD-bound (v2) envelope when the input was a legacy v1 envelope
+   * and a binding context was supplied, else `null`. Callers persist this to
+   * lazily migrate the row at rest (read-repair) so no v1 envelope survives.
+   */
+  readonly rewrapped: FridayEncryptedEnvelope | null;
 }
 
 // ─── Core encrypt / decrypt ───
@@ -20,10 +75,16 @@ const ALGORITHM = "aes-256-gcm";
 const IV_BYTES = 12;
 const KEY_BYTES = 32;
 
-export function encryptSecret(
-  plaintext: string,
-  masterKey: Buffer,
-): FridayEncryptedEnvelope {
+/** Envelope schema version for AAD-bound ciphertext. */
+export const FRIDAY_SECRET_ENVELOPE_V2 = 2;
+/**
+ * Schema version of the canonical AAD encoding. Bumping this deliberately
+ * invalidates every previously-written v2 tag (forces a re-wrap), so it is only
+ * changed when the binding-context semantics change.
+ */
+export const FRIDAY_SECRET_AAD_SCHEMA_VERSION = 1;
+
+function assertMasterKeyLength(masterKey: Buffer): void {
   if (masterKey.length !== KEY_BYTES) {
     throw new FridayDomainError(
       "VALIDATION_ERROR",
@@ -31,37 +92,115 @@ export function encryptSecret(
       { httpStatus: 400 },
     );
   }
+}
+
+/**
+ * Deterministically encodes a binding context into AAD bytes.
+ *
+ * Uses a fixed field order and JSON encoding of `[key, value|null]` tuples so
+ * the output is stable regardless of object key-insertion order and unambiguous
+ * regardless of value contents (JSON escaping prevents separator injection).
+ * A versioned magic prefix domain-separates this AAD from any other GCM usage.
+ */
+function canonicalizeAadContext(context: FridaySecretAadContext): Buffer {
+  if (typeof context.store !== "string" || context.store.trim() === "") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "Secret binding context requires a non-empty 'store'",
+      { httpStatus: 400 },
+    );
+  }
+  const pairs: Array<[string, string | null]> = [
+    ["store", context.store],
+    ["owner", context.owner ?? null],
+    ["tenant", context.tenant ?? null],
+    ["scope", context.scope ?? null],
+    ["ref", context.ref ?? null],
+    ["field", context.field ?? null],
+  ];
+  const canonical =
+    `friday-secret-aad\u0000v${String(FRIDAY_SECRET_AAD_SCHEMA_VERSION)}\u0000` +
+    JSON.stringify(pairs);
+  return Buffer.from(canonical, "utf8");
+}
+
+/**
+ * Encrypts `plaintext` under AES-256-GCM.
+ *
+ * When `context` is supplied the result is an AAD-bound v2 envelope: the GCM tag
+ * authenticates the canonical binding context, so the ciphertext can only be
+ * decrypted with the identical context (fail-closed on transplant). When
+ * `context` is omitted a legacy v1 envelope is produced — retained ONLY for the
+ * primitive's own tests and the (documented) not-yet-migrated stores; every
+ * production secret writer supplies a context.
+ */
+export function encryptSecret(
+  plaintext: string,
+  masterKey: Buffer,
+  context?: FridaySecretAadContext,
+): FridayEncryptedEnvelope {
+  assertMasterKeyLength(masterKey);
   const iv = crypto.randomBytes(IV_BYTES);
   const cipher = crypto.createCipheriv(ALGORITHM, masterKey, iv);
+  if (context) {
+    cipher.setAAD(canonicalizeAadContext(context));
+  }
   const encrypted = Buffer.concat([
     cipher.update(plaintext, "utf8"),
     cipher.final(),
   ]);
   const tag = cipher.getAuthTag();
 
-  return {
+  const envelope: FridayEncryptedEnvelope = {
     ciphertext: encrypted.toString("base64"),
     iv: iv.toString("base64"),
     tag: tag.toString("base64"),
   };
+  if (context) {
+    envelope.v = FRIDAY_SECRET_ENVELOPE_V2;
+  }
+  return envelope;
 }
 
+/**
+ * Decrypts a {@link FridayEncryptedEnvelope}.
+ *
+ * For a v2 envelope a binding `context` is REQUIRED and is authenticated as GCM
+ * AAD: a missing or mismatched context fails closed (throws). For a v1 legacy
+ * envelope no AAD is applied and `context` is ignored (this path exists only to
+ * read secrets stored before AAD binding, during migration).
+ */
 export function decryptSecret(
   envelope: FridayEncryptedEnvelope,
   masterKey: Buffer,
+  context?: FridaySecretAadContext,
 ): string {
-  if (masterKey.length !== KEY_BYTES) {
-    throw new FridayDomainError(
-      "VALIDATION_ERROR",
-      `Master key must be ${KEY_BYTES} bytes, got ${String(masterKey.length)}`,
-      { httpStatus: 400 },
-    );
-  }
+  assertMasterKeyLength(masterKey);
   const iv = Buffer.from(envelope.iv, "base64");
   const tag = Buffer.from(envelope.tag, "base64");
   const ciphertext = Buffer.from(envelope.ciphertext, "base64");
 
   const decipher = crypto.createDecipheriv(ALGORITHM, masterKey, iv);
+
+  const version = envelope.v;
+  if (version === FRIDAY_SECRET_ENVELOPE_V2) {
+    if (!context) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        "AAD-bound (v2) secret envelope requires a binding context to decrypt",
+        { httpStatus: 400 },
+      );
+    }
+    decipher.setAAD(canonicalizeAadContext(context));
+  } else if (version !== undefined) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `Unsupported secret envelope version ${String(version)}`,
+      { httpStatus: 400 },
+    );
+  }
+  // version === undefined → v1 legacy: no AAD (context, if any, is ignored).
+
   decipher.setAuthTag(tag);
 
   const decrypted = Buffer.concat([
@@ -70,6 +209,28 @@ export function decryptSecret(
   ]);
 
   return decrypted.toString("utf8");
+}
+
+/**
+ * Decrypts and, when the input was a legacy v1 envelope, produces a v2 re-wrap
+ * bound to `context` so the caller can migrate the row at rest (read-repair).
+ *
+ * A v2 input is decrypted (AAD-enforced) and returns `rewrapped: null`. A v1
+ * input is decrypted via the legacy path and re-encrypted under `context`; the
+ * caller persists `rewrapped` to guarantee no v1 envelope survives a read.
+ * Because the recovered plaintext round-trips through {@link encryptSecret},
+ * a re-wrap that could not itself be decrypted is impossible.
+ */
+export function decryptSecretWithMigration(
+  envelope: FridayEncryptedEnvelope,
+  masterKey: Buffer,
+  context: FridaySecretAadContext,
+): FridaySecretMigrationResult {
+  const plaintext = decryptSecret(envelope, masterKey, context);
+  if (envelope.v === undefined) {
+    return { plaintext, rewrapped: encryptSecret(plaintext, masterKey, context) };
+  }
+  return { plaintext, rewrapped: null };
 }
 
 // ─── Master key resolution ───
