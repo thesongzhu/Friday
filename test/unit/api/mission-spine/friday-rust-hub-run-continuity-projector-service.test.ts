@@ -79,16 +79,50 @@ describe("FridayRustHubRunContinuityProjector (executeRun-replace slice 2, fork 
     layers.length = 0;
   });
 
-  it("loop-status → terminal TS status mapping is exhaustive and terminal", () => {
+  it("loop-status → TS status mapping: Paused is the NONTERMINAL awaiting_approval, the rest terminal", () => {
     expect(mapLoopStatusToTsStatus("Finished")).toBe("completed");
-    expect(mapLoopStatusToTsStatus("Paused")).toBe("cancelled");
+    // ENDBAR RUN-AWAITING-APPROVAL-001: an owner-approval pause is NONTERMINAL — the run is
+    // awaiting approval, not cancelled/terminal. It must map to `awaiting_approval`.
+    expect(mapLoopStatusToTsStatus("Paused")).toBe("awaiting_approval");
     expect(mapLoopStatusToTsStatus("Bounded")).toBe("failed");
     expect(mapLoopStatusToTsStatus("Blocked")).toBe("failed");
     expect(mapLoopStatusToTsStatus("Errored")).toBe("failed");
-    // No mapping yields an ACTIVE (non-terminal) status — a projected run is complete.
-    for (const s of ["Finished", "Paused", "Bounded", "Blocked", "Errored", "anything"]) {
+    // Paused must NOT be a terminal status (negative_control: Paused appears cancelled/terminal ⇒ fail).
+    // The reaper deletes only these terminal states — awaiting_approval must be none of them.
+    expect(["completed", "failed", "cancelled"]).not.toContain(mapLoopStatusToTsStatus("Paused"));
+    // Every GENUINELY-terminal loop status still maps to a terminal TS status (no-degrade).
+    for (const s of ["Finished", "Bounded", "Blocked", "Errored", "anything"]) {
       expect(["completed", "failed", "cancelled"]).toContain(mapLoopStatusToTsStatus(s));
     }
+  });
+
+  it("projects a Paused receipt to a NONTERMINAL awaiting_approval row that the reaper never deletes", () => {
+    const db = freshDb();
+    const projector = createFridayRustHubRunContinuityProjectorService();
+
+    const paused: FridayRustHubRunReceipt = {
+      ...FIXTURE_RECEIPT,
+      runId: "hub_run_task_dev_paused_approval",
+      loopStatus: "Paused",
+    };
+    const result = projector.project(db, paused);
+    // ENDBAR RUN-AWAITING-APPROVAL-001: the projected status is the NONTERMINAL awaiting_approval,
+    // never a terminal cancelled/completed/failed.
+    expect(result.status).toBe("awaiting_approval");
+
+    const run = db
+      .prepare("SELECT status FROM friday_agent_runs WHERE id = ?")
+      .get(paused.runId) as { status: string };
+    expect(run.status).toBe("awaiting_approval");
+
+    // The retention reaper deletes ONLY terminal rows (`status IN ('completed','failed','cancelled')`).
+    // A run awaiting approval must be OUTSIDE that set — otherwise a resumable run would be reaped.
+    const reaped = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM friday_agent_runs WHERE id = ? AND status IN ('completed','failed','cancelled')",
+      )
+      .get(paused.runId) as { n: number };
+    expect(reaped.n).toBe(0);
   });
 
   it("projects ONE agent_run + ONE usage row with the correct Rust→TS column mapping", () => {
