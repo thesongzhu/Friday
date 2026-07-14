@@ -361,6 +361,47 @@ describe("SEC-SETUP-BOOTSTRAP-001 Slice 5: authenticated dual-read migration", (
     expect(readNonceRow(db, nonce)?.consumed_at).toBeNull();
   });
 
+  it("cross-intent: a VALID migration PoP whose signed action is 'owner-claim' is REFUSED (401) — nonce un-burned, no binding", () => {
+    seedPassphraseOwner(db);
+    const nonce = issueMigrationNonce(db);
+    // A fully valid PoP — correct key, fresh, low-S, bound to THIS migration's
+    // nonce/origin/deviceId — that merely carries a DIFFERENT signed intent
+    // ("owner-claim"). Because `action` is bound INTO the signed bytes, the positive
+    // own-action assertion rejects it: without that assertion this would successfully
+    // record a migration by cross-intent replay of an owner-claim proof.
+    const transcript = makeTranscript(DEVICE_KEY, {
+      nonce,
+      origin: ORIGIN,
+      deviceId: DEVICE_ID,
+      action: "owner-claim",
+      installId: "install-m1",
+      osUser: "jarvis",
+    });
+    const req = {
+      ...migrateReq({ nonce }),
+      deviceClaimProof: {
+        transcript,
+        signature: {
+          encoding: "ieee-p1363-base64" as const,
+          value: signTranscriptLowS(DEVICE_KEY, transcript),
+        },
+      },
+    };
+
+    let caught: unknown;
+    try {
+      makeService(db).migrateOwnerToDeviceKey(req, ownerPrincipal(), LOOPBACK);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(FridayDomainError);
+    expect((caught as FridayDomainError).httpStatus).toBe(401);
+    expect((caught as FridayDomainError).code).toBe("AUTH_MIGRATE_POP_INVALID");
+    // No binding recorded; the migration nonce is un-burned (fail-closed).
+    expect(readBindings(db)).toHaveLength(0);
+    expect(readNonceRow(db, nonce)?.consumed_at).toBeNull();
+  });
+
   it("refuses migration against a NULL owner slot — first-boot must NOT reuse the bootstrap leg (409)", () => {
     seedOwner(db); // password_hash NULL, NO passphrase set
     // The challenge itself is refused for a NULL owner, so issue directly via a

@@ -131,6 +131,38 @@ function isSqliteConstraintError(error: unknown): boolean {
   return typeof code === "string" && code.startsWith("SQLITE_CONSTRAINT");
 }
 
+/**
+ * The SOLE UNIQUE constraint on friday_device_owner_bindings: the partial index
+ * `idx_friday_device_owner_bindings_active(user_id) WHERE state='active'` (see
+ * migration v104). better-sqlite3 reports its violation as
+ *   code    = "SQLITE_CONSTRAINT_UNIQUE"
+ *   message = "UNIQUE constraint failed: friday_device_owner_bindings.user_id"
+ * on this build; some SQLite builds name the partial index in the message instead,
+ * so both the table.column and the index name are accepted signatures.
+ */
+const ACTIVE_BINDING_UNIQUE_INDEX = "idx_friday_device_owner_bindings_active";
+const ACTIVE_BINDING_UNIQUE_COLUMN = "friday_device_owner_bindings.user_id";
+
+/**
+ * True ONLY for the active-binding uniqueness violation that the provisional→active
+ * readback flip can raise. Deliberately NARROWER than isSqliteConstraintError: a
+ * CHECK / FK / NOT-NULL error, or a UNIQUE on a DIFFERENT (future) column or index,
+ * does NOT match and therefore propagates instead of being mislabelled 409.
+ *
+ * ASSUMPTION: the active-binding partial index is the ONLY UNIQUE constraint on
+ * friday_device_owner_bindings. Any NEW UPDATE-time UNIQUE constraint on that table
+ * (or a rename of the index/user_id column) MUST revisit this mapping.
+ */
+function isActiveBindingUniqueViolation(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: unknown }).code;
+  if (code !== "SQLITE_CONSTRAINT_UNIQUE") return false;
+  return (
+    error.message.includes(ACTIVE_BINDING_UNIQUE_INDEX) ||
+    error.message.includes(ACTIVE_BINDING_UNIQUE_COLUMN)
+  );
+}
+
 // ─── SEC-SETUP-BOOTSTRAP-001 · Stage 3+4 device-readback hardening follow-ups ───
 
 /**
@@ -141,6 +173,24 @@ function isSqliteConstraintError(error: unknown): boolean {
  * nonce/origin/deviceId — can NEVER be replayed to activate a device binding.
  */
 const READBACK_TRANSCRIPT_ACTION = "owner-readback";
+
+/**
+ * The canonical transcript `action` an owner-CLAIM proof MUST be minted for. All
+ * first-boot bootstrap challenges are issued with this action (see
+ * issueBootstrapChallenge's default). Because `action` is bound INTO the signed
+ * transcript bytes, requiring an exact match domain-separates the claim leg from
+ * EVERY other intent (migration / readback) — not just the readback case the
+ * negative cross-intent guard covers.
+ */
+const CLAIM_TRANSCRIPT_ACTION = "owner-claim";
+
+/**
+ * The canonical transcript `action` an owner-MIGRATION proof MUST be minted for.
+ * All migration challenges are issued with this action (see
+ * issueMigrationChallenge's default). Same domain-separation rationale as
+ * CLAIM_TRANSCRIPT_ACTION, applied to the migration leg.
+ */
+const MIGRATE_TRANSCRIPT_ACTION = "owner-migrate";
 
 /**
  * Server-side maximum accepted transcript TTL for a device readback (aligned with
@@ -762,6 +812,18 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
           { httpStatus: 401 },
         );
       }
+      // POSITIVE own-action assertion (defence-in-depth, ON TOP of the negative
+      // readback guard above): the transcript MUST have been minted FOR owner-claim.
+      // Because `action` is bound into the signed bytes, a proof minted for ANY other
+      // intent (migration, readback, or an arbitrary label) can never be replayed into
+      // the owner-claim leg — closing the residual gap the negative-only guard left.
+      if (proof.transcript.action !== CLAIM_TRANSCRIPT_ACTION) {
+        throw new FridayDomainError(
+          "AUTH_BOOTSTRAP_POP_INVALID",
+          "Proof-of-possession transcript was not minted for owner-claim.",
+          { httpStatus: 401 },
+        );
+      }
       const pop = ownerClaimPoPVerifier.verifyPossession({
         transcript: proof.transcript,
         devicePublicKey: { encoding: "spki-der-base64", value: devicePublicKey },
@@ -1023,6 +1085,18 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         throw new FridayDomainError(
           "AUTH_MIGRATE_POP_INVALID",
           "Proof-of-possession transcript was minted for device readback, not migration.",
+          { httpStatus: 401 },
+        );
+      }
+      // POSITIVE own-action assertion (defence-in-depth, ON TOP of the negative
+      // readback guard above): the transcript MUST have been minted FOR migration.
+      // Because `action` is bound into the signed bytes, a proof minted for ANY other
+      // intent (owner-claim, readback, or an arbitrary label) can never be replayed
+      // into the migration leg — closing the residual gap the negative-only guard left.
+      if (proof.transcript.action !== MIGRATE_TRANSCRIPT_ACTION) {
+        throw new FridayDomainError(
+          "AUTH_MIGRATE_POP_INVALID",
+          "Proof-of-possession transcript was not minted for migration.",
           { httpStatus: 401 },
         );
       }
@@ -1310,10 +1384,12 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         // The only UNIQUE that can fire is the partial UNIQUE(user_id) WHERE
         // state='active': an existing/concurrent active binding for this owner makes
         // the provisional→active flip a UNIQUE violation. Surface it as a clean
-        // fail-closed 409. The in-txn FridayDomainErrors (tombstone / no-binding /
-        // not-provisional) are NOT constraint errors, so they re-throw unchanged
-        // with their original codes.
-        if (isSqliteConstraintError(error)) {
+        // fail-closed 409. Narrowed to the SPECIFIC active-binding uniqueness
+        // violation (not any SQLITE_CONSTRAINT*) so a future different constraint on
+        // this table is not mismapped to 409 — it propagates. The in-txn
+        // FridayDomainErrors (tombstone / no-binding / not-provisional) are NOT
+        // constraint errors, so they re-throw unchanged with their original codes.
+        if (isActiveBindingUniqueViolation(error)) {
           throw new FridayDomainError(
             "AUTH_READBACK_ALREADY_ACTIVE",
             "A device binding is already active for this owner.",
