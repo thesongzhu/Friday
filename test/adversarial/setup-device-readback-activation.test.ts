@@ -57,6 +57,15 @@ const DEVICE_PUBKEY = DEVICE_KEY.spkiDerBase64;
 const DEVICE_ID = "device-migrate-001";
 const DEVICE_OWNER_SENTINEL_PREFIX = "device-owner$v1$";
 const READBACK_NONCE = "readback-nonce-0001";
+// Follow-up hardening (b): a readback proof's expiry must fall within the
+// server-side max TTL (5 min). The happy/state fixtures use a short, in-window
+// expiry (relative to the fixed test NOW) so they exercise the clamp's PASS side.
+const READBACK_EXPIRES_AT = new Date(Date.parse(NOW) + 4 * 60 * 1000).toISOString();
+// Follow-up hardening (c): a SECOND device key + id used to seed a provisional
+// binding for the same owner alongside an already-active binding.
+const DEVICE_KEY2 = generateTestDeviceKey();
+const DEVICE_PUBKEY2 = DEVICE_KEY2.spkiDerBase64;
+const DEVICE_ID_2 = "device-migrate-002";
 
 function sha256Hex(v: string): string {
   return crypto.createHash("sha256").update(v).digest("hex");
@@ -212,6 +221,7 @@ function readbackReq(
     action: "owner-readback",
     installId: "install-m1",
     osUser: "jarvis",
+    expiresAt: READBACK_EXPIRES_AT,
     ...transcriptOver,
   });
   return {
@@ -595,5 +605,112 @@ describe("SEC-SETUP-BOOTSTRAP-001 Stage 3+4: device-readback activation", () => 
       caught = err;
     }
     expect((caught as FridayDomainError).httpStatus).toBe(401);
+  });
+
+  // ── Follow-up hardening (a): domain-separated transcript.action ──
+
+  it("(a) cross-intent domain separation: a VALID proof whose signed action is 'owner-migrate' — sharing the readback nonce/origin/deviceId — is REFUSED (401); binding stays provisional", () => {
+    seedProvisionalBinding(db);
+    // readbackReq re-signs over the overridden transcript, so this is a fully valid
+    // PoP (correct key, fresh, low-S) that merely carries a DIFFERENT signed intent.
+    // Without domain separation it would activate the binding by cross-intent replay.
+    const req = readbackReq({}, { action: "owner-migrate" });
+    let caught: unknown;
+    try {
+      makeService(db).confirmDeviceReadback(req, ownerPrincipal(), LOOPBACK);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(FridayDomainError);
+    expect((caught as FridayDomainError).httpStatus).toBe(401);
+    expect((caught as FridayDomainError).code).toBe("AUTH_READBACK_POP_INVALID");
+    expect(readBindings(db)[0].state).toBe("provisional");
+    expect(countActiveBindings(db)).toBe(0);
+  });
+
+  // ── Follow-up hardening (b): server-side max-TTL clamp (readback only) ──
+
+  it("(b) max-TTL clamp: a far-future (NOW + 24h) transcript expiry is REFUSED (401); binding stays provisional", () => {
+    seedProvisionalBinding(db);
+    // Not expired (NOW < expiry) so the freshness gate passes — but the expiry lies
+    // FAR beyond the 5-minute readback max TTL, so the clamp fails it closed.
+    const farFuture = new Date(Date.parse(NOW) + 24 * 60 * 60 * 1000).toISOString();
+    const req = readbackReq({}, { expiresAt: farFuture });
+    let caught: unknown;
+    try {
+      makeService(db).confirmDeviceReadback(req, ownerPrincipal(), LOOPBACK);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(FridayDomainError);
+    expect((caught as FridayDomainError).httpStatus).toBe(401);
+    expect((caught as FridayDomainError).code).toBe("AUTH_READBACK_POP_INVALID");
+    expect(readBindings(db)[0].state).toBe("provisional");
+    expect(countActiveBindings(db)).toBe(0);
+  });
+
+  // ── Follow-up hardening (c): graceful 409 on the active-binding UNIQUE, not 500 ──
+
+  it("(c) already-active owner: activating a second device key's provisional binding is a clean 409 AUTH_READBACK_ALREADY_ACTIVE (NOT a raw 500); exactly ONE active row remains", () => {
+    seedPassphraseOwner(db);
+    // ONE already-active binding (device key #1) + a second PROVISIONAL binding for a
+    // DIFFERENT device key (#2), same owner. The partial UNIQUE(user_id) WHERE
+    // state='active' allows this at rest but rejects flipping #2 to active.
+    db.withWriteTransaction((conn) => {
+      conn
+        .prepare(
+          `INSERT INTO friday_device_owner_bindings (
+             id, user_id, device_id, device_public_key, device_public_key_hash,
+             state, migrated_from, origin, hub_id, created_at, activated_at, revoked_at
+           ) VALUES (?, ?, ?, ?, ?, 'active', 'passphrase', ?, 'test-hub', ?, ?, NULL)`,
+        )
+        .run("binding-active-1", OWNER_ID, DEVICE_ID, DEVICE_PUBKEY, sha256Hex(DEVICE_PUBKEY), ORIGIN, NOW, NOW);
+      conn
+        .prepare(
+          `INSERT INTO friday_device_owner_bindings (
+             id, user_id, device_id, device_public_key, device_public_key_hash,
+             state, migrated_from, origin, hub_id, created_at, activated_at, revoked_at
+           ) VALUES (?, ?, ?, ?, ?, 'provisional', 'passphrase', ?, 'test-hub', ?, NULL, NULL)`,
+        )
+        .run("binding-prov-2", OWNER_ID, DEVICE_ID_2, DEVICE_PUBKEY2, sha256Hex(DEVICE_PUBKEY2), ORIGIN, NOW);
+    });
+
+    // A fresh, valid readback PoP over device key #2 (the provisional one).
+    const nonce = "readback-nonce-key2";
+    const transcript = makeTranscript(DEVICE_KEY2, {
+      nonce,
+      origin: ORIGIN,
+      deviceId: DEVICE_ID_2,
+      action: "owner-readback",
+      installId: "install-m1",
+      osUser: "jarvis",
+      expiresAt: READBACK_EXPIRES_AT,
+    });
+    const req = {
+      nonce,
+      devicePublicKey: DEVICE_PUBKEY2,
+      deviceId: DEVICE_ID_2,
+      origin: ORIGIN,
+      installId: "install-m1",
+      osUser: "jarvis",
+      deviceClaimProof: {
+        transcript,
+        signature: { encoding: "ieee-p1363-base64" as const, value: signTranscriptLowS(DEVICE_KEY2, transcript) },
+      },
+    };
+
+    let caught: unknown;
+    try {
+      makeService(db).confirmDeviceReadback(req, ownerPrincipal(), LOOPBACK);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(FridayDomainError);
+    expect((caught as FridayDomainError).httpStatus).toBe(409);
+    expect((caught as FridayDomainError).code).toBe("AUTH_READBACK_ALREADY_ACTIVE");
+    // The failed flip rolled back: exactly ONE active row (#1), #2 stayed provisional.
+    expect(countActiveBindings(db)).toBe(1);
+    const key2 = readBindings(db).find((b) => b.id === "binding-prov-2");
+    expect(key2?.state).toBe("provisional");
   });
 });

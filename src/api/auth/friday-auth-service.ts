@@ -131,6 +131,26 @@ function isSqliteConstraintError(error: unknown): boolean {
   return typeof code === "string" && code.startsWith("SQLITE_CONSTRAINT");
 }
 
+// ─── SEC-SETUP-BOOTSTRAP-001 · Stage 3+4 device-readback hardening follow-ups ───
+
+/**
+ * The canonical transcript `action` a device-readback proof MUST be minted for.
+ * Domain-separates readback from the other PoP legs (owner-claim / owner-migrate):
+ * because `action` is bound INTO the signed transcript bytes, a proof minted for a
+ * DIFFERENT intent — even one that happens to share the readback
+ * nonce/origin/deviceId — can NEVER be replayed to activate a device binding.
+ */
+const READBACK_TRANSCRIPT_ACTION = "owner-readback";
+
+/**
+ * Server-side maximum accepted transcript TTL for a device readback (aligned with
+ * the 300s bootstrap-nonce TTL). The transcript's own `expiresAt` is the freshness
+ * signal, but the PoP verifier imposes NO upper bound — so a client could mint a
+ * far-future transcript once and replay it indefinitely. Clamp the accepted window
+ * so a readback proof is short-lived by construction.
+ */
+const READBACK_MAX_TRANSCRIPT_TTL_MS = 5 * 60 * 1000;
+
 function isLocalhostAddress(addr?: string): boolean {
   return isFridayLoopbackAddress(addr);
 }
@@ -732,6 +752,16 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
           { httpStatus: 401 },
         );
       }
+      // Reverse cross-intent guard: a proof minted FOR device readback
+      // ("owner-readback") must NEVER be replayed into the owner-claim leg. NEGATIVE
+      // guard only — any existing non-canonical claim action still passes.
+      if (proof.transcript.action === READBACK_TRANSCRIPT_ACTION) {
+        throw new FridayDomainError(
+          "AUTH_BOOTSTRAP_POP_INVALID",
+          "Proof-of-possession transcript was minted for device readback, not owner-claim.",
+          { httpStatus: 401 },
+        );
+      }
       const pop = ownerClaimPoPVerifier.verifyPossession({
         transcript: proof.transcript,
         devicePublicKey: { encoding: "spki-der-base64", value: devicePublicKey },
@@ -986,6 +1016,16 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
           { httpStatus: 401 },
         );
       }
+      // Reverse cross-intent guard: a proof minted FOR device readback
+      // ("owner-readback") must NEVER be replayed into the migration leg. NEGATIVE
+      // guard only — any existing non-canonical migration action still passes.
+      if (proof.transcript.action === READBACK_TRANSCRIPT_ACTION) {
+        throw new FridayDomainError(
+          "AUTH_MIGRATE_POP_INVALID",
+          "Proof-of-possession transcript was minted for device readback, not migration.",
+          { httpStatus: 401 },
+        );
+      }
       const pop = ownerClaimPoPVerifier.verifyPossession({
         transcript: proof.transcript,
         devicePublicKey: { encoding: "spki-der-base64", value: devicePublicKey },
@@ -1169,6 +1209,18 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
           { httpStatus: 401 },
         );
       }
+      // ── (a) Domain-separate the readback intent ──
+      // The transcript MUST have been minted FOR device readback. `action` is bound
+      // into the signed bytes, so a proof minted for a different intent (e.g.
+      // "owner-migrate") that happens to share this readback's nonce/origin/deviceId
+      // can NEVER be replayed here to activate the binding.
+      if (proof.transcript.action !== READBACK_TRANSCRIPT_ACTION) {
+        throw new FridayDomainError(
+          "AUTH_READBACK_POP_INVALID",
+          "Proof-of-possession transcript was not minted for device readback.",
+          { httpStatus: 401 },
+        );
+      }
       const pop = ownerClaimPoPVerifier.verifyPossession({
         transcript: proof.transcript,
         devicePublicKey: { encoding: "spki-der-base64", value: devicePublicKey },
@@ -1183,6 +1235,24 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         );
       }
 
+      // ── (b) Server-side max-TTL clamp (readback only) ──
+      // Freshness is bound in the transcript's own expiresAt (verified above), but
+      // the PoP verifier imposes NO upper bound. Reject a proof whose expiry is
+      // non-finite or lies further in the future than the maximum allowed readback
+      // TTL, so a far-future transcript can never be minted once and replayed.
+      const readbackNowMs = Date.parse(deps.nowIso());
+      const readbackExpiryMs = Date.parse(proof.transcript.expiresAt);
+      if (
+        !Number.isFinite(readbackExpiryMs) ||
+        readbackExpiryMs - readbackNowMs > READBACK_MAX_TRANSCRIPT_TTL_MS
+      ) {
+        throw new FridayDomainError(
+          "AUTH_READBACK_POP_INVALID",
+          "Proof-of-possession transcript expiry exceeds the maximum allowed TTL.",
+          { httpStatus: 401 },
+        );
+      }
+
       // The binding stores sha256(devicePublicKey base64) — recompute the SAME
       // hash the migrate leg persisted, from the possession-proven presented key,
       // so we activate the exact provisional row that migration created.
@@ -1192,47 +1262,66 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       // Single write transaction: read-guard + CAS-activate are atomic. NEVER
       // touches users.password_hash (the passphrase stays authoritative — no
       // lockout) and writes NO tombstone (Stage 5 is deferred).
-      const bindingId = deps.db.withWriteTransaction((db) => {
-        // Defence-in-depth (migration-free, writes nothing): if the legacy
-        // credential has already been tombstoned (a later stage's terminal state),
-        // refuse to (re-)activate. This satisfies "tombstoned cannot re-activate"
-        // WITHOUT activating the Stage-5 tombstone-write path.
-        if (bindingRepo.findActiveTombstone(db, localUser.id)) {
-          throw new FridayDomainError(
-            "AUTH_READBACK_TOMBSTONED",
-            "The legacy credential has been retired; the device binding cannot be re-activated.",
-            { httpStatus: 409 },
-          );
-        }
+      let bindingId: string;
+      try {
+        bindingId = deps.db.withWriteTransaction((db) => {
+          // Defence-in-depth (migration-free, writes nothing): if the legacy
+          // credential has already been tombstoned (a later stage's terminal state),
+          // refuse to (re-)activate. This satisfies "tombstoned cannot re-activate"
+          // WITHOUT activating the Stage-5 tombstone-write path.
+          if (bindingRepo.findActiveTombstone(db, localUser.id)) {
+            throw new FridayDomainError(
+              "AUTH_READBACK_TOMBSTONED",
+              "The legacy credential has been retired; the device binding cannot be re-activated.",
+              { httpStatus: 409 },
+            );
+          }
 
-        const binding = bindingRepo.findBindingByUserAndKeyHash(
-          db,
-          localUser.id,
-          devicePublicKeyHash,
-        );
-        if (!binding) {
-          // No binding for this owner+key — cross-owner, unknown key, or migration
-          // never ran. Fail closed with ZERO state change.
-          throw new FridayDomainError(
-            "AUTH_READBACK_NO_BINDING",
-            "No device binding to activate for this owner and device key.",
-            { httpStatus: 409 },
+          const binding = bindingRepo.findBindingByUserAndKeyHash(
+            db,
+            localUser.id,
+            devicePublicKeyHash,
           );
-        }
+          if (!binding) {
+            // No binding for this owner+key — cross-owner, unknown key, or migration
+            // never ran. Fail closed with ZERO state change.
+            throw new FridayDomainError(
+              "AUTH_READBACK_NO_BINDING",
+              "No device binding to activate for this owner and device key.",
+              { httpStatus: 409 },
+            );
+          }
 
-        // Provisional → active compare-and-set. changes===1 only when the row was
-        // provisional; a revoked binding, an already-active binding (replay), or a
-        // concurrent flip all return 0 ⇒ fail closed, NO second active row.
-        const changed = bindingRepo.activateBinding(db, binding.id, localUser.id, now);
-        if (changed !== 1) {
+          // Provisional → active compare-and-set. changes===1 only when the row was
+          // provisional; a revoked binding, an already-active binding (replay), or a
+          // concurrent flip all return 0 ⇒ fail closed, NO second active row.
+          const changed = bindingRepo.activateBinding(db, binding.id, localUser.id, now);
+          if (changed !== 1) {
+            throw new FridayDomainError(
+              "AUTH_READBACK_NOT_PROVISIONAL",
+              "The device binding is not in a provisional state and cannot be activated.",
+              { httpStatus: 409 },
+            );
+          }
+          return binding.id;
+        });
+      } catch (error) {
+        // ── (c) Graceful 409 on the active-binding UNIQUE (never a raw 500) ──
+        // The only UNIQUE that can fire is the partial UNIQUE(user_id) WHERE
+        // state='active': an existing/concurrent active binding for this owner makes
+        // the provisional→active flip a UNIQUE violation. Surface it as a clean
+        // fail-closed 409. The in-txn FridayDomainErrors (tombstone / no-binding /
+        // not-provisional) are NOT constraint errors, so they re-throw unchanged
+        // with their original codes.
+        if (isSqliteConstraintError(error)) {
           throw new FridayDomainError(
-            "AUTH_READBACK_NOT_PROVISIONAL",
-            "The device binding is not in a provisional state and cannot be activated.",
+            "AUTH_READBACK_ALREADY_ACTIVE",
+            "A device binding is already active for this owner.",
             { httpStatus: 409 },
           );
         }
-        return binding.id;
-      });
+        throw error;
+      }
 
       return {
         activated: true,
