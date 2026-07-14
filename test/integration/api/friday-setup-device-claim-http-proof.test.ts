@@ -31,13 +31,40 @@ import {
 } from "#api";
 import { createFridaySqliteLayer } from "#state";
 import type { FridaySqliteLayer } from "#state";
+// SEC-SETUP-BOOTSTRAP-001 Slice 3: device-claim now requires a real PoP. Reuse
+// the S2a signing helpers so this runtime proof drives the REAL verifier.
+import { generateTestDeviceKey, makeTranscript, signTranscriptLowS } from "../../adversarial/_secsetup-s2a.helpers.js";
 
 const OWNER_ID = "admin-001";
 const NOW = "2026-07-13T00:00:00.000Z";
 const ORIGIN = "https://friday.localhost";
 const EVIL_ORIGIN = "https://evil.localhost";
-const DEVICE_PUBKEY = crypto.randomBytes(32).toString("base64url");
+const DEVICE_KEY = generateTestDeviceKey();
+const DEVICE_PUBKEY = DEVICE_KEY.spkiDerBase64;
 const DEVICE_ID = "device-http-proof-001";
+
+/** Build a device-claim body carrying a valid PoP bound to (nonce, origin). */
+function claimBody(nonce: string, origin: string): Record<string, unknown> {
+  const transcript = makeTranscript(DEVICE_KEY, {
+    nonce,
+    origin,
+    deviceId: DEVICE_ID,
+    installId: "install-http-1",
+    osUser: "jarvis",
+  });
+  return {
+    nonce,
+    devicePublicKey: DEVICE_PUBKEY,
+    deviceId: DEVICE_ID,
+    origin,
+    installId: "install-http-1",
+    osUser: "jarvis",
+    deviceClaimProof: {
+      transcript,
+      signature: { encoding: "ieee-p1363-base64", value: signTranscriptLowS(DEVICE_KEY, transcript) },
+    },
+  };
+}
 // Evidence is written to a scratch path (NOT into the repo tree) so CI never
 // dirties the working tree. A representative captured run is committed at
 // test/adversarial/evidence/secsetup-device-claim-runtime-proof.txt.
@@ -220,14 +247,7 @@ describe("SEC-SETUP-BOOTSTRAP-001 runtime proof: device claim over real HTTP + r
     evidence.push(`   persisted row: nonce_hash=${nonceRow(nonce)?.nonce_hash} consumed_at=${nonceRow(nonce)?.consumed_at}`);
 
     // 2. Cross-origin claim MUST fail closed; owner NULL; nonce unconsumed.
-    const evil = await post("/v1/auth/bootstrap/device-claim", {
-      nonce,
-      devicePublicKey: DEVICE_PUBKEY,
-      deviceId: DEVICE_ID,
-      origin: EVIL_ORIGIN,
-      installId: "install-http-1",
-      osUser: "jarvis",
-    });
+    const evil = await post("/v1/auth/bootstrap/device-claim", claimBody(nonce, EVIL_ORIGIN));
     expect(evil.status).toBe(409);
     expect(ownerHash()).toBeNull();
     expect(nonceRow(nonce)?.consumed_at).toBeNull();
@@ -235,17 +255,13 @@ describe("SEC-SETUP-BOOTSTRAP-001 runtime proof: device claim over real HTTP + r
     evidence.push(`   owner password_hash=${ownerHash()} (unchanged) nonce consumed_at=${nonceRow(nonce)?.consumed_at}`);
 
     // 3. Correct-origin claim wins: owner sentinel set, nonce consumed + bound.
-    const ok = await post("/v1/auth/bootstrap/device-claim", {
-      nonce,
-      devicePublicKey: DEVICE_PUBKEY,
-      deviceId: DEVICE_ID,
-      origin: ORIGIN,
-      installId: "install-http-1",
-      osUser: "jarvis",
-    });
+    const ok = await post("/v1/auth/bootstrap/device-claim", claimBody(nonce, ORIGIN));
     expect(ok.status).toBe(200);
     expect(ok.json.data.claimed).toBe(true);
     expect(ok.json.data.devicePublicKeyHash).toBe(sha256Hex(DEVICE_PUBKEY));
+    // Slice 3 authoritative readback: the device binding carries ZERO authority.
+    expect(ok.json.data.deviceAuthorityEnabled).toBe(false);
+    expect(ok.json.data.keyProtection).toBe("unverified");
     const claimedHash = ownerHash();
     expect(claimedHash).toBe(`device-owner$v1$${sha256Hex(DEVICE_PUBKEY)}`);
     const consumedRow = nonceRow(nonce);
@@ -257,14 +273,7 @@ describe("SEC-SETUP-BOOTSTRAP-001 runtime proof: device claim over real HTTP + r
     evidence.push(`   consumed row: consumed_at=${consumedRow?.consumed_at} device_id=${consumedRow?.device_id} device_public_key_hash=${consumedRow?.device_public_key_hash} claimed_user_id=${consumedRow?.claimed_user_id}`);
 
     // 4. Replay the same nonce MUST fail closed; sentinel unchanged.
-    const replay = await post("/v1/auth/bootstrap/device-claim", {
-      nonce,
-      devicePublicKey: DEVICE_PUBKEY,
-      deviceId: DEVICE_ID,
-      origin: ORIGIN,
-      installId: "install-http-1",
-      osUser: "jarvis",
-    });
+    const replay = await post("/v1/auth/bootstrap/device-claim", claimBody(nonce, ORIGIN));
     expect(replay.status).toBe(409);
     expect(ownerHash()).toBe(claimedHash);
     evidence.push(`4) POST /v1/auth/bootstrap/device-claim (replay same nonce) -> HTTP ${replay.status} code=${replay.json?.error?.code ?? replay.json?.code}`);

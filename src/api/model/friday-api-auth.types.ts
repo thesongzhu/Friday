@@ -187,10 +187,41 @@ export interface FridayAuthBootstrapChallengeResponse {
   expiresAt: ISODateTime;
 }
 
+// SEC-SETUP-BOOTSTRAP-001 Slice 3 — proof-of-possession (PoP) over the server
+// nonce. The device MUST prove possession of the PRIVATE key by signing the
+// canonical owner-claim transcript; nonce-possession alone no longer suffices.
+// The transcript + signature are verified by the merged S2a device-attest seam
+// BEFORE the single-use nonce is consumed, so a PoP failure leaves the nonce
+// un-burned and the owner slot untouched.
+
+/** Canonical owner-claim transcript the device signed (S2a shape). */
+export interface FridayDeviceClaimTranscript {
+  transcriptVersion: "friday-owner-claim-v1";
+  algorithm: "ECDSA_P256_SHA256";
+  kind: "install_owner_claim";
+  hubId: string;
+  installId: string;
+  osUser: string;
+  deviceId: string;
+  action: string;
+  origin: string;
+  channel: string;
+  nonce: string;
+  expiresAt: ISODateTime;
+  /** SHA-256 hex of the canonical SPKI DER of the device public key. */
+  devicePublicKeyHash: string;
+}
+
+export interface FridayDeviceClaimProof {
+  transcript: FridayDeviceClaimTranscript;
+  /** IEEE P-1363 raw (r‖s, 64 bytes) ECDSA signature, base64/base64url. */
+  signature: { encoding: "ieee-p1363-base64"; value: string };
+}
+
 export interface FridayAuthDeviceClaimRequest {
   /** The raw nonce previously issued by the challenge endpoint. */
   nonce: string;
-  /** Device public key (opaque bytes, base64url) bound to the owner. */
+  /** Device public key, SPKI DER base64/base64url (P-256), bound to the owner. */
   devicePublicKey: string;
   /** Device identifier bound to the owner. */
   deviceId: string;
@@ -198,6 +229,13 @@ export interface FridayAuthDeviceClaimRequest {
   origin: string;
   installId: string;
   osUser: string;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 Slice 3: REQUIRED proof-of-possession. The device
+   * signs the canonical transcript; the server verifies the signature against the
+   * presented public key before consuming the nonce. A missing/invalid proof
+   * fails closed (owner slot untouched, nonce un-burned).
+   */
+  deviceClaimProof?: FridayDeviceClaimProof;
 }
 
 export interface FridayAuthDeviceClaimResponse {
@@ -207,6 +245,18 @@ export interface FridayAuthDeviceClaimResponse {
   deviceId: string;
   /** Deterministic hash of the bound device public key (never the private key). */
   devicePublicKeyHash: string;
+  /**
+   * Server-derived key-protection posture. Never self-reported. Today the only
+   * reachable value is `unverified` (no OS attestation bridge), which is
+   * fail-closed for release authority.
+   */
+  keyProtection: "secure_enclave_os_verified" | "keychain_acl_verified" | "software_dev_only" | "unverified";
+  /**
+   * Authoritative readback: whether this device binding carries owner authority.
+   * ALWAYS `false` in the release/default profile until native-IPC precondition
+   * (b) lands — so a caller can positively confirm the device has NO authority.
+   */
+  deviceAuthorityEnabled: boolean;
 }
 
 // ─── Refresh ───

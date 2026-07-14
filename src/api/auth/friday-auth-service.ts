@@ -35,6 +35,17 @@ import { createFridayAuthSessionRepository } from "../persistence/friday-auth-se
 import { createFridaySetupBootstrapNonceRepository } from "../persistence/friday-setup-bootstrap-nonce-repository.js";
 import { isFridayTestSecurityWarningSuppressed } from "#utilities";
 import { isFridayLoopbackAddress } from "../http/friday-http-client-ip.js";
+import {
+  createFridayOwnerClaimPoPVerifier,
+} from "./device-attest/index.js";
+import type {
+  OwnerClaimPresentedSignature,
+  OwnerClaimTranscript,
+} from "./device-attest/index.js";
+import {
+  deriveDeviceKeyProtection,
+  isDeviceOwnerAuthorityEnabled,
+} from "../../security/friday-device-owner-authority-precondition.js";
 
 // ─── Helpers ───
 
@@ -62,6 +73,46 @@ const DEVICE_OWNER_HASH_PREFIX = "device-owner$v1$";
 
 function deviceOwnerSentinel(devicePublicKeyHash: string): string {
   return `${DEVICE_OWNER_HASH_PREFIX}${devicePublicKeyHash}`;
+}
+
+/**
+ * SEC-SETUP-BOOTSTRAP-001 Slice 3: defensively coerce an untrusted request-body
+ * device-claim proof into the strict transcript + signature shape the S2a
+ * verifier consumes. Returns null for any structurally invalid input (→ the
+ * caller fails closed). The literal-typed transcript fields are forwarded
+ * verbatim; the verifier re-validates version/algorithm/kind against its
+ * allowlists and rejects anything malformed — so this coercion grants nothing.
+ */
+function coerceDeviceClaimProof(raw: unknown): {
+  transcript: OwnerClaimTranscript;
+  signature: OwnerClaimPresentedSignature;
+} | null {
+  if (!raw || typeof raw !== "object") return null;
+  const proof = raw as Record<string, unknown>;
+  const t = proof.transcript;
+  const sig = proof.signature;
+  if (!t || typeof t !== "object") return null;
+  if (!sig || typeof sig !== "object") return null;
+  const tr = t as Record<string, unknown>;
+  const sg = sig as Record<string, unknown>;
+  if (sg.encoding !== "ieee-p1363-base64" || typeof sg.value !== "string") return null;
+  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+  const transcript: OwnerClaimTranscript = {
+    transcriptVersion: str(tr.transcriptVersion) as OwnerClaimTranscript["transcriptVersion"],
+    algorithm: str(tr.algorithm) as OwnerClaimTranscript["algorithm"],
+    kind: str(tr.kind) as OwnerClaimTranscript["kind"],
+    hubId: str(tr.hubId),
+    installId: str(tr.installId),
+    osUser: str(tr.osUser),
+    deviceId: str(tr.deviceId),
+    action: str(tr.action),
+    origin: str(tr.origin),
+    channel: str(tr.channel),
+    nonce: str(tr.nonce),
+    expiresAt: str(tr.expiresAt),
+    devicePublicKeyHash: str(tr.devicePublicKeyHash),
+  };
+  return { transcript, signature: { encoding: "ieee-p1363-base64", value: sg.value } };
 }
 
 /** True when the caught error is a better-sqlite3 UNIQUE/constraint violation. */
@@ -227,6 +278,9 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
   const userRepo = createFridayUserRepository();
   const sessionRepo = createFridayAuthSessionRepository();
   const bootstrapNonceRepo = createFridaySetupBootstrapNonceRepository();
+  // SEC-SETUP-BOOTSTRAP-001 Slice 3: the merged S2a proof-of-possession verifier.
+  // Crypto lives entirely in the device-attest seam — never re-implemented here.
+  const ownerClaimPoPVerifier = createFridayOwnerClaimPoPVerifier();
   const bootstrapHubId = deps.hubId ?? "local-hub";
   const bootstrapNonceTtlSec = deps.bootstrapNonceTtlSec ?? 300;
   const generateBootstrapNonce =
@@ -590,6 +644,51 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         );
       }
 
+      // ── SEC-SETUP-BOOTSTRAP-001 Slice 3: proof-of-possession gate ──
+      // Nonce-possession alone no longer suffices: the device MUST prove
+      // possession of the PRIVATE key by signing the canonical transcript. This
+      // runs BEFORE the single-use nonce is consumed (below), so a PoP failure
+      // leaves the nonce un-burned AND the owner slot untouched. Crypto is
+      // delegated ENTIRELY to the merged S2a device-attest verifier.
+      const proof = coerceDeviceClaimProof(request.deviceClaimProof);
+      if (!proof) {
+        throw new FridayDomainError(
+          "AUTH_BOOTSTRAP_POP_REQUIRED",
+          "Device owner-claim requires a proof-of-possession (signed transcript + signature).",
+          { httpStatus: 400 },
+        );
+      }
+      // Bind the signed transcript to THIS claim request: a device may not sign
+      // one transcript and submit a different nonce/origin/device in the claim.
+      if (
+        proof.transcript.nonce !== nonce ||
+        proof.transcript.origin !== origin ||
+        proof.transcript.deviceId !== deviceId
+      ) {
+        throw new FridayDomainError(
+          "AUTH_BOOTSTRAP_POP_INVALID",
+          "Proof-of-possession transcript does not match the claim request.",
+          { httpStatus: 401 },
+        );
+      }
+      const pop = ownerClaimPoPVerifier.verifyPossession({
+        transcript: proof.transcript,
+        devicePublicKey: { encoding: "spki-der-base64", value: devicePublicKey },
+        signature: proof.signature,
+        nowMs: Date.parse(deps.nowIso()),
+      });
+      if (!pop.ok) {
+        // PoP-unverified key ⇒ REFUSAL. No nonce consume, no owner write.
+        throw new FridayDomainError(
+          "AUTH_BOOTSTRAP_POP_INVALID",
+          `Device proof-of-possession failed: ${pop.reason}.`,
+          { httpStatus: 401 },
+        );
+      }
+      // Server-derived key-protection posture (never self-reported). Today the
+      // only reachable value is "unverified" → fail closed for release authority.
+      const keyProtection = deriveDeviceKeyProtection();
+
       const localUser = findLocalUser();
       if (!localUser) {
         throw new FridayDomainError(
@@ -673,6 +772,11 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         userId: localUser.id,
         deviceId,
         devicePublicKeyHash,
+        // Authoritative readback: server-derived posture + the truth that this
+        // device binding carries NO owner authority in release/default (the
+        // device principal stays DISABLED until native-IPC precondition (b)).
+        keyProtection,
+        deviceAuthorityEnabled: isDeviceOwnerAuthorityEnabled(),
       };
     },
 
