@@ -77,10 +77,16 @@ export function createFridayAuthRoutes(
       operationId: "auth.bootstrap.challenge",
       method: "POST",
       path: "/v1/auth/bootstrap/challenge",
-      // SEC-SETUP-BOOTSTRAP-001: first-boot device-claim leg. Mints a single-use
-      // install nonce. Loopback-only + first-boot gates are enforced in
-      // authService.issueBootstrapChallenge before any side effect (same posture
-      // as auth.bootstrap.local.passphrase). Only the nonce HASH is persisted.
+      // SEC-SETUP-BOOTSTRAP-001: device-claim challenge leg. Mints a single-use
+      // install nonce. authService.issueBootstrapChallenge enforces ONLY (a)
+      // loopback-only ingress and (b) required-field presence (installId/osUser/
+      // origin) before any side effect — it does NOT gate on first-boot/ownership
+      // (unlike auth.bootstrap.local.passphrase, which checks the owner slot).
+      // Minting a challenge post-ownership is harmless: the ownership gate is the
+      // owner CAS enforced downstream at auth.bootstrap.device-claim, which fails
+      // closed (409) if already claimed. Only the nonce HASH is persisted; the
+      // raw nonce is returned once. Expired/unconsumed nonces are reaped by the
+      // retention sweep (bounded), so this route cannot grow the ledger unbounded.
       auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "auth.login",
       async handler(ctx): Promise<FridayAuthBootstrapChallengeResponse> {
