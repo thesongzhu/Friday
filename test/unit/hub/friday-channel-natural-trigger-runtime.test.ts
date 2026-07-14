@@ -183,7 +183,7 @@ describe("channel natural-trigger parent runtime resolver", () => {
       hub = null;
     }
     if (stateDir) {
-      await fs.rm(stateDir, { recursive: true, force: true });
+      await fs.rm(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
       stateDir = null;
     }
     if (autoDetectEnvSnapshot) {
@@ -645,7 +645,7 @@ describe("channel session-mirror write guard (G5, default fail-closed)", () => {
       hub = null;
     }
     if (stateDir) {
-      await fs.rm(stateDir, { recursive: true, force: true });
+      await fs.rm(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
       stateDir = null;
     }
     if (autoDetectEnvSnapshot) {
@@ -756,7 +756,7 @@ describe("channel ENGINE control-plane write guard (G5 completeness, default fai
       hub = null;
     }
     if (stateDir) {
-      await fs.rm(stateDir, { recursive: true, force: true });
+      await fs.rm(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
       stateDir = null;
     }
     if (autoDetectEnvSnapshot) {
