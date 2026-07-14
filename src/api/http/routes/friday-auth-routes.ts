@@ -134,6 +134,10 @@ export function createFridayAuthRoutes(
           origin: typeof body.origin === "string" ? body.origin : "",
           installId: typeof body.installId === "string" ? body.installId : "",
           osUser: typeof body.osUser === "string" ? body.osUser : "",
+          // SEC-SETUP-BOOTSTRAP-001 Slice 3: forward the untrusted proof-of-
+          // possession envelope; the auth SERVICE defensively validates it and
+          // fails closed on anything malformed.
+          deviceClaimProof: body.deviceClaimProof as FridayAuthDeviceClaimRequest["deviceClaimProof"],
         };
         return deps.authService.claimOwnerWithDeviceKey(request, ctx.ip);
       },

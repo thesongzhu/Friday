@@ -33,13 +33,16 @@ import { createFridayAuthService, createFridaySetupBootstrapNonceRepository } fr
 import { FridayDomainError } from "#errors";
 import { createFridaySqliteLayer } from "#state";
 import type { FridaySqliteLayer } from "#state";
+// SEC-SETUP-BOOTSTRAP-001 Slice 3: device-claim now requires proof-of-possession.
+import { generateTestDeviceKey, makeTranscript, signTranscriptLowS, type TestDeviceKey } from "./_secsetup-s2a.helpers.js";
 
 const OWNER_ID = "admin-001";
 const NOW = "2026-07-13T00:00:00.000Z";
 const AFTER_TTL = "2026-07-13T00:10:00.000Z"; // > NOW + 300s (nonce TTL)
 const LOOPBACK = "127.0.0.1";
 const ORIGIN = "https://friday.localhost";
-const DEVICE_PUBKEY = crypto.randomBytes(32).toString("base64url");
+const DEVICE_KEY = generateTestDeviceKey();
+const DEVICE_PUBKEY = DEVICE_KEY.spkiDerBase64;
 const DEVICE_ID = "device-abc-001";
 const OWNER_HASH_PREFIX = "device-owner$v1$";
 const BOOTSTRAP_TTL_SEC = 300;
@@ -111,14 +114,25 @@ function issueNonce(db: FridaySqliteLayer, over?: { origin?: string; nowIso?: st
   return res.nonce;
 }
 
-function claimReq(over?: Partial<{ nonce: string; origin: string; devicePublicKey: string; deviceId: string }>) {
+function claimReq(over?: Partial<{ nonce: string; origin: string; deviceId: string; key: TestDeviceKey }>) {
+  const key = over?.key ?? DEVICE_KEY;
+  const nonce = over?.nonce ?? "";
+  const origin = over?.origin ?? ORIGIN;
+  const deviceId = over?.deviceId ?? DEVICE_ID;
+  // Far-future transcript expiry so the server nonce store stays the authoritative
+  // TTL/single-use gate (slice-1 error codes unchanged); PoP proves key possession.
+  const transcript = makeTranscript(key, { nonce, origin, deviceId, installId: "install-1", osUser: "jarvis" });
   return {
-    nonce: over?.nonce ?? "",
-    devicePublicKey: over?.devicePublicKey ?? DEVICE_PUBKEY,
-    deviceId: over?.deviceId ?? DEVICE_ID,
-    origin: over?.origin ?? ORIGIN,
+    nonce,
+    devicePublicKey: key.spkiDerBase64,
+    deviceId,
+    origin,
     installId: "install-1",
     osUser: "jarvis",
+    deviceClaimProof: {
+      transcript,
+      signature: { encoding: "ieee-p1363-base64" as const, value: signTranscriptLowS(key, transcript) },
+    },
   };
 }
 
@@ -340,11 +354,11 @@ describe("SEC-SETUP-BOOTSTRAP-001 s4: crash / restart recovery", () => {
     // A retried claim after restart — even with a FRESH nonce and a DIFFERENT
     // device — cannot re-own: it fails closed (409) and leaves the owner intact.
     const nonceB = issueNonce(db);
-    const otherKey = crypto.randomBytes(32).toString("base64url");
+    const otherKey = generateTestDeviceKey(); // a DIFFERENT real device (valid PoP)
     let caught: unknown;
     try {
       makeService(db).claimOwnerWithDeviceKey(
-        claimReq({ nonce: nonceB, devicePublicKey: otherKey, deviceId: "device-other" }),
+        claimReq({ nonce: nonceB, key: otherKey, deviceId: "device-other" }),
         LOOPBACK,
       );
     } catch (err) {

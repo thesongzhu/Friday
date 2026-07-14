@@ -36,12 +36,21 @@ import { FridayDomainError } from "#errors";
 import { createFridaySqliteLayer } from "#state";
 import type { FridaySqliteLayer } from "#state";
 
+// SEC-SETUP-BOOTSTRAP-001 Slice 3: the device-claim now REQUIRES a real
+// proof-of-possession (signed transcript). These slice-1 negative controls are
+// preserved verbatim; each claim just additionally carries a valid signed
+// transcript so the flow reaches the same nonce/owner/atomicity branches. The
+// transcript's expiresAt is far-future so the AUTHORITATIVE single-use + TTL gate
+// stays server-side at nonce-consume — keeping every error code unchanged.
+import { generateTestDeviceKey, makeTranscript, signTranscriptLowS } from "./_secsetup-s2a.helpers.js";
+
 const OWNER_ID = "admin-001";
 const NOW = "2026-07-13T00:00:00.000Z";
 const LATER_AFTER_TTL = "2026-07-13T00:10:00.000Z"; // > NOW + 300s
 const LOOPBACK = "127.0.0.1";
 const ORIGIN = "https://friday.localhost";
-const DEVICE_PUBKEY = crypto.randomBytes(32).toString("base64url");
+const DEVICE_KEY = generateTestDeviceKey();
+const DEVICE_PUBKEY = DEVICE_KEY.spkiDerBase64;
 const DEVICE_ID = "device-abc-001";
 const OWNER_HASH_PREFIX = "device-owner$v1$";
 
@@ -105,13 +114,29 @@ function issueNonce(db: FridaySqliteLayer, over?: { origin?: string; nowIso?: st
 }
 
 function claimReq(over?: Partial<{ nonce: string; origin: string; devicePublicKey: string; deviceId: string }>) {
-  return {
-    nonce: over?.nonce ?? "",
-    devicePublicKey: over?.devicePublicKey ?? DEVICE_PUBKEY,
-    deviceId: over?.deviceId ?? DEVICE_ID,
-    origin: over?.origin ?? ORIGIN,
+  const nonce = over?.nonce ?? "";
+  const origin = over?.origin ?? ORIGIN;
+  const deviceId = over?.deviceId ?? DEVICE_ID;
+  const devicePublicKey = over?.devicePublicKey ?? DEVICE_PUBKEY;
+  // Sign a transcript BOUND to this claim (nonce/origin/deviceId) with far-future
+  // expiry so PoP freshness passes and the server nonce store remains the
+  // authoritative TTL/single-use gate (error codes unchanged from slice 1).
+  const transcript = makeTranscript(DEVICE_KEY, {
+    nonce,
+    origin,
+    deviceId,
     installId: "install-1",
     osUser: "jarvis",
+  });
+  const signature = { encoding: "ieee-p1363-base64" as const, value: signTranscriptLowS(DEVICE_KEY, transcript) };
+  return {
+    nonce,
+    devicePublicKey,
+    deviceId,
+    origin,
+    installId: "install-1",
+    osUser: "jarvis",
+    deviceClaimProof: { transcript, signature },
   };
 }
 

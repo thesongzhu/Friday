@@ -6,6 +6,11 @@ import {
   FRIDAY_DEFAULT_PUBLIC_HTTP_USER_ID,
 } from "../api/http/friday-default-public-principal.js";
 import type { FridayAuthPrincipal, FridayRole, FridayScope } from "../api/model/friday-api-auth.types.js";
+import {
+  DEVICE_OWNER_PRINCIPAL_TYPE,
+  isDeviceOwnerAuthorityEnabled,
+  isDeviceOwnerPrincipalId,
+} from "./friday-device-owner-authority-precondition.js";
 
 // Phase 14.5A — module_28a owner/session/channel capability gate.
 // Source-aware boundary above high-risk public mutating operations.
@@ -108,7 +113,7 @@ export type FridayPublicMutationOperation =
   // owning principal).
   | "memory.spine.decide";
 
-export type FridayBoundPrincipalSource = "api" | "session" | "channel" | "satellite";
+export type FridayBoundPrincipalSource = "api" | "session" | "channel" | "satellite" | "device";
 
 export const ERROR_CODE_BOUND_PRINCIPAL_REQUIRED = "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED";
 const ERROR_CODE_BOUND_PRINCIPAL_AUTHORITY_REQUIRED = "OWNER_SESSION_CHANNEL_AUTHORITY_REQUIRED";
@@ -129,6 +134,25 @@ const SENSITIVE_HEADER_PATTERNS: ReadonlyArray<RegExp> = [
   /^x-csrf-token$/i,
 ];
 
+/**
+ * SEC-SETUP-BOOTSTRAP-001 Slice 3 — a device-bound owner principal that is
+ * DISABLED in the release/default profile (the server-derived device-authority
+ * switch is off, which is ALWAYS the case until native-IPC caller-identity (b)
+ * lands). Such a principal MUST be treated exactly like the synthetic anonymous
+ * principal by every floor. This is keyed on the principal TYPE + the
+ * server-derived switch — NOT on "the id is not public:default" — so a device
+ * principal minted non-synthetic with owner scopes cannot slip through L1/L2/L3.
+ */
+export function isReleaseDisabledDevicePrincipal(
+  principal: FridayAuthPrincipal | null | undefined,
+): boolean {
+  if (!principal) return false;
+  if (principal.principalType !== DEVICE_OWNER_PRINCIPAL_TYPE) return false;
+  // Fail closed: the device principal carries authority ONLY when the
+  // server-derived switch is on. Off (today) ⇒ treat as unauthenticated.
+  return !isDeviceOwnerAuthorityEnabled();
+}
+
 export function isUnauthenticatedPublicPrincipal(
   principal: FridayAuthPrincipal | null | undefined,
 ): boolean {
@@ -141,6 +165,9 @@ export function isUnauthenticatedPublicPrincipal(
   ) {
     return true;
   }
+  // Additive fail-closed refusal: a release-disabled device principal is refused
+  // exactly like the synthetic anonymous principal across L1/L2/L3.
+  if (isReleaseDisabledDevicePrincipal(principal)) return true;
   return false;
 }
 
@@ -221,10 +248,17 @@ export function assertBoundActorForSessionOperation(
   // (which is truthy in JavaScript) cannot pass the bound-principal gate or be
   // propagated downstream as an audit identity.
   const normalized = typeof actorId === "string" ? actorId.trim() : "";
+  // SEC-SETUP-BOOTSTRAP-001 Slice 3: a device-owner actor id is refused here
+  // exactly like the synthetic public actor while the server-derived
+  // device-authority switch is off (always, today) — conversational dispatch
+  // never grants owner authority from a disabled device identity.
+  const isDisabledDeviceActor =
+    isDeviceOwnerPrincipalId(normalized) && !isDeviceOwnerAuthorityEnabled();
   if (
     normalized.length === 0 ||
     normalized === FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID ||
-    normalized === "system"
+    normalized === "system" ||
+    isDisabledDeviceActor
   ) {
     throw new FridayDomainError(
       ERROR_CODE_BOUND_PRINCIPAL_REQUIRED,

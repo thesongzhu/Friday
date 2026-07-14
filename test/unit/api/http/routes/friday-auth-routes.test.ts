@@ -4,6 +4,26 @@ import { createTestDb } from "../../../satellites/_helpers/create-test-db.helper
 import { createFridayAuthRoutes, createFridayAuthService } from "#api";
 import type { FridayAuthService } from "#api";
 import type { FridayRouteDefinition, FridayHttpContext } from "#api";
+// SEC-SETUP-BOOTSTRAP-001 Slice 3: device-claim now requires proof-of-possession.
+import { generateTestDeviceKey, makeTranscript, signTranscriptLowS } from "../../../../adversarial/_secsetup-s2a.helpers.js";
+
+const ROUTE_DEVICE_KEY = generateTestDeviceKey();
+/** Build a device-claim body carrying a valid PoP bound to (nonce, origin, deviceId). */
+function deviceClaimBody(nonce: string, origin: string, deviceId: string) {
+  const transcript = makeTranscript(ROUTE_DEVICE_KEY, { nonce, origin, deviceId, installId: "i-1", osUser: "u" });
+  return {
+    nonce,
+    devicePublicKey: ROUTE_DEVICE_KEY.spkiDerBase64,
+    deviceId,
+    origin,
+    installId: "i-1",
+    osUser: "u",
+    deviceClaimProof: {
+      transcript,
+      signature: { encoding: "ieee-p1363-base64" as const, value: signTranscriptLowS(ROUTE_DEVICE_KEY, transcript) },
+    },
+  };
+}
 
 describe("FridayAuthRoutes", () => {
   let db: FridaySqliteLayer;
@@ -139,14 +159,7 @@ describe("FridayAuthRoutes", () => {
     const claim = await findRoute("auth.bootstrap.device.claim").handler(
       makeCtx({
         ip: "127.0.0.1",
-        body: {
-          nonce: challenge.nonce,
-          devicePublicKey: "device-pubkey-b64u",
-          deviceId: "device-1",
-          origin,
-          installId: "i-1",
-          osUser: "u",
-        },
+        body: deviceClaimBody(challenge.nonce, origin, "device-1"),
       }),
     ) as { claimed: boolean; userId: string };
     expect(claim.claimed).toBe(true);
@@ -157,14 +170,7 @@ describe("FridayAuthRoutes", () => {
       findRoute("auth.bootstrap.device.claim").handler(
         makeCtx({
           ip: "127.0.0.1",
-          body: {
-            nonce: challenge.nonce,
-            devicePublicKey: "device-pubkey-b64u",
-            deviceId: "device-1",
-            origin,
-            installId: "i-1",
-            osUser: "u",
-          },
+          body: deviceClaimBody(challenge.nonce, origin, "device-1"),
         }),
       ),
     ).rejects.toThrow("already been completed");
