@@ -70,8 +70,8 @@ describe("FridayAuthRoutes", () => {
 
   // ─── Route registration ───
 
-  it("registers 10 auth routes", () => {
-    expect(routes).toHaveLength(10);
+  it("registers 12 auth routes", () => {
+    expect(routes).toHaveLength(12);
   });
 
   it("has correct operation IDs", () => {
@@ -83,10 +83,33 @@ describe("FridayAuthRoutes", () => {
     // SEC-SETUP-BOOTSTRAP-001 Slice 5: authenticated migration endpoints.
     expect(opIds).toContain("auth.migrate.challenge");
     expect(opIds).toContain("auth.migrate.device.claim");
+    // SEC-SETUP-BOOTSTRAP-001 FIXED-order Stage 3+4: device-readback activation +
+    // the owner-gated binding-state read seam.
+    expect(opIds).toContain("auth.migrate.device.readback");
+    expect(opIds).toContain("auth.migrate.device.binding.read");
     expect(opIds).toContain("auth.login");
     expect(opIds).toContain("auth.refresh");
     expect(opIds).toContain("auth.logout");
     expect(opIds).toContain("auth.me");
+  });
+
+  // ─── Device-readback activation routes (SEC-SETUP-BOOTSTRAP-001 Stage 3+4) ───
+
+  it("POST /v1/auth/migrate/device-readback is public (bound-principal gated in handler) and rate-limited", () => {
+    const route = findRoute("auth.migrate.device.readback");
+    expect(route.method).toBe("POST");
+    expect(route.path).toBe("/v1/auth/migrate/device-readback");
+    // NOT allowUnauthenticatedMutation → the L1 floor refuses the synthetic
+    // public principal; the handler enforces owner authority.
+    expect(route.auth).toEqual({ public: true });
+    expect(route.rateLimitPolicyId).toBe("auth.login");
+  });
+
+  it("GET /v1/auth/migrate/device-binding is public (owner-gated in handler)", () => {
+    const route = findRoute("auth.migrate.device.binding.read");
+    expect(route.method).toBe("GET");
+    expect(route.path).toBe("/v1/auth/migrate/device-binding");
+    expect(route.auth).toEqual({ public: true });
   });
 
   // ─── Bootstrap routes ───

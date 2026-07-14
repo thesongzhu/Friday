@@ -83,6 +83,12 @@ export type FridayPublicMutationOperation =
   // (only the bound local OWNER may mint a migration nonce / migrate ownership).
   | "auth.migrate.challenge"
   | "auth.migrate.device.claim"
+  // SEC-SETUP-BOOTSTRAP-001 FIXED-order Stage 3+4 — device-readback activation
+  // (public mutating: refuse the synthetic public principal; only the bound local
+  // OWNER may activate its provisional binding) + the owner-gated binding-state
+  // read seam (owner-gated observability; refuses the synthetic public principal).
+  | "auth.migrate.device.readback"
+  | "auth.migrate.device.binding.read"
   | "runtime.config.update"
   | "runtime.config.revert"
   | "runtime.secret.list"

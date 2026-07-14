@@ -5,8 +5,11 @@ import type {
   FridayAuthBootstrapRequest,
   FridayAuthBootstrapResponse,
   FridayAuthBootstrapStatusResponse,
+  FridayAuthDeviceBindingStateResponse,
   FridayAuthDeviceClaimRequest,
   FridayAuthDeviceClaimResponse,
+  FridayAuthDeviceReadbackRequest,
+  FridayAuthDeviceReadbackResponse,
   FridayAuthMeResponse,
   FridayAuthMigrateChallengeRequest,
   FridayAuthMigrateChallengeResponse,
@@ -224,6 +227,68 @@ export function createFridayAuthRoutes(
           deviceClaimProof: body.deviceClaimProof as FridayAuthMigrateDeviceClaimRequest["deviceClaimProof"],
         };
         return deps.authService.migrateOwnerToDeviceKey(request, ctx.principal, ctx.ip);
+      },
+    },
+    {
+      operationId: "auth.migrate.device.readback",
+      method: "POST",
+      path: "/v1/auth/migrate/device-readback",
+      // SEC-SETUP-BOOTSTRAP-001 FIXED-order Stage 3+4: activate a PROVISIONAL
+      // device binding after a FRESH device proof-of-possession. ADDITIVE,
+      // migration-free, fail-closed and reversible: users.password_hash STAYS
+      // scrypt$… (the passphrase still works — NO lockout), the device binding
+      // carries ZERO authority, NO install nonce is consumed and NO tombstone is
+      // written. Same posture as migrate/device-claim: NOT allowUnauthenticatedMutation
+      // → the L1 floor refuses the synthetic public principal; the handler enforces
+      // owner authority; the auth SERVICE binds the principal to the local owner and
+      // verifies device PoP before the provisional→active compare-and-set.
+      auth: { public: true },
+      rateLimitPolicyId: "auth.login",
+      async handler(ctx): Promise<FridayAuthDeviceReadbackResponse> {
+        assertBoundPrincipalAuthorityForOperation(
+          ctx.principal,
+          "auth.migrate.device.readback",
+          "api",
+          { anyOfRoles: ["owner", "admin"], anyOfScopes: ["security.write"] },
+        );
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body || typeof body !== "object") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "Request body is required",
+            { httpStatus: 400 },
+          );
+        }
+        const request: FridayAuthDeviceReadbackRequest = {
+          nonce: typeof body.nonce === "string" ? body.nonce : "",
+          devicePublicKey: typeof body.devicePublicKey === "string" ? body.devicePublicKey : "",
+          deviceId: typeof body.deviceId === "string" ? body.deviceId : "",
+          origin: typeof body.origin === "string" ? body.origin : "",
+          installId: typeof body.installId === "string" ? body.installId : "",
+          osUser: typeof body.osUser === "string" ? body.osUser : "",
+          deviceClaimProof: body.deviceClaimProof as FridayAuthDeviceReadbackRequest["deviceClaimProof"],
+        };
+        return deps.authService.confirmDeviceReadback(request, ctx.principal, ctx.ip);
+      },
+    },
+    {
+      operationId: "auth.migrate.device.binding.read",
+      method: "GET",
+      path: "/v1/auth/migrate/device-binding",
+      // SEC-SETUP-BOOTSTRAP-001 FIXED-order Stage 4 observability: owner-gated read
+      // of the local owner's device-binding posture (active/provisional/revoked/
+      // none). Pure read — mutates nothing. public:true, but the handler enforces
+      // owner authority (the synthetic public principal is refused with 401), and
+      // the auth SERVICE binds the principal to the local owner + is loopback-only.
+      auth: { public: true },
+      async handler(ctx): Promise<FridayAuthDeviceBindingStateResponse> {
+        assertBoundPrincipalAuthorityForOperation(
+          ctx.principal,
+          "auth.migrate.device.binding.read",
+          "api",
+          { anyOfRoles: ["owner", "admin"], anyOfScopes: ["security.read"] },
+        );
+        return deps.authService.getDeviceBindingState(ctx.principal, ctx.ip);
       },
     },
     {

@@ -9,8 +9,11 @@ import type {
   FridayAuthBootstrapRequest,
   FridayAuthBootstrapResponse,
   FridayAuthBootstrapStatusResponse,
+  FridayAuthDeviceBindingStateResponse,
   FridayAuthDeviceClaimRequest,
   FridayAuthDeviceClaimResponse,
+  FridayAuthDeviceReadbackRequest,
+  FridayAuthDeviceReadbackResponse,
   FridayAuthMeResponse,
   FridayAuthMigrateChallengeRequest,
   FridayAuthMigrateChallengeResponse,
@@ -1098,6 +1101,196 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         keyProtection,
         // ALWAYS false in release/default — the provisional device binding
         // carries ZERO authority until native-IPC precondition (b) lands.
+        deviceAuthorityEnabled: isDeviceOwnerAuthorityEnabled(),
+      };
+    },
+
+    confirmDeviceReadback(
+      request: FridayAuthDeviceReadbackRequest,
+      principal: FridayAuthPrincipal | null,
+      ip?: string,
+    ): FridayAuthDeviceReadbackResponse {
+      // Loopback-only guard (identical ingress boundary to the migrate legs).
+      if (!isLocalhostAddress(ip)) {
+        throw new FridayDomainError(
+          "AUTH_READBACK_NOT_ALLOWED",
+          "Device readback is only allowed from localhost.",
+          { httpStatus: 403 },
+        );
+      }
+
+      const localUser = findLocalUser();
+      if (!localUser) {
+        throw new FridayDomainError(
+          "USER_NOT_FOUND",
+          "No local user configured",
+          { httpStatus: 404 },
+        );
+      }
+      // Authenticated-owner gate (the session is the proof-of-passphrase). Refuses
+      // the synthetic public principal (401) and any non-owner identity/role (403).
+      assertAuthenticatedLocalOwner(principal, localUser);
+
+      const nonce = (request.nonce ?? "").trim();
+      const devicePublicKey = (request.devicePublicKey ?? "").trim();
+      const deviceId = (request.deviceId ?? "").trim();
+      const origin = (request.origin ?? "").trim();
+      if (!nonce || !devicePublicKey || !deviceId || !origin) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          "nonce, devicePublicKey, deviceId and origin are required",
+          { httpStatus: 400 },
+        );
+      }
+
+      // ── Proof-of-possession gate (identical posture to migrateOwnerToDeviceKey) ──
+      // The device MUST prove fresh PRIVATE-key possession by signing the canonical
+      // transcript. A PoP failure activates NOTHING (the binding stays provisional).
+      // Anti-replay is INTRINSIC: freshness comes from the transcript's own
+      // expiresAt (verified below), and a replayed activation flips 0 rows at the
+      // provisional→active compare-and-set — so NO install nonce is consumed here
+      // and NO migration is required.
+      const proof = coerceDeviceClaimProof(request.deviceClaimProof);
+      if (!proof) {
+        throw new FridayDomainError(
+          "AUTH_READBACK_POP_REQUIRED",
+          "Device readback requires a proof-of-possession (signed transcript + signature).",
+          { httpStatus: 400 },
+        );
+      }
+      if (
+        proof.transcript.nonce !== nonce ||
+        proof.transcript.origin !== origin ||
+        proof.transcript.deviceId !== deviceId
+      ) {
+        throw new FridayDomainError(
+          "AUTH_READBACK_POP_INVALID",
+          "Proof-of-possession transcript does not match the readback request.",
+          { httpStatus: 401 },
+        );
+      }
+      const pop = ownerClaimPoPVerifier.verifyPossession({
+        transcript: proof.transcript,
+        devicePublicKey: { encoding: "spki-der-base64", value: devicePublicKey },
+        signature: proof.signature,
+        nowMs: Date.parse(deps.nowIso()),
+      });
+      if (!pop.ok) {
+        throw new FridayDomainError(
+          "AUTH_READBACK_POP_INVALID",
+          `Device proof-of-possession failed: ${pop.reason}.`,
+          { httpStatus: 401 },
+        );
+      }
+
+      // The binding stores sha256(devicePublicKey base64) — recompute the SAME
+      // hash the migrate leg persisted, from the possession-proven presented key,
+      // so we activate the exact provisional row that migration created.
+      const devicePublicKeyHash = sha256Hex(devicePublicKey);
+      const now = deps.nowIso();
+
+      // Single write transaction: read-guard + CAS-activate are atomic. NEVER
+      // touches users.password_hash (the passphrase stays authoritative — no
+      // lockout) and writes NO tombstone (Stage 5 is deferred).
+      const bindingId = deps.db.withWriteTransaction((db) => {
+        // Defence-in-depth (migration-free, writes nothing): if the legacy
+        // credential has already been tombstoned (a later stage's terminal state),
+        // refuse to (re-)activate. This satisfies "tombstoned cannot re-activate"
+        // WITHOUT activating the Stage-5 tombstone-write path.
+        if (bindingRepo.findActiveTombstone(db, localUser.id)) {
+          throw new FridayDomainError(
+            "AUTH_READBACK_TOMBSTONED",
+            "The legacy credential has been retired; the device binding cannot be re-activated.",
+            { httpStatus: 409 },
+          );
+        }
+
+        const binding = bindingRepo.findBindingByUserAndKeyHash(
+          db,
+          localUser.id,
+          devicePublicKeyHash,
+        );
+        if (!binding) {
+          // No binding for this owner+key — cross-owner, unknown key, or migration
+          // never ran. Fail closed with ZERO state change.
+          throw new FridayDomainError(
+            "AUTH_READBACK_NO_BINDING",
+            "No device binding to activate for this owner and device key.",
+            { httpStatus: 409 },
+          );
+        }
+
+        // Provisional → active compare-and-set. changes===1 only when the row was
+        // provisional; a revoked binding, an already-active binding (replay), or a
+        // concurrent flip all return 0 ⇒ fail closed, NO second active row.
+        const changed = bindingRepo.activateBinding(db, binding.id, localUser.id, now);
+        if (changed !== 1) {
+          throw new FridayDomainError(
+            "AUTH_READBACK_NOT_PROVISIONAL",
+            "The device binding is not in a provisional state and cannot be activated.",
+            { httpStatus: 409 },
+          );
+        }
+        return binding.id;
+      });
+
+      return {
+        activated: true,
+        state: "active",
+        bindingId,
+        activatedAt: now,
+        userId: localUser.id,
+        deviceId,
+        devicePublicKeyHash,
+        // The passphrase is still the working owner credential — no lockout.
+        passphraseStillActive: true,
+        // ALWAYS false in release/default — activation grants ZERO authority until
+        // native-IPC precondition (b) lands.
+        deviceAuthorityEnabled: isDeviceOwnerAuthorityEnabled(),
+      };
+    },
+
+    getDeviceBindingState(
+      principal: FridayAuthPrincipal | null,
+      ip?: string,
+    ): FridayAuthDeviceBindingStateResponse {
+      // Loopback-only (consistent with the rest of the migrate/device family).
+      if (!isLocalhostAddress(ip)) {
+        throw new FridayDomainError(
+          "AUTH_READBACK_NOT_ALLOWED",
+          "Device binding state is only readable from localhost.",
+          { httpStatus: 403 },
+        );
+      }
+      const localUser = findLocalUser();
+      if (!localUser) {
+        throw new FridayDomainError(
+          "USER_NOT_FOUND",
+          "No local user configured",
+          { httpStatus: 404 },
+        );
+      }
+      assertAuthenticatedLocalOwner(principal, localUser);
+
+      const row = deps.db.withReadConnection((db) => {
+        const active = bindingRepo.findActiveBindingByUser(db, localUser.id);
+        if (active) return active;
+        // Fall back to the newest binding in any state (provisional/revoked) so the
+        // caller can observe a not-yet-activated bind.
+        return bindingRepo.findBindingsByUser(db, localUser.id)[0] ?? null;
+      });
+
+      return {
+        userId: localUser.id,
+        hasActiveBinding: row?.state === "active",
+        state: row?.state ?? "none",
+        bindingId: row?.id ?? null,
+        deviceId: row?.device_id ?? null,
+        devicePublicKeyHash: row?.device_public_key_hash ?? null,
+        createdAt: row?.created_at ?? null,
+        activatedAt: row?.activated_at ?? null,
+        revokedAt: row?.revoked_at ?? null,
+        passphraseStillActive: true,
         deviceAuthorityEnabled: isDeviceOwnerAuthorityEnabled(),
       };
     },
