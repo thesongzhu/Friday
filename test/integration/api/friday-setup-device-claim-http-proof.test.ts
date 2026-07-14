@@ -47,24 +47,29 @@ function sha256Hex(v: string): string {
   return crypto.createHash("sha256").update(v).digest("hex");
 }
 
-/** Allocate a free ephemeral port, re-rolling until it is > 49152 as required. */
+/**
+ * Allocate a free port strictly above `min` (§5 production posture requires
+ * a port > 49152). We EXPLICITLY probe ports in the private/dynamic range
+ * rather than relying on OS ephemeral auto-assignment (listen(0)): on Linux
+ * CI `ip_local_port_range` frequently caps at/below 49152 so auto-assignment
+ * never yields a qualifying port, whereas an explicit bind to a specific high
+ * port is always permitted. Deterministic stride (no RNG) spreads candidates
+ * to avoid collisions between parallel test workers.
+ */
 async function findEphemeralPortAbove(min: number): Promise<number> {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const port = await new Promise<number>((resolve, reject) => {
+  const lo = Math.max(min + 1, 49153);
+  const hi = 65535;
+  const span = hi - lo + 1;
+  for (let attempt = 0; attempt < 128; attempt += 1) {
+    const candidate = lo + ((attempt * 2861 + 7919) % span);
+    const bound = await new Promise<number | null>((resolve) => {
       const srv = net.createServer();
-      srv.listen(0, "127.0.0.1", () => {
-        const addr = srv.address();
-        if (!addr || typeof addr === "string") {
-          srv.close();
-          reject(new Error("no port"));
-          return;
-        }
-        const p = addr.port;
-        srv.close((e) => (e ? reject(e) : resolve(p)));
+      srv.once("error", () => resolve(null)); // EADDRINUSE / EACCES → try next candidate
+      srv.listen(candidate, "127.0.0.1", () => {
+        srv.close((e) => resolve(e ? null : candidate));
       });
-      srv.on("error", reject);
     });
-    if (port > min) return port;
+    if (bound !== null && bound > min) return bound;
   }
   throw new Error(`could not allocate an ephemeral port > ${min}`);
 }
