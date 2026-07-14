@@ -202,6 +202,47 @@ async function waitForNewestWorkflowRun(
   throw new Error(`Workflow ${workflowId} did not produce a terminal run after count ${String(previousCount)}`);
 }
 
+/**
+ * Poll until a workflow output file exists and its size is non-zero and stable
+ * (unchanged across two consecutive stats), up to a bounded timeout.
+ *
+ * The probe drives async workflow runs that WRITE output files; a run can be
+ * observed terminal a beat before its output file is durably flushed and
+ * visible to a subsequent read, producing an ENOENT (or a partial read) under
+ * CI load. This guard closes that timing race BEFORE the readback/assert while
+ * still failing loudly with a clear message if the file genuinely never lands —
+ * it never masks a real non-write and does not touch the content assertions.
+ */
+async function waitForStableFile(
+  filePath: string,
+  timeoutMs = 5_000,
+  intervalMs = 50,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastStableSize = -1;
+  let lastStatError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const stat = await fs.stat(filePath);
+      if (stat.size > 0 && stat.size === lastStableSize) {
+        // Same non-zero size observed across two consecutive stats → stable.
+        return;
+      }
+      lastStableSize = stat.size > 0 ? stat.size : -1;
+      lastStatError = undefined;
+    } catch (error) {
+      lastStableSize = -1;
+      lastStatError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  const detail = lastStatError instanceof Error ? ` (last stat error: ${lastStatError.message})` : "";
+  throw new Error(
+    `waitForStableFile timed out after ${String(timeoutMs)}ms waiting for a non-empty, stable file at ${filePath}${detail}`,
+  );
+}
+
 describe("DP-10 probe — SOP memory triggers workflow execution", () => {
   let db: FridaySqliteLayer | undefined;
   let server: FridayHttpServer | undefined;
@@ -526,6 +567,7 @@ describe("DP-10 probe — SOP memory triggers workflow execution", () => {
       expect(evidence.summary.totalEvents).toBeGreaterThan(0);
 
       const outputPath = path.join(workspaceDir, `outbox/customer-followups-${index + 1}.md`);
+      await waitForStableFile(outputPath);
       const content = await fs.readFile(outputPath, "utf8");
       expect(content).toContain("DP10_WORKFLOW_OUTPUT");
       expect(content).toContain(`sourceTask=dp10-positive-${index + 1}`);
