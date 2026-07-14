@@ -12,6 +12,10 @@ import { createFridaySatelliteHeartbeatRepository } from "../persistence/friday-
 import { createFridayOutboxMessageRepository } from "../persistence/friday-outbox-message-repository.js";
 import { createFridayStreamCheckpointRepository } from "../persistence/friday-stream-checkpoint-repository.js";
 import { createFridayApiTokenRepository } from "../persistence/friday-satellite-api-token-repository.js";
+// Direct file import (not the #api barrel) — src/api already imports #satellites,
+// so a satellites -> #api edge would close a module cycle. This repo file has no
+// cross-module imports, so importing it directly is cycle-free.
+import { createFridaySetupBootstrapNonceRepository } from "../../api/persistence/friday-setup-bootstrap-nonce-repository.js";
 import { createFridayResumeCursorSigner } from "../protocol/friday-resume-cursor-signer.js";
 import { createFridayAckResumeValidator } from "../protocol/friday-ack-resume-validator.js";
 import { createFridaySatelliteRegistrationService } from "../services/friday-satellite-registration-service.js";
@@ -202,6 +206,7 @@ export function createFridaySatelliteRuntime(
   const localRunner = createFridaySatelliteLocalRunnerService({ sync });
 
   // Retention
+  const bootstrapNonceRepo = createFridaySetupBootstrapNonceRepository();
   const retention = createFridayRetentionJob({
     db,
     pairingRequestRepo,
@@ -209,6 +214,7 @@ export function createFridaySatelliteRuntime(
     outboxRepo,
     learningLedger,
     skillRunStore,
+    bootstrapNonceRepo,
     policy: retentionPolicy,
     nowIso,
   });

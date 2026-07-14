@@ -52,12 +52,62 @@ export interface ConsumeFridaySetupBootstrapNonceInput {
   claimedUserId: string;
 }
 
+// ─── Sweep (reaper / TTL) inputs ───
+
+export interface SweepFridaySetupBootstrapNoncesInput {
+  /**
+   * Wall-clock ISO (Z, lexicographically comparable to `expires_at`). Rows that
+   * are UNCONSUMED and whose `expires_at <= nowIso` are permanently unusable —
+   * the consume CAS requires `expires_at > now` — so they are dead weight and
+   * are reaped. This bounds the local table growth a loopback caller could cause
+   * by minting unbounded challenge nonces (OBS-2).
+   */
+  nowIso: string;
+  /**
+   * ISO cutoff (Z) for CONSUMED rows: a consumed nonce whose `consumed_at` is
+   * strictly older than this is past its retention horizon and is reaped. The
+   * authoritative owner<->device binding lives durably on `users.password_hash`
+   * (the device-owner sentinel), so aging out the consumed nonce row does NOT
+   * relax the single-owner invariant — the owner CAS (`password_hash IS NULL`)
+   * plus the fact a deleted row yields `changes = 0` on any consume both keep a
+   * replayed claim closed. The row is retained for a generous horizon (audit +
+   * defence-in-depth belt) before reclamation.
+   */
+  consumedRetentionCutoffIso: string;
+  /**
+   * Max rows deleted PER class (expired-unconsumed / consumed-retired) per sweep
+   * pass. Bounds the work so the sweep itself cannot be turned into a long lock;
+   * a backlog drains across successive scheduled passes.
+   */
+  batchLimit: number;
+}
+
+export interface SweepFridaySetupBootstrapNoncesResult {
+  /** Expired UNCONSUMED nonce rows deleted this pass. */
+  deletedExpiredUnconsumed: number;
+  /** CONSUMED nonce rows past the retention horizon deleted this pass. */
+  deletedConsumedRetired: number;
+}
+
 // ─── Repository interface ───
 
 export interface FridaySetupBootstrapNonceRepository {
   insertNonce(db: Database.Database, input: InsertFridaySetupBootstrapNonceInput): void;
   findByHash(db: Database.Database, nonceHash: string): FridaySetupBootstrapNonceRow | null;
   findById(db: Database.Database, id: string): FridaySetupBootstrapNonceRow | null;
+  /**
+   * Bounded reaper for the install-nonce ledger. Deletes (a) expired UNCONSUMED
+   * nonces (past `expires_at`) and (b) CONSUMED nonces past a retention horizon.
+   * Each class is capped at `batchLimit` rows via a subquery LIMIT (better-sqlite3
+   * is not compiled with `DELETE ... LIMIT`). ADDITIVE / no-degrade: it only
+   * removes rows that are already unusable (expired) or authoritative-elsewhere
+   * (consumed → binding held on `users.password_hash`); it never touches a LIVE
+   * unconsumed-unexpired nonce nor the owner slot. Returns per-class delete counts.
+   */
+  sweepExpiredAndRetired(
+    db: Database.Database,
+    input: SweepFridaySetupBootstrapNoncesInput,
+  ): SweepFridaySetupBootstrapNoncesResult;
   /**
    * Single-use compare-and-consume of an owner-claim nonce.
    *
@@ -114,6 +164,48 @@ export function createFridaySetupBootstrapNonceRepository(): FridaySetupBootstra
           .prepare("SELECT * FROM friday_setup_bootstrap_nonces WHERE id = ?")
           .get(id) as FridaySetupBootstrapNonceRow | undefined) ?? null
       );
+    },
+
+    sweepExpiredAndRetired(db, input) {
+      const limit = Math.max(0, Math.floor(input.batchLimit));
+      if (limit === 0) {
+        return { deletedExpiredUnconsumed: 0, deletedConsumedRetired: 0 };
+      }
+
+      // (a) Expired UNCONSUMED nonces. These are the OBS-2 growth vector: a
+      // loopback caller can mint unbounded challenge rows, each unusable once
+      // `expires_at` passes. The subquery LIMIT bounds a single pass; the
+      // idx on (expires_at, consumed_at) serves the predicate + ORDER BY.
+      const deletedExpiredUnconsumed = db
+        .prepare(
+          `DELETE FROM friday_setup_bootstrap_nonces
+             WHERE id IN (
+               SELECT id FROM friday_setup_bootstrap_nonces
+                WHERE consumed_at IS NULL
+                  AND expires_at <= :nowIso
+                ORDER BY expires_at ASC
+                LIMIT :limit
+             )`,
+        )
+        .run({ nowIso: input.nowIso, limit }).changes;
+
+      // (b) CONSUMED nonces past the retention horizon. The authoritative owner
+      // binding is on `users.password_hash`; the consumed nonce row is an audit
+      // + defence-in-depth record we keep for a generous window, then reclaim.
+      const deletedConsumedRetired = db
+        .prepare(
+          `DELETE FROM friday_setup_bootstrap_nonces
+             WHERE id IN (
+               SELECT id FROM friday_setup_bootstrap_nonces
+                WHERE consumed_at IS NOT NULL
+                  AND consumed_at < :cutoff
+                ORDER BY consumed_at ASC
+                LIMIT :limit
+             )`,
+        )
+        .run({ cutoff: input.consumedRetentionCutoffIso, limit }).changes;
+
+      return { deletedExpiredUnconsumed, deletedConsumedRetired };
     },
 
     consumeOwnerClaimNonce(db, input) {

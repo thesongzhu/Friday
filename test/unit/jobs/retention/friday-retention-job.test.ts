@@ -5,6 +5,7 @@ import { createFridaySatelliteHeartbeatRepository } from "#satellites";
 import { createFridayOutboxMessageRepository } from "#satellites";
 import { createFridayLearningEventLedger } from "#ledger";
 import { createFridaySkillRunStore } from "#ledger";
+import { createFridaySetupBootstrapNonceRepository } from "#api";
 import { createFridayRetentionJob } from "#jobs";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 
@@ -16,6 +17,38 @@ describe("FridayRetentionJob", () => {
   const pairingRequestRepo = createFridaySatellitePairingRequestRepository();
   const heartbeatRepo = createFridaySatelliteHeartbeatRepository();
   const outboxRepo = createFridayOutboxMessageRepository();
+  const bootstrapNonceRepo = createFridaySetupBootstrapNonceRepository();
+
+  function insertNonce(
+    id: string,
+    over?: Partial<{ expiresAt: string; consumedAt: string | null; kind: string }>,
+  ) {
+    // kind CHECK allows only 'install_owner_claim'; consumed rows are also bound
+    // by the partial UNIQUE(kind) WHERE consumed_at IS NOT NULL, so tests that
+    // need multiple consumed rows must key off distinct behaviour, not kind.
+    db.writer
+      .prepare(
+        `INSERT INTO friday_setup_bootstrap_nonces
+           (id, nonce_hash, kind, hub_id, install_id, os_user, origin, action,
+            created_at, expires_at, consumed_at)
+         VALUES (?, ?, 'install_owner_claim', 'h', 'i', 'u', 'o', 'owner-claim', ?, ?, ?)`,
+      )
+      .run(
+        id,
+        `hash-${id}`,
+        "2024-01-01T00:00:00.000Z",
+        over?.expiresAt ?? "2999-01-01T00:00:00.000Z",
+        over?.consumedAt ?? null,
+      );
+  }
+
+  function countNonces(): number {
+    return (
+      db.writer
+        .prepare("SELECT COUNT(*) AS c FROM friday_setup_bootstrap_nonces")
+        .get() as { c: number }
+    ).c;
+  }
 
   function insertSatellite(id: string) {
     db.writer
@@ -46,6 +79,7 @@ describe("FridayRetentionJob", () => {
     agentRunsDays: number;
     llmUsageRecordsDays: number;
     errorIncidentsDays: number;
+    bootstrapNoncesConsumedDays: number;
   }>) {
     return createFridayRetentionJob({
       db,
@@ -54,6 +88,7 @@ describe("FridayRetentionJob", () => {
       outboxRepo,
       learningLedger: createFridayLearningEventLedger({ db }),
       skillRunStore: createFridaySkillRunStore({ db }),
+      bootstrapNonceRepo,
       nowIso: () => NOW,
       policy: {
         learningEventsDays: 90,
@@ -65,6 +100,7 @@ describe("FridayRetentionJob", () => {
         agentRunsDays: 90,
         llmUsageRecordsDays: 180,
         errorIncidentsDays: 90,
+        bootstrapNoncesConsumedDays: 365,
         ...policy,
       },
     });
@@ -316,6 +352,70 @@ describe("FridayRetentionJob", () => {
     expect(result.deletedAgentRuns).toBe(0);
     expect(result.deletedLlmUsageRecords).toBe(0);
     expect(result.deletedErrorIncidents).toBe(0);
+    expect(result.deletedExpiredBootstrapNonces).toBe(0);
+    expect(result.deletedConsumedBootstrapNonces).toBe(0);
+  });
+
+  it("reaps expired unconsumed bootstrap nonces but preserves live ones", () => {
+    // Expired + unconsumed → dead weight, must be reaped.
+    insertNonce("nonce-expired", { expiresAt: "2025-06-14T00:00:00.000Z", consumedAt: null });
+    // Not yet expired + unconsumed → live, must be preserved.
+    insertNonce("nonce-live", { expiresAt: "2025-06-16T00:00:00.000Z", consumedAt: null });
+
+    const job = createJob();
+    const result = job.run(NOW);
+
+    expect(result.deletedExpiredBootstrapNonces).toBe(1);
+    expect(result.deletedConsumedBootstrapNonces).toBe(0);
+    const remaining = db.writer
+      .prepare("SELECT id FROM friday_setup_bootstrap_nonces")
+      .all() as Array<{ id: string }>;
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe("nonce-live");
+  });
+
+  it("reaps a consumed bootstrap nonce past the retention horizon", () => {
+    // Only ONE consumed owner-claim row can exist (partial UNIQUE(kind) WHERE
+    // consumed_at IS NOT NULL). Consumed long ago (> 365 days) → reaped.
+    insertNonce("nonce-old-consumed", {
+      expiresAt: "2024-01-01T00:05:00.000Z",
+      consumedAt: "2024-01-01T00:00:00.000Z",
+    });
+
+    const job = createJob();
+    const result = job.run(NOW);
+
+    expect(result.deletedConsumedBootstrapNonces).toBe(1);
+    expect(result.deletedExpiredBootstrapNonces).toBe(0);
+    expect(countNonces()).toBe(0);
+  });
+
+  it("keeps a recently-consumed bootstrap nonce (within the retention horizon)", () => {
+    // Consumed recently (well within 365 days) → kept.
+    insertNonce("nonce-recent-consumed", {
+      expiresAt: "2025-06-15T00:05:00.000Z",
+      consumedAt: "2025-06-14T00:00:00.000Z",
+    });
+
+    const job = createJob();
+    const result = job.run(NOW);
+
+    expect(result.deletedConsumedBootstrapNonces).toBe(0);
+    expect(countNonces()).toBe(1);
+  });
+
+  it("never reaps a consumed nonce still within the retention horizon", () => {
+    // consumed_at == cutoff boundary (NOW - 365d) is NOT strictly older → kept.
+    insertNonce("nonce-boundary", {
+      expiresAt: "2024-06-15T10:05:00.000Z",
+      consumedAt: "2024-06-15T10:00:00.000Z", // exactly 365 days before NOW
+    });
+
+    const job = createJob();
+    const result = job.run(NOW);
+
+    expect(result.deletedConsumedBootstrapNonces).toBe(0);
+    expect(countNonces()).toBe(1);
   });
 
   it("deletes old audit logs", () => {

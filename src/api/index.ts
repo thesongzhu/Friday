@@ -192,6 +192,13 @@ export type { FridaySubagentRoutesDeps } from "./http/routes/friday-subagent-rou
 export { createFridayRealtimeEventRepository } from "./persistence/friday-realtime-event-repository.js";
 export type { FridayRealtimeEventRepository } from "./persistence/friday-realtime-event-repository.js";
 export { createFridayRealtimeCheckpointRepository } from "./persistence/friday-realtime-checkpoint-repository.js";
+export { createFridaySetupBootstrapNonceRepository } from "./persistence/friday-setup-bootstrap-nonce-repository.js";
+export type {
+  FridaySetupBootstrapNonceRepository,
+  FridaySetupBootstrapNonceRow,
+  SweepFridaySetupBootstrapNoncesInput,
+  SweepFridaySetupBootstrapNoncesResult,
+} from "./persistence/friday-setup-bootstrap-nonce-repository.js";
 
 // Multi-tenant security routes (B-002)
 export { createFridayMultiTenantSecurityRoutes } from "./http/routes/friday-multi-tenant-security-routes.js";

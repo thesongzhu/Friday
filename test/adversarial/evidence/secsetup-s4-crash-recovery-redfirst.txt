@@ -1,0 +1,48 @@
+SEC-SETUP-BOOTSTRAP-001 slice 4 — §5 red-first evidence: crash/restart recovery
+target suite: test/adversarial/bootstrap-nonce-lifecycle.test.ts
+              (REAL file-backed sqlite created, closed, and REOPENED to simulate
+               a process restart; admin-001 seeded as the hub seeds it)
+method: start GREEN (hardened working tree), remove ONE S1 owner-claim guard at a
+        time -> the crash-recovery assertion that relies on it going RED across the
+        restart (a real defect, not a compile error), restore -> GREEN. This proves
+        the S1 single-use / expiry / single-owner invariants still hold after a
+        restart (no-degrade of S1) and that each test is load-bearing.
+
+BASELINE (hardened): Tests  9 passed (9)
+
+GUARD REMOVED: single-use consume CAS  (AND consumed_at IS NULL -> AND 1=1)
+  (src/api/persistence/friday-setup-bootstrap-nonce-repository.ts, consumeOwnerClaimNonce)
+  A consumed nonce can now be re-consumed, so single-use no longer survives restart.
+  RED  ×  crash / restart recovery > (b) a consumed nonce stays consumed across restart (single-use holds)
+  RED  Tests  1 failed | 8 passed (9)
+  RESTORE: Tests  9 passed (9)
+
+GUARD REMOVED: freshness/expiry consume CAS  (AND expires_at > :nowIso -> AND 1=1)
+  (src/api/persistence/friday-setup-bootstrap-nonce-repository.ts, consumeOwnerClaimNonce)
+  An expired nonce can now be consumed, so a post-TTL claim after restart succeeds.
+  RED  ×  crash / restart recovery > (a) issued-but-unconsumed nonce past TTL after restart: claim rejected, then reaped, no partial owner
+  RED  Tests  1 failed | 8 passed (9)
+  RESTORE: Tests  9 passed (9)
+
+GUARD REMOVED: owner slot single-writer (claim path)  — BOTH the fast-fail owner
+              check (`if (localUser.password_hash)` -> `if (false)`) AND the owner
+              CAS predicate (`WHERE id = ? AND password_hash IS NULL` -> `WHERE id = ?`)
+  (src/api/auth/friday-auth-service.ts, claimOwnerWithDeviceKey)
+  With both removed, a fresh claim can seize an ALREADY-owned slot (single-owner
+  degrades). Surfaced by:
+  RED  ×  crash / restart recovery > (e) no-degrade: passphrase bootstrap still works across a restart
+          (a device claim now overwrites the existing scrypt passphrase owner)
+  RED  ×  nonce reaper (OBS-2) > NO-DEGRADE: reaping a consumed nonce does NOT release the owner slot
+          (after the consumed row is reaped, the severed CAS lets a fresh claim re-own)
+  RED  Tests  2 failed | 7 passed (9)
+  NOTE (defence-in-depth, expected): test "(c) owner-claim is idempotent under
+       retry-after-restart" STAYS GREEN even with both guards removed, because the
+       partial UNIQUE(kind) WHERE consumed_at IS NOT NULL belt independently rejects
+       the SECOND consume (the prior consumed nonce row is still present). It only
+       degrades once ALL THREE layers (early-check + owner CAS + the partial-unique
+       belt) are gone — which is why (e)/NO-DEGRADE (no surviving consumed row in
+       play) are the tests that expose the single-writer guard directly.
+  RESTORE: Tests  9 passed (9)
+
+FINAL working tree: both source files restored byte-for-byte (auth-service shows
+                    zero diff vs base; adversarial suite GREEN 9/9).
