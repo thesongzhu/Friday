@@ -12,6 +12,10 @@ import type {
   FridayAuthDeviceClaimRequest,
   FridayAuthDeviceClaimResponse,
   FridayAuthMeResponse,
+  FridayAuthMigrateChallengeRequest,
+  FridayAuthMigrateChallengeResponse,
+  FridayAuthMigrateDeviceClaimRequest,
+  FridayAuthMigrateDeviceClaimResponse,
   FridayAuthPrincipal,
   FridayLoginRequest,
   FridayLoginResponse,
@@ -33,6 +37,8 @@ import { createFridayUserRepository } from "../persistence/friday-user-repositor
 import type { FridayUserRow } from "../persistence/friday-user-repository.js";
 import { createFridayAuthSessionRepository } from "../persistence/friday-auth-session-repository.js";
 import { createFridaySetupBootstrapNonceRepository } from "../persistence/friday-setup-bootstrap-nonce-repository.js";
+import { createFridayDeviceOwnerBindingRepository } from "../persistence/friday-device-owner-binding-repository.js";
+import { isUnauthenticatedPublicPrincipal } from "../../security/friday-owner-session-channel-capability.js";
 import { isFridayTestSecurityWarningSuppressed } from "#utilities";
 import { isFridayLoopbackAddress } from "../http/friday-http-client-ip.js";
 import {
@@ -198,6 +204,22 @@ function isLegacySha256Hash(hash: string): boolean {
 }
 
 /**
+ * SEC-SETUP-BOOTSTRAP-001 Slice 5: true iff `hash` is a KNOWN passphrase-owner
+ * credential — the only valid migration SOURCE. NULL (first-boot, unclaimed) and
+ * the device-owner sentinel (already device-owned) both return false, so the
+ * authenticated migration can never reuse the first-boot bootstrap leg nor
+ * clobber an existing device owner. The device sentinel
+ * (`device-owner$v1$<64hex>`) is not `scrypt$…` and is longer than 64 chars, so
+ * it fails both branches.
+ */
+function isKnownPassphraseOwnerHash(hash: string | null | undefined): boolean {
+  if (!hash) return false;
+  if (hash.startsWith("scrypt$")) return true;
+  if (isLegacySha256Hash(hash)) return true;
+  return false;
+}
+
+/**
  * Verify a password against a legacy SHA-256 hex hash using constant-time comparison.
  */
 function verifyPasswordLegacySha256(input: string, hash: string): boolean {
@@ -278,6 +300,9 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
   const userRepo = createFridayUserRepository();
   const sessionRepo = createFridayAuthSessionRepository();
   const bootstrapNonceRepo = createFridaySetupBootstrapNonceRepository();
+  // SEC-SETUP-BOOTSTRAP-001 Slice 5: durable dual-read owner↔device binding
+  // record (provisional bind) + INACTIVE tombstone/rollback scaffolding.
+  const bindingRepo = createFridayDeviceOwnerBindingRepository();
   // SEC-SETUP-BOOTSTRAP-001 Slice 3: the merged S2a proof-of-possession verifier.
   // Crypto lives entirely in the device-attest seam — never re-implemented here.
   const ownerClaimPoPVerifier = createFridayOwnerClaimPoPVerifier();
@@ -474,6 +499,39 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
 
     const refreshToken = deps.idGenerator();
     return { accessToken, refreshToken, accessTokenClaims };
+  }
+
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 Slice 5: fail-closed guard that the caller is the
+   * AUTHENTICATED local owner (from a passphrase login). Defence-in-depth on top
+   * of the http-server L1 public-mutation floor: refuse the synthetic public
+   * principal AND any release-disabled device principal, then require the bound
+   * owner identity (principalId === localUser.id) + an owner/admin role. The
+   * authenticated session IS the proof-of-passphrase-possession — the passphrase
+   * is never re-typed into a body, and Origin/UA/bundle-string are never trusted
+   * for identity.
+   */
+  function assertAuthenticatedLocalOwner(
+    principal: FridayAuthPrincipal | null,
+    localUser: FridayUserRow,
+  ): void {
+    if (isUnauthenticatedPublicPrincipal(principal)) {
+      throw new FridayDomainError(
+        "AUTH_MIGRATE_OWNER_REQUIRED",
+        "Migration requires the authenticated local owner; the synthetic public principal cannot migrate ownership.",
+        { httpStatus: 401 },
+      );
+    }
+    const p = principal as FridayAuthPrincipal;
+    const roleOk = p.role === "admin" || p.role === "owner";
+    const identityOk = p.principalId === localUser.id;
+    if (!roleOk || !identityOk) {
+      throw new FridayDomainError(
+        "AUTH_MIGRATE_FORBIDDEN",
+        "Migration requires the authenticated local owner principal (admin/owner bound to the local user).",
+        { httpStatus: 403 },
+      );
+    }
   }
 
   return {
@@ -776,6 +834,270 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         // device binding carries NO owner authority in release/default (the
         // device principal stays DISABLED until native-IPC precondition (b)).
         keyProtection,
+        deviceAuthorityEnabled: isDeviceOwnerAuthorityEnabled(),
+      };
+    },
+
+    issueMigrationChallenge(
+      request: FridayAuthMigrateChallengeRequest,
+      principal: FridayAuthPrincipal | null,
+      ip?: string,
+    ): FridayAuthMigrateChallengeResponse {
+      // Loopback-only, mirroring the bootstrap challenge ingress boundary.
+      if (!isLocalhostAddress(ip)) {
+        throw new FridayDomainError(
+          "AUTH_MIGRATE_NOT_ALLOWED",
+          "Migration challenge is only allowed from localhost.",
+          { httpStatus: 403 },
+        );
+      }
+
+      const localUser = findLocalUser();
+      if (!localUser) {
+        throw new FridayDomainError(
+          "USER_NOT_FOUND",
+          "No local user configured",
+          { httpStatus: 404 },
+        );
+      }
+      // Authenticated-owner gate: only the bound local owner starts a migration.
+      assertAuthenticatedLocalOwner(principal, localUser);
+      // Only a KNOWN passphrase-owner is a valid migration source. NULL
+      // (first-boot) or the device sentinel (already migrated) fail closed — the
+      // migration never reuses the first-boot leg nor re-migrates a device owner.
+      if (!isKnownPassphraseOwnerHash(localUser.password_hash)) {
+        throw new FridayDomainError(
+          "AUTH_MIGRATE_NO_LEGACY_OWNER",
+          "Migration requires an existing passphrase owner; there is no legacy passphrase credential to migrate.",
+          { httpStatus: 409 },
+        );
+      }
+
+      const installId = (request.installId ?? "").trim();
+      const osUser = (request.osUser ?? "").trim();
+      const origin = (request.origin ?? "").trim();
+      const action = (request.action ?? "owner-migrate").trim() || "owner-migrate";
+      if (!installId || !osUser || !origin) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          "installId, osUser and origin are required to issue a migration challenge",
+          { httpStatus: 400 },
+        );
+      }
+
+      const now = deps.nowIso();
+      const expiresAt = new Date(
+        new Date(now).getTime() + bootstrapNonceTtlSec * 1000,
+      ).toISOString();
+      const challengeId = deps.idGenerator();
+      const nonce = generateBootstrapNonce();
+      const nonceHash = sha256Hex(nonce);
+
+      deps.db.withWriteTransaction((db) => {
+        bootstrapNonceRepo.insertNonce(db, {
+          id: challengeId,
+          nonceHash,
+          kind: "device_migration_claim",
+          hubId: bootstrapHubId,
+          installId,
+          osUser,
+          origin,
+          action,
+          createdAt: now,
+          expiresAt,
+        });
+      });
+
+      return {
+        challengeId,
+        nonce,
+        kind: "device_migration_claim",
+        hubId: bootstrapHubId,
+        installId,
+        osUser,
+        origin,
+        action,
+        createdAt: now,
+        expiresAt,
+      };
+    },
+
+    migrateOwnerToDeviceKey(
+      request: FridayAuthMigrateDeviceClaimRequest,
+      principal: FridayAuthPrincipal | null,
+      ip?: string,
+    ): FridayAuthMigrateDeviceClaimResponse {
+      // Loopback-only guard.
+      if (!isLocalhostAddress(ip)) {
+        throw new FridayDomainError(
+          "AUTH_MIGRATE_NOT_ALLOWED",
+          "Migration is only allowed from localhost.",
+          { httpStatus: 403 },
+        );
+      }
+
+      const localUser = findLocalUser();
+      if (!localUser) {
+        throw new FridayDomainError(
+          "USER_NOT_FOUND",
+          "No local user configured",
+          { httpStatus: 404 },
+        );
+      }
+      // Authenticated-owner gate (the session is the proof-of-passphrase).
+      assertAuthenticatedLocalOwner(principal, localUser);
+
+      const nonce = (request.nonce ?? "").trim();
+      const devicePublicKey = (request.devicePublicKey ?? "").trim();
+      const deviceId = (request.deviceId ?? "").trim();
+      const origin = (request.origin ?? "").trim();
+      if (!nonce || !devicePublicKey || !deviceId || !origin) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          "nonce, devicePublicKey, deviceId and origin are required",
+          { httpStatus: 400 },
+        );
+      }
+
+      // ── Proof-of-possession gate (identical posture to claimOwnerWithDeviceKey) ──
+      // The device MUST prove PRIVATE-key possession by signing the canonical
+      // transcript over the server nonce. Verified BEFORE the nonce is consumed,
+      // so a PoP failure leaves the nonce un-burned and adds NO binding. Crypto is
+      // delegated ENTIRELY to the merged S2a verifier — never re-implemented here.
+      const proof = coerceDeviceClaimProof(request.deviceClaimProof);
+      if (!proof) {
+        throw new FridayDomainError(
+          "AUTH_MIGRATE_POP_REQUIRED",
+          "Device migration requires a proof-of-possession (signed transcript + signature).",
+          { httpStatus: 400 },
+        );
+      }
+      if (
+        proof.transcript.nonce !== nonce ||
+        proof.transcript.origin !== origin ||
+        proof.transcript.deviceId !== deviceId
+      ) {
+        throw new FridayDomainError(
+          "AUTH_MIGRATE_POP_INVALID",
+          "Proof-of-possession transcript does not match the migration request.",
+          { httpStatus: 401 },
+        );
+      }
+      const pop = ownerClaimPoPVerifier.verifyPossession({
+        transcript: proof.transcript,
+        devicePublicKey: { encoding: "spki-der-base64", value: devicePublicKey },
+        signature: proof.signature,
+        nowMs: Date.parse(deps.nowIso()),
+      });
+      if (!pop.ok) {
+        throw new FridayDomainError(
+          "AUTH_MIGRATE_POP_INVALID",
+          `Device proof-of-possession failed: ${pop.reason}.`,
+          { httpStatus: 401 },
+        );
+      }
+      const keyProtection = deriveDeviceKeyProtection();
+
+      // Migration SOURCE gate: CAS from a KNOWN passphrase-owner hash ONLY. NULL
+      // (first-boot) ⇒ refuse (never reuse the bootstrap leg). Device sentinel ⇒
+      // refuse (already migrated). Captured now for the in-txn re-assert below.
+      const observedHash = localUser.password_hash;
+      if (!isKnownPassphraseOwnerHash(observedHash)) {
+        throw new FridayDomainError(
+          "AUTH_MIGRATE_NO_LEGACY_OWNER",
+          "Migration requires an existing passphrase owner; there is no legacy passphrase credential to migrate.",
+          { httpStatus: 409 },
+        );
+      }
+
+      const now = deps.nowIso();
+      const nonceHash = sha256Hex(nonce);
+      const devicePublicKeyHash = sha256Hex(devicePublicKey);
+      const bindingId = deps.idGenerator();
+
+      // ADDITIVE, dual-read, abort-safe: BOTH writes run in ONE transaction. A
+      // crash / thrown error rolls the whole unit back — the nonce stays
+      // unconsumed AND no binding is added. Crucially, users.password_hash is
+      // NEVER written here: the passphrase stays authoritative (NO lockout), the
+      // device binding is only 'provisional', and the tombstone/sentinel flip is
+      // a LATER stage (INACTIVE scaffolding this slice).
+      //   1. CAS-consume the migration nonce (kind='device_migration_claim',
+      //      origin/expiry/single-use). changes=0 ⇒ replay/expired/cross-origin ⇒
+      //      reject, ZERO state change.
+      //   2. Re-assert the observed legacy hash is UNCHANGED inside the txn — a
+      //      concurrent passphrase rotation / re-bootstrap / device-claim aborts
+      //      the migration with ZERO state change (never bind against a moved slot).
+      //   3. Insert the 'provisional' dual-read binding. password_hash UNTOUCHED.
+      try {
+        deps.db.withWriteTransaction((db) => {
+          const consumed = bootstrapNonceRepo.consumeOwnerClaimNonce(db, {
+            nonceHash,
+            kind: "device_migration_claim",
+            origin,
+            nowIso: now,
+            devicePublicKey,
+            devicePublicKeyHash,
+            deviceId,
+            claimedUserId: localUser.id,
+          });
+          if (consumed !== 1) {
+            throw new FridayDomainError(
+              "AUTH_MIGRATE_NONCE_INVALID",
+              "Migration nonce is invalid, expired, cross-origin, or already used.",
+              { httpStatus: 409 },
+            );
+          }
+
+          const current = db
+            .prepare("SELECT password_hash AS h FROM users WHERE id = ?")
+            .get(localUser.id) as { h: string | null } | undefined;
+          if (!current || current.h !== observedHash) {
+            throw new FridayDomainError(
+              "AUTH_MIGRATE_OWNER_CHANGED",
+              "The owner credential changed during migration; aborted with no state change.",
+              { httpStatus: 409 },
+            );
+          }
+
+          bindingRepo.insertProvisionalBinding(db, {
+            id: bindingId,
+            userId: localUser.id,
+            deviceId,
+            devicePublicKey,
+            devicePublicKeyHash,
+            migratedFrom: "passphrase",
+            origin,
+            hubId: bootstrapHubId,
+            createdAt: now,
+          });
+        });
+      } catch (error) {
+        // Defence-in-depth: the partial UNIQUE(kind) WHERE consumed_at IS NOT NULL
+        // makes a second consumed migration nonce a UNIQUE violation. Surface it
+        // as a clean fail-closed 409 rather than a raw SQLite error.
+        if (isSqliteConstraintError(error)) {
+          throw new FridayDomainError(
+            "AUTH_MIGRATE_ALREADY_DONE",
+            "A device migration has already been recorded for this owner.",
+            { httpStatus: 409 },
+          );
+        }
+        throw error;
+      }
+
+      return {
+        migrated: true,
+        state: "provisional",
+        bindingId,
+        migratedAt: now,
+        userId: localUser.id,
+        deviceId,
+        devicePublicKeyHash,
+        // The passphrase is still the working owner credential — no lockout.
+        passphraseStillActive: true,
+        keyProtection,
+        // ALWAYS false in release/default — the provisional device binding
+        // carries ZERO authority until native-IPC precondition (b) lands.
         deviceAuthorityEnabled: isDeviceOwnerAuthorityEnabled(),
       };
     },

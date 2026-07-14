@@ -70,8 +70,8 @@ describe("FridayAuthRoutes", () => {
 
   // ─── Route registration ───
 
-  it("registers 8 auth routes", () => {
-    expect(routes).toHaveLength(8);
+  it("registers 10 auth routes", () => {
+    expect(routes).toHaveLength(10);
   });
 
   it("has correct operation IDs", () => {
@@ -80,6 +80,9 @@ describe("FridayAuthRoutes", () => {
     expect(opIds).toContain("auth.bootstrap.local.passphrase");
     expect(opIds).toContain("auth.bootstrap.challenge");
     expect(opIds).toContain("auth.bootstrap.device.claim");
+    // SEC-SETUP-BOOTSTRAP-001 Slice 5: authenticated migration endpoints.
+    expect(opIds).toContain("auth.migrate.challenge");
+    expect(opIds).toContain("auth.migrate.device.claim");
     expect(opIds).toContain("auth.login");
     expect(opIds).toContain("auth.refresh");
     expect(opIds).toContain("auth.logout");

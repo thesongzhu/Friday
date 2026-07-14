@@ -8,6 +8,10 @@ import type {
   FridayAuthDeviceClaimRequest,
   FridayAuthDeviceClaimResponse,
   FridayAuthMeResponse,
+  FridayAuthMigrateChallengeRequest,
+  FridayAuthMigrateChallengeResponse,
+  FridayAuthMigrateDeviceClaimRequest,
+  FridayAuthMigrateDeviceClaimResponse,
   FridayLoginRequest,
   FridayLogoutRequest,
   FridayRefreshRequest,
@@ -17,6 +21,7 @@ import {
   FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID,
   FRIDAY_DEFAULT_PUBLIC_HTTP_USER_ID,
 } from "../friday-default-public-principal.js";
+import { assertBoundPrincipalAuthorityForOperation } from "../../../security/friday-owner-session-channel-capability.js";
 import { FridayDomainError } from "#errors";
 
 const FRIDAY_DEFAULT_PUBLIC_HTTP_DISPLAY_NAME = "Friday Public";
@@ -140,6 +145,85 @@ export function createFridayAuthRoutes(
           deviceClaimProof: body.deviceClaimProof as FridayAuthDeviceClaimRequest["deviceClaimProof"],
         };
         return deps.authService.claimOwnerWithDeviceKey(request, ctx.ip);
+      },
+    },
+    {
+      operationId: "auth.migrate.challenge",
+      method: "POST",
+      path: "/v1/auth/migrate/challenge",
+      // SEC-SETUP-BOOTSTRAP-001 Slice 5: mints a single-use migration nonce
+      // (kind='device_migration_claim') the device signs. AUTHENTICATED: NOT
+      // allowUnauthenticatedMutation, so the http-server L1 public-mutation floor
+      // refuses the synthetic public principal (401) — a real OWNER bearer is
+      // required. The handler additionally enforces owner authority, and the auth
+      // SERVICE binds the principal to the local owner (principalId===localUser.id)
+      // and requires an existing passphrase credential. Loopback-only,
+      // rate-limited under auth.login.
+      auth: { public: true },
+      rateLimitPolicyId: "auth.login",
+      async handler(ctx): Promise<FridayAuthMigrateChallengeResponse> {
+        assertBoundPrincipalAuthorityForOperation(
+          ctx.principal,
+          "auth.migrate.challenge",
+          "api",
+          { anyOfRoles: ["owner", "admin"], anyOfScopes: ["security.write"] },
+        );
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body || typeof body !== "object") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "Request body is required",
+            { httpStatus: 400 },
+          );
+        }
+        const request: FridayAuthMigrateChallengeRequest = {
+          installId: typeof body.installId === "string" ? body.installId : "",
+          osUser: typeof body.osUser === "string" ? body.osUser : "",
+          origin: typeof body.origin === "string" ? body.origin : "",
+          action: typeof body.action === "string" ? body.action : undefined,
+        };
+        return deps.authService.issueMigrationChallenge(request, ctx.principal, ctx.ip);
+      },
+    },
+    {
+      operationId: "auth.migrate.device.claim",
+      method: "POST",
+      path: "/v1/auth/migrate/device-claim",
+      // SEC-SETUP-BOOTSTRAP-001 Slice 5: authenticated dual-read migration of an
+      // existing passphrase-owner to a PROVISIONAL device binding. ADDITIVE and
+      // reversible: users.password_hash STAYS scrypt$… (the passphrase still
+      // works — NO lockout) and the device binding carries ZERO authority. NOT
+      // allowUnauthenticatedMutation → the L1 floor refuses the synthetic public
+      // principal; the handler enforces owner authority; the auth SERVICE binds
+      // the principal to the local owner (the authenticated session IS the
+      // proof-of-passphrase-possession) + verifies device PoP before any bind.
+      auth: { public: true },
+      rateLimitPolicyId: "auth.login",
+      async handler(ctx): Promise<FridayAuthMigrateDeviceClaimResponse> {
+        assertBoundPrincipalAuthorityForOperation(
+          ctx.principal,
+          "auth.migrate.device.claim",
+          "api",
+          { anyOfRoles: ["owner", "admin"], anyOfScopes: ["security.write"] },
+        );
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body || typeof body !== "object") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "Request body is required",
+            { httpStatus: 400 },
+          );
+        }
+        const request: FridayAuthMigrateDeviceClaimRequest = {
+          nonce: typeof body.nonce === "string" ? body.nonce : "",
+          devicePublicKey: typeof body.devicePublicKey === "string" ? body.devicePublicKey : "",
+          deviceId: typeof body.deviceId === "string" ? body.deviceId : "",
+          origin: typeof body.origin === "string" ? body.origin : "",
+          installId: typeof body.installId === "string" ? body.installId : "",
+          osUser: typeof body.osUser === "string" ? body.osUser : "",
+          deviceClaimProof: body.deviceClaimProof as FridayAuthMigrateDeviceClaimRequest["deviceClaimProof"],
+        };
+        return deps.authService.migrateOwnerToDeviceKey(request, ctx.principal, ctx.ip);
       },
     },
     {

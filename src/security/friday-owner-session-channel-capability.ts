@@ -78,6 +78,11 @@ export type FridayPublicMutationOperation =
   | "task.workflow.cli.handoff.record"
   | "task.workflow.channel.command.issue"
   | "task.workflow.channel.command.confirm"
+  // SEC-SETUP-BOOTSTRAP-001 Slice 5 — authenticated legacy-passphrase → device
+  // migration. Public mutating routes that refuse the synthetic public principal
+  // (only the bound local OWNER may mint a migration nonce / migrate ownership).
+  | "auth.migrate.challenge"
+  | "auth.migrate.device.claim"
   | "runtime.config.update"
   | "runtime.config.revert"
   | "runtime.secret.list"

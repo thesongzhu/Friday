@@ -259,6 +259,87 @@ export interface FridayAuthDeviceClaimResponse {
   deviceAuthorityEnabled: boolean;
 }
 
+// ─── Authenticated legacy-passphrase → device migration (SEC-SETUP-BOOTSTRAP-001 Slice 5) ───
+//
+// ADDITIVE, dual-read, reversible. Unlike the first-boot device claim (which CAS
+// from password_hash IS NULL), migration moves an ALREADY-authenticated existing
+// passphrase-owner to a PROVISIONAL device binding. The authenticated owner
+// session IS the proof-of-passphrase-possession (never re-typed into a body).
+// After a successful migrate, users.password_hash STAYS scrypt$… (the passphrase
+// STILL works — NO lockout) and a provisional binding row is added. Fully
+// reversible until a later stage proves device readback. The device principal
+// still carries ZERO authority (deviceAuthorityEnabled always false).
+
+export interface FridayAuthMigrateChallengeRequest {
+  /** Stable installation id for this hub install (binds the nonce). */
+  installId: string;
+  /** OS user the install runs as (binds the nonce). */
+  osUser: string;
+  /** Loopback origin the migration claim will be presented from (binds the nonce). */
+  origin: string;
+  /** Optional bound action label; defaults to "owner-migrate". */
+  action?: string;
+}
+
+export interface FridayAuthMigrateChallengeResponse {
+  challengeId: UUID;
+  /** Raw single-use nonce — returned exactly ONCE; only its hash is persisted. */
+  nonce: string;
+  kind: "device_migration_claim";
+  hubId: string;
+  installId: string;
+  osUser: string;
+  origin: string;
+  action: string;
+  createdAt: ISODateTime;
+  expiresAt: ISODateTime;
+}
+
+export interface FridayAuthMigrateDeviceClaimRequest {
+  /** The raw nonce previously issued by the migrate challenge endpoint. */
+  nonce: string;
+  /** Device public key, SPKI DER base64/base64url (P-256), bound to the owner. */
+  devicePublicKey: string;
+  /** Device identifier bound to the owner. */
+  deviceId: string;
+  /** Origin the claim is presented from; MUST equal the bound issue origin. */
+  origin: string;
+  installId: string;
+  osUser: string;
+  /**
+   * REQUIRED proof-of-possession. The device signs the canonical transcript; the
+   * server verifies the signature against the presented public key BEFORE any
+   * binding or nonce consume. A missing/invalid proof fails closed (no binding,
+   * nonce un-burned).
+   */
+  deviceClaimProof?: FridayDeviceClaimProof;
+}
+
+export interface FridayAuthMigrateDeviceClaimResponse {
+  migrated: true;
+  /** Always 'provisional' in Slice 5 — activation is a later stage. */
+  state: "provisional";
+  /** Id of the newly-inserted provisional device-owner binding row. */
+  bindingId: UUID;
+  migratedAt: ISODateTime;
+  userId: UUID;
+  deviceId: string;
+  /** Deterministic hash of the bound device public key (never the private key). */
+  devicePublicKeyHash: string;
+  /**
+   * The passphrase remains the working owner credential after migration
+   * (dual-read window) — ALWAYS true in Slice 5. Positive proof of no-lockout.
+   */
+  passphraseStillActive: true;
+  /** Server-derived key-protection posture (never self-reported). */
+  keyProtection: "secure_enclave_os_verified" | "keychain_acl_verified" | "software_dev_only" | "unverified";
+  /**
+   * Whether this device binding carries owner authority. ALWAYS false in the
+   * release/default profile until native-IPC precondition (b) lands.
+   */
+  deviceAuthorityEnabled: boolean;
+}
+
 // ─── Refresh ───
 
 export interface FridayRefreshRequest {
