@@ -1,0 +1,9 @@
+# secsetup-s2a-field-binding.txt
+# SEC-SETUP-BOOTSTRAP-001 Slice 2a — red-first (mutation) evidence
+# generated: 2026-07-14T03:45:03.736Z
+# keys/signatures: SOFTWARE dev/test material (Node crypto) — NOT attestation evidence
+
+GUARD: hubId (and every field) bound into the canonical signed bytes
+ATTACK: sign a claim for hub-A, present it as a claim for hub-B
+NEUTRALIZED (encoder drops hubId): digests collide=true, cross-hub accepted=true  => RED
+GUARDED   (production encoder)    : ok=false reason=signature_mismatch  => GREEN
