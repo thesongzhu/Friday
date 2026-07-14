@@ -1,0 +1,9 @@
+# secsetup-s2a-expiry.txt
+# SEC-SETUP-BOOTSTRAP-001 Slice 2a — red-first (mutation) evidence
+# generated: 2026-07-14T03:45:03.736Z
+# keys/signatures: SOFTWARE dev/test material (Node crypto) — NOT attestation evidence
+
+GUARD: freshness — reject when nowMs >= transcript.expiresAt
+ATTACK: present a signature-valid but EXPIRED transcript
+NEUTRALIZED (skip expiry gate): signature-accepted=true  => RED
+GUARDED   (production verifier): ok=false reason=expired  => GREEN

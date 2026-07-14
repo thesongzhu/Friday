@@ -1,0 +1,9 @@
+# secsetup-s2a-replay.txt
+# SEC-SETUP-BOOTSTRAP-001 Slice 2a — red-first (mutation) evidence
+# generated: 2026-07-14T03:45:03.737Z
+# keys/signatures: SOFTWARE dev/test material (Node crypto) — NOT attestation evidence
+
+GUARD: single-use nonce consumer (replay defense) composed over possession
+ATTACK: present the SAME valid nonce+signature twice
+NEUTRALIZED (possession-only, stateless): 1st ok=true, 2nd ok=true  => RED
+GUARDED   (with single-use consumer)    : 1st ok=true, 2nd ok=false reason=nonce_replayed  => GREEN

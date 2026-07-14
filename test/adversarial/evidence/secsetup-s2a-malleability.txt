@@ -1,0 +1,9 @@
+# secsetup-s2a-malleability.txt
+# SEC-SETUP-BOOTSTRAP-001 Slice 2a — red-first (mutation) evidence
+# generated: 2026-07-14T03:45:03.734Z
+# keys/signatures: SOFTWARE dev/test material (Node crypto) — NOT attestation evidence
+
+GUARD: low-S canonical-signature enforcement (ECDSA malleability)
+ATTACK: present the high-S twin (r, n-s) of a valid low-S signature
+NEUTRALIZED (no low-S check, raw crypto.verify): accepted=true  => RED
+GUARDED   (production verifier)                : ok=false reason=non_canonical_signature  => GREEN
