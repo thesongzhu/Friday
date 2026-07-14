@@ -6,8 +6,11 @@ import type {
   FridayAuthBootstrapRequest,
   FridayAuthBootstrapResponse,
   FridayAuthBootstrapStatusResponse,
+  FridayAuthDeviceBindingStateResponse,
   FridayAuthDeviceClaimRequest,
   FridayAuthDeviceClaimResponse,
+  FridayAuthDeviceReadbackRequest,
+  FridayAuthDeviceReadbackResponse,
   FridayAuthMeResponse,
   FridayAuthMigrateChallengeRequest,
   FridayAuthMigrateChallengeResponse,
@@ -80,6 +83,32 @@ export interface FridayAuthService {
     principal: FridayAuthPrincipal | null,
     ip?: string,
   ): FridayAuthMigrateDeviceClaimResponse;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 FIXED-order Stage 3+4: activate a PROVISIONAL device
+   * binding after the device proves FRESH proof-of-possession. CAS-flips
+   * provisional → active for the authenticated local OWNER's binding matching the
+   * possession-proven key. ADDITIVE, migration-free and fail-closed: NO install
+   * nonce is consumed (freshness is intrinsic to the PoP transcript's expiresAt;
+   * anti-replay is intrinsic to the provisional→active compare-and-set), users.
+   * password_hash is NEVER touched (the passphrase STILL works — no lockout), NO
+   * tombstone is written, and the device binding continues to carry ZERO authority
+   * (deviceAuthorityEnabled always false). Loopback-only, origin-bound.
+   */
+  confirmDeviceReadback(
+    request: FridayAuthDeviceReadbackRequest,
+    principal: FridayAuthPrincipal | null,
+    ip?: string,
+  ): FridayAuthDeviceReadbackResponse;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 FIXED-order Stage 4: owner-gated observability read of
+   * the local owner's current device-binding posture (active/provisional/revoked/
+   * none). Pure read — mutates nothing. Loopback-only; requires the bound OWNER
+   * principal.
+   */
+  getDeviceBindingState(
+    principal: FridayAuthPrincipal | null,
+    ip?: string,
+  ): FridayAuthDeviceBindingStateResponse;
 }
 
 export interface FridayIssuedAccessTokenRecord {

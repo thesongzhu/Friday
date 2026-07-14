@@ -886,6 +886,13 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         // password_hash is never flipped and the device binding carries zero authority.
         "auth.migrate.challenge",
         "auth.migrate.device.claim",
+        // SEC-SETUP-BOOTSTRAP-001 FIXED-order Stage 3+4: device-readback activation.
+        // Same posture — NOT allowUnauthenticatedMutation → L1 floor refuses the
+        // synthetic public principal; the handler enforces owner authority via
+        // assertBoundPrincipalAuthorityForOperation. Migration-free, additive; the
+        // provisional→active flip never touches password_hash and the device binding
+        // still carries zero authority.
+        "auth.migrate.device.readback",
       ]);
       // rate_limited_pending
       const RATE_LIMITED_PENDING: ReadonlySet<string> = new Set([

@@ -93,6 +93,19 @@ export interface FridayDeviceOwnerBindingRepository {
     userId: string,
   ): FridayDeviceOwnerBindingRow | null;
   /**
+   * The most-relevant binding for a (user, device-public-key-hash) pair,
+   * preferring a 'provisional' row (so the readback activates the pending bind),
+   * then the newest by created_at. Returns null when the owner has no binding for
+   * that key — so a cross-owner or unknown-key readback fails closed. This is a
+   * pure read; the provisional → active flip is still gated by the activateBinding
+   * compare-and-set.
+   */
+  findBindingByUserAndKeyHash(
+    db: Database.Database,
+    userId: string,
+    devicePublicKeyHash: string,
+  ): FridayDeviceOwnerBindingRow | null;
+  /**
    * SCAFFOLDING (stage 3+, INACTIVE in Slice 5). CAS-flip a provisional binding
    * to 'active'. Not called by any Slice-5 live path. Keyed on the exact
    * bindingId + state='provisional' so it can never activate a revoked binding.
@@ -163,6 +176,19 @@ export function createFridayDeviceOwnerBindingRepository(): FridayDeviceOwnerBin
             "SELECT * FROM friday_device_owner_bindings WHERE user_id = ? AND state = 'active'",
           )
           .get(userId) as FridayDeviceOwnerBindingRow | undefined) ?? null
+      );
+    },
+
+    findBindingByUserAndKeyHash(db, userId, devicePublicKeyHash) {
+      return (
+        (db
+          .prepare(
+            `SELECT * FROM friday_device_owner_bindings
+              WHERE user_id = ? AND device_public_key_hash = ?
+              ORDER BY (state = 'provisional') DESC, created_at DESC
+              LIMIT 1`,
+          )
+          .get(userId, devicePublicKeyHash) as FridayDeviceOwnerBindingRow | undefined) ?? null
       );
     },
 

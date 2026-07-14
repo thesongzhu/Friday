@@ -340,6 +340,92 @@ export interface FridayAuthMigrateDeviceClaimResponse {
   deviceAuthorityEnabled: boolean;
 }
 
+// ─── Device readback activation (SEC-SETUP-BOOTSTRAP-001 FIXED-order Stage 3+4) ───
+//
+// ADDITIVE, fail-closed, migration-free. After an authenticated owner has minted
+// a PROVISIONAL device binding (Stage 2 migrate), the device proves fresh
+// possession of its private key (a NEW PoP transcript) and the binding is
+// CAS-flipped provisional → active. NO install nonce is consumed — freshness is
+// intrinsic to the PoP transcript's expiresAt, and anti-replay is intrinsic to
+// the provisional→active compare-and-set (a replay flips 0 rows). users.
+// password_hash is NEVER touched (the passphrase STILL works — no lockout) and
+// the device binding continues to carry ZERO authority
+// (deviceAuthorityEnabled always false).
+
+export interface FridayAuthDeviceReadbackRequest {
+  /**
+   * The nonce echoed inside the PoP transcript. Unlike the migrate leg, NO
+   * server-issued install nonce is consumed here — this value is only bound into
+   * the signed transcript for request/transcript consistency. Freshness is
+   * enforced by the transcript's own expiresAt (verified by the PoP verifier).
+   */
+  nonce: string;
+  /** Device public key, SPKI DER base64/base64url (P-256), bound to the owner. */
+  devicePublicKey: string;
+  /** Device identifier bound to the owner. */
+  deviceId: string;
+  /** Origin the readback is presented from; MUST equal the transcript origin. */
+  origin: string;
+  installId: string;
+  osUser: string;
+  /**
+   * REQUIRED proof-of-possession. The device signs a FRESH canonical transcript;
+   * the server verifies the signature against the presented public key BEFORE any
+   * activation. A missing/invalid proof fails closed (the binding stays
+   * provisional, no state change).
+   */
+  deviceClaimProof?: FridayDeviceClaimProof;
+}
+
+export interface FridayAuthDeviceReadbackResponse {
+  activated: true;
+  /** Always 'active' — the readback flips provisional → active. */
+  state: "active";
+  /** Id of the binding that was activated. */
+  bindingId: UUID;
+  activatedAt: ISODateTime;
+  userId: UUID;
+  deviceId: string;
+  /** Deterministic hash of the bound device public key (never the private key). */
+  devicePublicKeyHash: string;
+  /**
+   * The passphrase remains the working owner credential after activation — the
+   * activation does NOT touch users.password_hash. ALWAYS true. Positive proof of
+   * no-lockout.
+   */
+  passphraseStillActive: true;
+  /**
+   * Whether this device binding carries owner authority. ALWAYS false in the
+   * release/default profile until native-IPC precondition (b) lands — activating
+   * the binding does NOT grant authority.
+   */
+  deviceAuthorityEnabled: boolean;
+}
+
+/**
+ * Owner-gated observability read seam (Stage 4). Reports the local owner's
+ * current device-binding posture so a caller can positively confirm the
+ * provisional → active transition persisted (e.g. across a hub restart) without
+ * mutating anything.
+ */
+export interface FridayAuthDeviceBindingStateResponse {
+  userId: UUID;
+  /** True iff there is exactly one 'active' binding for the owner. */
+  hasActiveBinding: boolean;
+  /** The state of the most-relevant binding (active > provisional > revoked). */
+  state: "active" | "provisional" | "revoked" | "none";
+  bindingId: UUID | null;
+  deviceId: string | null;
+  devicePublicKeyHash: string | null;
+  createdAt: ISODateTime | null;
+  activatedAt: ISODateTime | null;
+  revokedAt: ISODateTime | null;
+  /** ALWAYS true this stage — the passphrase remains authoritative (no lockout). */
+  passphraseStillActive: true;
+  /** ALWAYS false in the release/default profile (zero device authority). */
+  deviceAuthorityEnabled: boolean;
+}
+
 // ─── Refresh ───
 
 export interface FridayRefreshRequest {
