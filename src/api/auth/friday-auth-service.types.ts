@@ -1,9 +1,13 @@
 import type Database from "better-sqlite3";
 import type { FridaySqliteLayer } from "#state";
 import type {
+  FridayAuthBootstrapChallengeRequest,
+  FridayAuthBootstrapChallengeResponse,
   FridayAuthBootstrapRequest,
   FridayAuthBootstrapResponse,
   FridayAuthBootstrapStatusResponse,
+  FridayAuthDeviceClaimRequest,
+  FridayAuthDeviceClaimResponse,
   FridayAuthMeResponse,
   FridayAuthPrincipal,
   FridayLoginRequest,
@@ -26,6 +30,25 @@ export interface FridayAuthService {
     request: FridayAuthBootstrapRequest,
     ip?: string,
   ): FridayAuthBootstrapResponse;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001: mint a single-use install nonce bound to the issue
+   * context (hub/install/os-user/origin/action). Returns the raw nonce ONCE;
+   * only its hash is persisted. Loopback-only.
+   */
+  issueBootstrapChallenge(
+    request: FridayAuthBootstrapChallengeRequest,
+    ip?: string,
+  ): FridayAuthBootstrapChallengeResponse;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001: atomically claim the local owner slot by consuming
+   * a single-use install nonce and binding a device public key. Replay-protected,
+   * origin-bound, loopback-only, crash-safe (single txn). Fails closed with 409
+   * if the owner slot was already claimed (by passphrase or another device).
+   */
+  claimOwnerWithDeviceKey(
+    request: FridayAuthDeviceClaimRequest,
+    ip?: string,
+  ): FridayAuthDeviceClaimResponse;
 }
 
 export interface FridayIssuedAccessTokenRecord {
@@ -43,6 +66,21 @@ export interface CreateFridayAuthServiceDeps {
   tokenSecret: string;
   accessTokenTtlSec: number;
   refreshTokenTtlSec: number;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001: stable identifier for this hub install, bound into
+   * issued install nonces. Defaults to "local-hub" when not supplied.
+   */
+  hubId?: string;
+  /**
+   * TTL (seconds) for issued install/bootstrap nonces. Defaults to 300s.
+   */
+  bootstrapNonceTtlSec?: number;
+  /**
+   * Cryptographically-random raw nonce generator. Defaults to
+   * crypto.randomBytes(32).toString("base64url"). Overridable for deterministic
+   * tests. MUST return high-entropy values in production.
+   */
+  generateBootstrapNonce?: () => string;
   /** Logger for warnings. Default: console.warn. */
   warn?: (message: string) => void;
   /** Callback to mark an access token as revoked in the in-memory revocation map. */

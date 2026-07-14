@@ -1,0 +1,35 @@
+SEC-SETUP-BOOTSTRAP-001 slice 1 — §5 red-first evidence (red -> green -> revert-red)
+target suite: test/adversarial/bootstrap-device-claim.test.ts  (real file-backed sqlite, admin-001 seeded as the hub seeds it)
+method: start GREEN (hardened HEAD), remove ONE guard at a time -> the specific
+        security assertion goes RED (real defect, not a compile error), restore -> GREEN.
+
+BASELINE (hardened, committed HEAD): Tests  10 passed (10)
+
+GUARD REMOVED: nonce single-use/expiry/origin CAS (replay & cross-origin gate)
+  (de-hardened src/api/persistence/friday-setup-bootstrap-nonce-repository.ts)
+  RED  FAIL   default  test/adversarial/bootstrap-device-claim.test.ts > SEC-SETUP-BOOTSTRAP-001: device-bound owner claim > (b) replay: a consumed install-nonce is rejected (NONCE_INVALID), ZERO state change
+  RED  FAIL   default  test/adversarial/bootstrap-device-claim.test.ts > SEC-SETUP-BOOTSTRAP-001: device-bound owner claim > (b) replay: an EXPIRED install-nonce is rejected, ZERO state change
+  RED  FAIL   default  test/adversarial/bootstrap-device-claim.test.ts > SEC-SETUP-BOOTSTRAP-001: device-bound owner claim > (d) cross-origin: a claim from a different origin fails closed, ZERO state change
+  RED  Tests  3 failed | 7 passed (10)
+  RESTORE: Tests  10 passed (10)  (tree clean=yes)
+
+GUARD REMOVED: owner slot compare-and-set (password_hash IS NULL)
+  (de-hardened src/api/auth/friday-auth-service.ts)
+  RED  FAIL   default  test/adversarial/bootstrap-device-claim.test.ts > SEC-SETUP-BOOTSTRAP-001: device-bound owner claim > (a) concurrent claim: a competitor inside the TOCTOU window wins; loser changes ZERO state
+  RED  Tests  1 failed | 9 passed (10)
+  RESTORE: Tests  10 passed (10)  (tree clean=yes)
+
+GUARD REMOVED: single-transaction atomicity (split consume + owner-set into two txns)
+  (de-hardened src/api/auth/friday-auth-service.ts)
+  RED  FAIL   default  test/adversarial/bootstrap-device-claim.test.ts > SEC-SETUP-BOOTSTRAP-001: device-bound owner claim > (a) concurrent claim: a competitor inside the TOCTOU window wins; loser changes ZERO state
+  RED  FAIL   default  test/adversarial/bootstrap-device-claim.test.ts > SEC-SETUP-BOOTSTRAP-001: device-bound owner claim > (c) crash/atomicity: a failure AFTER nonce-consume, BEFORE owner-set leaves NO partial owner
+  RED  Tests  2 failed | 8 passed (10)
+  RESTORE: Tests  10 passed (10)  (tree clean=yes)
+
+GUARD REMOVED: loopback-only guard on the claim
+  (de-hardened src/api/auth/friday-auth-service.ts)
+  RED  FAIL   default  test/adversarial/bootstrap-device-claim.test.ts > SEC-SETUP-BOOTSTRAP-001: device-bound owner claim > (d) loopback-only: a non-loopback claim / issue fails closed (403)
+  RED  Tests  1 failed | 9 passed (10)
+  RESTORE: Tests  10 passed (10)  (tree clean=yes)
+
+FINAL working tree (src): 0 modified files (expect 0)

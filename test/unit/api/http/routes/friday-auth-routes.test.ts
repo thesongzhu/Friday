@@ -50,14 +50,16 @@ describe("FridayAuthRoutes", () => {
 
   // ─── Route registration ───
 
-  it("registers 6 auth routes", () => {
-    expect(routes).toHaveLength(6);
+  it("registers 8 auth routes", () => {
+    expect(routes).toHaveLength(8);
   });
 
   it("has correct operation IDs", () => {
     const opIds = routes.map((r) => r.operationId);
     expect(opIds).toContain("auth.bootstrap.status");
     expect(opIds).toContain("auth.bootstrap.local.passphrase");
+    expect(opIds).toContain("auth.bootstrap.challenge");
+    expect(opIds).toContain("auth.bootstrap.device.claim");
     expect(opIds).toContain("auth.login");
     expect(opIds).toContain("auth.refresh");
     expect(opIds).toContain("auth.logout");
@@ -82,6 +84,90 @@ describe("FridayAuthRoutes", () => {
     // gate and the first-boot/no-existing-password gate before any side effect.
     expect(route.auth).toEqual({ public: true, allowUnauthenticatedMutation: true });
     expect(route.rateLimitPolicyId).toBe("auth.login");
+  });
+
+  // ─── Device-bound owner-claim routes (SEC-SETUP-BOOTSTRAP-001) ───
+
+  it("POST /v1/auth/bootstrap/challenge is public, rate-limited, first-boot", () => {
+    const route = findRoute("auth.bootstrap.challenge");
+    expect(route.method).toBe("POST");
+    expect(route.path).toBe("/v1/auth/bootstrap/challenge");
+    expect(route.auth).toEqual({ public: true, allowUnauthenticatedMutation: true });
+    expect(route.rateLimitPolicyId).toBe("auth.login");
+  });
+
+  it("POST /v1/auth/bootstrap/device-claim is public, rate-limited, first-boot", () => {
+    const route = findRoute("auth.bootstrap.device.claim");
+    expect(route.method).toBe("POST");
+    expect(route.path).toBe("/v1/auth/bootstrap/device-claim");
+    expect(route.auth).toEqual({ public: true, allowUnauthenticatedMutation: true });
+    expect(route.rateLimitPolicyId).toBe("auth.login");
+  });
+
+  it("challenge route rejects non-localhost callers (loopback-only)", async () => {
+    const route = findRoute("auth.bootstrap.challenge");
+    await expect(
+      route.handler(
+        makeCtx({
+          ip: "10.0.0.2",
+          body: { installId: "i-1", osUser: "u", origin: "https://friday.localhost" },
+        }),
+      ),
+    ).rejects.toThrow("only allowed from localhost");
+  });
+
+  it("device-claim route rejects non-localhost callers (loopback-only)", async () => {
+    const route = findRoute("auth.bootstrap.device.claim");
+    await expect(
+      route.handler(
+        makeCtx({
+          ip: "10.0.0.2",
+          body: { nonce: "n", devicePublicKey: "k", deviceId: "d", origin: "https://friday.localhost" },
+        }),
+      ),
+    ).rejects.toThrow("only allowed from localhost");
+  });
+
+  it("challenge → device-claim over the route layer flips ownership once", async () => {
+    db.writer.prepare("UPDATE users SET password_hash = NULL WHERE id = 'test-user'").run();
+    const origin = "https://friday.localhost";
+    const challenge = await findRoute("auth.bootstrap.challenge").handler(
+      makeCtx({ ip: "127.0.0.1", body: { installId: "i-1", osUser: "u", origin } }),
+    ) as { nonce: string };
+    expect(typeof challenge.nonce).toBe("string");
+
+    const claim = await findRoute("auth.bootstrap.device.claim").handler(
+      makeCtx({
+        ip: "127.0.0.1",
+        body: {
+          nonce: challenge.nonce,
+          devicePublicKey: "device-pubkey-b64u",
+          deviceId: "device-1",
+          origin,
+          installId: "i-1",
+          osUser: "u",
+        },
+      }),
+    ) as { claimed: boolean; userId: string };
+    expect(claim.claimed).toBe(true);
+    expect(claim.userId).toBe("test-user");
+
+    // Replay of the same nonce fails closed (owner already claimed).
+    await expect(
+      findRoute("auth.bootstrap.device.claim").handler(
+        makeCtx({
+          ip: "127.0.0.1",
+          body: {
+            nonce: challenge.nonce,
+            devicePublicKey: "device-pubkey-b64u",
+            deviceId: "device-1",
+            origin,
+            installId: "i-1",
+            osUser: "u",
+          },
+        }),
+      ),
+    ).rejects.toThrow("already been completed");
   });
 
   it("bootstrap status reports not required when local user already has password", async () => {

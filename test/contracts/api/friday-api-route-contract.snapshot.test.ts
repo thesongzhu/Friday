@@ -884,6 +884,12 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         "satellites.register",
         "satellites.handshake",
         "auth.bootstrap.local.passphrase",
+        // SEC-SETUP-BOOTSTRAP-001: the device-bound first-run owner claim. Same
+        // posture as auth.bootstrap.local.passphrase — public first-boot mutation
+        // gated by a localhost-only IP check + single-use install nonce + owner
+        // compare-and-set, under the auth.login rate-limit policy.
+        "auth.bootstrap.challenge",
+        "auth.bootstrap.device.claim",
         "auth.login",
       ]);
       // public_low_risk

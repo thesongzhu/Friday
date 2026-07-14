@@ -154,6 +154,61 @@ export interface FridayAuthBootstrapResponse {
   userId: UUID;
 }
 
+// ─── Device-bound owner claim (SEC-SETUP-BOOTSTRAP-001) ───
+//
+// The signed-native install-flow first mints a single-use install nonce
+// (challenge), then presents it back with a device public key to atomically
+// claim the local owner slot. This is an ADDITIVE alternative to the passphrase
+// bootstrap above; both compete for the same single owner slot and the first to
+// win flips it (the other fails closed). Passphrase removal is a later slice.
+
+export interface FridayAuthBootstrapChallengeRequest {
+  /** Stable installation id for this hub install (binds the nonce). */
+  installId: string;
+  /** OS user the install runs as (binds the nonce). */
+  osUser: string;
+  /** Loopback origin the claim will be presented from (binds the nonce). */
+  origin: string;
+  /** Optional bound action label; defaults to "owner-claim". */
+  action?: string;
+}
+
+export interface FridayAuthBootstrapChallengeResponse {
+  challengeId: UUID;
+  /** Raw single-use nonce — returned exactly ONCE; only its hash is persisted. */
+  nonce: string;
+  kind: "install_owner_claim";
+  hubId: string;
+  installId: string;
+  osUser: string;
+  origin: string;
+  action: string;
+  createdAt: ISODateTime;
+  expiresAt: ISODateTime;
+}
+
+export interface FridayAuthDeviceClaimRequest {
+  /** The raw nonce previously issued by the challenge endpoint. */
+  nonce: string;
+  /** Device public key (opaque bytes, base64url) bound to the owner. */
+  devicePublicKey: string;
+  /** Device identifier bound to the owner. */
+  deviceId: string;
+  /** Origin the claim is presented from; MUST equal the bound issue origin. */
+  origin: string;
+  installId: string;
+  osUser: string;
+}
+
+export interface FridayAuthDeviceClaimResponse {
+  claimed: true;
+  claimedAt: ISODateTime;
+  userId: UUID;
+  deviceId: string;
+  /** Deterministic hash of the bound device public key (never the private key). */
+  devicePublicKeyHash: string;
+}
+
 // ─── Refresh ───
 
 export interface FridayRefreshRequest {
