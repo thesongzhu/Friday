@@ -20,12 +20,27 @@ export interface FridaySetupBootstrapNonceRow {
   consumed_at: string | null;
 }
 
+// ─── Nonce kinds ───
+
+/**
+ * Ledger `kind` discriminator. `install_owner_claim` is the first-boot
+ * device-bound owner claim (SEC-SETUP-BOOTSTRAP-001 Slice 1). Slice 5 adds
+ * `device_migration_claim` — the SECOND consumer of this same ledger, minted for
+ * an AUTHENTICATED existing-passphrase-owner → device migration. The DB CHECK
+ * (v104) enforces this closed set; the distinct kind keeps a first-boot nonce
+ * from being replayed into a migration and vice-versa (the consume CAS matches
+ * on `kind`).
+ */
+export type FridaySetupBootstrapNonceKind =
+  | "install_owner_claim"
+  | "device_migration_claim";
+
 // ─── Insert / consume inputs ───
 
 export interface InsertFridaySetupBootstrapNonceInput {
   id: string;
   nonceHash: string;
-  kind: "install_owner_claim";
+  kind: FridaySetupBootstrapNonceKind;
   hubId: string;
   installId: string;
   osUser: string;
@@ -37,7 +52,7 @@ export interface InsertFridaySetupBootstrapNonceInput {
 
 export interface ConsumeFridaySetupBootstrapNonceInput {
   nonceHash: string;
-  kind: "install_owner_claim";
+  kind: FridaySetupBootstrapNonceKind;
   /** Origin the claim is presented from; MUST equal the bound issue origin. */
   origin: string;
   /** Wall-clock ISO used for the `expires_at > now` freshness gate. */

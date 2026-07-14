@@ -878,6 +878,14 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         // A1 run-outcome learning decision courier. Refuses the synthetic public principal
         // before any dispatch; flag-OFF/503 by default until the Rust arm is configured.
         "run.outcome.learning.decide.apply",
+        // SEC-SETUP-BOOTSTRAP-001 Slice 5: authenticated legacy-passphrase → device
+        // migration. NOT allowUnauthenticatedMutation → the L1 floor refuses the
+        // synthetic public principal; the handler additionally enforces owner
+        // authority via assertBoundPrincipalAuthorityForOperation, and the auth
+        // service binds the principal to the local owner. Additive/reversible;
+        // password_hash is never flipped and the device binding carries zero authority.
+        "auth.migrate.challenge",
+        "auth.migrate.device.claim",
       ]);
       // rate_limited_pending
       const RATE_LIMITED_PENDING: ReadonlySet<string> = new Set([

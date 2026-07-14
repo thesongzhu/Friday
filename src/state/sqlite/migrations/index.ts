@@ -102,6 +102,7 @@ import { V100_OPERATION_JOURNAL_MIGRATION } from "./v100-operation-journal.js";
 import { V101_TELEGRAM_INBOX_MIGRATION } from "./v101-telegram-inbox.js";
 import { V102_PROVIDER_CALL_RECEIPT_MIGRATION } from "./v102-provider-call-receipt.js";
 import { V103_SETUP_BOOTSTRAP_DEVICE_CLAIM_MIGRATION } from "./v103-setup-bootstrap-device-claim.js";
+import { V104_SETUP_BOOTSTRAP_MIGRATION_STATE_MIGRATION } from "./v104-setup-bootstrap-migration-state.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -210,6 +211,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V101_TELEGRAM_INBOX_MIGRATION,
   V102_PROVIDER_CALL_RECEIPT_MIGRATION,
   V103_SETUP_BOOTSTRAP_DEVICE_CLAIM_MIGRATION,
+  V104_SETUP_BOOTSTRAP_MIGRATION_STATE_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };

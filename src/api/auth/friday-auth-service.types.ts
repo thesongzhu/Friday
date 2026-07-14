@@ -9,6 +9,10 @@ import type {
   FridayAuthDeviceClaimRequest,
   FridayAuthDeviceClaimResponse,
   FridayAuthMeResponse,
+  FridayAuthMigrateChallengeRequest,
+  FridayAuthMigrateChallengeResponse,
+  FridayAuthMigrateDeviceClaimRequest,
+  FridayAuthMigrateDeviceClaimResponse,
   FridayAuthPrincipal,
   FridayLoginRequest,
   FridayLoginResponse,
@@ -49,6 +53,33 @@ export interface FridayAuthService {
     request: FridayAuthDeviceClaimRequest,
     ip?: string,
   ): FridayAuthDeviceClaimResponse;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 Slice 5: mint a single-use install nonce for an
+   * AUTHENTICATED existing-passphrase-owner → device migration (kind
+   * 'device_migration_claim'). Requires the bound OWNER principal
+   * (principalId === localUser.id, role admin/owner). Loopback-only; the raw
+   * nonce is returned once. ADDITIVE — removes/disables nothing.
+   */
+  issueMigrationChallenge(
+    request: FridayAuthMigrateChallengeRequest,
+    principal: FridayAuthPrincipal | null,
+    ip?: string,
+  ): FridayAuthMigrateChallengeResponse;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 Slice 5: authenticated dual-read migration of an
+   * existing passphrase-owner to a PROVISIONAL device binding. Requires the
+   * bound OWNER principal (the authenticated session IS the proof-of-passphrase
+   * possession) + a valid device proof-of-possession. CAS from a KNOWN
+   * passphrase-owner hash (never NULL / never the device sentinel). Leaves
+   * users.password_hash UNTOUCHED (the passphrase STILL works — no lockout).
+   * Reversible; the device binding carries ZERO authority. Loopback-only,
+   * origin-bound, replay-protected, crash-safe (single txn).
+   */
+  migrateOwnerToDeviceKey(
+    request: FridayAuthMigrateDeviceClaimRequest,
+    principal: FridayAuthPrincipal | null,
+    ip?: string,
+  ): FridayAuthMigrateDeviceClaimResponse;
 }
 
 export interface FridayIssuedAccessTokenRecord {
