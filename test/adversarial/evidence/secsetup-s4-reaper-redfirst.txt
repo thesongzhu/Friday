@@ -1,0 +1,29 @@
+SEC-SETUP-BOOTSTRAP-001 slice 4 — §5 red-first evidence: nonce reaper (OBS-2)
+target suites:
+  test/adversarial/bootstrap-nonce-lifecycle.test.ts   (real file-backed sqlite)
+  test/unit/jobs/retention/friday-retention-job.test.ts (retention-job wiring)
+method: start GREEN (hardened working tree), NEUTRALIZE the reaper -> the
+        deletion-asserting tests go RED (expired/overflow rows PERSIST, counts
+        stay 0 — a real defect, not a compile error), restore -> GREEN.
+
+BASELINE (hardened): Tests  28 passed (28)   [adversarial 9 + retention 19]
+
+GUARD NEUTRALIZED: reaper sweep
+  (src/api/persistence/friday-setup-bootstrap-nonce-repository.ts —
+   sweepExpiredAndRetired forced to a no-op: `const limit = Math.max(0, Math.floor(
+   input.batchLimit))` -> `const limit = 0`, so it early-returns {0,0} and deletes
+   nothing; expired-unconsumed + past-retention-consumed rows PERSIST.)
+  RED  ×  bootstrap-nonce-lifecycle > nonce reaper (OBS-2) > reaps expired unconsumed nonces but preserves a live one
+  RED  ×  bootstrap-nonce-lifecycle > nonce reaper (OBS-2) > NO-DEGRADE: reaping a consumed nonce does NOT release the owner slot
+  RED  ×  bootstrap-nonce-lifecycle > nonce reaper (OBS-2) > bounds the work per pass by batchLimit; a backlog drains over passes
+  RED  ×  bootstrap-nonce-lifecycle > crash / restart recovery > (a) issued-but-unconsumed nonce past TTL after restart: claim rejected, then reaped, no partial owner
+  RED  ×  friday-retention-job > FridayRetentionJob > reaps expired unconsumed bootstrap nonces but preserves live ones
+  RED  ×  friday-retention-job > FridayRetentionJob > reaps a consumed bootstrap nonce past the retention horizon
+  RED  Tests  6 failed | 22 passed (28)
+  (control: the no-op/keep assertions — "a batchLimit of 0 is a no-op",
+   "keeps a recently-consumed …", "never reaps a consumed nonce within the
+   retention horizon", "returns all zeros …" — stay GREEN, proving the RED is
+   the missing deletion, not a blanket break.)
+  RESTORE: Tests  28 passed (28)
+
+FINAL working tree: reaper file restored byte-for-byte (GREEN 28/28); auth-service untouched.

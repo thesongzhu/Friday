@@ -1,11 +1,17 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayOutboxMessageRepository, FridaySatelliteHeartbeatRepository, FridaySatellitePairingRequestRepository } from "#satellites";
 import type { FridayLearningEventLedger, FridaySkillRunStore } from "#ledger";
+// Type-only import (erased at compile) — avoids a runtime jobs->api edge; the
+// concrete repo is injected by the wiring layer (see friday-satellite-runtime).
+import type { FridaySetupBootstrapNonceRepository } from "../../api/persistence/friday-setup-bootstrap-nonce-repository.js";
 import type {
   FridayRetentionJobResult,
   FridayRetentionPolicy,
 } from "./friday-retention.types.js";
-import { FRIDAY_DEFAULT_RETENTION_POLICY } from "./friday-retention.types.js";
+import {
+  FRIDAY_BOOTSTRAP_NONCE_SWEEP_BATCH_LIMIT,
+  FRIDAY_DEFAULT_RETENTION_POLICY,
+} from "./friday-retention.types.js";
 
 export interface FridayRetentionJob {
   run(nowIso?: string): FridayRetentionJobResult;
@@ -18,6 +24,7 @@ export interface CreateRetentionJobDeps {
   outboxRepo: FridayOutboxMessageRepository;
   learningLedger: FridayLearningEventLedger;
   skillRunStore: FridaySkillRunStore;
+  bootstrapNonceRepo: FridaySetupBootstrapNonceRepository;
   policy?: FridayRetentionPolicy;
   nowIso: () => string;
 }
@@ -46,6 +53,8 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
         deletedAgentRuns: 0,
         deletedLlmUsageRecords: 0,
         deletedErrorIncidents: 0,
+        deletedExpiredBootstrapNonces: 0,
+        deletedConsumedBootstrapNonces: 0,
       };
 
       result.markedPairingExpired = deps.db.withWriteTransaction((db) => {
@@ -121,6 +130,23 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
           )
           .run(errorCutoff).changes;
       });
+
+      // Setup-bootstrap install-nonce reaper (OBS-2). Bounded per pass; reaps
+      // expired UNCONSUMED nonces (dead weight / DoS vector) and CONSUMED nonces
+      // past their retention horizon. No-degrade: never touches a live
+      // unconsumed-unexpired nonce nor the owner slot.
+      {
+        const bootstrapNonceCutoff = subtractDays(nowIso, policy.bootstrapNoncesConsumedDays);
+        const swept = deps.db.withWriteTransaction((db) =>
+          deps.bootstrapNonceRepo.sweepExpiredAndRetired(db, {
+            nowIso,
+            consumedRetentionCutoffIso: bootstrapNonceCutoff,
+            batchLimit: FRIDAY_BOOTSTRAP_NONCE_SWEEP_BATCH_LIMIT,
+          }),
+        );
+        result.deletedExpiredBootstrapNonces = swept.deletedExpiredUnconsumed;
+        result.deletedConsumedBootstrapNonces = swept.deletedConsumedRetired;
+      }
 
       // Run PRAGMA optimize after cleanup to update query planner statistics
       try {
