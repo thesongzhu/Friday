@@ -5,6 +5,7 @@ import type { FridayLearningEventLedger, FridaySkillRunStore } from "#ledger";
 // concrete repo is injected by the wiring layer (see friday-satellite-runtime).
 import type { FridaySetupBootstrapNonceRepository } from "../../api/persistence/friday-setup-bootstrap-nonce-repository.js";
 import type {
+  CategoryRetention,
   FridayRetentionJobResult,
   FridayRetentionPolicy,
 } from "./friday-retention.types.js";
@@ -32,6 +33,45 @@ export interface CreateRetentionJobDeps {
 function subtractDays(isoDate: string, days: number): string {
   const ms = new Date(isoDate).getTime() - days * 24 * 60 * 60 * 1000;
   return new Date(ms).toISOString();
+}
+
+/**
+ * Fail-closed cutoff evaluator for a CONTENT retention category.
+ *
+ * DATA-RETENTION-001 / U9-DATA-RETENTION: content is default-PERMANENT and any
+ * auto-deletion must be explicitly enabled AND well-formed. This is the ONLY
+ * gate the per-category DELETE statements consult.
+ *
+ * Returns:
+ *   - `null` for `{mode:'permanent'}` → caller SKIPS deletion (retain forever).
+ *   - the ISO cutoff string for a valid `{mode:'after_days', days:n}` where `n`
+ *     is a positive finite integer that yields an in-range date.
+ *   - `null` for ANY invalid input — missing/undefined/null, non-object,
+ *     unknown mode, days ≤ 0, non-integer, NaN, Infinity, or an overflowing /
+ *     out-of-range date. Invalid ⇒ treat as PERMANENT (delete nothing) = FAIL
+ *     CLOSED. Never throws; never deletes on uncertainty.
+ */
+export function resolveCutoff(
+  nowIso: string,
+  categoryRetention: CategoryRetention | null | undefined,
+): string | null {
+  if (categoryRetention === null || typeof categoryRetention !== "object") {
+    return null; // missing / non-object → fail closed
+  }
+  const mode = (categoryRetention as { mode?: unknown }).mode;
+  if (mode === "permanent") return null; // retain forever
+  if (mode !== "after_days") return null; // unknown mode → fail closed
+  const days = (categoryRetention as { days?: unknown }).days;
+  if (typeof days !== "number") return null; // missing / non-number → fail closed
+  if (!Number.isInteger(days)) return null; // NaN, Infinity, 1.5, … → fail closed
+  if (days <= 0) return null; // 0 / negative → fail closed
+  const nowMs = new Date(nowIso).getTime();
+  if (!Number.isFinite(nowMs)) return null; // bad nowIso → fail closed
+  const cutoffMs = nowMs - days * 24 * 60 * 60 * 1000;
+  if (!Number.isFinite(cutoffMs)) return null; // overflow → fail closed
+  const cutoff = new Date(cutoffMs);
+  if (Number.isNaN(cutoff.getTime())) return null; // out-of-range date → fail closed
+  return cutoff.toISOString();
 }
 
 export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRetentionJob {
@@ -74,10 +114,14 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
         );
       });
 
-      result.deletedHeartbeats = deps.db.withWriteTransaction((db) => {
-        const heartbeatCutoff = subtractDays(nowIso, policy.heartbeatsDays);
-        return deps.heartbeatRepo.deleteBefore(db, heartbeatCutoff);
-      });
+      // CONTENT category (derived): default-permanent, fail-closed.
+      const heartbeatCutoff = resolveCutoff(nowIso, policy.heartbeats);
+      result.deletedHeartbeats =
+        heartbeatCutoff === null
+          ? 0
+          : deps.db.withWriteTransaction((db) =>
+              deps.heartbeatRepo.deleteBefore(db, heartbeatCutoff),
+            );
 
       result.markedOutboxExpired = deps.db.withWriteTransaction((db) =>
         deps.outboxRepo.expireByTtl(db, nowIso),
@@ -88,48 +132,77 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
         return deps.outboxRepo.deleteTerminalBefore(db, outboxDeleteCutoff);
       });
 
-      result.deletedLearningEvents = deps.db.withWriteTransaction((db) => {
-        const learningCutoff = subtractDays(nowIso, policy.learningEventsDays);
-        return db
-          .prepare("DELETE FROM learning_events WHERE ts < ?")
-          .run(learningCutoff).changes;
-      });
+      // CONTENT category (canonical): default-permanent, fail-closed.
+      const learningCutoff = resolveCutoff(nowIso, policy.learningEvents);
+      result.deletedLearningEvents =
+        learningCutoff === null
+          ? 0
+          : deps.db.withWriteTransaction(
+              (db) =>
+                db
+                  .prepare("DELETE FROM learning_events WHERE ts < ?")
+                  .run(learningCutoff).changes,
+            );
 
-      const skillRunCutoff = subtractDays(nowIso, policy.skillRunTerminalDays);
+      // CONTENT category (canonical): default-permanent, fail-closed.
+      const skillRunCutoff = resolveCutoff(nowIso, policy.skillRunTerminal);
       result.deletedSkillRuns =
-        deps.skillRunStore.pruneTerminalRunsBefore(skillRunCutoff);
+        skillRunCutoff === null
+          ? 0
+          : deps.skillRunStore.pruneTerminalRunsBefore(skillRunCutoff);
 
-      result.deletedAuditLogs = deps.db.withWriteTransaction((db) => {
-        const auditCutoff = subtractDays(nowIso, policy.auditLogsDays);
-        return db
-          .prepare("DELETE FROM audit_logs WHERE ts < ?")
-          .run(auditCutoff).changes;
-      });
+      // CONTENT category (canonical): default-permanent, fail-closed.
+      // audit_logs permanence is a hard requirement — never auto-delete by default.
+      const auditCutoff = resolveCutoff(nowIso, policy.auditLogs);
+      result.deletedAuditLogs =
+        auditCutoff === null
+          ? 0
+          : deps.db.withWriteTransaction(
+              (db) =>
+                db
+                  .prepare("DELETE FROM audit_logs WHERE ts < ?")
+                  .run(auditCutoff).changes,
+            );
 
-      result.deletedAgentRuns = deps.db.withWriteTransaction((db) => {
-        const agentRunCutoff = subtractDays(nowIso, policy.agentRunsDays);
-        return db
-          .prepare(
-            "DELETE FROM friday_agent_runs WHERE created_at < ? AND status IN ('completed', 'failed', 'cancelled')",
-          )
-          .run(agentRunCutoff).changes;
-      });
+      // CONTENT category (canonical): default-permanent, fail-closed.
+      const agentRunCutoff = resolveCutoff(nowIso, policy.agentRuns);
+      result.deletedAgentRuns =
+        agentRunCutoff === null
+          ? 0
+          : deps.db.withWriteTransaction(
+              (db) =>
+                db
+                  .prepare(
+                    "DELETE FROM friday_agent_runs WHERE created_at < ? AND status IN ('completed', 'failed', 'cancelled')",
+                  )
+                  .run(agentRunCutoff).changes,
+            );
 
-      result.deletedLlmUsageRecords = deps.db.withWriteTransaction((db) => {
-        const llmUsageCutoff = subtractDays(nowIso, policy.llmUsageRecordsDays);
-        return db
-          .prepare("DELETE FROM llm_usage_records WHERE created_at < ?")
-          .run(llmUsageCutoff).changes;
-      });
+      // CONTENT category (canonical): default-permanent, fail-closed.
+      const llmUsageCutoff = resolveCutoff(nowIso, policy.llmUsageRecords);
+      result.deletedLlmUsageRecords =
+        llmUsageCutoff === null
+          ? 0
+          : deps.db.withWriteTransaction(
+              (db) =>
+                db
+                  .prepare("DELETE FROM llm_usage_records WHERE created_at < ?")
+                  .run(llmUsageCutoff).changes,
+            );
 
-      result.deletedErrorIncidents = deps.db.withWriteTransaction((db) => {
-        const errorCutoff = subtractDays(nowIso, policy.errorIncidentsDays);
-        return db
-          .prepare(
-            "DELETE FROM error_incidents WHERE status = 'resolved' AND updated_at < ?",
-          )
-          .run(errorCutoff).changes;
-      });
+      // CONTENT category (canonical): default-permanent, fail-closed.
+      const errorCutoff = resolveCutoff(nowIso, policy.errorIncidents);
+      result.deletedErrorIncidents =
+        errorCutoff === null
+          ? 0
+          : deps.db.withWriteTransaction(
+              (db) =>
+                db
+                  .prepare(
+                    "DELETE FROM error_incidents WHERE status = 'resolved' AND updated_at < ?",
+                  )
+                  .run(errorCutoff).changes,
+            );
 
       // Setup-bootstrap install-nonce reaper (OBS-2). Bounded per pass; reaps
       // expired UNCONSUMED nonces (dead weight / DoS vector) and CONSUMED nonces
