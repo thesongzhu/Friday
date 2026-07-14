@@ -1,0 +1,17 @@
+SEC-SETUP-BOOTSTRAP-001 slice 1 — device-claim runtime proof
+posture: NODE_ENV=production, real file-backed sqlite (WAL), ephemeral port=63041 (>49152)
+db: /var/folders/69/y1fclmj57zs11k_ssccfz0700000gn/T/friday-secsetup-http-6ZsJKI/friday.db
+(raw nonces are REDACTED to sha256; only hashes are persisted)
+
+1) POST /v1/auth/bootstrap/challenge -> HTTP 200
+   challengeId=id-0001 nonce_sha256=14e55b47d367ad8eefb0d94a1f9f4f829f02a559b72de0415fb9f5f10dabdfaa expiresAt=2026-07-13T00:05:00.000Z
+   persisted row: nonce_hash=14e55b47d367ad8eefb0d94a1f9f4f829f02a559b72de0415fb9f5f10dabdfaa consumed_at=null
+2) POST /v1/auth/bootstrap/device-claim (origin=https://evil.localhost) -> HTTP 409 code=AUTH_BOOTSTRAP_NONCE_INVALID
+   owner password_hash=null (unchanged) nonce consumed_at=null
+3) POST /v1/auth/bootstrap/device-claim (origin=https://friday.localhost) -> HTTP 200 claimed=true
+   owner password_hash=device-owner$v1$cb36ac008c1ca87db198c2ac076521b7e5355c916f77091d59fa923afd885ffb
+   consumed row: consumed_at=2026-07-13T00:00:00.000Z device_id=device-http-proof-001 device_public_key_hash=cb36ac008c1ca87db198c2ac076521b7e5355c916f77091d59fa923afd885ffb claimed_user_id=admin-001
+4) POST /v1/auth/bootstrap/device-claim (replay same nonce) -> HTTP 409 code=AUTH_BOOTSTRAP_ALREADY_DONE
+   owner password_hash=device-owner$v1$cb36ac008c1ca87db198c2ac076521b7e5355c916f77091d59fa923afd885ffb (unchanged — no re-claim)
+
+RESULT: issue persists hash-only; cross-origin + replay fail closed with zero state change; single device-bound owner survives.

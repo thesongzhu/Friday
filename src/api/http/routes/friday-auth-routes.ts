@@ -1,8 +1,12 @@
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
+  FridayAuthBootstrapChallengeRequest,
+  FridayAuthBootstrapChallengeResponse,
   FridayAuthBootstrapRequest,
   FridayAuthBootstrapResponse,
   FridayAuthBootstrapStatusResponse,
+  FridayAuthDeviceClaimRequest,
+  FridayAuthDeviceClaimResponse,
   FridayAuthMeResponse,
   FridayLoginRequest,
   FridayLogoutRequest,
@@ -67,6 +71,65 @@ export function createFridayAuthRoutes(
         };
 
         return deps.authService.bootstrapLocalPassphrase(request, ctx.ip);
+      },
+    },
+    {
+      operationId: "auth.bootstrap.challenge",
+      method: "POST",
+      path: "/v1/auth/bootstrap/challenge",
+      // SEC-SETUP-BOOTSTRAP-001: first-boot device-claim leg. Mints a single-use
+      // install nonce. Loopback-only + first-boot gates are enforced in
+      // authService.issueBootstrapChallenge before any side effect (same posture
+      // as auth.bootstrap.local.passphrase). Only the nonce HASH is persisted.
+      auth: { public: true, allowUnauthenticatedMutation: true },
+      rateLimitPolicyId: "auth.login",
+      async handler(ctx): Promise<FridayAuthBootstrapChallengeResponse> {
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body || typeof body !== "object") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "Request body is required",
+            { httpStatus: 400 },
+          );
+        }
+        const request: FridayAuthBootstrapChallengeRequest = {
+          installId: typeof body.installId === "string" ? body.installId : "",
+          osUser: typeof body.osUser === "string" ? body.osUser : "",
+          origin: typeof body.origin === "string" ? body.origin : "",
+          action: typeof body.action === "string" ? body.action : undefined,
+        };
+        return deps.authService.issueBootstrapChallenge(request, ctx.ip);
+      },
+    },
+    {
+      operationId: "auth.bootstrap.device.claim",
+      method: "POST",
+      path: "/v1/auth/bootstrap/device-claim",
+      // SEC-SETUP-BOOTSTRAP-001: atomically claims the local owner slot by
+      // consuming a single-use install nonce and binding a device public key.
+      // Loopback-only, origin-bound, replay-protected, crash-safe — all enforced
+      // in authService.claimOwnerWithDeviceKey. Fails closed (409) if already
+      // claimed (by passphrase or another device).
+      auth: { public: true, allowUnauthenticatedMutation: true },
+      rateLimitPolicyId: "auth.login",
+      async handler(ctx): Promise<FridayAuthDeviceClaimResponse> {
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body || typeof body !== "object") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "Request body is required",
+            { httpStatus: 400 },
+          );
+        }
+        const request: FridayAuthDeviceClaimRequest = {
+          nonce: typeof body.nonce === "string" ? body.nonce : "",
+          devicePublicKey: typeof body.devicePublicKey === "string" ? body.devicePublicKey : "",
+          deviceId: typeof body.deviceId === "string" ? body.deviceId : "",
+          origin: typeof body.origin === "string" ? body.origin : "",
+          installId: typeof body.installId === "string" ? body.installId : "",
+          osUser: typeof body.osUser === "string" ? body.osUser : "",
+        };
+        return deps.authService.claimOwnerWithDeviceKey(request, ctx.ip);
       },
     },
     {

@@ -4,9 +4,13 @@ import { FridayDomainError } from "#errors";
 
 import type {
   FridayAccessTokenClaims,
+  FridayAuthBootstrapChallengeRequest,
+  FridayAuthBootstrapChallengeResponse,
   FridayAuthBootstrapRequest,
   FridayAuthBootstrapResponse,
   FridayAuthBootstrapStatusResponse,
+  FridayAuthDeviceClaimRequest,
+  FridayAuthDeviceClaimResponse,
   FridayAuthMeResponse,
   FridayAuthPrincipal,
   FridayLoginRequest,
@@ -28,6 +32,7 @@ import { encodeToken } from "./friday-token-validator.js";
 import { createFridayUserRepository } from "../persistence/friday-user-repository.js";
 import type { FridayUserRow } from "../persistence/friday-user-repository.js";
 import { createFridayAuthSessionRepository } from "../persistence/friday-auth-session-repository.js";
+import { createFridaySetupBootstrapNonceRepository } from "../persistence/friday-setup-bootstrap-nonce-repository.js";
 import { isFridayTestSecurityWarningSuppressed } from "#utilities";
 import { isFridayLoopbackAddress } from "../http/friday-http-client-ip.js";
 
@@ -35,6 +40,35 @@ import { isFridayLoopbackAddress } from "../http/friday-http-client-ip.js";
 
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+// ─── SEC-SETUP-BOOTSTRAP-001 device-bound owner claim ───
+
+/** sha256 of a value, hex. Used for install-nonce + device-public-key hashing. */
+function sha256Hex(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+/**
+ * Namespaced sentinel stored in users.password_hash when ownership is claimed by
+ * a device (not a passphrase). It is deliberately NOT a valid scrypt/legacy hash
+ * so verifyPassword() falls through to the unknown-format branch and rejects any
+ * passphrase login against a device-claimed owner (fails closed). Non-null, so
+ * getBootstrapStatus()/bootstrapLocalPassphrase() correctly treat ownership as
+ * already claimed. This overloads no existing behaviour — it is a new, distinct,
+ * inert marker value.
+ */
+const DEVICE_OWNER_HASH_PREFIX = "device-owner$v1$";
+
+function deviceOwnerSentinel(devicePublicKeyHash: string): string {
+  return `${DEVICE_OWNER_HASH_PREFIX}${devicePublicKeyHash}`;
+}
+
+/** True when the caught error is a better-sqlite3 UNIQUE/constraint violation. */
+function isSqliteConstraintError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && code.startsWith("SQLITE_CONSTRAINT");
 }
 
 function isLocalhostAddress(addr?: string): boolean {
@@ -192,6 +226,11 @@ export class FridayAuthError extends FridayDomainError {
 export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): FridayAuthService {
   const userRepo = createFridayUserRepository();
   const sessionRepo = createFridayAuthSessionRepository();
+  const bootstrapNonceRepo = createFridaySetupBootstrapNonceRepository();
+  const bootstrapHubId = deps.hubId ?? "local-hub";
+  const bootstrapNonceTtlSec = deps.bootstrapNonceTtlSec ?? 300;
+  const generateBootstrapNonce =
+    deps.generateBootstrapNonce ?? (() => crypto.randomBytes(32).toString("base64url"));
   const warn = deps.warn ?? console.warn;
   const warnOnce = createWarnOnce(warn);
   const rateLimiter = deps.rateLimiter;
@@ -460,6 +499,180 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         initialized: true,
         initializedAt: now,
         userId: localUser.id,
+      };
+    },
+
+    issueBootstrapChallenge(
+      request: FridayAuthBootstrapChallengeRequest,
+      ip?: string,
+    ): FridayAuthBootstrapChallengeResponse {
+      // Loopback-only, mirroring bootstrapLocalPassphrase's ingress boundary.
+      if (!isLocalhostAddress(ip)) {
+        throw new FridayDomainError(
+          "AUTH_BOOTSTRAP_NOT_ALLOWED",
+          "Bootstrap challenge is only allowed from localhost.",
+          { httpStatus: 403 },
+        );
+      }
+
+      const installId = (request.installId ?? "").trim();
+      const osUser = (request.osUser ?? "").trim();
+      const origin = (request.origin ?? "").trim();
+      const action = (request.action ?? "owner-claim").trim() || "owner-claim";
+      if (!installId || !osUser || !origin) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          "installId, osUser and origin are required to issue a bootstrap challenge",
+          { httpStatus: 400 },
+        );
+      }
+
+      const now = deps.nowIso();
+      const expiresAt = new Date(
+        new Date(now).getTime() + bootstrapNonceTtlSec * 1000,
+      ).toISOString();
+      const challengeId = deps.idGenerator();
+      // Raw nonce is returned ONCE; only its hash is persisted.
+      const nonce = generateBootstrapNonce();
+      const nonceHash = sha256Hex(nonce);
+
+      deps.db.withWriteTransaction((db) => {
+        bootstrapNonceRepo.insertNonce(db, {
+          id: challengeId,
+          nonceHash,
+          kind: "install_owner_claim",
+          hubId: bootstrapHubId,
+          installId,
+          osUser,
+          origin,
+          action,
+          createdAt: now,
+          expiresAt,
+        });
+      });
+
+      return {
+        challengeId,
+        nonce,
+        kind: "install_owner_claim",
+        hubId: bootstrapHubId,
+        installId,
+        osUser,
+        origin,
+        action,
+        createdAt: now,
+        expiresAt,
+      };
+    },
+
+    claimOwnerWithDeviceKey(
+      request: FridayAuthDeviceClaimRequest,
+      ip?: string,
+    ): FridayAuthDeviceClaimResponse {
+      // (d) loopback-only guard — a non-loopback claim fails closed.
+      if (!isLocalhostAddress(ip)) {
+        throw new FridayDomainError(
+          "AUTH_BOOTSTRAP_NOT_ALLOWED",
+          "Owner claim is only allowed from localhost.",
+          { httpStatus: 403 },
+        );
+      }
+
+      const nonce = (request.nonce ?? "").trim();
+      const devicePublicKey = (request.devicePublicKey ?? "").trim();
+      const deviceId = (request.deviceId ?? "").trim();
+      const origin = (request.origin ?? "").trim();
+      if (!nonce || !devicePublicKey || !deviceId || !origin) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          "nonce, devicePublicKey, deviceId and origin are required",
+          { httpStatus: 400 },
+        );
+      }
+
+      const localUser = findLocalUser();
+      if (!localUser) {
+        throw new FridayDomainError(
+          "USER_NOT_FOUND",
+          "No local user configured",
+          { httpStatus: 404 },
+        );
+      }
+      // Fast fail-closed if ownership is already claimed (passphrase or device).
+      // The authoritative check is the CAS below; this is a friendly early exit.
+      if (localUser.password_hash) {
+        throw new FridayDomainError(
+          "AUTH_BOOTSTRAP_ALREADY_DONE",
+          "Local bootstrap has already been completed.",
+          { httpStatus: 409 },
+        );
+      }
+
+      const now = deps.nowIso();
+      const nonceHash = sha256Hex(nonce);
+      const devicePublicKeyHash = sha256Hex(devicePublicKey);
+      const ownerSentinel = deviceOwnerSentinel(devicePublicKeyHash);
+
+      // Atomic, crash-safe claim: BOTH writes run in ONE write transaction, so a
+      // crash / thrown error mid-claim rolls back the whole unit — the nonce stays
+      // unconsumed AND the owner slot stays NULL (never a partial owner).
+      //   1. CAS-consume the nonce (origin/expiry/single-use gate). changes=0 =>
+      //      replay / expired / cross-origin => reject, ZERO state change.
+      //   2. CAS-claim the owner slot (password_hash IS NULL). changes=0 =>
+      //      already claimed => 409, ZERO state change (nonce consume rolls back).
+      try {
+        deps.db.withWriteTransaction((db) => {
+          const consumed = bootstrapNonceRepo.consumeOwnerClaimNonce(db, {
+            nonceHash,
+            kind: "install_owner_claim",
+            origin,
+            nowIso: now,
+            devicePublicKey,
+            devicePublicKeyHash,
+            deviceId,
+            claimedUserId: localUser.id,
+          });
+          if (consumed !== 1) {
+            throw new FridayDomainError(
+              "AUTH_BOOTSTRAP_NONCE_INVALID",
+              "Install nonce is invalid, expired, cross-origin, or already used.",
+              { httpStatus: 409 },
+            );
+          }
+
+          const claimed = db
+            .prepare(
+              "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ? AND password_hash IS NULL",
+            )
+            .run(ownerSentinel, now, localUser.id);
+          if (claimed.changes !== 1) {
+            throw new FridayDomainError(
+              "AUTH_BOOTSTRAP_ALREADY_DONE",
+              "Local bootstrap has already been completed.",
+              { httpStatus: 409 },
+            );
+          }
+        });
+      } catch (error) {
+        // Defence-in-depth: the partial UNIQUE(kind) WHERE consumed_at IS NOT NULL
+        // makes a second consumed owner-claim a UNIQUE violation. Surface it as a
+        // clean fail-closed 409 rather than a raw SQLite error.
+        if (isSqliteConstraintError(error)) {
+          throw new FridayDomainError(
+            "AUTH_BOOTSTRAP_ALREADY_DONE",
+            "Local bootstrap has already been completed.",
+            { httpStatus: 409 },
+          );
+        }
+        throw error;
+      }
+
+      return {
+        claimed: true,
+        claimedAt: now,
+        userId: localUser.id,
+        deviceId,
+        devicePublicKeyHash,
       };
     },
 
