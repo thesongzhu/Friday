@@ -713,4 +713,38 @@ describe("SEC-SETUP-BOOTSTRAP-001 Stage 3+4: device-readback activation", () => 
     const key2 = readBindings(db).find((b) => b.id === "binding-prov-2");
     expect(key2?.state).toBe("provisional");
   });
+
+  it("(c) narrowed 409: a NON-unique constraint error from the readback write is NOT masked to 409 — it propagates", () => {
+    seedProvisionalBinding(db);
+    // The AUTH_READBACK_ALREADY_ACTIVE 409 mapping is restricted to the SPECIFIC
+    // active-binding UNIQUE violation (SQLITE_CONSTRAINT_UNIQUE on the sole unique
+    // index of friday_device_owner_bindings). Any OTHER constraint on that table —
+    // e.g. a future CHECK — must surface as ITSELF, not be mis-labelled 409. Inject a
+    // synthetic non-unique constraint error at the write-transaction boundary (the
+    // same seam the atomicity crash tests drive).
+    const constraintDb: FridaySqliteLayer = {
+      ...db,
+      withWriteTransaction<T>(): T {
+        const e = new Error(
+          "CHECK constraint failed: friday_device_owner_bindings.some_future_check",
+        );
+        (e as { code?: string }).code = "SQLITE_CONSTRAINT_CHECK";
+        throw e;
+      },
+    };
+
+    let caught: unknown;
+    try {
+      makeService(constraintDb).confirmDeviceReadback(readbackReq(), ownerPrincipal(), LOOPBACK);
+    } catch (err) {
+      caught = err;
+    }
+    // Propagated as the RAW constraint error — NOT masked to a 409 domain error.
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(FridayDomainError);
+    expect((caught as { code?: string }).code).toBe("SQLITE_CONSTRAINT_CHECK");
+    // Real state untouched: the binding is still provisional (the write never ran).
+    expect(readBindings(db)[0].state).toBe("provisional");
+    expect(countActiveBindings(db)).toBe(0);
+  });
 });

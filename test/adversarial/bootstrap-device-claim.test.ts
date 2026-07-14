@@ -329,6 +329,46 @@ describe("SEC-SETUP-BOOTSTRAP-001: device-bound owner claim", () => {
     expect(readNonceRow(db, nonce)?.consumed_at).toBeNull();
   });
 
+  it("(f) cross-intent: a VALID claim PoP whose signed action is 'owner-migrate' is REFUSED (401); ZERO state change", () => {
+    // A fully valid PoP — correct key, fresh, low-S, bound to THIS claim's
+    // nonce/origin/deviceId — that merely carries a DIFFERENT signed intent
+    // ("owner-migrate"). Because `action` is bound INTO the signed bytes, the
+    // positive own-action assertion rejects it: without that assertion this would
+    // successfully claim ownership by cross-intent replay of a migration proof.
+    const nonce = issueNonce(db, { origin: ORIGIN });
+    const transcript = makeTranscript(DEVICE_KEY, {
+      nonce,
+      origin: ORIGIN,
+      deviceId: DEVICE_ID,
+      action: "owner-migrate",
+      installId: "install-1",
+      osUser: "jarvis",
+    });
+    const req = {
+      ...claimReq({ nonce }),
+      deviceClaimProof: {
+        transcript,
+        signature: {
+          encoding: "ieee-p1363-base64" as const,
+          value: signTranscriptLowS(DEVICE_KEY, transcript),
+        },
+      },
+    };
+
+    let caught: unknown;
+    try {
+      makeService(db).claimOwnerWithDeviceKey(req, LOOPBACK);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(FridayDomainError);
+    expect((caught as FridayDomainError).httpStatus).toBe(401);
+    expect((caught as FridayDomainError).code).toBe("AUTH_BOOTSTRAP_POP_INVALID");
+    // No ownership claimed; the install nonce is un-burned (fail-closed).
+    expect(readOwnerHash(db)).toBeNull();
+    expect(readNonceRow(db, nonce)?.consumed_at).toBeNull();
+  });
+
   it("(d) loopback-only: a non-loopback claim / issue fails closed (403)", () => {
     const nonce = issueNonce(db);
 
