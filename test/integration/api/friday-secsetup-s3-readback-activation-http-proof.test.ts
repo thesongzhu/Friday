@@ -235,7 +235,11 @@ describe("S3 runtime proof — device-readback activation over real HTTP (produc
 
   function readbackBody() {
     const nonce = "readback-http-0001";
-    const transcript = makeTranscript(DEVICE_KEY, { nonce, origin: ORIGIN, deviceId: DEVICE_ID, action: "owner-readback", installId: "install-s3", osUser: "jarvis" });
+    // Follow-up hardening (b): the readback proof's expiry must fall within the
+    // server-side max TTL (5 min). The service's clock is real time here, so mint a
+    // short, in-window expiry relative to now.
+    const expiresAt = new Date(Date.now() + 4 * 60 * 1000).toISOString();
+    const transcript = makeTranscript(DEVICE_KEY, { nonce, origin: ORIGIN, deviceId: DEVICE_ID, action: "owner-readback", installId: "install-s3", osUser: "jarvis", expiresAt });
     return {
       nonce,
       devicePublicKey: DEVICE_PUBKEY,
