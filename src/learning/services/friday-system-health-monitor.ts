@@ -68,14 +68,17 @@ export interface FridaySystemHealthGrowthDetail {
 }
 
 /**
- * Narrow structural sink for report-only growth telemetry. Deliberately mirrors
- * the observability `FridayMetricsCollector.setGauge` signature so the real
- * collector satisfies it WITHOUT the monitor importing the observability engine.
- * The gauges (a numeric time series) are the durable readback surface for the
- * growth TREND; `status` + `reclaim_status` ride along as labels.
+ * Narrow structural REPORTER for report-only growth telemetry. The monitor hands
+ * the whole growth reading to the observability service, which publishes it
+ * through its FORMAL seam (unlabeled gauges + metricState + dashboard
+ * time-series) so it is readable off the real `/v1/observability/metrics` and
+ * `/v1/observability/time-series` routes. The monitor stays decoupled: it never
+ * imports the observability engine nor knows gauge names. The reading is
+ * RESTART-VOLATILE once published (the collector is in-memory); a durable,
+ * cross-restart trend is PENDING. Never used for any deletion.
  */
-export interface FridayHealthMetricsSink {
-  setGauge(name: string, value: number, labels?: Readonly<Record<string, string>>): void;
+export interface FridayRealtimeEventsGrowthReporter {
+  report(detail: FridaySystemHealthGrowthDetail): void;
 }
 
 /**
@@ -159,12 +162,14 @@ export interface CreateSystemHealthMonitorDeps {
   /** Optional callback invoked after each run for audit/observability. */
   onRunComplete?: (summary: FridaySystemHealthRunSummary) => void;
   /**
-   * Optional report-only telemetry sink. When provided, the
-   * `realtime_events_growth` check publishes its rows/bytes estimate (with
-   * status + reclaim_status labels) so the growth trend lands in a durable,
-   * readback-able surface. Never used for any deletion.
+   * Optional report-only growth reporter. When provided, the
+   * `realtime_events_growth` check hands its full reading (rows/bytes/status/
+   * reclaim_status) to the observability service, which publishes it through the
+   * formal seam so it is readback-able off the real observability routes. The
+   * published values are RESTART-VOLATILE (in-memory collector); a durable trend
+   * is PENDING. Never used for any deletion.
    */
-  metricsSink?: FridayHealthMetricsSink;
+  metricsSink?: FridayRealtimeEventsGrowthReporter;
 }
 
 // ─── Checks ───
@@ -183,10 +188,6 @@ const RETIRED_MEMORY_ITEMS_MAINTENANCE =
   "TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED: expired memory_items maintenance is disabled in the TypeScript runtime; use the Rust memory owner/migration path instead.";
 
 // ─── realtime_events growth observability (report-only; bounded; DATA-RETENTION-001) ───
-
-/** Gauge names for the growth trend (durable readback via the metrics collector). */
-export const REALTIME_EVENTS_ROWS_GAUGE = "friday.realtime_events.rows_estimate";
-export const REALTIME_EVENTS_BYTES_GAUGE = "friday.realtime_events.bytes_estimate";
 
 /**
  * Max rows read to estimate the average payload byte-length. Bounds the byte
@@ -276,18 +277,19 @@ function degradedRealtimeEventsGrowthDetail(err: unknown): FridaySystemHealthGro
 }
 
 /**
- * Publish the growth estimate to the metrics sink (report-only). Best-effort:
- * an unregistered gauge or any telemetry error must never break the health run.
+ * Hand the growth reading to the observability reporter (report-only). The
+ * reporter publishes rows/bytes/status through the formal seam with a STABLE,
+ * unlabeled gauge identity (status rides as a numeric value, not a label, so no
+ * stale per-status variant can leak). Best-effort: any telemetry error must
+ * never break the health run, and nothing is ever deleted.
  */
-export function publishRealtimeEventsGrowthGauges(
-  sink: FridayHealthMetricsSink | undefined,
+export function reportRealtimeEventsGrowth(
+  reporter: FridayRealtimeEventsGrowthReporter | undefined,
   detail: FridaySystemHealthGrowthDetail,
 ): void {
-  if (!sink) return;
-  const labels = { status: detail.status, reclaim_status: detail.reclaim_status };
+  if (!reporter) return;
   try {
-    sink.setGauge(REALTIME_EVENTS_ROWS_GAUGE, detail.rowCount, labels);
-    sink.setGauge(REALTIME_EVENTS_BYTES_GAUGE, detail.estimatedBytes, labels);
+    reporter.report(detail);
   } catch {
     // Report-only telemetry is best-effort; swallow so health never fails on it.
   }
@@ -389,8 +391,9 @@ const HEALTH_CHECKS: HealthCheck[] = [
         // performs NO deletion. reclaim_status is still surfaced for the reader.
         detail = degradedRealtimeEventsGrowthDetail(err);
       }
-      // Report-only readback: publish the trend to the durable metrics surface.
-      publishRealtimeEventsGrowthGauges(deps.metricsSink, detail);
+      // Report-only readback: hand the reading to the observability reporter,
+      // which publishes it through the formal (restart-volatile) metrics seam.
+      reportRealtimeEventsGrowth(deps.metricsSink, detail);
       return {
         name: "realtime_events_growth",
         healthy: detail.status === "healthy",

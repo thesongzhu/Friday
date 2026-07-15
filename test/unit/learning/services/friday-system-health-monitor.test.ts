@@ -1,19 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
-import { FridayMetricsCollector } from "../../../../src/observability/engine/metrics-collector.js";
 import {
   createFridaySystemHealthMonitor,
   classifyRealtimeEventsGrowth,
-  publishRealtimeEventsGrowthGauges,
+  reportRealtimeEventsGrowth,
   createFridayHealthLogDeduper,
   healthCheckStatusLabel,
   REALTIME_EVENTS_GROWTH_THRESHOLDS,
   REALTIME_EVENTS_SAMPLE_SIZE,
   REALTIME_EVENTS_ROWCOUNT_PROXY_SQL,
   REALTIME_EVENTS_SAMPLE_BYTES_SQL,
-  REALTIME_EVENTS_ROWS_GAUGE,
-  REALTIME_EVENTS_BYTES_GAUGE,
+  type FridaySystemHealthGrowthDetail,
   type FridaySystemHealthMonitor,
   type FridaySystemHealthRunSummary,
 } from "../../../../src/learning/services/friday-system-health-monitor.js";
@@ -354,41 +352,37 @@ describe("FridaySystemHealthMonitor", () => {
     expect(summary.maintenanceRecommendations.find((r) => r.name === "realtime_events_growth")).toBeUndefined();
   });
 
-  it("publishes the growth trend to a REAL metrics collector (durable readback)", () => {
-    // Use the real FridayMetricsCollector as the sink and read the values back.
-    const metrics = new FridayMetricsCollector();
-    metrics.registerGauge(REALTIME_EVENTS_ROWS_GAUGE, "learning");
-    metrics.registerGauge(REALTIME_EVENTS_BYTES_GAUGE, "learning");
-
+  it("forwards the full growth reading to the observability reporter (report-only)", () => {
+    // The monitor hands its detail to the reporter; the observability service
+    // (tested end-to-end for the real HTTP readback in
+    // test/unit/observability/services/realtime-events-growth-readback.test.ts)
+    // is what publishes through the formal, RESTART-VOLATILE metrics seam.
+    const received: FridaySystemHealthGrowthDetail[] = [];
     const wired = createFridaySystemHealthMonitor({
       db,
       nowIso: () => NOW,
-      metricsSink: metrics,
+      metricsSink: { report: (detail) => received.push(detail) },
     });
     const N = 12;
     insertRealtimeEvents(N, JSON.stringify({ data: "w".repeat(40) }));
     const summary = wired.runAll();
     const growth = summary.checks.find((c) => c.name === "realtime_events_growth")!;
 
-    const labels = { status: "healthy", reclaim_status: "deferred_to_rust_epoch_resync" };
-    const rowsSnap = metrics.getSnapshot(REALTIME_EVENTS_ROWS_GAUGE, labels);
-    const bytesSnap = metrics.getSnapshot(REALTIME_EVENTS_BYTES_GAUGE, labels);
-
-    expect(rowsSnap).not.toBeNull();
-    expect(bytesSnap).not.toBeNull();
-    // reclaim_status + rows/bytes estimate are readable back off a real consumer.
-    expect((rowsSnap as { value: number }).value).toBe(N);
-    expect((bytesSnap as { value: number }).value).toBe(growth.detail!.estimatedBytes);
+    expect(received).toHaveLength(1);
+    expect(received[0]!.status).toBe("healthy");
+    expect(received[0]!.rowCount).toBe(N);
+    expect(received[0]!.estimatedBytes).toBe(growth.detail!.estimatedBytes);
+    expect(received[0]!.reclaim_status).toBe("deferred_to_rust_epoch_resync");
   });
 
-  it("publishRealtimeEventsGrowthGauges is a no-op without a sink and never throws", () => {
+  it("reportRealtimeEventsGrowth is a no-op without a reporter and swallows reporter errors", () => {
     expect(() =>
-      publishRealtimeEventsGrowthGauges(undefined, classifyRealtimeEventsGrowth(5, 100)),
+      reportRealtimeEventsGrowth(undefined, classifyRealtimeEventsGrowth(5, 100)),
     ).not.toThrow();
-    // An unregistered-gauge collector must not break the caller (best-effort).
-    const bare = new FridayMetricsCollector();
+    // A throwing reporter must not break the caller (best-effort telemetry).
+    const throwing = { report: () => { throw new Error("sink down"); } };
     expect(() =>
-      publishRealtimeEventsGrowthGauges(bare, classifyRealtimeEventsGrowth(5, 100)),
+      reportRealtimeEventsGrowth(throwing, classifyRealtimeEventsGrowth(5, 100)),
     ).not.toThrow();
   });
 
