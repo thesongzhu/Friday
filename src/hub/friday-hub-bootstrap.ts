@@ -8196,36 +8196,58 @@ export async function createFridayHub(
     // is a separate operator-gated Phase-1/2 replacement.
 
     // System self-health monitor: periodic diagnose-only checks; maintenance cleanup requires an explicit gate.
-    schedulerJobs.push({
-      id: "system-health-monitor",
-      intervalMs: 300_000, // every 5 min
-      timeoutMs: 60_000,
-      catchUpRuns: 1,
-      run: async () => {
-        const { createFridaySystemHealthMonitor } = await import("../learning/services/friday-system-health-monitor.js");
-        const monitor = createFridaySystemHealthMonitor({
-          db: stateRuntime!.sqlite,
-          nowIso,
-          onRunComplete: (summary) => {
-            const unhealthy = summary.checks.filter((c) => !c.healthy);
-            if (unhealthy.length > 0) {
-              for (const check of unhealthy) {
-                console.warn(`[friday][system-health] ${check.name}: unhealthy (${String(check.value)} ${check.unit})`);
+    {
+      const {
+        createFridaySystemHealthMonitor,
+        createFridayHealthLogDeduper,
+        healthCheckStatusLabel,
+      } = await import("../learning/services/friday-system-health-monitor.js");
+      // One-time setup (persists across ticks): a transition-only log deduper so
+      // a persistently large table never spams a warning every 5 minutes. Per the
+      // #1606 split, the report-only realtime_events growth reading is surfaced
+      // ONLY via these transition-only logs — it is NOT published to any
+      // observability route / HTTP surface (owner-authorized readback is deferred
+      // to R3). Report-only — none of this deletes anything.
+      const systemHealthLogDeduper = createFridayHealthLogDeduper();
+      schedulerJobs.push({
+        id: "system-health-monitor",
+        intervalMs: 300_000, // every 5 min
+        timeoutMs: 60_000,
+        catchUpRuns: 1,
+        run: async () => {
+          const monitor = createFridaySystemHealthMonitor({
+            db: stateRuntime!.sqlite,
+            nowIso,
+            onRunComplete: (summary) => {
+              // Log an unhealthy/warn/critical/degraded check only on a status
+              // TRANSITION; feed healthy statuses too so a recovery resets state
+              // and the next regression re-alerts.
+              for (const check of summary.checks) {
+                const status = healthCheckStatusLabel(check);
+                if (check.healthy) {
+                  systemHealthLogDeduper.shouldLog(check.name, status);
+                  continue;
+                }
+                if (systemHealthLogDeduper.shouldLog(check.name, status)) {
+                  console.warn(
+                    `[friday][system-health] ${check.name}: ${status} (${String(check.value)} ${check.unit})`,
+                  );
+                }
               }
-            }
-            for (const recommendation of summary.maintenanceRecommendations) {
-              console.warn(
-                `[friday][system-health] maintenance ${recommendation.name}: ${recommendation.detail}; explicit maintenance gate required`,
-              );
-            }
-            for (const receipt of summary.maintenanceReceipts) {
-              console.warn(`[friday][system-health] maintenance ${receipt.name}: ${receipt.detail}`);
-            }
-          },
-        });
-        monitor.runAll();
-      },
-    });
+              for (const recommendation of summary.maintenanceRecommendations) {
+                console.warn(
+                  `[friday][system-health] maintenance ${recommendation.name}: ${recommendation.detail}; explicit maintenance gate required`,
+                );
+              }
+              for (const receipt of summary.maintenanceReceipts) {
+                console.warn(`[friday][system-health] maintenance ${receipt.name}: ${receipt.detail}`);
+              }
+            },
+          });
+          monitor.runAll();
+        },
+      });
+    }
 
     // F1.5 — Headless Rust-route self-probe diagnostic (DARK, DEFAULT-OFF; OPTION-1 / H-b).
     // WHEN ENABLED by the operator via FRIDAY_RUST_ROUTE_DIAGNOSTIC_ENABLED=true ONLY, this
