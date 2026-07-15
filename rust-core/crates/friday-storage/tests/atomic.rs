@@ -555,11 +555,12 @@ fn concurrent_billing_survives_a_reaper_sweeping_on_a_short_cadence() {
         seed_aged_ledger(hub.conn(), &format!("aged_{i}"), now_ms - one_year_ms - 1);
     }
 
-    // Small batch + the same `now_ms` so only the seeded-aged rows match the cutoffs. Large
-    // windows everywhere so the freshly-billed recent rows (created_at == now_ms) never age.
+    // Small batch + the same `now_ms` so only the seeded-aged rows match the cutoffs. The DEFAULT
+    // policy is now permanent (deletes nothing), so this concurrency stress explicitly opts EVERY
+    // category in via `operator_windows()` to exercise the deletion mechanism under contention.
     let windows = RetentionWindows {
         batch_limit: 4,
-        ..RetentionWindows::default()
+        ..RetentionWindows::operator_windows()
     };
 
     let stop = Arc::new(AtomicBool::new(false));
