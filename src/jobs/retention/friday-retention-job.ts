@@ -26,7 +26,22 @@ export interface CreateRetentionJobDeps {
   learningLedger: FridayLearningEventLedger;
   skillRunStore: FridaySkillRunStore;
   bootstrapNonceRepo: FridaySetupBootstrapNonceRepository;
+  /**
+   * Static startup policy. Retained for existing callers; when `loadPolicy` is
+   * provided it takes precedence and this is ignored.
+   */
   policy?: FridayRetentionPolicy;
+  /**
+   * RETENTION-R3a live-revocation fix. When provided, the reaper re-reads the
+   * CURRENT persisted retention policy at the START of EVERY sweep instead of
+   * capturing a startup snapshot. This makes an owner's opt-in/opt-OUT
+   * authoritative for the already-running reaper WITHOUT a process restart
+   * (DATA-RETENTION-001): setting a category back to permanent stops the very
+   * next sweep from deleting it. Must fail closed — return all-permanent on any
+   * read failure; the job additionally guards the call with try/catch so a throw
+   * or nullish result also resolves to all-permanent (delete nothing).
+   */
+  loadPolicy?: () => FridayRetentionPolicy;
   nowIso: () => string;
 }
 
@@ -75,11 +90,25 @@ export function resolveCutoff(
 }
 
 export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRetentionJob {
-  const policy = deps.policy ?? FRIDAY_DEFAULT_RETENTION_POLICY;
+  // RETENTION-R3a: resolve the governing policy PER SWEEP (not once at
+  // construction) so live owner opt-in/opt-OUT changes are authoritative for the
+  // running reaper. FAIL-CLOSED: any error / nullish live read ⇒ all-permanent ⇒
+  // delete nothing.
+  function resolvePolicy(): FridayRetentionPolicy {
+    if (deps.loadPolicy) {
+      try {
+        return deps.loadPolicy() ?? FRIDAY_DEFAULT_RETENTION_POLICY;
+      } catch {
+        return FRIDAY_DEFAULT_RETENTION_POLICY;
+      }
+    }
+    return deps.policy ?? FRIDAY_DEFAULT_RETENTION_POLICY;
+  }
 
   return {
     run(nowIsoOverride?) {
       const nowIso = nowIsoOverride ?? deps.nowIso();
+      const policy = resolvePolicy();
 
       const result: FridayRetentionJobResult = {
         markedPairingExpired: 0,

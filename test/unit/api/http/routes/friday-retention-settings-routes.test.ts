@@ -12,6 +12,15 @@ import { createTestDb } from "../../../satellites/_helpers/create-test-db.helper
 
 const NOW = "2026-07-15T10:00:00.000Z";
 
+// Retention config is canonical-owner-only: a principal must carry owner/admin
+// authority (role owner/admin, which grants the hub.admin scope) to read or
+// mutate it. These handler-level tests use bound OWNER principals; the real auth
+// composition (anonymous/synthetic/viewer/operator denied) is proven end-to-end
+// against the REAL server in friday-http-server-retention-settings-authz.test.ts.
+function owner(userId: string): never {
+  return { userId, principalId: userId, role: "admin", scopes: ["hub.admin"] } as never;
+}
+
 function makeCtx(
   overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {},
 ): FridayHttpContext<unknown, unknown, unknown> {
@@ -22,7 +31,7 @@ function makeCtx(
     query: {},
     body: {},
     headers: {},
-    principal: { userId: "owner-a" } as never,
+    principal: owner("owner-a"),
     ...overrides,
   };
 }
@@ -91,18 +100,31 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
     expect(rowsFor("00000000-0000-0000-0000-000000000001")).toHaveLength(0);
   });
 
+  it("a bound NON-OWNER (viewer) is refused 403 on GET and PUT (owner-only); nothing persisted", async () => {
+    const viewer = { userId: "viewer-1", principalId: "viewer-1", role: "viewer", scopes: ["session.read"] } as never;
+    await expect(
+      getRoute().handler(makeCtx({ principal: viewer })),
+    ).rejects.toMatchObject({ httpStatus: 403 });
+    await expect(
+      putRoute().handler(
+        makeCtx({ principal: viewer, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+      ),
+    ).rejects.toMatchObject({ httpStatus: 403 });
+    expect(rowsFor("viewer-1")).toHaveLength(0);
+  });
+
   // ── 2. CROSS-OWNER ISOLATION (the class missed in #1606) ──────────────────
   it("owner A's PUT is invisible to owner B's GET; B sees only defaults", async () => {
     await putRoute().handler(
       makeCtx({
-        principal: { userId: "owner-a" } as never,
+        principal: owner("owner-a"),
         body: { policy: { auditLogs: { mode: "after_days", days: 30 } } },
       }),
     );
 
     // Owner B reads: every category permanent (no leakage of A's opt-in).
     const bResult = (await getRoute().handler(
-      makeCtx({ principal: { userId: "owner-b" } as never }),
+      makeCtx({ principal: owner("owner-b") }),
     )) as { policy: Record<string, { mode: string; days?: number }> };
     for (const [, retention] of Object.entries(bResult.policy)) {
       expect(retention.mode).toBe("permanent");
@@ -111,7 +133,7 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
 
     // Owner A reads back its own opt-in.
     const aResult = (await getRoute().handler(
-      makeCtx({ principal: { userId: "owner-a" } as never }),
+      makeCtx({ principal: owner("owner-a") }),
     )) as { policy: Record<string, { mode: string; days?: number }> };
     expect(aResult.policy.auditLogs).toEqual({ mode: "after_days", days: 30 });
 
@@ -124,7 +146,7 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
     // Body tries to target owner-b; handler must write under the principal (owner-a).
     await putRoute().handler(
       makeCtx({
-        principal: { userId: "owner-a" } as never,
+        principal: owner("owner-a"),
         body: {
           userId: "owner-b",
           principalId: "owner-b",

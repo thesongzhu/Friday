@@ -41,7 +41,8 @@ function makeCtx(
     query: {},
     body: {},
     headers: {},
-    principal: { userId: OWNER } as never,
+    // Retention config is owner-only: the caller must carry owner/admin authority.
+    principal: { userId: OWNER, principalId: OWNER, role: "admin", scopes: ["hub.admin"] } as never,
     ...overrides,
   };
 }

@@ -1,7 +1,10 @@
 import { FridayDomainError } from "#errors";
 import type { CategoryRetention, FridayRetentionSettingsStore } from "#jobs";
-import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
-import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
+import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import {
+  assertBoundPrincipalAuthorityForOperation,
+  isUnauthenticatedPublicPrincipal,
+} from "../../../security/friday-owner-session-channel-capability.js";
 
 /**
  * Owner-bound retention-Settings HTTP surface (RETENTION-R3a).
@@ -34,6 +37,28 @@ function requireUserId(principal: { userId?: string } | null): string {
     });
   }
   return principal.userId;
+}
+
+/**
+ * Retention config is CANONICAL-LOCAL-OWNER-only (SEC-NET-PRINCIPAL-001): it
+ * governs global content deletion, so both READS and MUTATIONS require owner
+ * authority — a non-owner (viewer / operator) or synthetic-public / release-
+ * disabled-device principal must never read or activate it. Reuses the SAME
+ * mechanism as the owner-only runtime.secret.* routes
+ * (`assertBoundPrincipalAuthorityForOperation`): the synthetic-public / disabled-
+ * device principal is refused 401 (bound-principal required) and a bound but
+ * non-owner principal is refused 403 (owner/admin authority required). The
+ * canonical owner authenticates as role owner/admin (which carries the hub.admin
+ * scope) via the local passphrase → bearer flow.
+ */
+function assertRetentionOwner(
+  principal: FridayAuthPrincipal | null,
+  operation: "retention.policy.read" | "retention.policy.update",
+): void {
+  assertBoundPrincipalAuthorityForOperation(principal, operation, "api", {
+    anyOfScopes: ["hub.admin"],
+    anyOfRoles: ["owner", "admin"],
+  });
 }
 
 /**
@@ -84,6 +109,7 @@ export function createFridayRetentionSettingsRoutes(
       path: "/v1/uix/retention-policy",
       auth: { public: true },
       async handler(ctx): Promise<FridayRetentionPolicyResponse> {
+        assertRetentionOwner(ctx.principal ?? null, "retention.policy.read");
         const userId = requireUserId(ctx.principal);
         return { policy: deps.store.readOwnerContentPolicy({ principalId: userId }) };
       },
@@ -94,6 +120,7 @@ export function createFridayRetentionSettingsRoutes(
       path: "/v1/uix/retention-policy",
       auth: { public: true },
       async handler(ctx): Promise<FridayRetentionPolicyResponse> {
+        assertRetentionOwner(ctx.principal ?? null, "retention.policy.update");
         const userId = requireUserId(ctx.principal);
 
         const body = ctx.body;

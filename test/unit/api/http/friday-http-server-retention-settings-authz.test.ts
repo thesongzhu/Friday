@@ -50,23 +50,57 @@ type StubPrincipal = {
   role: string;
   scopes: string[];
   tokenId: string;
+  principalType?: string;
 };
 
+// Canonical OWNERS: role "admin" (grants the hub.admin scope) via the local
+// passphrase → bearer flow. Two distinct owner userIds exercise cross-owner
+// isolation even among authorized owners.
 const OWNER_A: StubPrincipal = {
   principalId: "user:alice",
   userId: "11111111-1111-1111-1111-111111111111",
   tenantId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-  role: "viewer",
-  scopes: ["session.read"],
+  role: "admin",
+  scopes: ["hub.admin", "session.read"],
   tokenId: "33333333-3333-3333-3333-333333333333",
 };
 const OWNER_B: StubPrincipal = {
   principalId: "user:bob",
   userId: "22222222-2222-2222-2222-222222222222",
   tenantId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-  role: "viewer",
-  scopes: ["session.read"],
+  role: "admin",
+  scopes: ["hub.admin", "session.read"],
   tokenId: "44444444-4444-4444-4444-444444444444",
+};
+
+// NON-OWNER principals that must be REFUSED (owner-only retention config).
+const VIEWER: StubPrincipal = {
+  principalId: "user:viewer",
+  userId: "55555555-5555-5555-5555-555555555555",
+  tenantId: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+  role: "viewer",
+  scopes: ["session.read"], // exactly the Advisor's probe principal
+  tokenId: "66666666-6666-6666-6666-666666666666",
+};
+const OPERATOR: StubPrincipal = {
+  principalId: "user:operator",
+  userId: "77777777-7777-7777-7777-777777777777",
+  tenantId: "dddddddd-dddd-dddd-dddd-dddddddddddd",
+  role: "operator", // no hub.admin scope, not owner/admin
+  scopes: ["workflow.write", "agent.run", "session.read"],
+  tokenId: "88888888-8888-8888-8888-888888888888",
+};
+// A device-bound OWNER principal while device-owner authority is DISABLED (the
+// default profile / a revoked-or-expired device). isReleaseDisabledDevicePrincipal
+// treats it exactly like the synthetic public principal ⇒ 401.
+const DEVICE_OWNER_DISABLED: StubPrincipal = {
+  principalType: "device",
+  principalId: "device-owner:revoked",
+  userId: "admin-001",
+  tenantId: "admin-001",
+  role: "admin",
+  scopes: ["hub.admin"],
+  tokenId: "99999999-9999-9999-9999-999999999999",
 };
 
 function findFreePort(): Promise<number> {
@@ -274,6 +308,75 @@ describe("FridayHttpServer — /v1/uix/retention-policy real-HTTP authz + cross-
     expect(totalRows()).toBe(1);
   });
 
+  // ── OWNER-AUTHORITY MATRIX (SEC-NET-PRINCIPAL-001): retention config is
+  //    canonical-local-owner-only. Only the owner may READ or MUTATE it. ──────
+  it("owner-authority matrix: non-owner principals are refused on GET+PUT with ZERO writes and ZERO deletion effect; only the owner succeeds", async () => {
+    await startServer({
+      "tok-viewer": VIEWER,
+      "tok-operator": OPERATOR,
+      "tok-device": DEVICE_OWNER_DISABLED,
+      "tok-owner": OWNER_A,
+    });
+
+    // DENIED matrix: [label, authHeader, expectedStatus]. Anonymous / synthetic
+    // and release-disabled-device → 401 (bound-principal floor); bound non-owner
+    // (viewer / operator) → 403 (owner authority required).
+    const denied: Array<[string, Record<string, string>, number]> = [
+      ["anonymous", {}, 401],
+      ["invalid-bearer (synthetic fallback)", { Authorization: "Bearer nope" }, 401],
+      ["viewer (session.read only)", { Authorization: "Bearer tok-viewer" }, 403],
+      ["operator (no owner authority)", { Authorization: "Bearer tok-operator" }, 403],
+      ["revoked/disabled device-owner", { Authorization: "Bearer tok-device" }, 401],
+    ];
+
+    for (const [, headers, expected] of denied) {
+      const getRes = await fetch(`${baseUrl}${ROUTE}`, { headers });
+      expect(getRes.status).toBe(expected);
+      const putRes = await put(headers, { policy: { auditLogs: { mode: "after_days", days: 1 } } });
+      expect(putRes.status).toBe(expected);
+    }
+
+    // ZERO WRITES: no denied principal persisted any override.
+    expect(totalRows()).toBe(0);
+
+    // ZERO DELETION EFFECT: with no persisted override, the live reaper policy is
+    // all-permanent ⇒ an aged audit row survives a sweep (denied principals had
+    // no destructive effect).
+    db!.writer
+      .prepare(
+        `INSERT INTO audit_logs (id, ts, actor_type, actor_id, action, resource_type, resource_id)
+         VALUES ('al-untouched', ?, 'user', 'u1', 'create', 'skill', 's1')`,
+      )
+      .run(AGED);
+    const loader = createFridayRetentionPolicyLoader({
+      db: db!,
+      repo: createFridayRetentionSettingsRepository(),
+      principalId: OWNER_A.userId,
+    });
+    const deniedSweep = createFridayRetentionJob({
+      db: db!,
+      pairingRequestRepo: createFridaySatellitePairingRequestRepository(),
+      heartbeatRepo: createFridaySatelliteHeartbeatRepository(),
+      outboxRepo: createFridayOutboxMessageRepository(),
+      learningLedger: createFridayLearningEventLedger({ db: db! }),
+      skillRunStore: createFridaySkillRunStore({ db: db! }),
+      bootstrapNonceRepo: createFridaySetupBootstrapNonceRepository(),
+      nowIso: () => NOW,
+      loadPolicy: () => loader.load(),
+    }).run(NOW);
+    expect(deniedSweep.deletedAuditLogs).toBe(0);
+
+    // ONLY the canonical owner succeeds: GET 200 + PUT 200 (opt-in persisted).
+    const ownerGet = await fetch(`${baseUrl}${ROUTE}`, { headers: { Authorization: "Bearer tok-owner" } });
+    expect(ownerGet.status).toBe(200);
+    const ownerPut = await put(
+      { Authorization: "Bearer tok-owner" },
+      { policy: { auditLogs: { mode: "after_days", days: 30 } } },
+    );
+    expect(ownerPut.status).toBe(200);
+    expect(rowsFor(OWNER_A.userId)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+  });
+
   // ── CORRECTNESS: the reaper honors an owner opt-in submitted via the real API.
   it("reaper honors an owner opt-in submitted via the real API (single-owner id linkage)", async () => {
     // OWNER = admin-001. This id is the SAME across the whole chain in the
@@ -292,7 +395,7 @@ describe("FridayHttpServer — /v1/uix/retention-policy real-HTTP authz + cross-
       userId: "admin-001",
       tenantId: "admin-001",
       role: "admin",
-      scopes: ["session.read"],
+      scopes: ["hub.admin", "session.read"],
       tokenId: "tok-admin-001",
     };
     await startServer({ [ownerToken]: ownerPrincipal });

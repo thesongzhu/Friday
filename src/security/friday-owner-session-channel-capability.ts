@@ -122,7 +122,14 @@ export type FridayPublicMutationOperation =
   // mutating route: refuse the synthetic public principal; only a bound owner can
   // confirm/reject (and the Rust side ALSO scopes the decision to the candidate's
   // owning principal).
-  | "memory.spine.decide";
+  | "memory.spine.decide"
+  // RETENTION-R3a (SEC-NET-PRINCIPAL-001): owner-bound retention Settings. Reading
+  // AND mutating the per-category retention policy is canonical-local-owner-only —
+  // it controls global content deletion, so a non-owner (viewer/operator) principal
+  // must never read or activate it. Gated via assertBoundPrincipalAuthorityForOperation
+  // with owner/admin authority (the same mechanism as runtime.secret.*).
+  | "retention.policy.read"
+  | "retention.policy.update";
 
 export type FridayBoundPrincipalSource = "api" | "session" | "channel" | "satellite" | "device";
 

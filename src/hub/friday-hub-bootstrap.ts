@@ -6750,7 +6750,11 @@ export async function createFridayHub(
     tokenSecret,
     idGenerator,
     nowIso,
-    retentionPolicy: retentionPolicyLoader.load(),
+    // RETENTION-R3a live-revocation fix: the hourly reaper re-reads the CURRENT
+    // persisted owner policy at the START of every sweep (fail-closed to
+    // all-permanent). A startup snapshot let the running reaper keep deleting
+    // under an opt-in the owner had since set back to permanent, until restart.
+    retentionPolicyProvider: () => retentionPolicyLoader.load(),
     learningEventWriter,
     remoteNodeResultWriter: async (input) => {
       await workflowRuntime.execution.reportRemoteNodeResult({
