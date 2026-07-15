@@ -1,4 +1,5 @@
 import { FridayDomainError } from "#errors";
+import { createFridayMemoryOutputFilter } from "#memory";
 import type { FridayProviderTenantContext } from "#providers";
 import {
   FRIDAY_COMMUNICATION_PREFERENCE_KEYS,
@@ -186,6 +187,13 @@ function enrichLearnedFactBoundary<T extends {
 export function createFridayUixRoutes(
   deps: FridayUixRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  // Learned facts are written verbatim (bypassing the write-time PII guard) and are exposed
+  // here for user transparency. Route the free-form `value` through the SAME production PII
+  // output filter (#1607) as a final egress transform so no raw PII (full-width / CJK / ASCII)
+  // leaks. `enrichLearnedFactBoundary` already strips `metadata`, so `value` is the carrier.
+  const outputFilter = createFridayMemoryOutputFilter();
+  const redactLearnedFact = <T extends { value: unknown }>(fact: T): T =>
+    ({ ...fact, value: outputFilter.redactLearnedFactValue(fact.value) });
   return [
     {
       operationId: "uix.intents.resolve",
@@ -533,7 +541,9 @@ export function createFridayUixRoutes(
         if (!deps.listLearnedFacts) {
           return { items: [] };
         }
-        const items = deps.listLearnedFacts({ userId }).map(enrichLearnedFactBoundary);
+        const items = deps.listLearnedFacts({ userId })
+          .map(redactLearnedFact)
+          .map(enrichLearnedFactBoundary);
         return { items };
       },
     },
@@ -578,7 +588,7 @@ export function createFridayUixRoutes(
         if (!updated) {
           throw new FridayDomainError("UIX_PREFERENCE_NOT_FOUND", `Learned fact '${key}' was not found`, { httpStatus: 404 });
         }
-        return enrichLearnedFactBoundary(updated);
+        return enrichLearnedFactBoundary(redactLearnedFact(updated));
       },
     },
     {

@@ -1,6 +1,7 @@
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridayAutonomySubjectRecord } from "../../../autonomy/model/friday-autonomy-subject.types.js";
 import type { FridayAgentAutomationRecord } from "../../../agent/services/friday-agent-automation-service.types.js";
+import { createFridayMemoryOutputFilter } from "#memory";
 
 export interface FridayAssetInventoryRoutesDeps {
   subjectInventory: { list(): FridayAutonomySubjectRecord[] };
@@ -74,6 +75,10 @@ function confidenceToStatus(confidence: number): string {
 export function createFridayAssetInventoryRoutes(
   deps: FridayAssetInventoryRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  // Learned facts bypass the write-time PII guard (written verbatim), so their free-form
+  // `value` is routed through the SAME production PII output filter (#1607) as a final egress
+  // transform here — no raw PII (full-width / CJK / ASCII) leaks into the asset inventory.
+  const outputFilter = createFridayMemoryOutputFilter();
   return [
     {
       operationId: "assets.inventory.list",
@@ -109,7 +114,7 @@ export function createFridayAssetInventoryRoutes(
               displayName: fact.key,
               status: confidenceToStatus(fact.confidence),
               details: {
-                value: fact.value,
+                value: outputFilter.redactLearnedFactValue(fact.value),
                 confidence: fact.confidence,
                 evidenceCount: fact.evidenceCount,
                 lastConfirmedAt: fact.lastConfirmedAt,

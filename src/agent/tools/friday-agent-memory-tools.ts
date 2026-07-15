@@ -5,6 +5,7 @@ import type {
   FridayMemoryService,
 } from "#memory";
 import type { FridayMemoryItem, FridayMemorySearchResult } from "#memory";
+import { createFridayMemoryOutputFilter } from "#memory";
 import type { FridayLearningEventAppendInput } from "#ledger";
 import {
   errorResult,
@@ -52,6 +53,14 @@ export interface CreateFridayAgentMemoryToolsDeps {
 }
 
 // ─── Namespace scoping ───
+
+// Learned facts are appended to memory_search results AFTER being written verbatim (they
+// bypass the write-time PII guard). memory_search egresses across a TRUST BOUNDARY to the
+// agent, so the learned-fact result is routed through the SAME production PII output filter
+// (#1607) before it reaches the tool caller — redacting content/metadata/tags/snippet. This
+// applies ONLY to learned facts; stored results come from `memoryService` unchanged (out of
+// scope for this fix).
+const memoryLearnedFactOutputFilter = createFridayMemoryOutputFilter();
 
 const AGENT_MEMORY_BASE_NAMESPACE = "agent";
 const USER_FACING_MEMORY_NAMESPACES = new Set(["default", "user", "preference"]);
@@ -759,7 +768,8 @@ function createMemorySearchTool(
         const learnedResults = principalId && deps.listLearnedFacts && shouldIncludeLearnedFacts(explicitNamespace)
           ? deps.listLearnedFacts({ userId: principalId, limit })
             .filter((fact) => matchesLearnedFactQuery(fact, query))
-            .map((fact) => toLearnedFactSearchResult(fact, query))
+            // Egress PII filter across the agent trust boundary (learned facts only).
+            .map((fact) => memoryLearnedFactOutputFilter.filterSearchResult(toLearnedFactSearchResult(fact, query)))
           : [];
         const combined = [...dedupedResults, ...learnedResults]
           .sort((a, b) => b.score - a.score)

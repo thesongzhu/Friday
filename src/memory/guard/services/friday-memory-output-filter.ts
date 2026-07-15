@@ -47,10 +47,21 @@ function filterSearchResultImpl(result: FridayMemorySearchResult): FridayMemoryS
   };
 }
 
+// Redact PII from a learned-fact `value` (free-form `unknown`). Learned facts are appended to
+// egress responses (uix / asset-inventory) AFTER the write-time guard, verbatim, so their
+// value skips PII redaction entirely. These sibling routes return the RAW `value` field (a
+// string or a nested object/array), not a stringified/truncated memory item, so we redact deep
+// in place — preserving structure and type — via the SAME production redactor used by
+// `redactMetadata`. Idempotent on already-redacted values.
+function redactLearnedFactValueImpl(value: unknown): unknown {
+  return piiRedactor.redactDeep(value).value;
+}
+
 export function createFridayMemoryOutputFilter(): FridayMemoryGuardOutputFilter {
   return {
     filterItem: filterItemImpl,
     filterSearchResult: filterSearchResultImpl,
+    redactLearnedFactValue: redactLearnedFactValueImpl,
     filterSearchResults(results: FridayMemorySearchResult[]): FridayMemorySearchResult[] {
       return results
         .slice(0, FRIDAY_MEMORY_GUARD_MAX_SEARCH_RESULTS)
