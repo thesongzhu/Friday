@@ -13,11 +13,17 @@ import { createTestDb } from "../../../satellites/_helpers/create-test-db.helper
 
 const NOW = "2026-07-15T10:00:00.000Z";
 
+// The single canonical-owner id the production reaper's policy loader is bound to
+// (hub-bootstrap wires principalId = learningDefaultUserId = "admin-001"). The
+// route binds GET/PUT to THIS id, so these handler-level tests act as it.
+const CANON = "admin-001";
+
 // Retention config is canonical-owner-only: a principal must carry owner/admin
-// authority (role owner/admin, which grants the hub.admin scope) to read or
-// mutate it. These handler-level tests use bound OWNER principals; the real auth
-// composition (anonymous/synthetic/viewer/operator denied) is proven end-to-end
-// against the REAL server in friday-http-server-retention-settings-authz.test.ts.
+// authority (role owner/admin, which grants the hub.admin scope) AND be the
+// canonical owner to read or mutate it. These handler-level tests use bound OWNER
+// principals; the real auth composition (anonymous/synthetic/viewer/operator/
+// second-admin denied) is proven end-to-end against the REAL server in
+// friday-http-server-retention-settings-authz.test.ts.
 function owner(userId: string): never {
   return { userId, principalId: userId, role: "admin", scopes: ["hub.admin"] } as never;
 }
@@ -32,7 +38,7 @@ function makeCtx(
     query: {},
     body: {},
     headers: {},
-    principal: owner("owner-a"),
+    principal: owner(CANON),
     ...overrides,
   };
 }
@@ -68,7 +74,7 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
       idGenerator: () => `ret-${String(++idCounter).padStart(4, "0")}`,
       nowIso: () => NOW,
     });
-    routes = createFridayRetentionSettingsRoutes({ store });
+    routes = createFridayRetentionSettingsRoutes({ store, resolveCanonicalOwnerId: () => CANON });
   });
 
   afterEach(() => {
@@ -114,50 +120,58 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
     expect(rowsFor("viewer-1")).toHaveLength(0);
   });
 
-  // ── 2. CROSS-OWNER ISOLATION (the class missed in #1606) ──────────────────
-  it("owner A's PUT is invisible to owner B's GET; B sees only defaults", async () => {
+  // ── 2. CANONICAL-OWNER BINDING (Advisor R3): only the canonical owner may
+  //       read/mutate; a second, distinct admin is refused; rows are canonical-
+  //       scoped and never keyed to a caller-supplied id. ────────────────────
+  it("a second admin (distinct userId, real hub.admin) is refused 403 on GET+PUT; the canonical owner's opt-in is canonical-scoped", async () => {
+    // Canonical owner writes an opt-in.
     await putRoute().handler(
       makeCtx({
-        principal: owner("owner-a"),
+        principal: owner(CANON),
         body: { policy: { auditLogs: { mode: "after_days", days: 30 } } },
       }),
     );
 
-    // Owner B reads: every category permanent (no leakage of A's opt-in).
-    const bResult = (await getRoute().handler(
-      makeCtx({ principal: owner("owner-b") }),
-    )) as { policy: Record<string, { mode: string; days?: number }> };
-    for (const [, retention] of Object.entries(bResult.policy)) {
-      expect(retention.mode).toBe("permanent");
-    }
-    expect(bResult.policy.auditLogs).toEqual({ mode: "permanent" });
+    // A SECOND admin (owner/admin role + hub.admin scope) with a DISTINCT userId
+    // is denied on BOTH GET and PUT — role/scope is not canonical-owner identity.
+    const secondAdmin = owner("admin-002");
+    await expect(
+      getRoute().handler(makeCtx({ principal: secondAdmin })),
+    ).rejects.toMatchObject({ httpStatus: 403 });
+    await expect(
+      putRoute().handler(
+        makeCtx({ principal: secondAdmin, body: { policy: { auditLogs: { mode: "after_days", days: 1 } } } }),
+      ),
+    ).rejects.toMatchObject({ httpStatus: 403 });
 
-    // Owner A reads back its own opt-in.
+    // The canonical owner reads back its own opt-in.
     const aResult = (await getRoute().handler(
-      makeCtx({ principal: owner("owner-a") }),
+      makeCtx({ principal: owner(CANON) }),
     )) as { policy: Record<string, { mode: string; days?: number }> };
     expect(aResult.policy.auditLogs).toEqual({ mode: "after_days", days: 30 });
 
-    // Persistence is physically scoped: A has a row, B has none.
-    expect(rowsFor("owner-a")).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
-    expect(rowsFor("owner-b")).toHaveLength(0);
+    // Persistence is canonical-scoped: the row lands under the canonical id, and
+    // the second admin's denied PUT wrote nothing.
+    expect(rowsFor(CANON)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+    expect(rowsFor("admin-002")).toHaveLength(0);
   });
 
-  it("owner id comes ONLY from the principal — a body-supplied owner id is ignored", async () => {
-    // Body tries to target owner-b; handler must write under the principal (owner-a).
+  it("the row is keyed to the resolved canonical owner id — a body-supplied owner id is ignored", async () => {
+    // Body tries to target a different id; the handler must write under the
+    // resolved canonical owner id (never the body, never any caller-supplied value).
     await putRoute().handler(
       makeCtx({
-        principal: owner("owner-a"),
+        principal: owner(CANON),
         body: {
-          userId: "owner-b",
-          principalId: "owner-b",
-          ownerId: "owner-b",
+          userId: "admin-002",
+          principalId: "admin-002",
+          ownerId: "admin-002",
           policy: { agentRuns: { mode: "after_days", days: 10 } },
         } as never,
       }),
     );
-    expect(rowsFor("owner-a")).toEqual([{ content_category: "agentRuns", after_days: 10 }]);
-    expect(rowsFor("owner-b")).toHaveLength(0);
+    expect(rowsFor(CANON)).toEqual([{ content_category: "agentRuns", after_days: 10 }]);
+    expect(rowsFor("admin-002")).toHaveLength(0);
   });
 
   // ── 3. "OFF" = clean disabled (permanent / no row) — NEVER a sentinel ─────
@@ -166,7 +180,7 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
     await putRoute().handler(
       makeCtx({ body: { policy: { learningEvents: { mode: "after_days", days: 45 } } } }),
     );
-    expect(rowsFor("owner-a")).toHaveLength(1);
+    expect(rowsFor(CANON)).toHaveLength(1);
 
     const offResult = (await putRoute().handler(
       makeCtx({ body: { policy: { learningEvents: { mode: "permanent" } } } }),
@@ -174,11 +188,11 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
 
     // Read back = permanent; the override row is GONE (absence = permanent).
     expect(offResult.policy.learningEvents).toEqual({ mode: "permanent" });
-    expect(rowsFor("owner-a")).toHaveLength(0);
+    expect(rowsFor(CANON)).toHaveLength(0);
 
     // No sentinel number is EVER present in persisted rows: every stored
     // after_days is a positive integer, and "off" is never a magic number.
-    for (const row of rowsFor("owner-a")) {
+    for (const row of rowsFor(CANON)) {
       expect(Number.isInteger(row.after_days)).toBe(true);
       expect(row.after_days).toBeGreaterThan(0);
     }
@@ -205,7 +219,7 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
     for (const cat of categories) {
       expect(result.policy[cat]).toEqual({ mode: "permanent" });
     }
-    expect(rowsFor("owner-a")).toHaveLength(0);
+    expect(rowsFor(CANON)).toHaveLength(0);
   });
 
   // ── 4. INVALID PUT bodies → typed 400, nothing persisted ─────────────────
@@ -229,7 +243,7 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
       await expect(
         putRoute().handler(makeCtx({ body: { policy } as never })),
       ).rejects.toMatchObject({ httpStatus: 400 });
-      expect(rowsFor("owner-a")).toHaveLength(0);
+      expect(rowsFor(CANON)).toHaveLength(0);
     },
   );
 
@@ -247,7 +261,7 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
       ),
     ).rejects.toMatchObject({ httpStatus: 400 });
     // Neither the valid nor the invalid entry was written.
-    expect(rowsFor("owner-a")).toHaveLength(0);
+    expect(rowsFor(CANON)).toHaveLength(0);
   });
 
   it("PUT with a non-object / missing policy → 400", async () => {
@@ -285,7 +299,7 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
         ),
       ).rejects.toMatchObject({ httpStatus: 400 });
       // No row was written under the owner.
-      expect(rowsFor("owner-a")).toHaveLength(0);
+      expect(rowsFor(CANON)).toHaveLength(0);
       // GET must not report the rejected window as active.
       const after = (await getRoute().handler(makeCtx())) as {
         policy: Record<string, { mode: string; days?: number }>;
@@ -305,7 +319,7 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
         }),
       ),
     ).rejects.toMatchObject({ httpStatus: 400 });
-    expect(rowsFor("owner-a")).toHaveLength(0);
+    expect(rowsFor(CANON)).toHaveLength(0);
   });
 
   it("BOUNDARY: days = 36500 (MAX) persists, reads back, and is HONORED by resolveCutoff", async () => {
@@ -315,7 +329,7 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
     )) as { policy: Record<string, { mode: string; days?: number }> };
     // Accepted + persisted at the exact boundary.
     expect(putResult.policy.auditLogs).toEqual({ mode: "after_days", days: MAX });
-    expect(rowsFor("owner-a")).toEqual([{ content_category: "auditLogs", after_days: MAX }]);
+    expect(rowsFor(CANON)).toEqual([{ content_category: "auditLogs", after_days: MAX }]);
     // Reads back active.
     const after = (await getRoute().handler(makeCtx())) as {
       policy: Record<string, { mode: string; days?: number }>;

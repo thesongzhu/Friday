@@ -18,14 +18,37 @@ import {
  *     window `[FRIDAY_MIN_AFTER_DAYS, FRIDAY_MAX_AFTER_DAYS]`). Invalid or
  *     out-of-domain bodies are rejected with a typed 400 and NOTHING is persisted.
  *
- * Owner binding reuses the EXACT `requireUserId(principal)` pattern from
- * friday-uix-routes.ts: the owner id comes ONLY from the authenticated
- * principal — never from the request body or params — and both handlers scope
- * every read/write to that derived id (cross-owner isolation).
+ * Owner binding is CANONICAL-OWNER-scoped (SEC-NET-PRINCIPAL-001): the id comes
+ * ONLY from the authenticated principal — never from the request body or params —
+ * AND the authenticated principal's `userId` MUST MATCH the single canonical
+ * owner the production reaper is bound to (`resolveCanonicalOwnerId`). Owner/admin
+ * ROLE is a floor, not identity: a second, legitimately-authenticated admin is
+ * refused 403 so a persisted opt-in can never diverge from what the reaper reads
+ * (accept == honored). Both handlers scope every read/write to the resolved
+ * canonical-owner id, and fail closed (403, zero effect) if it cannot be resolved.
  */
 
 export interface FridayRetentionSettingsRoutesDeps {
   store: FridayRetentionSettingsStore;
+  /**
+   * Resolves the SINGLE canonical-owner identity that GOVERNS the reaper —
+   * i.e. the exact id the production per-sweep policy loader is bound to
+   * (`learningDefaultUserId` = `admin-001` in `friday-hub-bootstrap.ts`). Both
+   * GET and PUT require the authenticated principal's `userId` to MATCH this
+   * id (SEC-NET-PRINCIPAL-001): role/scope (owner/admin + hub.admin) is a floor,
+   * NOT canonical-owner identity — the repo schema permits multiple users and
+   * each role-derived `hub.admin` token would otherwise be accepted, persisting
+   * an override the canonical-owner-bound reaper NEVER reads (DATA-RETENTION-001
+   * truthfulness: accept must equal honored end-to-end).
+   *
+   * This is a PRODUCTION dependency threaded from the SAME source the reaper
+   * consumes — never a per-request caller value and never a route-local literal.
+   *
+   * FAIL-CLOSED: if this returns null/undefined/empty (or throws), the route
+   * denies (403, zero persistence, zero readback) rather than falling open to
+   * "any admin".
+   */
+  resolveCanonicalOwnerId: () => string | null | undefined;
 }
 
 interface FridayRetentionPolicyResponse {
@@ -61,6 +84,61 @@ function assertRetentionOwner(
     anyOfScopes: ["hub.admin"],
     anyOfRoles: ["owner", "admin"],
   });
+}
+
+/**
+ * CANONICAL-OWNER binding (SEC-NET-PRINCIPAL-001 / DATA-RETENTION-001). Beyond
+ * the bound-principal + owner/admin authority FLOOR (kept as defense in depth),
+ * retention config is governed by a SINGLE canonical owner — the exact identity
+ * the production reaper's policy loader is bound to. Role/scope alone is NOT
+ * canonical-owner identity (the schema permits multiple hub.admin users), so the
+ * authenticated principal's `userId` MUST MATCH the resolved canonical-owner id
+ * on BOTH reads and mutations. Anything an owner/admin-authorized-but-non-
+ * canonical principal (e.g. `admin-002`) submits would persist under an id the
+ * canonical-owner-bound reaper never reads (accept ≠ honored) — so it is refused.
+ *
+ * Returns the resolved canonical-owner id (== the caller's userId) that every
+ * read/write MUST be keyed to — never a caller-supplied value. FAIL-CLOSED: an
+ * unresolvable canonical-owner id (null/undefined/blank, or the provider throws)
+ * denies with a typed 403 and ZERO effect, rather than falling open to any admin.
+ */
+function assertCanonicalRetentionOwner(
+  principal: FridayAuthPrincipal | null,
+  operation: "retention.policy.read" | "retention.policy.update",
+  resolveCanonicalOwnerId: () => string | null | undefined,
+): string {
+  // Floor first (defense in depth): synthetic-public / disabled-device → 401;
+  // bound non-owner (viewer / operator) → 403.
+  assertRetentionOwner(principal, operation);
+  const userId = requireUserId(principal);
+
+  // Resolve the canonical-owner id the reaper actually consumes. FAIL-CLOSED on
+  // any resolution failure (throw or nullish/blank) — never fall open.
+  let canonicalOwnerId: string | null | undefined;
+  try {
+    canonicalOwnerId = resolveCanonicalOwnerId();
+  } catch {
+    canonicalOwnerId = null;
+  }
+  if (typeof canonicalOwnerId !== "string" || canonicalOwnerId.trim().length === 0) {
+    throw new FridayDomainError(
+      "RETENTION_CANONICAL_OWNER_UNRESOLVED",
+      "Retention policy is unavailable: the canonical owner identity could not be resolved.",
+      { httpStatus: 403 },
+    );
+  }
+
+  // The authenticated principal must BE the canonical owner (not merely hold
+  // owner/admin authority). A second, legitimately-authenticated admin is denied.
+  if (userId !== canonicalOwnerId) {
+    throw new FridayDomainError(
+      "RETENTION_NOT_CANONICAL_OWNER",
+      "Retention policy is governed by the single canonical owner; this principal is not the canonical owner.",
+      { httpStatus: 403 },
+    );
+  }
+
+  return canonicalOwnerId;
 }
 
 /**
@@ -113,9 +191,12 @@ export function createFridayRetentionSettingsRoutes(
       path: "/v1/uix/retention-policy",
       auth: { public: true },
       async handler(ctx): Promise<FridayRetentionPolicyResponse> {
-        assertRetentionOwner(ctx.principal ?? null, "retention.policy.read");
-        const userId = requireUserId(ctx.principal);
-        return { policy: deps.store.readOwnerContentPolicy({ principalId: userId }) };
+        const ownerId = assertCanonicalRetentionOwner(
+          ctx.principal ?? null,
+          "retention.policy.read",
+          deps.resolveCanonicalOwnerId,
+        );
+        return { policy: deps.store.readOwnerContentPolicy({ principalId: ownerId }) };
       },
     },
     {
@@ -124,8 +205,11 @@ export function createFridayRetentionSettingsRoutes(
       path: "/v1/uix/retention-policy",
       auth: { public: true },
       async handler(ctx): Promise<FridayRetentionPolicyResponse> {
-        assertRetentionOwner(ctx.principal ?? null, "retention.policy.update");
-        const userId = requireUserId(ctx.principal);
+        const ownerId = assertCanonicalRetentionOwner(
+          ctx.principal ?? null,
+          "retention.policy.update",
+          deps.resolveCanonicalOwnerId,
+        );
 
         const body = ctx.body;
         if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -148,7 +232,7 @@ export function createFridayRetentionSettingsRoutes(
         // Deriving them from the store keeps this handler decoupled from the
         // category list while still rejecting unknown keys.
         const known = new Set(
-          Object.keys(deps.store.readOwnerContentPolicy({ principalId: userId })),
+          Object.keys(deps.store.readOwnerContentPolicy({ principalId: ownerId })),
         );
 
         // Validate the WHOLE body FIRST (reject → 400, persist nothing), then apply.
@@ -165,7 +249,7 @@ export function createFridayRetentionSettingsRoutes(
         }
 
         return {
-          policy: deps.store.applyOwnerContentPolicy({ principalId: userId, updates }),
+          policy: deps.store.applyOwnerContentPolicy({ principalId: ownerId, updates }),
         };
       },
     },

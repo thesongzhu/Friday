@@ -82,7 +82,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
   it("policy written via PUT survives a store re-open and drives the reaper", () => {
     // ── Session 1: write via the PUT route, then close the store. ──
     const layer1 = openLayer(dbPath);
-    const routes1 = createFridayRetentionSettingsRoutes({ store: makeStore(layer1) });
+    const routes1 = createFridayRetentionSettingsRoutes({ store: makeStore(layer1), resolveCanonicalOwnerId: () => OWNER });
     const put1 = routes1.find((r) => r.operationId === "uix.retention.policy.update")!;
     const get1 = routes1.find((r) => r.operationId === "uix.retention.policy.get")!;
 
@@ -109,7 +109,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
       // ── Session 2: re-open a FRESH store on the SAME on-disk db. ──
       const layer2 = openLayer(dbPath);
       try {
-        const routes2 = createFridayRetentionSettingsRoutes({ store: makeStore(layer2) });
+        const routes2 = createFridayRetentionSettingsRoutes({ store: makeStore(layer2), resolveCanonicalOwnerId: () => OWNER });
         const get2 = routes2.find((r) => r.operationId === "uix.retention.policy.get")!;
 
         const after = (await get2.handler(makeCtx())) as { policy: Record<string, unknown> };
@@ -167,7 +167,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
 
     // ── Session 1: write the boundary window via the PUT route, then close. ──
     const layer1 = openLayer(dbPath);
-    const routes1 = createFridayRetentionSettingsRoutes({ store: makeStore(layer1) });
+    const routes1 = createFridayRetentionSettingsRoutes({ store: makeStore(layer1), resolveCanonicalOwnerId: () => OWNER });
     const put1 = routes1.find((r) => r.operationId === "uix.retention.policy.update")!;
     const putResult = (await put1.handler(
       makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days: MAX } } } }),
@@ -178,7 +178,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
     // ── Session 2: re-open a FRESH store on the SAME on-disk db. ──
     const layer2 = openLayer(dbPath);
     try {
-      const routes2 = createFridayRetentionSettingsRoutes({ store: makeStore(layer2) });
+      const routes2 = createFridayRetentionSettingsRoutes({ store: makeStore(layer2), resolveCanonicalOwnerId: () => OWNER });
       const get2 = routes2.find((r) => r.operationId === "uix.retention.policy.get")!;
       const after = (await get2.handler(makeCtx())) as { policy: Record<string, unknown> };
 

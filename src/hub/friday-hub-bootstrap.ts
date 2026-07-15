@@ -7474,7 +7474,15 @@ export async function createFridayHub(
     memorySpine: memorySpineDispatch ? { dispatch: memorySpineDispatch } : undefined,
     runOutcomeLearning: runOutcomeLearningDispatch ? { dispatch: runOutcomeLearningDispatch } : undefined,
     // RETENTION-R3a: owner-bound retention-Settings surface (GET|PUT /v1/uix/retention-policy).
-    retentionSettings: { store: retentionSettingsStore },
+    // The route binds GET/PUT to the SINGLE canonical owner the reaper's policy
+    // loader is bound to (learningDefaultUserId = admin-001) — the SAME source, so
+    // what the API accepts is exactly what the per-sweep reaper reads (accept ==
+    // honored). Role/scope alone is NOT canonical-owner identity: a second
+    // legitimately-authenticated admin is refused. Fail-closed if unresolvable.
+    retentionSettings: {
+      store: retentionSettingsStore,
+      resolveCanonicalOwnerId: () => learningDefaultUserId,
+    },
     uix: {
       service: uixService,
       readSetupCompletedAt,

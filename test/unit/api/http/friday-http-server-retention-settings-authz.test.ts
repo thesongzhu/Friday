@@ -35,13 +35,19 @@ import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js
  * (public-mutation floor + sensitive-read floor + bearer middleware) against
  * `/v1/uix/retention-policy` backed by a REAL store over an in-memory sqlite.
  *
- * Load-bearing: breaking the repo's `WHERE principal_id = ?` scoping makes the
- * two-owner isolation test go RED (owner B would read owner A's opt-in).
+ * Load-bearing: the canonical-owner binding (Advisor R3) requires the
+ * authenticated principal's userId to MATCH the single canonical-owner id the
+ * reaper consumes; a second legitimately-authenticated admin is refused, and the
+ * repo's `WHERE principal_id = ?` scoping keys every row to that canonical id.
  */
 
 const ROUTE = "/v1/uix/retention-policy";
 const NOW = "2026-07-15T10:00:00.000Z";
 const AGED = "2024-01-01T00:00:00.000Z";
+
+// The single canonical-owner id the production reaper's policy loader is bound to
+// (hub-bootstrap wires `principalId: learningDefaultUserId = "admin-001"`).
+const CANONICAL_OWNER_ID = "admin-001";
 
 type StubPrincipal = {
   principalId: string;
@@ -53,21 +59,26 @@ type StubPrincipal = {
   principalType?: string;
 };
 
-// Canonical OWNERS: role "admin" (grants the hub.admin scope) via the local
-// passphrase → bearer flow. Two distinct owner userIds exercise cross-owner
-// isolation even among authorized owners.
+// The CANONICAL owner: role "admin" (grants the hub.admin scope) via the local
+// passphrase → bearer flow, AND userId == the single canonical-owner id the
+// production reaper's policy loader is bound to (learningDefaultUserId).
 const OWNER_A: StubPrincipal = {
-  principalId: "user:alice",
-  userId: "11111111-1111-1111-1111-111111111111",
-  tenantId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  principalId: "user:admin-001",
+  userId: CANONICAL_OWNER_ID,
+  tenantId: "admin-001",
   role: "admin",
   scopes: ["hub.admin", "session.read"],
   tokenId: "33333333-3333-3333-3333-333333333333",
 };
+// A SECOND, legitimately-authenticated admin — a DISTINCT userId with a REAL
+// role-derived hub.admin token (the schema permits multiple such users). Role/
+// scope is NOT canonical-owner identity, so this principal is REFUSED 403 on the
+// canonical-owner-bound retention surface (Advisor R3): it must never receive an
+// active-policy readback nor persist an override the canonical reaper won't read.
 const OWNER_B: StubPrincipal = {
-  principalId: "user:bob",
-  userId: "22222222-2222-2222-2222-222222222222",
-  tenantId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+  principalId: "user:admin-002",
+  userId: "admin-002",
+  tenantId: "admin-002",
   role: "admin",
   scopes: ["hub.admin", "session.read"],
   tokenId: "44444444-4444-4444-4444-444444444444",
@@ -186,9 +197,12 @@ describe("FridayHttpServer — /v1/uix/retention-policy real-HTTP authz + cross-
     }
   });
 
-  function startServer(tokens: Record<string, StubPrincipal> = {}) {
+  function startServer(
+    tokens: Record<string, StubPrincipal> = {},
+    resolveCanonicalOwnerId: () => string | null | undefined = () => CANONICAL_OWNER_ID,
+  ) {
     const routes = createFridayHttpRouteRegistry();
-    for (const route of createFridayRetentionSettingsRoutes({ store })) {
+    for (const route of createFridayRetentionSettingsRoutes({ store, resolveCanonicalOwnerId })) {
       routes.register(route);
     }
     server = createFridayHttpServer({
@@ -267,13 +281,15 @@ describe("FridayHttpServer — /v1/uix/retention-policy real-HTTP authz + cross-
     expect(totalRows()).toBe(0);
   });
 
-  // ── CROSS-OWNER ISOLATION (the class missed in #1606) ─────────────────────
-  it("two authenticated owners: A's opt-in is invisible to B; body-supplied owner id is ignored; rows are principal-scoped", async () => {
+  // ── CANONICAL-OWNER BINDING (Advisor R3): a second legitimately-authenticated
+  //    admin is REFUSED; the canonical owner writes under its own id; a body-
+  //    supplied owner id is ignored; rows are canonical-scoped. ────────────────
+  it("second admin (B) is denied 403 on GET+PUT; canonical owner (A) writes; body-supplied owner id ignored; rows canonical-scoped", async () => {
     await startServer({ "token-a": OWNER_A, "token-b": OWNER_B });
 
-    // A PUTs an opt-in — and the body ALSO tries to target owner B (userId /
-    // principalId / ownerId). The handler must ignore the body ids and write
-    // under the AUTHENTICATED principal (A) only.
+    // The CANONICAL owner (A = admin-001) PUTs an opt-in — the body ALSO tries to
+    // target the second admin B (userId / principalId / ownerId). The handler must
+    // ignore the body ids and write under the resolved CANONICAL owner only.
     const putRes = await put(
       { Authorization: "Bearer token-a" },
       {
@@ -287,22 +303,24 @@ describe("FridayHttpServer — /v1/uix/retention-policy real-HTTP authz + cross-
     const putBody = (await putRes.json()) as { ok: true; data: { policy: Record<string, { mode: string; days?: number }> } };
     expect(putBody.data.policy.auditLogs).toEqual({ mode: "after_days", days: 30 });
 
-    // B GETs → every category permanent (A's opt-in is NOT visible to B).
+    // The SECOND admin (B) — a distinct userId with a real hub.admin token — is
+    // REFUSED on BOTH GET and PUT: role/scope is NOT canonical-owner identity.
     const bGet = await fetch(`${baseUrl}${ROUTE}`, { headers: { Authorization: "Bearer token-b" } });
-    expect(bGet.status).toBe(200);
-    const bBody = (await bGet.json()) as { ok: true; data: { policy: Record<string, { mode: string; days?: number }> } };
-    for (const retention of Object.values(bBody.data.policy)) {
-      expect(retention.mode).toBe("permanent");
-    }
-    expect(bBody.data.policy.auditLogs).toEqual({ mode: "permanent" });
+    expect(bGet.status).toBe(403);
+    const bPut = await put(
+      { Authorization: "Bearer token-b" },
+      { policy: { auditLogs: { mode: "after_days", days: 1 } } },
+    );
+    expect(bPut.status).toBe(403);
 
     // A GETs → sees its own opt-in.
     const aGet = await fetch(`${baseUrl}${ROUTE}`, { headers: { Authorization: "Bearer token-a" } });
     const aBody = (await aGet.json()) as { ok: true; data: { policy: Record<string, { mode: string; days?: number }> } };
     expect(aBody.data.policy.auditLogs).toEqual({ mode: "after_days", days: 30 });
 
-    // Physical persistence is principal-scoped: the row lands under A's userId,
-    // NOT under B's (despite the body attempting to target B).
+    // Physical persistence is canonical-scoped: the row lands under the canonical
+    // owner id (== admin-001), NOT under B's id (despite the body targeting B),
+    // and B's denied PUT wrote nothing.
     expect(rowsFor(OWNER_A.userId)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
     expect(rowsFor(OWNER_B.userId)).toHaveLength(0);
     expect(totalRows()).toBe(1);
@@ -315,18 +333,21 @@ describe("FridayHttpServer — /v1/uix/retention-policy real-HTTP authz + cross-
       "tok-viewer": VIEWER,
       "tok-operator": OPERATOR,
       "tok-device": DEVICE_OWNER_DISABLED,
+      "tok-admin-2": OWNER_B,
       "tok-owner": OWNER_A,
     });
 
     // DENIED matrix: [label, authHeader, expectedStatus]. Anonymous / synthetic
     // and release-disabled-device → 401 (bound-principal floor); bound non-owner
-    // (viewer / operator) → 403 (owner authority required).
+    // (viewer / operator) → 403 (owner authority required); a bound owner/admin
+    // that is NOT the canonical owner (second admin) → 403 (canonical binding).
     const denied: Array<[string, Record<string, string>, number]> = [
       ["anonymous", {}, 401],
       ["invalid-bearer (synthetic fallback)", { Authorization: "Bearer nope" }, 401],
       ["viewer (session.read only)", { Authorization: "Bearer tok-viewer" }, 403],
       ["operator (no owner authority)", { Authorization: "Bearer tok-operator" }, 403],
       ["revoked/disabled device-owner", { Authorization: "Bearer tok-device" }, 401],
+      ["second admin (owner/admin role, NOT canonical owner)", { Authorization: "Bearer tok-admin-2" }, 403],
     ];
 
     for (const [, headers, expected] of denied) {
