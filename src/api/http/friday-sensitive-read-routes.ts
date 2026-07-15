@@ -32,6 +32,15 @@
  *   - /v1/grants     active grants and authorization posture
  *   - /v1/audit      runtime audit logs / forensic evidence
  *   - /v1/observability/audit  observability audit entries and detail readback
+ *   - /v1/observability/metrics, /v1/observability/time-series  report-only realtime_events
+ *                    DB-footprint growth posture (#1606) — row-count / estimated-bytes / status /
+ *                    sample-size / reclaim-status and its time-series. That is owner/system detail,
+ *                    NOT minimal anonymous health, so it is gated 2026-07-15 (SEC-NET-PRINCIPAL-001).
+ *                    #1606 shipped both routes as auth:{public:true} and omitted them here, so an
+ *                    unauthenticated HTTP GET returned 200 + the growth body. Sibling anonymous
+ *                    observability reads (/v1/observability/overview, /v1/observability/traces,
+ *                    /v1/observability/slos, /v1/observability/alerts) stay public via the
+ *                    trailing-slash boundary (no over-flooring).
  *   - /v1/providers/usage  provider spend/usage summary (global cost data) — gated
  *                    2026-06-24 (operator-authorized per-handler review). Sub-path only:
  *                    the trailing-slash boundary keeps the bare /v1/providers list/get/health/
@@ -82,6 +91,17 @@ export const FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES: readonly string[] = [
   "/v1/grants",
   "/v1/audit",
   "/v1/observability/audit",
+  // SEC-NET-PRINCIPAL-001 (2026-07-15): the report-only realtime_events DB-footprint growth
+  // posture (#1606) is published onto these two routes — row-count / estimated-bytes / status /
+  // sample-size / reclaim-status and its time-series. That is owner/system detail, NOT minimal
+  // anonymous health. #1606 declared both auth:{public:true} and omitted them here, so an
+  // unauthenticated HTTP GET returned 200 + the growth body (bypassing the sensitive-read floor).
+  // Gate the whole route behind a bound principal. The trailing-slash boundary in
+  // isFridaySensitiveReadRoute keeps the sibling anonymous observability reads
+  // (/v1/observability/overview, /v1/observability/traces, /v1/observability/slos,
+  // /v1/observability/alerts, …) public — these two exact paths do not over-floor.
+  "/v1/observability/metrics",
+  "/v1/observability/time-series",
   // Gated 2026-06-24 (operator-authorized per-handler review). Each is a SUB-PATH of an
   // otherwise-anonymous prefix; the trailing-slash boundary in isFridaySensitiveReadRoute keeps
   // the bare /v1/providers and /v1/system/... prefixes anonymous (no over-flooring).
