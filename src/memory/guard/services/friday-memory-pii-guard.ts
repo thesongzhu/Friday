@@ -333,10 +333,23 @@ export function createFridayMemoryPiiGuard(
 
       // Redact PII carried in an object KEY. String key CONTENT that is itself recognizable PII
       // (email, or a formatted phone/SSN/card) is redacted in place, so `user@example.com` →
-      // `[EMAIL]` and a compound `ssn:123-45-6789` → `ssn:[SSN_US]`. A PURE-NUMERIC key
-      // (`/^\d+$/`) is NEVER shape-redacted — it is an ambiguous id and is preserved verbatim.
+      // `[EMAIL]` and a compound `ssn:123-45-6789` → `ssn:[SSN_US]`. A PURE-DIGIT key is NEVER
+      // shape-redacted — it is an ambiguous business id and is preserved verbatim.
+      //
+      // The pure-digit exemption is Unicode-decimal-aware (`/^\p{Nd}+$/u`), NOT ASCII-only
+      // (`/^\d+$/`). The PII matcher folds full-width digits before matching, so an ASCII-only
+      // exemption let the ASCII key "4111111111111111" through (correct) but folded its
+      // semantically-identical FULL-WIDTH form "４１１１…" into a card and irreversibly renamed it
+      // to "[CREDIT_CARD]" — corrupting a benign business id (DATA-RETENTION-001 no-corruption;
+      // PRIV-UNICODE-REDACTION-001 benign-multilingual no-degrade). Testing `\p{Nd}` makes ASCII,
+      // full-width, Arabic-Indic, and MIXED-width digit-only keys reach the SAME exempt outcome —
+      // width/script-consistent with the matcher's fold. Only keys composed ENTIRELY of decimal
+      // digits (any script, NON-empty, NO separators/other chars) are exempt: a FORMATTED PII key
+      // (dashes/spaces/letters, e.g. "４１１１-…" or "ssn:123-45-6789") contains a non-`Nd` char, so
+      // it fails the exemption and STILL redacts. This is purely the key-preservation exemption —
+      // it does NOT weaken the value path (a full-width card VALUE is redacted as before).
       const redactKey = (key: string): string => {
-        if (/^\d+$/.test(key)) return key;
+        if (/^\p{Nd}+$/u.test(key)) return key;
         const matches = findMatches(key);
         if (matches.length === 0) return key;
         for (const m of matches) {

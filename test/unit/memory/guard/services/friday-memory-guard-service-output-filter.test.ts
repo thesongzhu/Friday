@@ -85,6 +85,18 @@ describe("FridayMemoryOutputFilter", () => {
     expect(filtered.tags).not.toContain("123-45-6789"); // PII-bearing tag dropped
   });
 
+  // Advisor round 3 — output-filter read-back seam: a FULL-WIDTH pure-numeric metadata KEY is a
+  // benign business id and must be preserved byte-identical, not folded + renamed to [CREDIT_CARD].
+  it("preserves a FULL-WIDTH pure-numeric metadata KEY on read-back (not renamed to [CREDIT_CARD]) [red-first]", () => {
+    const fullwidthKey = "４１１１１１１１１１１１１１１１"; // toFullwidth("4111111111111111") used as a KEY
+    const item = makeItem({ metadata: { [fullwidthKey]: "canonical-marker" } });
+    const filtered = filter.filterItem(item);
+    const meta = filtered.metadata as Record<string, unknown>;
+    expect(Object.keys(meta)).toContain(fullwidthKey); // preserved
+    expect(Object.keys(meta)).not.toContain("[CREDIT_CARD]");
+    expect(meta[fullwidthKey]).toBe("canonical-marker");
+  });
+
   // ─── filterSearchResults ───
 
   it("returns results as-is when within limits", () => {

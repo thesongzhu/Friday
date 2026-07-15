@@ -102,3 +102,38 @@ describe("FridayMemoryGuardService — deep metadata store seam (Advisor round 2
     expect(storedTags).toEqual(expect.arrayContaining(["pii.email", "pii.phone_us", "pii.ssn_us"]));
   });
 });
+
+// ─── Advisor round 3 — production guard/store seam probe: full-width pure-numeric KEY ─────
+//
+// The pure-numeric object-KEY exemption preserved the ASCII business key "4111111111111111" but
+// its semantically-identical FULL-WIDTH form was folded by the PII matcher, matched as a card, and
+// irreversibly renamed to "[CREDIT_CARD]" — so on the REAL store path core.store received a
+// corrupted key (canonical-lookup identity broken). After making the exemption Unicode-decimal-
+// aware, core.store must receive the ORIGINAL full-width key, byte-identical.
+describe("FridayMemoryGuardService — full-width pure-numeric metadata KEY store seam (Advisor round 3) [red-first]", () => {
+  const fullwidth = (s: string): string =>
+    [...s]
+      .map((ch) => {
+        const c = ch.charCodeAt(0);
+        return c >= 0x21 && c <= 0x7e ? String.fromCharCode(c + 0xfee0) : ch;
+      })
+      .join("");
+
+  it("core.store receives the ORIGINAL full-width pure-numeric KEY (not renamed to [CREDIT_CARD])", async () => {
+    const { guard, core } = makeRealPiiGuardService("redact");
+    const fwKey = fullwidth("4111111111111111"); // full-width Luhn-valid Visa test number as a KEY
+    const metadata: Record<string, unknown> = { [fwKey]: "canonical-marker" };
+
+    await guard.store("test-ns", "benign content", { metadata });
+
+    const callArgs = vi.mocked(core.store).mock.calls[0];
+    const storedMeta = callArgs[2]?.metadata as Record<string, unknown> | undefined;
+    expect(storedMeta).toBeDefined();
+    expect(Object.keys(storedMeta as Record<string, unknown>)).toContain(fwKey); // key preserved
+    expect(Object.keys(storedMeta as Record<string, unknown>)).not.toContain("[CREDIT_CARD]");
+    expect((storedMeta as Record<string, unknown>)[fwKey]).toBe("canonical-marker");
+    // No PII tag was fabricated from a benign business id.
+    const storedTags = (callArgs[2]?.tags as string[] | undefined) ?? [];
+    expect(storedTags).not.toContain("pii.credit_card");
+  });
+});

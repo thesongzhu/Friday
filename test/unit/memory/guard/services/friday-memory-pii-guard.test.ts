@@ -904,4 +904,97 @@ describe("FridayMemoryPiiGuard", () => {
       expect(Object.prototype.hasOwnProperty.call(twice as object, "__proto__")).toBe(true);
     });
   });
+
+  // ─── Advisor round 3 — pure-numeric object-KEY exemption is Unicode-width/script-consistent ───
+  //
+  // The pure-numeric object-KEY exemption ("a bare digit-only key is an ambiguous business id —
+  // preserve it verbatim") was tested with an ASCII-only /^\d+$/, but the PII matcher applies a
+  // full-width fold. So the ASCII key "4111111111111111" was preserved (correct) while its
+  // semantically-identical FULL-WIDTH form was folded, matched as a card, and IRREVERSIBLY renamed
+  // to "[CREDIT_CARD]" — silently breaking canonical-lookup identity (DATA-RETENTION-001 no
+  // corruption; PRIV-UNICODE-REDACTION-001 benign-multilingual no-degrade). The exemption is now
+  // Unicode-decimal-aware (/^\p{Nd}+$/u): a KEY composed ENTIRELY of Unicode decimal digits in ANY
+  // script (ASCII / full-width / Arabic-Indic / mixed) with NO separators is preserved; a FORMATTED
+  // PII key (separators/context present) STILL redacts; the VALUE path is unchanged (a full-width
+  // card VALUE still redacts). Red-first: tests [1] and [3] FAIL on the pre-fix ASCII-only check.
+  describe("redactDeep — pure-numeric object-KEY exemption is Unicode-width/script-consistent (Advisor round 3) [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    // ASCII 0x21–0x7E → full-width (U+FF01–FF5E); ASCII space → ideographic space.
+    const fw = (s: string): string =>
+      [...s]
+        .map((ch) => {
+          const c = ch.charCodeAt(0);
+          if (c === 0x20) return "　";
+          if (c >= 0x21 && c <= 0x7e) return String.fromCharCode(c + 0xfee0);
+          return ch;
+        })
+        .join("");
+    // ASCII digits → Arabic-Indic digits (U+0660–U+0669).
+    const ai = (s: string): string =>
+      [...s]
+        .map((ch) =>
+          ch >= "0" && ch <= "9" ? String.fromCharCode(0x0660 + (ch.charCodeAt(0) - 0x30)) : ch,
+        )
+        .join("");
+
+    const CARD = "4111111111111111"; // Luhn-valid Visa test number
+
+    it("[1] preserves a FULL-WIDTH pure-numeric KEY byte-identical (NOT renamed to [CREDIT_CARD])", () => {
+      const key = fw(CARD);
+      const { value, tagsToAdd } = guard.redactDeep({ [key]: "x" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toContain(key); // byte-identical preservation of the business id
+      expect(Object.keys(out)).not.toContain("[CREDIT_CARD]");
+      expect(out[key]).toBe("x");
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("[2] preserves an ASCII pure-numeric KEY (regression)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ [CARD]: "x" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toContain(CARD);
+      expect(Object.keys(out)).not.toContain("[CREDIT_CARD]");
+      expect(out[CARD]).toBe("x");
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("[3] preserves a MIXED-WIDTH digit-only KEY (ASCII + full-width, no separators)", () => {
+      const key = "4111" + fw("111111111111"); // 16 digits, mixed width, no separators
+      const { value, tagsToAdd } = guard.redactDeep({ [key]: "x" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toContain(key);
+      expect(Object.keys(out)).not.toContain("[CREDIT_CARD]");
+      expect(out[key]).toBe("x");
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("[4] preserves an ARABIC-INDIC digit-only KEY", () => {
+      const key = ai(CARD);
+      const { value, tagsToAdd } = guard.redactDeep({ [key]: "x" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toContain(key);
+      expect(Object.keys(out)).not.toContain("[CREDIT_CARD]");
+      expect(out[key]).toBe("x");
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("[5] CONTROL: a FORMATTED full-width card KEY (separators present) STILL redacts", () => {
+      const key = fw("4111-1111-1111-1111"); // full-width dashes → not a pure digit-only id → PII
+      const { value, tagsToAdd } = guard.redactDeep({ [key]: "x" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).not.toContain(key);
+      expect(Object.keys(out)).toContain("[CREDIT_CARD]");
+      expect(out["[CREDIT_CARD]"]).toBe("x");
+      expect(tagsToAdd).toContain("pii.credit_card");
+    });
+
+    it("[6] CONTROL: a full-width card as a VALUE still redacts (key-path change did not weaken values)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ note: fw(CARD) });
+      const out = value as { note: string };
+      expect(out.note).toBe("[CREDIT_CARD]");
+      expect(out.note).not.toContain(fw(CARD));
+      expect(tagsToAdd).toContain("pii.credit_card");
+    });
+  });
 });
