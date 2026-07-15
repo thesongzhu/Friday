@@ -9,6 +9,9 @@ export {
   FRIDAY_DEFAULT_RETENTION_POLICY,
   FRIDAY_BOOTSTRAP_NONCE_SWEEP_BATCH_LIMIT,
   FRIDAY_RETENTION_CONTENT_CATEGORIES,
+  FRIDAY_MIN_AFTER_DAYS,
+  FRIDAY_MAX_AFTER_DAYS,
+  isValidAfterDays,
 } from "./retention/friday-retention.types.js";
 export { createFridayRetentionJob, resolveCutoff } from "./retention/friday-retention-job.js";
 export type { FridayRetentionJob } from "./retention/friday-retention-job.js";

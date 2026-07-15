@@ -18,6 +18,7 @@ import {
   createFridayRetentionPolicyLoader,
   createFridayRetentionSettingsRepository,
   createFridayRetentionSettingsStore,
+  resolveCutoff,
 } from "#jobs";
 
 /**
@@ -159,5 +160,42 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
         layer2.close();
       }
     })();
+  });
+
+  it("BOUNDARY: a MAX (36500-day) window persists, survives a store re-open, and is HONORED (Advisor R2)", async () => {
+    const MAX = 36_500; // == FRIDAY_MAX_AFTER_DAYS (accept ⊆ honored at the boundary)
+
+    // ── Session 1: write the boundary window via the PUT route, then close. ──
+    const layer1 = openLayer(dbPath);
+    const routes1 = createFridayRetentionSettingsRoutes({ store: makeStore(layer1) });
+    const put1 = routes1.find((r) => r.operationId === "uix.retention.policy.update")!;
+    const putResult = (await put1.handler(
+      makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days: MAX } } } }),
+    )) as { policy: Record<string, unknown> };
+    expect(putResult.policy.auditLogs).toEqual({ mode: "after_days", days: MAX });
+    layer1.close();
+
+    // ── Session 2: re-open a FRESH store on the SAME on-disk db. ──
+    const layer2 = openLayer(dbPath);
+    try {
+      const routes2 = createFridayRetentionSettingsRoutes({ store: makeStore(layer2) });
+      const get2 = routes2.find((r) => r.operationId === "uix.retention.policy.get")!;
+      const after = (await get2.handler(makeCtx())) as { policy: Record<string, unknown> };
+
+      // Byte-identical readback of the boundary window across the restart.
+      expect(after.policy.auditLogs).toEqual({ mode: "after_days", days: MAX });
+
+      // The loader picks it up AND the reaper's evaluator honors it (non-null cutoff)
+      // — proving the accepted maximum is inside the honored domain.
+      const loader = createFridayRetentionPolicyLoader({
+        db: layer2,
+        repo: createFridayRetentionSettingsRepository(),
+        principalId: OWNER,
+      });
+      expect(loader.load().auditLogs).toEqual({ mode: "after_days", days: MAX });
+      expect(resolveCutoff(NOW, { mode: "after_days", days: MAX })).not.toBeNull();
+    } finally {
+      layer2.close();
+    }
   });
 });

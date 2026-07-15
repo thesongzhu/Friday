@@ -5,6 +5,7 @@ import type { FridaySqliteLayer } from "#state";
 import {
   createFridayRetentionSettingsRepository,
   createFridayRetentionSettingsStore,
+  resolveCutoff,
 } from "#jobs";
 import type { FridayRetentionSettingsStore } from "#jobs";
 import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
@@ -259,5 +260,68 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
     await expect(
       putRoute().handler(makeCtx({ body: null as never })),
     ).rejects.toMatchObject({ httpStatus: 400 });
+  });
+
+  // ── 5. OUT-OF-DOMAIN / OVERFLOW after_days → typed 400, ZERO persistence ───
+  // Advisor R2: the ACCEPTED domain must be a SUBSET of what the reaper honors.
+  // These windows are all > FRIDAY_MAX_AFTER_DAYS (36500); the largest ones the
+  // reaper's resolveCutoff silently treats as PERMANENT (null cutoff) — so if the
+  // route accepted them the API would report an ACTIVE policy production ignores.
+  // The 36500 literals below mirror FRIDAY_MAX_AFTER_DAYS (kept in sync by the
+  // domain guard test); a change to that ceiling makes these tests go RED.
+  const outOfDomainDays: Array<[string, number]> = [
+    ["100000000 (1e8 — the Advisor's boundary example)", 100_000_000],
+    ["1000000000 (1e9 — resolveCutoff returns null ⇒ unhonored)", 1_000_000_000],
+    ["Number.MAX_SAFE_INTEGER (bigint-ish)", Number.MAX_SAFE_INTEGER],
+    ["36501 (MAX + 1 — just over the product ceiling)", 36_501],
+  ];
+
+  it.each(outOfDomainDays)(
+    "PUT with days = %s → 400 and persists NOTHING (accept ⊆ honored)",
+    async (_label, days) => {
+      await expect(
+        putRoute().handler(
+          makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days } } } as never }),
+        ),
+      ).rejects.toMatchObject({ httpStatus: 400 });
+      // No row was written under the owner.
+      expect(rowsFor("owner-a")).toHaveLength(0);
+      // GET must not report the rejected window as active.
+      const after = (await getRoute().handler(makeCtx())) as {
+        policy: Record<string, { mode: string; days?: number }>;
+      };
+      expect(after.policy.auditLogs).toEqual({ mode: "permanent" });
+    },
+  );
+
+  it("directly demonstrates the finding: 1e9 is unhonored (resolveCutoff null) yet must be rejected", async () => {
+    // The reaper would treat this window as permanent (null cutoff) → the route
+    // MUST refuse it so the API never reports a policy production won't honor.
+    expect(resolveCutoff(NOW, { mode: "after_days", days: 1_000_000_000 })).toBeNull();
+    await expect(
+      putRoute().handler(
+        makeCtx({
+          body: { policy: { auditLogs: { mode: "after_days", days: 1_000_000_000 } } } as never,
+        }),
+      ),
+    ).rejects.toMatchObject({ httpStatus: 400 });
+    expect(rowsFor("owner-a")).toHaveLength(0);
+  });
+
+  it("BOUNDARY: days = 36500 (MAX) persists, reads back, and is HONORED by resolveCutoff", async () => {
+    const MAX = 36_500; // == FRIDAY_MAX_AFTER_DAYS (guarded by the domain test)
+    const putResult = (await putRoute().handler(
+      makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days: MAX } } } as never }),
+    )) as { policy: Record<string, { mode: string; days?: number }> };
+    // Accepted + persisted at the exact boundary.
+    expect(putResult.policy.auditLogs).toEqual({ mode: "after_days", days: MAX });
+    expect(rowsFor("owner-a")).toEqual([{ content_category: "auditLogs", after_days: MAX }]);
+    // Reads back active.
+    const after = (await getRoute().handler(makeCtx())) as {
+      policy: Record<string, { mode: string; days?: number }>;
+    };
+    expect(after.policy.auditLogs).toEqual({ mode: "after_days", days: MAX });
+    // accept == honored at the boundary: the reaper WILL honor this window.
+    expect(resolveCutoff(NOW, { mode: "after_days", days: MAX })).not.toBeNull();
   });
 });

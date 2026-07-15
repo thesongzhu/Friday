@@ -4,6 +4,7 @@ import type { CategoryRetention, FridayRetentionPolicy } from "./friday-retentio
 import {
   FRIDAY_DEFAULT_RETENTION_POLICY,
   FRIDAY_RETENTION_CONTENT_CATEGORIES,
+  isValidAfterDays,
 } from "./friday-retention.types.js";
 import type { FridayRetentionSettingsRepository } from "./friday-retention-settings-repository.js";
 
@@ -37,10 +38,6 @@ export interface CreateFridayRetentionPolicyLoaderDeps {
 
 const CONTENT_CATEGORY_SET: ReadonlySet<string> = new Set(FRIDAY_RETENTION_CONTENT_CATEGORIES);
 
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
-}
-
 export function createFridayRetentionPolicyLoader(
   deps: CreateFridayRetentionPolicyLoaderDeps,
 ): FridayRetentionPolicyLoader {
@@ -63,14 +60,17 @@ export function createFridayRetentionPolicyLoader(
         for (const override of overrides) {
           if (
             CONTENT_CATEGORY_SET.has(override.contentCategory) &&
-            isPositiveInteger(override.afterDays)
+            isValidAfterDays(override.afterDays)
           ) {
             content[override.contentCategory] = {
               mode: "after_days",
               days: override.afterDays,
             };
           }
-          // else: unknown category / malformed window ⇒ leave permanent (fail closed).
+          // else: unknown category / malformed or out-of-domain (legacy) window ⇒
+          // leave permanent (fail closed). An after_days outside the canonical
+          // [MIN, MAX] domain is one the reaper would not honor, so the loader must
+          // never surface it active — mirrors the store + route validation.
         }
       } catch {
         // Unreadable store ⇒ all-permanent (delete nothing).

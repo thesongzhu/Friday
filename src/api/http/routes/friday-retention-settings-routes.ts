@@ -1,5 +1,6 @@
 import { FridayDomainError } from "#errors";
 import type { CategoryRetention, FridayRetentionSettingsStore } from "#jobs";
+import { FRIDAY_MAX_AFTER_DAYS, FRIDAY_MIN_AFTER_DAYS, isValidAfterDays } from "#jobs";
 import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import {
   assertBoundPrincipalAuthorityForOperation,
@@ -13,8 +14,9 @@ import {
  *     category policy (defaults every category to `{mode:"permanent"}`).
  *   PUT /v1/uix/retention-policy  → the caller-owner sets each content category
  *     to `{mode:"permanent"}` (clean "off" — the override is removed) or
- *     `{mode:"after_days",days:N}` (N a positive integer). Invalid bodies are
- *     rejected with a typed 400 and NOTHING is persisted.
+ *     `{mode:"after_days",days:N}` (N an integer inside the canonical honored
+ *     window `[FRIDAY_MIN_AFTER_DAYS, FRIDAY_MAX_AFTER_DAYS]`). Invalid or
+ *     out-of-domain bodies are rejected with a typed 400 and NOTHING is persisted.
  *
  * Owner binding reuses the EXACT `requireUserId(principal)` pattern from
  * friday-uix-routes.ts: the owner id comes ONLY from the authenticated
@@ -64,10 +66,12 @@ function assertRetentionOwner(
 /**
  * Strictly parse ONE per-category `CategoryRetention` value from an untrusted
  * request body. Rejects (typed 400) anything that is not exactly
- * `{mode:"permanent"}` or `{mode:"after_days",days:<positive integer>}` — bad
- * mode, missing/non-integer/≤0/NaN/Infinity `days`, or extraneous shapes. The
- * caller MUST validate the WHOLE body before any persistence so an invalid
- * entry persists nothing.
+ * `{mode:"permanent"}` or `{mode:"after_days",days:<N>}` where N is inside the
+ * canonical honored window `[FRIDAY_MIN_AFTER_DAYS, FRIDAY_MAX_AFTER_DAYS]` — bad
+ * mode, missing/non-integer/NaN/Infinity `days`, `days ≤ 0`, or an OUT-OF-RANGE
+ * window the reaper would silently treat as permanent (accept ⊆ honored). The
+ * caller MUST validate the WHOLE body before any persistence so an invalid entry
+ * persists nothing.
  */
 function parseCategoryRetention(category: string, raw: unknown): CategoryRetention {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -89,10 +93,10 @@ function parseCategoryRetention(category: string, raw: unknown): CategoryRetenti
     );
   }
   const days = (raw as { days?: unknown }).days;
-  if (typeof days !== "number" || !Number.isInteger(days) || days <= 0) {
+  if (!isValidAfterDays(days)) {
     throw new FridayDomainError(
       "RETENTION_POLICY_VALIDATION_FAILED",
-      `Invalid retention config for '${category}': 'after_days' requires a positive integer 'days'.`,
+      `Invalid retention config for '${category}': 'after_days' requires an integer 'days' in [${FRIDAY_MIN_AFTER_DAYS}, ${FRIDAY_MAX_AFTER_DAYS}].`,
       { httpStatus: 400 },
     );
   }

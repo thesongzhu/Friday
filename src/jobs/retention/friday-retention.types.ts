@@ -12,6 +12,46 @@ export type CategoryRetention =
   | { mode: "permanent" }
   | { mode: "after_days"; days: number };
 
+/**
+ * The ONE canonical valid `after_days` domain (RETENTION-R3a hardening).
+ *
+ * DATA-RETENTION-001 truthfulness invariant: the API must NEVER accept /
+ * persist / report-active a window the production reaper won't honor. The reaper
+ * evaluator (`resolveCutoff`) fails closed to PERMANENT for any window whose
+ * cutoff date overflows JS `Date`'s ±8.64e15 ms range — i.e. `after_days` beyond
+ * roughly 1e8 days. Rather than track that fragile, `now`-dependent internal
+ * bound, we pin a SANE PRODUCT CEILING well inside it: `[1, 36500]` days
+ * (36500 days ≈ 100 years). `resolveCutoff` returns a NON-null cutoff for every
+ * value in this closed interval for any realistic `now` (≥ 1970), so the ACCEPTED
+ * domain is a strict SUBSET of the HONORED domain (accept ⊆ honored). Every layer
+ * — request parsing, the store read/write, the loader, and the DB `CHECK` — MUST
+ * enforce exactly this interval; anything outside it is malformed ⇒ fail closed
+ * to PERMANENT (delete nothing) and is never surfaced as an active policy.
+ *
+ * NB: the migration's `CHECK (after_days >= 1 AND after_days <= 36500)` inlines
+ * these literals (a migration's SQL/checksum is a frozen historical artifact and
+ * must not interpolate a mutable constant); a guard test asserts the CHECK bound
+ * agrees with these constants.
+ */
+export const FRIDAY_MIN_AFTER_DAYS = 1;
+export const FRIDAY_MAX_AFTER_DAYS = 36500;
+
+/**
+ * Canonical predicate for a valid `after_days` window: a positive integer inside
+ * the honored `[FRIDAY_MIN_AFTER_DAYS, FRIDAY_MAX_AFTER_DAYS]` interval. Shared by
+ * request parsing, the store, and the loader so the accepted domain is identical
+ * everywhere (and ⊆ what `resolveCutoff` honors). Rejects NaN, Infinity,
+ * non-integers, ≤ 0, and any out-of-range / overflowing window.
+ */
+export function isValidAfterDays(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= FRIDAY_MIN_AFTER_DAYS &&
+    value <= FRIDAY_MAX_AFTER_DAYS
+  );
+}
+
 export interface FridayRetentionPolicy {
   // ── CONTENT categories (canonical + derived-content) ──────────────────────
   // Default PERMANENT. Auto-deletion is opt-in per category via `after_days`;

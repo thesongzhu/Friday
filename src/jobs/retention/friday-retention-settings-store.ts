@@ -1,7 +1,7 @@
 import type { FridaySqliteLayer } from "#state";
 
 import type { CategoryRetention, FridayRetentionContentPolicy } from "./friday-retention.types.js";
-import { FRIDAY_RETENTION_CONTENT_CATEGORIES } from "./friday-retention.types.js";
+import { FRIDAY_RETENTION_CONTENT_CATEGORIES, isValidAfterDays } from "./friday-retention.types.js";
 import type { FridayRetentionSettingsRepository } from "./friday-retention-settings-repository.js";
 
 /**
@@ -24,7 +24,8 @@ export interface FridayRetentionSettingsStore {
    * Apply owner-supplied per-category updates transactionally (validate-then-
    * apply: on ANY invalid entry nothing is persisted). `{mode:"permanent"}`
    * removes the override (clean "off"); `{mode:"after_days",days:N}` upserts a
-   * positive-integer window. Returns the fresh effective policy.
+   * window inside the canonical `[FRIDAY_MIN_AFTER_DAYS, FRIDAY_MAX_AFTER_DAYS]`
+   * domain (`isValidAfterDays`). Returns the fresh effective policy.
    */
   applyOwnerContentPolicy(input: {
     principalId: string;
@@ -33,10 +34,6 @@ export interface FridayRetentionSettingsStore {
 }
 
 const CONTENT_CATEGORY_SET: ReadonlySet<string> = new Set(FRIDAY_RETENTION_CONTENT_CATEGORIES);
-
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
-}
 
 function allPermanentPolicy(): FridayRetentionContentPolicy {
   const policy = {} as FridayRetentionContentPolicy;
@@ -63,11 +60,13 @@ export function createFridayRetentionSettingsStore(
     );
     for (const override of overrides) {
       // Defensive: only surface a well-formed opt-in for a known content
-      // category; anything else falls back to the permanent default
-      // (fail-closed read — mirrors the reaper's resolveCutoff).
+      // category whose window is inside the canonical honored domain; anything
+      // else (unknown category, or an out-of-domain / legacy after_days the
+      // reaper would silently treat as permanent) falls back to the permanent
+      // default — fail-closed read, never report a policy production won't honor.
       if (
         CONTENT_CATEGORY_SET.has(override.contentCategory) &&
-        isPositiveInteger(override.afterDays)
+        isValidAfterDays(override.afterDays)
       ) {
         policy[override.contentCategory as keyof FridayRetentionContentPolicy] = {
           mode: "after_days",
@@ -101,7 +100,7 @@ export function createFridayRetentionSettingsStore(
             });
             continue;
           }
-          if (retention.mode === "after_days" && isPositiveInteger(retention.days)) {
+          if (retention.mode === "after_days" && isValidAfterDays(retention.days)) {
             deps.repo.upsertAfterDays(db, {
               id: deps.idGenerator(),
               principalId: input.principalId,

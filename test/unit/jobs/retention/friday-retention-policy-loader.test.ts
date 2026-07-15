@@ -12,6 +12,7 @@ import {
   createFridayRetentionPolicyLoader,
   createFridayRetentionSettingsRepository,
   createFridayRetentionSettingsStore,
+  resolveCutoff,
   FRIDAY_DEFAULT_RETENTION_POLICY,
 } from "#jobs";
 import type { FridayRetentionPolicy, FridayRetentionSettingsRepository } from "#jobs";
@@ -199,6 +200,49 @@ describe("createFridayRetentionPolicyLoader — FAIL-CLOSED", () => {
     });
     const policy = loader.load();
     expect(policy).toEqual(FRIDAY_DEFAULT_RETENTION_POLICY);
+    expectZeroContentDeletes(policy);
+  });
+
+  it("OUT-OF-DOMAIN (legacy) row ⇒ loader + store fail closed to permanent; reaper deletes 0 (Advisor R2)", () => {
+    seedAllContentCategories();
+    // Inject a persisted after_days the reaper will NOT honor (resolveCutoff → null):
+    // 1e9 days overflows JS Date. Bypass the tightened v105 CHECK with
+    // ignore_check_constraints to simulate a legacy / corrupt row that predates the
+    // domain bound (defense-in-depth: the loader must fail closed even if such a row
+    // ever exists).
+    const HUGE = 1_000_000_000;
+    expect(resolveCutoff(NOW, { mode: "after_days", days: HUGE })).toBeNull(); // proven UNHONORED
+    db.writer.pragma("ignore_check_constraints = ON");
+    db.writer
+      .prepare(
+        `INSERT INTO friday_retention_settings (id, principal_id, content_category, after_days, created_at, updated_at)
+         VALUES ('legacy-huge', ?, 'auditLogs', ?, ?, ?)`,
+      )
+      .run(OWNER, HUGE, NOW, NOW);
+    db.writer.pragma("ignore_check_constraints = OFF");
+
+    // Loader (reaper side) must treat the out-of-domain window as PERMANENT.
+    const loader = createFridayRetentionPolicyLoader({
+      db,
+      repo: createFridayRetentionSettingsRepository(),
+      principalId: OWNER,
+    });
+    const policy = loader.load();
+    expect(policy.auditLogs).toEqual({ mode: "permanent" });
+    expect(policy).toEqual(FRIDAY_DEFAULT_RETENTION_POLICY);
+
+    // GET (store read) must NOT surface it as active either.
+    const store = createFridayRetentionSettingsStore({
+      db,
+      repo: createFridayRetentionSettingsRepository(),
+      idGenerator: () => "unused",
+      nowIso: () => NOW,
+    });
+    expect(store.readOwnerContentPolicy({ principalId: OWNER }).auditLogs).toEqual({
+      mode: "permanent",
+    });
+
+    // Reaper deletes 0 for that category (the aged audit row survives).
     expectZeroContentDeletes(policy);
   });
 

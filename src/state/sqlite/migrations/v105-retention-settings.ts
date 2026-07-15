@@ -9,12 +9,22 @@ import type { FridaySqliteMigration } from "./friday-migration.types.js";
  * PER CONTENT CATEGORY. This table stores ONLY the explicit owner opt-ins:
  *
  *   - A row's mere EXISTENCE means the owner enabled a time-based sweep for that
- *     content category with `after_days = N` (N a POSITIVE integer, enforced by
- *     `CHECK (after_days > 0)`).
+ *     content category with `after_days = N`, where N is an integer inside the
+ *     canonical honored window `[1, 36500]` (≈ 1 day … 100 years), enforced by
+ *     `CHECK (after_days >= 1 AND after_days <= 36500)`. The upper bound keeps the
+ *     PERSISTED domain a strict subset of what the reaper's `resolveCutoff` will
+ *     honor (windows beyond ~1e8 days overflow JS `Date` and fail closed to
+ *     permanent), so the DB can never hold a window the API would report active
+ *     but production silently ignores (DATA-RETENTION-001 truthfulness).
  *   - The ABSENCE of a row is the clean disabled state = PERMANENT ("off").
  *     "Off" is therefore represented by row-absence — NEVER by a magic sentinel
  *     number (not 0, -1, 30, nor an oversized value). The schema makes a sentinel
- *     structurally impossible: `after_days` is NOT NULL and must be `> 0`.
+ *     structurally impossible: `after_days` is NOT NULL and must be in `[1, 36500]`.
+ *
+ * The `[1, 36500]` literals mirror `FRIDAY_MIN_AFTER_DAYS` / `FRIDAY_MAX_AFTER_DAYS`
+ * in `friday-retention.types.ts` (inlined here on purpose — a migration's SQL and
+ * checksum are a frozen historical artifact and must not interpolate a mutable
+ * constant; a guard test asserts the CHECK bound agrees with those constants).
  *
  * Owner scoping mirrors `uix_user_preferences` (v051): every row is keyed by
  * `principal_id`; the unique `(principal_id, content_category)` index gives one
@@ -31,7 +41,7 @@ CREATE TABLE IF NOT EXISTS friday_retention_settings (
   id TEXT PRIMARY KEY,
   principal_id TEXT NOT NULL,
   content_category TEXT NOT NULL,
-  after_days INTEGER NOT NULL CHECK (after_days > 0),
+  after_days INTEGER NOT NULL CHECK (after_days >= 1 AND after_days <= 36500),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
