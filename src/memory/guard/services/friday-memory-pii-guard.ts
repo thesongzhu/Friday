@@ -309,15 +309,16 @@ export function createFridayMemoryPiiGuard(
 
     redactDeep(value: unknown): { value: unknown; tagsToAdd: string[] } {
       const tagSet = new Set<string>();
-      // Structural recursion cap — a STACK-OVERFLOW / DoS guard, NOT a scan-coverage limit. It
-      // sits far above any realistic metadata nesting (real metadata is a handful of levels
-      // deep) so legitimate byte-bounded input is ALWAYS fully scanned, and comfortably below
-      // the JS call-stack limit for this walker so it never throws. If a pathological,
-      // adversarially deep structure exceeds it, the walker fails CLOSED: the over-deep subtree
-      // is replaced by a redaction SENTINEL and NEVER emitted in cleartext. (The previous code
-      // returned the unscanned subtree verbatim past depth 6 — a fail-OPEN egress leak.)
-      const MAX_DEPTH = 500;
-      const DEPTH_REDACTION_SENTINEL = "[REDACTED_DEPTH]";
+      // Traversal is ITERATIVE (an explicit heap-allocated work stack), CYCLE-AWARE, and
+      // FULL-SCAN — there is NO depth cap and NO truncation sentinel. The real resource bound
+      // is the UPSTREAM 16 KiB metadata byte-limit (validateMetadata runs before this on the
+      // store path); every structure admitted by that bound is scanned to its leaves. Because
+      // the work stack lives on the heap (not the ~2000–5000-frame JS call stack), arbitrarily
+      // deep byte-bounded input is scanned without stack overflow. This replaces the previous
+      // fixed recursion that returned a "[REDACTED_DEPTH]" sentinel past a depth cap in ALL
+      // modes — silently corrupting valid deep metadata (canonical-data loss, DATA-RETENTION-001)
+      // and violating the tag/block mode contracts. Deep PII is still ALWAYS found (the F2 leak
+      // stays closed) and benign deep data now round-trips UNCHANGED.
 
       // String leaves keep the EXISTING shape-based at-rest policy (unchanged by this lane):
       // scan with the PII patterns and redact in place in redact mode, tag-only otherwise.
@@ -344,26 +345,13 @@ export function createFridayMemoryPiiGuard(
         return effectiveMode === "redact" ? redactContent(key, matches) : key;
       };
 
-      // Assign `value` under `key`, never dropping data. Redacting keys can collapse two
-      // distinct PII keys onto the same token (e.g. `a@x.com` and `b@y.com` → `[EMAIL]`); on
-      // collision the later entry is disambiguated deterministically so both VALUES survive.
-      // The suffix contains no PII pattern, so a second redactDeep pass is a no-op (idempotent).
-      //
-      // Define an OWN DATA property rather than `out[finalKey] = val`: a JSON-originated own key
-      // named `__proto__` would otherwise invoke the legacy prototype setter, mutating the
-      // output object's prototype (prototype confusion) AND dropping the field from
-      // serialization. `Object.defineProperty` round-trips such keys as ordinary own enumerable
-      // data properties with the prototype untouched.
-      const assignKey = (out: Record<string, unknown>, key: string, val: unknown): void => {
-        let finalKey = key;
-        if (Object.prototype.hasOwnProperty.call(out, key)) {
-          let suffix = 2;
-          while (Object.prototype.hasOwnProperty.call(out, `${key}#${suffix}`)) {
-            suffix += 1;
-          }
-          finalKey = `${key}#${suffix}`;
-        }
-        Object.defineProperty(out, finalKey, {
+      // Write `val` under `key` as an OWN DATA property rather than `out[key] = val`: a
+      // JSON-originated own key named `__proto__` would otherwise invoke the legacy prototype
+      // setter, mutating the output object's prototype (prototype confusion) AND dropping the
+      // field from serialization. `Object.defineProperty` round-trips such keys as ordinary own
+      // enumerable data properties with the prototype untouched. (F3 — preserved.)
+      const defineOwn = (out: Record<string, unknown>, key: string, val: unknown): void => {
+        Object.defineProperty(out, key, {
           value: val,
           enumerable: true,
           writable: true,
@@ -371,13 +359,28 @@ export function createFridayMemoryPiiGuard(
         });
       };
 
-      // `keyedType` is the PII type a numeric/bigint value INHERITS FROM ITS OBJECT KEY (see
-      // sensitiveTypeForKey). It is threaded down through arrays (a list under a sensitive key)
-      // but NOT into nested objects, which re-establish their own key context.
-      const walk = (v: unknown, depth: number, keyedType?: FridayKeyDrivenPiiType): unknown => {
-        // Fail CLOSED past the structural safety cap: never return an unscanned subtree in
-        // cleartext. The sentinel carries no PII and is inert on a re-scan (idempotent).
-        if (depth > MAX_DEPTH) return DEPTH_REDACTION_SENTINEL;
+      // Resolve the collision-disambiguated final key for `key` in `out`, WITHOUT writing the
+      // value. Redacting keys can collapse two distinct PII keys onto the same token (e.g.
+      // `a@x.com` and `b@y.com` → `[EMAIL]`); on collision the later entry is disambiguated
+      // deterministically so both VALUES survive. The `#N` suffix contains no PII pattern, so a
+      // second redactDeep pass is a no-op (idempotent). The slot is RESERVED in forward key
+      // order (see the object branch) so the resulting key set and enumeration order are
+      // byte-identical to the previous recursive walker; the deep value fills the slot later.
+      const resolveFinalKey = (out: Record<string, unknown>, key: string): string => {
+        if (!Object.prototype.hasOwnProperty.call(out, key)) return key;
+        let suffix = 2;
+        while (Object.prototype.hasOwnProperty.call(out, `${key}#${suffix}`)) {
+          suffix += 1;
+        }
+        return `${key}#${suffix}`;
+      };
+
+      // Transform a scalar leaf. `keyedType` is the PII type a numeric/bigint value INHERITS
+      // FROM ITS OBJECT KEY (see sensitiveTypeForKey); it is threaded through arrays (a list
+      // under a sensitive key) but NOT into nested objects, which re-establish their own key
+      // context. Containers (array/object) are NOT handled here — the iterative loop below
+      // reconstructs them so the traversal never touches the call stack.
+      const transformScalar = (v: unknown, keyedType?: FridayKeyDrivenPiiType): unknown => {
         if (typeof v === "string") {
           return redactStringLeaf(v);
         }
@@ -390,32 +393,100 @@ export function createFridayMemoryPiiGuard(
         //      head_phone: 42, sim_card: 2) is preserved because "3"/"42"/"2" is not card/phone
         //      shaped. It does NOT reintroduce shape-alone inference — the value gate only runs
         //      AFTER the sensitive-key gate, so a Luhn-valid `order_id` under a NON-sensitive key
-        //      is still preserved.
+        //      is still preserved. In tag/block mode the value is returned UNCHANGED (contract:
+        //      those modes never transform data) while the pii.* tag is still collected.
         if (typeof v === "number" || typeof v === "bigint") {
           if (!keyedType) return v;
           if (!numericValueMatchesKeyedType(String(v), keyedType)) return v;
           tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${keyedType}`);
           return effectiveMode === "redact" ? `[${keyedType.toUpperCase()}]` : v;
         }
-        // Preserve a Date's original TYPE (the object branch below would otherwise walk its zero
+        // Preserve a Date's original TYPE (the object branch would otherwise walk its zero
         // own-enumerable props and corrupt it into `{}`). A Date is not a numeric PII carrier.
-        if (v instanceof Date) {
-          return v;
-        }
-        if (Array.isArray(v)) {
-          return v.map((entry) => walk(entry, depth + 1, keyedType));
-        }
-        if (v && typeof v === "object") {
-          const out: Record<string, unknown> = {};
-          for (const [k, entry] of Object.entries(v as Record<string, unknown>)) {
-            assignKey(out, redactKey(k), walk(entry, depth + 1, sensitiveTypeForKey(k)));
-          }
-          return out;
-        }
         return v;
       };
 
-      return { value: walk(value, 0), tagsToAdd: [...tagSet] };
+      // Explicit work stack. Each `value` frame writes its transformed result into a parent slot
+      // via `assign`; each `exit` frame pops a container off the ancestor path once its whole
+      // subtree is processed. `onPath` maps a container currently on the DFS ancestor path to
+      // its output container; a back-edge to a node still on the path is a CYCLE — we assign the
+      // (in-progress) output reference and do NOT recurse, so a cyclic input never infinite-loops
+      // or stack-overflows and no data is lost. `onPath` is cleared on exit, so a re-referenced
+      // node reached via a sibling path (a DAG, not a cycle) is fully re-walked — byte-identical
+      // to the old recursive walker for every acyclic input.
+      type ValueFrame = { value: unknown; keyedType?: FridayKeyDrivenPiiType; assign: (r: unknown) => void };
+      type ExitFrame = { exit: object };
+      const root: { out: unknown } = { out: undefined };
+      const onPath = new WeakMap<object, unknown>();
+      const stack: Array<ValueFrame | ExitFrame> = [
+        { value, assign: (r) => { root.out = r; } },
+      ];
+
+      while (stack.length > 0) {
+        const frame = stack.pop() as ValueFrame | ExitFrame;
+        if ("exit" in frame) {
+          onPath.delete(frame.exit);
+          continue;
+        }
+        const { value: v, keyedType, assign } = frame;
+
+        if (Array.isArray(v)) {
+          if (onPath.has(v)) {
+            assign(onPath.get(v)); // cycle back-edge → structural share (no data loss)
+            continue;
+          }
+          const out: unknown[] = new Array(v.length);
+          onPath.set(v, out);
+          assign(out);
+          stack.push({ exit: v });
+          // Push in reverse so element frames are processed in forward index order (arrays
+          // thread the parent keyedType into their elements).
+          for (let i = v.length - 1; i >= 0; i -= 1) {
+            const idx = i;
+            stack.push({ value: v[idx], keyedType, assign: (r) => { out[idx] = r; } });
+          }
+          continue;
+        }
+
+        if (v instanceof Date) {
+          assign(v);
+          continue;
+        }
+
+        if (v && typeof v === "object") {
+          if (onPath.has(v)) {
+            assign(onPath.get(v)); // cycle back-edge → structural share (no data loss)
+            continue;
+          }
+          const out: Record<string, unknown> = {};
+          onPath.set(v, out);
+          assign(out);
+          stack.push({ exit: v });
+          // Reserve every key slot in FORWARD Object.entries order (collision-disambiguated,
+          // own data property) so the key set / enumeration order match the old recursive
+          // walker exactly; deep values fill the reserved slots as their frames complete.
+          const childFrames: ValueFrame[] = [];
+          for (const [k, entry] of Object.entries(v as Record<string, unknown>)) {
+            const finalKey = resolveFinalKey(out, redactKey(k));
+            defineOwn(out, finalKey, undefined);
+            const childKeyedType = sensitiveTypeForKey(k);
+            childFrames.push({
+              value: entry,
+              keyedType: childKeyedType,
+              assign: (r) => { defineOwn(out, finalKey, r); },
+            });
+          }
+          for (let i = childFrames.length - 1; i >= 0; i -= 1) {
+            stack.push(childFrames[i]);
+          }
+          continue;
+        }
+
+        // Scalar leaf (string / number / bigint / Date / null / boolean / undefined / other).
+        assign(transformScalar(v, keyedType));
+      }
+
+      return { value: root.out, tagsToAdd: [...tagSet] };
     },
   };
 }

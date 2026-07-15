@@ -707,14 +707,16 @@ describe("FridayMemoryPiiGuard", () => {
     });
   });
 
-  // ─── F2: deep nesting must fail CLOSED, never emit an unscanned subtree ───
+  // ─── F2 (Advisor round 2): deep nesting is FULLY SCANNED — no cap, no sentinel ───
   //
-  // The walker returned the remaining subtree UNCHANGED past the recursion cap (fail-OPEN):
-  // a 7-level object carrying `owner@example.com` egressed in cleartext. The fix scans every
-  // depth realistic (byte-bounded) input can reach and, at a high structural safety cap
-  // (stack-overflow guard), fails CLOSED by replacing the over-deep subtree with a redaction
-  // sentinel — never cleartext.
-  describe("redactDeep F2 — deep nesting fails CLOSED (no unscanned egress) [red-first]", () => {
+  // The prior round replaced every subtree past a fixed recursion cap (depth 500) with a
+  // "[REDACTED_DEPTH]" sentinel in ALL modes. That silently CORRUPTED valid deep user metadata
+  // (canonical-data loss — DATA-RETENTION-001) and violated the tag/block non-transform
+  // contract. The rewrite makes the walker ITERATIVE (heap work stack) + CYCLE-AWARE + FULL-
+  // SCAN: bounded only by the upstream 16 KiB metadata byte-limit, every admitted structure is
+  // scanned to its leaves. Deep PII is ALWAYS found (the F2 leak stays closed) AND benign deep
+  // data round-trips UNCHANGED (the new data-loss defect is fixed). No sentinel exists anymore.
+  describe("redactDeep F2 — deep nesting fully scanned, no cap/sentinel [red-first]", () => {
     const guard = createFridayMemoryPiiGuard("redact");
 
     // `depth` levels of {child: …} wrapping a leaf object with an email + keyed phone/ssn.
@@ -728,7 +730,14 @@ describe("FridayMemoryPiiGuard", () => {
       return node;
     }
 
-    it("redacts PII at depth 7 (previously beyond the depth-6 fail-open boundary)", () => {
+    // `depth` levels of {child: …} wrapping a purely BENIGN leaf that must round-trip unchanged.
+    function deepBenign(depth: number): unknown {
+      let node: Record<string, unknown> = { keepme: "benign-canonical-marker", count: 42 };
+      for (let i = 0; i < depth; i += 1) node = { child: node, idx: i };
+      return node;
+    }
+
+    it("redacts PII at depth 7 (regression — was the depth-6 fail-open boundary)", () => {
       const { value, tagsToAdd } = guard.redactDeep(deepPii(7));
       const json = JSON.stringify(value);
       expect(json).not.toContain("owner@example.com");
@@ -742,7 +751,7 @@ describe("FridayMemoryPiiGuard", () => {
       );
     });
 
-    it("redacts PII much deeper (depth 300) — still fully scanned below the safety cap", () => {
+    it("redacts PII much deeper (depth 300) — regression, was below the old cap", () => {
       const { value } = guard.redactDeep(deepPii(300));
       const json = JSON.stringify(value);
       expect(json).not.toContain("owner@example.com");
@@ -750,12 +759,109 @@ describe("FridayMemoryPiiGuard", () => {
       expect(json).toContain("[EMAIL]");
     });
 
-    it("fails CLOSED beyond the structural safety cap: the over-deep subtree is replaced by a redaction sentinel, never emitted clear", () => {
-      const { value } = guard.redactDeep(deepPii(1200));
+    // Red-first: on the pre-fix code the leaf sits past the depth-500 cap, so it was replaced by
+    // the sentinel (no [EMAIL], a "[REDACTED_DEPTH]" instead). Now it is fully scanned.
+    it.each([501, 1200, 2000])(
+      "redacts deep PII at depth %i — no sentinel, no leak (red-first)",
+      (depth) => {
+        const { value, tagsToAdd } = guard.redactDeep(deepPii(depth));
+        const json = JSON.stringify(value);
+        expect(json).not.toContain("owner@example.com"); // no cleartext leak
+        expect(json).not.toContain("5552345678");
+        expect(json).not.toContain("123456789");
+        expect(json).not.toContain("[REDACTED_DEPTH]"); // sentinel is gone entirely
+        expect(json).toContain("[EMAIL]"); // deep PII actually redacted
+        expect(json).toContain("[PHONE_US]");
+        expect(json).toContain("[SSN_US]");
+        expect(tagsToAdd).toEqual(
+          expect.arrayContaining(["pii.email", "pii.phone_us", "pii.ssn_us"]),
+        );
+      },
+    );
+
+    // Red-first: on the pre-fix code the benign leaf past depth 500 was CORRUPTED to the
+    // sentinel (silent canonical-data loss). Now deep benign metadata round-trips byte-identical.
+    it.each([501, 1200, 2000])(
+      "round-trips BENIGN deep data UNCHANGED at depth %i (no silent loss — red-first)",
+      (depth) => {
+        const input = deepBenign(depth);
+        const { value, tagsToAdd } = guard.redactDeep(input);
+        const json = JSON.stringify(value);
+        expect(json).not.toContain("[REDACTED_DEPTH]"); // never corrupted
+        expect(json).toContain("benign-canonical-marker"); // deep canonical value survives
+        expect(json).toBe(JSON.stringify(input)); // byte-identical round-trip
+        expect(tagsToAdd).toHaveLength(0); // no PII → no tags
+      },
+    );
+  });
+
+  // ─── F2b (Advisor round 2): the tag/block MODE CONTRACTS hold at ANY depth ───
+  //
+  // The old sentinel replaced deep subtrees regardless of mode. tag mode MUST NOT transform any
+  // value; block mode MUST surface a pii.* tag for PII at any depth so the guard service can
+  // reject the whole write (never persist an untagged "scanned-clean" sentinel).
+  describe("redactDeep F2b — deep mode contracts (tag non-transform / block tags) [red-first]", () => {
+    function deepNode(depth: number, leaf: Record<string, unknown>): unknown {
+      let node: Record<string, unknown> = leaf;
+      for (let i = 0; i < depth; i += 1) node = { child: node };
+      return node;
+    }
+
+    it("tag mode: deep subtree is returned UNCHANGED (no sentinel, no value transform)", () => {
+      const tagGuard = createFridayMemoryPiiGuard("tag");
+      const input = deepNode(1200, { contact: "owner@example.com", phone: 5552345678, note: "keep-me" });
+      const { value, tagsToAdd } = tagGuard.redactDeep(input);
       const json = JSON.stringify(value);
-      expect(json).not.toContain("owner@example.com"); // deep email never leaked
-      expect(json).not.toContain("5552345678");
-      expect(json).toContain("[REDACTED_DEPTH]"); // fail-closed sentinel present
+      expect(json).not.toContain("[REDACTED_DEPTH]");
+      expect(json).toBe(JSON.stringify(input)); // tag mode transforms NOTHING, even deep
+      expect(json).toContain("owner@example.com"); // value untouched
+      expect(json).toContain("5552345678");
+      // …but the deep PII is still DETECTED and reported as tags.
+      expect(tagsToAdd).toEqual(expect.arrayContaining(["pii.email", "pii.phone_us"]));
+    });
+
+    it("block mode: deep PII yields pii.* tags (so the blocker can reject) — no untagged sentinel", () => {
+      const blockGuard = createFridayMemoryPiiGuard("block");
+      const input = deepNode(1200, { contact: "owner@example.com", ssn: 123456789 });
+      const { value, tagsToAdd } = blockGuard.redactDeep(input);
+      const json = JSON.stringify(value);
+      // block mode does not transform values here (the guard service throws on tagsToAdd);
+      // crucially the deep PII must be TAGGED, never silently replaced by an untagged sentinel.
+      expect(json).not.toContain("[REDACTED_DEPTH]");
+      expect(tagsToAdd).toEqual(expect.arrayContaining(["pii.email", "pii.ssn_us"]));
+    });
+  });
+
+  // ─── F2c (Advisor round 2): cycle safety — no hang, no stack overflow ───
+  //
+  // A cyclic object must terminate: the ancestor-path guard breaks the back-edge (structural
+  // share, no data loss) instead of infinite-looping. The old recursive walker would stack-
+  // overflow (or, past the cap, sentinel-truncate) a deep/cyclic structure.
+  describe("redactDeep F2c — cycle safety (terminates, each node once) [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("terminates on a direct self-cycle and still redacts the PII leaf", () => {
+      const node: Record<string, unknown> = { contact: "owner@example.com", phone: 5552345678 };
+      node.self = node; // cycle
+      const { value, tagsToAdd } = guard.redactDeep(node);
+      const out = value as Record<string, unknown>;
+      expect(out.contact).toBe("[EMAIL]"); // PII in the cyclic node is redacted
+      expect(out.phone).toBe("[PHONE_US]");
+      expect(out.self).toBe(out); // back-edge preserved as a structural self-reference
+      expect(tagsToAdd).toEqual(expect.arrayContaining(["pii.email", "pii.phone_us"]));
+    });
+
+    it("terminates on a mutual (A→B→A) cycle nested under a benign parent", () => {
+      const a: Record<string, unknown> = { email: "a-owner@example.com" };
+      const b: Record<string, unknown> = { ssn: 123456789, back: a };
+      a.next = b; // A → B → A
+      const { value } = guard.redactDeep({ root: a, note: "keep" });
+      const out = value as { root: Record<string, unknown>; note: string };
+      expect(out.note).toBe("keep");
+      expect(out.root.email).toBe("[EMAIL]");
+      const bOut = out.root.next as Record<string, unknown>;
+      expect(bOut.ssn).toBe("[SSN_US]");
+      expect(bOut.back).toBe(out.root); // cycle closed back onto the same output node
     });
   });
 
