@@ -1,11 +1,13 @@
 export type {
+  CategoryRetention,
   FridayRetentionPolicy,
   FridayRetentionJobResult,
 } from "./retention/friday-retention.types.js";
 export {
   FRIDAY_DEFAULT_RETENTION_POLICY,
+  FRIDAY_BOOTSTRAP_NONCE_SWEEP_BATCH_LIMIT,
 } from "./retention/friday-retention.types.js";
-export { createFridayRetentionJob } from "./retention/friday-retention-job.js";
+export { createFridayRetentionJob, resolveCutoff } from "./retention/friday-retention-job.js";
 export type { FridayRetentionJob } from "./retention/friday-retention-job.js";
 
 export type {

@@ -7,6 +7,7 @@ import { createFridayLearningEventLedger } from "#ledger";
 import { createFridaySkillRunStore } from "#ledger";
 import { createFridaySetupBootstrapNonceRepository } from "#api";
 import { createFridayRetentionJob } from "#jobs";
+import type { FridayRetentionPolicy } from "#jobs";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 
 describe("FridayRetentionJob", () => {
@@ -69,18 +70,13 @@ describe("FridayRetentionJob", () => {
     db.close();
   });
 
-  function createJob(policy?: Partial<{
-    learningEventsDays: number;
-    heartbeatsDays: number;
-    pairingRequestsDays: number;
-    outboxTerminalDays: number;
-    skillRunTerminalDays: number;
-    auditLogsDays: number;
-    agentRunsDays: number;
-    llmUsageRecordsDays: number;
-    errorIncidentsDays: number;
-    bootstrapNoncesConsumedDays: number;
-  }>) {
+  // Content categories are now default-PERMANENT in production
+  // (FRIDAY_DEFAULT_RETENTION_POLICY — proven in
+  // friday-retention-policy-core.test.ts). The deletion-asserting tests below
+  // exercise the *enable* path, so this helper injects each content category
+  // explicitly ENABLED at its historical day-window as a discriminated
+  // {mode:'after_days'} config. Security-lifecycle TTLs stay numeric.
+  function createJob(policy?: Partial<FridayRetentionPolicy>) {
     return createFridayRetentionJob({
       db,
       pairingRequestRepo,
@@ -91,15 +87,15 @@ describe("FridayRetentionJob", () => {
       bootstrapNonceRepo,
       nowIso: () => NOW,
       policy: {
-        learningEventsDays: 90,
-        heartbeatsDays: 7,
+        learningEvents: { mode: "after_days", days: 90 },
+        heartbeats: { mode: "after_days", days: 7 },
+        skillRunTerminal: { mode: "after_days", days: 30 },
+        auditLogs: { mode: "after_days", days: 90 },
+        agentRuns: { mode: "after_days", days: 90 },
+        llmUsageRecords: { mode: "after_days", days: 180 },
+        errorIncidents: { mode: "after_days", days: 90 },
         pairingRequestsDays: 7,
         outboxTerminalDays: 14,
-        skillRunTerminalDays: 30,
-        auditLogsDays: 90,
-        agentRunsDays: 90,
-        llmUsageRecordsDays: 180,
-        errorIncidentsDays: 90,
         bootstrapNoncesConsumedDays: 365,
         ...policy,
       },

@@ -1,13 +1,43 @@
+/**
+ * Per-category retention configuration for a CONTENT category.
+ *
+ * DATA-RETENTION-001 / U9-DATA-RETENTION: local data is default-PERMANENT until
+ * the user deletes it; automatic time-based cleanup is default-OFF and opt-in
+ * per category. `permanent` (the default) means "never auto-delete". `after_days`
+ * is the ONLY way to enable a time-based sweep for a content category, and the
+ * evaluator (`resolveCutoff`) fails closed — treats any invalid config as
+ * permanent — so a corrupt policy can never trigger a silent deletion.
+ */
+export type CategoryRetention =
+  | { mode: "permanent" }
+  | { mode: "after_days"; days: number };
+
 export interface FridayRetentionPolicy {
-  learningEventsDays: number;
-  heartbeatsDays: number;
+  // ── CONTENT categories (canonical + derived-content) ──────────────────────
+  // Default PERMANENT. Auto-deletion is opt-in per category via `after_days`;
+  // any invalid config fails closed to permanent (see resolveCutoff).
+  learningEvents: CategoryRetention;
+  /** Derived telemetry; per operator, default no-delete until an authority exemption is proven. */
+  heartbeats: CategoryRetention;
+  skillRunTerminal: CategoryRetention;
+  auditLogs: CategoryRetention;
+  agentRuns: CategoryRetention;
+  llmUsageRecords: CategoryRetention;
+  errorIncidents: CategoryRetention;
+
+  // ── SECURITY-LIFECYCLE terminal TTLs (EXEMPT from default-permanent) ───────
+  // These are NOT canonical content-retention: each deletes a row only once it
+  // is TERMINAL / state-invalidated, and the deletion is a security-hygiene /
+  // anti-replay lifecycle (not content retention). They therefore remain plain
+  // numeric day-windows and are intentionally left ON:
+  //   - pairingRequestsDays: hard-delete of RESOLVED pairing-request rows.
+  //   - outboxTerminalDays:  hard-delete of TERMINAL (acked/failed) outbox rows.
+  //   - bootstrapNoncesConsumedDays: retention horizon for CONSUMED install
+  //     nonces (an anti-replay / defence-in-depth record whose authoritative
+  //     binding lives on users.password_hash). Expired UNCONSUMED nonces are
+  //     always reaped (unusable) with no policy knob.
   pairingRequestsDays: number;
   outboxTerminalDays: number;
-  skillRunTerminalDays: number;
-  auditLogsDays: number;
-  agentRunsDays: number;
-  llmUsageRecordsDays: number;
-  errorIncidentsDays: number;
   /**
    * Retention horizon for CONSUMED setup-bootstrap install-nonce rows. Expired
    * UNCONSUMED nonces are always reaped once past `expires_at` (no policy knob —
@@ -19,15 +49,17 @@ export interface FridayRetentionPolicy {
 }
 
 export const FRIDAY_DEFAULT_RETENTION_POLICY: FridayRetentionPolicy = {
-  learningEventsDays: 90,
-  heartbeatsDays: 7,
+  // Content categories: PERMANENT by default (DATA-RETENTION-001).
+  learningEvents: { mode: "permanent" },
+  heartbeats: { mode: "permanent" },
+  skillRunTerminal: { mode: "permanent" },
+  auditLogs: { mode: "permanent" },
+  agentRuns: { mode: "permanent" },
+  llmUsageRecords: { mode: "permanent" },
+  errorIncidents: { mode: "permanent" },
+  // Security-lifecycle terminal TTLs (unchanged; not content retention).
   pairingRequestsDays: 7,
   outboxTerminalDays: 14,
-  skillRunTerminalDays: 30,
-  auditLogsDays: 90,
-  agentRunsDays: 90,
-  llmUsageRecordsDays: 180,
-  errorIncidentsDays: 90,
   bootstrapNoncesConsumedDays: 365,
 };
 
