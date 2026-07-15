@@ -3718,9 +3718,16 @@ mod tests {
     }
 
     #[test]
-    fn retention_sweep_runs_only_on_enabled_reaper_tick() {
+    fn retention_sweep_is_default_permanent_even_when_the_flag_is_enabled() {
+        // DATA-RETENTION-001 (R-Rust): the reaper tick passes `RetentionWindows::default()`, which
+        // is now PERMANENT for every user-data category. So even with the retention flag ENABLED,
+        // the sweep deletes NOTHING — local canonical user data is retained until the user
+        // explicitly enables a per-category window. This is the tick-level mirror of #1608's
+        // default-permanent policy; flipping the flag alone can never silently prune content.
         let (rt, _ws) = mock_runtime("retention-reaper-tick", OWNER);
         let now = 2_000 * 24 * 60 * 60 * 1000_i64;
+        // A token_ledger row far older than the (opt-in) 90-day window — maximally eligible IF a
+        // window were enabled; under the permanent default it must survive regardless.
         let old = now - friday_storage::retention::TOKEN_LEDGER_MAX_AGE_MS - 1;
         rt.db()
             .conn()
@@ -3751,8 +3758,9 @@ mod tests {
         run_session_reaper_tick(rt.db(), true, now);
         assert_eq!(
             count(),
-            0,
-            "retention flag ON runs artifact retention on the same tick"
+            1,
+            "retention flag ON still deletes NOTHING: the default policy is PERMANENT \
+             (DATA-RETENTION-001)"
         );
         assert_eq!(
             rt.db()

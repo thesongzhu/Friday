@@ -57,6 +57,7 @@
 //! NOT a v1 GO.
 
 use crate::error::Result;
+use crate::retention::{resolve_cutoff, CategoryRetention};
 use rusqlite::params;
 use rusqlite::Connection;
 
@@ -68,8 +69,13 @@ pub const IDLE_TIMEOUT_MS: i64 = 30 * 60 * 1000;
 pub const ARCHIVE_TIMEOUT_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 /// archived → pruned: archived for longer than 30 days.
 pub const PRUNE_TIMEOUT_MS: i64 = 30 * 24 * 60 * 60 * 1000;
-/// pruned → hard-delete: pruned for longer than 7 days.
-pub const HARD_DELETE_TIMEOUT_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+/// pruned → hard-delete: the ORIGINAL 7-day window. Under DATA-RETENTION-001 the hard-delete is now
+/// default-OFF (see [`sweep_lifecycle`]); this window applies ONLY when an operator explicitly opts
+/// the session-content category in as `CategoryRetention::AfterDays(HARD_DELETE_TIMEOUT_DAYS)`,
+/// which reproduces exactly the old `now - HARD_DELETE_TIMEOUT_MS` cutoff.
+pub const HARD_DELETE_TIMEOUT_DAYS: i64 = 7;
+/// pruned → hard-delete window in ms (derived from [`HARD_DELETE_TIMEOUT_DAYS`]).
+pub const HARD_DELETE_TIMEOUT_MS: i64 = HARD_DELETE_TIMEOUT_DAYS * 24 * 60 * 60 * 1000;
 
 /// Per-transition counts from one [`sweep_lifecycle`] call, for observability. The
 /// `hard_deleted` count is the number of `agent_session` ROWS removed (each may have
@@ -100,15 +106,37 @@ impl SweepOutcome {
     }
 }
 
-/// Run the four lifecycle transitions over `agent_session` in ONE transaction at logical
-/// time `now_ms` (epoch ms). Returns the per-transition [`SweepOutcome`] counts.
-///
-/// The four steps run in order (active→idle→archived→pruned→hard-delete); each reads the
-/// timestamp the PRIOR step wrote, but a strict `<` boundary plus the per-phase timeouts
-/// mean a row advances at most one phase per call (a just-idled row's `idle_at = now` is
-/// not `< now - ARCHIVE_TIMEOUT`). The whole sweep is all-or-nothing: any error rolls back
-/// every transition (no partial sweep).
+/// Run the four lifecycle transitions with the DEFAULT session-content policy — `Permanent`
+/// (DATA-RETENTION-001). This is the entry the runtime reaper calls. The reversible status
+/// transitions (active→idle→archived→pruned) still fire; the IRREVERSIBLE pruned→hard-delete leg,
+/// which destroys chat/session USER-DATA, is SKIPPED (deletes nothing) under the permanent default,
+/// so local chat is retained forever until the user explicitly deletes it. Enabling a real
+/// time-based hard-delete is an explicit, per-category opt-in via [`sweep_lifecycle_with_policy`].
 pub fn sweep_lifecycle(conn: &Connection, now_ms: i64) -> Result<SweepOutcome> {
+    sweep_lifecycle_with_policy(conn, now_ms, CategoryRetention::Permanent)
+}
+
+/// Run the four lifecycle transitions over `agent_session` in ONE transaction at logical
+/// time `now_ms` (epoch ms), with an explicit `session_content` retention policy for the
+/// IRREVERSIBLE pruned→hard-delete leg. Returns the per-transition [`SweepOutcome`] counts.
+///
+/// The active→idle→archived→pruned STATUS transitions are reversible lifecycle bookkeeping (they
+/// destroy no content) and ALWAYS run — they are session lifecycle, not user-data retention, and
+/// are left non-degraded. The pruned→hard-delete leg deletes chat/session USER-DATA and is gated by
+/// `session_content` through the fail-closed [`resolve_cutoff`]: `Permanent` (the default) or ANY
+/// invalid config ⇒ NO hard-delete (delete 0); an explicit, well-formed
+/// `AfterDays(HARD_DELETE_TIMEOUT_DAYS)` reproduces the original 7-day cutoff. This mirrors PR
+/// #1608's default-permanent + fail-closed policy for the user-data portion of the sweep.
+///
+/// The steps run in order; each reads the timestamp the PRIOR step wrote, but a strict `<` boundary
+/// plus the per-phase timeouts mean a row advances at most one phase per call (a just-idled row's
+/// `idle_at = now` is not `< now - ARCHIVE_TIMEOUT`). The whole sweep is all-or-nothing: any error
+/// rolls back every transition (no partial sweep).
+pub fn sweep_lifecycle_with_policy(
+    conn: &Connection,
+    now_ms: i64,
+    session_content: CategoryRetention,
+) -> Result<SweepOutcome> {
     let tx = conn.unchecked_transaction()?;
 
     // 1. active → idle: no activity for > IDLE_TIMEOUT. Drive off
@@ -145,27 +173,36 @@ pub fn sweep_lifecycle(conn: &Connection, now_ms: i64) -> Result<SweepOutcome> {
         params![now_ms, prune_before],
     )?;
 
-    // 4. pruned → hard-delete: pruned for > HARD_DELETE_TIMEOUT (drives off pruned_at).
-    //    STRICT `<`. Delete child messages FIRST (FK has no ON DELETE CASCADE and
-    //    foreign_keys is ON), then the parent rows — same txn, no orphans.
-    let hard_delete_before = now_ms - HARD_DELETE_TIMEOUT_MS;
-    let messages_deleted = tx.execute(
-        "DELETE FROM agent_session_message
+    // 4. pruned → hard-delete: the IRREVERSIBLE deletion of chat/session USER-DATA. DATA-RETENTION-
+    //    001: default-permanent + fail-closed. `resolve_cutoff` returns the cutoff ONLY for an
+    //    explicitly-enabled, well-formed AfterDays policy; `Permanent` (default) or any invalid
+    //    config ⇒ None ⇒ NO hard-delete (chat retained forever). When enabled, STRICT `<` on
+    //    pruned_at; child messages deleted FIRST (FK has no ON DELETE CASCADE and foreign_keys is
+    //    ON), then the parent rows — same txn, no orphans.
+    let (messages_deleted, hard_deleted) = match resolve_cutoff(now_ms, session_content) {
+        Some(hard_delete_before) => {
+            let m = tx.execute(
+                "DELETE FROM agent_session_message
           WHERE agent_session_id IN (
               SELECT agent_session_id FROM agent_session
                WHERE status = 'pruned'
                  AND pruned_at IS NOT NULL
                  AND pruned_at < ?1
           )",
-        params![hard_delete_before],
-    )?;
-    let hard_deleted = tx.execute(
-        "DELETE FROM agent_session
+                params![hard_delete_before],
+            )?;
+            let h = tx.execute(
+                "DELETE FROM agent_session
           WHERE status = 'pruned'
             AND pruned_at IS NOT NULL
             AND pruned_at < ?1",
-        params![hard_delete_before],
-    )?;
+                params![hard_delete_before],
+            )?;
+            (m, h)
+        }
+        // PERMANENT / fail-closed: chat/session user-data is never destroyed.
+        None => (0usize, 0usize),
+    };
 
     // M4 receipt — FOLDED INTO THE SWEEP TXN, before commit, so it is ATOMIC with the irreversible
     // hard-delete. Reversibility rationale: M4's prune leg is IRREVERSIBLE (the rows are gone), so
@@ -244,6 +281,18 @@ mod tests {
                 |r| r.get::<_, bool>(0),
             )
             .unwrap()
+    }
+
+    /// Run the sweep with the hard-delete leg EXPLICITLY opted in (the operator-enabled policy that
+    /// reproduces the original 7-day pruned→hard-delete cutoff). Tests that exercise the hard-delete
+    /// mechanism call this; the DEFAULT-policy [`sweep_lifecycle`] is covered separately (it must
+    /// hard-delete NOTHING — DATA-RETENTION-001).
+    fn sweep_enabled(conn: &Connection, now_ms: i64) -> Result<SweepOutcome> {
+        sweep_lifecycle_with_policy(
+            conn,
+            now_ms,
+            CategoryRetention::AfterDays(HARD_DELETE_TIMEOUT_DAYS),
+        )
     }
 
     /// Hand-place a session in a given phase with explicit timestamps so a boundary test can
@@ -506,7 +555,7 @@ mod tests {
             Some(now - HARD_DELETE_TIMEOUT_MS - 1),
             1,
         );
-        let out = sweep_lifecycle(db.conn(), now).unwrap();
+        let out = sweep_enabled(db.conn(), now).unwrap();
         assert_eq!(out.hard_deleted, 1);
         assert!(
             exists(&db, "keep"),
@@ -541,7 +590,7 @@ mod tests {
             Some(now - HARD_DELETE_TIMEOUT_MS - 1),
             1,
         );
-        let out = sweep_lifecycle(db.conn(), now).unwrap();
+        let out = sweep_enabled(db.conn(), now).unwrap();
         assert_eq!(
             out.hard_deleted, 1,
             "only the expired pruned row is deleted"
@@ -597,7 +646,7 @@ mod tests {
         // (it keys on pruned_at), and the pre-set pruned_at survives the append's
         // updated_at bump.
 
-        let out = sweep_lifecycle(db.conn(), now).unwrap();
+        let out = sweep_enabled(db.conn(), now).unwrap();
         assert_eq!(out.hard_deleted, 1);
         assert_eq!(
             out.messages_deleted, 2,
@@ -666,7 +715,7 @@ mod tests {
         )
         .unwrap();
 
-        let out = sweep_lifecycle(db.conn(), now).unwrap();
+        let out = sweep_enabled(db.conn(), now).unwrap();
         assert_eq!(out.hard_deleted, 1);
         assert_eq!(out.messages_deleted, 2);
 
@@ -717,7 +766,7 @@ mod tests {
         // Remove the receipt table so the folded INSERT cannot succeed.
         db.conn().execute_batch("DROP TABLE retention_log").unwrap();
 
-        let res = sweep_lifecycle(db.conn(), now);
+        let res = sweep_enabled(db.conn(), now);
         assert!(
             res.is_err(),
             "a receipt-write failure must surface as an Err, not a silently-committed prune"
@@ -795,7 +844,7 @@ mod tests {
             1,
         );
 
-        let first = sweep_lifecycle(db.conn(), now).unwrap();
+        let first = sweep_enabled(db.conn(), now).unwrap();
         assert_eq!(first.idled, 1);
         assert_eq!(first.archived, 1);
         assert_eq!(first.pruned, 1);
@@ -804,7 +853,7 @@ mod tests {
         assert_eq!(status_of(&db, "a"), "idle");
 
         // Second sweep at the SAME now: nothing is newly eligible → no-op.
-        let second = sweep_lifecycle(db.conn(), now).unwrap();
+        let second = sweep_enabled(db.conn(), now).unwrap();
         assert!(
             second.is_empty(),
             "second back-to-back sweep changes nothing"
@@ -849,22 +898,122 @@ mod tests {
 
         // Tick 1: past idle → idle.
         let t1 = t0 + IDLE_TIMEOUT_MS + 1;
-        assert_eq!(sweep_lifecycle(db.conn(), t1).unwrap().idled, 1);
+        assert_eq!(sweep_enabled(db.conn(), t1).unwrap().idled, 1);
         assert_eq!(status_of(&db, "s"), "idle");
 
         // Tick 2: past archive (idle_at was t1) → archived.
         let t2 = t1 + ARCHIVE_TIMEOUT_MS + 1;
-        assert_eq!(sweep_lifecycle(db.conn(), t2).unwrap().archived, 1);
+        assert_eq!(sweep_enabled(db.conn(), t2).unwrap().archived, 1);
         assert_eq!(status_of(&db, "s"), "archived");
 
         // Tick 3: past prune (archived_at was t2) → pruned.
         let t3 = t2 + PRUNE_TIMEOUT_MS + 1;
-        assert_eq!(sweep_lifecycle(db.conn(), t3).unwrap().pruned, 1);
+        assert_eq!(sweep_enabled(db.conn(), t3).unwrap().pruned, 1);
         assert_eq!(status_of(&db, "s"), "pruned");
 
         // Tick 4: past hard-delete (pruned_at was t3) → gone.
         let t4 = t3 + HARD_DELETE_TIMEOUT_MS + 1;
-        assert_eq!(sweep_lifecycle(db.conn(), t4).unwrap().hard_deleted, 1);
+        assert_eq!(sweep_enabled(db.conn(), t4).unwrap().hard_deleted, 1);
         assert!(!exists(&db, "s"));
+    }
+
+    // --- DATA-RETENTION-001: the DEFAULT session-content policy never hard-deletes chat ---
+
+    #[test]
+    fn default_policy_never_hard_deletes_chat_even_under_far_future_time_travel() {
+        // The pruned→hard-delete leg destroys chat/session USER-DATA. DATA-RETENTION-001: that
+        // deletion is PERMANENT-by-default (default-OFF), so `sweep_lifecycle` (the default-policy
+        // entry the runtime reaper calls) must hard-delete NOTHING even far in the future.
+        //
+        // RED-FIRST: against the pre-fix code (hard-delete keyed only on pruned_at age) this
+        // deletes the expired pruned session, so `hard_deleted == 1` and this test FAILS. After
+        // the fix (default session-content policy = permanent, fail-closed) it hard-deletes
+        // nothing and PASSES. The status transitions (idle/archive/prune) are NON-destructive
+        // lifecycle and are unaffected.
+        let db = Db::open_hub(&tmp("session-default-permanent")).unwrap();
+        let now = 1_000_000 * 24 * 60 * 60 * 1000_i64; // ~1e6 days into the future
+                                                       // A long-pruned session WITH chat messages — maximally eligible under an age-only rule.
+        seed(&db, "old_pruned", "pruned", None, None, Some(1), 1);
+        append_session_message(
+            db.conn(),
+            "old_pruned",
+            &SessionMessage::new("user", "CANONICAL-CHAT-CONTENT", None),
+            10,
+        )
+        .unwrap();
+
+        let out = sweep_lifecycle(db.conn(), now).unwrap();
+
+        assert_eq!(
+            out.hard_deleted, 0,
+            "DEFAULT policy is PERMANENT: chat/session user-data is never hard-deleted"
+        );
+        assert_eq!(
+            out.messages_deleted, 0,
+            "chat messages are never destroyed by default"
+        );
+        assert!(
+            exists(&db, "old_pruned"),
+            "the pruned session + its chat survive the default (permanent) reaper forever"
+        );
+        let msgs: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM agent_session_message WHERE agent_session_id = 'old_pruned'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            msgs, 1,
+            "chat content is retained until the user explicitly deletes"
+        );
+    }
+
+    #[test]
+    fn default_policy_still_advances_status_lifecycle_but_never_hard_deletes() {
+        // NON-DEGRADE (lifecycle): the reversible active→idle→archived→pruned STATUS transitions
+        // are session lifecycle (they destroy no content) and MUST keep firing under the default
+        // (permanent) policy — only the IRREVERSIBLE hard-delete of chat user-data is gated OFF.
+        // A session walks the full status lifecycle across ticks, then — even far past the old
+        // hard-delete window — is NOT deleted.
+        let db = Db::open_hub(&tmp("default-lifecycle-intact")).unwrap();
+        let t0 = 1_000_000_000_i64;
+        ensure_session(db.conn(), "s", t0).unwrap();
+
+        let t1 = t0 + IDLE_TIMEOUT_MS + 1;
+        assert_eq!(
+            sweep_lifecycle(db.conn(), t1).unwrap().idled,
+            1,
+            "active→idle still fires under the default policy"
+        );
+        assert_eq!(status_of(&db, "s"), "idle");
+
+        let t2 = t1 + ARCHIVE_TIMEOUT_MS + 1;
+        assert_eq!(
+            sweep_lifecycle(db.conn(), t2).unwrap().archived,
+            1,
+            "idle→archived still fires"
+        );
+        assert_eq!(status_of(&db, "s"), "archived");
+
+        let t3 = t2 + PRUNE_TIMEOUT_MS + 1;
+        assert_eq!(
+            sweep_lifecycle(db.conn(), t3).unwrap().pruned,
+            1,
+            "archived→pruned still fires"
+        );
+        assert_eq!(status_of(&db, "s"), "pruned");
+
+        // Far past the old 7-day hard-delete window: under the DEFAULT policy the pruned session
+        // is NEVER hard-deleted (chat user-data is permanent).
+        let t4 = t3 + HARD_DELETE_TIMEOUT_MS * 1000 + 1;
+        let out = sweep_lifecycle(db.conn(), t4).unwrap();
+        assert_eq!(out.hard_deleted, 0, "default policy never hard-deletes");
+        assert!(
+            exists(&db, "s"),
+            "the pruned session survives forever under the permanent default"
+        );
+        assert_eq!(status_of(&db, "s"), "pruned");
     }
 }

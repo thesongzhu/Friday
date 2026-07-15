@@ -69,8 +69,8 @@ pub use provider_timeline_store::{
     StoredPendingAction, StoredTimeline, StoredTimelineEvent, TimelineEventRow, TimelineState,
 };
 pub use retention::{
-    insert_retention_log, insert_retention_log_in, sweep_retention, RetentionOutcome,
-    RetentionWindows,
+    insert_retention_log, insert_retention_log_in, resolve_cutoff, sweep_retention,
+    CategoryRetention, RetentionOutcome, RetentionWindows,
 };
 pub use run_result::{
     get_run_answer_for_principal, get_run_result, get_run_result_ref, persist_run_result,
@@ -80,7 +80,7 @@ pub use run_result::{
 pub use schema::{
     hub_code_max, hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES,
 };
-pub use session_lifecycle::{sweep_lifecycle, SweepOutcome};
+pub use session_lifecycle::{sweep_lifecycle, sweep_lifecycle_with_policy, SweepOutcome};
 pub use trust_grant::{
     active_grant, authorize_agent_action, grant_trust, latest_grant_any_state, revoke_trust,
     AgentActionContext,

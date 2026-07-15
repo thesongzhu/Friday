@@ -74,60 +74,183 @@ use rusqlite::params;
 use rusqlite::Connection;
 use rusqlite::Transaction;
 
-// ─── Operator-approved default retention windows (ms) ───
+// ─── DATA-RETENTION-001 policy primitive (default-permanent + fail-closed) ───
+//
+// This module MIRRORS the TS retention policy landed in PR #1608
+// (`src/jobs/retention/friday-retention.types.ts` + `resolveCutoff`) INTO the Rust sweep.
+// DATA-RETENTION-001 / U9-DATA-RETENTION: local user data is PERMANENT by default until the user
+// explicitly deletes it; automatic time-based cleanup is DEFAULT-OFF and opt-in per category; any
+// invalid/missing/corrupt config FAILS CLOSED (delete nothing). Every CONTENT category below is
+// therefore a discriminated policy that DEFAULTS to `Permanent`; `AfterDays(n>0)` is the ONLY way
+// to enable a time-based sweep, and [`resolve_cutoff`] is the single fail-closed gate every DELETE
+// consults. A magic sentinel (e.g. an "infinite" numeric window) is deliberately NOT used — "off"
+// is a clean, structurally-distinct `Permanent` variant, so a corrupt/unknown config can never be
+// misread as "delete after N days".
 
-/// `token_ledger` rows older than 90 days are pruned (keyed on `created_at`).
-pub const TOKEN_LEDGER_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
-/// `run_result` rows older than 365 days are pruned (keyed on `created_at`).
-pub const RUN_RESULT_MAX_AGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
-/// `surface_event` rows older than 90 days are pruned (keyed on `created_at_ms`).
-pub const SURFACE_EVENT_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
-/// `provider_session_event` rows older than 90 days are pruned (keyed on `observed_at`).
-pub const PROVIDER_SESSION_EVENT_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
-/// Terminal `agent_run` rows older than 365 days are pruned after their events/results are gone.
-pub const AGENT_RUN_MAX_AGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
-/// Terminal `mission` rows older than 365 days are pruned (keyed on `updated_at_ms`).
-pub const MISSION_MAX_AGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
-/// Terminal `work_item` rows older than 365 days are pruned (keyed on `updated_at_ms`).
-pub const WORK_ITEM_MAX_AGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
-/// Rejected/expired memory CANDIDATES older than 30 days are pruned (keyed on `created_at`).
-/// CONFIRMED memory is NEVER pruned regardless of age.
-pub const MEMORY_CANDIDATE_MAX_AGE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+/// One CONTENT category's retention policy. `Permanent` (the default) means "never auto-delete".
+/// `AfterDays(n)` enables a time-based sweep that deletes rows older than `n` days — but ONLY when
+/// `n` is a positive integer whose cutoff is in range; anything else fails closed via
+/// [`resolve_cutoff`]. Mirrors the TS `CategoryRetention` union (`{mode:"permanent"} |
+/// {mode:"after_days",days:n}`) from PR #1608.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CategoryRetention {
+    /// Retain forever (DATA-RETENTION-001 default). The sweep skips this category entirely.
+    Permanent,
+    /// Opt-in: delete rows older than `days` days. A non-positive or overflowing `days` fails
+    /// closed (see [`resolve_cutoff`]) — it is NEVER treated as "delete everything".
+    AfterDays(i64),
+}
+
+impl CategoryRetention {
+    /// FAIL-CLOSED constructor from a serialized `(mode, days)` pair — the Rust mirror of the TS
+    /// `resolveCutoff` input validation (#1608). This is the boundary where an untrusted/persisted
+    /// config (env / JSON / DB) becomes a typed policy. ANY unrecognized/empty mode, or
+    /// `after_days` with a missing / zero / negative `days`, yields `Permanent` (delete nothing).
+    /// Only a well-formed `("after_days", Some(n>0))` enables a sweep.
+    pub fn from_config(mode: &str, days: Option<i64>) -> CategoryRetention {
+        match mode {
+            "after_days" => match days {
+                Some(d) if d > 0 => CategoryRetention::AfterDays(d),
+                // missing / zero / negative days ⇒ fail closed.
+                _ => CategoryRetention::Permanent,
+            },
+            "permanent" => CategoryRetention::Permanent,
+            // unknown / corrupt / empty mode ⇒ fail closed.
+            _ => CategoryRetention::Permanent,
+        }
+    }
+}
+
+/// One day in milliseconds. The sweep keys on epoch-ms timestamps.
+pub const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// FAIL-CLOSED cutoff evaluator — the single gate every per-category DELETE consults. Returns
+/// `Some(cutoff_ms)` ONLY for an explicitly-enabled, well-formed `AfterDays(n>0)` whose cutoff is
+/// representable; `Permanent` and ANY invalid input (n ≤ 0, or a multiply/subtract that overflows
+/// `i64`) return `None`, which the caller treats as "skip this category (delete 0)". NEVER panics.
+/// This is the Rust mirror of the TS `resolveCutoff` (#1608): invalid ⇒ permanent ⇒ delete nothing.
+pub fn resolve_cutoff(now_ms: i64, policy: CategoryRetention) -> Option<i64> {
+    match policy {
+        CategoryRetention::Permanent => None,
+        CategoryRetention::AfterDays(days) => {
+            if days <= 0 {
+                return None; // zero / negative ⇒ fail closed
+            }
+            // Compute in i128 then range-check back to i64 so an overflowing window fails closed
+            // (returns None) instead of wrapping into a bogus (possibly future) cutoff.
+            let age_ms = (days as i128).checked_mul(DAY_MS as i128)?;
+            let cutoff = (now_ms as i128).checked_sub(age_ms)?;
+            if cutoff < i64::MIN as i128 || cutoff > i64::MAX as i128 {
+                return None; // out-of-range ⇒ fail closed
+            }
+            Some(cutoff as i64)
+        }
+    }
+}
+
+// ─── Operator-approved OPT-IN retention windows (day counts) ───
+//
+// These are NOT the default (the default is `Permanent`); they are the values an operator would set
+// if they DELIBERATELY enable per-category time-based cleanup (surfaced via
+// [`RetentionWindows::operator_windows`]). The `*_MAX_AGE_MS` constants are derived from the day
+// counts so existing age-boundary tests keep a single source of truth.
+
+/// `token_ledger`: opt-in window is 90 days (keyed on `created_at`).
+pub const TOKEN_LEDGER_MAX_AGE_DAYS: i64 = 90;
+/// `run_result`: opt-in window is 365 days (keyed on `created_at`).
+pub const RUN_RESULT_MAX_AGE_DAYS: i64 = 365;
+/// `surface_event`: opt-in window is 90 days (keyed on `created_at_ms`).
+pub const SURFACE_EVENT_MAX_AGE_DAYS: i64 = 90;
+/// `provider_session_event`: opt-in window is 90 days (keyed on `observed_at`).
+pub const PROVIDER_SESSION_EVENT_MAX_AGE_DAYS: i64 = 90;
+/// Terminal `agent_run`: opt-in window is 365 days.
+pub const AGENT_RUN_MAX_AGE_DAYS: i64 = 365;
+/// Terminal `mission`: opt-in window is 365 days (keyed on `updated_at_ms`).
+pub const MISSION_MAX_AGE_DAYS: i64 = 365;
+/// Terminal `work_item`: opt-in window is 365 days (keyed on `updated_at_ms`).
+pub const WORK_ITEM_MAX_AGE_DAYS: i64 = 365;
+/// Rejected/expired memory CANDIDATES: opt-in window is 30 days. CONFIRMED memory is NEVER pruned.
+pub const MEMORY_CANDIDATE_MAX_AGE_DAYS: i64 = 30;
+
+/// `token_ledger` opt-in window in ms (keyed on `created_at`).
+pub const TOKEN_LEDGER_MAX_AGE_MS: i64 = TOKEN_LEDGER_MAX_AGE_DAYS * DAY_MS;
+/// `run_result` opt-in window in ms (keyed on `created_at`).
+pub const RUN_RESULT_MAX_AGE_MS: i64 = RUN_RESULT_MAX_AGE_DAYS * DAY_MS;
+/// `surface_event` opt-in window in ms (keyed on `created_at_ms`).
+pub const SURFACE_EVENT_MAX_AGE_MS: i64 = SURFACE_EVENT_MAX_AGE_DAYS * DAY_MS;
+/// `provider_session_event` opt-in window in ms (keyed on `observed_at`).
+pub const PROVIDER_SESSION_EVENT_MAX_AGE_MS: i64 = PROVIDER_SESSION_EVENT_MAX_AGE_DAYS * DAY_MS;
+/// Terminal `agent_run` opt-in window in ms.
+pub const AGENT_RUN_MAX_AGE_MS: i64 = AGENT_RUN_MAX_AGE_DAYS * DAY_MS;
+/// Terminal `mission` opt-in window in ms (keyed on `updated_at_ms`).
+pub const MISSION_MAX_AGE_MS: i64 = MISSION_MAX_AGE_DAYS * DAY_MS;
+/// Terminal `work_item` opt-in window in ms (keyed on `updated_at_ms`).
+pub const WORK_ITEM_MAX_AGE_MS: i64 = WORK_ITEM_MAX_AGE_DAYS * DAY_MS;
+/// Rejected/expired memory CANDIDATE opt-in window in ms (keyed on `created_at`).
+pub const MEMORY_CANDIDATE_MAX_AGE_MS: i64 = MEMORY_CANDIDATE_MAX_AGE_DAYS * DAY_MS;
 
 /// Default max rows deleted per table per sweep (bounds the per-tick work / lock time). At the
 /// 120s reaper cadence this drains a large backlog over successive ticks without ever holding a
 /// long write lock.
 pub const DEFAULT_BATCH_LIMIT: i64 = 5_000;
 
-/// The retention windows + batch cap, passed to [`sweep_retention`]. Constructed from the
-/// operator-approved constants via [`RetentionWindows::default`]; exposed as named fields so the
-/// windows are trivially adjustable (e.g. in a test) without touching the sweep logic.
+/// The per-category retention POLICIES + batch cap, passed to [`sweep_retention`]. Each content
+/// category is a [`CategoryRetention`] that DEFAULTS to `Permanent` (DATA-RETENTION-001): the
+/// runtime default deletes NOTHING. [`RetentionWindows::operator_windows`] gives the explicit
+/// opt-in after-days windows. Exposed as named fields so a category can be enabled individually
+/// (e.g. in a test) without touching the sweep logic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RetentionWindows {
-    pub token_ledger_max_age_ms: i64,
-    pub run_result_max_age_ms: i64,
-    pub surface_event_max_age_ms: i64,
-    pub provider_session_event_max_age_ms: i64,
-    pub agent_run_max_age_ms: i64,
-    pub mission_max_age_ms: i64,
-    pub work_item_max_age_ms: i64,
-    pub memory_candidate_max_age_ms: i64,
+    pub token_ledger: CategoryRetention,
+    pub run_result: CategoryRetention,
+    pub surface_event: CategoryRetention,
+    pub provider_session_event: CategoryRetention,
+    pub agent_run: CategoryRetention,
+    pub mission: CategoryRetention,
+    pub work_item: CategoryRetention,
+    pub memory_candidate: CategoryRetention,
     /// Max rows deleted per table per sweep (`> 0`; a non-positive value disables that table's
     /// delete, since the `LIMIT` would select nothing).
     pub batch_limit: i64,
 }
 
 impl Default for RetentionWindows {
+    /// DATA-RETENTION-001: every user-data CONTENT category defaults to `Permanent` (never
+    /// auto-delete). This is what the runtime reaper uses, so deploying/enabling the sweep flag
+    /// deletes NOTHING until a category is explicitly opted in.
     fn default() -> Self {
         RetentionWindows {
-            token_ledger_max_age_ms: TOKEN_LEDGER_MAX_AGE_MS,
-            run_result_max_age_ms: RUN_RESULT_MAX_AGE_MS,
-            surface_event_max_age_ms: SURFACE_EVENT_MAX_AGE_MS,
-            provider_session_event_max_age_ms: PROVIDER_SESSION_EVENT_MAX_AGE_MS,
-            agent_run_max_age_ms: AGENT_RUN_MAX_AGE_MS,
-            mission_max_age_ms: MISSION_MAX_AGE_MS,
-            work_item_max_age_ms: WORK_ITEM_MAX_AGE_MS,
-            memory_candidate_max_age_ms: MEMORY_CANDIDATE_MAX_AGE_MS,
+            token_ledger: CategoryRetention::Permanent,
+            run_result: CategoryRetention::Permanent,
+            surface_event: CategoryRetention::Permanent,
+            provider_session_event: CategoryRetention::Permanent,
+            agent_run: CategoryRetention::Permanent,
+            mission: CategoryRetention::Permanent,
+            work_item: CategoryRetention::Permanent,
+            memory_candidate: CategoryRetention::Permanent,
+            batch_limit: DEFAULT_BATCH_LIMIT,
+        }
+    }
+}
+
+impl RetentionWindows {
+    /// The operator-approved OPT-IN windows: every content category set to its `AfterDays(n)`
+    /// value. This is NOT a default — it is what an operator would choose if they DELIBERATELY
+    /// enable per-category time-based cleanup. It is never wired as the runtime default (the
+    /// runtime default is [`RetentionWindows::default`] = all-`Permanent`); it exists so the
+    /// deletion mechanism can be exercised (tests, or a future operator-supplied policy).
+    pub fn operator_windows() -> Self {
+        RetentionWindows {
+            token_ledger: CategoryRetention::AfterDays(TOKEN_LEDGER_MAX_AGE_DAYS),
+            run_result: CategoryRetention::AfterDays(RUN_RESULT_MAX_AGE_DAYS),
+            surface_event: CategoryRetention::AfterDays(SURFACE_EVENT_MAX_AGE_DAYS),
+            provider_session_event: CategoryRetention::AfterDays(
+                PROVIDER_SESSION_EVENT_MAX_AGE_DAYS,
+            ),
+            agent_run: CategoryRetention::AfterDays(AGENT_RUN_MAX_AGE_DAYS),
+            mission: CategoryRetention::AfterDays(MISSION_MAX_AGE_DAYS),
+            work_item: CategoryRetention::AfterDays(WORK_ITEM_MAX_AGE_DAYS),
+            memory_candidate: CategoryRetention::AfterDays(MEMORY_CANDIDATE_MAX_AGE_DAYS),
             batch_limit: DEFAULT_BATCH_LIMIT,
         }
     }
@@ -203,50 +326,63 @@ pub fn sweep_retention(
     windows: RetentionWindows,
 ) -> RetentionOutcome {
     let mut out = RetentionOutcome::default();
-    let work_item_cutoff = now_ms - windows.work_item_max_age_ms;
-    let mission_cutoff = now_ms - windows.mission_max_age_ms;
+
+    // Resolve every content category to a FAIL-CLOSED cutoff. `None` = `Permanent` OR an invalid
+    // config ⇒ that category's DELETE is SKIPPED entirely (deletes 0). Under the DEFAULT policy
+    // every category resolves to `None`, so the whole sweep is a no-op regardless of how far
+    // `now_ms` is advanced — the DATA-RETENTION-001 default-permanent guarantee (constraint #3).
+    let token_cutoff = resolve_cutoff(now_ms, windows.token_ledger);
+    let run_result_cutoff = resolve_cutoff(now_ms, windows.run_result);
+    let agent_run_cutoff = resolve_cutoff(now_ms, windows.agent_run);
+    let surface_cutoff = resolve_cutoff(now_ms, windows.surface_event);
+    let provider_session_cutoff = resolve_cutoff(now_ms, windows.provider_session_event);
+    let memory_cutoff = resolve_cutoff(now_ms, windows.memory_candidate);
+    let mission_cutoff = resolve_cutoff(now_ms, windows.mission);
+    let work_item_cutoff = resolve_cutoff(now_ms, windows.work_item);
 
     // 1. token_ledger — pure age on created_at. Leaf w.r.t. these FKs (nothing references it).
-    let token_cutoff = now_ms - windows.token_ledger_max_age_ms;
-    match delete_bounded(
-        conn,
-        "DELETE FROM token_ledger
+    if let Some(token_cutoff) = token_cutoff {
+        match delete_bounded(
+            conn,
+            "DELETE FROM token_ledger
           WHERE rowid IN (
               SELECT rowid FROM token_ledger WHERE created_at < ?1
                ORDER BY created_at LIMIT ?2
           )",
-        token_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.token_ledger_deleted = n,
-        Err(_e) => out.table_errors += 1,
+            token_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.token_ledger_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
     }
 
     // 2. run_result — pure age on created_at. Leaf w.r.t. hard FKs (audit_ref/run_id are soft
     //    refs), and rows exist only for terminal run outcomes, so no state guard is needed.
-    let run_result_cutoff = now_ms - windows.run_result_max_age_ms;
-    match delete_bounded(
-        conn,
-        "DELETE FROM run_result
+    if let Some(run_result_cutoff) = run_result_cutoff {
+        match delete_bounded(
+            conn,
+            "DELETE FROM run_result
           WHERE rowid IN (
               SELECT rowid FROM run_result WHERE created_at < ?1
                ORDER BY created_at LIMIT ?2
           )",
-        run_result_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.run_result_deleted = n,
-        Err(_e) => out.table_errors += 1,
+            run_result_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.run_result_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
     }
 
     // 3. agent_run_event — old events for hard-terminal+aged runs, before deleting the run row.
     //    Events for a live hold (`awaiting_clarification`), approval states, or recent terminal
     //    runs stay intact. Orphaned old events are safe to remove because no parent can need them
     //    for a coherent run projection.
-    let agent_run_cutoff = now_ms - windows.agent_run_max_age_ms;
-    match delete_bounded(
-        conn,
-        "DELETE FROM agent_run_event
+    if let Some(agent_run_cutoff) = agent_run_cutoff {
+        match delete_bounded(
+            conn,
+            "DELETE FROM agent_run_event
           WHERE rowid IN (
               SELECT e.rowid FROM agent_run_event e
                WHERE e.created_at < ?1
@@ -263,17 +399,17 @@ pub fn sweep_retention(
                  )
                ORDER BY e.created_at LIMIT ?2
           )",
-        agent_run_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.agent_run_event_deleted = n,
-        Err(_e) => out.table_errors += 1,
-    }
+            agent_run_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.agent_run_event_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
 
-    // 4. agent_run — parent row last, after event rows and any still-retained run_result are gone.
-    match delete_bounded(
-        conn,
-        "DELETE FROM agent_run
+        // 4. agent_run — parent row last, after event rows and any still-retained run_result gone.
+        match delete_bounded(
+            conn,
+            "DELETE FROM agent_run
           WHERE rowid IN (
               SELECT ar.rowid FROM agent_run ar
                WHERE ar.state IN
@@ -284,71 +420,80 @@ pub fn sweep_retention(
                  AND NOT EXISTS (SELECT 1 FROM run_result r WHERE r.run_id = ar.run_id)
                ORDER BY ar.updated_at LIMIT ?2
           )",
-        agent_run_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.agent_run_deleted = n,
-        Err(_e) => out.table_errors += 1,
+            agent_run_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.agent_run_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
     }
 
     // 5. surface_event — pure age on created_at_ms. Leaf (no table references surface_event).
     //    Deleted BEFORE work_item/mission so this tick can also free those parents.
-    let surface_cutoff = now_ms - windows.surface_event_max_age_ms;
-    match delete_bounded(
-        conn,
-        "DELETE FROM surface_event
+    if let Some(surface_cutoff) = surface_cutoff {
+        match delete_bounded(
+            conn,
+            "DELETE FROM surface_event
           WHERE rowid IN (
               SELECT rowid FROM surface_event WHERE created_at_ms < ?1
                ORDER BY created_at_ms LIMIT ?2
           )",
-        surface_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.surface_event_deleted = n,
-        Err(_e) => out.table_errors += 1,
+            surface_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.surface_event_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
     }
 
-    // 6. provider_session_event — pure age on observed_at. This is the provider app-server
-    //    observation firehose (metadata/delta receipts), not the token ledger. It is a leaf w.r.t.
-    //    Friday's core mission/work_item FKs, so a bounded age sweep cannot orphan mission state.
-    let provider_session_cutoff = now_ms - windows.provider_session_event_max_age_ms;
-    match delete_bounded(
-        conn,
-        "DELETE FROM provider_session_event
+    // 6. provider_session_event + process_observation — the two firehose leaves, both keyed on the
+    //    provider_session category window. This is the provider app-server observation firehose
+    //    (metadata/delta receipts), not the token ledger; a leaf w.r.t. Friday's core mission/
+    //    work_item FKs, so a bounded age sweep cannot orphan mission state.
+    if let Some(provider_session_cutoff) = provider_session_cutoff {
+        match delete_bounded(
+            conn,
+            "DELETE FROM provider_session_event
           WHERE rowid IN (
               SELECT rowid FROM provider_session_event WHERE observed_at < ?1
                ORDER BY observed_at LIMIT ?2
           )",
-        provider_session_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.provider_session_event_deleted = n,
-        Err(_e) => out.table_errors += 1,
-    }
+            provider_session_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.provider_session_event_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
 
-    // 5. process_observation — process-discovery firehose, pure age on observed_at_ms. It is
-    //    deleted before workspace_claim so old matched observations do not pin old released claims.
-    match delete_bounded(
-        conn,
-        "DELETE FROM process_observation
+        // process_observation — process-discovery firehose, pure age on observed_at_ms. Deleted
+        // before workspace_claim so old matched observations do not pin old released claims.
+        match delete_bounded(
+            conn,
+            "DELETE FROM process_observation
           WHERE rowid IN (
               SELECT rowid FROM process_observation WHERE observed_at_ms < ?1
                ORDER BY observed_at_ms LIMIT ?2
           )",
-        provider_session_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.process_observation_deleted = n,
-        Err(_e) => out.table_errors += 1,
+            provider_session_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.process_observation_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
     }
 
-    // 6. route_decision_control — terminal route trace child rows only. The join back to the
-    //    matching route_decision prevents a mismatched but FK-valid control row from being treated
-    //    as terminal trace debris for an unrelated parent.
-    let route_trace_cutoff = work_item_cutoff.min(mission_cutoff);
-    match delete_bounded4(
-        conn,
-        "DELETE FROM route_decision_control
+    // Blocks 6–11: mission/work_item route-trace + child rows. ALL require BOTH the mission AND
+    // work_item categories to be explicitly enabled (fail-closed): a permanent/invalid PARENT
+    // category ⇒ its trace/child debris is retained too. Under the default policy both resolve to
+    // None ⇒ the whole group is skipped.
+    if let (Some(mission_cutoff), Some(work_item_cutoff)) = (mission_cutoff, work_item_cutoff) {
+        let route_trace_cutoff = work_item_cutoff.min(mission_cutoff);
+        // 6. route_decision_control — terminal route trace child rows only. The join back to the
+        //    matching route_decision prevents a mismatched but FK-valid control row from being treated
+        //    as terminal trace debris for an unrelated parent.
+        match delete_bounded4(
+            conn,
+            "DELETE FROM route_decision_control
           WHERE rowid IN (
               SELECT c.rowid
                 FROM route_decision_control c
@@ -366,19 +511,19 @@ pub fn sweep_retention(
                  AND w.updated_at_ms < ?3
                ORDER BY c.created_at_ms LIMIT ?4
           )",
-        route_trace_cutoff,
-        mission_cutoff,
-        work_item_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.route_decision_control_deleted = n,
-        Err(_e) => out.table_errors += 1,
-    }
+            route_trace_cutoff,
+            mission_cutoff,
+            work_item_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.route_decision_control_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
 
-    // 7. route_decision — terminal route trace rows after their controls are gone.
-    match delete_bounded4(
-        conn,
-        "DELETE FROM route_decision
+        // 7. route_decision — terminal route trace rows after their controls are gone.
+        match delete_bounded4(
+            conn,
+            "DELETE FROM route_decision
           WHERE rowid IN (
               SELECT r.rowid
                 FROM route_decision r
@@ -396,20 +541,20 @@ pub fn sweep_retention(
                  )
                ORDER BY r.created_at_ms LIMIT ?4
           )",
-        route_trace_cutoff,
-        mission_cutoff,
-        work_item_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.route_decision_deleted = n,
-        Err(_e) => out.table_errors += 1,
-    }
+            route_trace_cutoff,
+            mission_cutoff,
+            work_item_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.route_decision_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
 
-    // 8. mission_link — only route-decision trace links are swept here; proof receipts and other
-    //    product evidence links keep their retention semantics and can still pin the parent.
-    match delete_bounded4(
-        conn,
-        "DELETE FROM mission_link
+        // 8. mission_link — only route-decision trace links are swept here; proof receipts and other
+        //    product evidence links keep their retention semantics and can still pin the parent.
+        match delete_bounded4(
+            conn,
+            "DELETE FROM mission_link
           WHERE rowid IN (
               SELECT l.rowid
                 FROM mission_link l
@@ -427,19 +572,19 @@ pub fn sweep_retention(
                  )
                ORDER BY l.created_at_ms LIMIT ?4
           )",
-        route_trace_cutoff,
-        mission_cutoff,
-        work_item_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.mission_link_deleted = n,
-        Err(_e) => out.table_errors += 1,
-    }
+            route_trace_cutoff,
+            mission_cutoff,
+            work_item_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.mission_link_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
 
-    // 9. mission_body_snapshot — full-text body snapshot attached to terminal+aged parents.
-    match delete_bounded4(
-        conn,
-        "DELETE FROM mission_body_snapshot
+        // 9. mission_body_snapshot — full-text body snapshot attached to terminal+aged parents.
+        match delete_bounded4(
+            conn,
+            "DELETE FROM mission_body_snapshot
           WHERE rowid IN (
               SELECT b.rowid
                 FROM mission_body_snapshot b
@@ -453,19 +598,19 @@ pub fn sweep_retention(
                  AND w.updated_at_ms < ?3
                ORDER BY b.created_at_ms LIMIT ?4
           )",
-        route_trace_cutoff,
-        mission_cutoff,
-        work_item_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.mission_body_snapshot_deleted = n,
-        Err(_e) => out.table_errors += 1,
-    }
+            route_trace_cutoff,
+            mission_cutoff,
+            work_item_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.mission_body_snapshot_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
 
-    // 10. process_lease — terminal process ownership rows attached to terminal+aged parents.
-    match delete_bounded4(
-        conn,
-        "DELETE FROM process_lease
+        // 10. process_lease — terminal process ownership rows attached to terminal+aged parents.
+        match delete_bounded4(
+            conn,
+            "DELETE FROM process_lease
           WHERE rowid IN (
               SELECT p.rowid
                 FROM process_lease p
@@ -483,19 +628,19 @@ pub fn sweep_retention(
                  )
                ORDER BY p.updated_at_ms LIMIT ?4
           )",
-        route_trace_cutoff,
-        mission_cutoff,
-        work_item_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.process_lease_deleted = n,
-        Err(_e) => out.table_errors += 1,
-    }
+            route_trace_cutoff,
+            mission_cutoff,
+            work_item_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.process_lease_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
 
-    // 11. workspace_claim — released/stale claims after process observations and leases are gone.
-    match delete_bounded4(
-        conn,
-        "DELETE FROM workspace_claim
+        // 11. workspace_claim — released/stale claims after process observations and leases are gone.
+        match delete_bounded4(
+            conn,
+            "DELETE FROM workspace_claim
           WHERE rowid IN (
               SELECT c.rowid
                 FROM workspace_claim c
@@ -519,20 +664,23 @@ pub fn sweep_retention(
                  )
                ORDER BY c.updated_at_ms LIMIT ?4
           )",
-        route_trace_cutoff,
-        mission_cutoff,
-        work_item_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.workspace_claim_deleted = n,
-        Err(_e) => out.table_errors += 1,
-    }
+            route_trace_cutoff,
+            mission_cutoff,
+            work_item_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.workspace_claim_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
+    } // end mission/work_item route-trace group (blocks 6–11)
 
     // 12. provider_session_link — session mirror rows after old event children and process leases
     //    are gone. A NULL last sighting is kept; only an explicitly old sighting can age out.
-    match delete_bounded(
-        conn,
-        "DELETE FROM provider_session_link
+    //    Keyed on the provider_session category (with process_lease already gone above).
+    if let Some(provider_session_cutoff) = provider_session_cutoff {
+        match delete_bounded(
+            conn,
+            "DELETE FROM provider_session_link
           WHERE rowid IN (
               SELECT l.rowid FROM provider_session_link l
                WHERE l.last_provider_seen_at IS NOT NULL
@@ -547,18 +695,20 @@ pub fn sweep_retention(
                  )
                ORDER BY l.last_provider_seen_at LIMIT ?2
           )",
-        provider_session_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.provider_session_link_deleted = n,
-        Err(_e) => out.table_errors += 1,
-    }
+            provider_session_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.provider_session_link_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
+    } // end provider_session_link (block 12)
 
     // 13. surface_thread — old terminal-mission threads only, after surface events and process
-    //    leases are gone.
-    match delete_bounded3(
-        conn,
-        "DELETE FROM surface_thread
+    //    leases are gone. Keyed on the mission category only.
+    if let Some(mission_cutoff) = mission_cutoff {
+        match delete_bounded3(
+            conn,
+            "DELETE FROM surface_thread
           WHERE rowid IN (
               SELECT t.rowid
                 FROM surface_thread t
@@ -576,37 +726,40 @@ pub fn sweep_retention(
                  )
                ORDER BY t.updated_at_ms LIMIT ?3
           )",
-        mission_cutoff,
-        mission_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.surface_thread_deleted = n,
-        Err(_e) => out.table_errors += 1,
-    }
+            mission_cutoff,
+            mission_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.surface_thread_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
+    } // end surface_thread (block 13)
 
     // 14. memory_item — rejected/expired CANDIDATES only, by created_at. CONFIRMED is excluded by
     //    state, so durable memory is NEVER deleted regardless of age. Leaf (no FK refs into it).
-    let memory_cutoff = now_ms - windows.memory_candidate_max_age_ms;
-    match delete_bounded(
-        conn,
-        "DELETE FROM memory_item
+    if let Some(memory_cutoff) = memory_cutoff {
+        match delete_bounded(
+            conn,
+            "DELETE FROM memory_item
           WHERE rowid IN (
               SELECT rowid FROM memory_item
                WHERE state IN ('candidate', 'rejected')
                  AND created_at < ?1
                ORDER BY created_at LIMIT ?2
           )",
-        memory_cutoff,
-        windows.batch_limit,
-    ) {
-        Ok(n) => out.memory_item_deleted = n,
-        Err(_e) => out.table_errors += 1,
-    }
+            memory_cutoff,
+            windows.batch_limit,
+        ) {
+            Ok(n) => out.memory_item_deleted = n,
+            Err(_e) => out.table_errors += 1,
+        }
+    } // end memory_item (block 14)
 
     // 15. work_item — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child
     //    in any table that RESTRICT-references work_item). A non-terminal work_item can never
     //    match the status set. Deleted BEFORE mission so an aged-out work_item frees its mission.
-    match delete_bounded(
+    if let Some(work_item_cutoff) = work_item_cutoff {
+        match delete_bounded(
         conn,
         "DELETE FROM work_item
           WHERE rowid IN (
@@ -629,11 +782,13 @@ pub fn sweep_retention(
         Ok(n) => out.work_item_deleted = n,
         Err(_e) => out.table_errors += 1,
     }
+    } // end work_item (block 15)
 
     // 16. mission — terminal status AND aged on updated_at_ms, AND FK-safe (no surviving child in
     //    ANY table that RESTRICT-references mission). A non-terminal (active/waiting/blocked/
     //    paused) mission can never match the status set.
-    match delete_bounded(
+    if let Some(mission_cutoff) = mission_cutoff {
+        match delete_bounded(
         conn,
         "DELETE FROM mission
           WHERE rowid IN (
@@ -657,6 +812,7 @@ pub fn sweep_retention(
         Ok(n) => out.mission_deleted = n,
         Err(_e) => out.table_errors += 1,
     }
+    } // end mission (block 16)
 
     // M3 receipt: record a CONTENT-FREE, counts-only summary of this sweep into `retention_log`
     // (a SEPARATE table, NOT the hash-chained `audit_ledger`). Written ONLY when the sweep actually
@@ -1066,7 +1222,7 @@ mod tests {
         .unwrap();
         assert_eq!(count(&db, "run_result"), 3);
 
-        let out = sweep_retention(db.conn(), now, RetentionWindows::default());
+        let out = sweep_retention(db.conn(), now, RetentionWindows::operator_windows());
         assert_eq!(out.table_errors, 0);
         assert_eq!(out.run_result_deleted, 1);
 
@@ -1091,7 +1247,7 @@ mod tests {
         let now = 2_000 * 24 * 60 * 60 * 1000_i64;
         let windows = RetentionWindows {
             batch_limit: 2,
-            ..RetentionWindows::default()
+            ..RetentionWindows::operator_windows()
         };
 
         for idx in 0..5 {
@@ -1124,7 +1280,7 @@ mod tests {
     fn flag_on_sweep_prunes_only_old_terminal_rows_others_untouched() {
         let db = Db::open_hub(&tmp("e2e-on")).unwrap();
         let now = 2_000 * 24 * 60 * 60 * 1000_i64; // ~2000 days, far past every window
-        let w = RetentionWindows::default();
+        let w = RetentionWindows::operator_windows();
 
         seed_conversation(&db, "fconv_1");
 
@@ -1397,7 +1553,7 @@ mod tests {
         let db = Db::open_hub(&tmp("error-only-receipt")).unwrap();
         let now = 2_000 * 24 * 60 * 60 * 1000_i64;
         db.conn().execute_batch("DROP TABLE mission").unwrap();
-        let out = sweep_retention(db.conn(), now, RetentionWindows::default());
+        let out = sweep_retention(db.conn(), now, RetentionWindows::operator_windows());
         assert!(out.table_errors >= 1, "the dropped-table DELETE must error");
         assert_eq!(out.mission_deleted, 0, "nothing was deleted");
         assert_eq!(
@@ -1417,7 +1573,7 @@ mod tests {
         // age+terminal window) so the whole progression is driven by the sweep, not test surgery.
         let db = Db::open_hub(&tmp("fk-safe")).unwrap();
         let now = 2_000 * 24 * 60 * 60 * 1000_i64;
-        let w = RetentionWindows::default();
+        let w = RetentionWindows::operator_windows();
         seed_conversation(&db, "fconv_1");
 
         // Terminal + very old mission whose ONLY child is a NON-terminal work_item (never
@@ -1477,7 +1633,7 @@ mod tests {
         // parent sweep must skip instead of relying on the route_decision guard alone.
         let db = Db::open_hub(&tmp("rd-control-fk-safe")).unwrap();
         let now = 2_000 * 24 * 60 * 60 * 1000_i64;
-        let w = RetentionWindows::default();
+        let w = RetentionWindows::operator_windows();
         seed_conversation(&db, "fconv_1");
         seed_mission(
             &db,
@@ -1541,7 +1697,7 @@ mod tests {
         );
         seed_agent_run_with_event(&db, "run_recent_done", "ev_recent_done", "finished", recent);
 
-        let out = sweep_retention(db.conn(), now, RetentionWindows::default());
+        let out = sweep_retention(db.conn(), now, RetentionWindows::operator_windows());
         assert_eq!(out.table_errors, 0);
 
         assert!(
@@ -1566,7 +1722,7 @@ mod tests {
     fn f2_aged_observe_and_terminal_child_rows_are_reaped_before_parents() {
         let db = Db::open_hub(&tmp("f2-child-reap")).unwrap();
         let now = 2_000 * 24 * 60 * 60 * 1000_i64;
-        let w = RetentionWindows::default();
+        let w = RetentionWindows::operator_windows();
         let old_session_seen = now - PROVIDER_SESSION_EVENT_MAX_AGE_MS - 1;
         let old_parent_seen = now - MISSION_MAX_AGE_MS - 1;
         seed_conversation(&db, "fconv_f2");
@@ -1709,7 +1865,7 @@ mod tests {
     fn empty_db_and_boundary_are_noops() {
         let db = Db::open_hub(&tmp("empty")).unwrap();
         let now = 2_000 * 24 * 60 * 60 * 1000_i64;
-        let w = RetentionWindows::default();
+        let w = RetentionWindows::operator_windows();
         // Empty DB: nothing to prune.
         assert!(sweep_retention(db.conn(), now, w).is_empty());
 
@@ -1746,7 +1902,7 @@ mod tests {
     fn second_back_to_back_sweep_is_a_noop() {
         let db = Db::open_hub(&tmp("idem")).unwrap();
         let now = 2_000 * 24 * 60 * 60 * 1000_i64;
-        let w = RetentionWindows::default();
+        let w = RetentionWindows::operator_windows();
         seed_conversation(&db, "fconv_1");
         seed_token_ledger(&db, "tl_old", now - TOKEN_LEDGER_MAX_AGE_MS - 1);
         seed_provider_session_link(&db, "ps_idem", now);
@@ -1792,7 +1948,7 @@ mod tests {
         let db = Db::open_hub(&tmp("non-terminal")).unwrap();
         let ancient = 1_i64; // updated_at_ms = 1 → maximally old
         let now = 5_000 * 24 * 60 * 60 * 1000_i64;
-        let w = RetentionWindows::default();
+        let w = RetentionWindows::operator_windows();
         seed_conversation(&db, "fconv_1");
 
         // Every NON-terminal mission status.
@@ -1840,7 +1996,7 @@ mod tests {
         let now = 2_000 * 24 * 60 * 60 * 1000_i64;
         let w = RetentionWindows {
             batch_limit: 2,
-            ..RetentionWindows::default()
+            ..RetentionWindows::operator_windows()
         };
         for i in 0..5 {
             seed_token_ledger(&db, &format!("tl{i}"), now - TOKEN_LEDGER_MAX_AGE_MS - 1);
@@ -1871,21 +2027,258 @@ mod tests {
         assert_eq!(count(&db, "provider_session_event"), 0);
     }
 
-    // --- the default windows ARE the operator-approved constants ---
+    // --- DATA-RETENTION-001: the DEFAULT policy is PERMANENT (deletes nothing) ---
+
+    /// Seed one AGED canonical/user-data row in every category the sweep can touch, at a `now`
+    /// far past every operator window, so that under an ENABLED (after-days) policy EVERYTHING
+    /// would be eligible for deletion. The default-permanent test asserts that under the DEFAULT
+    /// (permanent) policy NONE of it is deleted even with this extreme time-travel.
+    fn seed_all_aged_canonical(db: &Db, now: i64) {
+        seed_conversation(db, "fconv_1");
+        seed_token_ledger(db, "tl_old", now - 10_000 * 24 * 60 * 60 * 1000_i64);
+        persist_run_result(
+            db.conn(),
+            "rr_old",
+            &RunResult::new("finished", "OLD-CANONICAL-ANSWER-BODY", None),
+            1,
+        )
+        .unwrap();
+        seed_memory(db, "mem_rejected_old", "rejected", "candidate", 1);
+        seed_memory(db, "mem_confirmed_old", "confirmed", "confirmed", 1);
+        // A terminal+aged mission with a terminal+aged work_item child (both leaf under the FK
+        // guards after each other), an aged surface_event, and an aged provider firehose row.
+        seed_mission(db, "miss_term_old", "fconv_1", "done", 1);
+        seed_mission(db, "miss_for_wi", "fconv_1", "merged", 1);
+        seed_work_item(db, "wi_term_old", "miss_for_wi", "completed_with_proof", 1);
+        seed_surface_thread(db, "st_1", "fconv_1", "miss_term_old");
+        seed_surface_event(db, "se_old", "fconv_1", "miss_term_old", None, "st_1", 1);
+        seed_provider_session_link(db, "ps_1", 1);
+        seed_provider_session_event(db, "ps_1", "pse_old", 1);
+        seed_agent_run_with_event(db, "run_old", "ev_old", "finished", 1);
+    }
 
     #[test]
-    fn default_windows_are_the_operator_approved_values() {
-        let w = RetentionWindows::default();
-        assert_eq!(w.token_ledger_max_age_ms, 90 * 24 * 60 * 60 * 1000);
-        assert_eq!(w.surface_event_max_age_ms, 90 * 24 * 60 * 60 * 1000);
-        assert_eq!(
-            w.provider_session_event_max_age_ms,
-            90 * 24 * 60 * 60 * 1000
+    fn default_policy_deletes_nothing_even_under_far_future_time_travel() {
+        // DATA-RETENTION-001 (constraint #3): under the DEFAULT retention policy AND arbitrary
+        // long time-travel, ZERO canonical user-data rows are deleted. Local user data is
+        // PERMANENT by default until the user explicitly enables per-category cleanup.
+        //
+        // RED-FIRST: against the pre-fix code (default = operator after-days windows) this sweep
+        // deletes the aged rows, so `is_empty()` is FALSE and this test FAILS. After the fix
+        // (default = permanent, fail-closed) the sweep deletes nothing and it PASSES.
+        let db = Db::open_hub(&tmp("default-permanent")).unwrap();
+        let now = 1_000_000 * 24 * 60 * 60 * 1000_i64; // ~1e6 days into the future
+        seed_all_aged_canonical(&db, now);
+
+        let out = sweep_retention(db.conn(), now, RetentionWindows::default());
+
+        assert!(
+            out.is_empty(),
+            "DEFAULT policy is PERMANENT: no user-data row may be deleted even far in the future \
+             (got {out:?})"
         );
-        assert_eq!(w.agent_run_max_age_ms, 365 * 24 * 60 * 60 * 1000);
-        assert_eq!(w.mission_max_age_ms, 365 * 24 * 60 * 60 * 1000);
-        assert_eq!(w.work_item_max_age_ms, 365 * 24 * 60 * 60 * 1000);
-        assert_eq!(w.memory_candidate_max_age_ms, 30 * 24 * 60 * 60 * 1000);
+        // Every seeded canonical row still present.
+        assert!(exists(&db, "token_ledger", "ledger_id", "tl_old"));
+        assert!(exists(&db, "run_result", "run_id", "rr_old"));
+        assert!(exists(&db, "memory_item", "memory_id", "mem_rejected_old"));
+        assert!(exists(&db, "memory_item", "memory_id", "mem_confirmed_old"));
+        assert!(exists(&db, "mission", "mission_id", "miss_term_old"));
+        assert!(exists(&db, "work_item", "work_item_id", "wi_term_old"));
+        assert!(exists(&db, "surface_event", "surface_event_id", "se_old"));
+        assert!(exists(
+            &db,
+            "provider_session_event",
+            "provider_event_id",
+            "pse_old"
+        ));
+        assert!(exists(&db, "agent_run", "run_id", "run_old"));
+        // No receipt row: nothing was deleted.
+        assert_eq!(
+            count(&db, "retention_log"),
+            0,
+            "a permanent-default sweep deletes nothing and writes no receipt"
+        );
+    }
+
+    // --- DEFAULT = permanent for every category; operator_windows = the opt-in day counts ---
+
+    #[test]
+    fn default_windows_are_permanent_and_operator_windows_are_the_approved_values() {
+        // DEFAULT = permanent for every content category (DATA-RETENTION-001).
+        let d = RetentionWindows::default();
+        for cat in [
+            d.token_ledger,
+            d.run_result,
+            d.surface_event,
+            d.provider_session_event,
+            d.agent_run,
+            d.mission,
+            d.work_item,
+            d.memory_candidate,
+        ] {
+            assert_eq!(
+                cat,
+                CategoryRetention::Permanent,
+                "every content category defaults to PERMANENT"
+            );
+        }
+        assert_eq!(d.batch_limit, DEFAULT_BATCH_LIMIT);
+
+        // operator_windows() = the explicit opt-in after-days values (NOT a default).
+        let w = RetentionWindows::operator_windows();
+        assert_eq!(w.token_ledger, CategoryRetention::AfterDays(90));
+        assert_eq!(w.surface_event, CategoryRetention::AfterDays(90));
+        assert_eq!(w.provider_session_event, CategoryRetention::AfterDays(90));
+        assert_eq!(w.agent_run, CategoryRetention::AfterDays(365));
+        assert_eq!(w.run_result, CategoryRetention::AfterDays(365));
+        assert_eq!(w.mission, CategoryRetention::AfterDays(365));
+        assert_eq!(w.work_item, CategoryRetention::AfterDays(365));
+        assert_eq!(w.memory_candidate, CategoryRetention::AfterDays(30));
         assert_eq!(w.batch_limit, DEFAULT_BATCH_LIMIT);
+    }
+
+    // --- fail-closed: resolve_cutoff / from_config reject every invalid config ---
+
+    #[test]
+    fn resolve_cutoff_and_from_config_fail_closed_on_every_invalid_input() {
+        let now = 1_000_000 * 24 * 60 * 60 * 1000_i64;
+        // permanent → None (skip).
+        assert_eq!(resolve_cutoff(now, CategoryRetention::Permanent), None);
+        // zero-days → None.
+        assert_eq!(resolve_cutoff(now, CategoryRetention::AfterDays(0)), None);
+        // negative-days → None.
+        assert_eq!(resolve_cutoff(now, CategoryRetention::AfterDays(-5)), None);
+        // overflow-days → None (does not panic).
+        assert_eq!(
+            resolve_cutoff(now, CategoryRetention::AfterDays(i64::MAX)),
+            None
+        );
+        assert_eq!(
+            resolve_cutoff(i64::MIN, CategoryRetention::AfterDays(i64::MAX)),
+            None
+        );
+        // a valid positive window resolves to now - n*day.
+        assert_eq!(
+            resolve_cutoff(now, CategoryRetention::AfterDays(90)),
+            Some(now - 90 * DAY_MS)
+        );
+
+        // from_config fail-closes on missing / unknown-mode / corrupt / non-positive inputs.
+        assert_eq!(
+            CategoryRetention::from_config("permanent", None),
+            CategoryRetention::Permanent
+        );
+        assert_eq!(
+            CategoryRetention::from_config("after_days", None), // missing days
+            CategoryRetention::Permanent
+        );
+        assert_eq!(
+            CategoryRetention::from_config("after_days", Some(0)), // zero
+            CategoryRetention::Permanent
+        );
+        assert_eq!(
+            CategoryRetention::from_config("after_days", Some(-3)), // negative
+            CategoryRetention::Permanent
+        );
+        assert_eq!(
+            CategoryRetention::from_config("garbage_mode", Some(30)), // unknown / corrupt mode
+            CategoryRetention::Permanent
+        );
+        assert_eq!(
+            CategoryRetention::from_config("", None), // empty / missing mode
+            CategoryRetention::Permanent
+        );
+        // only a well-formed after_days enables it.
+        assert_eq!(
+            CategoryRetention::from_config("after_days", Some(30)),
+            CategoryRetention::AfterDays(30)
+        );
+    }
+
+    #[test]
+    fn invalid_per_category_config_deletes_zero_for_that_category() {
+        // Enable ONE category (token_ledger) with each invalid config in turn; each must delete 0
+        // (fail-closed) while an aged row sits ready. Every OTHER category stays permanent.
+        let now = 1_000_000 * 24 * 60 * 60 * 1000_i64;
+        for bad in [
+            CategoryRetention::AfterDays(0),
+            CategoryRetention::AfterDays(-1),
+            CategoryRetention::AfterDays(i64::MAX),
+            CategoryRetention::from_config("unknown", Some(90)),
+            CategoryRetention::from_config("after_days", None),
+        ] {
+            let db = Db::open_hub(&tmp("failclosed")).unwrap();
+            seed_token_ledger(&db, "tl_old", 1);
+            let w = RetentionWindows {
+                token_ledger: bad,
+                ..RetentionWindows::default()
+            };
+            let out = sweep_retention(db.conn(), now, w);
+            assert_eq!(
+                out.token_ledger_deleted, 0,
+                "invalid config {bad:?} must fail closed (delete 0)"
+            );
+            assert!(exists(&db, "token_ledger", "ledger_id", "tl_old"));
+            assert_eq!(count(&db, "retention_log"), 0);
+        }
+    }
+
+    // --- positive control: an EXPLICIT opt-in deletes exactly that category, nothing else ---
+
+    #[test]
+    fn explicit_single_category_opt_in_deletes_only_that_category() {
+        // The mechanism still works when the user genuinely opts in: enable ONLY memory_candidate
+        // at after_days(30); leave every other category permanent. Aged rows exist in MANY
+        // categories, but ONLY the aged rejected memory candidate is deleted.
+        let db = Db::open_hub(&tmp("opt-in-one")).unwrap();
+        let now = 1_000_000 * 24 * 60 * 60 * 1000_i64;
+        seed_all_aged_canonical(&db, now);
+
+        let w = RetentionWindows {
+            memory_candidate: CategoryRetention::AfterDays(30),
+            ..RetentionWindows::default()
+        };
+        let out = sweep_retention(db.conn(), now, w);
+        assert_eq!(out.table_errors, 0);
+
+        // Exactly the aged rejected candidate went; the confirmed memory (durable) stayed.
+        assert_eq!(out.memory_item_deleted, 1);
+        assert!(!exists(&db, "memory_item", "memory_id", "mem_rejected_old"));
+        assert!(
+            exists(&db, "memory_item", "memory_id", "mem_confirmed_old"),
+            "confirmed memory is never deleted, even when the category is enabled"
+        );
+        // Nothing else was touched (all other categories still permanent).
+        assert_eq!(out.token_ledger_deleted, 0);
+        assert_eq!(out.run_result_deleted, 0);
+        assert_eq!(out.surface_event_deleted, 0);
+        assert_eq!(out.provider_session_event_deleted, 0);
+        assert_eq!(out.mission_deleted, 0);
+        assert_eq!(out.work_item_deleted, 0);
+        assert_eq!(out.agent_run_deleted, 0);
+        assert!(exists(&db, "token_ledger", "ledger_id", "tl_old"));
+        assert!(exists(&db, "run_result", "run_id", "rr_old"));
+        assert!(exists(&db, "mission", "mission_id", "miss_term_old"));
+        assert!(exists(&db, "work_item", "work_item_id", "wi_term_old"));
+    }
+
+    // --- audit_ledger is NEVER swept, under any policy ---
+
+    #[test]
+    fn audit_ledger_is_never_swept_under_any_policy() {
+        let db = Db::open_hub(&tmp("audit-permanent")).unwrap();
+        let now = 1_000_000 * 24 * 60 * 60 * 1000_i64;
+        seed_audit(&db, "audit_1");
+        seed_audit(&db, "audit_2");
+        let before = count(&db, "audit_ledger");
+        // Even with EVERY category maximally enabled (operator_windows) + extreme time-travel,
+        // the audit hash-chain is untouched (the sweep never references audit_ledger).
+        let _ = sweep_retention(db.conn(), now, RetentionWindows::operator_windows());
+        assert_eq!(
+            count(&db, "audit_ledger"),
+            before,
+            "audit_ledger row count unchanged"
+        );
+        assert_eq!(crate::audit::verify_audit_chain(db.conn()).unwrap(), 2);
     }
 }
