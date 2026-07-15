@@ -161,6 +161,214 @@ describe("FridayMemoryPiiGuard", () => {
     expect(result.distinctTypes).toContain("phone_us");
   });
 
+  // ─── Full-width / width-folding (egress PII correctness) ───
+  //
+  // The redaction regexes are ASCII-only (\d = [0-9], no `u` flag). Full-width digit
+  // (U+FF10–FF19) and separator forms bypassed them, so a Luhn-valid card in full-width
+  // form was returned UNREDACTED through the live memory egress/read path. The guard now
+  // matches against a *length-preserving* width-folded view (each full-width code unit maps
+  // to exactly one ASCII code unit at the SAME index), then redacts the ORIGINAL string at
+  // the matched offsets — so match offsets stay valid and surrounding text is untouched.
+
+  // Map ASCII printable + space to its full-width / ideographic-space counterpart.
+  function toFullwidth(s: string): string {
+    return [...s]
+      .map((ch) => {
+        const c = ch.charCodeAt(0);
+        if (c === 0x20) return "　"; // space → ideographic space
+        if (c >= 0x21 && c <= 0x7e) return String.fromCharCode(c + 0xfee0);
+        return ch;
+      })
+      .join("");
+  }
+
+  describe("full-width width-fold", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("redacts a full-width Luhn-valid card and preserves surrounding text byte-for-byte", () => {
+      const card = toFullwidth("4111111111111111"); // ４１１１…, Luhn-valid Visa test number
+      const result = guard.scanAndTransform(`カード番号は${card}です`);
+      // Exact-equality proves index alignment: only the card span is replaced, the
+      // Japanese context is preserved unchanged.
+      expect(result.transformedContent).toBe("カード番号は[CREDIT_CARD]です");
+      expect(result.distinctTypes).toContain("credit_card");
+      expect(result.tagsToAdd).toContain("pii.credit_card");
+      // The reported match must span exactly the full-width card (length-preserving fold).
+      const cc = result.matches.find((m) => m.type === "credit_card");
+      expect(cc?.value).toBe(card);
+    });
+
+    it("redacts a full-width US phone number", () => {
+      const result = guard.scanAndTransform(`電話は${toFullwidth("555-234-5678")}まで`);
+      expect(result.transformedContent).toBe("電話は[PHONE_US]まで");
+      expect(result.distinctTypes).toContain("phone_us");
+    });
+
+    it("redacts a full-width US SSN", () => {
+      const result = guard.scanAndTransform(`SSN ${toFullwidth("123-45-6789")}`);
+      expect(result.transformedContent).toContain("[SSN_US]");
+      expect(result.transformedContent).not.toContain(toFullwidth("123-45-6789"));
+    });
+
+    it("redacts full-width digit groups separated by ASCII spaces", () => {
+      // ASCII space is a genuine, unambiguous separator (unlike U+3000 — see the
+      // ideographic-space non-bridge test); the card regex's `[ -]` class bridges the groups.
+      const card = [
+        toFullwidth("4111"),
+        toFullwidth("1111"),
+        toFullwidth("1111"),
+        toFullwidth("1111"),
+      ].join(" ");
+      const result = guard.scanAndTransform(card);
+      expect(result.transformedContent).toBe("[CREDIT_CARD]");
+      expect(result.distinctTypes).toContain("credit_card");
+    });
+
+    it("redacts a full-width card with full-width hyphen separators", () => {
+      const result = guard.scanAndTransform(toFullwidth("4111-1111-1111-1111"));
+      expect(result.transformedContent).toBe("[CREDIT_CARD]");
+      expect(result.distinctTypes).toContain("credit_card");
+    });
+
+    it("redacts a card mixing ASCII and full-width digits", () => {
+      const mixed = "4111" + toFullwidth("1111") + "11111111"; // 4111111111111111, Luhn-valid
+      const result = guard.scanAndTransform(mixed);
+      expect(result.transformedContent).toBe("[CREDIT_CARD]");
+      expect(result.distinctTypes).toContain("credit_card");
+    });
+
+    it("does NOT redact a full-width NON-Luhn card (Luhn still gates; fold did not over-match)", () => {
+      const nonLuhn = toFullwidth("4111111111111112"); // last digit broken → Luhn-invalid
+      const result = guard.scanAndTransform(nonLuhn);
+      expect(result.matches.filter((m) => m.type === "credit_card")).toHaveLength(0);
+      expect(result.distinctTypes).not.toContain("credit_card");
+      expect(result.transformedContent).toBe(nonLuhn); // returned unchanged
+    });
+
+    it("redacts a folded card at the very start and end of the string", () => {
+      const card = toFullwidth("4111111111111111");
+      const result = guard.scanAndTransform(card);
+      expect(result.transformedContent).toBe("[CREDIT_CARD]");
+      const cc = result.matches.find((m) => m.type === "credit_card");
+      expect(cc?.start).toBe(0);
+      expect(cc?.end).toBe(card.length);
+    });
+
+    it("redacts two adjacent PII spans without corrupting the boundary between them", () => {
+      const card = toFullwidth("4111111111111111");
+      const ssn = toFullwidth("123-45-6789");
+      const result = guard.scanAndTransform(`${card} / ${ssn}`);
+      expect(result.transformedContent).toBe("[CREDIT_CARD] / [SSN_US]");
+    });
+
+    it("redacts full-width PII inside metadata values and tags (redactDeep egress path)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({
+        note: `card ${toFullwidth("4111111111111111")}`,
+        tag: toFullwidth("123-45-6789"),
+      });
+      const meta = value as { note: string; tag: string };
+      expect(meta.note).toContain("[CREDIT_CARD]");
+      expect(meta.note).not.toContain(toFullwidth("4111111111111111"));
+      expect(meta.tag).toContain("[SSN_US]");
+      expect(tagsToAdd).toEqual(expect.arrayContaining(["pii.credit_card", "pii.ssn_us"]));
+    });
+  });
+
+  // ─── Full-width adjacency: UNION / no-regression (a full-width digit next to an ASCII
+  //     PII run must NOT make the ASCII PII vanish) ───
+  //
+  // A full-width digit is a NON-word char, so in the ORIGINAL string it forms a \b that
+  // correctly delimits an adjacent ASCII PII run. Folding it to an ASCII digit turns it into
+  // a word char, merging the runs and destroying that \b — the extended run overflows the
+  // card length/Luhn gate (or breaks SSN/phone exact-length anchoring) and the match
+  // vanishes. Detection must therefore be ADDITIVE: run on the ORIGINAL string too so no
+  // pre-existing ASCII match is ever lost.
+
+  describe("full-width adjacency (union superset)", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("still redacts an ASCII card immediately followed by a full-width digit", () => {
+      const result = guard.scanAndTransform("my card 4111111111111111１ thanks");
+      expect(result.transformedContent).toContain("[CREDIT_CARD]");
+      expect(result.transformedContent).not.toContain("4111111111111111");
+      expect(result.distinctTypes).toContain("credit_card");
+    });
+
+    it("still redacts an ASCII card immediately preceded by a full-width digit", () => {
+      const result = guard.scanAndTransform("１4111111111111111");
+      expect(result.transformedContent).toContain("[CREDIT_CARD]");
+      expect(result.transformedContent).not.toContain("4111111111111111");
+    });
+
+    it("still redacts an ASCII SSN immediately followed by a full-width digit", () => {
+      const result = guard.scanAndTransform("SSN: 123-45-6789１");
+      expect(result.transformedContent).toContain("[SSN_US]");
+      expect(result.transformedContent).not.toContain("123-45-6789");
+    });
+
+    it("still redacts an ASCII phone immediately followed by a full-width digit", () => {
+      const result = guard.scanAndTransform("call 234-5678１ now");
+      expect(result.transformedContent).toContain("[PHONE_US]");
+      expect(result.transformedContent).not.toContain("234-5678");
+    });
+
+    it("SUPERSET: the pre-fold (original-string) match span is always still redacted", () => {
+      // For each input, the character range the ASCII regex matches on the ORIGINAL string
+      // must be fully redacted after the union fix (old redaction span ⊆ new redaction span).
+      const cases: Array<{ input: string; leaked: string }> = [
+        { input: "my card 4111111111111111１ thanks", leaked: "4111111111111111" },
+        { input: "１4111111111111111", leaked: "4111111111111111" },
+        { input: "SSN: 123-45-6789１", leaked: "123-45-6789" },
+        { input: "call 234-5678１ now", leaked: "234-5678" },
+      ];
+      for (const c of cases) {
+        const out = guard.scanAndTransform(c.input).transformedContent;
+        expect(out).not.toContain(c.leaked);
+      }
+    });
+  });
+
+  // ─── U+3000 (ideographic space) must NOT bridge two distinct full-width groups ───
+
+  describe("full-width ideographic-space non-bridge", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("does NOT bridge two full-width digit groups joined only by U+3000 into a false card", () => {
+      // Bridged, these 8+8 digits would be a Luhn-valid 16-digit card; the ideographic space
+      // must keep them separate so legitimate non-card content is not over-redacted.
+      const g1 = toFullwidth("41111111");
+      const g2 = toFullwidth("11111111");
+      const result = guard.scanAndTransform(`${g1}　${g2}`);
+      expect(result.distinctTypes).not.toContain("credit_card");
+      expect(result.transformedContent).not.toContain("[CREDIT_CARD]");
+    });
+  });
+
+  // ─── Full-width phone-format chars: period (U+FF0E), parens (U+FF08/FF09) ───
+  //
+  // Phone/number formats use '.', '(', ')' (and '+') as separators. Folding their full-width
+  // forms lets the ASCII phone regex match full-width-formatted numbers. Additive union still
+  // applies, so nothing pre-existing is lost.
+
+  describe("full-width phone-format chars", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("redacts a full-width phone using full-width PERIOD separators (U+FF0E)", () => {
+      // Without folding U+FF0E there is no 7+ contiguous-digit run, so nothing matches → leak.
+      const result = guard.scanAndTransform(`電話 ${toFullwidth("234.567.8901")}`);
+      expect(result.transformedContent).toContain("[PHONE_US]");
+      expect(result.distinctTypes).toContain("phone_us");
+    });
+
+    it("redacts the AREA CODE of a full-width parenthesized phone (U+FF08/FF09)", () => {
+      // Without folding the full-width parens, only the local `567-8901` matches and the
+      // area code `234` LEAKS; folding U+FF09 lets `\)?` extend the match over the area code.
+      const result = guard.scanAndTransform(toFullwidth("(234)567-8901"));
+      expect(result.transformedContent).toContain("[PHONE_US]");
+      expect(result.transformedContent).not.toContain(toFullwidth("234")); // area code redacted
+    });
+  });
+
   // ─── redactDeep (metadata + tags) ───
 
   describe("redactDeep", () => {
