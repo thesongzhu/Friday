@@ -226,12 +226,6 @@ export interface FridayObservabilityApiService {
   readonly health: FridayHealthCheckManager;
   readonly dashboard: FridayDashboardDataProvider;
   readonly scheduler: FridayAlertEvaluationScheduler;
-  /**
-   * Report-only: publish a realtime_events growth reading through the formal
-   * observability seam (gauges + metricState + dashboard time-series). Never
-   * deletes anything. RESTART-VOLATILE (in-memory).
-   */
-  recordRealtimeEventsGrowth(reading: FridayRealtimeEventsGrowthReading): void;
   observeAsync<T>(input: FridayObservedOperationInput, work: () => Promise<T>): Promise<T>;
   drainAuditWrites(): Promise<void>;
   shutdown(): Promise<void>;
@@ -383,75 +377,6 @@ const HISTOGRAM_METRICS: Array<{ name: HistogramMetricName; module: FridayObserv
   { name: "friday.uix.template.duration_ms", module: "uix" },
   { name: "friday.uix.wizard.duration_ms", module: "uix" },
 ];
-
-// ─── realtime_events growth gauges (report-only; DATA-RETENTION-001) ───
-//
-// Report-only growth telemetry for the append-only, DERIVED realtime_events
-// replay stream. These gauges are registered and reported through the SAME
-// formal seam the counters/histograms use (metrics collector + metricState +
-// dashboard.recordDataPoint), so the signal is authoritatively readable off the
-// real `/v1/observability/metrics` and `/v1/observability/time-series` routes
-// and by the alert engine's metric provider. RESTART-VOLATILE: like every other
-// metric in this in-memory collector, the values and the time-series history do
-// NOT survive a Hub restart — no deletion is ever performed here.
-
-/** Gauge: approximate realtime_events row count (O(1) MAX(rowid) proxy). */
-export const REALTIME_EVENTS_ROWS_GAUGE = "friday.realtime_events.rows_estimate";
-/** Gauge: estimated realtime_events payload size in true UTF-8 bytes. */
-export const REALTIME_EVENTS_BYTES_GAUGE = "friday.realtime_events.bytes_estimate";
-/**
- * Gauge: the mutable growth status encoded as a numeric VALUE (not a label).
- * A label-encoded status would leave an uncleanable stale gauge variant per
- * transition; a single unlabeled gauge whose value is the status code updates in
- * place, so the API always reflects exactly the CURRENT status.
- */
-export const REALTIME_EVENTS_STATUS_CODE_GAUGE = "friday.realtime_events.growth_status_code";
-
-/** Numeric encoding for the report-only growth status (rides as a gauge value). */
-export const REALTIME_EVENTS_GROWTH_STATUS_CODE: Readonly<Record<string, number>> = {
-  healthy: 0,
-  warn: 1,
-  critical: 2,
-  degraded: 3,
-};
-
-const GAUGE_METRICS: Array<{ name: string; module: FridayObservabilityModule }> = [
-  { name: REALTIME_EVENTS_ROWS_GAUGE, module: "learning" },
-  { name: REALTIME_EVENTS_BYTES_GAUGE, module: "learning" },
-  { name: REALTIME_EVENTS_STATUS_CODE_GAUGE, module: "learning" },
-];
-
-/**
- * Structural, report-only growth reading accepted by
- * `recordRealtimeEventsGrowth`. Deliberately decoupled from the learning-layer
- * `FridaySystemHealthGrowthDetail` (which is structurally assignable to it) so
- * the observability service never imports the health monitor.
- */
-export interface FridayRealtimeEventsGrowthReading {
-  status: string;
-  rowCount: number;
-  estimatedBytes: number;
-  sampleSize: number;
-  reclaim_status: string;
-  failClosed?: boolean;
-}
-
-/** The last-observed growth snapshot returned off the metrics route (current, restart-volatile). */
-export interface FridayRealtimeEventsGrowthSnapshot {
-  rowCount: number;
-  estimatedBytes: number;
-  status: string;
-  statusCode: number;
-  reclaim_status: string;
-  sampleSize: number;
-  failClosed: boolean;
-  reportedAt: string;
-  /**
-   * Honesty marker: this snapshot and its time-series history live only in the
-   * in-memory collector. A durable, cross-restart growth trend is PENDING.
-   */
-  durability: "restart_volatile";
-}
 
 function buildDefaultAlertRule(nowIso: string): FridayAlertRule {
   return {
@@ -909,13 +834,6 @@ export function createFridayObservabilityApiService(
   for (const metric of HISTOGRAM_METRICS) {
     metrics.registerHistogram(metric.name, metric.module);
   }
-  for (const metric of GAUGE_METRICS) {
-    metrics.registerGauge(metric.name, metric.module);
-  }
-
-  // Latest report-only realtime_events growth snapshot (restart-volatile; the
-  // metrics route returns it so status/reclaim_status strings are readable).
-  let lastRealtimeEventsGrowth: FridayRealtimeEventsGrowthSnapshot | null = null;
 
   function parseAlertDestinationRow(row: FridayAlertChannelRow): AlertDestinationEntity {
     const config: AlertDestinationConfig = row.type === "email"
@@ -1464,48 +1382,6 @@ export function createFridayObservabilityApiService(
     metricState.lastValues.set(name, value);
     metricState.lastReportedAt.set(name, timestamp);
     dashboard.recordDataPoint(name, value, timestamp);
-  }
-
-  /**
-   * Report a gauge through the FULL formal seam counters/histograms use: the
-   * metrics collector (readback via `/v1/observability/metrics`), the alert
-   * engine's metricState (`lastValues`/`lastReportedAt`), and the dashboard
-   * time-series (readback + trend via `/v1/observability/time-series`). Uses an
-   * EMPTY label set so the gauge keeps a single stable identity — no per-status
-   * variant can leak. Report-only; never deletes anything.
-   */
-  function reportGauge(name: string, value: number, timestamp: string): void {
-    metrics.setGauge(name, value, {});
-    metricState.lastValues.set(name, value);
-    metricState.lastReportedAt.set(name, timestamp);
-    dashboard.recordDataPoint(name, value, timestamp);
-  }
-
-  /**
-   * Publish the report-only realtime_events growth reading through the formal
-   * observability seam. rows/bytes/status-code land as unlabeled gauges (so the
-   * metrics route enumerates them and the time-series route can trend them), and
-   * the structured snapshot (with the status + reclaim_status strings) is stored
-   * for the metrics route. RESTART-VOLATILE and DELETION-FREE.
-   */
-  function recordRealtimeEventsGrowth(reading: FridayRealtimeEventsGrowthReading): void {
-    const timestamp = deps.nowIso();
-    const statusCode = REALTIME_EVENTS_GROWTH_STATUS_CODE[reading.status]
-      ?? REALTIME_EVENTS_GROWTH_STATUS_CODE.degraded;
-    reportGauge(REALTIME_EVENTS_ROWS_GAUGE, reading.rowCount, timestamp);
-    reportGauge(REALTIME_EVENTS_BYTES_GAUGE, reading.estimatedBytes, timestamp);
-    reportGauge(REALTIME_EVENTS_STATUS_CODE_GAUGE, statusCode, timestamp);
-    lastRealtimeEventsGrowth = {
-      rowCount: reading.rowCount,
-      estimatedBytes: reading.estimatedBytes,
-      status: reading.status,
-      statusCode,
-      reclaim_status: reading.reclaim_status,
-      sampleSize: reading.sampleSize,
-      failClosed: reading.failClosed === true,
-      reportedAt: timestamp,
-      durability: "restart_volatile",
-    };
   }
 
   function metricValue(name: string): number {
@@ -2501,25 +2377,15 @@ export function createFridayObservabilityApiService(
     },
     metrics: {
       getSnapshot() {
+        const metricNames = COUNTER_METRICS.map((m) => m.name);
         const collected: Record<string, number> = {};
-        for (const { name } of COUNTER_METRICS) {
-          collected[name] = metricValueFromSnapshots(metrics.getAllSnapshots(name));
-        }
-        // Enumerate gauges too, so the report-only realtime_events growth signal
-        // (rows/bytes/status-code) is authoritatively readable off this route.
-        for (const { name } of GAUGE_METRICS) {
+        for (const name of metricNames) {
           collected[name] = metricValueFromSnapshots(metrics.getAllSnapshots(name));
         }
         return {
           collectedAt: deps.nowIso(),
           metrics: collected,
-          // Structured current growth snapshot carries the status + reclaim_status
-          // STRINGS (the numeric gauges above cannot). Null until the first tick.
-          // RESTART-VOLATILE: cleared on Hub restart (in-memory collector).
-          realtimeEventsGrowth: lastRealtimeEventsGrowth,
-          summary:
-            `In-memory metrics collector active with ${COUNTER_METRICS.length} counter(s) and ` +
-            `${GAUGE_METRICS.length} gauge(s). Values are RESTART-VOLATILE (not persisted across Hub restart).`,
+          summary: `In-memory metrics collector active with ${metricNames.length} counter(s).`,
         };
       },
     },
@@ -2559,7 +2425,6 @@ export function createFridayObservabilityApiService(
     dashboard,
     scheduler,
     drainAuditWrites,
-    recordRealtimeEventsGrowth,
     async shutdown() {
       scheduler.stop();
       await drainAuditWrites();

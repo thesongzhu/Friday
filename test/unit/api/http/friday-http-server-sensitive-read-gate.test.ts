@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createFridayHttpRouteRegistry,
   createFridayHttpServer,
-  createFridayObservabilityRoutes,
   createFridaySystemRoutes,
   type FridayAuthMiddlewareFactory,
   type FridayHttpServer,
@@ -137,111 +136,6 @@ const SYSTEM_READ_PATHS: readonly string[] = [
   "/v1/system/session",
 ];
 
-// SEC-NET-PRINCIPAL-001: build the REAL `/v1/observability` metrics + time-series read
-// routes (createFridayObservabilityRoutes) backed by counting stub services that emit the
-// #1606 realtime_events growth body, so the sensitive-read floor is exercised against the
-// ACTUAL registered route handlers (not a hand-rolled duplicate). `calls` records whether a
-// handler body executed (must stay 0 for anonymous callers — no growth data leaks).
-interface ObservabilityReadCalls {
-  metrics: number;
-  timeSeries: number;
-}
-
-// Distinctive sentinels that ONLY appear in the real growth body — used to prove the anonymous
-// (401) response carries NONE of the realtime_events growth fields. None of these substrings
-// appear in the sensitive-read error envelope ({ok:false,error:{code,message}}).
-const RTE_ROWS_GAUGE = "friday.realtime_events.rows_estimate";
-const RTE_BYTES_GAUGE = "friday.realtime_events.bytes_estimate";
-const RTE_STATUS_CODE_GAUGE = "friday.realtime_events.growth_status_code";
-const GROWTH_ROW_COUNT = 4242;
-const GROWTH_BYTES = 987654;
-const GROWTH_RECLAIM_STATUS = "deferred_to_rust_epoch_resync";
-const GROWTH_LEAK_SENTINELS: readonly string[] = [
-  "realtimeEventsGrowth",
-  "friday.realtime_events",
-  GROWTH_RECLAIM_STATUS,
-  "restart_volatile",
-  String(GROWTH_ROW_COUNT),
-  String(GROWTH_BYTES),
-];
-
-function makeCountingObservabilityReadRoutes(calls: ObservabilityReadCalls) {
-  const deps = {
-    overview: { get: () => ({ overview: {} }) },
-    timeSeries: {
-      get: () => {
-        calls.timeSeries += 1;
-        // The realtime_events growth trend — owner/system detail, not anonymous health.
-        return {
-          series: { metricName: RTE_ROWS_GAUGE, points: [{ value: GROWTH_ROW_COUNT }] },
-        };
-      },
-    },
-    traces: { search: () => ({ traces: [] }), get: () => ({ trace: null }) },
-    audit: { search: () => ({ entries: [] }), get: () => ({ entry: null }) },
-    slos: {
-      list: () => ({ slos: [] }),
-      get: () => ({}),
-      create: async () => ({}),
-      update: async () => ({}),
-      delete: async () => ({ deleted: true, sloId: "x" }),
-    },
-    alerts: {
-      list: () => ({ alerts: [] }),
-      get: () => ({}),
-      acknowledge: () => ({}),
-      testDispatch: () => ({}),
-    },
-    alertDestinations: {
-      list: () => ({ destinations: [] }),
-      create: () => ({}),
-      update: () => ({}),
-      delete: () => ({}),
-    },
-    alertRules: {
-      list: () => ({ rules: [] }),
-      get: () => ({}),
-      create: () => ({}),
-      update: () => ({}),
-      delete: () => ({}),
-    },
-    metrics: {
-      getSnapshot: () => {
-        calls.metrics += 1;
-        // The exact #1606 report-only realtime_events growth snapshot published on this route.
-        return {
-          collectedAt: "2026-07-15T00:00:00.000Z",
-          metrics: {
-            [RTE_ROWS_GAUGE]: GROWTH_ROW_COUNT,
-            [RTE_BYTES_GAUGE]: GROWTH_BYTES,
-            [RTE_STATUS_CODE_GAUGE]: 0,
-          },
-          realtimeEventsGrowth: {
-            rowCount: GROWTH_ROW_COUNT,
-            estimatedBytes: GROWTH_BYTES,
-            status: "healthy",
-            statusCode: 0,
-            reclaim_status: GROWTH_RECLAIM_STATUS,
-            sampleSize: GROWTH_ROW_COUNT,
-            durability: "restart_volatile",
-          },
-          summary: "test",
-        };
-      },
-    },
-  };
-  const wantedReadOps = new Set(["observability.time.series", "observability.metrics.snapshot"]);
-  return createFridayObservabilityRoutes(
-    deps as unknown as Parameters<typeof createFridayObservabilityRoutes>[0],
-  ).filter((route) => wantedReadOps.has(route.operationId));
-}
-
-const OBSERVABILITY_GROWTH_READ_PATHS: readonly string[] = [
-  "/v1/observability/metrics",
-  `/v1/observability/time-series?metricName=${RTE_ROWS_GAUGE}` +
-    "&startTime=2026-03-07T00:00:00.000Z&endTime=2026-03-07T01:00:00.000Z&bucketSize=5m",
-];
-
 describe("isFridaySensitiveReadRoute", () => {
   it("matches the sensitive prefixes and their sub-paths", () => {
     for (const prefix of FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES) {
@@ -345,35 +239,6 @@ describe("isFridaySensitiveReadRoute", () => {
       "/v1/system/eventsx",
       "/v1/system/sessionx",
       "/v1/system/sessions",
-    ]) {
-      expect(isFridaySensitiveReadRoute(sibling)).toBe(false);
-    }
-  });
-
-  it("SEC-NET-PRINCIPAL-001: classifies the #1606 realtime_events growth reads (observability metrics + time-series) without over-flooring sibling observability reads", () => {
-    // #1606 publishes owner-specific realtime_events DB-footprint growth (rows/bytes/status/
-    // sampleSize/reclaim_status + time-series) onto these two routes; they must be gated.
-    for (const path of ["/v1/observability/metrics", "/v1/observability/time-series"]) {
-      expect(FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES).toContain(path);
-      expect(isFridaySensitiveReadRoute(path)).toBe(true);
-      expect(isFridaySensitiveReadRoute(`${path}/:id`)).toBe(true);
-    }
-
-    // No-degrade: the sibling anonymous observability reads stay public (minimal, non-owner).
-    for (const path of [
-      "/v1/observability/overview",
-      "/v1/observability/traces",
-      "/v1/observability/traces/:traceId",
-      "/v1/observability/slos",
-      "/v1/observability/alerts",
-    ]) {
-      expect(isFridaySensitiveReadRoute(path)).toBe(false);
-    }
-
-    // Trailing-slash boundary: textual-prefix siblings must NOT be over-floored.
-    for (const sibling of [
-      "/v1/observability/metricsx",
-      "/v1/observability/time-series-archive",
     ]) {
       expect(isFridaySensitiveReadRoute(sibling)).toBe(false);
     }
@@ -819,91 +684,5 @@ describe("FridayHttpServer sensitive-read floor", () => {
     }
     // Every real system read handler executed exactly once for the bound owner — access unchanged.
     expect(calls).toEqual({ session: 1, state: 1, approvals: 1, events: 1 });
-  });
-
-  it("SEC-NET-PRINCIPAL-001 negative: anonymous GET on /v1/observability/metrics + /v1/observability/time-series → 401 before the REAL handlers run (no realtime_events growth leak)", async () => {
-    // Regression guard for the #1606 P0: both routes shipped auth:{public:true} and were absent
-    // from the sensitive-read floor, so an unauthenticated HTTP GET returned 200 + the growth body.
-    // This drives the SAME server path a real network client hits (createFridayHttpServer + the
-    // REAL createFridayObservabilityRoutes handlers) — NOT a direct handler call — so it proves the
-    // gate is enforced at the HTTP middleware layer (the prior integration test invoked the route
-    // handler function directly and therefore bypassed this floor entirely).
-    const calls: ObservabilityReadCalls = { metrics: 0, timeSeries: 0 };
-    await startWith((routes) => {
-      for (const route of makeCountingObservabilityReadRoutes(calls)) {
-        routes.register(route);
-      }
-    });
-
-    for (const path of OBSERVABILITY_GROWTH_READ_PATHS) {
-      const response = await fetch(`${baseUrl}${path}`);
-      expect(response.status).toBe(401);
-      const raw = await response.text();
-      const body = JSON.parse(raw) as { ok: false; error: { code: string } };
-      expect(body.ok).toBe(false);
-      expect(body.error.code).toBe(ERROR_CODE_BOUND_PRINCIPAL_REQUIRED);
-      // Critical: the anonymous 401 response body carries NONE of the realtime_events growth fields.
-      for (const sentinel of GROWTH_LEAK_SENTINELS) {
-        expect(raw).not.toContain(sentinel);
-      }
-    }
-    // Critical: neither real observability read handler executed for an anonymous caller — no leak.
-    expect(calls).toEqual({ metrics: 0, timeSeries: 0 });
-  });
-
-  it("SEC-NET-PRINCIPAL-001 no-degrade: a bound bearer still reaches the REAL observability metrics + time-series handlers → 200 with the growth body", async () => {
-    const calls: ObservabilityReadCalls = { metrics: 0, timeSeries: 0 };
-    await startWith(
-      (routes) => {
-        for (const route of makeCountingObservabilityReadRoutes(calls)) {
-          routes.register(route);
-        }
-      },
-      {
-        "real-token-abc": {
-          principalId: "user:alice",
-          userId: "11111111-1111-1111-1111-111111111111",
-          tenantId: "22222222-2222-2222-2222-222222222222",
-          role: "viewer",
-          scopes: ["session.read"],
-          tokenId: "33333333-3333-3333-3333-333333333333",
-        },
-      },
-    );
-
-    const metricsResponse = await fetch(`${baseUrl}/v1/observability/metrics`, {
-      headers: { Authorization: "Bearer real-token-abc" },
-    });
-    expect(metricsResponse.status).toBe(200);
-    const metricsBody = (await metricsResponse.json()) as {
-      ok: true;
-      data: {
-        metrics: Record<string, number>;
-        realtimeEventsGrowth: { rowCount: number; estimatedBytes: number; reclaim_status: string; durability: string };
-      };
-    };
-    expect(metricsBody.ok).toBe(true);
-    expect(metricsBody.data.realtimeEventsGrowth.rowCount).toBe(GROWTH_ROW_COUNT);
-    expect(metricsBody.data.realtimeEventsGrowth.estimatedBytes).toBe(GROWTH_BYTES);
-    expect(metricsBody.data.realtimeEventsGrowth.reclaim_status).toBe(GROWTH_RECLAIM_STATUS);
-    expect(metricsBody.data.realtimeEventsGrowth.durability).toBe("restart_volatile");
-    expect(metricsBody.data.metrics[RTE_ROWS_GAUGE]).toBe(GROWTH_ROW_COUNT);
-
-    const seriesResponse = await fetch(
-      `${baseUrl}/v1/observability/time-series?metricName=${RTE_ROWS_GAUGE}` +
-        "&startTime=2026-03-07T00:00:00.000Z&endTime=2026-03-07T01:00:00.000Z&bucketSize=5m",
-      { headers: { Authorization: "Bearer real-token-abc" } },
-    );
-    expect(seriesResponse.status).toBe(200);
-    const seriesBody = (await seriesResponse.json()) as {
-      ok: true;
-      data: { series: { metricName: string; points: Array<{ value: number }> } };
-    };
-    expect(seriesBody.ok).toBe(true);
-    expect(seriesBody.data.series.metricName).toBe(RTE_ROWS_GAUGE);
-    expect(seriesBody.data.series.points.some((point) => point.value >= GROWTH_ROW_COUNT)).toBe(true);
-
-    // Both real observability read handlers executed exactly once for the bound owner — access unchanged.
-    expect(calls).toEqual({ metrics: 1, timeSeries: 1 });
   });
 });

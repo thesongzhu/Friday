@@ -4,14 +4,12 @@ import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js
 import {
   createFridaySystemHealthMonitor,
   classifyRealtimeEventsGrowth,
-  reportRealtimeEventsGrowth,
   createFridayHealthLogDeduper,
   healthCheckStatusLabel,
   REALTIME_EVENTS_GROWTH_THRESHOLDS,
   REALTIME_EVENTS_SAMPLE_SIZE,
   REALTIME_EVENTS_ROWCOUNT_PROXY_SQL,
   REALTIME_EVENTS_SAMPLE_BYTES_SQL,
-  type FridaySystemHealthGrowthDetail,
   type FridaySystemHealthMonitor,
   type FridaySystemHealthRunSummary,
 } from "../../../../src/learning/services/friday-system-health-monitor.js";
@@ -379,40 +377,6 @@ describe("FridaySystemHealthMonitor", () => {
     expect(growth!.detail!.reclaim_status).toBe("deferred_to_rust_epoch_resync");
     expect(summary.maintenanceReceipts).toHaveLength(0);
     expect(summary.maintenanceRecommendations.find((r) => r.name === "realtime_events_growth")).toBeUndefined();
-  });
-
-  it("forwards the full growth reading to the observability reporter (report-only)", () => {
-    // The monitor hands its detail to the reporter; the observability service
-    // (tested end-to-end for the real HTTP readback in
-    // test/unit/observability/services/realtime-events-growth-readback.test.ts)
-    // is what publishes through the formal, RESTART-VOLATILE metrics seam.
-    const received: FridaySystemHealthGrowthDetail[] = [];
-    const wired = createFridaySystemHealthMonitor({
-      db,
-      nowIso: () => NOW,
-      metricsSink: { report: (detail) => received.push(detail) },
-    });
-    const N = 12;
-    insertRealtimeEvents(N, JSON.stringify({ data: "w".repeat(40) }));
-    const summary = wired.runAll();
-    const growth = summary.checks.find((c) => c.name === "realtime_events_growth")!;
-
-    expect(received).toHaveLength(1);
-    expect(received[0]!.status).toBe("healthy");
-    expect(received[0]!.rowCount).toBe(N);
-    expect(received[0]!.estimatedBytes).toBe(growth.detail!.estimatedBytes);
-    expect(received[0]!.reclaim_status).toBe("deferred_to_rust_epoch_resync");
-  });
-
-  it("reportRealtimeEventsGrowth is a no-op without a reporter and swallows reporter errors", () => {
-    expect(() =>
-      reportRealtimeEventsGrowth(undefined, classifyRealtimeEventsGrowth(5, 100)),
-    ).not.toThrow();
-    // A throwing reporter must not break the caller (best-effort telemetry).
-    const throwing = { report: () => { throw new Error("sink down"); } };
-    expect(() =>
-      reportRealtimeEventsGrowth(throwing, classifyRealtimeEventsGrowth(5, 100)),
-    ).not.toThrow();
   });
 
   it("rate-limits repeated warnings: logs only on a status transition", () => {

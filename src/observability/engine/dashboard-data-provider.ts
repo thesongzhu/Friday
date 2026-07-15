@@ -41,12 +41,13 @@ const BUCKET_MS: Record<BucketSize, number> = {
  * (a bounded ring buffer that evicts the oldest), so a long-running Home Hub
  * cannot grow this in-memory store without bound.
  *
- * Every periodic gauge/counter/histogram — including the report-only
- * `realtime_events` growth gauges reported every 5 minutes — flows through
- * `recordDataPoint`, so without this cap a 10,000-report run would retain 10,000
- * points PER metric forever. At 2,000 points and a 5-minute cadence this still
- * preserves ~7 days of the RECENT trend the readback needs while staying O(1)
- * in memory. The whole store remains RESTART-VOLATILE (cleared on Hub restart).
+ * Every periodic gauge/counter/histogram flows through `recordDataPoint`, so
+ * without this cap a long-running Hub would retain one point PER metric PER tick
+ * forever (unbounded in-memory growth). At 2,000 points and a 5-minute cadence
+ * this still preserves ~7 days of the RECENT trend a dashboard needs while
+ * staying O(1) in memory. The whole store remains RESTART-VOLATILE (cleared on
+ * Hub restart). This is a general in-memory-retention safety bound, independent
+ * of any single metric.
  */
 export const FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC = 2000;
 

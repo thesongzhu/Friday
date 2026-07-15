@@ -73,20 +73,6 @@ export interface FridaySystemHealthGrowthDetail {
 }
 
 /**
- * Narrow structural REPORTER for report-only growth telemetry. The monitor hands
- * the whole growth reading to the observability service, which publishes it
- * through its FORMAL seam (unlabeled gauges + metricState + dashboard
- * time-series) so it is readable off the real `/v1/observability/metrics` and
- * `/v1/observability/time-series` routes. The monitor stays decoupled: it never
- * imports the observability engine nor knows gauge names. The reading is
- * RESTART-VOLATILE once published (the collector is in-memory); a durable,
- * cross-restart trend is PENDING. Never used for any deletion.
- */
-export interface FridayRealtimeEventsGrowthReporter {
-  report(detail: FridaySystemHealthGrowthDetail): void;
-}
-
-/**
  * Rate-limits repeated health-status warnings. A persistently warn/critical
  * check must NOT emit a fresh log every 5 minutes forever — only on a status
  * TRANSITION. Feed every check's status (healthy included) so a recovery resets
@@ -166,15 +152,6 @@ export interface CreateSystemHealthMonitorDeps {
   nowIso: () => string;
   /** Optional callback invoked after each run for audit/observability. */
   onRunComplete?: (summary: FridaySystemHealthRunSummary) => void;
-  /**
-   * Optional report-only growth reporter. When provided, the
-   * `realtime_events_growth` check hands its full reading (rows/bytes/status/
-   * reclaim_status) to the observability service, which publishes it through the
-   * formal seam so it is readback-able off the real observability routes. The
-   * published values are RESTART-VOLATILE (in-memory collector); a durable trend
-   * is PENDING. Never used for any deletion.
-   */
-  metricsSink?: FridayRealtimeEventsGrowthReporter;
 }
 
 // ─── Checks ───
@@ -293,25 +270,6 @@ function degradedRealtimeEventsGrowthDetail(err: unknown): FridaySystemHealthGro
   };
 }
 
-/**
- * Hand the growth reading to the observability reporter (report-only). The
- * reporter publishes rows/bytes/status through the formal seam with a STABLE,
- * unlabeled gauge identity (status rides as a numeric value, not a label, so no
- * stale per-status variant can leak). Best-effort: any telemetry error must
- * never break the health run, and nothing is ever deleted.
- */
-export function reportRealtimeEventsGrowth(
-  reporter: FridayRealtimeEventsGrowthReporter | undefined,
-  detail: FridaySystemHealthGrowthDetail,
-): void {
-  if (!reporter) return;
-  try {
-    reporter.report(detail);
-  } catch {
-    // Report-only telemetry is best-effort; swallow so health never fails on it.
-  }
-}
-
 const HEALTH_CHECKS: HealthCheck[] = [
   {
     name: "db_size",
@@ -411,9 +369,11 @@ const HEALTH_CHECKS: HealthCheck[] = [
         // performs NO deletion. reclaim_status is still surfaced for the reader.
         detail = degradedRealtimeEventsGrowthDetail(err);
       }
-      // Report-only readback: hand the reading to the observability reporter,
-      // which publishes it through the formal (restart-volatile) metrics seam.
-      reportRealtimeEventsGrowth(deps.metricsSink, detail);
+      // Report-only: the growth reading rides in the returned check `detail` and is
+      // surfaced ONLY through the monitor's run summary → transition-only warning
+      // logs (see the Hub scheduler's onRunComplete). Per the #1606 split it is NOT
+      // published to any observability route / HTTP surface; owner-authorized
+      // readback is deferred to R3. Never used for any deletion.
       return {
         name: "realtime_events_growth",
         healthy: detail.status === "healthy",

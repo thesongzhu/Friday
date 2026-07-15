@@ -8203,9 +8203,11 @@ export async function createFridayHub(
         healthCheckStatusLabel,
       } = await import("../learning/services/friday-system-health-monitor.js");
       // One-time setup (persists across ticks): a transition-only log deduper so
-      // a persistently large table never spams a warning every 5 minutes. The
-      // growth gauges are registered by the observability service itself. Report-
-      // only — none of this deletes anything.
+      // a persistently large table never spams a warning every 5 minutes. Per the
+      // #1606 split, the report-only realtime_events growth reading is surfaced
+      // ONLY via these transition-only logs — it is NOT published to any
+      // observability route / HTTP surface (owner-authorized readback is deferred
+      // to R3). Report-only — none of this deletes anything.
       const systemHealthLogDeduper = createFridayHealthLogDeduper();
       schedulerJobs.push({
         id: "system-health-monitor",
@@ -8216,14 +8218,6 @@ export async function createFridayHub(
           const monitor = createFridaySystemHealthMonitor({
             db: stateRuntime!.sqlite,
             nowIso,
-            // Publish the growth reading through the observability service's
-            // FORMAL seam (unlabeled gauges + metricState + dashboard
-            // time-series) so it is readback-able off /v1/observability/metrics
-            // and /v1/observability/time-series. RESTART-VOLATILE (in-memory);
-            // durable cross-restart trend is PENDING. NEVER used for any deletion.
-            metricsSink: {
-              report: (detail) => observabilityService.recordRealtimeEventsGrowth(detail),
-            },
             onRunComplete: (summary) => {
               // Log an unhealthy/warn/critical/degraded check only on a status
               // TRANSITION; feed healthy statuses too so a recovery resets state

@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
-import { initializeFridayState } from "#state";
 import {
-  REALTIME_EVENTS_ROWS_GAUGE,
-  REALTIME_EVENTS_BYTES_GAUGE,
-  REALTIME_EVENTS_STATUS_CODE_GAUGE,
-} from "../../../src/observability/services/friday-observability-api-service.js";
+  createFridayHttpServer,
+  type FridayAuthMiddlewareFactory,
+  type FridayHttpServer,
+  type FridayRealtimeWsGateway,
+} from "#api";
+import { initializeFridayState } from "#state";
+import { createFridaySystemHealthMonitor } from "../../../src/learning/services/friday-system-health-monitor.js";
 import {
   clearAutoDetectProviderEnv,
   restoreAutoDetectProviderEnv,
@@ -17,25 +20,37 @@ import {
 } from "../../_helpers/auto-detect-provider-env.js";
 
 /**
- * REAL production-path readback for the report-only realtime_events growth signal.
+ * SPLIT PROOF (production wiring): the report-only realtime_events growth signal
+ * is computed by the real Hub's system-health-monitor but is NOT exposed on ANY
+ * `/v1/observability/*` route.
  *
- * NO PROOF-THEATER: this exercises the EXACT production wiring, not a test-only
- * duplicate adapter. It runs the real `createFridayHub`, then `hub.start()` — which
- * boots the real job scheduler and runs the EXACT registered `system-health-monitor`
- * job whose bootstrap `metricsSink` adapter publishes through
- * `observabilityService.recordRealtimeEventsGrowth`. The signal is then read back off
- * the authoritative, hub-registered `GET /v1/observability/metrics` and
- * `GET /v1/observability/time-series` route handlers (found on
- * `hub.apiRuntime.routes.getRoutes()`). No monitor/service/route is hand-constructed.
+ * NO PROOF-THEATER: this runs the EXACT production path — real `createFridayHub`
+ * → `hub.start()` boots the real job scheduler and its registered
+ * `system-health-monitor` job (report-only; per the #1606 split it no longer
+ * wires a metricsSink to the observability service). The real, hub-registered
+ * observability routes are then served through a REAL `createFridayHttpServer`
+ * (over `hub.apiRuntime.routes`) and fetched over HTTP exactly as a client would.
  *
- * HONESTY: the observability metrics collector and its time-series store are
- * IN-MEMORY, so the signal is RESTART-VOLATILE — a within-session snapshot + trend
- * are proven here; a durable cross-restart trend is PENDING. No claim of durability.
+ * The test asserts (a) the collector DOES compute a real growth reading from the
+ * seeded rows (so the signal is not silently gone), and (b) NONE of the growth
+ * fields reach `/v1/observability/metrics` or `/v1/observability/time-series`.
+ * This is a regression guard: re-adding the bootstrap metricsSink publish would
+ * make (b) fail. Owner-authorized readback is DEFERRED to R3.
  */
-describe("realtime_events growth — real bootstrap + scheduler + route readback", () => {
+describe("realtime_events growth — real Hub computes it, but NO growth reaches any observability route", () => {
   const tmpDirs: string[] = [];
   const hubs: FridayHub[] = [];
+  const servers: FridayHttpServer[] = [];
   let envSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
+
+  // Sentinels that would ONLY appear if the growth reading leaked onto a route.
+  const GROWTH_SENTINELS = [
+    "realtimeEventsGrowth",
+    "friday.realtime_events",
+    "deferred_to_rust_epoch_resync",
+    "reclaim_status",
+    "estimatedBytes",
+  ] as const;
 
   function makeTmpDir(): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-rte-growth-"));
@@ -43,11 +58,46 @@ describe("realtime_events growth — real bootstrap + scheduler + route readback
     return dir;
   }
 
+  function findFreePort(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const probe = net.createServer();
+      probe.listen(0, "127.0.0.1", () => {
+        const addr = probe.address();
+        if (!addr || typeof addr === "string") {
+          probe.close();
+          reject(new Error("failed to allocate free port"));
+          return;
+        }
+        const port = addr.port;
+        probe.close((closeErr) => (closeErr ? reject(closeErr) : resolve(port)));
+      });
+      probe.on("error", reject);
+    });
+  }
+
+  function makeStubWsGateway(): FridayRealtimeWsGateway {
+    return {
+      handleClientFrame: () => ({ handled: false }),
+      addConnection: () => {},
+      removeConnection: () => {},
+      broadcastEvent: () => {},
+    } as unknown as FridayRealtimeWsGateway;
+  }
+
+  // Anonymous/public reads only: never sets a principal, so the server falls back
+  // to its synthetic default-public principal (these routes are public).
+  function makeStubMiddleware(): FridayAuthMiddlewareFactory {
+    return {
+      requireAuth: () => ({ passed: true as const }),
+      requireAnyScope: () => ({ passed: true as const }),
+      requireAnyRole: () => ({ passed: true as const }),
+      enforceRateLimit: () => ({ passed: true as const }),
+    };
+  }
+
   /**
-   * Seed the DERIVED realtime_events stream BEFORE the hub starts, through the same
-   * on-disk friday.db the hub opens (append-only; nothing here deletes). Uses a
-   * short-lived state runtime on the same stateDir (migrations are idempotent), so
-   * the real scheduler's health tick reads exactly these rows.
+   * Seed the DERIVED realtime_events stream through the same on-disk friday.db
+   * the hub opens (append-only; nothing here deletes). Migrations are idempotent.
    */
   function seedRealtimeEvents(stateDir: string, count: number, payload: string, at: string): void {
     const state = initializeFridayState({ env: { ...process.env, FRIDAY_STATE_DIR: stateDir } });
@@ -65,42 +115,38 @@ describe("realtime_events growth — real bootstrap + scheduler + route readback
     }
   }
 
-  /** Invoke a REAL hub-registered route handler by operationId (as the HTTP server would). */
-  async function invokeRoute(
-    hub: FridayHub,
-    operationId: string,
-    query: Record<string, unknown> = {},
-  ): Promise<Record<string, unknown>> {
-    const route = hub.apiRuntime.routes.getRoutes().find((entry) => entry.operationId === operationId);
-    if (!route) throw new Error(`route ${operationId} is not registered on the hub`);
-    return (await route.handler({
-      requestId: `${operationId}:req`,
-      receivedAt: new Date().toISOString(),
-      params: {},
-      query,
-      body: {},
-      headers: {},
-      principal: null,
-    } as never)) as Record<string, unknown>;
+  /** Directly run the collector over the seeded state to prove it computes a growth reading. */
+  function computeGrowthDirectly(stateDir: string): { rowCount: number; status: string; sampleSize: number } {
+    const state = initializeFridayState({ env: { ...process.env, FRIDAY_STATE_DIR: stateDir } });
+    try {
+      const summary = createFridaySystemHealthMonitor({
+        db: state.sqlite,
+        nowIso: () => new Date().toISOString(),
+      }).runAll();
+      const growth = summary.checks.find((c) => c.name === "realtime_events_growth")!;
+      return {
+        rowCount: growth.detail!.rowCount,
+        status: growth.detail!.status,
+        sampleSize: growth.detail!.sampleSize,
+      };
+    } finally {
+      state.close();
+    }
   }
-
-  type GrowthSnapshot = {
-    rowCount: number;
-    estimatedBytes: number;
-    status: string;
-    statusCode: number;
-    reclaim_status: string;
-    sampleSize: number;
-    durability: string;
-  } | null;
-  type MetricsResponse = { metrics: Record<string, number>; realtimeEventsGrowth: GrowthSnapshot };
-  type TimeSeriesResponse = { series: { metricName: string; points: Array<{ value: number }> } };
 
   beforeEach(() => {
     envSnapshot = clearAutoDetectProviderEnv();
   });
 
   afterEach(async () => {
+    for (const server of servers) {
+      try {
+        await server.close();
+      } catch {
+        // ignore
+      }
+    }
+    servers.length = 0;
     for (const hub of hubs) {
       try {
         await hub.stop();
@@ -123,56 +169,70 @@ describe("realtime_events growth — real bootstrap + scheduler + route readback
     }
   });
 
-  it("real createFridayHub → real registered system-health scheduler job → GET /v1/observability/metrics lands rows/bytes/status/reclaim_status", async () => {
+  it("real createFridayHub → real system-health scheduler → growth is computed but ABSENT from /v1/observability/metrics and /time-series", async () => {
     const stateDir = makeTmpDir();
     const N = 15;
     // Seed BEFORE start so the real scheduler's health tick reads these rows.
     seedRealtimeEvents(stateDir, N, JSON.stringify({ data: "x".repeat(40) }), "2026-03-07T12:00:00.000Z");
 
-    const trendStart = new Date(Date.now() - 3_600_000).toISOString();
-    const hub = await createFridayHub({ stateDir, skillDirs: [makeTmpDir(), makeTmpDir()] });
-    hubs.push(hub);
-
-    // REAL production start(): boots the real job scheduler, which runs the EXACT
-    // registered "system-health-monitor" job (bootstrap metricsSink adapter →
-    // observabilityService.recordRealtimeEventsGrowth). No duplicate wiring.
-    await hub.start();
-
-    // The plain-interval health job fires on the first scheduler pass; poll the
-    // REAL metrics route until the (restart-volatile) growth snapshot is published.
-    let snap: MetricsResponse | null = null;
-    const deadline = Date.now() + 15_000;
-    while (Date.now() < deadline) {
-      const response = (await invokeRoute(hub, "observability.metrics.snapshot")) as MetricsResponse;
-      if (response.realtimeEventsGrowth) {
-        snap = response;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-
-    expect(snap).not.toBeNull();
-    const growth = snap!.realtimeEventsGrowth!;
-    // The seeded rows are reflected in the real readback (>= tolerates any
-    // incidental projection emission during boot; a fresh hub emits none).
+    // (a) The collector DOES compute a real growth reading from this data
+    // (report-only). Proven deterministically over the seeded state.
+    const growth = computeGrowthDirectly(stateDir);
     expect(growth.rowCount).toBeGreaterThanOrEqual(N);
     expect(growth.status).toBe("healthy");
-    expect(growth.reclaim_status).toBe("deferred_to_rust_epoch_resync");
-    // Honestly labelled as restart-volatile (in-memory collector).
-    expect(growth.durability).toBe("restart_volatile");
-    // Numeric gauges are enumerated by the real route and internally consistent.
-    expect(snap!.metrics[REALTIME_EVENTS_ROWS_GAUGE]).toBeGreaterThanOrEqual(N);
-    expect(snap!.metrics[REALTIME_EVENTS_STATUS_CODE_GAUGE]).toBe(0); // healthy → 0
-    expect(snap!.metrics[REALTIME_EVENTS_BYTES_GAUGE]).toBe(growth.estimatedBytes);
+    expect(growth.sampleSize).toBeGreaterThanOrEqual(N);
 
-    // Trend is queryable off the REAL time-series route (single within-session point).
-    const series = (await invokeRoute(hub, "observability.time.series", {
-      metricName: REALTIME_EVENTS_ROWS_GAUGE,
-      startTime: trendStart,
-      endTime: new Date(Date.now() + 3_600_000).toISOString(),
-      bucketSize: "1h",
-    })) as TimeSeriesResponse;
-    expect(series.series.metricName).toBe(REALTIME_EVENTS_ROWS_GAUGE);
-    expect(series.series.points.some((point) => point.value >= N)).toBe(true);
+    // REAL production start(): boots the real job scheduler + the registered
+    // "system-health-monitor" job (report-only; no metricsSink publish).
+    const hub = await createFridayHub({ stateDir, skillDirs: [makeTmpDir(), makeTmpDir()] });
+    hubs.push(hub);
+    await hub.start();
+
+    // Serve the REAL hub-registered routes through a REAL HTTP server and fetch
+    // exactly as a network client would.
+    const port = await findFreePort();
+    const server = createFridayHttpServer({
+      routes: hub.apiRuntime.routes,
+      wsGateway: makeStubWsGateway(),
+      middleware: makeStubMiddleware(),
+      port,
+      host: "127.0.0.1",
+    });
+    servers.push(server);
+    await server.listen();
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    // (b) NO growth field reaches either observability route.
+    const metricsRes = await fetch(`${baseUrl}/v1/observability/metrics`);
+    expect(metricsRes.status).toBe(200);
+    const metricsRaw = await metricsRes.text();
+    const metricsBody = JSON.parse(metricsRaw) as {
+      ok: true;
+      data: { metrics: Record<string, number>; realtimeEventsGrowth?: unknown };
+    };
+    expect(metricsBody.data.realtimeEventsGrowth).toBeUndefined();
+    expect(Object.keys(metricsBody.data.metrics).some((k) => k.startsWith("friday.realtime_events"))).toBe(false);
+
+    const seriesRes = await fetch(
+      `${baseUrl}/v1/observability/time-series?metricName=friday.realtime_events.rows_estimate` +
+        "&startTime=2026-03-07T00:00:00.000Z&endTime=2026-03-07T13:00:00.000Z&bucketSize=1h",
+    );
+    expect(seriesRes.status).toBe(200);
+    const seriesRaw = await seriesRes.text();
+    const seriesBody = JSON.parse(seriesRaw) as { ok: true; data: { series: { points: Array<{ value: number }> } } };
+    // The time-series route ECHOES the caller-supplied metricName, so that string
+    // is not a leak signal. The real leak signal is a non-zero growth VALUE: the
+    // gauge was never published, so every point is 0 (no leaked trend).
+    expect(seriesBody.data.series.points.length).toBeGreaterThan(0);
+    expect(seriesBody.data.series.points.every((p) => p.value === 0)).toBe(true);
+
+    // No growth sentinel appears in the metrics body; no structured growth field
+    // rides in the series body (metricName echo excluded — see above).
+    for (const sentinel of GROWTH_SENTINELS) {
+      expect(metricsRaw).not.toContain(sentinel);
+    }
+    for (const field of ["realtimeEventsGrowth", "deferred_to_rust_epoch_resync", "reclaim_status", "estimatedBytes"]) {
+      expect(seriesRaw).not.toContain(field);
+    }
   }, 30_000);
 });
