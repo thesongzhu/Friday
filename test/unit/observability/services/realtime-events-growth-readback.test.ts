@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 
@@ -8,25 +9,30 @@ import {
   REALTIME_EVENTS_BYTES_GAUGE,
   REALTIME_EVENTS_STATUS_CODE_GAUGE,
 } from "../../../../src/observability/services/friday-observability-api-service.js";
+import { FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC } from "../../../../src/observability/engine/dashboard-data-provider.js";
 import { createFridayObservabilityRoutes } from "../../../../src/api/http/routes/friday-observability-routes.js";
 import { createFridaySystemHealthMonitor } from "../../../../src/learning/services/friday-system-health-monitor.js";
 import { createTestDb, createTestIdGenerator } from "../../../helpers/friday-test-db.helper.js";
 
 /**
- * Production-path readback for the report-only realtime_events growth signal.
+ * Service-seam readback for the report-only realtime_events growth signal.
  *
- * This exercises the REAL observability HTTP route handlers (the exact functions
- * `createFridayObservabilityRoutes` binds into the HTTP server) — not a collector's
- * internals. It proves that after a system-health tick publishes through the
- * FORMAL seam, rows/bytes/status/reclaim_status are authoritatively readable off
- * `GET /v1/observability/metrics` and that the growth trend is queryable off
- * `GET /v1/observability/time-series`.
+ * These tests exercise the REAL observability route handlers (the exact functions
+ * `createFridayObservabilityRoutes` binds into the HTTP server) over the real
+ * observability service seam (gauges + metricState + dashboard time-series). They
+ * drive the real `createFridaySystemHealthMonitor` directly.
  *
- * HONESTY: the observability metrics collector and its time-series store are
- * IN-MEMORY. The signal is RESTART-VOLATILE — a within-session trend is proven
- * here; a durable cross-restart trend is PENDING. No test claims durability.
+ * The end-to-end proof that the REAL production bootstrap + job scheduler wire this
+ * up (real `createFridayHub` → real registered `system-health-monitor` job → real
+ * route) lives in
+ * `test/integration/hub/realtime-events-growth-readback.integration.test.ts` — this
+ * file does NOT claim to run the bootstrap or the scheduler.
+ *
+ * HONESTY: the metrics collector and its time-series store are IN-MEMORY. The signal
+ * is RESTART-VOLATILE — a within-session snapshot + trend are proven here; a durable
+ * cross-restart trend is PENDING. No test claims durability.
  */
-describe("realtime_events growth production-path readback", () => {
+describe("realtime_events growth service-seam readback", () => {
   const dbs: FridaySqliteLayer[] = [];
 
   afterEach(() => {
@@ -60,6 +66,35 @@ describe("realtime_events growth production-path readback", () => {
     ).c;
   }
 
+  /** Exact content fingerprint of every surviving row (rowid + id + payload). */
+  function snapshotRows(db: FridaySqliteLayer): { count: number; ids: string[]; digest: string } {
+    const rows = db.withReadConnection((r) =>
+      r.prepare("SELECT rowid AS rid, event_id, payload_json FROM realtime_events ORDER BY rowid").all(),
+    ) as Array<{ rid: number; event_id: string; payload_json: string }>;
+    return {
+      count: rows.length,
+      ids: rows.map((row) => row.event_id),
+      digest: createHash("sha256").update(JSON.stringify(rows)).digest("hex"),
+    };
+  }
+
+  /**
+   * A FridaySqliteLayer whose READ path throws, while the underlying table and its
+   * rows REMAIN fully present (the write path still delegates). Simulates a broken
+   * connection / failed read WITHOUT dropping anything, so a failed read can be
+   * proven to leave existing rows byte-identical.
+   */
+  function makeBrokenReadDb(real: FridaySqliteLayer): FridaySqliteLayer {
+    const failRead = (): never => {
+      throw new Error("injected read failure: realtime_events growth query connection is broken");
+    };
+    return {
+      ...real,
+      reads: { ...real.reads, withReadConnection: failRead },
+      withReadConnection: failRead,
+    };
+  }
+
   /** Invoke a real route handler by path, exactly as the HTTP server would. */
   async function getRoute(
     service: FridayObservabilityApiService,
@@ -80,11 +115,13 @@ describe("realtime_events growth production-path readback", () => {
       status: string;
       statusCode: number;
       reclaim_status: string;
+      sampleSize: number;
+      failClosed: boolean;
       durability: string;
     } | null;
   };
 
-  it("readback: a health tick lands rows/bytes/status/reclaim_status on GET /v1/observability/metrics", async () => {
+  it("readback: a health tick lands rows/bytes/status/reclaim_status on GET /v1/observability/metrics (service seam)", async () => {
     const NOW = "2026-03-07T12:00:00.000Z";
     const db = makeDb();
     const service = makeService(db, () => NOW);
@@ -92,8 +129,9 @@ describe("realtime_events growth production-path readback", () => {
     const N = 15;
     insertRealtimeEvents(db, N, JSON.stringify({ data: "x".repeat(40) }), NOW);
 
-    // Bootstrap-equivalent wiring: the monitor publishes through the service's
-    // formal seam (the same adapter friday-hub-bootstrap installs).
+    // Drives the real monitor + the real service seam adapter (the same
+    // recordRealtimeEventsGrowth the bootstrap installs). End-to-end bootstrap +
+    // scheduler is proven in the integration test.
     const monitor = createFridaySystemHealthMonitor({
       db,
       nowIso: () => NOW,
@@ -114,6 +152,7 @@ describe("realtime_events growth production-path readback", () => {
     expect(snap.realtimeEventsGrowth!.rowCount).toBe(N);
     expect(snap.realtimeEventsGrowth!.estimatedBytes).toBe(growthCheck.detail!.estimatedBytes);
     expect(snap.realtimeEventsGrowth!.status).toBe("healthy");
+    expect(snap.realtimeEventsGrowth!.sampleSize).toBe(N); // real sampled COUNT(*)
     expect(snap.realtimeEventsGrowth!.reclaim_status).toBe("deferred_to_rust_epoch_resync");
     // Honestly labelled as restart-volatile.
     expect(snap.realtimeEventsGrowth!.durability).toBe("restart_volatile");
@@ -150,7 +189,7 @@ describe("realtime_events growth production-path readback", () => {
     expect(service.metrics.getAllSnapshots(REALTIME_EVENTS_BYTES_GAUGE)).toHaveLength(1);
   });
 
-  it("repeated identical ticks are idempotent — no unbounded metric accumulation", async () => {
+  it("repeated identical ticks are idempotent — no unbounded metric snapshot accumulation", async () => {
     const NOW = "2026-03-07T12:00:00.000Z";
     const db = makeDb();
     const service = makeService(db, () => NOW);
@@ -171,40 +210,50 @@ describe("realtime_events growth production-path readback", () => {
     expect(snap.metrics[REALTIME_EVENTS_ROWS_GAUGE]).toBe(9);
   });
 
-  it("trend: a multi-tick growth series is queryable off GET /v1/observability/time-series", async () => {
-    // Advance the clock across ticks so the time-series buckets differ.
+  it("STRESS: 10,000+ growth ticks stay BOUNDED per gauge in the time-series (newest trend survives)", async () => {
+    // Every 5-minute health tick appends 3 time-series points (rows/bytes/status).
+    // Without a bound, a 10k-report run would retain 10k points PER gauge forever.
+    // The bounded ring buffer caps retention while keeping the RECENT trend.
     let now = new Date("2026-03-07T12:00:00.000Z").getTime();
     const nowIso = () => new Date(now).toISOString();
-    const startTime = nowIso();
     const db = makeDb();
     const service = makeService(db, nowIso);
-    const monitor = createFridaySystemHealthMonitor({
-      db,
-      nowIso,
-      metricsSink: { report: (detail) => service.recordRealtimeEventsGrowth(detail) },
-    });
 
-    const rowCounts: number[] = [];
-    for (const target of [10, 25, 40]) {
-      const have = countRealtimeEvents(db);
-      insertRealtimeEvents(db, target - have, JSON.stringify({ data: "z".repeat(16) }), nowIso());
-      monitor.runAll();
-      rowCounts.push(countRealtimeEvents(db));
+    const TICKS = 10_500; // > FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC
+    let lastRowCount = 0;
+    for (let i = 0; i < TICKS; i++) {
+      lastRowCount = i + 1;
+      service.recordRealtimeEventsGrowth({
+        status: "healthy",
+        rowCount: lastRowCount,
+        estimatedBytes: lastRowCount * 10,
+        sampleSize: Math.min(1000, lastRowCount),
+        reclaim_status: "deferred_to_rust_epoch_resync",
+      });
       now += 5 * 60_000; // +5 minutes per tick
     }
 
+    // BOUNDED: each growth gauge retains at most the cap, NOT all 10,500 points.
+    for (const gauge of [REALTIME_EVENTS_ROWS_GAUGE, REALTIME_EVENTS_BYTES_GAUGE, REALTIME_EVENTS_STATUS_CODE_GAUGE]) {
+      expect(service.dashboard.timeSeriesPointCount(gauge)).toBeLessThanOrEqual(
+        FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC,
+      );
+    }
+
+    // NEWEST trend SURVIVES: the last tick's value is still queryable off the real
+    // time-series route (the newest points are the ones the ring buffer keeps).
     const series = (await getRoute(service, "/v1/observability/time-series", {
       metricName: REALTIME_EVENTS_ROWS_GAUGE,
-      startTime,
-      endTime: nowIso(),
+      startTime: new Date(now - 10 * 60_000).toISOString(),
+      endTime: new Date(now).toISOString(),
       bucketSize: "5m",
-    })) as { series: { metricName: string; points: Array<{ value: number }> } };
+    })) as { series: { points: Array<{ value: number }> } };
+    const values = series.series.points.map((p) => p.value).filter((v) => v > 0);
+    expect(values).toContain(lastRowCount);
 
-    expect(series.series.metricName).toBe(REALTIME_EVENTS_ROWS_GAUGE);
-    const nonZero = series.series.points.map((p) => p.value).filter((v) => v > 0);
-    // Three distinct ticks → three growth points forming the trend.
-    expect(nonZero).toEqual([10, 25, 40]);
-    expect(rowCounts).toEqual([10, 25, 40]);
+    // Current snapshot still reflects the latest tick.
+    const snap = (await getRoute(service, "/v1/observability/metrics")) as MetricsSnapshot;
+    expect(snap.realtimeEventsGrowth!.rowCount).toBe(lastRowCount);
   });
 
   it("RESTART-VOLATILE: a fresh service (simulated Hub restart) has NO prior growth history", async () => {
@@ -229,38 +278,37 @@ describe("realtime_events growth production-path readback", () => {
     expect(after.metrics[REALTIME_EVENTS_ROWS_GAUGE]).toBe(0);
   });
 
-  it("degraded path: a failing DB read reports status=degraded off the route, deletes ZERO rows", async () => {
+  it("degraded path: a FAILED READ (table + rows still present) reports degraded and leaves EVERY row byte-identical", async () => {
     const NOW = "2026-03-07T12:00:00.000Z";
-    const db = makeDb();
-    const service = makeService(db, () => NOW);
-    insertRealtimeEvents(db, 12, JSON.stringify({ data: "b".repeat(8) }), NOW);
-    const before = countRealtimeEvents(db);
+    // realDb keeps the table and its rows the WHOLE time — nothing is dropped.
+    const realDb = makeDb();
+    insertRealtimeEvents(realDb, 12, JSON.stringify({ data: "b".repeat(8) }), NOW);
+    const before = snapshotRows(realDb);
+    expect(before.count).toBe(12);
 
-    // Force the growth query to throw by dropping the table after seeding.
-    db.withWriteTransaction((w) => w.exec("DROP TABLE realtime_events"));
+    const service = makeService(realDb, () => NOW);
 
+    // Inject a broken READ (connection error) while the rows REMAIN present.
+    const brokenReadDb = makeBrokenReadDb(realDb);
     createFridaySystemHealthMonitor({
-      db,
+      db: brokenReadDb,
       nowIso: () => NOW,
       metricsSink: { report: (detail) => service.recordRealtimeEventsGrowth(detail) },
     }).runAll();
 
+    // Fail-closed to degraded off the real route (never healthy, no deletion).
     const snap = (await getRoute(service, "/v1/observability/metrics")) as MetricsSnapshot;
     expect(snap.realtimeEventsGrowth!.status).toBe("degraded");
+    expect(snap.realtimeEventsGrowth!.failClosed).toBe(true);
     expect(snap.metrics[REALTIME_EVENTS_STATUS_CODE_GAUGE]).toBe(3); // degraded → 3
     expect(snap.realtimeEventsGrowth!.reclaim_status).toBe("deferred_to_rust_epoch_resync");
 
-    // Fail-closed and deletion-free: recreate the table and confirm the seeded
-    // rows were untouched by the diagnose-only path (it never deletes).
-    db.withWriteTransaction((w) =>
-      w.exec(
-        `CREATE TABLE IF NOT EXISTS realtime_events (
-           event_id TEXT PRIMARY KEY, stream_id TEXT NOT NULL, seq INTEGER NOT NULL,
-           event TEXT NOT NULL, payload_json TEXT NOT NULL, emitted_at TEXT NOT NULL,
-           correlation_id TEXT, state_version_json TEXT, created_at TEXT NOT NULL)`,
-      ),
-    );
-    // The drop was the test's own action; the monitor itself issued no DELETE.
-    expect(before).toBe(12);
+    // ZERO deletion: the failed read left every existing row byte-identical
+    // (same count, same ids, same content digest). The read failed — the data did not.
+    const after = snapshotRows(realDb);
+    expect(after.count).toBe(before.count);
+    expect(after.ids).toEqual(before.ids);
+    expect(after.digest).toBe(before.digest);
+    expect(countRealtimeEvents(realDb)).toBe(12);
   });
 });
