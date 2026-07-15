@@ -2,13 +2,33 @@ export type {
   CategoryRetention,
   FridayRetentionPolicy,
   FridayRetentionJobResult,
+  FridayRetentionContentCategory,
+  FridayRetentionContentPolicy,
 } from "./retention/friday-retention.types.js";
 export {
   FRIDAY_DEFAULT_RETENTION_POLICY,
   FRIDAY_BOOTSTRAP_NONCE_SWEEP_BATCH_LIMIT,
+  FRIDAY_RETENTION_CONTENT_CATEGORIES,
 } from "./retention/friday-retention.types.js";
 export { createFridayRetentionJob, resolveCutoff } from "./retention/friday-retention-job.js";
 export type { FridayRetentionJob } from "./retention/friday-retention-job.js";
+
+// ─── Owner-bound retention SETTINGS (RETENTION-R3a) ───
+export { createFridayRetentionSettingsRepository } from "./retention/friday-retention-settings-repository.js";
+export type {
+  FridayRetentionSettingsRepository,
+  FridayRetentionSettingOverride,
+} from "./retention/friday-retention-settings-repository.js";
+export { createFridayRetentionSettingsStore } from "./retention/friday-retention-settings-store.js";
+export type {
+  FridayRetentionSettingsStore,
+  CreateFridayRetentionSettingsStoreDeps,
+} from "./retention/friday-retention-settings-store.js";
+export { createFridayRetentionPolicyLoader } from "./retention/friday-retention-policy-loader.js";
+export type {
+  FridayRetentionPolicyLoader,
+  CreateFridayRetentionPolicyLoaderDeps,
+} from "./retention/friday-retention-policy-loader.js";
 
 export type {
   FridayLearningMetricsJobResult,

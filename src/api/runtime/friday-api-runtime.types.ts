@@ -83,6 +83,7 @@ import type { FridayAgentLoopRoutesDeps } from "../http/routes/friday-agent-loop
 import type { FridaySystemRoutesDeps } from "../http/routes/friday-system-routes.js";
 import type { FridayGuideLensRoutesDeps } from "../http/routes/friday-guide-lens-routes.js";
 import type { FridayUixRoutesDeps } from "../http/routes/friday-uix-routes.js";
+import type { FridayRetentionSettingsRoutesDeps } from "../http/routes/friday-retention-settings-routes.js";
 import type { FridayMissionSpineRoutesDeps } from "../http/routes/friday-mission-spine-routes.js";
 import type { FridayMemorySpineRoutesDeps } from "../http/routes/friday-memory-spine-routes.js";
 import type { FridayRunOutcomeLearningRoutesDeps } from "../http/routes/friday-run-outcome-learning-routes.js";
@@ -663,6 +664,8 @@ export interface CreateFridayApiRuntimeDeps {
   canonicalMutatingActionGate?: boolean;
   /** Optional: beginner-friendly UIX route surface. */
   uix?: FridayUixRoutesDeps;
+  /** Optional: owner-bound retention-Settings route surface (RETENTION-R3a). */
+  retentionSettings?: FridayRetentionSettingsRoutesDeps;
   /**
    * Optional Mission Spine workbench projection route surface.
    *

@@ -336,6 +336,9 @@ import {
   createFridayJobSchedulerRepository,
   createFridayJobSchedulerService,
   createFridayLearningMetricsJob,
+  createFridayRetentionPolicyLoader,
+  createFridayRetentionSettingsRepository,
+  createFridayRetentionSettingsStore,
   createFridaySessionMemoryExtractionWorkerJob,
   createFridayWorkflowCronTriggerJob,
   createFridayWorkflowTimeoutJob,
@@ -6720,6 +6723,26 @@ export async function createFridayHub(
     });
   };
 
+  // ─── Owner-bound retention Settings (RETENTION-R3a) ───
+  // Persisted per-content-category opt-ins for the single hub owner. The loader
+  // resolves the reaper's policy FAIL-CLOSED (all-permanent) on any unreadable /
+  // missing / invalid persisted state; the store backs GET|PUT
+  // /v1/uix/retention-policy. The owner id is the seeded single-owner user
+  // (learningDefaultUserId) — the SAME principal_id the API writes under
+  // (requireUserId → principal.userId), so a restart re-reads what the owner set.
+  const retentionSettingsRepository = createFridayRetentionSettingsRepository();
+  const retentionSettingsStore = createFridayRetentionSettingsStore({
+    db: stateRuntime.sqlite,
+    repo: retentionSettingsRepository,
+    idGenerator,
+    nowIso,
+  });
+  const retentionPolicyLoader = createFridayRetentionPolicyLoader({
+    db: stateRuntime.sqlite,
+    repo: retentionSettingsRepository,
+    principalId: learningDefaultUserId,
+  });
+
   // ─── Satellite runtime ───
   const satelliteRuntime = createFridaySatelliteRuntime({
     db: stateRuntime.sqlite,
@@ -6727,6 +6750,7 @@ export async function createFridayHub(
     tokenSecret,
     idGenerator,
     nowIso,
+    retentionPolicy: retentionPolicyLoader.load(),
     learningEventWriter,
     remoteNodeResultWriter: async (input) => {
       await workflowRuntime.execution.reportRemoteNodeResult({
@@ -7445,6 +7469,8 @@ export async function createFridayHub(
     // (`MEMORY_SPINE_DISPATCH_UNAVAILABLE`) → byte-identical to today.
     memorySpine: memorySpineDispatch ? { dispatch: memorySpineDispatch } : undefined,
     runOutcomeLearning: runOutcomeLearningDispatch ? { dispatch: runOutcomeLearningDispatch } : undefined,
+    // RETENTION-R3a: owner-bound retention-Settings surface (GET|PUT /v1/uix/retention-policy).
+    retentionSettings: { store: retentionSettingsStore },
     uix: {
       service: uixService,
       readSetupCompletedAt,

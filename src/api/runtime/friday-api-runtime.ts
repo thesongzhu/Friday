@@ -126,6 +126,7 @@ import { createFridayGrantRoutes } from "../http/routes/friday-grant-routes.js";
 import { createFridaySystemRoutes } from "../http/routes/friday-system-routes.js";
 import { createFridayGuideLensRoutes } from "../http/routes/friday-guide-lens-routes.js";
 import { createFridayUixRoutes } from "../http/routes/friday-uix-routes.js";
+import { createFridayRetentionSettingsRoutes } from "../http/routes/friday-retention-settings-routes.js";
 import {
   createFridayMissionSpineRoutes,
   type FridayMissionSpineRoutesDeps,
@@ -4395,6 +4396,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   if (deps.uix) {
     for (const route of createFridayUixRoutes(deps.uix)) {
+      routes.register(route);
+    }
+  }
+
+  if (deps.retentionSettings) {
+    for (const route of createFridayRetentionSettingsRoutes(deps.retentionSettings)) {
       routes.register(route);
     }
   }

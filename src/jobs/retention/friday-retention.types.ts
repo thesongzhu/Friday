@@ -64,6 +64,41 @@ export const FRIDAY_DEFAULT_RETENTION_POLICY: FridayRetentionPolicy = {
 };
 
 /**
+ * The user-configurable CONTENT categories (RETENTION-R3a).
+ *
+ * These are exactly the `CategoryRetention`-typed fields of
+ * `FridayRetentionPolicy` — the ones that are default-PERMANENT and opt-in per
+ * DATA-RETENTION-001. The SECURITY-LIFECYCLE terminal TTLs
+ * (`pairingRequestsDays` / `outboxTerminalDays` / `bootstrapNoncesConsumedDays`)
+ * are intentionally EXCLUDED: they are not content retention and are never
+ * exposed on the owner-bound retention-Settings surface.
+ */
+export const FRIDAY_RETENTION_CONTENT_CATEGORIES = [
+  "learningEvents",
+  "heartbeats",
+  "skillRunTerminal",
+  "auditLogs",
+  "agentRuns",
+  "llmUsageRecords",
+  "errorIncidents",
+] as const;
+
+/** One of the seven user-configurable CONTENT retention categories. */
+export type FridayRetentionContentCategory =
+  (typeof FRIDAY_RETENTION_CONTENT_CATEGORIES)[number];
+
+/**
+ * The effective per-content-category retention policy for a single owner:
+ * every content category mapped to its `CategoryRetention` (default
+ * `{mode:"permanent"}`). This is the shape the owner-bound retention-Settings
+ * API returns and accepts (it never surfaces the security-lifecycle TTLs).
+ */
+export type FridayRetentionContentPolicy = Record<
+  FridayRetentionContentCategory,
+  CategoryRetention
+>;
+
+/**
  * Max setup-bootstrap nonce rows deleted PER class (expired-unconsumed /
  * consumed-retired) per retention pass. Bounds the reaper's work so it cannot
  * hold a long write lock; any backlog drains across successive scheduled runs.

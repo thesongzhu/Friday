@@ -54,10 +54,11 @@
  *                    particular aggregates approvals + remote device/session posture, so leaving it
  *                    anonymous bypassed the /v1/system/remote/* floor. Mutations under /v1/system
  *                    (POST intents, PATCH approvals) are separately fenced and unaffected here.
- *   - /v1/uix/user-profile and /v1/uix/learned-facts  personal UX profile / learned preference
- *                    facts. These are already fail-closed at the route requireUserId helper
- *                    (cr02-03 / #1450); exact-path floor entries keep the central read
- *                    classification honest without over-flooring anonymous setup/template UX
+ *   - /v1/uix/user-profile, /v1/uix/learned-facts and /v1/uix/retention-policy  personal UX
+ *                    profile / learned preference facts / owner-bound retention Settings posture.
+ *                    These are already fail-closed at the route requireUserId helper
+ *                    (cr02-03 / #1450; RETENTION-R3a); exact-path floor entries keep the central
+ *                    read classification honest without over-flooring anonymous setup/template UX
  *                    surfaces under the broader /v1/uix prefix.
  *
  * Intentionally NOT gated here (kept anonymous): health, setup, onboarding, auth
@@ -109,6 +110,12 @@ export const FRIDAY_SENSITIVE_READ_ROUTE_PREFIXES: readonly string[] = [
   "/v1/system/session",
   "/v1/uix/user-profile",
   "/v1/uix/learned-facts",
+  // RETENTION-R3a: owner-bound per-category retention Settings (GET reads the
+  // owner's retention posture). Already fail-closed at the route requireUserId
+  // helper; the exact-path floor keeps the central read classification honest
+  // alongside the sibling personal /v1/uix/* surfaces without over-flooring the
+  // broader anonymous /v1/uix setup/template UX.
+  "/v1/uix/retention-policy",
 ];
 
 /**
