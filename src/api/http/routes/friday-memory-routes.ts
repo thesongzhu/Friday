@@ -22,7 +22,7 @@ import {
 } from "../../../learning/services/friday-learned-fact-memory-view.js";
 import { isFridayReflexConfirmationRequiredKey } from "../../../reflex/services/friday-reflex-preference-sensitivity.js";
 import { FridayDomainError } from "#errors";
-import { FRIDAY_MEMORY_ERROR_CODES, FRIDAY_MEMORY_MAX_LIMIT } from "#memory";
+import { createFridayMemoryOutputFilter, FRIDAY_MEMORY_ERROR_CODES, FRIDAY_MEMORY_MAX_LIMIT } from "#memory";
 import {
   hashIdempotencyPayload,
   readIdempotencyKeyHeader,
@@ -349,6 +349,13 @@ function validatePruneBody(body: unknown): asserts body is FridayMemoryPruneRequ
 export function createFridayMemoryRoutes(
   deps: FridayMemoryRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  // Single egress PII filter for list/search. The guard service already filters items it
+  // returns, but learned facts are appended in these route handlers AFTER the guard has run
+  // (deps.listLearnedFacts). Re-applying the SAME production output filter to the FINAL
+  // merged result guarantees no returned field — including appended learned-fact content,
+  // metadata, tags, and snippet — can bypass PII redaction. It is idempotent on the
+  // already-filtered stored items.
+  const outputFilter = createFridayMemoryOutputFilter();
   return [
     // ─── Store ───
     {
@@ -533,7 +540,9 @@ export function createFridayMemoryRoutes(
         return {
           items: [...items, ...learnedItems]
             .sort((a, b) => b.score - a.score)
-            .slice(0, body.limit ?? FRIDAY_MEMORY_MAX_LIMIT),
+            .slice(0, body.limit ?? FRIDAY_MEMORY_MAX_LIMIT)
+            // Egress PII filter over the merged result (stored + appended learned facts).
+            .map((result) => outputFilter.filterSearchResult(result)),
         };
       },
     },
@@ -593,7 +602,9 @@ export function createFridayMemoryRoutes(
           : [];
         const combined = [...items, ...learnedItems]
           .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-        return { items: typeof limit === "number" ? combined.slice(0, limit) : combined };
+        const sliced = typeof limit === "number" ? combined.slice(0, limit) : combined;
+        // Egress PII filter over the merged result (stored + appended learned facts).
+        return { items: sliced.map((item) => outputFilter.filterItem(item)) };
       },
     },
 

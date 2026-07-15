@@ -129,6 +129,30 @@ describe("FridayMemoryOutputFilter", () => {
     expect(filtered[0].snippet).not.toContain("user@example.com");
   });
 
+  it("redacts a FULL-WIDTH credit card on the egress read path (filterItem)", () => {
+    // Full-width digits (U+FF10–FF19) previously bypassed the ASCII-only regex and leaked
+    // through the live GET /v1/memory/items(/:id) + POST /v1/memory/search read path.
+    const fullwidthCard = "４１１１１１１１１１１１１１１１"; // toFullwidth("4111111111111111"), Luhn-valid
+    const item = makeItem({ content: `カード番号は${fullwidthCard}です` });
+    const filtered = filter.filterItem(item);
+    expect(filtered.content).toContain("[CREDIT_CARD]");
+    expect(filtered.content).not.toContain(fullwidthCard);
+    expect(filtered.content).toBe("カード番号は[CREDIT_CARD]です");
+  });
+
+  it("redacts a FULL-WIDTH credit card in search result content and snippet (filterSearchResults)", () => {
+    const fullwidthCard = "４１１１１１１１１１１１１１１１";
+    const results = [makeSearchResult({
+      item: makeItem({ content: `card ${fullwidthCard}` }),
+      snippet: `snippet ${fullwidthCard}`,
+    })];
+    const filtered = filter.filterSearchResults(results);
+    expect(filtered[0].item.content).toContain("[CREDIT_CARD]");
+    expect(filtered[0].item.content).not.toContain(fullwidthCard);
+    expect(filtered[0].snippet).toContain("[CREDIT_CARD]");
+    expect(filtered[0].snippet).not.toContain(fullwidthCard);
+  });
+
   it("preserves score and matchedBy", () => {
     const results = [makeSearchResult({ score: 0.95, matchedBy: ["fts", "semantic"] })];
     const filtered = filter.filterSearchResults(results);

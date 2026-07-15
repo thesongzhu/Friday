@@ -136,6 +136,13 @@ export interface FridayMemoryGuardPiiGuard {
 export interface FridayMemoryGuardOutputFilter {
   filterItem(item: FridayMemoryItem): FridayMemoryItem;
   filterSearchResults(results: FridayMemorySearchResult[]): FridayMemorySearchResult[];
+  /**
+   * Redact + truncate a single search result (item content/metadata/tags + snippet) WITHOUT
+   * applying the result-count cap. Use at an egress boundary where results from multiple
+   * sources are merged (e.g. stored items + appended learned facts) so every returned
+   * result passes the same PII filter regardless of the total count.
+   */
+  filterSearchResult(result: FridayMemorySearchResult): FridayMemorySearchResult;
 }
 
 // ─── Guard service ───

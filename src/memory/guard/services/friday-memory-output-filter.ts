@@ -30,29 +30,31 @@ function dropPiiTags(tags: string[]): string[] {
   return tags.filter((tag) => piiRedactor.scanAndTransform(tag).matches.length === 0);
 }
 
+function filterItemImpl(item: FridayMemoryItem): FridayMemoryItem {
+  return {
+    ...item,
+    content: redactAndTruncate(item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
+    metadata: redactMetadata(item.metadata),
+    tags: dropPiiTags(item.tags),
+  };
+}
+
+function filterSearchResultImpl(result: FridayMemorySearchResult): FridayMemorySearchResult {
+  return {
+    ...result,
+    item: filterItemImpl(result.item),
+    snippet: redactAndTruncate(result.snippet, FRIDAY_MEMORY_GUARD_MAX_RESULT_SNIPPET_CHARS),
+  };
+}
+
 export function createFridayMemoryOutputFilter(): FridayMemoryGuardOutputFilter {
   return {
-    filterItem(item: FridayMemoryItem): FridayMemoryItem {
-      return {
-        ...item,
-        content: redactAndTruncate(item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
-        metadata: redactMetadata(item.metadata),
-        tags: dropPiiTags(item.tags),
-      };
-    },
-
+    filterItem: filterItemImpl,
+    filterSearchResult: filterSearchResultImpl,
     filterSearchResults(results: FridayMemorySearchResult[]): FridayMemorySearchResult[] {
-      const capped = results.slice(0, FRIDAY_MEMORY_GUARD_MAX_SEARCH_RESULTS);
-      return capped.map((result) => ({
-        ...result,
-        item: {
-          ...result.item,
-          content: redactAndTruncate(result.item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
-          metadata: redactMetadata(result.item.metadata),
-          tags: dropPiiTags(result.item.tags),
-        },
-        snippet: redactAndTruncate(result.snippet, FRIDAY_MEMORY_GUARD_MAX_RESULT_SNIPPET_CHARS),
-      }));
+      return results
+        .slice(0, FRIDAY_MEMORY_GUARD_MAX_SEARCH_RESULTS)
+        .map(filterSearchResultImpl);
     },
   };
 }
