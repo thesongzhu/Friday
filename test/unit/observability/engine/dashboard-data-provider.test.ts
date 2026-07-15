@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { FridayDashboardDataProvider } from "../../../../src/observability/engine/dashboard-data-provider.js";
+import {
+  FridayDashboardDataProvider,
+  FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC,
+} from "../../../../src/observability/engine/dashboard-data-provider.js";
 import { FridayMetricsCollector } from "../../../../src/observability/engine/metrics-collector.js";
 import { FridayTraceManager } from "../../../../src/observability/engine/trace-manager.js";
 import { FridayAuditTrail } from "../../../../src/observability/engine/audit-trail.js";
@@ -50,6 +53,44 @@ describe("FridayDashboardDataProvider", () => {
       expect(result.points).toHaveLength(2); // 2 one-minute buckets
       expect(result.points[0].value).toBe(55); // avg(50, 60)
       expect(result.points[1].value).toBe(70); // avg(70)
+    });
+
+    it("BOUNDS retained points per metric under high-frequency recording (ring buffer, newest survive)", () => {
+      const { provider } = createFullProvider();
+      const baseTime = new Date("2026-01-01T00:00:00.000Z").getTime();
+
+      // Record far more points than the cap for a single metric. Without a bound
+      // this in-memory store would retain all TICKS points forever (unbounded
+      // Home Hub memory growth); the ring buffer must evict the oldest.
+      const TICKS = FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC + 2500;
+      // Record value = i + 1 so a PRESENT oldest point (value 1) is distinguishable
+      // from an EVICTED one (empty bucket → 0).
+      for (let i = 0; i < TICKS; i++) {
+        provider.recordDataPoint("g", i + 1, new Date(baseTime + i * 60_000).toISOString());
+      }
+
+      // BOUNDED: retained point count never exceeds the cap (pre-fix: all TICKS).
+      expect(provider.timeSeriesPointCount("g")).toBe(FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC);
+
+      // NEWEST survive: the last recorded value is still queryable.
+      const tail = provider.queryTimeSeries({
+        metricName: "g",
+        startTime: new Date(baseTime + (TICKS - 1) * 60_000).toISOString(),
+        endTime: new Date(baseTime + TICKS * 60_000).toISOString(),
+        bucketSize: "1m",
+      });
+      expect(tail.points[0].value).toBe(TICKS); // value of the last tick (i+1)
+
+      // OLDEST evicted: the very first minute's point was dropped by the ring
+      // buffer. Pre-fix (unbounded) it was PRESENT with value 1; post-fix the
+      // bucket is empty → 0.
+      const head = provider.queryTimeSeries({
+        metricName: "g",
+        startTime: new Date(baseTime).toISOString(),
+        endTime: new Date(baseTime + 60_000).toISOString(),
+        bucketSize: "1m",
+      });
+      expect(head.points[0].value).toBe(0); // evicted → empty bucket → 0
     });
 
     it("fills empty buckets with zero", () => {

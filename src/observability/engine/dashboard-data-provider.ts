@@ -35,6 +35,21 @@ const BUCKET_MS: Record<BucketSize, number> = {
   "1d": 86_400_000,
 };
 
+/**
+ * Hard per-metric cap on retained time-series points. `recordDataPoint` keeps
+ * only the newest `FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC` points per metric
+ * (a bounded ring buffer that evicts the oldest), so a long-running Home Hub
+ * cannot grow this in-memory store without bound.
+ *
+ * Every periodic gauge/counter/histogram — including the report-only
+ * `realtime_events` growth gauges reported every 5 minutes — flows through
+ * `recordDataPoint`, so without this cap a 10,000-report run would retain 10,000
+ * points PER metric forever. At 2,000 points and a 5-minute cadence this still
+ * preserves ~7 days of the RECENT trend the readback needs while staying O(1)
+ * in memory. The whole store remains RESTART-VOLATILE (cleared on Hub restart).
+ */
+export const FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC = 2000;
+
 /** A single time-series data point. */
 export interface TimeSeriesPoint {
   /** Bucket start timestamp. */
@@ -168,7 +183,14 @@ export class FridayDashboardDataProvider {
 
   // ─── Time-Series ───
 
-  /** Record a time-series data point. */
+  /**
+   * Record a time-series data point.
+   *
+   * BOUNDED: retains only the newest `FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC`
+   * points per metric (ring buffer, oldest evicted). Prevents unbounded
+   * in-memory growth from periodic gauges/counters on a long-running Hub while
+   * preserving the recent trend the readback needs (the newest points survive).
+   */
   recordDataPoint(metricName: string, value: number, timestamp?: ISODateTime): void {
     const ts = timestamp ? new Date(timestamp).getTime() : Date.now();
     let series = this.timeSeriesData.get(metricName);
@@ -177,6 +199,20 @@ export class FridayDashboardDataProvider {
       this.timeSeriesData.set(metricName, series);
     }
     series.push({ timestamp: ts, value });
+    // Evict the oldest points beyond the cap. One push adds one point, so at
+    // steady state this removes exactly one — O(1) amortized, never unbounded.
+    const overflow = series.length - FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC;
+    if (overflow > 0) {
+      series.splice(0, overflow);
+    }
+  }
+
+  /**
+   * Number of time-series points currently retained for a metric (diagnostics /
+   * retention observability). Always ≤ `FRIDAY_MAX_TIMESERIES_POINTS_PER_METRIC`.
+   */
+  timeSeriesPointCount(metricName: string): number {
+    return this.timeSeriesData.get(metricName)?.length ?? 0;
   }
 
   /** Query time-series data with aggregation. */
