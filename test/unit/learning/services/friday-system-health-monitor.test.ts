@@ -1,8 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
+import { FridayMetricsCollector } from "../../../../src/observability/engine/metrics-collector.js";
 import {
   createFridaySystemHealthMonitor,
+  classifyRealtimeEventsGrowth,
+  publishRealtimeEventsGrowthGauges,
+  createFridayHealthLogDeduper,
+  healthCheckStatusLabel,
+  REALTIME_EVENTS_GROWTH_THRESHOLDS,
+  REALTIME_EVENTS_SAMPLE_SIZE,
+  REALTIME_EVENTS_ROWCOUNT_PROXY_SQL,
+  REALTIME_EVENTS_SAMPLE_BYTES_SQL,
+  REALTIME_EVENTS_ROWS_GAUGE,
+  REALTIME_EVENTS_BYTES_GAUGE,
   type FridaySystemHealthMonitor,
   type FridaySystemHealthRunSummary,
 } from "../../../../src/learning/services/friday-system-health-monitor.js";
@@ -102,6 +113,33 @@ describe("FridaySystemHealthMonitor", () => {
     });
   }
 
+  function insertRealtimeEvents(count: number, payload: string): void {
+    db.withWriteTransaction((writerDb) => {
+      const stmt = writerDb.prepare(
+        `INSERT INTO realtime_events
+           (event_id, stream_id, seq, event, payload_json, emitted_at, correlation_id, state_version_json, created_at)
+         VALUES (?, 'stream-1', ?, 'projection.update', ?, ?, NULL, NULL, ?)`,
+      );
+      for (let i = 0; i < count; i++) {
+        stmt.run(`evt-${i}`, i, payload, PAST_DATE, PAST_DATE);
+      }
+    });
+  }
+
+  function countRealtimeEvents(): number {
+    const row = db.withReadConnection((readerDb) =>
+      readerDb.prepare("SELECT COUNT(*) AS cnt FROM realtime_events").get(),
+    ) as { cnt: number };
+    return row.cnt;
+  }
+
+  function explainPlan(sql: string): string {
+    const rows = db.withReadConnection((readerDb) =>
+      readerDb.prepare("EXPLAIN QUERY PLAN " + sql).all(),
+    ) as Array<{ detail: string }>;
+    return rows.map((r) => r.detail).join(" | ");
+  }
+
   it("diagnoses expired memory items without cleanup by default", () => {
     insertExpiredMemoryItems(600);
 
@@ -196,5 +234,191 @@ describe("FridaySystemHealthMonitor", () => {
     }
     expect(summary.maintenanceRecommendations).toHaveLength(0);
     expect(summary.maintenanceReceipts).toHaveLength(0);
+  });
+
+  // ─── realtime_events growth observability (report-only; bounded; DATA-RETENTION-001) ───
+
+  it("reports realtime_events row count and byte estimate (report-only, no deletion)", () => {
+    const N = 25;
+    const payload = JSON.stringify({ kind: "projection.update", data: "x".repeat(64) });
+    insertRealtimeEvents(N, payload);
+
+    const summary = monitor.runAll();
+    const growth = summary.checks.find((c) => c.name === "realtime_events_growth");
+
+    expect(growth).toBeDefined();
+    expect(growth!.unit).toBe("bytes");
+    expect(growth!.healthy).toBe(true); // tiny rows → below thresholds → healthy
+    expect(growth!.detail).toBeDefined();
+    expect(growth!.detail!.status).toBe("healthy");
+    expect(growth!.detail!.rowCount).toBe(N); // MAX(rowid) == N under append-only
+    expect(growth!.detail!.estimatedBytes).toBeGreaterThan(0);
+    expect(growth!.detail!.sampleSize).toBe(N);
+    expect(growth!.value).toBe(growth!.detail!.estimatedBytes); // db_size style
+    expect(growth!.detail!.reclaim_status).toBe("deferred_to_rust_epoch_resync");
+    // Report-only: no maintenance recommendation/receipt, and nothing deleted.
+    expect(summary.maintenanceRecommendations.find((r) => r.name === "realtime_events_growth")).toBeUndefined();
+    expect(summary.maintenanceReceipts).toHaveLength(0);
+    expect(countRealtimeEvents()).toBe(N);
+  });
+
+  it("classifies growth by heuristic thresholds (below → healthy, above → warn/critical)", () => {
+    const t = REALTIME_EVENTS_GROWTH_THRESHOLDS;
+    expect(classifyRealtimeEventsGrowth(0, 0).status).toBe("healthy");
+    expect(classifyRealtimeEventsGrowth(t.warnRows - 1, t.warnBytes - 1).status).toBe("healthy");
+    expect(classifyRealtimeEventsGrowth(0, t.warnBytes).status).toBe("warn");
+    expect(classifyRealtimeEventsGrowth(t.warnRows, 0).status).toBe("warn");
+    expect(classifyRealtimeEventsGrowth(0, t.criticalBytes).status).toBe("critical");
+    expect(classifyRealtimeEventsGrowth(t.criticalRows, 0).status).toBe("critical");
+    for (const detail of [
+      classifyRealtimeEventsGrowth(0, 0),
+      classifyRealtimeEventsGrowth(0, t.warnBytes),
+      classifyRealtimeEventsGrowth(0, t.criticalBytes),
+    ]) {
+      expect(detail.reclaim_status).toBe("deferred_to_rust_epoch_resync");
+      expect(detail.thresholds.heuristic).toBe(true);
+    }
+  });
+
+  it("estimates TRUE UTF-8 BYTES for CJK + emoji payloads (not character count)", () => {
+    // Uniform multibyte payload: sample avg == exact per-row byte length, so the
+    // whole-table estimate is exact and provably byte-accurate.
+    const payload = JSON.stringify({ msg: "你好世界🌍こんにちは" });
+    const trueBytesPerRow = Buffer.byteLength(payload, "utf8");
+    const charsPerRow = payload.length; // UTF-16 units < UTF-8 bytes for this string
+    expect(trueBytesPerRow).toBeGreaterThan(charsPerRow); // multibyte, so bytes > chars
+    const N = 30;
+    insertRealtimeEvents(N, payload);
+
+    const summary = monitor.runAll();
+    const growth = summary.checks.find((c) => c.name === "realtime_events_growth")!;
+
+    expect(growth.detail!.rowCount).toBe(N);
+    // Reported bytes == true UTF-8 byte length × rows (NOT the char-count product).
+    expect(growth.detail!.estimatedBytes).toBe(trueBytesPerRow * N);
+    expect(growth.detail!.estimatedBytes).not.toBe(charsPerRow * N);
+  });
+
+  it("uses only BOUNDED / index-backed queries (EXPLAIN QUERY PLAN proof)", () => {
+    insertRealtimeEvents(500, JSON.stringify({ data: "y".repeat(32) }));
+
+    // Row count proxy is O(1): MAX(rowid) → a b-tree SEARCH, never a SCAN.
+    const countPlan = explainPlan(REALTIME_EVENTS_ROWCOUNT_PROXY_SQL);
+    expect(countPlan).toMatch(/SEARCH/);
+    expect(countPlan).not.toMatch(/SCAN/);
+
+    // Byte sample is bounded: the SQL carries a LIMIT and the plan does NOT sort
+    // the whole table (no TEMP B-TREE) — it walks the rowid index and stops.
+    expect(REALTIME_EVENTS_SAMPLE_BYTES_SQL).toMatch(new RegExp(`LIMIT ${REALTIME_EVENTS_SAMPLE_SIZE}\\b`));
+    const samplePlan = explainPlan(REALTIME_EVENTS_SAMPLE_BYTES_SQL);
+    expect(samplePlan).not.toMatch(/USE TEMP B-TREE/);
+
+    // Red-first contrast: the rejected naive approach IS an unbounded full payload
+    // scan (SCAN over the table, no LIMIT) — this is exactly what we avoid.
+    const naivePlan = explainPlan("SELECT SUM(LENGTH(payload_json)) FROM realtime_events");
+    expect(naivePlan).toMatch(/SCAN realtime_events/);
+    expect(REALTIME_EVENTS_SAMPLE_BYTES_SQL).not.toMatch(/SUM\(LENGTH\(payload_json\)\)\s+FROM realtime_events/i);
+  });
+
+  it("stays within a bounded budget on a large table (50k+ rows)", () => {
+    // Seed well beyond the sample size; the check must NOT scale with table size.
+    insertRealtimeEvents(60_000, JSON.stringify({ data: "z".repeat(48) }));
+
+    const start = Date.now();
+    const summary = monitor.runAll();
+    const elapsed = Date.now() - start;
+
+    const growth = summary.checks.find((c) => c.name === "realtime_events_growth")!;
+    expect(growth.detail!.rowCount).toBe(60_000);
+    expect(growth.detail!.estimatedBytes).toBeGreaterThan(0);
+    expect(growth.detail!.sampleSize).toBe(REALTIME_EVENTS_SAMPLE_SIZE); // capped, not 60k
+    // Bounded: the O(1) proxy + LIMIT sample finish fast regardless of the 60k rows.
+    // Generous ceiling (all checks incl. db_size/heap) to stay non-flaky in CI.
+    expect(elapsed).toBeLessThan(2_000);
+  });
+
+  it("fails closed (degraded, no deletion) when the realtime_events query throws", () => {
+    db.withWriteTransaction((writerDb) => {
+      writerDb.exec("DROP TABLE realtime_events");
+    });
+
+    const summary = monitor.runAll();
+    const growth = summary.checks.find((c) => c.name === "realtime_events_growth");
+
+    expect(growth).toBeDefined();
+    expect(growth!.healthy).toBe(false);
+    expect(growth!.detail!.status).toBe("degraded");
+    expect(growth!.detail!.failClosed).toBe(true);
+    expect(growth!.detail!.reclaim_status).toBe("deferred_to_rust_epoch_resync");
+    expect(summary.maintenanceReceipts).toHaveLength(0);
+    expect(summary.maintenanceRecommendations.find((r) => r.name === "realtime_events_growth")).toBeUndefined();
+  });
+
+  it("publishes the growth trend to a REAL metrics collector (durable readback)", () => {
+    // Use the real FridayMetricsCollector as the sink and read the values back.
+    const metrics = new FridayMetricsCollector();
+    metrics.registerGauge(REALTIME_EVENTS_ROWS_GAUGE, "learning");
+    metrics.registerGauge(REALTIME_EVENTS_BYTES_GAUGE, "learning");
+
+    const wired = createFridaySystemHealthMonitor({
+      db,
+      nowIso: () => NOW,
+      metricsSink: metrics,
+    });
+    const N = 12;
+    insertRealtimeEvents(N, JSON.stringify({ data: "w".repeat(40) }));
+    const summary = wired.runAll();
+    const growth = summary.checks.find((c) => c.name === "realtime_events_growth")!;
+
+    const labels = { status: "healthy", reclaim_status: "deferred_to_rust_epoch_resync" };
+    const rowsSnap = metrics.getSnapshot(REALTIME_EVENTS_ROWS_GAUGE, labels);
+    const bytesSnap = metrics.getSnapshot(REALTIME_EVENTS_BYTES_GAUGE, labels);
+
+    expect(rowsSnap).not.toBeNull();
+    expect(bytesSnap).not.toBeNull();
+    // reclaim_status + rows/bytes estimate are readable back off a real consumer.
+    expect((rowsSnap as { value: number }).value).toBe(N);
+    expect((bytesSnap as { value: number }).value).toBe(growth.detail!.estimatedBytes);
+  });
+
+  it("publishRealtimeEventsGrowthGauges is a no-op without a sink and never throws", () => {
+    expect(() =>
+      publishRealtimeEventsGrowthGauges(undefined, classifyRealtimeEventsGrowth(5, 100)),
+    ).not.toThrow();
+    // An unregistered-gauge collector must not break the caller (best-effort).
+    const bare = new FridayMetricsCollector();
+    expect(() =>
+      publishRealtimeEventsGrowthGauges(bare, classifyRealtimeEventsGrowth(5, 100)),
+    ).not.toThrow();
+  });
+
+  it("rate-limits repeated warnings: logs only on a status transition", () => {
+    const dedup = createFridayHealthLogDeduper();
+    // First warn logs; repeats are suppressed until the status changes.
+    expect(dedup.shouldLog("realtime_events_growth", "warn")).toBe(true);
+    expect(dedup.shouldLog("realtime_events_growth", "warn")).toBe(false);
+    expect(dedup.shouldLog("realtime_events_growth", "warn")).toBe(false);
+    // Escalation is a transition → logs again.
+    expect(dedup.shouldLog("realtime_events_growth", "critical")).toBe(true);
+    expect(dedup.shouldLog("realtime_events_growth", "critical")).toBe(false);
+    // Recovery resets, so a later regression re-alerts.
+    expect(dedup.shouldLog("realtime_events_growth", "healthy")).toBe(true);
+    expect(dedup.shouldLog("realtime_events_growth", "warn")).toBe(true);
+    // Independent per check name.
+    expect(dedup.shouldLog("db_size", "unhealthy")).toBe(true);
+  });
+
+  it("healthCheckStatusLabel derives status from growth detail or healthy flag", () => {
+    expect(healthCheckStatusLabel({ name: "x", healthy: true, value: 1, unit: "b" })).toBe("healthy");
+    expect(healthCheckStatusLabel({ name: "x", healthy: false, value: 1, unit: "b" })).toBe("unhealthy");
+    expect(
+      healthCheckStatusLabel({
+        name: "realtime_events_growth",
+        healthy: false,
+        value: 1,
+        unit: "bytes",
+        detail: classifyRealtimeEventsGrowth(0, REALTIME_EVENTS_GROWTH_THRESHOLDS.criticalBytes),
+      }),
+    ).toBe("critical");
   });
 });

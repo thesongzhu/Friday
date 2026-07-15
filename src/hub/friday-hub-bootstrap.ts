@@ -8196,36 +8196,65 @@ export async function createFridayHub(
     // is a separate operator-gated Phase-1/2 replacement.
 
     // System self-health monitor: periodic diagnose-only checks; maintenance cleanup requires an explicit gate.
-    schedulerJobs.push({
-      id: "system-health-monitor",
-      intervalMs: 300_000, // every 5 min
-      timeoutMs: 60_000,
-      catchUpRuns: 1,
-      run: async () => {
-        const { createFridaySystemHealthMonitor } = await import("../learning/services/friday-system-health-monitor.js");
-        const monitor = createFridaySystemHealthMonitor({
-          db: stateRuntime!.sqlite,
-          nowIso,
-          onRunComplete: (summary) => {
-            const unhealthy = summary.checks.filter((c) => !c.healthy);
-            if (unhealthy.length > 0) {
-              for (const check of unhealthy) {
-                console.warn(`[friday][system-health] ${check.name}: unhealthy (${String(check.value)} ${check.unit})`);
+    {
+      const {
+        createFridaySystemHealthMonitor,
+        createFridayHealthLogDeduper,
+        healthCheckStatusLabel,
+        REALTIME_EVENTS_ROWS_GAUGE,
+        REALTIME_EVENTS_BYTES_GAUGE,
+      } = await import("../learning/services/friday-system-health-monitor.js");
+      // One-time setup (persists across ticks): register the realtime_events
+      // growth-trend gauges so the estimate lands in a durable, readback-able
+      // surface (the observability metrics collector), and build a transition-only
+      // log deduper so a persistently large table never spams a warning every
+      // 5 minutes. Report-only — none of this deletes anything.
+      observabilityService.metrics.registerGauge(REALTIME_EVENTS_ROWS_GAUGE, "learning");
+      observabilityService.metrics.registerGauge(REALTIME_EVENTS_BYTES_GAUGE, "learning");
+      const systemHealthLogDeduper = createFridayHealthLogDeduper();
+      schedulerJobs.push({
+        id: "system-health-monitor",
+        intervalMs: 300_000, // every 5 min
+        timeoutMs: 60_000,
+        catchUpRuns: 1,
+        run: async () => {
+          const monitor = createFridaySystemHealthMonitor({
+            db: stateRuntime!.sqlite,
+            nowIso,
+            // Growth telemetry lands in the observability metrics collector as a
+            // gauge time series (durable readback of rows/bytes + status +
+            // reclaim_status labels). NEVER used for any deletion.
+            metricsSink: observabilityService.metrics,
+            onRunComplete: (summary) => {
+              // Log an unhealthy/warn/critical/degraded check only on a status
+              // TRANSITION; feed healthy statuses too so a recovery resets state
+              // and the next regression re-alerts.
+              for (const check of summary.checks) {
+                const status = healthCheckStatusLabel(check);
+                if (check.healthy) {
+                  systemHealthLogDeduper.shouldLog(check.name, status);
+                  continue;
+                }
+                if (systemHealthLogDeduper.shouldLog(check.name, status)) {
+                  console.warn(
+                    `[friday][system-health] ${check.name}: ${status} (${String(check.value)} ${check.unit})`,
+                  );
+                }
               }
-            }
-            for (const recommendation of summary.maintenanceRecommendations) {
-              console.warn(
-                `[friday][system-health] maintenance ${recommendation.name}: ${recommendation.detail}; explicit maintenance gate required`,
-              );
-            }
-            for (const receipt of summary.maintenanceReceipts) {
-              console.warn(`[friday][system-health] maintenance ${receipt.name}: ${receipt.detail}`);
-            }
-          },
-        });
-        monitor.runAll();
-      },
-    });
+              for (const recommendation of summary.maintenanceRecommendations) {
+                console.warn(
+                  `[friday][system-health] maintenance ${recommendation.name}: ${recommendation.detail}; explicit maintenance gate required`,
+                );
+              }
+              for (const receipt of summary.maintenanceReceipts) {
+                console.warn(`[friday][system-health] maintenance ${receipt.name}: ${receipt.detail}`);
+              }
+            },
+          });
+          monitor.runAll();
+        },
+      });
+    }
 
     // F1.5 — Headless Rust-route self-probe diagnostic (DARK, DEFAULT-OFF; OPTION-1 / H-b).
     // WHEN ENABLED by the operator via FRIDAY_RUST_ROUTE_DIAGNOSTIC_ENABLED=true ONLY, this
