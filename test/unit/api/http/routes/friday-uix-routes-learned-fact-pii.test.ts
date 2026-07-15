@@ -93,6 +93,33 @@ describe("FridayUixRoutes — learned-fact PII egress", () => {
     expect(JSON.stringify(res)).not.toContain(FULLWIDTH_CARD);
   });
 
+  it("uix.learnedfacts.list redacts registry-keyed numeric PII but preserves ambiguous business ids (egress)", async () => {
+    // Real HTTP egress path: a structured learned-fact value with typed numeric fields. The
+    // key-driven redactor redacts ssn/card (registry keys) while preserving order_id (an
+    // ambiguous business id) — no digit-shape inference. `123456789` still appears in the JSON
+    // via order_id; the assertion targets the card value, which must not leak in cleartext.
+    const routes = createFridayUixRoutes({
+      service,
+      listLearnedFacts: vi.fn(() => [{
+        key: "pref:profile",
+        value: { order_id: 123456789, sim_card: 2, ssn: 123456789, card: 4111111111111111 },
+        confidence: 0.8,
+        evidenceCount: 1,
+        lastConfirmedAt: NOW,
+      }]),
+    });
+    const route = routes.find((r) => r.operationId === "uix.learnedfacts.list")!;
+    const res = (await route.handler(makeCtx())) as {
+      items: Array<{ value: { order_id: unknown; sim_card: unknown; ssn: unknown; card: unknown } }>;
+    };
+    const v = res.items[0]!.value;
+    expect(v.order_id).toBe(123456789); // ambiguous business id preserved on egress
+    expect(v.sim_card).toBe(2); // sensitive-sounding key, non-card value → preserved (value gate)
+    expect(v.ssn).toBe("[SSN_US]"); // registry key + SSN-shaped value redacted
+    expect(v.card).toBe("[CREDIT_CARD]");
+    expect(JSON.stringify(res)).not.toContain("4111111111111111"); // card not leaked in cleartext
+  });
+
   it("uix.learnedfacts.list leaves a value with no PII unchanged (negative control)", async () => {
     const routes = createFridayUixRoutes({
       service,

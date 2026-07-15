@@ -187,6 +187,80 @@ function redactContent(content: string, matches: FridayMemoryGuardPiiMatch[]): s
   return result;
 }
 
+/**
+ * Sensitive-field registry for CONTEXT-AWARE typed redaction.
+ *
+ * A bare `number`/`bigint` carries no reliable signal of being PII: a 9/10/13–19-digit run or a
+ * Luhn-valid value is just as likely an order number, invoice id, account id, or epoch
+ * timestamp. `redactDeep` therefore redacts a numeric/bigint value only under TWO gates:
+ *  (1) its OBJECT KEY names a known sensitive field (this registry), AND
+ *  (2) the value's string form ACTUALLY matches that type's canonical detector (SSN / phone /
+ *      Luhn-gated card) — see the value gate in `redactDeep`.
+ * Never by digit shape or Luhn validity ALONE. Ambiguous numerics under other keys, benign
+ * numerics under sensitive-sounding keys (`gift_card: 3`, `head_phone: 42`), and pure-numeric
+ * object keys are preserved unchanged (no irreversible masking of legitimate ids). The string
+ * at-rest policy is untouched: string values/keys still use the existing shape-based patterns.
+ *
+ * Key matching is by normalized token SUFFIX so prefixed variants match (`home_phone`,
+ * `user_ssn`, `billing_card_number`) while unrelated names do not (`phone_count`, `telemetry`,
+ * `discard`, `cardinality`, `order_id`). The final-token footgun (`gift_card`, `dust_pan`, …) is
+ * covered by the value gate rather than a brittle denylist. Keys are normalized: camelCase is
+ * split, digits and separators are dropped, and a trailing plural `s` on the final token folded.
+ */
+type FridayKeyDrivenPiiType = Extract<FridayMemoryGuardPiiType, "ssn_us" | "phone_us" | "credit_card">;
+
+const SENSITIVE_KEY_PHRASE_TO_TYPE = new Map<string, FridayKeyDrivenPiiType>([
+  ["ssn", "ssn_us"],
+  ["ssn number", "ssn_us"],
+  ["social security", "ssn_us"],
+  ["social security number", "ssn_us"],
+  ["phone", "phone_us"],
+  ["phone number", "phone_us"],
+  ["telephone", "phone_us"],
+  ["tel", "phone_us"],
+  ["mobile", "phone_us"],
+  ["mobile number", "phone_us"],
+  ["mobile phone", "phone_us"],
+  ["card", "credit_card"],
+  ["card number", "credit_card"],
+  ["credit card", "credit_card"],
+  ["credit card number", "credit_card"],
+  ["pan", "credit_card"],
+]);
+const SENSITIVE_KEY_MAX_PHRASE_TOKENS = 3;
+
+function normalizeKeyTokens(key: string): string[] {
+  const tokens = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter((t) => t.length > 0);
+  const last = tokens.pop();
+  if (last === undefined) return tokens;
+  const singular =
+    last.length > 3 && last.endsWith("s") && !last.endsWith("ss") ? last.slice(0, -1) : last;
+  tokens.push(singular);
+  return tokens;
+}
+
+/**
+ * Resolve the PII type a value inherits from its object KEY, or `undefined` for a non-sensitive
+ * key. The longest matching suffix wins (most specific). Purely key-driven — the value itself is
+ * never inspected, so no benign number can be redacted by this path.
+ */
+function sensitiveTypeForKey(key: string): FridayKeyDrivenPiiType | undefined {
+  const tokens = normalizeKeyTokens(key);
+  if (tokens.length === 0) return undefined;
+  const maxLen = Math.min(SENSITIVE_KEY_MAX_PHRASE_TOKENS, tokens.length);
+  for (let len = maxLen; len >= 1; len -= 1) {
+    const suffix = tokens.slice(tokens.length - len).join(" ");
+    const type = SENSITIVE_KEY_PHRASE_TO_TYPE.get(suffix);
+    if (type) return type;
+  }
+  return undefined;
+}
+
 export function createFridayMemoryPiiGuard(
   mode?: FridayMemoryGuardPiiMode,
 ): FridayMemoryGuardPiiGuard {
@@ -217,23 +291,84 @@ export function createFridayMemoryPiiGuard(
       const tagSet = new Set<string>();
       const MAX_DEPTH = 6;
 
-      const walk = (v: unknown, depth: number): unknown => {
+      // String leaves keep the EXISTING shape-based at-rest policy (unchanged by this lane):
+      // scan with the PII patterns and redact in place in redact mode, tag-only otherwise.
+      const redactStringLeaf = (s: string): string => {
+        const matches = findMatches(s);
+        if (matches.length === 0) return s;
+        for (const m of matches) {
+          tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${m.type}`);
+        }
+        return effectiveMode === "redact" ? redactContent(s, matches) : s;
+      };
+
+      // Redact PII carried in an object KEY. String key CONTENT that is itself recognizable PII
+      // (email, or a formatted phone/SSN/card) is redacted in place, so `user@example.com` →
+      // `[EMAIL]` and a compound `ssn:123-45-6789` → `ssn:[SSN_US]`. A PURE-NUMERIC key
+      // (`/^\d+$/`) is NEVER shape-redacted — it is an ambiguous id and is preserved verbatim.
+      const redactKey = (key: string): string => {
+        if (/^\d+$/.test(key)) return key;
+        const matches = findMatches(key);
+        if (matches.length === 0) return key;
+        for (const m of matches) {
+          tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${m.type}`);
+        }
+        return effectiveMode === "redact" ? redactContent(key, matches) : key;
+      };
+
+      // Assign `value` under `key`, never dropping data. Redacting keys can collapse two
+      // distinct PII keys onto the same token (e.g. `a@x.com` and `b@y.com` → `[EMAIL]`); on
+      // collision the later entry is disambiguated deterministically so both VALUES survive.
+      // The suffix contains no PII pattern, so a second redactDeep pass is a no-op (idempotent).
+      const assignKey = (out: Record<string, unknown>, key: string, val: unknown): void => {
+        let finalKey = key;
+        if (Object.prototype.hasOwnProperty.call(out, key)) {
+          let suffix = 2;
+          while (Object.prototype.hasOwnProperty.call(out, `${key}#${suffix}`)) {
+            suffix += 1;
+          }
+          finalKey = `${key}#${suffix}`;
+        }
+        out[finalKey] = val;
+      };
+
+      // `keyedType` is the PII type a numeric/bigint value INHERITS FROM ITS OBJECT KEY (see
+      // sensitiveTypeForKey). It is threaded down through arrays (a list under a sensitive key)
+      // but NOT into nested objects, which re-establish their own key context.
+      const walk = (v: unknown, depth: number, keyedType?: FridayKeyDrivenPiiType): unknown => {
         if (depth > MAX_DEPTH) return v;
         if (typeof v === "string") {
-          const matches = findMatches(v);
-          if (matches.length === 0) return v;
-          for (const m of matches) {
-            tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${m.type}`);
-          }
-          return effectiveMode === "redact" ? redactContent(v, matches) : v;
+          return redactStringLeaf(v);
+        }
+        // CONTEXT-AWARE typed redaction, gated on BOTH the key AND the value:
+        //  (1) key gate  — the object key must name a known PII type (keyedType); unknown keys
+        //      and context-less/array numbers are never candidates.
+        //  (2) value gate — the value's string form must ACTUALLY match that type's canonical
+        //      detector (SSN / phone / Luhn-gated card). This is strictly more conservative than
+        //      key-alone: a benign numeric under a sensitive-sounding field (gift_card: 3,
+        //      head_phone: 42, sim_card: 2) is preserved because "3"/"42"/"2" is not card/phone
+        //      shaped. It does NOT reintroduce shape-alone inference — the value gate only runs
+        //      AFTER the sensitive-key gate, so a Luhn-valid `order_id` under a NON-sensitive key
+        //      is still preserved.
+        if (typeof v === "number" || typeof v === "bigint") {
+          if (!keyedType) return v;
+          const valueIsTypeShaped = findMatches(String(v)).some((m) => m.type === keyedType);
+          if (!valueIsTypeShaped) return v;
+          tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${keyedType}`);
+          return effectiveMode === "redact" ? `[${keyedType.toUpperCase()}]` : v;
+        }
+        // Preserve a Date's original TYPE (the object branch below would otherwise walk its zero
+        // own-enumerable props and corrupt it into `{}`). A Date is not a numeric PII carrier.
+        if (v instanceof Date) {
+          return v;
         }
         if (Array.isArray(v)) {
-          return v.map((entry) => walk(entry, depth + 1));
+          return v.map((entry) => walk(entry, depth + 1, keyedType));
         }
         if (v && typeof v === "object") {
           const out: Record<string, unknown> = {};
           for (const [k, entry] of Object.entries(v as Record<string, unknown>)) {
-            out[k] = walk(entry, depth + 1);
+            assignKey(out, redactKey(k), walk(entry, depth + 1, sensitiveTypeForKey(k)));
           }
           return out;
         }
