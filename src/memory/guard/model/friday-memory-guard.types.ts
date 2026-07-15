@@ -143,6 +143,14 @@ export interface FridayMemoryGuardOutputFilter {
    * result passes the same PII filter regardless of the total count.
    */
   filterSearchResult(result: FridayMemorySearchResult): FridayMemorySearchResult;
+  /**
+   * Redact PII from a learned-fact `value` (which is free-form `unknown` — a string or a
+   * nested object/array), returning the value with the SAME structure/type, PII redacted in
+   * place via the production deep redactor. Unlike `filterItem`, it does NOT stringify or
+   * truncate — sibling egress paths (uix / asset-inventory) return the raw `value` field, so
+   * only redaction is applied. Idempotent on an already-redacted value.
+   */
+  redactLearnedFactValue(value: unknown): unknown;
 }
 
 // ─── Guard service ───
