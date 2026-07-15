@@ -656,4 +656,146 @@ describe("FridayMemoryPiiGuard", () => {
       expect(tagsToAdd).toContain("pii.credit_card");
     });
   });
+
+  // ─── Advisor round 2 ─────────────────────────────────────────────────────────
+  //
+  // Three real defects the independent Advisor found in the two-gate typed-PII redactor.
+  // Each block is red-first: it reproduces the leak/bug against the pre-fix code, then the
+  // fix makes it pass. Benign controls assert no over-redaction is introduced.
+
+  // ─── F1: keyed numeric US phone stored as a country-code integer (1XXXXXXXXXX) ───
+  //
+  // A US number persisted numerically loses its leading '+', becoming the 11-digit form
+  // 1XXXXXXXXXX. The reused phone detector only accepts +1XXXXXXXXXX (which it cannot even
+  // anchor at string start) or the bare 10-digit form, so `redactDeep({phone: 15552345678})`
+  // returned the CLEAR value. The fix normalizes the numeric string ONLY under an already-
+  // phone-typed key (no shape-only redaction) against the SAME detector.
+  describe("redactDeep F1 — keyed numeric country-code US phone (1XXXXXXXXXX) [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("redacts a numeric country-code phone (1XXXXXXXXXX) under a `phone` key", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ phone: 15552345678 });
+      expect((value as { phone: unknown }).phone).toBe("[PHONE_US]");
+      expect(tagsToAdd).toContain("pii.phone_us");
+    });
+
+    it("redacts a bigint country-code phone under a `phone` key", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ phone: 15552345678n });
+      expect((value as { phone: unknown }).phone).toBe("[PHONE_US]");
+      expect(tagsToAdd).toContain("pii.phone_us");
+    });
+
+    // Benign controls that MUST still preserve (no new over-redaction, no shape-only path).
+    it("preserves a tiny number under a `phone` key (value gate still applies)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ phone: 42 });
+      expect((value as { phone: unknown }).phone).toBe(42);
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("preserves an 11-digit phone-ish value under a NON-phone key (gift_card → credit_card type)", () => {
+      // The KEY governs the type; gift_card is a card key, and 11 digits is not card-shaped,
+      // so the value gate preserves it. The phone normalization must NOT leak across key types.
+      const { value, tagsToAdd } = guard.redactDeep({ gift_card: 15552345678 });
+      expect((value as { gift_card: unknown }).gift_card).toBe(15552345678);
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("preserves an 11-digit value under a non-sensitive key (order_id)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ order_id: 15552345678 });
+      expect((value as { order_id: unknown }).order_id).toBe(15552345678);
+      expect(tagsToAdd).toHaveLength(0);
+    });
+  });
+
+  // ─── F2: deep nesting must fail CLOSED, never emit an unscanned subtree ───
+  //
+  // The walker returned the remaining subtree UNCHANGED past the recursion cap (fail-OPEN):
+  // a 7-level object carrying `owner@example.com` egressed in cleartext. The fix scans every
+  // depth realistic (byte-bounded) input can reach and, at a high structural safety cap
+  // (stack-overflow guard), fails CLOSED by replacing the over-deep subtree with a redaction
+  // sentinel — never cleartext.
+  describe("redactDeep F2 — deep nesting fails CLOSED (no unscanned egress) [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    // `depth` levels of {child: …} wrapping a leaf object with an email + keyed phone/ssn.
+    function deepPii(depth: number): unknown {
+      let node: Record<string, unknown> = {
+        contact: "owner@example.com",
+        phone: 5552345678,
+        ssn: 123456789,
+      };
+      for (let i = 0; i < depth; i += 1) node = { child: node };
+      return node;
+    }
+
+    it("redacts PII at depth 7 (previously beyond the depth-6 fail-open boundary)", () => {
+      const { value, tagsToAdd } = guard.redactDeep(deepPii(7));
+      const json = JSON.stringify(value);
+      expect(json).not.toContain("owner@example.com");
+      expect(json).not.toContain("5552345678");
+      expect(json).not.toContain("123456789");
+      expect(json).toContain("[EMAIL]");
+      expect(json).toContain("[PHONE_US]");
+      expect(json).toContain("[SSN_US]");
+      expect(tagsToAdd).toEqual(
+        expect.arrayContaining(["pii.email", "pii.phone_us", "pii.ssn_us"]),
+      );
+    });
+
+    it("redacts PII much deeper (depth 300) — still fully scanned below the safety cap", () => {
+      const { value } = guard.redactDeep(deepPii(300));
+      const json = JSON.stringify(value);
+      expect(json).not.toContain("owner@example.com");
+      expect(json).not.toContain("5552345678");
+      expect(json).toContain("[EMAIL]");
+    });
+
+    it("fails CLOSED beyond the structural safety cap: the over-deep subtree is replaced by a redaction sentinel, never emitted clear", () => {
+      const { value } = guard.redactDeep(deepPii(1200));
+      const json = JSON.stringify(value);
+      expect(json).not.toContain("owner@example.com"); // deep email never leaked
+      expect(json).not.toContain("5552345678");
+      expect(json).toContain("[REDACTED_DEPTH]"); // fail-closed sentinel present
+    });
+  });
+
+  // ─── F3: JSON-originated dangerous keys must be OWN data properties (no proto pollution) ───
+  //
+  // `out[key] = val` invokes the legacy `__proto__` setter for a JSON-originated own key
+  // `__proto__`, mutating the output object's prototype AND dropping the field. The fix
+  // defines an OWN data property so `__proto__` round-trips and the prototype is unchanged.
+  describe("redactDeep F3 — JSON-originated dangerous keys are own data properties [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("round-trips a JSON `__proto__` own key without mutating the output prototype or dropping data", () => {
+      const input = JSON.parse(String.raw`{"__proto__": {"polluted": true}, "safe": 1}`);
+      const { value } = guard.redactDeep(input);
+      const out = value as Record<string, unknown>;
+      expect(Object.getPrototypeOf(out)).toBe(Object.prototype); // prototype untouched
+      expect(Object.prototype.hasOwnProperty.call(out, "__proto__")).toBe(true); // no data drop
+      expect(Object.keys(out)).toContain("__proto__");
+      expect(out.safe).toBe(1);
+      expect(JSON.parse(JSON.stringify(out)).safe).toBe(1); // still JSON-round-trips
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined(); // no global pollution
+    });
+
+    it("preserves JSON `constructor` and `prototype` own keys as own data properties", () => {
+      const input = JSON.parse(String.raw`{"constructor": 1, "prototype": 2, "clean": 3}`);
+      const { value } = guard.redactDeep(input);
+      const out = value as Record<string, unknown>;
+      expect(Object.prototype.hasOwnProperty.call(out, "constructor")).toBe(true);
+      expect(out.constructor).toBe(1);
+      expect(out.prototype).toBe(2);
+      expect(out.clean).toBe(3);
+      expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    });
+
+    it("keeps idempotence and collision-safety with a dangerous key", () => {
+      const input = JSON.parse(String.raw`{"__proto__": 1}`);
+      const once = guard.redactDeep(input).value;
+      const twice = guard.redactDeep(once).value;
+      expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
+      expect(Object.prototype.hasOwnProperty.call(twice as object, "__proto__")).toBe(true);
+    });
+  });
 });

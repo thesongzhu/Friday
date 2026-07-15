@@ -261,6 +261,26 @@ function sensitiveTypeForKey(key: string): FridayKeyDrivenPiiType | undefined {
   return undefined;
 }
 
+/**
+ * VALUE gate for a numeric/bigint value whose OBJECT KEY already resolved to `type`
+ * (sensitiveTypeForKey). Returns true only when the value's string form actually matches that
+ * type's canonical detector. This runs strictly AFTER the sensitive-key gate, so it can never
+ * reintroduce shape-only inference — a value under a non-sensitive key never reaches here.
+ *
+ * Phone normalization (F1): a US number persisted as a numeric loses its leading '+', producing
+ * the 11-digit country-code form 1XXXXXXXXXX. The reused phone detector only accepts +1XXXXXXXXXX
+ * or the bare 10-digit form, so that numeric form leaked. Because the key is ALREADY a registered
+ * phone key, we may safely normalize by stripping the leading country-code '1' to the 10-digit
+ * form the SAME detector recognizes — no new shape-only redaction is introduced.
+ */
+function numericValueMatchesKeyedType(str: string, type: FridayKeyDrivenPiiType): boolean {
+  if (findMatches(str).some((m) => m.type === type)) return true;
+  if (type === "phone_us" && /^1\d{10}$/.test(str)) {
+    return findMatches(str.slice(1)).some((m) => m.type === "phone_us");
+  }
+  return false;
+}
+
 export function createFridayMemoryPiiGuard(
   mode?: FridayMemoryGuardPiiMode,
 ): FridayMemoryGuardPiiGuard {
@@ -289,7 +309,15 @@ export function createFridayMemoryPiiGuard(
 
     redactDeep(value: unknown): { value: unknown; tagsToAdd: string[] } {
       const tagSet = new Set<string>();
-      const MAX_DEPTH = 6;
+      // Structural recursion cap — a STACK-OVERFLOW / DoS guard, NOT a scan-coverage limit. It
+      // sits far above any realistic metadata nesting (real metadata is a handful of levels
+      // deep) so legitimate byte-bounded input is ALWAYS fully scanned, and comfortably below
+      // the JS call-stack limit for this walker so it never throws. If a pathological,
+      // adversarially deep structure exceeds it, the walker fails CLOSED: the over-deep subtree
+      // is replaced by a redaction SENTINEL and NEVER emitted in cleartext. (The previous code
+      // returned the unscanned subtree verbatim past depth 6 — a fail-OPEN egress leak.)
+      const MAX_DEPTH = 500;
+      const DEPTH_REDACTION_SENTINEL = "[REDACTED_DEPTH]";
 
       // String leaves keep the EXISTING shape-based at-rest policy (unchanged by this lane):
       // scan with the PII patterns and redact in place in redact mode, tag-only otherwise.
@@ -320,6 +348,12 @@ export function createFridayMemoryPiiGuard(
       // distinct PII keys onto the same token (e.g. `a@x.com` and `b@y.com` → `[EMAIL]`); on
       // collision the later entry is disambiguated deterministically so both VALUES survive.
       // The suffix contains no PII pattern, so a second redactDeep pass is a no-op (idempotent).
+      //
+      // Define an OWN DATA property rather than `out[finalKey] = val`: a JSON-originated own key
+      // named `__proto__` would otherwise invoke the legacy prototype setter, mutating the
+      // output object's prototype (prototype confusion) AND dropping the field from
+      // serialization. `Object.defineProperty` round-trips such keys as ordinary own enumerable
+      // data properties with the prototype untouched.
       const assignKey = (out: Record<string, unknown>, key: string, val: unknown): void => {
         let finalKey = key;
         if (Object.prototype.hasOwnProperty.call(out, key)) {
@@ -329,14 +363,21 @@ export function createFridayMemoryPiiGuard(
           }
           finalKey = `${key}#${suffix}`;
         }
-        out[finalKey] = val;
+        Object.defineProperty(out, finalKey, {
+          value: val,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
       };
 
       // `keyedType` is the PII type a numeric/bigint value INHERITS FROM ITS OBJECT KEY (see
       // sensitiveTypeForKey). It is threaded down through arrays (a list under a sensitive key)
       // but NOT into nested objects, which re-establish their own key context.
       const walk = (v: unknown, depth: number, keyedType?: FridayKeyDrivenPiiType): unknown => {
-        if (depth > MAX_DEPTH) return v;
+        // Fail CLOSED past the structural safety cap: never return an unscanned subtree in
+        // cleartext. The sentinel carries no PII and is inert on a re-scan (idempotent).
+        if (depth > MAX_DEPTH) return DEPTH_REDACTION_SENTINEL;
         if (typeof v === "string") {
           return redactStringLeaf(v);
         }
@@ -352,8 +393,7 @@ export function createFridayMemoryPiiGuard(
         //      is still preserved.
         if (typeof v === "number" || typeof v === "bigint") {
           if (!keyedType) return v;
-          const valueIsTypeShaped = findMatches(String(v)).some((m) => m.type === keyedType);
-          if (!valueIsTypeShaped) return v;
+          if (!numericValueMatchesKeyedType(String(v), keyedType)) return v;
           tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${keyedType}`);
           return effectiveMode === "redact" ? `[${keyedType.toUpperCase()}]` : v;
         }
