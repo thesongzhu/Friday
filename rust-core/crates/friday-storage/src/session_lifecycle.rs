@@ -163,15 +163,21 @@ pub fn sweep_lifecycle_with_policy(
 
     // 1. active → idle: no activity for > IDLE_TIMEOUT. Drive off
     //    COALESCE(last_activity_at, updated_at) — last_activity_at has no writer yet, so
-    //    updated_at (genuinely maintained) is the live signal. STRICT `<` boundary.
-    let idle_before = now_ms - IDLE_TIMEOUT_MS;
-    let idled = tx.execute(
-        "UPDATE agent_session
+    //    updated_at (genuinely maintained) is the live signal. STRICT `<` boundary. The boundary is
+    //    computed with `checked_sub`: an i64 UNDERFLOW (a pathological near-`i64::MIN` now_ms) FAILS
+    //    CLOSED — the phase is SKIPPED (idled = 0), never a wrapped/bogus cutoff that could
+    //    mis-transition a fresh row (#60's "overflow fail-closed" rule, matching `resolve_cutoff`).
+    //    Any sane wall clock (~1.7e12) never underflows, so behaviour is unchanged for real times.
+    let idled = match now_ms.checked_sub(IDLE_TIMEOUT_MS) {
+        Some(idle_before) => tx.execute(
+            "UPDATE agent_session
             SET status = 'idle', idle_at = ?1, status_changed_at = ?1, updated_at = ?1
           WHERE status = 'active'
             AND COALESCE(last_activity_at, updated_at) < ?2",
-        params![now_ms, idle_before],
-    )?;
+            params![now_ms, idle_before],
+        )?,
+        None => 0,
+    };
 
     // DATA-RETENTION-001 SOFT-HIDING GATE (the single fail-closed switch for the non-idle legs).
     // `archived` and `pruned` are BOTH EXCLUDED from the ONLY owner-discovery path —
@@ -189,37 +195,36 @@ pub fn sweep_lifecycle_with_policy(
     // resumable conversation), so idling never hides a session.
     let content_cutoff = resolve_cutoff(now_ms, session_content);
 
-    // 2. idle → archived: GATED. Runs ONLY under an explicit session-content policy; under the
-    //    permanent default it is SKIPPED (archiving would soft-hide the session). idle for
-    //    > ARCHIVE_TIMEOUT (drives off idle_at). STRICT `<`.
-    let archived = if content_cutoff.is_some() {
-        let archive_before = now_ms - ARCHIVE_TIMEOUT_MS;
-        tx.execute(
+    // 2. idle → archived: GATED + overflow-safe. Runs ONLY under an explicit session-content policy
+    //    (content_cutoff is Some); under the permanent default it is SKIPPED (archiving would
+    //    soft-hide the session). idle for > ARCHIVE_TIMEOUT (drives off idle_at). STRICT `<`. The
+    //    boundary is computed with `checked_sub`, so an i64 UNDERFLOW ALSO fails closed (skip = 0);
+    //    `and_then` folds the policy gate AND the overflow check into one Option (#60 overflow rule).
+    let archived = match content_cutoff.and_then(|_| now_ms.checked_sub(ARCHIVE_TIMEOUT_MS)) {
+        Some(archive_before) => tx.execute(
             "UPDATE agent_session
                 SET status = 'archived', archived_at = ?1, status_changed_at = ?1, updated_at = ?1
               WHERE status = 'idle'
                 AND idle_at IS NOT NULL
                 AND idle_at < ?2",
             params![now_ms, archive_before],
-        )?
-    } else {
-        0
+        )?,
+        None => 0,
     };
 
-    // 3. archived → pruned: GATED by the SAME gate as archive. archived for > PRUNE_TIMEOUT
-    //    (drives off archived_at). STRICT `<`.
-    let pruned = if content_cutoff.is_some() {
-        let prune_before = now_ms - PRUNE_TIMEOUT_MS;
-        tx.execute(
+    // 3. archived → pruned: GATED by the SAME gate as archive, and overflow-safe via `checked_sub`
+    //    (an i64 UNDERFLOW fails closed = skip = 0). archived for > PRUNE_TIMEOUT (drives off
+    //    archived_at). STRICT `<`.
+    let pruned = match content_cutoff.and_then(|_| now_ms.checked_sub(PRUNE_TIMEOUT_MS)) {
+        Some(prune_before) => tx.execute(
             "UPDATE agent_session
                 SET status = 'pruned', pruned_at = ?1, status_changed_at = ?1, updated_at = ?1
               WHERE status = 'archived'
                 AND archived_at IS NOT NULL
                 AND archived_at < ?2",
             params![now_ms, prune_before],
-        )?
-    } else {
-        0
+        )?,
+        None => 0,
     };
 
     // 4. pruned → hard-delete: the IRREVERSIBLE deletion of chat/session USER-DATA, gated by the
@@ -1327,6 +1332,45 @@ mod tests {
         assert!(
             exists(&default_db, "old_pruned"),
             "pruned row retained under the default"
+        );
+    }
+
+    // --- #60 overflow rule: each per-phase cutoff fails CLOSED on an i64 underflow -------------
+    //
+    // The three per-phase boundaries (`now_ms - IDLE_TIMEOUT_MS` / `- ARCHIVE_TIMEOUT_MS` /
+    // `- PRUNE_TIMEOUT_MS`) are computed with `checked_sub`, so a pathological near-`i64::MIN`
+    // now_ms UNDERFLOWS → that phase is SKIPPED (does 0), never a wrapped/bogus cutoff that could
+    // mis-transition a fresh row — matching `resolve_cutoff`'s fail-closed math. A real wall clock
+    // (~1.7e12) never reaches here; this only guards a future refactor from silently reintroducing
+    // unchecked subtraction (which would also PANIC in a debug build at this input).
+    #[test]
+    fn per_phase_boundary_underflow_fails_closed_and_never_mistransitions() {
+        let db = Db::open_hub(&tmp("overflow-failclosed")).unwrap();
+        // A brand-new ACTIVE session with a normal updated_at.
+        ensure_session(db.conn(), "s", 1_000).unwrap();
+
+        // DEFAULT policy at i64::MIN: `i64::MIN - IDLE_TIMEOUT_MS` underflows → idle phase skipped.
+        let out = sweep_lifecycle(db.conn(), i64::MIN).unwrap();
+        assert_eq!(
+            out.idled, 0,
+            "idle phase fails closed on underflow (no wrapped cutoff)"
+        );
+        assert_eq!(
+            status_of(&db, "s"),
+            "active",
+            "the session is NOT mis-transitioned by an overflowing clock"
+        );
+
+        // EXPLICIT policy at i64::MIN: the archive/prune boundaries also fail closed (no panic, 0),
+        // and no row is destroyed.
+        let out2 = sweep_enabled(db.conn(), i64::MIN).unwrap();
+        assert_eq!(out2.idled, 0);
+        assert_eq!(out2.archived, 0);
+        assert_eq!(out2.pruned, 0);
+        assert_eq!(out2.hard_deleted, 0);
+        assert!(
+            exists(&db, "s"),
+            "no row destroyed under an overflowing clock"
         );
     }
 }
