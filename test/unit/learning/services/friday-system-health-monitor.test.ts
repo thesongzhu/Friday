@@ -260,6 +260,35 @@ describe("FridaySystemHealthMonitor", () => {
     expect(countRealtimeEvents()).toBe(N);
   });
 
+  it("reports the ACTUAL sampled row count after rowid gaps from deletion (not min(LIMIT, MAX(rowid)))", () => {
+    // Append 1200 rows (rowids 1..1200), then delete all but the newest 10. The
+    // survivors are 10, but MAX(rowid) stays 1200 (rowid gaps never reused). The
+    // public sampleSize MUST report the real sampled COUNT(*) = 10, NOT
+    // min(REALTIME_EVENTS_SAMPLE_SIZE, MAX(rowid)) = 1000 (the misleading proxy).
+    insertRealtimeEvents(1200, JSON.stringify({ data: "x".repeat(16) }));
+    db.withWriteTransaction((writerDb) => {
+      writerDb.prepare("DELETE FROM realtime_events WHERE rowid <= 1190").run();
+    });
+    const survivors = countRealtimeEvents();
+    const maxRowid = (
+      db.withReadConnection((r) => r.prepare("SELECT MAX(rowid) AS m FROM realtime_events").get()) as { m: number }
+    ).m;
+    expect(survivors).toBe(10);
+    expect(maxRowid).toBe(1200);
+    expect(Math.min(REALTIME_EVENTS_SAMPLE_SIZE, maxRowid)).toBe(1000); // the OLD (wrong) value
+
+    const summary = monitor.runAll();
+    const growth = summary.checks.find((c) => c.name === "realtime_events_growth")!;
+
+    // FIX: sampleSize is the ACTUAL sampled COUNT(*), not the rowid-derived proxy.
+    expect(growth.detail!.sampleSize).toBe(survivors); // 10
+    expect(growth.detail!.sampleSize).not.toBe(Math.min(REALTIME_EVENTS_SAMPLE_SIZE, maxRowid)); // not 1000
+    expect(growth.detail!.sampleSize).toBeLessThanOrEqual(REALTIME_EVENTS_SAMPLE_SIZE);
+    // The byte estimate stays honestly LABELLED as a bounded-sample extrapolation.
+    expect(growth.detail!.estimateBasis).toMatch(/bounded-sample estimate/);
+    expect(growth.detail!.estimatedBytes).toBeGreaterThan(0);
+  });
+
   it("classifies growth by heuristic thresholds (below → healthy, above → warn/critical)", () => {
     const t = REALTIME_EVENTS_GROWTH_THRESHOLDS;
     expect(classifyRealtimeEventsGrowth(0, 0).status).toBe("healthy");

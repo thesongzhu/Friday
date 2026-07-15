@@ -43,7 +43,12 @@ export interface FridaySystemHealthGrowthDetail {
    * BLOB))`), extrapolated as sampled-average × rowCount; -1 when fail-closed.
    */
   estimatedBytes: number;
-  /** Rows actually sampled for the byte average (≤ REALTIME_EVENTS_SAMPLE_SIZE). */
+  /**
+   * The ACTUAL number of rows the byte sample read (the real `COUNT(*)` of the
+   * newest-≤`REALTIME_EVENTS_SAMPLE_SIZE`-rows subquery), NOT `min(LIMIT,
+   * MAX(rowid))`. After a deletion, rowid gaps make `MAX(rowid)` exceed the
+   * surviving-row count, so this stays honest (≤ surviving rows, ≤ the LIMIT).
+   */
   sampleSize: number;
   /** Human-readable note describing the bounded/sampled estimate method. */
   estimateBasis: string;
@@ -206,12 +211,18 @@ export const REALTIME_EVENTS_ROWCOUNT_PROXY_SQL =
 /**
  * Bounded byte-size sample: average TRUE UTF-8 byte-length
  * (`LENGTH(CAST(payload_json AS BLOB))` — NOT character count) over the most
- * recent `REALTIME_EVENTS_SAMPLE_SIZE` rows in rowid order. The `LIMIT` caps the
- * payload reads; the rowid ordering avoids a full-table sort (no TEMP B-TREE).
- * Never a `SUM(...)` over the whole table.
+ * recent `REALTIME_EVENTS_SAMPLE_SIZE` rows in rowid order, PLUS the ACTUAL
+ * `COUNT(*)` of that bounded subquery. The `LIMIT` caps the payload reads; the
+ * rowid ordering avoids a full-table sort (no TEMP B-TREE). Never a `SUM(...)`
+ * over the whole table.
+ *
+ * `sample_count` is the REAL number of rows the sample read (≤ the LIMIT). It is
+ * NOT derivable from `MAX(rowid)`: after a deletion, rowid gaps make MAX(rowid)
+ * exceed the surviving-row count, so a `min(LIMIT, MAX(rowid))` proxy would
+ * over-report. The check surfaces this real count as the public `sampleSize`.
  */
 export const REALTIME_EVENTS_SAMPLE_BYTES_SQL =
-  `SELECT AVG(LENGTH(CAST(payload_json AS BLOB))) AS avg_bytes ` +
+  `SELECT COUNT(*) AS sample_count, AVG(LENGTH(CAST(payload_json AS BLOB))) AS avg_bytes ` +
   `FROM (SELECT payload_json FROM realtime_events ORDER BY rowid DESC LIMIT ${REALTIME_EVENTS_SAMPLE_SIZE})`;
 
 /**
@@ -242,6 +253,7 @@ const REALTIME_EVENTS_ESTIMATE_BASIS =
 export function classifyRealtimeEventsGrowth(
   rowCount: number,
   estimatedBytes: number,
+  sampleSize?: number,
 ): FridaySystemHealthGrowthDetail {
   const t = REALTIME_EVENTS_GROWTH_THRESHOLDS;
   let status: FridaySystemHealthGrowthStatus = "healthy";
@@ -254,7 +266,12 @@ export function classifyRealtimeEventsGrowth(
     status,
     rowCount,
     estimatedBytes,
-    sampleSize: Math.min(REALTIME_EVENTS_SAMPLE_SIZE, Math.max(0, rowCount)),
+    // Use the REAL sampled `COUNT(*)` when the caller supplies it (the production
+    // check always does — see REALTIME_EVENTS_SAMPLE_BYTES_SQL). Only the pure
+    // threshold unit tests omit it, where there is no sample query; in that case
+    // fall back to a rowCount-derived upper bound. Never `min(LIMIT, MAX(rowid))`
+    // on real data, which would over-report after rowid gaps from deletion.
+    sampleSize: sampleSize ?? Math.min(REALTIME_EVENTS_SAMPLE_SIZE, Math.max(0, rowCount)),
     estimateBasis: REALTIME_EVENTS_ESTIMATE_BASIS,
     thresholds: { ...t },
     reclaim_status: "deferred_to_rust_epoch_resync",
@@ -380,11 +397,14 @@ const HEALTH_CHECKS: HealthCheck[] = [
             | undefined;
           const rowCount = countRow?.max_rowid ?? 0;
           const sampleRow = db.prepare(REALTIME_EVENTS_SAMPLE_BYTES_SQL).get() as
-            | { avg_bytes: number | null }
+            | { avg_bytes: number | null; sample_count: number | null }
             | undefined;
           const avgBytes = sampleRow?.avg_bytes ?? 0;
+          // The REAL number of rows the byte sample read (honest even under rowid
+          // gaps), NOT min(LIMIT, MAX(rowid)). Surfaced as the public sampleSize.
+          const sampleCount = sampleRow?.sample_count ?? 0;
           const estimatedBytes = Math.round(avgBytes * rowCount);
-          return classifyRealtimeEventsGrowth(rowCount, estimatedBytes);
+          return classifyRealtimeEventsGrowth(rowCount, estimatedBytes, sampleCount);
         });
       } catch (err) {
         // FAIL-CLOSED: an unknown count/size reports degraded (never healthy) and
