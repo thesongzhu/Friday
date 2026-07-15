@@ -336,6 +336,9 @@ import {
   createFridayJobSchedulerRepository,
   createFridayJobSchedulerService,
   createFridayLearningMetricsJob,
+  createFridayRetentionPolicyLoader,
+  createFridayRetentionSettingsRepository,
+  createFridayRetentionSettingsStore,
   createFridaySessionMemoryExtractionWorkerJob,
   createFridayWorkflowCronTriggerJob,
   createFridayWorkflowTimeoutJob,
@@ -6720,6 +6723,26 @@ export async function createFridayHub(
     });
   };
 
+  // ─── Owner-bound retention Settings (RETENTION-R3a) ───
+  // Persisted per-content-category opt-ins for the single hub owner. The loader
+  // resolves the reaper's policy FAIL-CLOSED (all-permanent) on any unreadable /
+  // missing / invalid persisted state; the store backs GET|PUT
+  // /v1/uix/retention-policy. The owner id is the seeded single-owner user
+  // (learningDefaultUserId) — the SAME principal_id the API writes under
+  // (requireUserId → principal.userId), so a restart re-reads what the owner set.
+  const retentionSettingsRepository = createFridayRetentionSettingsRepository();
+  const retentionSettingsStore = createFridayRetentionSettingsStore({
+    db: stateRuntime.sqlite,
+    repo: retentionSettingsRepository,
+    idGenerator,
+    nowIso,
+  });
+  const retentionPolicyLoader = createFridayRetentionPolicyLoader({
+    db: stateRuntime.sqlite,
+    repo: retentionSettingsRepository,
+    principalId: learningDefaultUserId,
+  });
+
   // ─── Satellite runtime ───
   const satelliteRuntime = createFridaySatelliteRuntime({
     db: stateRuntime.sqlite,
@@ -6727,6 +6750,11 @@ export async function createFridayHub(
     tokenSecret,
     idGenerator,
     nowIso,
+    // RETENTION-R3a live-revocation fix: the hourly reaper re-reads the CURRENT
+    // persisted owner policy at the START of every sweep (fail-closed to
+    // all-permanent). A startup snapshot let the running reaper keep deleting
+    // under an opt-in the owner had since set back to permanent, until restart.
+    retentionPolicyProvider: () => retentionPolicyLoader.load(),
     learningEventWriter,
     remoteNodeResultWriter: async (input) => {
       await workflowRuntime.execution.reportRemoteNodeResult({
@@ -7445,6 +7473,16 @@ export async function createFridayHub(
     // (`MEMORY_SPINE_DISPATCH_UNAVAILABLE`) → byte-identical to today.
     memorySpine: memorySpineDispatch ? { dispatch: memorySpineDispatch } : undefined,
     runOutcomeLearning: runOutcomeLearningDispatch ? { dispatch: runOutcomeLearningDispatch } : undefined,
+    // RETENTION-R3a: owner-bound retention-Settings surface (GET|PUT /v1/uix/retention-policy).
+    // The route binds GET/PUT to the SINGLE canonical owner the reaper's policy
+    // loader is bound to (learningDefaultUserId = admin-001) — the SAME source, so
+    // what the API accepts is exactly what the per-sweep reaper reads (accept ==
+    // honored). Role/scope alone is NOT canonical-owner identity: a second
+    // legitimately-authenticated admin is refused. Fail-closed if unresolvable.
+    retentionSettings: {
+      store: retentionSettingsStore,
+      resolveCanonicalOwnerId: () => learningDefaultUserId,
+    },
     uix: {
       service: uixService,
       readSetupCompletedAt,

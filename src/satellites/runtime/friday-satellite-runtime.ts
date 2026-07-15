@@ -36,7 +36,15 @@ export interface CreateFridaySatelliteRuntimeOptions {
   tokenSecret: string;
   idGenerator: () => string;
   nowIso: () => string;
+  /** Static startup policy (legacy). Ignored when `retentionPolicyProvider` is set. */
   retentionPolicy?: FridayRetentionPolicy;
+  /**
+   * RETENTION-R3a live-revocation: when provided, the reaper re-reads the CURRENT
+   * persisted policy at the start of EVERY sweep (via this provider) instead of a
+   * startup snapshot, so owner opt-in/opt-OUT takes effect without a restart. Must
+   * fail closed (return all-permanent on read failure).
+   */
+  retentionPolicyProvider?: () => FridayRetentionPolicy;
   pairingTtlMs?: number;
   expectedHeartbeatIntervalMs?: number;
   learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
@@ -81,6 +89,7 @@ export function createFridaySatelliteRuntime(
     idGenerator,
     nowIso,
     retentionPolicy,
+    retentionPolicyProvider,
     pairingTtlMs,
     expectedHeartbeatIntervalMs,
     learningEventWriter,
@@ -216,6 +225,9 @@ export function createFridaySatelliteRuntime(
     skillRunStore,
     bootstrapNonceRepo,
     policy: retentionPolicy,
+    // RETENTION-R3a: live per-sweep policy re-read (opt-out stops deletion without
+    // a restart). Takes precedence over the static `policy` snapshot when set.
+    loadPolicy: retentionPolicyProvider,
     nowIso,
   });
 

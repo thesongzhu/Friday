@@ -246,6 +246,8 @@ export { createFridayGuideLensRoutes } from "./http/routes/friday-guide-lens-rou
 export type { FridayGuideLensRoutesDeps } from "./http/routes/friday-guide-lens-routes.js";
 export { createFridayUixRoutes } from "./http/routes/friday-uix-routes.js";
 export type { FridayUixRoutesDeps } from "./http/routes/friday-uix-routes.js";
+export { createFridayRetentionSettingsRoutes } from "./http/routes/friday-retention-settings-routes.js";
+export type { FridayRetentionSettingsRoutesDeps } from "./http/routes/friday-retention-settings-routes.js";
 export { createFridayMissionSpineRoutes } from "./http/routes/friday-mission-spine-routes.js";
 export type { FridayMissionSpineRoutesDeps } from "./http/routes/friday-mission-spine-routes.js";
 export { createFridayMemorySpineRoutes } from "./http/routes/friday-memory-spine-routes.js";

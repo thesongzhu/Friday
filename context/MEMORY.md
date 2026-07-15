@@ -18,4 +18,4 @@
 - Tool call summary (`src/agent/services/friday-tool-call-summary.ts`) captures privacy-safe tool execution metadata (arg keys only, no values) for observability and world model training data.
 - Warn-once pattern is used across 7+ modules (hub-bootstrap, auth, memory, system, http-server, workspace-context, unix-socket-bridge) to deduplicate runtime warnings without losing critical signals.
 - OpenAI Responses API (`openai-responses`) streaming is now supported alongside `openai-completions` in the agent LLM client.
-- Database migration count: 104 (latest: v104-setup-bootstrap-migration-state).
+- Database migration count: 105 (latest: v105-retention-settings).
