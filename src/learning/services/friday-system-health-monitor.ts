@@ -167,6 +167,14 @@ export interface CreateSystemHealthMonitorDeps {
    * assumes healthy free space.
    */
   probeDiskSpace?: () => { freeBytes: number; totalBytes: number } | null;
+  /**
+   * Optional AUTHORITATIVE growth-rate probe (bytes/day) for the U13 projected-
+   * exhaustion branch. When omitted / null, that branch is UNEVALUATED and the
+   * absolute `max(10 GiB, 10% capacity)` free-space floor still governs the
+   * warning. (Real growth-window tracking is a clean follow-up; the floor is the
+   * live authoritative signal today.)
+   */
+  probeGrowthRateBytesPerDay?: () => number | null;
 }
 
 // ─── Checks ───
@@ -412,6 +420,7 @@ const HEALTH_CHECKS: HealthCheck[] = [
     check: (deps) => {
       let detail: FridayDiskGrowthWarning;
       try {
+        // NON-authoritative diagnostics (report-only; NEVER drive the U13 result).
         const totalDbBytes = deps.db.withReadConnection((db) => {
           const pageCount = db.pragma("page_count", { simple: true }) as number;
           const pageSize = db.pragma("page_size", { simple: true }) as number;
@@ -428,15 +437,19 @@ const HEALTH_CHECKS: HealthCheck[] = [
           const avgBytes = sampleRow?.avg_bytes ?? 0;
           return Math.round(avgBytes * rowCount);
         });
-        // The free-space probe is INJECTED (prod = statfsSync). A missing or null
-        // probe yields a null free reading → classifyDiskGrowth fails closed to
+        // AUTHORITATIVE inputs: free + capacity from the injected statfs probe; an
+        // optional growth-rate probe for the projected-exhaustion branch. A missing
+        // or null free/capacity reading → classifyDiskGrowth fails closed to
         // `unknown` (never assumes healthy free space).
         const probe = deps.probeDiskSpace ? deps.probeDiskSpace() : null;
+        const growthRateBytesPerDay = deps.probeGrowthRateBytesPerDay
+          ? deps.probeGrowthRateBytesPerDay()
+          : null;
         detail = classifyDiskGrowth({
-          totalDbBytes,
-          realtimeEventsEstimatedBytes,
           freeBytes: probe ? probe.freeBytes : null,
-          totalDiskBytes: probe ? probe.totalBytes : null,
+          totalCapacityBytes: probe ? probe.totalBytes : null,
+          growthRateBytesPerDay,
+          diagnostics: { totalDbBytes, realtimeEventsEstimatedBytes },
         });
       } catch (err) {
         // FAIL-CLOSED: an unknown DB read / probe error reports `unknown` (never
@@ -449,7 +462,7 @@ const HEALTH_CHECKS: HealthCheck[] = [
       return {
         name: "disk_growth",
         healthy: detail.status === "ok",
-        value: detail.totalDbBytes ?? -1,
+        value: detail.freeBytes ?? -1,
         unit: "bytes",
         detail,
       };

@@ -1,139 +1,145 @@
 /**
- * RETENTION-R3b — PURE disk-growth warning + large-write evaluator formulas.
+ * RETENTION-R3b — PURE storage-pressure warning + large-write evaluator formulas.
  *
- * This module implements the two named formulas required by the
- * DATA-RETENTION-001 acceptance oracle:
+ * The binding formulas are the OPERATOR-LOCKED decision **U13-STORAGE-PRESSURE**
+ * (authority: operator_locked), verbatim:
  *
- *   "Implement exact warning and large-write evaluator formulas with
- *    overflow/unknown fail-closed; disk pressure never auto-deletes and escape
- *    operations remain usable."
+ *   "Warn when free space is below max(10 GiB,10%) or projected exhaustion is
+ *    within 7 days. For large writes compute reserve=max(5 GiB,5% capacity) and
+ *    projected_free=current_free-estimated_peak_temp-estimated_persistent_growth;
+ *    pause when current or projected free is below reserve, and fail closed on
+ *    unknown/overflow estimates. Reads, search, streaming export, settings,
+ *    diagnostics and all deletion remain available. Never auto-delete or corrupt
+ *    data."
  *
- * It is DELIBERATELY PURE: no `fs`, no DB handle, no IO, no process spawning. It
- * only labels observed magnitudes. Being pure means it is STRUCTURALLY incapable
- * of pruning, vacuuming, or removing any data — disk pressure here can only ever
- * WARN. The paired negative controls it must defeat (DATA-RETENTION-001 `:negative`):
- * boolean-only peak flag, current-free-only check, integer overflow, omitted
- * WAL/COW/archive/backup/partial/rollback estimate, disabled export/delete, or
- * silent purge/corruption.
+ * This module is DELIBERATELY PURE: no `fs`, no DB handle, no IO, no process
+ * spawning. It only labels observed magnitudes — being pure it is STRUCTURALLY
+ * incapable of pruning/vacuuming/removing data (the DATA-RETENTION-001 report-only,
+ * zero-deletion posture). "pause" is computed as a VERDICT; it is not wired as a
+ * blocking gate at any write site in this slice, so escape operations are
+ * structurally never blockable by it.
+ *
+ * Non-authoritative diagnostics (DB size, realtime-stream estimate) may be carried
+ * for the UI, but they NEVER override the locked result — status is derived ONLY
+ * from the U13 formula.
  */
 
-// ─── Thresholds (built-in heuristic defaults; report-only; NOT a retention knob) ───
+const GIB = 1024 ** 3;
 
-/**
- * Heuristic thresholds for the report-only disk-growth warning. A `warn`/`critical`
- * on TOTAL DB bytes plus, when a free-space reading is present, a `warn`/`critical`
- * on the FREE-SPACE FRACTION (a fraction, never a boolean). Hand-picked for
- * VISIBILITY only — they are `heuristic:true` labelled and never gate any
- * deletion. "Off = clean disabled" does not apply: observation is always safe and
- * needs no user toggle to be correct (a user-tunable "warn me at N GB" knob is a
- * deferred follow-up that must use row-absence/null, never a sentinel).
- */
-export const FRIDAY_DISK_GROWTH_THRESHOLDS = {
-  /** Warn once the local SQLite DB crosses ~1 GB. */
-  warnTotalBytes: 1_000_000_000,
-  /** Critical once the local SQLite DB crosses ~4 GB. */
-  criticalTotalBytes: 4_000_000_000,
-  /** Warn once free disk drops to 15% of capacity. */
-  warnFreeFraction: 0.15,
-  /** Critical once free disk drops to 5% of capacity. */
-  criticalFreeFraction: 0.05,
-  /** Marks these as hand-picked heuristics, not a tuned/enforced policy. */
-  heuristic: true,
-} as const;
+// ─── Operator-locked authority (U13-STORAGE-PRESSURE) ───
 
 /**
- * EXPLICIT overhead multipliers/addends for the large-write space-safety formula.
- * The required space for a projected write is NEVER just the projected bytes
- * (that is the "current-free-only" negative control): a durable SQLite write can
- * transiently need WAL headroom, a rollback journal, a COW/backup/archive copy,
- * and a partial-write safety margin. Each is a NAMED, surfaced component so the
- * estimate can never silently omit WAL/COW/archive/backup/partial/rollback.
+ * The exact operator-locked thresholds. These REPLACE the earlier ad-hoc DB-size
+ * (1 GB/4 GB) and free-fraction (15%/5%) heuristics — those were non-authoritative
+ * prose and must never drive or override this locked result.
  */
-export const FRIDAY_LARGE_WRITE_OVERHEAD = {
-  /** WAL can transiently hold a copy of the pages being modified. */
-  walHeadroomFraction: 0.25,
-  /** A rollback journal may mirror the pre-image of the modified pages. */
-  rollbackJournalHeadroomFraction: 0.25,
-  /** A COW/backup/archive step may duplicate the written bytes. */
-  cowBackupArchiveFraction: 1.0,
-  /** Fixed floor to absorb partial-write / rollback churn (16 MB). */
-  partialWriteSafetyMarginBytes: 16_000_000,
+export const FRIDAY_STORAGE_PRESSURE_AUTHORITY = {
+  decision: "U13-STORAGE-PRESSURE",
+  authority: "operator_locked",
+  /** Warn when free space is below max(10 GiB, 10% of capacity). */
+  freeSpaceFloorBytes: 10 * GIB,
+  freeSpaceFloorFraction: 0.1,
+  /** ...OR when projected exhaustion is within 7 days. */
+  projectedExhaustionWarnDays: 7,
+  /** Large-write reserve = max(5 GiB, 5% of capacity). */
+  largeWriteReserveBytes: 5 * GIB,
+  largeWriteReserveFraction: 0.05,
 } as const;
 
 // ─── Types ───
 
-export type FridayDiskGrowthStatus = "ok" | "warn" | "critical" | "unknown";
+export type FridayDiskGrowthStatus = "ok" | "warn" | "unknown";
+
+export interface FridayDiskGrowthDiagnostics {
+  /** Report-only local SQLite size (`page_count × page_size`). NON-authoritative. */
+  totalDbBytes?: number;
+  /** Report-only realtime_events growth estimate. NON-authoritative. */
+  realtimeEventsEstimatedBytes?: number;
+}
 
 export interface FridayDiskGrowthInput {
-  /** Total local SQLite bytes (`page_count × page_size`). */
-  totalDbBytes: number;
-  /** Report-only realtime_events growth estimate (bounded-sample extrapolation). */
-  realtimeEventsEstimatedBytes: number;
-  /** Free bytes available on the state volume; `null` = unresolved probe → unknown. */
+  /** Free bytes on the state volume; `null` = unresolved probe → unknown. */
   freeBytes: number | null;
   /** Total capacity of the state volume; `null` = unresolved probe → unknown. */
-  totalDiskBytes: number | null;
-  /** Optional per-content-category byte breakdown (reserved for the UI card). */
-  categoryBytes?: Record<string, number>;
+  totalCapacityBytes: number | null;
+  /**
+   * AUTHORITATIVE growth rate (bytes/day) for the projected-exhaustion branch.
+   * When missing/invalid/overflow that BRANCH is UNKNOWN — but the absolute
+   * max(10 GiB, 10%) floor still applies (it never forces the whole result to
+   * unknown; only an unresolvable FREE-SPACE reading does).
+   */
+  growthRateBytesPerDay?: number | null;
+  /** Optional report-only NON-authoritative context; NEVER affects status. */
+  diagnostics?: FridayDiskGrowthDiagnostics;
 }
 
 export interface FridayDiskGrowthWarning {
   /** Magnitude-derived enum (NEVER a boolean). `unknown` is never treated as `ok`. */
   status: FridayDiskGrowthStatus;
-  totalDbBytes: number | null;
   freeBytes: number | null;
-  totalDiskBytes: number | null;
-  /** free / capacity, in `[0,1]`; `null` when unresolved/fail-closed. */
+  totalCapacityBytes: number | null;
   freeFraction: number | null;
-  estimatedBytes: number | null;
-  thresholds: typeof FRIDAY_DISK_GROWTH_THRESHOLDS;
-  /** Human-readable reasons for any warn/critical/unknown signal (empty when ok). */
+  /** The computed max(10 GiB, 10% capacity) floor. */
+  freeSpaceFloorBytes: number | null;
+  belowFloor: boolean | null;
+  /** free / growthRate; `null` when the growth branch is unknown or non-exhausting. */
+  projectedExhaustionDays: number | null;
+  withinExhaustionWindow: boolean;
+  growthBranch: "known" | "unknown";
+  authority: typeof FRIDAY_STORAGE_PRESSURE_AUTHORITY;
+  /** Human-readable reasons for any warn/unknown signal (empty when ok). */
   reasons: string[];
-  /** True only when the reading was unresolvable/overflowed and fell back to unknown. */
+  /** Optional NON-authoritative diagnostics (never affect `status`). */
+  diagnostics?: FridayDiskGrowthDiagnostics;
+  /** True only when FREE-SPACE was unresolvable/inconsistent and fell back to unknown. */
   failClosed?: boolean;
 }
 
 export interface FridayLargeWriteInput {
-  /** Bytes the caller intends to write. */
-  projectedWriteBytes: number;
-  /** Free bytes available; `null` = unresolved probe → unsafe (unless escape). */
-  freeBytes: number | null;
+  /** Current free bytes. */
+  currentFreeBytes: number | null;
+  /** Total capacity (drives the reserve). */
+  totalCapacityBytes: number | null;
+  /** Estimated transient peak temp bytes the write needs. */
+  estimatedPeakTempBytes: number | null;
+  /** Estimated persistent growth bytes the write commits. */
+  estimatedPersistentGrowthBytes: number | null;
   /**
-   * When true, this is an ESCAPE operation (export/delete): it must ALWAYS be
-   * permitted — disk pressure must never block the user from reclaiming space or
-   * exporting their data. The estimate is still reported.
+   * When true this is an ESCAPE operation — reads, search, streaming export,
+   * settings, diagnostics, and ALL deletion — which must ALWAYS remain available.
    */
   isEscapeOperation?: boolean;
 }
 
 export interface FridayLargeWriteVerdict {
-  /** Whether the projected write (plus overhead) fits. Escape ops are always safe. */
+  /** `false` = PAUSE. Escape ops are always `true`. */
   safe: boolean;
-  requiredBytes: number | null;
-  projectedBytes: number | null;
-  overheadBytes: number | null;
-  freeBytes: number | null;
-  shortfallBytes: number | null;
+  reserveBytes: number | null;
+  currentFreeBytes: number | null;
+  projectedFreeBytes: number | null;
+  totalCapacityBytes: number | null;
+  estimatedPeakTempBytes: number | null;
+  estimatedPersistentGrowthBytes: number | null;
   reason: string;
   /** True when the verdict fell back to unsafe due to unknown/overflow (non-escape). */
   failClosed?: boolean;
-  /** True when this verdict is for an escape operation (always usable). */
+  /** True when this verdict is for an escape operation (always available). */
   escapeOperation?: boolean;
 }
 
 // ─── Fail-closed helpers ───
 
 /**
- * A finite, non-negative byte count within the exact-integer range. Anything
- * else — NaN, ±Infinity, negative, or a magnitude beyond `MAX_SAFE_INTEGER`
- * (where integer arithmetic silently loses precision) — is REJECTED. This is the
- * single choke-point that defeats the "integer overflow" and "unknown" negatives.
+ * A finite, non-negative byte count within the exact-integer range. Rejects NaN,
+ * ±Infinity, negative, or a magnitude beyond `MAX_SAFE_INTEGER` (where integer
+ * arithmetic silently loses precision) — the choke-point defeating the "integer
+ * overflow" and "unknown" negative controls.
  */
 function isValidByteCount(x: unknown): x is number {
   return typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= Number.MAX_SAFE_INTEGER;
 }
 
-/** Checked addition: returns `null` on any non-finite/negative term or overflow past MAX_SAFE_INTEGER. */
+/** Checked addition: `null` on any non-finite/negative term or overflow past MAX_SAFE_INTEGER. */
 function checkedAddAll(terms: number[]): number | null {
   let sum = 0;
   for (const term of terms) {
@@ -144,225 +150,226 @@ function checkedAddAll(terms: number[]): number | null {
   return sum;
 }
 
-function worstOkWarnCritical(
-  a: "ok" | "warn" | "critical",
-  b: "ok" | "warn" | "critical",
-): "ok" | "warn" | "critical" {
-  const rank = { ok: 0, warn: 1, critical: 2 } as const;
-  return rank[a] >= rank[b] ? a : b;
+/** 10% / 5% thresholds computed integer-safe (`Math.floor`) so exact byte boundaries are stable. */
+function fractionBytes(capacity: number, fraction: number): number {
+  return Math.floor(capacity * fraction);
 }
 
 /**
- * Fail-closed disk-growth reading (status `unknown`, never `ok`). Echoes back any
- * inputs that WERE valid (for the reader) but carries no fraction and marks
- * `failClosed`. Exported so the collector can fail closed on a DB read error too.
+ * Fail-closed disk-growth reading (status `unknown`, never `ok`). Exported so the
+ * collector can fail closed on a DB read error too.
  */
 export function failClosedDiskGrowth(reason: string): FridayDiskGrowthWarning {
   return {
     status: "unknown",
-    totalDbBytes: null,
     freeBytes: null,
-    totalDiskBytes: null,
+    totalCapacityBytes: null,
     freeFraction: null,
-    estimatedBytes: null,
-    thresholds: { ...FRIDAY_DISK_GROWTH_THRESHOLDS },
+    freeSpaceFloorBytes: null,
+    belowFloor: null,
+    projectedExhaustionDays: null,
+    withinExhaustionWindow: false,
+    growthBranch: "unknown",
+    authority: FRIDAY_STORAGE_PRESSURE_AUTHORITY,
     reasons: [`fail-closed to unknown: ${reason}`],
     failClosed: true,
   };
 }
 
 function unknownDiskGrowth(input: FridayDiskGrowthInput, reason: string): FridayDiskGrowthWarning {
-  return {
-    status: "unknown",
-    totalDbBytes: isValidByteCount(input.totalDbBytes) ? input.totalDbBytes : null,
-    freeBytes: isValidByteCount(input.freeBytes) ? input.freeBytes : null,
-    totalDiskBytes: isValidByteCount(input.totalDiskBytes) ? input.totalDiskBytes : null,
-    freeFraction: null,
-    estimatedBytes: isValidByteCount(input.realtimeEventsEstimatedBytes)
-      ? input.realtimeEventsEstimatedBytes
-      : null,
-    thresholds: { ...FRIDAY_DISK_GROWTH_THRESHOLDS },
-    reasons: [`fail-closed to unknown: ${reason}`],
-    failClosed: true,
-  };
+  const out = failClosedDiskGrowth(reason);
+  out.freeBytes = isValidByteCount(input.freeBytes) ? input.freeBytes : null;
+  out.totalCapacityBytes = isValidByteCount(input.totalCapacityBytes) ? input.totalCapacityBytes : null;
+  if (input.diagnostics) out.diagnostics = input.diagnostics;
+  return out;
 }
 
-// ─── R3b-1: disk-growth WARNING formula ───
+// ─── U13 warning formula ───
 
 /**
- * The EXACT report-only disk-growth warning formula. Derives a status from the
- * WORST of two magnitude signals: total DB bytes, and (when a free-space reading
- * is present) the free-space fraction. Any non-finite/negative/overflowing input,
- * or an unresolved/inconsistent free-space reading, fails closed to `unknown`
- * (never `ok`). Performs NO IO and can never delete — it only labels magnitudes.
+ * The operator-locked disk-growth warning formula. WARN when free space is below
+ * `max(10 GiB, 10% capacity)` OR projected exhaustion (`free / growthRate`) is
+ * within 7 days. Fails closed to `unknown` (never `ok`) only when FREE SPACE
+ * itself is null/NaN/overflow/inconsistent; a missing growth rate leaves ONLY the
+ * exhaustion branch unevaluated while the absolute floor still governs. Performs
+ * NO IO and can never delete.
  */
 export function classifyDiskGrowth(input: FridayDiskGrowthInput): FridayDiskGrowthWarning {
-  const t = FRIDAY_DISK_GROWTH_THRESHOLDS;
+  const A = FRIDAY_STORAGE_PRESSURE_AUTHORITY;
 
-  // Fail-closed validation of the required byte inputs (NaN/Infinity/negative/overflow).
-  if (!isValidByteCount(input.totalDbBytes)) {
-    return unknownDiskGrowth(input, "totalDbBytes is not a finite in-range byte count");
+  // Fail-closed: FREE SPACE + capacity must be resolvable and consistent.
+  if (!isValidByteCount(input.freeBytes) || !isValidByteCount(input.totalCapacityBytes)) {
+    return unknownDiskGrowth(input, "free-space/capacity is null/NaN/overflow/invalid");
   }
-  if (!isValidByteCount(input.realtimeEventsEstimatedBytes)) {
-    return unknownDiskGrowth(input, "realtimeEventsEstimatedBytes is not a finite in-range byte count");
+  const freeBytes = input.freeBytes;
+  const capacity = input.totalCapacityBytes;
+  if (capacity <= 0) {
+    return unknownDiskGrowth(input, "capacity is zero/invalid");
   }
-
-  // Unresolved probe → unknown (a missing free-space reading is never treated as ok).
-  if (input.freeBytes === null || input.totalDiskBytes === null) {
-    return unknownDiskGrowth(input, "free-space probe unresolved (freeBytes/totalDiskBytes is null)");
-  }
-  if (!isValidByteCount(input.freeBytes) || !isValidByteCount(input.totalDiskBytes) || input.totalDiskBytes === 0) {
-    return unknownDiskGrowth(input, "free-space reading is not a finite positive byte count");
-  }
-  if (input.freeBytes > input.totalDiskBytes) {
-    return unknownDiskGrowth(input, "inconsistent reading: freeBytes exceeds totalDiskBytes");
+  if (freeBytes > capacity) {
+    return unknownDiskGrowth(input, "inconsistent reading: freeBytes exceeds capacity");
   }
 
-  const freeFraction = input.freeBytes / input.totalDiskBytes;
   const reasons: string[] = [];
 
-  // Byte signal.
-  let byteStatus: "ok" | "warn" | "critical" = "ok";
-  if (input.totalDbBytes >= t.criticalTotalBytes) {
-    byteStatus = "critical";
-    reasons.push(`total DB size ${input.totalDbBytes} >= critical ${t.criticalTotalBytes} bytes`);
-  } else if (input.totalDbBytes >= t.warnTotalBytes) {
-    byteStatus = "warn";
-    reasons.push(`total DB size ${input.totalDbBytes} >= warn ${t.warnTotalBytes} bytes`);
+  // Signal 1: absolute + relative free-space floor = max(10 GiB, 10% capacity).
+  const floorBytes = Math.max(A.freeSpaceFloorBytes, fractionBytes(capacity, A.freeSpaceFloorFraction));
+  const belowFloor = freeBytes < floorBytes;
+  if (belowFloor) {
+    reasons.push(
+      `free ${freeBytes} < floor max(${A.freeSpaceFloorBytes}, 10% capacity)=${floorBytes} bytes`,
+    );
   }
 
-  // Free-space-fraction signal.
-  let freeStatus: "ok" | "warn" | "critical" = "ok";
-  if (freeFraction <= t.criticalFreeFraction) {
-    freeStatus = "critical";
-    reasons.push(`free disk fraction ${freeFraction.toFixed(4)} <= critical ${t.criticalFreeFraction}`);
-  } else if (freeFraction <= t.warnFreeFraction) {
-    freeStatus = "warn";
-    reasons.push(`free disk fraction ${freeFraction.toFixed(4)} <= warn ${t.warnFreeFraction}`);
+  // Signal 2: projected exhaustion within 7 days (free / growthRate).
+  let growthBranch: "known" | "unknown" = "unknown";
+  let projectedExhaustionDays: number | null = null;
+  let withinExhaustionWindow = false;
+  const rate = input.growthRateBytesPerDay;
+  if (typeof rate === "number" && Number.isFinite(rate) && rate <= Number.MAX_SAFE_INTEGER) {
+    growthBranch = "known";
+    if (rate > 0) {
+      projectedExhaustionDays = freeBytes / rate;
+      withinExhaustionWindow = projectedExhaustionDays <= A.projectedExhaustionWarnDays;
+      if (withinExhaustionWindow) {
+        reasons.push(
+          `projected exhaustion ${projectedExhaustionDays.toFixed(2)}d <= ${A.projectedExhaustionWarnDays}d ` +
+            `(free ${freeBytes} / growth ${rate} B/day)`,
+        );
+      }
+    }
+    // rate <= 0 → never exhausts → withinExhaustionWindow stays false.
+  } else {
+    reasons.push(
+      "projected-exhaustion branch UNEVALUATED (growth rate unknown); absolute floor still applied",
+    );
   }
 
-  const status = worstOkWarnCritical(byteStatus, freeStatus);
+  const status: FridayDiskGrowthStatus = belowFloor || withinExhaustionWindow ? "warn" : "ok";
 
-  return {
+  const out: FridayDiskGrowthWarning = {
     status,
-    totalDbBytes: input.totalDbBytes,
-    freeBytes: input.freeBytes,
-    totalDiskBytes: input.totalDiskBytes,
-    freeFraction,
-    estimatedBytes: input.realtimeEventsEstimatedBytes,
-    thresholds: { ...t },
+    freeBytes,
+    totalCapacityBytes: capacity,
+    freeFraction: freeBytes / capacity,
+    freeSpaceFloorBytes: floorBytes,
+    belowFloor,
+    projectedExhaustionDays,
+    withinExhaustionWindow,
+    growthBranch,
+    authority: A,
     reasons,
   };
+  if (input.diagnostics) out.diagnostics = input.diagnostics;
+  return out;
 }
 
-// ─── R3b-2: large-write space-safety formula (formula only; NOT wired as a gate) ───
+// ─── U13 large-write formula (formula only; NOT wired as a gate) ───
 
 function failClosedWrite(
   reason: string,
-  partial: {
-    projectedBytes: number | null;
-    overheadBytes: number | null;
-    requiredBytes: number | null;
-    freeBytes: number | null;
-  },
+  partial: Omit<FridayLargeWriteVerdict, "safe" | "reason" | "failClosed" | "escapeOperation">,
 ): FridayLargeWriteVerdict {
   return {
     safe: false,
-    requiredBytes: partial.requiredBytes,
-    projectedBytes: partial.projectedBytes,
-    overheadBytes: partial.overheadBytes,
-    freeBytes: partial.freeBytes,
-    shortfallBytes: null,
+    ...partial,
     reason: `fail-closed to unsafe: ${reason}`,
     failClosed: true,
   };
 }
 
 /**
- * The large-write space-safety evaluator formula. required = projected + EXPLICIT
- * overhead (WAL + rollback-journal + COW/backup/archive + partial-write margin),
- * summed with a CHECKED add so a huge projected value can never wrap to a small
- * "safe" number. Fail-closed to `unsafe` on unknown free space or any overflow.
- *
- * ESCAPE operations (export/delete) are ALWAYS `safe:true` — disk pressure must
- * never block the user from exporting or reclaiming — while STILL reporting the
- * estimate. This is a PURE formula plus tests; it is NOT wired as a pre-flight
- * gate at any write site in this slice, so escape operations are structurally
- * never blockable by it.
+ * The operator-locked large-write space-safety evaluator. reserve = max(5 GiB, 5%
+ * capacity); projected_free = current_free − estimated_peak_temp −
+ * estimated_persistent_growth (CHECKED arithmetic). PAUSE (unsafe) when current OR
+ * projected free is below reserve. Fails closed to unsafe on any unknown/overflow
+ * estimate. ESCAPE operations (reads/search/streaming export/settings/diagnostics/
+ * deletion) are ALWAYS `safe:true` — never blocked — while still reporting the
+ * estimate. Pure formula plus tests; NOT wired as a pre-flight gate at any write
+ * site in this slice.
  */
 export function evaluateLargeWriteSafety(input: FridayLargeWriteInput): FridayLargeWriteVerdict {
+  const A = FRIDAY_STORAGE_PRESSURE_AUTHORITY;
   const isEscape = input.isEscapeOperation === true;
-  const o = FRIDAY_LARGE_WRITE_OVERHEAD;
 
-  // Compute the estimate best-effort so it is reported even for escape ops.
-  const projectedValid = isValidByteCount(input.projectedWriteBytes);
-  let overheadBytes: number | null = null;
-  let requiredBytes: number | null = null;
-  if (projectedValid) {
-    const p = input.projectedWriteBytes;
-    const walBytes = Math.ceil(p * o.walHeadroomFraction);
-    const rollbackBytes = Math.ceil(p * o.rollbackJournalHeadroomFraction);
-    const cowBackupBytes = Math.ceil(p * o.cowBackupArchiveFraction);
-    overheadBytes = checkedAddAll([walBytes, rollbackBytes, cowBackupBytes, o.partialWriteSafetyMarginBytes]);
-    requiredBytes = overheadBytes === null ? null : checkedAddAll([p, overheadBytes]);
+  const capacityValid = isValidByteCount(input.totalCapacityBytes);
+  const capacity = capacityValid ? input.totalCapacityBytes : null;
+  const reserveBytes =
+    capacity === null ? null : Math.max(A.largeWriteReserveBytes, fractionBytes(capacity, A.largeWriteReserveFraction));
+
+  const currentValid = isValidByteCount(input.currentFreeBytes);
+  const currentFree = currentValid ? input.currentFreeBytes : null;
+  const peakValid = isValidByteCount(input.estimatedPeakTempBytes);
+  const peakTemp = peakValid ? input.estimatedPeakTempBytes : null;
+  const growthValid = isValidByteCount(input.estimatedPersistentGrowthBytes);
+  const persistentGrowth = growthValid ? input.estimatedPersistentGrowthBytes : null;
+
+  // projected_free = current_free − peak_temp − persistent_growth (checked).
+  let projectedFree: number | null = null;
+  let projectedOverflow = false;
+  if (currentValid && peakValid && growthValid) {
+    const consumed = checkedAddAll([peakTemp as number, persistentGrowth as number]);
+    if (consumed === null) {
+      projectedOverflow = true;
+    } else {
+      const pf = (currentFree as number) - consumed;
+      if (Number.isFinite(pf)) projectedFree = pf;
+      else projectedOverflow = true;
+    }
   }
 
-  const freeValid = isValidByteCount(input.freeBytes);
-  const freeBytes = freeValid ? (input.freeBytes as number) : null;
-  const projectedBytes = projectedValid ? input.projectedWriteBytes : null;
-
-  // Escape operations must NEVER be blocked by disk pressure.
+  // Escape operations always remain available regardless of pressure.
   if (isEscape) {
     return {
       safe: true,
-      requiredBytes,
-      projectedBytes,
-      overheadBytes,
-      freeBytes,
-      shortfallBytes: null,
-      reason: "escape operation (export/delete) is always permitted; disk pressure never blocks it",
+      reserveBytes,
+      currentFreeBytes: currentFree,
+      projectedFreeBytes: projectedFree,
+      totalCapacityBytes: capacity,
+      estimatedPeakTempBytes: peakTemp,
+      estimatedPersistentGrowthBytes: persistentGrowth,
+      reason:
+        "escape operation (reads/search/streaming export/settings/diagnostics/deletion) always available; disk pressure never blocks it",
       escapeOperation: true,
     };
   }
 
-  // Non-escape: fail-closed on any unknown / overflow.
-  if (!projectedValid) {
-    return failClosedWrite("projectedWriteBytes is not a finite in-range byte count", {
-      projectedBytes: null,
-      overheadBytes: null,
-      requiredBytes: null,
-      freeBytes,
+  // Non-escape: fail-closed on any unknown / overflow estimate.
+  if (!currentValid || !capacityValid || !peakValid || !growthValid || reserveBytes === null) {
+    return failClosedWrite("current_free/capacity/peak_temp/persistent_growth is null/NaN/overflow", {
+      reserveBytes,
+      currentFreeBytes: currentFree,
+      projectedFreeBytes: null,
+      totalCapacityBytes: capacity,
+      estimatedPeakTempBytes: peakTemp,
+      estimatedPersistentGrowthBytes: persistentGrowth,
     });
   }
-  if (overheadBytes === null || requiredBytes === null) {
-    return failClosedWrite("integer overflow computing required = projected + overhead", {
-      projectedBytes,
-      overheadBytes: null,
-      requiredBytes: null,
-      freeBytes,
-    });
-  }
-  if (!freeValid || freeBytes === null) {
-    return failClosedWrite("free space is unknown (probe unresolved)", {
-      projectedBytes,
-      overheadBytes,
-      requiredBytes,
-      freeBytes: null,
+  if (projectedOverflow || projectedFree === null) {
+    return failClosedWrite("overflow computing projected_free = current_free − peak_temp − persistent_growth", {
+      reserveBytes,
+      currentFreeBytes: currentFree,
+      projectedFreeBytes: null,
+      totalCapacityBytes: capacity,
+      estimatedPeakTempBytes: peakTemp,
+      estimatedPersistentGrowthBytes: persistentGrowth,
     });
   }
 
-  const safe = requiredBytes <= freeBytes;
-  const shortfallBytes = safe ? 0 : requiredBytes - freeBytes;
+  const currentBelow = (currentFree as number) < reserveBytes;
+  const projectedBelow = projectedFree < reserveBytes;
+  const paused = currentBelow || projectedBelow;
   return {
-    safe,
-    requiredBytes,
-    projectedBytes,
-    overheadBytes,
-    freeBytes,
-    shortfallBytes,
-    reason: safe
-      ? `fits: required ${requiredBytes} <= free ${freeBytes} bytes`
-      : `insufficient space: required ${requiredBytes} > free ${freeBytes} bytes (short ${shortfallBytes})`,
+    safe: !paused,
+    reserveBytes,
+    currentFreeBytes: currentFree,
+    projectedFreeBytes: projectedFree,
+    totalCapacityBytes: capacity,
+    estimatedPeakTempBytes: peakTemp,
+    estimatedPersistentGrowthBytes: persistentGrowth,
+    reason: paused
+      ? `PAUSE: ${currentBelow ? "current_free" : "projected_free"} < reserve max(5 GiB, 5% capacity)=${reserveBytes} bytes`
+      : `fits: current_free ${currentFree} and projected_free ${projectedFree} both >= reserve ${reserveBytes} bytes`,
   };
 }
 
@@ -370,9 +377,9 @@ export function evaluateLargeWriteSafety(input: FridayLargeWriteInput): FridayLa
 
 /**
  * A tiny in-memory holder for the latest disk-growth reading — the report-only
- * snapshot the owner-bound readback serves. It is DERIVED/observable, never
- * persisted as canonical (DATA-RETENTION-001 forbids treating derived
- * observations as authoritative data subject to retention).
+ * snapshot the owner-bound readback serves. DERIVED/observable, never persisted as
+ * canonical (DATA-RETENTION-001 forbids treating derived observations as
+ * authoritative data subject to retention).
  */
 export interface FridayDiskGrowthHolder {
   get(): FridayDiskGrowthWarning | null;

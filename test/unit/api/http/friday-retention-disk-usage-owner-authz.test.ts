@@ -40,7 +40,7 @@ import { createTestDb, createTestIdGenerator } from "../../../helpers/friday-tes
 const ROUTE = "/v1/uix/retention-policy/disk-usage";
 const NOW = "2026-07-15T12:00:00.000Z";
 const CANONICAL_OWNER_ID = "admin-001";
-const GB = 1_000_000_000;
+const GiB = 1024 ** 3;
 
 type StubPrincipal = {
   principalId: string;
@@ -149,13 +149,13 @@ describe("FridayHttpServer — /v1/uix/retention-policy/disk-usage canonical-own
       nowIso: () => NOW,
     });
     holder = createFridayDiskGrowthHolder();
-    // Seed a real WARN reading so a leak would carry non-trivial owner/system data.
+    // Seed a real WARN reading (free below the U13 10 GiB floor) so a leak would
+    // carry non-trivial owner/system data.
     holder.set(
       classifyDiskGrowth({
-        totalDbBytes: 10_000_000,
-        realtimeEventsEstimatedBytes: 1_000_000,
-        freeBytes: 120 * GB,
-        totalDiskBytes: 1000 * GB,
+        freeBytes: 5 * GiB,
+        totalCapacityBytes: 1000 * GiB,
+        diagnostics: { totalDbBytes: 10_000_000, realtimeEventsEstimatedBytes: 1_000_000 },
       }),
     );
   });
@@ -227,11 +227,17 @@ describe("FridayHttpServer — /v1/uix/retention-policy/disk-usage canonical-own
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       ok: true;
-      data: { diskUsage: { status: string; totalDbBytes: number; freeFraction: number; reasons: string[] } | null };
+      data: {
+        diskUsage:
+          | { status: string; freeBytes: number; freeSpaceFloorBytes: number; reasons: string[]; authority: { decision: string } }
+          | null;
+      };
     };
     expect(body.data.diskUsage).not.toBeNull();
     expect(body.data.diskUsage!.status).toBe("warn");
-    expect(typeof body.data.diskUsage!.totalDbBytes).toBe("number");
+    expect(typeof body.data.diskUsage!.freeBytes).toBe("number");
+    expect(typeof body.data.diskUsage!.freeSpaceFloorBytes).toBe("number");
+    expect(body.data.diskUsage!.authority.decision).toBe("U13-STORAGE-PRESSURE");
     expect(Array.isArray(body.data.diskUsage!.reasons)).toBe(true);
   });
 
@@ -245,7 +251,14 @@ describe("FridayHttpServer — /v1/uix/retention-policy/disk-usage canonical-own
     });
     const obsRoutes = createFridayObservabilityRoutes(service.routes);
 
-    const DISK_SENTINELS = ["disk_growth", "freeFraction", "totalDiskBytes", "totalDbBytes", "diskUsage"] as const;
+    const DISK_SENTINELS = [
+      "disk_growth",
+      "freeSpaceFloorBytes",
+      "totalCapacityBytes",
+      "projectedExhaustionDays",
+      "U13-STORAGE-PRESSURE",
+      "diskUsage",
+    ] as const;
 
     async function callRoute(path: string, query: Record<string, unknown> = {}): Promise<string> {
       const route = obsRoutes.find((r) => r.path === path && r.method === "GET");
@@ -264,11 +277,10 @@ describe("FridayHttpServer — /v1/uix/retention-policy/disk-usage canonical-own
 
     for (const sentinel of DISK_SENTINELS) {
       expect(metricsJson).not.toContain(sentinel);
-      // The time-series route echoes the caller-supplied metricName, so only
-      // check the disk-usage STRUCTURE sentinels there (not "friday.disk.*").
-      if (sentinel !== "totalDbBytes") {
-        expect(seriesJson).not.toContain(sentinel);
-      }
+      // These are all disk-usage STRUCTURE sentinels (the time-series route only
+      // echoes the caller-supplied metricName, which is "friday.disk.*" — not one
+      // of these), so none may appear on either route.
+      expect(seriesJson).not.toContain(sentinel);
     }
   });
 });

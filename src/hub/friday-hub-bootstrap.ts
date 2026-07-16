@@ -8287,6 +8287,12 @@ export async function createFridayHub(
                 return null;
               }
             },
+            // U13 projected-exhaustion branch: no growth-window tracking exists in
+            // the TS runtime yet, so the growth rate is UNKNOWN today. That leaves
+            // only the exhaustion branch unevaluated — the absolute max(10 GiB, 10%)
+            // free-space floor is the live authoritative warning. Real bytes/day
+            // growth tracking is a clean follow-up.
+            probeGrowthRateBytesPerDay: () => null,
             onRunComplete: (summary) => {
               // Log an unhealthy/warn/critical/degraded check only on a status
               // TRANSITION; feed healthy statuses too so a recovery resets state

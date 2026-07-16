@@ -6,17 +6,17 @@ import { createFridaySystemHealthMonitor } from "../../../../src/learning/servic
 import { createTestDb } from "../../../helpers/friday-test-db.helper.js";
 
 /**
- * RETENTION-R3b — report-only `disk_growth` health check.
+ * RETENTION-R3b — report-only `disk_growth` health check (U13-STORAGE-PRESSURE).
  *
- * A sibling of `realtime_events_growth`: it feeds the pure disk-growth warning
- * evaluator (total DB bytes + free-space fraction) and surfaces ONLY via the
- * monitor's run summary → transition-only warning logs. It has NO `maintenance`
- * block, imports/uses no deletion path, and fails closed to `unknown` (never
- * "ok") on any probe/read failure.
+ * It feeds the pure U13 warning evaluator with AUTHORITATIVE free + capacity (from
+ * the injected statfs probe) and surfaces ONLY via the monitor's run summary →
+ * transition-only warning logs. It has NO `maintenance` block, imports/uses no
+ * deletion path, and fails closed to `unknown` (never "ok") on any probe/read
+ * failure.
  */
 describe("friday-system-health-monitor — disk_growth (report-only; zero deletion; fail-closed)", () => {
   const dbs: FridaySqliteLayer[] = [];
-  const GB = 1_000_000_000;
+  const GiB = 1024 ** 3;
   const NOW = "2026-07-15T12:00:00.000Z";
 
   afterEach(() => {
@@ -69,16 +69,22 @@ describe("friday-system-health-monitor — disk_growth (report-only; zero deleti
     const monitor = createFridaySystemHealthMonitor({
       db,
       nowIso: () => NOW,
-      probeDiskSpace: () => ({ freeBytes: 500 * GB, totalBytes: 1000 * GB }),
+      probeDiskSpace: () => ({ freeBytes: 500 * GiB, totalBytes: 1000 * GiB }),
     });
     const summary = monitor.runAll();
     const disk = summary.checks.find((c) => c.name === "disk_growth");
     expect(disk).toBeDefined();
-    const detail = disk!.detail as { status: string; totalDbBytes: number | null; freeFraction: number | null; estimatedBytes: number | null };
+    const detail = disk!.detail as {
+      status: string;
+      freeBytes: number | null;
+      totalCapacityBytes: number | null;
+      diagnostics?: { totalDbBytes?: number };
+    };
     expect(detail.status).toBe("ok");
-    expect(typeof detail.totalDbBytes).toBe("number");
-    expect(detail.freeFraction).toBeCloseTo(0.5, 5);
-    expect(typeof detail.estimatedBytes).toBe("number");
+    expect(detail.freeBytes).toBe(500 * GiB);
+    expect(detail.totalCapacityBytes).toBe(1000 * GiB);
+    // Report-only diagnostics are carried but never authoritative.
+    expect(typeof detail.diagnostics?.totalDbBytes).toBe("number");
     expect(disk!.healthy).toBe(true);
   });
 
@@ -88,10 +94,23 @@ describe("friday-system-health-monitor — disk_growth (report-only; zero deleti
     const summary = createFridaySystemHealthMonitor({
       db,
       nowIso: () => NOW,
-      probeDiskSpace: () => ({ freeBytes: 800 * GB, totalBytes: 1000 * GB }),
+      probeDiskSpace: () => ({ freeBytes: 800 * GiB, totalBytes: 1000 * GiB }),
     }).runAll();
     const disk = summary.checks.find((c) => c.name === "disk_growth")!;
     expect((disk.detail as { status: string }).status).toBe("ok");
+  });
+
+  it("WARN below the U13 floor: free 5 GiB on a 1000 GiB volume → disk_growth warn (below max(10GiB,10%))", () => {
+    const db = makeDb();
+    insertRealtimeEvents(db, 3, JSON.stringify({ data: "y" }));
+    const summary = createFridaySystemHealthMonitor({
+      db,
+      nowIso: () => NOW,
+      probeDiskSpace: () => ({ freeBytes: 5 * GiB, totalBytes: 1000 * GiB }),
+    }).runAll();
+    const disk = summary.checks.find((c) => c.name === "disk_growth")!;
+    expect((disk.detail as { status: string; belowFloor: boolean }).status).toBe("warn");
+    expect(disk.healthy).toBe(false);
   });
 
   it("FAIL-CLOSED + ZERO DELETION: a broken DB read → unknown/failClosed and every row byte-identical", () => {
@@ -104,7 +123,7 @@ describe("friday-system-health-monitor — disk_growth (report-only; zero deleti
     const summary = createFridaySystemHealthMonitor({
       db: brokenReadDb,
       nowIso: () => NOW,
-      probeDiskSpace: () => ({ freeBytes: 500 * GB, totalBytes: 1000 * GB }),
+      probeDiskSpace: () => ({ freeBytes: 500 * GiB, totalBytes: 1000 * GiB }),
     }).runAll();
     const disk = summary.checks.find((c) => c.name === "disk_growth")!;
     const detail = disk.detail as { status: string; failClosed?: boolean };
@@ -112,7 +131,6 @@ describe("friday-system-health-monitor — disk_growth (report-only; zero deleti
     expect(detail.status).not.toBe("ok");
     expect(detail.failClosed).toBe(true);
 
-    // The read failed — the data did not. Every row is byte-identical.
     const after = snapshotRows(realDb);
     expect(after.count).toBe(before.count);
     expect(after.ids).toEqual(before.ids);
@@ -135,29 +153,25 @@ describe("friday-system-health-monitor — disk_growth (report-only; zero deleti
     expect(detail.failClosed).toBe(true);
   });
 
-  it("NO MAINTENANCE: even a critical disk_growth emits NO maintenance recommendation or receipt", () => {
+  it("NO MAINTENANCE: even a warn disk_growth emits NO maintenance recommendation or receipt", () => {
     const db = makeDb();
     insertRealtimeEvents(db, 5, JSON.stringify({ data: "z" }));
-    // Critically low free fraction (1%) → disk_growth critical (unhealthy). If the
-    // check wrongly carried a maintenance block, an unhealthy result would emit a
-    // recommendation (no gate) or a receipt (with a gate). It must emit NEITHER.
-    const criticalDeps = {
+    // Below the U13 floor → warn (unhealthy). If the check wrongly carried a
+    // maintenance block, an unhealthy result would emit a recommendation (no gate)
+    // or a receipt (with a gate). It must emit NEITHER.
+    const warnDeps = {
       db,
       nowIso: () => NOW,
-      probeDiskSpace: () => ({ freeBytes: 10 * GB, totalBytes: 1000 * GB }),
+      probeDiskSpace: () => ({ freeBytes: 5 * GiB, totalBytes: 1000 * GiB }),
     };
-    const noGate = createFridaySystemHealthMonitor(criticalDeps).runAll();
+    const noGate = createFridaySystemHealthMonitor(warnDeps).runAll();
     const disk = noGate.checks.find((c) => c.name === "disk_growth")!;
-    expect((disk.detail as { status: string }).status).toBe("critical");
+    expect((disk.detail as { status: string }).status).toBe("warn");
     expect(disk.healthy).toBe(false);
     expect(noGate.maintenanceRecommendations.some((r) => r.name === "disk_growth")).toBe(false);
 
-    const withGate = createFridaySystemHealthMonitor(criticalDeps).runAll({
-      maintenanceGate: {
-        requestedBy: "operator",
-        reason: "test",
-        approvedAt: NOW,
-      },
+    const withGate = createFridaySystemHealthMonitor(warnDeps).runAll({
+      maintenanceGate: { requestedBy: "operator", reason: "test", approvedAt: NOW },
     });
     expect(withGate.maintenanceReceipts.some((r) => r.name === "disk_growth")).toBe(false);
   });

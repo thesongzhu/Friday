@@ -4,219 +4,257 @@ import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  FRIDAY_DISK_GROWTH_THRESHOLDS,
-  FRIDAY_LARGE_WRITE_OVERHEAD,
+  FRIDAY_STORAGE_PRESSURE_AUTHORITY,
   classifyDiskGrowth,
   evaluateLargeWriteSafety,
 } from "../../../../src/learning/services/friday-disk-growth-evaluator.js";
 
 /**
- * RETENTION-R3b — PURE disk-growth WARNING + large-write evaluator formulas.
+ * RETENTION-R3b — PURE storage-pressure formulas bound to the OPERATOR-LOCKED
+ * decision U13-STORAGE-PRESSURE:
  *
- * These are the two named formulas the DATA-RETENTION-001 acceptance oracle
- * requires: "Implement exact warning and large-write evaluator formulas with
- * overflow/unknown fail-closed; disk pressure never auto-deletes and escape
- * operations remain usable."
+ *   "Warn when free space is below max(10 GiB,10%) or projected exhaustion is
+ *    within 7 days. For large writes compute reserve=max(5 GiB,5% capacity) and
+ *    projected_free=current_free-estimated_peak_temp-estimated_persistent_growth;
+ *    pause when current or projected free is below reserve, and fail closed on
+ *    unknown/overflow estimates. Reads, search, streaming export, settings,
+ *    diagnostics and all deletion remain available. Never auto-delete or corrupt
+ *    data."
  *
- * Each negative control from the oracle's `:negative` clause is its own RED-first
- * test:
- *   - boolean-only peak flag            → status is a magnitude-derived ENUM, verdict carries numeric estimates
- *   - current-free-only check           → a write that fits raw free bytes is UNSAFE once overhead is added
- *   - integer overflow                  → checked-add trips → unknown / unsafe (never wraps to ok/safe)
- *   - omitted WAL/COW/…/rollback estimate → overhead is an explicit named sum, surfaced numerically
- *   - disabled export/delete            → an escape operation is ALWAYS usable
- *   - silent purge/corruption           → the module is structurally incapable of IO/deletion
+ * Includes the two advisor counterexamples the pre-fix code got wrong.
  */
-describe("friday-disk-growth-evaluator — classifyDiskGrowth (warning formula)", () => {
-  const GB = 1_000_000_000;
 
-  // A healthy baseline: tiny DB, plenty of free space.
-  function healthyInput(over: Partial<Parameters<typeof classifyDiskGrowth>[0]> = {}) {
-    return {
-      totalDbBytes: 10_000_000, // 10 MB
-      realtimeEventsEstimatedBytes: 1_000_000,
-      freeBytes: 500 * GB,
-      totalDiskBytes: 1000 * GB, // 50% free
-      ...over,
-    };
-  }
+const GiB = 1024 ** 3;
+const MiB = 1024 ** 2;
 
-  it("SILENT by default: a small DB with healthy free space → ok, empty reasons (never cries wolf)", () => {
-    const out = classifyDiskGrowth(healthyInput());
-    expect(out.status).toBe("ok");
-    expect(out.reasons).toEqual([]);
-    expect(out.failClosed).toBeUndefined();
-    // Status is an enum, not a boolean.
-    expect(typeof out.status).toBe("string");
-  });
-
-  it("warn fires when total DB bytes cross the warn ceiling (magnitude enum, not a boolean flag)", () => {
-    const out = classifyDiskGrowth(
-      healthyInput({ totalDbBytes: FRIDAY_DISK_GROWTH_THRESHOLDS.warnTotalBytes + 1 }),
-    );
+describe("classifyDiskGrowth — U13 warning formula", () => {
+  it("CE1 (advisor): 9 GiB free on a 50 GiB volume → WARN (below the absolute 10 GiB floor)", () => {
+    const out = classifyDiskGrowth({ freeBytes: 9 * GiB, totalCapacityBytes: 50 * GiB });
     expect(out.status).toBe("warn");
-    expect(out.reasons.length).toBeGreaterThan(0);
+    expect(out.belowFloor).toBe(true);
+    expect(out.freeSpaceFloorBytes).toBe(10 * GiB); // max(10 GiB, 10%×50 GiB=5 GiB) = 10 GiB
   });
 
-  it("critical fires when total DB bytes cross the critical ceiling", () => {
-    const out = classifyDiskGrowth(
-      healthyInput({ totalDbBytes: FRIDAY_DISK_GROWTH_THRESHOLDS.criticalTotalBytes + 1 }),
-    );
-    expect(out.status).toBe("critical");
+  it("boundary: free == 10 GiB floor on a 50 GiB volume → ok (below is strict <)", () => {
+    const out = classifyDiskGrowth({ freeBytes: 10 * GiB, totalCapacityBytes: 50 * GiB });
+    expect(out.status).toBe("ok");
+    expect(out.belowFloor).toBe(false);
+    const justBelow = classifyDiskGrowth({ freeBytes: 10 * GiB - 1, totalCapacityBytes: 50 * GiB });
+    expect(justBelow.status).toBe("warn");
   });
 
-  it("free-space FRACTION is a real signal (not a boolean): low free-fraction warns/criticals", () => {
-    // 12% free → below warn 15%, above critical 5% → warn.
-    const warnOut = classifyDiskGrowth(
-      healthyInput({ freeBytes: 120 * GB, totalDiskBytes: 1000 * GB }),
-    );
-    expect(warnOut.status).toBe("warn");
-    expect(warnOut.freeFraction).toBeCloseTo(0.12, 5);
-
-    // 3% free → below critical 5% → critical.
-    const critOut = classifyDiskGrowth(
-      healthyInput({ freeBytes: 30 * GB, totalDiskBytes: 1000 * GB }),
-    );
-    expect(critOut.status).toBe("critical");
+  it("boundary: 10% branch dominates on a large volume — free == 10% → ok, just below → warn", () => {
+    // 200 GiB capacity → floor = max(10 GiB, 20 GiB) = 20 GiB.
+    const floor = 20 * GiB;
+    const at = classifyDiskGrowth({ freeBytes: floor, totalCapacityBytes: 200 * GiB });
+    expect(at.freeSpaceFloorBytes).toBe(floor);
+    expect(at.status).toBe("ok");
+    const below = classifyDiskGrowth({ freeBytes: floor - 1, totalCapacityBytes: 200 * GiB });
+    expect(below.status).toBe("warn");
   });
 
-  it("worst-of: a healthy byte signal with a critical free-fraction → critical", () => {
-    const out = classifyDiskGrowth(
-      healthyInput({ totalDbBytes: 10_000_000, freeBytes: 10 * GB, totalDiskBytes: 1000 * GB }),
-    );
-    expect(out.status).toBe("critical");
+  it("healthy: free well above both floors, growth unknown → ok", () => {
+    const out = classifyDiskGrowth({ freeBytes: 500 * GiB, totalCapacityBytes: 1000 * GiB });
+    expect(out.status).toBe("ok");
+    expect(out.belowFloor).toBe(false);
+    expect(out.growthBranch).toBe("unknown");
   });
 
-  it("overflow/unknown FAIL-CLOSED: NaN totalDbBytes → unknown (never ok), enum not boolean", () => {
-    const out = classifyDiskGrowth(healthyInput({ totalDbBytes: Number.NaN }));
-    expect(out.status).toBe("unknown");
-    expect(out.status).not.toBe("ok");
-    expect(out.failClosed).toBe(true);
+  it("projected-exhaustion boundary: == 7 days → warn; just over 7 → ok (floor otherwise satisfied)", () => {
+    // 5 TiB capacity → floor = max(10 GiB, 512 GiB) = 512 GiB. free 700 GiB is above it,
+    // so ONLY the exhaustion branch can warn.
+    const capacity = 5 * 1024 * GiB; // 5 TiB
+    const free = 700 * GiB;
+    const at = classifyDiskGrowth({
+      freeBytes: free,
+      totalCapacityBytes: capacity,
+      growthRateBytesPerDay: free / 7,
+    });
+    expect(at.belowFloor).toBe(false);
+    expect(at.withinExhaustionWindow).toBe(true);
+    expect(at.status).toBe("warn");
+
+    const over = classifyDiskGrowth({
+      freeBytes: free,
+      totalCapacityBytes: capacity,
+      growthRateBytesPerDay: free / 7.001,
+    });
+    expect(over.withinExhaustionWindow).toBe(false);
+    expect(over.status).toBe("ok");
   });
 
-  it("overflow/unknown FAIL-CLOSED: Infinity → unknown", () => {
-    const out = classifyDiskGrowth(healthyInput({ totalDbBytes: Number.POSITIVE_INFINITY }));
-    expect(out.status).toBe("unknown");
-    expect(out.failClosed).toBe(true);
+  it("growth branch unknown does NOT force unknown: floor still governs (ok when above floor)", () => {
+    const out = classifyDiskGrowth({
+      freeBytes: 800 * GiB,
+      totalCapacityBytes: 1000 * GiB,
+      growthRateBytesPerDay: null,
+    });
+    expect(out.status).toBe("ok");
+    expect(out.growthBranch).toBe("unknown");
   });
 
-  it("overflow/unknown FAIL-CLOSED: negative bytes → unknown", () => {
-    const out = classifyDiskGrowth(healthyInput({ totalDbBytes: -1 }));
-    expect(out.status).toBe("unknown");
-    expect(out.failClosed).toBe(true);
+  it("zero/negative growth never exhausts → not a warning by the exhaustion branch", () => {
+    const zero = classifyDiskGrowth({ freeBytes: 800 * GiB, totalCapacityBytes: 1000 * GiB, growthRateBytesPerDay: 0 });
+    expect(zero.withinExhaustionWindow).toBe(false);
+    expect(zero.status).toBe("ok");
   });
 
-  it("overflow FAIL-CLOSED: a value beyond MAX_SAFE_INTEGER → unknown (never silently ok)", () => {
-    const out = classifyDiskGrowth(healthyInput({ totalDbBytes: Number.MAX_SAFE_INTEGER + 1 }));
-    expect(out.status).toBe("unknown");
-    expect(out.failClosed).toBe(true);
+  it("FAIL-CLOSED (free space itself): null / NaN / overflow / inconsistent → unknown, never ok", () => {
+    expect(classifyDiskGrowth({ freeBytes: null, totalCapacityBytes: 1000 * GiB }).status).toBe("unknown");
+    expect(classifyDiskGrowth({ freeBytes: Number.NaN, totalCapacityBytes: 1000 * GiB }).status).toBe("unknown");
+    expect(classifyDiskGrowth({ freeBytes: 9 * GiB, totalCapacityBytes: null }).status).toBe("unknown");
+    expect(
+      classifyDiskGrowth({ freeBytes: Number.MAX_SAFE_INTEGER + 1, totalCapacityBytes: 1000 * GiB }).status,
+    ).toBe("unknown");
+    const inconsistent = classifyDiskGrowth({ freeBytes: 2000 * GiB, totalCapacityBytes: 1000 * GiB });
+    expect(inconsistent.status).toBe("unknown");
+    expect(inconsistent.failClosed).toBe(true);
+    expect(inconsistent.status).not.toBe("ok");
   });
 
-  it("unresolved probe FAIL-CLOSED: freeBytes:null → unknown (never ok)", () => {
-    const out = classifyDiskGrowth(healthyInput({ freeBytes: null, totalDiskBytes: null }));
-    expect(out.status).toBe("unknown");
-    expect(out.status).not.toBe("ok");
-    expect(out.failClosed).toBe(true);
+  it("NON-authoritative diagnostics NEVER override the locked result", () => {
+    // A huge DB size must NOT turn a healthy (above-floor, no-exhaustion) reading into a warning.
+    const out = classifyDiskGrowth({
+      freeBytes: 800 * GiB,
+      totalCapacityBytes: 1000 * GiB,
+      growthRateBytesPerDay: 0,
+      diagnostics: { totalDbBytes: 500 * GiB, realtimeEventsEstimatedBytes: 400 * GiB },
+    });
+    expect(out.status).toBe("ok");
+    expect(out.diagnostics?.totalDbBytes).toBe(500 * GiB);
   });
 
-  it("inconsistent reading FAIL-CLOSED: free > capacity → unknown", () => {
-    const out = classifyDiskGrowth(healthyInput({ freeBytes: 2000 * GB, totalDiskBytes: 1000 * GB }));
-    expect(out.status).toBe("unknown");
-    expect(out.failClosed).toBe(true);
+  it("status is a magnitude enum, not a boolean; carries the locked authority reference", () => {
+    const out = classifyDiskGrowth({ freeBytes: 9 * GiB, totalCapacityBytes: 50 * GiB });
+    expect(["ok", "warn", "unknown"]).toContain(out.status);
+    expect(out.authority.decision).toBe("U13-STORAGE-PRESSURE");
+    expect(out.authority.authority).toBe("operator_locked");
+    expect(FRIDAY_STORAGE_PRESSURE_AUTHORITY.freeSpaceFloorBytes).toBe(10 * GiB);
   });
 });
 
-describe("friday-disk-growth-evaluator — evaluateLargeWriteSafety (large-write formula)", () => {
-  const MB = 1_000_000;
-
-  it("carries NUMERIC estimates (not a bare boolean): required/overhead/shortfall present", () => {
-    const v = evaluateLargeWriteSafety({ projectedWriteBytes: 100 * MB, freeBytes: 10_000 * MB });
-    expect(typeof v.requiredBytes).toBe("number");
-    expect(typeof v.overheadBytes).toBe("number");
-    expect(v.overheadBytes! > 0).toBe(true);
-    expect(typeof v.shortfallBytes).toBe("number");
-    expect(v.safe).toBe(true);
-  });
-
-  it("overhead is an EXPLICIT named sum of WAL/rollback/COW-backup-archive/partial-margin", () => {
-    const projected = 100 * MB;
-    const v = evaluateLargeWriteSafety({ projectedWriteBytes: projected, freeBytes: 10_000 * MB });
-    const o = FRIDAY_LARGE_WRITE_OVERHEAD;
-    const expectedOverhead =
-      Math.ceil(projected * o.walHeadroomFraction) +
-      Math.ceil(projected * o.rollbackJournalHeadroomFraction) +
-      Math.ceil(projected * o.cowBackupArchiveFraction) +
-      o.partialWriteSafetyMarginBytes;
-    expect(v.overheadBytes).toBe(expectedOverhead);
-    expect(v.requiredBytes).toBe(projected + expectedOverhead);
-  });
-
-  it("CURRENT-FREE-ONLY would pass, but overhead makes it UNSAFE (kills current-free-only + omitted-overhead)", () => {
-    // projected 100MB fits raw free 130MB; but projected + overhead (>130MB) does not.
-    const v = evaluateLargeWriteSafety({ projectedWriteBytes: 100 * MB, freeBytes: 130 * MB });
-    expect(v.safe).toBe(false);
-    expect(v.shortfallBytes! > 0).toBe(true);
-    // A naive current-free-only check would have said "fits".
-    expect(v.projectedBytes! <= v.freeBytes!).toBe(true);
-  });
-
-  it("integer overflow FAIL-CLOSED: projected near MAX_SAFE_INTEGER → unsafe (never wraps to safe)", () => {
+describe("evaluateLargeWriteSafety — U13 large-write formula", () => {
+  it("CE2 (advisor): 1 MiB write, 40 GiB free on a 1 TiB volume → PAUSE (40 < reserve max(5 GiB,5%)=51.2 GiB)", () => {
     const v = evaluateLargeWriteSafety({
-      projectedWriteBytes: Number.MAX_SAFE_INTEGER - 10,
-      freeBytes: 1_000,
+      currentFreeBytes: 40 * GiB,
+      totalCapacityBytes: 1024 * GiB, // 1 TiB
+      estimatedPeakTempBytes: 1 * MiB,
+      estimatedPersistentGrowthBytes: 0,
+    });
+    expect(v.safe).toBe(false);
+    expect(v.reserveBytes).toBe(Math.floor(1024 * GiB * 0.05)); // ≈ 51.2 GiB
+    expect(v.currentFreeBytes! < v.reserveBytes!).toBe(true);
+  });
+
+  it("reserve boundary: current_free == reserve → safe; just below → PAUSE", () => {
+    // 200 GiB capacity → reserve = max(5 GiB, 10 GiB) = 10 GiB.
+    const reserve = 10 * GiB;
+    const at = evaluateLargeWriteSafety({
+      currentFreeBytes: reserve,
+      totalCapacityBytes: 200 * GiB,
+      estimatedPeakTempBytes: 0,
+      estimatedPersistentGrowthBytes: 0,
+    });
+    expect(at.reserveBytes).toBe(reserve);
+    expect(at.safe).toBe(true);
+    const below = evaluateLargeWriteSafety({
+      currentFreeBytes: reserve - 1,
+      totalCapacityBytes: 200 * GiB,
+      estimatedPeakTempBytes: 0,
+      estimatedPersistentGrowthBytes: 0,
+    });
+    expect(below.safe).toBe(false);
+  });
+
+  it("PAUSE when projected_free < reserve even though current_free >= reserve", () => {
+    // reserve 10 GiB; current 12 GiB (>= reserve) but peak 5 GiB → projected 7 GiB < 10 GiB.
+    const v = evaluateLargeWriteSafety({
+      currentFreeBytes: 12 * GiB,
+      totalCapacityBytes: 200 * GiB,
+      estimatedPeakTempBytes: 5 * GiB,
+      estimatedPersistentGrowthBytes: 0,
+    });
+    expect(v.currentFreeBytes! >= v.reserveBytes!).toBe(true);
+    expect(v.projectedFreeBytes).toBe(7 * GiB);
+    expect(v.safe).toBe(false);
+    expect(v.reason).toContain("projected_free");
+  });
+
+  it("safe when both current and projected free are at/above reserve; carries numeric estimates", () => {
+    const v = evaluateLargeWriteSafety({
+      currentFreeBytes: 500 * GiB,
+      totalCapacityBytes: 1000 * GiB,
+      estimatedPeakTempBytes: 2 * GiB,
+      estimatedPersistentGrowthBytes: 1 * GiB,
+    });
+    expect(v.safe).toBe(true);
+    expect(typeof v.reserveBytes).toBe("number");
+    expect(v.projectedFreeBytes).toBe(500 * GiB - 3 * GiB);
+  });
+
+  it("FAIL-CLOSED: unknown free/capacity/peak/growth → unsafe (non-escape)", () => {
+    expect(
+      evaluateLargeWriteSafety({
+        currentFreeBytes: null,
+        totalCapacityBytes: 1000 * GiB,
+        estimatedPeakTempBytes: 0,
+        estimatedPersistentGrowthBytes: 0,
+      }),
+    ).toMatchObject({ safe: false, failClosed: true });
+    expect(
+      evaluateLargeWriteSafety({
+        currentFreeBytes: 500 * GiB,
+        totalCapacityBytes: 1000 * GiB,
+        estimatedPeakTempBytes: null,
+        estimatedPersistentGrowthBytes: 0,
+      }),
+    ).toMatchObject({ safe: false, failClosed: true });
+  });
+
+  it("FAIL-CLOSED: overflow computing projected_free → unsafe (never wraps to safe)", () => {
+    const v = evaluateLargeWriteSafety({
+      currentFreeBytes: 1000,
+      totalCapacityBytes: 1000 * GiB,
+      estimatedPeakTempBytes: Number.MAX_SAFE_INTEGER - 5,
+      estimatedPersistentGrowthBytes: Number.MAX_SAFE_INTEGER - 5,
     });
     expect(v.safe).toBe(false);
     expect(v.failClosed).toBe(true);
   });
 
-  it("unknown free space FAIL-CLOSED: freeBytes:null → unsafe", () => {
-    const v = evaluateLargeWriteSafety({ projectedWriteBytes: 1 * MB, freeBytes: null });
-    expect(v.safe).toBe(false);
-    expect(v.failClosed).toBe(true);
-  });
-
-  it("NaN/negative projected FAIL-CLOSED: → unsafe (non-escape)", () => {
-    expect(evaluateLargeWriteSafety({ projectedWriteBytes: Number.NaN, freeBytes: 10 * MB }).safe).toBe(false);
-    expect(evaluateLargeWriteSafety({ projectedWriteBytes: -1, freeBytes: 10 * MB }).safe).toBe(false);
-  });
-
-  it("ESCAPE operation is ALWAYS usable even under severe pressure (kills disabled export/delete)", () => {
-    const v = evaluateLargeWriteSafety({
-      projectedWriteBytes: 10_000 * MB,
-      freeBytes: 1, // effectively no space
+  it("ESCAPE op always available even under severe pressure / unknown free (never blocked)", () => {
+    const severe = evaluateLargeWriteSafety({
+      currentFreeBytes: 1,
+      totalCapacityBytes: 1000 * GiB,
+      estimatedPeakTempBytes: 900 * GiB,
+      estimatedPersistentGrowthBytes: 100 * GiB,
       isEscapeOperation: true,
     });
-    expect(v.safe).toBe(true);
-    expect(v.escapeOperation).toBe(true);
-    // Still reports the estimate rather than hiding it.
-    expect(typeof v.requiredBytes).toBe("number");
-  });
+    expect(severe.safe).toBe(true);
+    expect(severe.escapeOperation).toBe(true);
+    expect(typeof severe.reserveBytes).toBe("number");
 
-  it("ESCAPE operation is usable even when free space is unknown", () => {
-    const v = evaluateLargeWriteSafety({
-      projectedWriteBytes: 10_000 * MB,
-      freeBytes: null,
+    const unknownFree = evaluateLargeWriteSafety({
+      currentFreeBytes: null,
+      totalCapacityBytes: null,
+      estimatedPeakTempBytes: null,
+      estimatedPersistentGrowthBytes: null,
       isEscapeOperation: true,
     });
-    expect(v.safe).toBe(true);
-    expect(v.escapeOperation).toBe(true);
+    expect(unknownFree.safe).toBe(true);
+    expect(unknownFree.escapeOperation).toBe(true);
   });
 });
 
 describe("friday-disk-growth-evaluator — ZERO deletion / no side effects (structural)", () => {
   it("the evaluator module imports NO fs / DB / child_process and contains no DELETE/write verbs", () => {
     const here = dirname(fileURLToPath(import.meta.url));
-    const modPath = resolve(
-      here,
-      "../../../../src/learning/services/friday-disk-growth-evaluator.ts",
-    );
+    const modPath = resolve(here, "../../../../src/learning/services/friday-disk-growth-evaluator.ts");
     const src = readFileSync(modPath, "utf8");
-    // No IO / DB / process-spawning imports.
     expect(src).not.toMatch(/from\s+["']node:fs["']/);
     expect(src).not.toMatch(/from\s+["']fs["']/);
     expect(src).not.toMatch(/from\s+["']node:child_process["']/);
     expect(src).not.toMatch(/require\(\s*["'](node:)?fs["']\s*\)/);
-    // No DB handle / SQL deletion verbs.
     expect(src).not.toMatch(/withWriteTransaction|withReadConnection|\.prepare\(/);
     expect(src).not.toMatch(/\bDELETE\b|\bDROP\b|\bTRUNCATE\b|incremental_vacuum/);
   });
