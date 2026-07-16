@@ -159,4 +159,56 @@ describe("RETENTION-R3c integration — real sampler (monotonic-injected) → #1
     expect(d.withinExhaustionWindow).toBe(true);
     expect(d.projectedExhaustionDays!).toBeLessThanOrEqual(7);
   });
+
+  // ── Advisor round-2: a fixed 6h "recent" LSQ is still diluted by preceding flat
+  //    history during a genuine SUSTAINED depletion → false ok for several intervals.
+  const STEP = 5 * 60 * 1000; // production cadence
+
+  it("EXACT PROBE: 6h flat 500 GiB then −10 GiB/5min → 1st decrease UNKNOWN, then WARN — NEVER ok×5", () => {
+    const { warm, tick } = makeRig(makeDb());
+    let mono = 0;
+    for (; mono <= 6 * 60 * 60 * 1000; mono += STEP) warm(mono, 500 * GiB); // 6h flat
+    const statuses: string[] = [];
+    const withinFlags: Array<boolean | null> = [];
+    let free = 500 * GiB;
+    for (let i = 1; i <= 5; i++) {
+      mono += STEP;
+      free -= 10 * GiB; // sustained, continuing depletion (well above the 100 GiB floor on 1 TB)
+      const d = tick(mono, free, 1000 * GiB);
+      statuses.push(d.status);
+      withinFlags.push(d.withinExhaustionWindow);
+    }
+    expect(statuses).not.toContain("ok"); // a dangerous observed trend must never read healthy
+    expect(statuses[0]).toBe("unknown"); // 1 unconfirmed fast decrease → unknown (not a diluted ok, not cry-wolf)
+    expect(statuses.slice(1)).toEqual(["warn", "warn", "warn", "warn"]); // ≥2 corroborating → warn
+    expect(withinFlags.slice(1)).toEqual([true, true, true, true]);
+  });
+
+  it("TRANSIENT dip → UNKNOWN for one tick, then RECOVERY → back to ok (never stuck warned)", () => {
+    const { warm, tick } = makeRig(makeDb());
+    let mono = 0;
+    for (; mono <= 6 * 60 * 60 * 1000; mono += STEP) warm(mono, 500 * GiB);
+    mono += STEP;
+    expect(tick(mono, 460 * GiB, 1000 * GiB).status).toBe("unknown"); // single 40 GiB dip → unknown
+    mono += STEP;
+    expect(tick(mono, 500 * GiB, 1000 * GiB).status).toBe("ok"); // recovered → ok, not stuck
+  });
+
+  it("NOISY stable (small ± fluctuations) → stays ok, no false warn/unknown", () => {
+    const { warm, tick } = makeRig(makeDb());
+    let seed = 4242 >>> 0;
+    const rnd = (): number => ((seed = (1_664_525 * seed + 1_013_904_223) >>> 0), seed / 0xffff_ffff);
+    let mono = 0;
+    for (let i = 0; i < 250; i++, mono += STEP) warm(mono, 500 * GiB + (rnd() - 0.5) * 2 * 1024 * 1024); // ±1 MiB
+    const d = tick(mono + STEP, 500 * GiB, 1000 * GiB);
+    expect(d.status).toBe("ok");
+  });
+
+  it("GENUINE multi-day recovery (free rising for days) → ok, never warned", () => {
+    const { warm, tick } = makeRig(makeDb());
+    for (let t = 0; t < 3 * MS_PER_DAY; t += 60 * 60 * 1000) warm(t, 300 * GiB + (5 * GiB * t) / MS_PER_DAY); // rising
+    const d = tick(3 * MS_PER_DAY, 315 * GiB, 1000 * GiB);
+    expect(d.status).toBe("ok");
+    expect(d.withinExhaustionWindow).toBe(false);
+  });
 });

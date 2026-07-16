@@ -43,6 +43,25 @@ function series(
   return out;
 }
 
+/** Flat readings for `flatCount` ticks, then a sustained decline of `declinePerStep` for `declineCount` ticks. */
+function flatThenDecline(opts: {
+  flatFree: number;
+  flatCount: number;
+  stepMs: number;
+  declinePerStep: number;
+  declineCount: number;
+}): DiskUsageSample[] {
+  const out: DiskUsageSample[] = [];
+  let mono = 0;
+  for (let i = 0; i < opts.flatCount; i++, mono += opts.stepMs) out.push({ monotonicMs: mono, freeBytes: opts.flatFree });
+  let free = opts.flatFree;
+  for (let i = 0; i < opts.declineCount; i++, mono += opts.stepMs) {
+    free -= opts.declinePerStep;
+    out.push({ monotonicMs: mono, freeBytes: free });
+  }
+  return out;
+}
+
 // Deterministic LCG so "noisy" cases are reproducible (no Math.random flake).
 function lcg(seed: number): () => number {
   let s = seed >>> 0;
@@ -172,6 +191,55 @@ describe("estimateConservativeConsumptionRateBytesPerDay (non-stationarity safet
   it("neither horizon observable → null", () => {
     expect(estimateConservativeConsumptionRateBytesPerDay([])).toBeNull();
     expect(estimateConservativeConsumptionRateBytesPerDay([{ monotonicMs: 0, freeBytes: 10 * GIB }])).toBeNull();
+  });
+});
+
+// ── Advisor round-2: change-point / confirmed-short-horizon (a fixed "recent" LSQ is
+//    still diluted by preceding flat history during a genuine SUSTAINED depletion) ──
+describe("estimateConservativeConsumptionRateBytesPerDay — change-point / confirmed short-horizon", () => {
+  const STEP = 5 * 60 * 1000; // production cadence
+  const FLAT_6H = (6 * 60) / 5 + 1; // 6 hours of 5-min ticks
+
+  const impliesWithin7d = (rate: number | null, latestFree: number): boolean =>
+    rate !== null && rate > 0 && Number.isFinite(latestFree / rate) && latestFree / rate <= 7;
+
+  it("EXACT PROBE: 6h flat 500 GiB then 1 UNCONFIRMED −10 GiB/5min decrease → null (UNKNOWN, never a diluted ok)", () => {
+    const s = flatThenDecline({ flatFree: 500 * GIB, flatCount: FLAT_6H, stepMs: STEP, declinePerStep: 10 * GIB, declineCount: 1 });
+    expect(estimateConservativeConsumptionRateBytesPerDay(s)).toBeNull();
+  });
+
+  it("EXACT PROBE: ≥2 CORROBORATING −10 GiB/5min decreases → a positive rate implying exhaustion ≤ 7 days (not diluted)", () => {
+    for (const declineCount of [2, 3, 4, 5]) {
+      const s = flatThenDecline({ flatFree: 500 * GIB, flatCount: FLAT_6H, stepMs: STEP, declinePerStep: 10 * GIB, declineCount });
+      const rate = estimateConservativeConsumptionRateBytesPerDay(s);
+      const latestFree = s.at(-1)!.freeBytes;
+      expect(rate).not.toBeNull();
+      expect(impliesWithin7d(rate, latestFree)).toBe(true);
+    }
+  });
+
+  it("SINGLE fast dip → null; then RECOVERY → not warn-implying, never stuck (measured no-growth)", () => {
+    const dip = flatThenDecline({ flatFree: 500 * GIB, flatCount: FLAT_6H, stepMs: STEP, declinePerStep: 40 * GIB, declineCount: 1 });
+    expect(estimateConservativeConsumptionRateBytesPerDay(dip)).toBeNull(); // ambiguous single step → unknown
+    const recovered: DiskUsageSample[] = [...dip, { monotonicMs: dip.at(-1)!.monotonicMs + STEP, freeBytes: 500 * GIB }];
+    const r = estimateConservativeConsumptionRateBytesPerDay(recovered);
+    expect(r).not.toBeNull();
+    expect(impliesWithin7d(r, 500 * GIB)).toBe(false); // rising tail clears the alarm
+  });
+
+  it("NOISY stable (small ± fluctuations, implies ≫ 7 days) → not null and never warn-implying", () => {
+    const rnd = lcg(4242);
+    const s: DiskUsageSample[] = [];
+    for (let i = 0; i < 300; i++) s.push({ monotonicMs: i * STEP, freeBytes: 500 * GIB + (rnd() - 0.5) * 2 * 1024 * 1024 }); // ±1 MiB
+    const rate = estimateConservativeConsumptionRateBytesPerDay(s);
+    expect(rate).not.toBeNull();
+    expect(impliesWithin7d(rate, s.at(-1)!.freeBytes)).toBe(false);
+  });
+
+  it("PRESERVE: steady SLOW decline (huge free, implies ≫ 7 days) stays a positive rate, not forced to null", () => {
+    const rate = estimateConservativeConsumptionRateBytesPerDay(series(5000 * GIB, GIB, 3 * MS_PER_DAY, STEP)); // ~1 GiB/day
+    expect(rate).not.toBeNull();
+    expect(rate! / GIB).toBeCloseTo(1, 1);
   });
 });
 

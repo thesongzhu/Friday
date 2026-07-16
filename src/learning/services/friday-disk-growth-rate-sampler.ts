@@ -76,6 +76,14 @@ export interface DiskGrowthRateSamplerConfig {
    * SOONER-exhaustion (higher-consumption) of {full, recent} is reported.
    */
   recentWindowMs: number;
+  /**
+   * Projected-exhaustion horizon (days) that mirrors U13's 7-day warn window. Used
+   * ONLY by the change-point signal to decide whether a tail decline run is "fast"
+   * (implies exhaustion within this many days) — the threshold that both corroborates
+   * a warn and naturally filters minor fluctuations. Must equal #1613's
+   * `projectedExhaustionWarnDays`; the classifier remains the sole authority on status.
+   */
+  exhaustionWarnDays: number;
 }
 
 /**
@@ -91,6 +99,7 @@ export const DEFAULT_DISK_GROWTH_RATE_SAMPLER_CONFIG: DiskGrowthRateSamplerConfi
   minSamples: 2,
   minSpanMs: 60 * 60 * 1000, // 1 hour
   recentWindowMs: 6 * 60 * 60 * 1000, // 6 hours
+  exhaustionWarnDays: 7, // mirrors U13 / #1613 projectedExhaustionWarnDays
 };
 
 /**
@@ -173,38 +182,123 @@ export function estimateConsumptionRateBytesPerDay(
 }
 
 /**
+ * Average consumption (bytes/day) over an already-time-sorted, strictly-decreasing
+ * tail run — a CHANGE-POINT-AWARE short horizon that is NOT diluted by old flat
+ * history and (deliberately) imposes NO `minSpanMs`, so a fresh sustained depletion
+ * is measured on its own terms. Returns `null` unless there is a genuine decrease over
+ * positive elapsed time.
+ */
+function runConsumptionRateBytesPerDay(sortedRun: readonly DiskUsageSample[]): number | null {
+  const first = sortedRun.at(0);
+  const last = sortedRun.at(-1);
+  if (!first || !last) return null;
+  const elapsedMs = last.monotonicMs - first.monotonicMs;
+  if (!(elapsedMs > 0) || !Number.isFinite(elapsedMs)) return null;
+  const consumed = first.freeBytes - last.freeBytes; // > 0 for a decline
+  const rate = (consumed / elapsedMs) * MS_PER_DAY;
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+  return Math.min(rate, Number.MAX_SAFE_INTEGER);
+}
+
+/** Count consecutive strictly-decreasing steps at the TAIL of a time-sorted series. */
+function tailDeclineRunLength(sortedSamples: readonly DiskUsageSample[]): number {
+  let run = 0;
+  let prevFree: number | null = null;
+  for (let i = sortedSamples.length - 1; i >= 0; i--) {
+    const free = sortedSamples.at(i)!.freeBytes;
+    if (prevFree === null) {
+      prevFree = free;
+      continue;
+    }
+    if (prevFree < free) {
+      // newer sample is LOWER than this (older) one ⇒ a decrease at the tail
+      run++;
+      prevFree = free;
+    } else {
+      break;
+    }
+  }
+  return run;
+}
+
+/**
  * PURE conservative estimator (the one the sampler serves): the SAFETY-CONSERVATIVE
- * consumption rate under non-stationarity. Estimates consumption over BOTH the full
- * window AND the most-recent `recentWindowMs`, and returns whichever implies SOONER
- * exhaustion (the HIGHER consumption):
- *   • both horizons evaluable → `max(full, recent)` (so a recent cliff on top of a
- *     rising full-window trend still WARNS, and measured-zero `0` is returned only
- *     when BOTH are ≤ 0);
- *   • the recent horizon lacks enough samples/span → fall back to the full window;
- *   • the full window lacks enough samples/span but the recent horizon has a rate →
- *     use the recent rate (conservative; a false warn is fail-closed-safe);
- *   • neither horizon is evaluable → `null` (UNKNOWN).
+ * consumption rate under NON-STATIONARITY, hardened with a CHANGE-POINT-AWARE
+ * short-horizon signal (advisor round-2). A fixed "recent" least-squares window is
+ * still diluted by preceding flat history during a genuine SUSTAINED depletion (6h of
+ * flat + a few minutes of decline → a slow averaged slope → a dangerous false `ok`).
+ *
+ * The rate is the SOONEST-exhaustion max of THREE signals:
+ *   • the full-window least-squares consumption,
+ *   • the recent-`recentWindowMs` least-squares consumption,
+ *   • a CONFIRMED short-horizon consumption over ONLY the strictly-decreasing tail run
+ *     (undiluted), included ONLY when the run is CORROBORATED (≥ 2 consecutive
+ *     production-cadence decreases) AND its rate implies exhaustion ≤ `exhaustionWarnDays`.
+ *
+ * Decision (soonest exhaustion wins; the classifier remains the sole status authority):
+ *   • any exposed signal implies exhaustion ≤ warn-days → return it (→ classifier WARNS);
+ *   • a SINGLE unconfirmed fast decrease (1 tail decrease implying ≤ warn-days, not yet
+ *     corroborated, and no other signal warns) → `null` (UNKNOWN → fail-closed, NOT a
+ *     false `ok`, but NOT cry-wolf `warn` either);
+ *   • otherwise the max of the observable horizons: `0` (MEASURED-ZERO) only when
+ *     NOTHING shows depletion, a slow positive rate for a slow decline, or `null` when
+ *     neither horizon is observable. Minor fluctuations imply ≫ warn-days, so the
+ *     change-point logic never fires for them → they stay `ok`. Genuine recovery
+ *     (rising tail) has run length 0 → never warned.
+ *
+ * Preserves the round-1/round-2 behavior: recovery-then-sustained-cliff still warns
+ * (the cliff is a long corroborated tail run), and all null-on-insufficient/invalid
+ * cases hold.
  */
 export function estimateConservativeConsumptionRateBytesPerDay(
   samples: readonly DiskUsageSample[],
   config: DiskGrowthRateSamplerConfig = DEFAULT_DISK_GROWTH_RATE_SAMPLER_CONFIG,
 ): number | null {
-  const fullRate = estimateConsumptionRateBytesPerDay(samples, config);
-
-  let maxMono = -Infinity;
+  if (!Array.isArray(samples) || samples.length < 2) return null;
   for (const s of samples) {
-    if (typeof s.monotonicMs === "number" && s.monotonicMs > maxMono) maxMono = s.monotonicMs;
+    if (!isNonNegativeFinite(s.monotonicMs) || !isNonNegativeFinite(s.freeBytes)) return null;
   }
-  let recentRate: number | null = null;
-  if (Number.isFinite(maxMono)) {
-    const cutoff = maxMono - config.recentWindowMs;
-    const recentSamples = samples.filter((s) => s.monotonicMs >= cutoff);
-    recentRate = estimateConsumptionRateBytesPerDay(recentSamples, config);
+  const sorted = [...samples].sort((a, b) => a.monotonicMs - b.monotonicMs);
+  const latestFree = sorted.at(-1)!.freeBytes;
+  const maxMono = sorted.at(-1)!.monotonicMs;
+
+  const fullRate = estimateConsumptionRateBytesPerDay(sorted, config);
+  const recentCutoff = maxMono - config.recentWindowMs;
+  const recentRate = estimateConsumptionRateBytesPerDay(
+    sorted.filter((s) => s.monotonicMs >= recentCutoff),
+    config,
+  );
+
+  // Change-point: the undiluted consumption over the strictly-decreasing tail run.
+  const declineRun = tailDeclineRunLength(sorted);
+  let shortRate: number | null = null;
+  let shortImpliesWarn = false;
+  if (declineRun >= 1) {
+    shortRate = runConsumptionRateBytesPerDay(sorted.slice(sorted.length - 1 - declineRun));
+    if (shortRate !== null) {
+      const days = latestFree / shortRate;
+      shortImpliesWarn = Number.isFinite(days) && days <= config.exhaustionWarnDays;
+    }
   }
 
-  const candidates = [fullRate, recentRate].filter((r): r is number => r !== null);
-  if (candidates.length === 0) return null; // neither horizon observable → UNKNOWN
-  return Math.max(...candidates); // sooner exhaustion wins (0 only if BOTH ≤ 0)
+  const candidates: number[] = [];
+  if (fullRate !== null) candidates.push(fullRate);
+  if (recentRate !== null) candidates.push(recentRate);
+  // A CORROBORATED (≥2) fast tail run is exposed so the classifier warns — it must NOT
+  // be averaged away by hours of old flat data.
+  if (declineRun >= 2 && shortImpliesWarn && shortRate !== null) candidates.push(shortRate);
+
+  const baseMax = candidates.length > 0 ? Math.max(...candidates) : null;
+
+  // Any exposed signal already implies exhaustion ≤ warn-days → return it (WARN).
+  if (baseMax !== null && baseMax > 0 && Number.isFinite(latestFree / baseMax) && latestFree / baseMax <= config.exhaustionWarnDays) {
+    return baseMax;
+  }
+
+  // A SINGLE unconfirmed fast decrease → UNKNOWN (avoid both false-ok and cry-wolf).
+  if (declineRun === 1 && shortImpliesWarn) return null;
+
+  return baseMax; // 0 (measured-zero) / slow positive / null (neither horizon observable)
 }
 
 /** A bounded rolling sampler owning the in-memory window and a monotonic clock. */
