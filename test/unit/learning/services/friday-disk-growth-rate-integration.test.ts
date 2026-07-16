@@ -199,16 +199,66 @@ describe("RETENTION-R3c integration — real sampler (monotonic-injected) → #1
     let seed = 4242 >>> 0;
     const rnd = (): number => ((seed = (1_664_525 * seed + 1_013_904_223) >>> 0), seed / 0xffff_ffff);
     let mono = 0;
-    for (let i = 0; i < 250; i++, mono += STEP) warm(mono, 500 * GiB + (rnd() - 0.5) * 2 * 1024 * 1024); // ±1 MiB
+    for (let i = 0; i < 250; i++, mono += STEP) warm(mono, 500 * GiB + Math.round((rnd() - 0.5) * 2 * 1024 * 1024)); // ±1 MiB, INTEGER
     const d = tick(mono + STEP, 500 * GiB, 1000 * GiB);
     expect(d.status).toBe("ok");
   });
 
   it("GENUINE multi-day recovery (free rising for days) → ok, never warned", () => {
     const { warm, tick } = makeRig(makeDb());
-    for (let t = 0; t < 3 * MS_PER_DAY; t += 60 * 60 * 1000) warm(t, 300 * GiB + (5 * GiB * t) / MS_PER_DAY); // rising
+    for (let t = 0; t < 3 * MS_PER_DAY; t += 60 * 60 * 1000) warm(t, 300 * GiB + Math.round((5 * GiB * t) / MS_PER_DAY)); // rising
     const d = tick(3 * MS_PER_DAY, 315 * GiB, 1000 * GiB);
     expect(d.status).toBe("ok");
     expect(d.withinExhaustionWindow).toBe(false);
+  });
+
+  // ── Reviewer round-3 P0: a STRICT consecutive-decrease run is silenced by a single
+  //    TIE (an exact-repeat statfs read) or sub-tolerance uptick → dilution → false ok.
+  //    Noise-tolerant net-trend corroboration must absorb interior ties/upticks. All
+  //    free values are INTEGER byte counts (classifyDiskGrowth validates integers).
+
+  it("(a) EXACT-REPEAT TIE mid-decline: 6h flat 500 GiB then −10/tick with tick2 a repeat → NEVER ok; corroborated → warn", () => {
+    const { warm, tick } = makeRig(makeDb());
+    let mono = 0;
+    for (; mono <= 6 * 60 * 60 * 1000; mono += STEP) warm(mono, 500 * GiB); // 6h flat
+    const freeSeq = [490, 490, 480, 470, 460].map((g) => g * GiB); // tick2 is an EXACT REPEAT of tick1
+    const statuses = freeSeq.map((free) => {
+      mono += STEP;
+      return tick(mono, free, 1000 * GiB).status;
+    });
+    expect(statuses).not.toContain("ok"); // the tie must NOT dilute back to a false ok
+    expect(statuses.slice(2)).toEqual(["warn", "warn", "warn"]); // ≥2 real decreases → warn
+  });
+
+  it("(b) ALTERNATING decrease/flat (−15 every other tick, sustained) → warn once corroborated, never ok mid-depletion", () => {
+    const { warm, tick } = makeRig(makeDb());
+    let mono = 0;
+    for (; mono <= 6 * 60 * 60 * 1000; mono += STEP) warm(mono, 500 * GiB);
+    const freeSeq = [485, 485, 470, 470, 455, 455, 440].map((g) => g * GiB); // decrease, tie, decrease, tie, ...
+    const statuses = freeSeq.map((free) => {
+      mono += STEP;
+      return tick(mono, free, 1000 * GiB).status;
+    });
+    expect(statuses).not.toContain("ok"); // ties never re-open a false ok
+    expect(statuses.slice(2)).toEqual(["warn", "warn", "warn", "warn", "warn"]); // corroborated → sustained warn
+  });
+
+  it("(c) REALISTIC 1-in-4 exact-repeat noise (3 decreases + 1 tie) → sustained warn, NO flip-flop, NEVER ok", () => {
+    const { warm, tick } = makeRig(makeDb());
+    let mono = 0;
+    for (; mono <= 6 * 60 * 60 * 1000; mono += STEP) warm(mono, 500 * GiB);
+    // ~2-day-exhaustion continuous depletion with a 1-in-4 exact-repeat tie pattern.
+    const gib: number[] = [];
+    let free = 500;
+    for (let i = 0; i < 16; i++) {
+      if (i % 4 === 3) gib.push(free); // exact-repeat tie every 4th tick
+      else gib.push((free -= 10)); // real decrease
+    }
+    const statuses = gib.map((g) => {
+      mono += STEP;
+      return tick(mono, g * GiB, 1000 * GiB).status;
+    });
+    expect(statuses).not.toContain("ok"); // never a false ok mid-depletion
+    expect(statuses.slice(1).every((s) => s === "warn")).toBe(true); // corroborated by tick2 → NO flip-flop, sustained warn
   });
 });

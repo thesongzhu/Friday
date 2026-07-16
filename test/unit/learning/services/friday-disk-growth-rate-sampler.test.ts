@@ -5,6 +5,7 @@ import {
   defaultMonotonicNowMs,
   estimateConservativeConsumptionRateBytesPerDay,
   estimateConsumptionRateBytesPerDay,
+  recentDeclineSignal,
   DEFAULT_DISK_GROWTH_RATE_SAMPLER_CONFIG,
   type DiskUsageSample,
   type FridayDiskGrowthRateSampler,
@@ -230,7 +231,7 @@ describe("estimateConservativeConsumptionRateBytesPerDay — change-point / conf
   it("NOISY stable (small ± fluctuations, implies ≫ 7 days) → not null and never warn-implying", () => {
     const rnd = lcg(4242);
     const s: DiskUsageSample[] = [];
-    for (let i = 0; i < 300; i++) s.push({ monotonicMs: i * STEP, freeBytes: 500 * GIB + (rnd() - 0.5) * 2 * 1024 * 1024 }); // ±1 MiB
+    for (let i = 0; i < 300; i++) s.push({ monotonicMs: i * STEP, freeBytes: 500 * GIB + Math.round((rnd() - 0.5) * 2 * 1024 * 1024) }); // ±1 MiB, INTEGER
     const rate = estimateConservativeConsumptionRateBytesPerDay(s);
     expect(rate).not.toBeNull();
     expect(impliesWithin7d(rate, s.at(-1)!.freeBytes)).toBe(false);
@@ -240,6 +241,39 @@ describe("estimateConservativeConsumptionRateBytesPerDay — change-point / conf
     const rate = estimateConservativeConsumptionRateBytesPerDay(series(5000 * GIB, GIB, 3 * MS_PER_DAY, STEP)); // ~1 GiB/day
     expect(rate).not.toBeNull();
     expect(rate! / GIB).toBeCloseTo(1, 1);
+  });
+
+  // ── Reviewer round-3 P0: interior TIES / sub-tolerance upticks must NOT silence the
+  //    corroboration (a strict consecutive-decrease run does — this is the false-ok). ──
+  it("TIE mid-decline: 6h flat then [−10, TIE, −10, −10] still corroborates (≥2 confirming) → warn-implying, NOT diluted to ok", () => {
+    const s: DiskUsageSample[] = [];
+    let mono = 0;
+    for (let i = 0; i < FLAT_6H; i++, mono += STEP) s.push({ monotonicMs: mono, freeBytes: 500 * GIB });
+    for (const g of [490, 490, 480, 470]) {
+      // 490,490 = an exact-repeat tie in the middle of the decline
+      s.push({ monotonicMs: mono, freeBytes: g * GIB });
+      mono += STEP;
+    }
+    const rate = estimateConservativeConsumptionRateBytesPerDay(s);
+    expect(rate).not.toBeNull();
+    expect(impliesWithin7d(rate, s.at(-1)!.freeBytes)).toBe(true); // tie absorbed, corroboration survives
+  });
+
+  it("recentDeclineSignal absorbs interior ties/upticks (net from the recent peak, undiluted)", () => {
+    const s: DiskUsageSample[] = [];
+    let mono = 0;
+    for (let i = 0; i < FLAT_6H; i++, mono += STEP) s.push({ monotonicMs: mono, freeBytes: 500 * GIB }); // flat prefix
+    for (const g of [490, 490, 492, 480, 470]) {
+      // interior tie (490,490) AND a sub-peak uptick (490→492) — both must be absorbed
+      s.push({ monotonicMs: mono, freeBytes: g * GIB });
+      mono += STEP;
+    }
+    const sig = recentDeclineSignal(s, DEFAULT_DISK_GROWTH_RATE_SAMPLER_CONFIG.shortWindowMs)!;
+    expect(sig).not.toBeNull();
+    expect(sig.confirmingDecreases).toBeGreaterThanOrEqual(2); // not reset to 0/1 by the tie or uptick
+    // net from the last flat-500 peak to 470 GiB, NOT diluted by the 6h flat prefix
+    const latestFree = 470 * GIB;
+    expect(latestFree / sig.shortRateBytesPerDay).toBeLessThanOrEqual(7);
   });
 });
 
