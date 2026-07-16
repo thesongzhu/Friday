@@ -43,14 +43,19 @@
  *    `assertSourceUnchanged` (=> RED). Non-git / dirty / untracked / abbreviated /
  *    HEAD≠expected / special => unsealed.
  *
- * `source_sha` (COMPLETE candidate tree) seals ONLY under the F-B conditions above;
+ * `source_sha` (git-tracked content at HEAD, via `git ls-tree -r HEAD`; immune to
+ * gitignored/untracked bytes) seals ONLY under the F-B conditions above;
  * the consumed `verification_policy_set_sha256` is sealed; runtime/artifact are
  * declared-content / schema-byte provisional; obligation is an explicit unsealed
  * two-pass sentinel. A `FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json` sidecar
  * (NOT a validator-graded artifact) names every unsealed reason.
  *
- * Exit: 0 = an honest PROVISIONAL bundle was produced; 3 = RED (missing/invalid
- * source, drift, empty enumerator).
+ * Exit: 0 = an honest bundle was produced (exit 0 does NOT mean sealed/PASS — a
+ * loud PROVISIONAL_UNSEALED banner is ALWAYS printed to stderr on a non-SEALED
+ * exit-0 so a `... && GATE_PASS` wrapper cannot misread generation success as a
+ * pass); 3 = RED (missing/invalid source, drift, empty enumerator); 4 = `--strict`
+ * was given and `seal_status !== SEALED` (fail-closed one-liner for gate callers;
+ * agent-side this is ALWAYS the case, so `--strict` always exits non-zero here).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -470,13 +475,14 @@ export function writeBundle(outDir, { inventory, sealStatus, rawFiles }) {
 }
 
 function parseArgs(argv) {
-  const args = { sourcesRoot: null, repoRoot: null, outDir: null, producerId: DEFAULT_PRODUCER_ID, expectedSha: null };
+  const args = { sourcesRoot: null, repoRoot: null, outDir: null, producerId: DEFAULT_PRODUCER_ID, expectedSha: null, strict: false };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--sources-root") args.sourcesRoot = argv[(i += 1)];
     else if (argv[i] === "--repo-root") args.repoRoot = argv[(i += 1)];
     else if (argv[i] === "--out-dir") args.outDir = argv[(i += 1)];
     else if (argv[i] === "--producer-id") args.producerId = argv[(i += 1)];
     else if (argv[i] === "--expected-sha") args.expectedSha = argv[(i += 1)];
+    else if (argv[i] === "--strict") args.strict = true;
   }
   return args;
 }
@@ -523,6 +529,19 @@ function main() {
         does_not_prove: built.sealStatus.does_not_prove,
       }),
     );
+    // Exit-code laundering guard: a non-SEALED bundle must NEVER be mistaken for a
+    // PASS. ALWAYS emit a loud stderr banner on a non-SEALED exit-0 (a `&& GATE_PASS`
+    // wrapper reads the code, not the JSON), and under --strict fail closed with a
+    // distinct non-zero code so a gate caller can branch on it directly.
+    const sealed = built.seal_status === "SEALED";
+    if (!sealed) {
+      console.error(
+        `PROVISIONAL_UNSEALED — exit 0 does NOT mean sealed/PASS (seal_status=${built.seal_status}). ` +
+          "Agent-side this bundle can NEVER self-seal (no trusted OIDC/operator authority); " +
+          "do NOT treat generation success as a gate PASS. Use --strict to fail closed (exit 4).",
+      );
+      if (args.strict) process.exit(4);
+    }
     process.exit(0);
   } catch (error) {
     if (error instanceof Red) return fail(error.code, error.detail);

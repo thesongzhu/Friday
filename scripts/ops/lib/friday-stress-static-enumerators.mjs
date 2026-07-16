@@ -23,10 +23,12 @@
  * HONESTY BOUNDARY: discovery is still static (regex per-route-object + declared
  * overlay); it is not a full TypeScript AST, runtime route registration probe,
  * built-artifact manifest, or mechanism ledger. The independent contract lens is
- * the mitigation, not a substitute. `sourceProvenance` binds the COMPLETE
- * candidate tree (git tree oid + full working-tree manifest) but seals it ONLY
- * for a real git repo at the EXACT expected HEAD with a clean worktree and no
- * symlink/special entry — otherwise it is provisional-unsealed.
+ * the mitigation, not a substitute. `sourceProvenance` binds the GIT-TRACKED
+ * content at HEAD (git tree oid + a `git ls-tree -r HEAD` manifest whose per-file
+ * oids ARE git's own content hashes of the tracked blobs) — immune to gitignored
+ * /untracked on-disk bytes — but seals it ONLY for a real git repo at the EXACT
+ * expected HEAD with a clean worktree and no tracked symlink/special entry —
+ * otherwise it is provisional-unsealed.
  *
  * Canonicalization mirrors the R13 validator BYTE-FOR-BYTE (verify-...-r13.mjs:8-9).
  */
@@ -109,21 +111,31 @@ function repoFiles(repoRoot, relDir, predicate) {
 
 // --- F-B: EXACT-candidate source provenance. `sealed` is true ONLY for a real
 // git repo, at the exact EXPECTED HEAD sha, with a clean worktree (no dirty
-// tracked, no untracked). The expected sha must be a FULL 40-char lowercase hex
-// commit id and HEAD must equal it EXACTLY — an abbreviated/prefix value is NOT
-// the reviewed candidate (a different commit can share a prefix) and is rejected.
-// A non-git root, dirty/untracked worktree, absent / abbreviated / mismatched
-// expected sha, or any symlink/special file in the manifest all force
-// `sealed:false` (the digest still binds the observed working bytes, but is NOT
-// a sealed candidate). `signature` supports mutation detection between the source
-// snapshot and the bundle write.
+// tracked, no untracked-non-ignored). The expected sha must be a FULL 40-char
+// lowercase hex commit id and HEAD must equal it EXACTLY — an abbreviated/prefix
+// value is NOT the reviewed candidate (a different commit can share a prefix) and
+// is rejected. A non-git root, dirty/untracked worktree, absent / abbreviated /
+// mismatched expected sha, or any TRACKED symlink/special file in the manifest all
+// force `sealed:false`.
+//
+// SOURCE DIGEST GROUNDING (F-1 root fix): for a real git repo the digest is built
+// from GIT-TRACKED content ONLY, enumerated via `git ls-tree -r HEAD` — each
+// entry's oid IS git's content hash of the tracked blob at HEAD. This is IMMUNE to
+// gitignored/untracked on-disk files: they can never fold their bytes into a SEALED
+// source digest, and it needs NO hardcoded ignore allowlist. (`git status
+// --porcelain` OMITS gitignored files, so a previous whole-disk walk let an
+// arbitrary gitignored payload silently change the sealed digest.) A NON-git root
+// has no HEAD to ground against; it falls back to an on-disk manifest that binds the
+// observed working bytes purely for signature/mutation detection — such a root is
+// NEVER sealed (isGit is false), so no gitignored byte is laundered into a seal.
+// `signature` supports mutation detection between the source snapshot and the write.
 export function sourceProvenance(repoRoot, expectedSha = null) {
   const runGit = (args) => {
     try {
       const r = spawnSync("git", ["-C", repoRoot, ...args], { encoding: "utf8" });
-      return { status: r.status, out: (r.stdout || "").trim() };
+      return { status: r.status, out: (r.stdout || "").trim(), raw: r.stdout || "" };
     } catch {
-      return { status: 1, out: "" };
+      return { status: 1, out: "", raw: "" };
     }
   };
   const treeR = runGit(["rev-parse", "HEAD^{tree}"]);
@@ -133,6 +145,9 @@ export function sourceProvenance(repoRoot, expectedSha = null) {
   const isGit = gitTreeOid !== null && headSha !== null;
   let cleanWorktree = false;
   if (isGit) {
+    // Certifies no TRACKED file is dirty/modified vs HEAD (and no untracked-non-ignored
+    // file is present). Gitignored files are correctly OMITTED and no longer affect the
+    // binding — the digest is grounded in ls-tree (tracked HEAD content) below.
     const st = runGit(["status", "--porcelain"]);
     cleanWorktree = st.status === 0 && st.out === "";
   }
@@ -140,36 +155,59 @@ export function sourceProvenance(repoRoot, expectedSha = null) {
   const expectedGiven = typeof expectedSha === "string" && expectedSha.length > 0;
   const expectedValid = typeof expectedSha === "string" && /^[0-9a-f]{40}$/.test(expectedSha);
   const expectedMatch = expectedValid && headSha !== null && headSha === expectedSha; // STRICT equality, no startsWith
-  // Dedicated traversal (NOT the shared `walk`, which silently skips symlinks):
-  // here a symlink or non-regular file must be OBSERVED so it can force unsealed.
   const files = [];
   let specialSeen = false;
-  const stack = [repoRoot];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    let st;
-    try {
-      st = fs.lstatSync(current);
-    } catch {
-      specialSeen = true;
-      continue;
-    }
-    if (st.isSymbolicLink()) {
-      specialSeen = true;
-      continue;
-    }
-    if (st.isDirectory()) {
-      for (const entry of fs.readdirSync(current)) {
-        if (IGNORED_DIRS.has(entry)) continue;
-        stack.push(path.join(current, entry));
+  if (isGit) {
+    // GIT-TRACKED grounding: enumerate tracked blobs at HEAD. Entry format (NUL-
+    // separated via -z, so paths are literal / unquoted): "<mode> <type> <oid>\t<path>".
+    // A tracked symlink (mode 120000) or gitlink/submodule (mode 160000 / type
+    // "commit") is OBSERVED so it can force unsealed. The oid IS the content hash.
+    const lsR = runGit(["ls-tree", "-r", "-z", "HEAD"]);
+    for (const entry of lsR.raw.split("\0")) {
+      if (!entry) continue;
+      const tab = entry.indexOf("\t");
+      if (tab < 0) continue;
+      const meta = entry.slice(0, tab).split(" ");
+      const relPath = entry.slice(tab + 1);
+      const mode = meta[0];
+      const type = meta[1];
+      const oid = meta[2];
+      if (mode === "120000" || mode === "160000" || type === "commit") {
+        specialSeen = true; // tracked symlink / gitlink — forces unsealed
+        continue;
       }
-      continue;
+      files.push({ path: relPath, oid });
     }
-    if (st.isFile()) {
-      const bytes = fs.readFileSync(current);
-      files.push({ path: toRel(repoRoot, current), sha256: sha(bytes), bytes: bytes.length });
-    } else {
-      specialSeen = true; // fifo / socket / block / char device
+  } else {
+    // NON-git fallback (NEVER sealed): dedicated traversal (NOT the shared `walk`,
+    // which silently skips symlinks) so a symlink or non-regular file is OBSERVED.
+    const stack = [repoRoot];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      let st;
+      try {
+        st = fs.lstatSync(current);
+      } catch {
+        specialSeen = true;
+        continue;
+      }
+      if (st.isSymbolicLink()) {
+        specialSeen = true;
+        continue;
+      }
+      if (st.isDirectory()) {
+        for (const entry of fs.readdirSync(current)) {
+          if (IGNORED_DIRS.has(entry)) continue;
+          stack.push(path.join(current, entry));
+        }
+        continue;
+      }
+      if (st.isFile()) {
+        const bytes = fs.readFileSync(current);
+        files.push({ path: toRel(repoRoot, current), sha256: sha(bytes), bytes: bytes.length });
+      } else {
+        specialSeen = true; // fifo / socket / block / char device
+      }
     }
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
@@ -183,7 +221,7 @@ export function sourceProvenance(repoRoot, expectedSha = null) {
   else if (isGit && !expectedMatch) unsealed_reasons.push("source_head_sha_not_equal_expected");
   if (specialSeen) unsealed_reasons.push("source_manifest_has_symlink_or_special_file");
   return {
-    basis: "git_head_verified_full_working_manifest",
+    basis: "git_head_verified_tracked_content_manifest",
     sealed,
     git_tree_oid: gitTreeOid,
     head_sha: headSha,

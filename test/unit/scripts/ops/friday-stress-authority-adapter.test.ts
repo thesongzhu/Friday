@@ -38,6 +38,20 @@ const GEN = path.join(REPO_ROOT, "scripts", "ops", "friday-stress-authority-adap
 const ADAPTER_MOD = path.join(REPO_ROOT, "scripts/ops/friday-stress-authority-adapter.mjs");
 const ENUM_MOD = path.join(REPO_ROOT, "scripts/ops/lib/friday-stress-static-enumerators.mjs");
 const VENDORED_VALIDATOR = path.join(__dirname, "fixtures", "verify-endbar-stress-evidence-r13.vendored.mjs");
+// OPERATOR-ATTESTED HASH-OF-RECORD. This is the sha256 of the vendored R13 validator
+// fixture at the moment an operator attested it byte-identical to the live Handoff tool
+// (LIVE_VALIDATOR below). The equality check `sha256(vendored) === VENDORED_VALIDATOR_SHA`
+// (test "vendored ... byte-identical ...") is the ONLY drift gate reachable in CI —
+// ubuntu-latest has no ~/Desktop, so the `fs.existsSync(LIVE_VALIDATOR)` byte-identity
+// branch is an ADDITIONAL check that only runs on operator machines. The CI gate is
+// therefore DELIBERATELY load-bearing and ALWAYS runs (never gated/skipped).
+// TRUST BOUNDARY (disclosed, not concealed): this record and the vendored bytes travel
+// together in-repo, so within a single PR the pair is SELF-REFERENTIAL — a reviewing
+// OPERATOR, not this test, is the authority that the vendored bytes equal the live tool.
+// UPDATE PROCEDURE: changing the fixture REQUIRES a reviewed PR in which the operator
+// re-attests the source against the live tool and updates BOTH the fixture bytes AND
+// this hash in the same commit. The "(finding-2) integrity gate FAILS on drift" test
+// proves the gate is not vacuous: any byte change to the fixture breaks this equality.
 const VENDORED_VALIDATOR_SHA = "4287ef02e4cae753f457fa8ef61e8436fe6e8e291ad62f2750cd69d81dbbb323"; // pragma: allowlist secret
 const LIVE_VALIDATOR = path.join(os.homedir(), "Desktop", "Friday-Handoff-Log", "tools", "verify-endbar-stress-evidence-r13.mjs");
 const REMOVED_REVIEWER = path.join(REPO_ROOT, "scripts", "ops", "friday-stress-authority-review.mjs");
@@ -192,13 +206,14 @@ function writeFixture(repoOpts: Parameters<typeof writeRepoRoot>[0] = {}): Roots
 }
 
 interface GenResult { status: number | null; stdout: string; stderr: string; json: () => any; err: () => any }
-function runGen(roots: Partial<Roots>, opts: { outDir?: string; producerId?: string; expectedSha?: string } = {}): GenResult {
+function runGen(roots: Partial<Roots>, opts: { outDir?: string; producerId?: string; expectedSha?: string; strict?: boolean } = {}): GenResult {
   const args: string[] = [];
   if (roots.sourcesRoot !== undefined) args.push("--sources-root", roots.sourcesRoot);
   if (roots.repoRoot !== undefined) args.push("--repo-root", roots.repoRoot);
   if (opts.outDir) args.push("--out-dir", opts.outDir);
   if (opts.producerId) args.push("--producer-id", opts.producerId);
   if (opts.expectedSha) args.push("--expected-sha", opts.expectedSha);
+  if (opts.strict) args.push("--strict");
   const r = spawnSync(process.execPath, [GEN, ...args], { encoding: "utf8" });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, json: () => JSON.parse(r.stdout), err: () => JSON.parse(r.stderr) };
 }
@@ -250,9 +265,35 @@ function vendoredComponentsKeys(): string[] {
 describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", () => {
   it("vendored independent validator is byte-identical to the live Handoff tool", () => {
     expect.hasAssertions();
+    // LOAD-BEARING, ALWAYS-RUN CI GATE: sha256(vendored) === operator-attested record.
+    // This is the ONLY drift gate reachable on ubuntu-latest (no ~/Desktop there), so it
+    // is intentionally unconditional — see the VENDORED_VALIDATOR_SHA comment for the
+    // operator-attested trust boundary and update procedure.
     const vendoredSha = sha(fs.readFileSync(VENDORED_VALIDATOR));
     expect(vendoredSha).toBe(VENDORED_VALIDATOR_SHA);
+    // ADDITIONAL operator-machine check: re-verify byte-identity against the live tool
+    // when it is present (never reachable in CI; not a substitute for the gate above).
     if (fs.existsSync(LIVE_VALIDATOR)) expect(sha(fs.readFileSync(LIVE_VALIDATOR))).toBe(vendoredSha);
+  });
+
+  // (finding-2) The CI-reachable drift gate must not be vacuous / fail-open. Prove that
+  // ANY change to the vendored fixture bytes breaks equality with the operator-attested
+  // record (so a future PR cannot weaken the fixture and stay green without ALSO editing
+  // the record — which the update procedure requires an operator to attest). We do NOT
+  // touch the real fixture: mutate an in-memory copy only.
+  it("(finding-2) the vendored-validator drift gate FAILS if the fixture bytes drift without updating the record", () => {
+    expect.hasAssertions();
+    const original = fs.readFileSync(VENDORED_VALIDATOR);
+    expect(sha(original)).toBe(VENDORED_VALIDATOR_SHA); // control: record matches current bytes
+    // appended byte -> different sha -> gate would FAIL.
+    const appended = Buffer.concat([original, Buffer.from("\n// unreviewed drift\n")]);
+    expect(sha(appended)).not.toBe(VENDORED_VALIDATOR_SHA);
+    // single-byte flip -> different sha -> gate would FAIL.
+    const flipped = Buffer.from(original);
+    flipped[0] = flipped[0] ^ 0xff;
+    expect(sha(flipped)).not.toBe(VENDORED_VALIDATOR_SHA);
+    // and pointing the gate's comparison at the mutated bytes throws (the assertion is real).
+    expect(() => expect(sha(appended)).toBe(VENDORED_VALIDATOR_SHA)).toThrow();
   });
 
   // P0-3 (a): route×METHOD identity — same-path GET/POST and GET/PUT are DISTINCT subjects.
@@ -489,6 +530,71 @@ describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", 
     try { adapter.assertSourceUnchanged(roots.repoRoot, head, prior); } catch (e) { thrown = e; }
     expect(thrown).not.toBeNull();
     expect(thrown.code).toBe("SOURCE_MUTATED_DURING_BUILD");
+  }, 30000);
+
+  // (finding-1) SOURCE DIGEST IS GIT-TRACKED-GROUNDED: a gitignored on-disk payload is
+  // EXCLUDED from the source digest and the tracked file_count. On the pre-fix whole-disk
+  // walk the payload's bytes folded into the digest while `git status --porcelain` stayed
+  // EMPTY (gitignored) -> the sealed digest silently changed: RED there, GREEN here.
+  it("(finding-1) a gitignored payload is EXCLUDED from the git-tracked source digest (unchanged by add/remove); dirty tracked -> unsealed", async () => {
+    expect.hasAssertions();
+    const enums = await import(ENUM_MOD);
+    const roots = writeFixture();
+    // .gitignore (itself tracked) lists arbitrary paths; commit the whole tree.
+    fs.writeFileSync(path.join(roots.repoRoot, ".gitignore"), ".DS_Store\nlocal-junk/\n");
+    const head = initGitCommitted(roots.repoRoot);
+    const before = enums.sourceProvenance(roots.repoRoot, head);
+    expect(before.sealed).toBe(true); // clean git at the exact HEAD -> honest partial seal
+    const baseDigest = before.digest;
+    const baseCount = before.file_count;
+
+    // add arbitrary-content GITIGNORED payloads — `git status --porcelain` stays EMPTY.
+    const payload = path.join(roots.repoRoot, ".DS_Store");
+    fs.writeFileSync(payload, "arbitrary untrusted payload bytes that must NOT bind the seal");
+    fs.mkdirSync(path.join(roots.repoRoot, "local-junk"), { recursive: true });
+    fs.writeFileSync(path.join(roots.repoRoot, "local-junk", "x.bin"), "more untrusted bytes");
+    const after = enums.sourceProvenance(roots.repoRoot, head);
+    expect(after.clean_worktree).toBe(true); // gitignored files do NOT dirty the worktree
+    expect(after.file_count).toBe(baseCount); // EXCLUDED from the tracked file count
+    expect(after.digest).toBe(baseDigest); // digest UNCHANGED by the payload bytes
+    expect(after.sealed).toBe(true); // still an honest seal (nothing tracked changed)
+
+    // removing the payload also leaves the digest byte-identical (symmetry).
+    fs.rmSync(payload);
+    fs.rmSync(path.join(roots.repoRoot, "local-junk"), { recursive: true, force: true });
+    const removed = enums.sourceProvenance(roots.repoRoot, head);
+    expect(removed.digest).toBe(baseDigest);
+    expect(removed.file_count).toBe(baseCount);
+
+    // a DIRTY *tracked* file DOES flip the seal (git status non-empty) -> sealed:false.
+    fs.appendFileSync(path.join(roots.repoRoot, "src/api/http/routes/friday-sample-routes.ts"), "\n// dirty tracked edit\n");
+    const dirty = enums.sourceProvenance(roots.repoRoot, head);
+    expect(dirty.clean_worktree).toBe(false);
+    expect(dirty.sealed).toBe(false);
+    expect(dirty.unsealed_reasons).toContain("source_worktree_dirty_or_untracked_present");
+  }, 60000);
+
+  // (finding-3) EXIT-CODE LAUNDERING GUARD. A non-SEALED bundle must never be read as a
+  // PASS by a `... && GATE_PASS` wrapper: the default run still exits 0 (honest generation)
+  // but ALWAYS prints a loud PROVISIONAL_UNSEALED banner to stderr; --strict fails closed
+  // with a distinct non-zero code (4). Pre-fix: no --strict (arg ignored -> exit 0) and no
+  // banner -> RED here; GREEN after.
+  it("(finding-3) --strict exits non-zero on a provisional bundle; a loud banner ALWAYS prints on a provisional exit-0", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    // default: honest generation exits 0, but the loud banner MUST be on stderr.
+    const lax = runGen(roots);
+    expect(lax.status).toBe(0);
+    expect(lax.stderr).toMatch(/PROVISIONAL_UNSEALED/);
+    expect(lax.stderr).toMatch(/exit 0 does NOT mean sealed\/PASS/i);
+    // --strict: a non-SEALED bundle is a distinct non-zero exit (fail-closed for gates).
+    const strict = runGen(roots, { strict: true });
+    expect(strict.status).not.toBe(0);
+    expect(strict.status).toBe(4);
+    expect(strict.stderr).toMatch(/PROVISIONAL_UNSEALED/); // banner still printed before exit 4
+    // stdout is still the honest OK JSON in both cases (the banner is stderr-only).
+    expect(JSON.parse(lax.stdout).seal_status).toBe("PROVISIONAL_UNSEALED");
+    expect(JSON.parse(strict.stdout).seal_status).toBe("PROVISIONAL_UNSEALED");
   }, 30000);
 
   // (f) DRIFT-LOCK: the closed-denominator is only sound if its component key set
