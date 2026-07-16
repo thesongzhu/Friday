@@ -31,7 +31,7 @@
 
 // Operator-frozen global oracle from `performance_policy.metric_instance_set_sha256`.
 export const LOCKED_METRIC_INSTANCE_SET_SHA256 =
-  "399d88f018db7448b660e75e8128b94c6af9e69b307e7dc8b60923b34304d414";
+  "399d88f018db7448b660e75e8128b94c6af9e69b307e7dc8b60923b34304d414"; // pragma: allowlist secret
 // Operator-frozen from `performance_policy.expected_metric_instance_count`.
 export const LOCKED_METRIC_INSTANCE_COUNT = 96;
 export const PERFORMANCE_POLICY_FROZEN_AT = "2026-07-11T13:34:32Z";

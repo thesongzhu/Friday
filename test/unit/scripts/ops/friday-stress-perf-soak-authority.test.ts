@@ -117,7 +117,7 @@ describe("perf-soak-authority (1) locked-96 sourcing self-authentication", () =>
   it("reproduces the operator-locked global metric_instance_set_sha256 (399d88f0...)", () => {
     // The module's own derivation matches the locked global hash...
     expect(globalMetricInstanceSetSha256(LOCKED_METRIC_MATRIX_RULES)).toBe(LOCKED_METRIC_INSTANCE_SET_SHA256);
-    expect(LOCKED_METRIC_INSTANCE_SET_SHA256).toBe("399d88f018db7448b660e75e8128b94c6af9e69b307e7dc8b60923b34304d414");
+    expect(LOCKED_METRIC_INSTANCE_SET_SHA256).toBe("399d88f018db7448b660e75e8128b94c6af9e69b307e7dc8b60923b34304d414"); // pragma: allowlist secret
     // ...AND a genuinely independent second expansion (re-implemented in this test)
     // reproduces both the locked hash and the module's instance ids — proving the 96
     // are the REAL locked set, not a plausible hardcode.
