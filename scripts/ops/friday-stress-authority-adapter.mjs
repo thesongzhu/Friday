@@ -2,40 +2,45 @@
 /**
  * friday-stress-authority-adapter.mjs
  *
- * TEST-STRESS-AUTHORITY-ADAPTER-001 (R13 EXHAUSTIVE-STRESS) — the foundational
- * subject-side adapter. It is deliberately a PROVISIONAL adapter: it produces an
- * HONEST subject inventory whose sealed / unsealed status is stated explicitly,
- * and it NEVER fake-passes.
+ * TEST-STRESS-AUTHORITY-ADAPTER-001 (R13 EXHAUSTIVE-STRESS).
  *
- * The three proof-theater failures this design closes (advisor audit of #1614):
- *  - F1 (open-world): emits one subject per INDEPENDENTLY-DISCOVERED member
- *    (every route / message / screen / crate surface), NOT one collapsed row per
- *    coverage class. Reconciliation fails closed on unknown/ghost.
- *  - F2 (exact denominators): `source_sha` binds the COMPLETE candidate source
- *    tree (git tree identity + full working-tree manifest) — adding ANY source
- *    file flips it. `runtime_profile_digest` / `cross_platform_artifact_set_sha256`
- *    bind FULL declared content bytes (flagged provisional — declared, not
- *    runtime-observed / built binaries). `obligation_set_sha256` is RECOMPUTED
- *    from a supplied ledger or left UNSEALED (two-pass) — an arbitrary caller
- *    digest is NEVER accepted as a final component.
- *  - F3 (no self-issued authority): the generator emits authority OBSERVATIONS
- *    with `verdict:"UNREVIEWED"`. A PASS attestation is produced ONLY when a
- *    SEPARATELY-EXECUTED, content-addressed review statement (distinct reviewer
- *    identity from an allowlist, bound to the exact tuple + generator + subject
- *    set) is supplied and verified. Missing/invalid review => UNSEALED, not PASS.
+ * A PROVISIONAL-ONLY adapter. AGENT-SIDE IT CAN NEVER SELF-SEAL: there is no
+ * trusted GitHub-Actions OIDC identity and no operator signature available to a
+ * local caller, so every authority is authority=NONE and `seal_status` is always
+ * `PROVISIONAL_UNSEALED`. It emits an HONEST subject inventory whose provisional
+ * state is stated explicitly; it NEVER fake-passes and NEVER launders a
+ * caller-supplied identity into a PASS.
  *
- * Because a real run has no independent reviewer and no computed ledger, the
- * DEFAULT bundle is PROVISIONAL_UNSEALED and the R13 fixture validator correctly
- * REDs on it (`DISCOVERY_AUTHORITY_INVALID`, verdict != PASS). That is the honest
- * terminal state. A fully-supplied SEALED bundle (ledger + independent reviews)
- * passes the validator's subject section — proving the machinery, isolating the
- * genuinely-missing real inputs. A companion sidecar
- * (`FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json`) states every unsealed
- * reason. The sidecar is NOT one of the 10 validator-graded artifacts.
+ * ROOT FIXES for the round-2 recurrences:
+ *  - P0-3 (open-world / route identity): HTTP subjects carry METHOD+PATH
+ *    (+operationId) identity via a per-route-object lens — GET vs POST on the
+ *    same path are DISTINCT subjects (not the round-1 path-only collapse). That
+ *    lens is reconciled against a GENUINELY INDEPENDENT second lens — the
+ *    CI-enforced API route CONTRACT SNAPSHOT (built by the real runtime
+ *    registry). Definition-vs-contract drift populates `unknown_ids`/`ghost_ids`
+ *    (so the INDEPENDENT R13 validator's own reconciliation grades it), not a
+ *    regrouping of the generated list. Classes with no independent second lens
+ *    are marked provisional.
+ *  - P0-1 (no self-issued authority): there is NO caller-controllable sealed
+ *    path. `--review-statements`/`--reviewer-allowlist`/`--obligation-ledger` and
+ *    the local reviewer are REMOVED. Authority verdict is always `UNREVIEWED`;
+ *    the R13 validator therefore correctly REDs (`DISCOVERY_AUTHORITY_INVALID`).
+ *    Real sealing would require independently-verified OIDC token claims or an
+ *    operator signature — absent agent-side, so it never seals.
+ *  - P0-2 (global seal truth): `computeSealStatus` returns SEALED only when
+ *    EVERY tuple component AND every independently-derived gate is sealed AND a
+ *    trusted authority is present. Any unsealed component / provisional gate /
+ *    absent authority forces PROVISIONAL_UNSEALED. Agent-side this is always
+ *    PROVISIONAL for several independent reasons.
  *
- * Exit: 0 = an honest bundle was produced (sealed OR provisional_unsealed;
- * stdout states which); 3 = RED (missing/invalid source, drift, empty
- * enumerator, ledger digest mismatch).
+ * Only `source_sha` (COMPLETE candidate tree) and the consumed
+ * `verification_policy_set_sha256` are genuinely sealed; runtime/artifact are
+ * declared-content / schema-byte provisional; obligation is an explicit unsealed
+ * two-pass sentinel. A `FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json` sidecar
+ * (NOT a validator-graded artifact) names every unsealed reason.
+ *
+ * Exit: 0 = an honest PROVISIONAL bundle was produced; 3 = RED (missing/invalid
+ * source, drift, empty enumerator).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -58,13 +63,11 @@ import { buildVerificationPolicyManifest } from "./friday-stress-verification-po
 
 const SCHEMA_VERSION = "friday.endbar.stress-subject-inventory.r13.v1";
 const SEAL_STATUS_SCHEMA = "friday.stress.subject-inventory-seal-status.r13.v1";
-const REVIEW_SCHEMA = "friday.stress.authority-review.r13.v1";
 const GENERATOR_ID = "scripts/ops/friday-stress-authority-adapter.mjs";
 const ENUMERATORS_URL = new URL("./lib/friday-stress-static-enumerators.mjs", import.meta.url);
 const DEFAULT_PRODUCER_ID = "friday-stress-authority-adapter-agent";
-const UNREVIEWED = "UNREVIEWED";
+const AUTHORITY_NONE_REVIEWER = "NONE_NO_TRUSTED_OIDC_OR_OPERATOR_SIGNATURE";
 const SEAL_STATUS_FILE = "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json";
-const DIGEST_RE = /^[0-9a-f]{64}$/;
 
 class Red extends Error {
   constructor(code, detail = {}) {
@@ -100,115 +103,36 @@ function requireArray(value, code, detail) {
   return value;
 }
 
-// F1: fail closed if the subject set and the independently-grouped authority
-// (declared) set disagree in either direction.
-export function reconcile(subjectIds, declaredIds) {
+// P0-2 GLOBAL SEAL TRUTH: SEALED only when every tuple component AND every gate
+// is genuinely sealed AND a trusted authority is present. Any false => PROVISIONAL.
+export function computeSealStatus({ componentSeal, gatesSealed, authorityPresent }) {
+  const components = Object.values(componentSeal).every(Boolean);
+  const gates = Object.values(gatesSealed).every(Boolean);
+  return components && gates && authorityPresent === true ? "SEALED" : "PROVISIONAL_UNSEALED";
+}
+
+// Internal coverage invariant (subject set == authority-partition union). This is
+// structural, NOT the independent reconciliation (that is HTTP def-vs-contract).
+export function reconcileCoverage(subjectIds, authorityUnion) {
   const subjects = new Set(subjectIds);
-  const declared = new Set(declaredIds);
-  const unknown_ids = [...subjects].filter((id) => !declared.has(id)).sort();
-  const ghost_ids = [...declared].filter((id) => !subjects.has(id)).sort();
-  if (unknown_ids.length || ghost_ids.length) {
-    throw new Red("SUBJECT_RECONCILIATION_NONZERO", { unknown_ids, ghost_ids });
-  }
-  return { unknown_ids, ghost_ids };
+  const declared = new Set(authorityUnion);
+  const missing = [...subjects].filter((id) => !declared.has(id)).sort();
+  const extra = [...declared].filter((id) => !subjects.has(id)).sort();
+  if (missing.length || extra.length) throw new Red("COVERAGE_INVARIANT_BROKEN", { missing, extra });
+  return true;
 }
 
 export function recomputeSubjectSetSha(subjects) {
   return digestOf([...subjects].sort((a, b) => a.subject_id.localeCompare(b.subject_id)));
 }
-
 export function recomputeFinalTupleSha(components) {
   return digestOf(components);
 }
 
-// F2: bind obligation_set_sha256 by RECOMPUTING it from a supplied ledger, or
-// leave it explicitly UNSEALED. An arbitrary caller digest is never a component.
-function bindObligationSet({ obligationLedgerPath, subjectSetSha }) {
-  if (!obligationLedgerPath) {
-    return {
-      digest: digestOf({ unsealed: "OBLIGATION_LEDGER_TWO_PASS_NOT_YET_AUTHORED", subject_set_sha256: subjectSetSha }),
-      sealed: false,
-      basis: "unsealed_two_pass_sentinel",
-    };
-  }
-  let ledger;
-  try {
-    ledger = JSON.parse(fs.readFileSync(obligationLedgerPath));
-  } catch (error) {
-    throw new Red("OBLIGATION_LEDGER_UNREADABLE", { detail: error.code || String(error) });
-  }
-  if (!ledger || typeof ledger !== "object" || !Array.isArray(ledger.obligations) || !ledger.obligations.length) {
-    throw new Red("OBLIGATION_LEDGER_SHAPE");
-  }
-  const sorted = [...ledger.obligations].sort((a, b) =>
-    String(a.stress_obligation_id).localeCompare(String(b.stress_obligation_id)),
-  );
-  const recomputed = digestOf(sorted);
-  if (!DIGEST_RE.test(ledger.obligation_set_sha256) || ledger.obligation_set_sha256 !== recomputed) {
-    throw new Red("OBLIGATION_LEDGER_DIGEST_MISMATCH", { declared: ledger.obligation_set_sha256, recomputed });
-  }
-  return { digest: recomputed, sealed: true, basis: "recomputed_from_supplied_ledger" };
-}
-
-// F3: verify a SEPARATELY-EXECUTED review statement binds this exact output.
-function loadReviewStatements(dir) {
-  if (!dir) return [];
-  let entries;
-  try {
-    entries = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
-  } catch (error) {
-    throw new Red("REVIEW_STATEMENTS_DIR_UNREADABLE", { detail: error.code || String(error) });
-  }
-  const out = [];
-  for (const f of entries.sort()) {
-    let stmt;
-    try {
-      stmt = JSON.parse(fs.readFileSync(path.join(dir, f)));
-    } catch (error) {
-      throw new Red("REVIEW_STATEMENT_INVALID_JSON", { path: f, detail: String(error) });
-    }
-    out.push(stmt);
-  }
-  return out;
-}
-
-function sealAuthority({ stmt, kind, tuple, generatorSha, subjectSetSha, subjectIds, producerId, reviewerAllowlist }) {
-  if (!stmt) return { reviewed: false, reason: "no_review_statement" };
-  const expectSubjectIdsSha = digestOf([...subjectIds].sort());
-  if (
-    stmt.schema_version !== REVIEW_SCHEMA ||
-    typeof stmt.reviewer_id !== "string" ||
-    !reviewerAllowlist.includes(stmt.reviewer_id) ||
-    stmt.reviewer_id === producerId ||
-    stmt.producer_id !== producerId ||
-    stmt.source_kind !== kind ||
-    stmt.reviewed_generator_sha256 !== generatorSha ||
-    stmt.reviewed_final_release_candidate_tuple_sha256 !== tuple ||
-    stmt.reviewed_subject_set_sha256 !== subjectSetSha ||
-    stmt.reviewed_subject_ids_sha256 !== expectSubjectIdsSha ||
-    stmt.verdict !== "PASS"
-  ) {
-    return { reviewed: false, reason: "review_statement_rejected" };
-  }
-  return { reviewed: true, reviewer_id: stmt.reviewer_id };
-}
-
-/**
- * Pure build (no disk writes). Reads declared/real sources read-only.
- * Returns { inventory, sealStatus, rawFiles, components, tuple, subjectSetSha, seal_status }.
- */
-export function buildSubjectInventory({
-  sourcesRoot,
-  repoRoot,
-  obligationLedgerPath = null,
-  reviewStatementsDir = null,
-  reviewerAllowlist = [],
-  producerId = DEFAULT_PRODUCER_ID,
-}) {
+export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFAULT_PRODUCER_ID }) {
   if (typeof sourcesRoot !== "string" || !path.isAbsolute(sourcesRoot)) throw new Red("SOURCES_ROOT_MUST_BE_ABSOLUTE", { sourcesRoot });
   if (typeof repoRoot !== "string" || !path.isAbsolute(repoRoot)) throw new Red("REPO_ROOT_MUST_BE_ABSOLUTE", { repoRoot });
   if (typeof producerId !== "string" || !producerId) throw new Red("PRODUCER_ID_INVALID");
-  if (!Array.isArray(reviewerAllowlist)) throw new Red("REVIEWER_ALLOWLIST_INVALID");
 
   const { overlay, overlayRef } = readOverlayRef(sourcesRoot);
   const contract_revision = overlay.contract_revision;
@@ -218,8 +142,6 @@ export function buildSubjectInventory({
   const declaredClasses = requireArray(bundleContract.minimum_coverage_classes, "MINIMUM_COVERAGE_CLASSES_MISSING");
   const declaredKinds = requireArray(bundleContract.authority_sources, "AUTHORITY_SOURCES_MISSING");
   const declaredDimensions = requireArray(overlay.stress_dimensions, "STRESS_DIMENSIONS_MISSING");
-
-  // F1/SR4 born-current denominator drift.
   if (!setEqual(implementedCoverageClasses(), declaredClasses)) {
     throw new Red("COVERAGE_CLASS_DENOMINATOR_DRIFT", { implemented: implementedCoverageClasses(), declared: [...declaredClasses].sort() });
   }
@@ -237,34 +159,45 @@ export function buildSubjectInventory({
   if (profileIds.length === 0) throw new Red("RUNTIME_PROFILES_EMPTY");
   if (artifactRoleIds.length === 0) throw new Red("ARTIFACT_ROLES_EMPTY");
 
-  // F1 OPEN-WORLD: one subject per independently-discovered member.
+  // P0-3 OPEN-WORLD: one subject per discovered member (route×method identity).
   const ctx = { repoRoot, overlay, overlayRef };
   const rawFiles = [];
   const subjects = [];
   const subjectIdsByAuthority = new Map();
   const provisionalClasses = [];
+  const provisionalReconClasses = [];
+  let httpReconciliation = { available: false, clean: false, definition_only: [], contract_only: [], confirmed: 0, reason: "not_run" };
+
   for (const coverageClass of implementedCoverageClasses()) {
     const spec = CLASS_SPEC[coverageClass];
     const resolved = spec.discover(ctx);
     if (!Array.isArray(resolved.members) || resolved.members.length === 0) {
       throw new Red("ENUMERATOR_EMPTY", { coverage_class: coverageClass, authority: spec.authority });
     }
-    const isProvisional = resolved.resolution_basis !== "repo_static_regex_proxy";
-    if (isProvisional) provisionalClasses.push(coverageClass);
-    for (const member of unique(resolved.members)) {
+    if (resolved.resolution_basis.startsWith("overlay_declared")) provisionalClasses.push(coverageClass);
+    if (!resolved.reconciliation || resolved.reconciliation.available !== true) provisionalReconClasses.push(coverageClass);
+    if (coverageClass === "http") httpReconciliation = resolved.reconciliation;
+
+    const seenMembers = new Set();
+    for (const member of resolved.members) {
+      if (seenMembers.has(member.member_id)) continue;
+      seenMembers.add(member.member_id);
       const observation = {
         coverage_class: coverageClass,
         authority: spec.authority,
-        member,
+        member_id: member.member_id,
+        operation_id: member.operation_id ?? null,
         discovery_sealed: false,
         resolution_basis: resolved.resolution_basis,
+        independent_lens: member.independent_lens ?? null,
+        independent_lens_confirmed: member.independent_lens_confirmed === true,
         source_refs: [...(resolved.source_refs ?? [])].sort((a, b) => a.path.localeCompare(b.path)),
       };
       const content = `${JSON.stringify(observation, null, 2)}\n`;
       const contentSha = sha(Buffer.from(content));
       const rawPath = `raw/subject-observation-${contentSha}.json`;
       rawFiles.push({ path: rawPath, content });
-      const subjectId = `${coverageClass}::${member}`;
+      const subjectId = `${coverageClass}::${member.member_id}`;
       subjects.push({
         subject_id: subjectId,
         subject_kind: spec.subject_kind,
@@ -290,44 +223,41 @@ export function buildSubjectInventory({
 
   const sortedSubjects = [...subjects].sort((a, b) => a.subject_id.localeCompare(b.subject_id));
   const subject_set_sha256 = digestOf(sortedSubjects);
+  const subjectIdSet = new Set(sortedSubjects.map((s) => s.subject_id));
 
   // F2 denominators.
   const source = completeSourceManifest(repoRoot);
   if (source.file_count === 0) throw new Red("SOURCE_TREE_EMPTY");
-  const obligation = bindObligationSet({ obligationLedgerPath, subjectSetSha: subject_set_sha256 });
+  // obligation is ALWAYS an explicit unsealed two-pass sentinel (no caller ledger).
+  const obligationSentinel = digestOf({ unsealed: "OBLIGATION_LEDGER_TWO_PASS_NOT_YET_AUTHORED", subject_set_sha256 });
   const { verification_policy_set_sha256 } = buildVerificationPolicyManifest({ sourcesRoot });
   const components = {
     source_sha: source.digest,
     cross_platform_artifact_set_sha256: digestOf(artifact.value),
     runtime_profile_digest: digestOf(runtime),
-    obligation_set_sha256: obligation.digest,
+    obligation_set_sha256: obligationSentinel,
     verification_policy_set_sha256,
   };
   const tuple = digestOf(components);
 
-  // F3 authority attestations: OBSERVATIONS (UNREVIEWED) unless independently sealed.
+  // P0-1 authority = NONE: every attestation is UNREVIEWED (never self-issued PASS).
   const generatorSha = sha(fs.readFileSync(ENUMERATORS_URL));
-  const statements = loadReviewStatements(reviewStatementsDir);
-  const declaredUnion = [];
+  const authorityUnion = [];
   const authority_inputs = [];
   const authoritySeal = {};
   for (const kind of [...declaredKinds].sort()) {
     const owned = unique(subjectIdsByAuthority.get(kind) ?? []);
     if (owned.length === 0) throw new Red("AUTHORITY_WITHOUT_SUBJECTS", { kind });
-    declaredUnion.push(...owned);
-    const stmt = statements.find((s) => s && s.source_kind === kind);
-    const seal = sealAuthority({ stmt, kind, tuple, generatorSha, subjectSetSha: subject_set_sha256, subjectIds: owned, producerId, reviewerAllowlist });
-    const reviewerId = seal.reviewed ? seal.reviewer_id : UNREVIEWED;
-    const verdict = seal.reviewed ? "PASS" : "UNREVIEWED";
-    authoritySeal[kind] = seal.reviewed ? { reviewed: true, reviewer_id: reviewerId } : { reviewed: false, reason: seal.reason };
+    authorityUnion.push(...owned);
+    authoritySeal[kind] = { reviewed: false, basis: "authority_none_no_trusted_oidc_or_operator_signature" };
     const attestation = {
       source_kind: kind,
       final_release_candidate_tuple_sha256: tuple,
       subject_ids: owned,
       generator_sha256: generatorSha,
-      reviewer_id: reviewerId,
+      reviewer_id: AUTHORITY_NONE_REVIEWER,
       producer_id: producerId,
-      verdict,
+      verdict: "UNREVIEWED",
     };
     const content = `${JSON.stringify(attestation, null, 2)}\n`;
     const contentSha = sha(Buffer.from(content));
@@ -335,8 +265,13 @@ export function buildSubjectInventory({
     rawFiles.push({ path: rawPath, content });
     authority_inputs.push({ path: rawPath, sha256: contentSha, bytes: Buffer.byteLength(content), kind: "discovery_authority" });
   }
+  reconcileCoverage(sortedSubjects.map((s) => s.subject_id), authorityUnion);
 
-  const { unknown_ids, ghost_ids } = reconcile(sortedSubjects.map((s) => s.subject_id), declaredUnion);
+  // P0-3 INDEPENDENT reconciliation -> the validator-graded unknown/ghost.
+  // unknown = HTTP subjects not confirmed by the independent contract lens;
+  // ghost   = contract routes with no matching subject.
+  const unknown_ids = httpReconciliation.available ? httpReconciliation.definition_only.map((k) => `http::${k}`).filter((id) => subjectIdSet.has(id)).sort() : [];
+  const ghost_ids = httpReconciliation.available ? httpReconciliation.contract_only.map((k) => `contract-route::${k}`).sort() : [];
 
   const inventory = {
     schema_version: SCHEMA_VERSION,
@@ -351,18 +286,29 @@ export function buildSubjectInventory({
     ghost_ids,
   };
 
-  const allReviewed = Object.values(authoritySeal).every((a) => a.reviewed);
-  const seal_status = obligation.sealed && allReviewed ? "SEALED" : "PROVISIONAL_UNSEALED";
-  const unsealed_reasons = [];
-  if (!obligation.sealed) unsealed_reasons.push("obligation_ledger_two_pass_not_authored");
-  const unreviewedKinds = Object.entries(authoritySeal).filter(([, a]) => !a.reviewed).map(([k]) => k).sort();
-  if (unreviewedKinds.length) unsealed_reasons.push(`independent_review_absent:${unreviewedKinds.join(",")}`);
-  const provisional_caveats = [
-    "discovery_static_proxy_regex_or_declared_not_ast_or_registration",
-    "runtime_profile_declared_not_runtime_observed",
-    "artifact_set_declared_schema_bytes_not_built_binaries",
-    `provisional_placeholder_classes:${provisionalClasses.sort().join(",") || "none"}`,
-  ];
+  // P0-2 global seal truth.
+  const componentSeal = {
+    source_sha: true,
+    verification_policy_set_sha256: true,
+    cross_platform_artifact_set_sha256: false, // schema bytes, not built binaries
+    runtime_profile_digest: false, // declared, not runtime-observed
+    obligation_set_sha256: false, // two-pass, not authored
+  };
+  const gatesSealed = {
+    http_independent_reconciliation: httpReconciliation.available === true && httpReconciliation.clean === true,
+    all_class_reconciliation: provisionalReconClasses.length === 0,
+    discovery_ast_registration: false, // static proxy discovery, not AST/registration
+  };
+  const authorityPresent = false; // no trusted OIDC / operator signature agent-side
+  const seal_status = computeSealStatus({ componentSeal, gatesSealed, authorityPresent });
+
+  const unsealed_reasons = ["authority_absent_no_trusted_oidc_or_operator_signature", "obligation_ledger_two_pass_not_authored",
+    "artifact_set_declared_schema_bytes_not_built_binaries", "runtime_profile_declared_not_runtime_observed",
+    "discovery_static_proxy_not_ast_or_runtime_registration"];
+  if (!(httpReconciliation.available && httpReconciliation.clean)) {
+    unsealed_reasons.push(`http_definition_vs_contract_reconciliation_not_clean:${httpReconciliation.definition_only.length}_def_only/${httpReconciliation.contract_only.length}_contract_only`);
+  }
+  if (provisionalReconClasses.length) unsealed_reasons.push(`reconciliation_provisional_no_independent_lens:${provisionalReconClasses.sort().join(",")}`);
 
   const sealStatus = {
     schema_version: SEAL_STATUS_SCHEMA,
@@ -373,19 +319,32 @@ export function buildSubjectInventory({
     subject_set_sha256,
     subjects: sortedSubjects.length,
     seal_status,
+    can_ever_self_seal_agent_side: false,
     component_binding: {
       source_sha: { basis: source.basis, sealed: true, git_tree_oid: source.git_tree_oid, file_count: source.file_count },
-      cross_platform_artifact_set_sha256: { basis: "declared_required_artifact_schema_bytes", sealed: false, caveat: "schemas, not built cross-platform binaries" },
-      runtime_profile_digest: { basis: "declared_full_content", sealed: false, caveat: "declared runtime profile, not runtime-observed" },
-      obligation_set_sha256: { basis: obligation.basis, sealed: obligation.sealed, caveat: obligation.sealed ? null : "two-pass ledger not yet authored" },
       verification_policy_set_sha256: { basis: "consumed_from_TEST-STRESS-POLICY-BINDING-001", sealed: true }, // pragma: allowlist secret
+      cross_platform_artifact_set_sha256: { basis: "declared_required_artifact_schema_bytes", sealed: false },
+      runtime_profile_digest: { basis: "declared_full_content", sealed: false },
+      obligation_set_sha256: { basis: "unsealed_two_pass_sentinel", sealed: false },
+    },
+    independent_reconciliation: {
+      http: {
+        basis: "api_route_contract_snapshot",
+        available: httpReconciliation.available,
+        clean: httpReconciliation.clean,
+        confirmed: httpReconciliation.confirmed,
+        definition_only_count: httpReconciliation.definition_only.length,
+        contract_only_count: httpReconciliation.contract_only.length,
+        definition_only_sample: httpReconciliation.definition_only.slice(0, 10),
+      },
+      internal_coverage_invariant: { unknown: 0, ghost: 0, note: "subject==authority-partition union; structural, NOT the independent check" },
+      provisional_classes_no_independent_lens: provisionalReconClasses.sort(),
     },
     authority_seal: authoritySeal,
-    reconciliation: { unknown_count: unknown_ids.length, ghost_count: ghost_ids.length, independence: "provisional_proxy_pending_ast_registration_signal" },
-    provisional_caveats,
+    provisional_placeholder_classes: provisionalClasses.sort(),
     unsealed_reasons,
     does_not_prove:
-      "R13 GO, final authority, exhaustive completeness, real runtime/artifact/ledger reality, independent trust, or closure of any requirement, product, soak, device, execution or external leaf",
+      "does not close #45 / TEST-STRESS-AUTHORITY-ADAPTER-001 / R13 authority; agent-side the adapter is ALWAYS provisional (no trusted OIDC/operator authority). Not R13 GO, not final authority, not exhaustive completeness, not real runtime/artifact/ledger reality, not independent trust, not closure of any product, soak, device, execution or external leaf.",
   };
 
   return { inventory, sealStatus, rawFiles, components, tuple, subjectSetSha: subject_set_sha256, seal_status };
@@ -409,13 +368,10 @@ export function writeBundle(outDir, { inventory, sealStatus, rawFiles }) {
 }
 
 function parseArgs(argv) {
-  const args = { sourcesRoot: null, repoRoot: null, obligationLedgerPath: null, reviewStatementsDir: null, reviewerAllowlist: [], outDir: null, producerId: DEFAULT_PRODUCER_ID };
+  const args = { sourcesRoot: null, repoRoot: null, outDir: null, producerId: DEFAULT_PRODUCER_ID };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--sources-root") args.sourcesRoot = argv[(i += 1)];
     else if (argv[i] === "--repo-root") args.repoRoot = argv[(i += 1)];
-    else if (argv[i] === "--obligation-ledger") args.obligationLedgerPath = argv[(i += 1)];
-    else if (argv[i] === "--review-statements") args.reviewStatementsDir = argv[(i += 1)];
-    else if (argv[i] === "--reviewer-allowlist") args.reviewerAllowlist = (argv[(i += 1)] || "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (argv[i] === "--out-dir") args.outDir = argv[(i += 1)];
     else if (argv[i] === "--producer-id") args.producerId = argv[(i += 1)];
   }
@@ -428,17 +384,10 @@ function main() {
     console.error(JSON.stringify({ result: "RED", code, detail }));
     process.exit(3);
   };
-  if (!args.sourcesRoot) return fail("MISSING_SOURCES_ROOT", { usage: "--sources-root <dir> --repo-root <dir> [--obligation-ledger <file>] [--review-statements <dir> --reviewer-allowlist a,b] [--out-dir <dir>]" });
+  if (!args.sourcesRoot) return fail("MISSING_SOURCES_ROOT", { usage: "--sources-root <dir> --repo-root <dir> [--out-dir <dir>]" });
   if (!args.repoRoot) return fail("MISSING_REPO_ROOT");
   try {
-    const built = buildSubjectInventory({
-      sourcesRoot: path.resolve(args.sourcesRoot),
-      repoRoot: path.resolve(args.repoRoot),
-      obligationLedgerPath: args.obligationLedgerPath ? path.resolve(args.obligationLedgerPath) : null,
-      reviewStatementsDir: args.reviewStatementsDir ? path.resolve(args.reviewStatementsDir) : null,
-      reviewerAllowlist: args.reviewerAllowlist,
-      producerId: args.producerId,
-    });
+    const built = buildSubjectInventory({ sourcesRoot: path.resolve(args.sourcesRoot), repoRoot: path.resolve(args.repoRoot), producerId: args.producerId });
     if (recomputeSubjectSetSha(built.inventory.subjects) !== built.inventory.subject_set_sha256) return fail("SUBJECT_SET_SELF_RECOMPUTE_MISMATCH");
     if (recomputeFinalTupleSha(built.components) !== built.tuple) return fail("TUPLE_SELF_RECOMPUTE_MISMATCH");
     let outDir = null;
@@ -450,12 +399,19 @@ function main() {
       JSON.stringify({
         result: "OK",
         seal_status: built.seal_status,
+        can_ever_self_seal_agent_side: false,
         contract_revision: built.inventory.contract_revision,
         final_release_candidate_tuple_sha256: built.tuple,
         subject_set_sha256: built.inventory.subject_set_sha256,
         subjects: built.inventory.subjects.length,
-        authority_inputs: built.inventory.authority_inputs.length,
-        authorities_reviewed: Object.values(built.sealStatus.authority_seal).filter((a) => a.reviewed).length,
+        http_reconciliation: {
+          available: built.sealStatus.independent_reconciliation.http.available,
+          clean: built.sealStatus.independent_reconciliation.http.clean,
+          definition_only: built.sealStatus.independent_reconciliation.http.definition_only_count,
+          contract_only: built.sealStatus.independent_reconciliation.http.contract_only_count,
+        },
+        unknown_ids: built.inventory.unknown_ids.length,
+        ghost_ids: built.inventory.ghost_ids.length,
         unsealed_reasons: built.sealStatus.unsealed_reasons,
         out_dir: outDir,
         does_not_prove: built.sealStatus.does_not_prove,

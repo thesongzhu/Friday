@@ -4,24 +4,30 @@
  *
  * TEST-STRESS-AUTHORITY-ADAPTER-001 (R13 EXHAUSTIVE-STRESS) — SR1.
  *
- * OPEN-WORLD static discovery substrate. Each authority independently enumerates
- * EVERY release-required member it can observe (each route, message, screen,
- * crate surface) — NOT one collapsed row per coverage class. Every discovered
- * member becomes its own subject downstream.
+ * OPEN-WORLD static discovery with OPERATION identity. Each authority enumerates
+ * every release-required member it can observe; HTTP routes carry METHOD+PATH
+ * (+operationId) identity, so GET vs POST on the same path are DISTINCT subjects
+ * (round-2 defect: path-only dedup collapsed 600 route×method declarations to
+ * 512 paths — fixed here).
  *
- * HONESTY BOUNDARY (why this is a PROVISIONAL adapter):
- *  - Discovery here is static PROXY discovery (regex over real bytes, or a
- *    declared-overlay placeholder). It is NOT AST / build-graph / runtime route
- *    registration / artifact-manifest / mechanism-ledger discovery. Every member
- *    therefore carries `discovery_sealed: false` and a `resolution_basis`. A
- *    class with NO real discovery input yet emits an explicit "PROVISIONAL"
- *    member (never a silent one-per-class collapse).
- *  - `completeSourceManifest` binds the COMPLETE candidate source tree (git tree
- *    identity + full working-tree file manifest) — this is the one exact,
- *    genuinely SEALED binding. Adding ANY source file changes it.
+ * INDEPENDENT RECONCILIATION: the HTTP definition lens (per-route-object parse of
+ * `src/api/http/routes/*.ts`) is reconciled against a GENUINELY INDEPENDENT
+ * second lens — the CI-enforced API route CONTRACT SNAPSHOT
+ * (`test/contracts/api/__snapshots__/friday-api-route-contract.snapshot.test.ts.snap`),
+ * which is produced by the real runtime registry (`createFridayApiRuntime`), a
+ * separate code path. Definition-vs-contract drift is a real, non-circular
+ * signal (NOT two regroupings of the same generated list). Coverage classes with
+ * NO independent second source have reconciliation `available:false` and are
+ * marked provisional.
  *
- * Canonicalization mirrors the R13 evidence validator BYTE-FOR-BYTE
- * (`tools/verify-endbar-stress-evidence-r13.mjs:8-9`).
+ * HONESTY BOUNDARY: discovery is still static (regex per-route-object + declared
+ * overlay); it is not a full TypeScript AST, runtime route registration probe,
+ * built-artifact manifest, or mechanism ledger. The independent contract lens is
+ * the mitigation, not a substitute. `completeSourceManifest` binds the COMPLETE
+ * candidate tree (git tree oid + full working-tree manifest) — the one exact
+ * genuinely-sealed binding.
+ *
+ * Canonicalization mirrors the R13 validator BYTE-FOR-BYTE (verify-...-r13.mjs:8-9).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -41,18 +47,13 @@ export const canonical = (value) =>
 export const digestOf = (value) => sha(Buffer.from(canonical(value)));
 
 export const OVERLAY_REL = "FRIDAY_ENDBAR_R13_STRESS_OVERLAY.json";
+export const ROUTE_CONTRACT_SNAPSHOT_REL =
+  "test/contracts/api/__snapshots__/friday-api-route-contract.snapshot.test.ts.snap";
 const IGNORED_DIRS = new Set(["node_modules", ".git", "dist", "coverage", "target", ".turbo", ".next"]);
 
 export const LIFECYCLE_STATES = [
   "empty", "loading", "error+retry", "offline-stale-no-network",
   "permission-denied-fail-closed-503", "success",
-];
-
-export const CANONICAL_MECHANISMS = [
-  "intake_mission", "by_strength_routing", "execution_agent_run", "verification_proof",
-  "memory_confirm_recall", "approval_gate", "trust_grant_dial", "context_passport",
-  "audit_hash_chain", "token_metering", "skills", "provider_workspace", "channels", "voice",
-  "pairing_device_trust", "needs_me_activity", "crash_recovery", "smart_queue", "smart_watch",
 ];
 
 export function unique(values) {
@@ -105,8 +106,7 @@ function repoFiles(repoRoot, relDir, predicate) {
   return walk(path.join(repoRoot, relDir), predicate).map((abs) => ({ abs, rel: toRel(repoRoot, abs), ref: repoFileRef(repoRoot, abs) }));
 }
 
-// --- F2: COMPLETE source identity (git tree oid + full working-tree manifest). --
-// NOT a class-loci subset: adding ANY source file flips the digest.
+// --- F2/P0-2: COMPLETE source identity (git tree oid + full working manifest). --
 export function completeSourceManifest(repoRoot) {
   let gitTreeOid = null;
   try {
@@ -144,28 +144,82 @@ function extractRustEnumBody(source, enumName) {
   return "";
 }
 
-// --- Open-world member extractors. Each returns { members: string[], source_refs }.
-// F1 counterexample #2: order-independent — a `path:` written BEFORE `method:` is
-// still discovered (member identity is the route path itself).
-function httpRouteMembers(repoRoot, relDir) {
+// --- HTTP definition lens: per-route-object parse capturing METHOD + PATH +
+// operationId + source. Anchored on operationId (always the object's first
+// field), method/path extracted from the object window in ANY order. ----------
+export function httpRouteObjects(repoRoot, relDir = "src/api/http/routes") {
   const files = repoFiles(repoRoot, relDir, (f) => f.endsWith(".ts"));
-  const members = [];
-  for (const { abs } of files) {
-    for (const m of readText(abs).matchAll(/\bpath:\s*["'`]([^"'`]+)["'`]/g)) members.push(m[1]);
+  const routes = [];
+  const seen = new Set();
+  for (const { abs, rel } of files) {
+    const t = readText(abs);
+    const anchors = [...t.matchAll(/operationId:\s*["'`]([^"'`]+)["'`]/g)];
+    for (let i = 0; i < anchors.length; i += 1) {
+      const start = anchors[i].index;
+      const end = i + 1 < anchors.length ? anchors[i + 1].index : Math.min(t.length, start + 900);
+      const win = t.slice(start, end);
+      const method = win.match(/method:\s*["'`]([A-Z]+)["'`]/);
+      const routePath = win.match(/path:\s*["'`]([^"'`]+)["'`]/);
+      if (!method || !routePath) continue;
+      const operationId = anchors[i][1];
+      const key = `${method[1]} ${routePath[1]}`;
+      const dedupe = `${operationId}|${key}`;
+      if (seen.has(dedupe)) continue;
+      seen.add(dedupe);
+      routes.push({ operationId, method: method[1], path: routePath[1], key, source: `repo/${rel}` });
+    }
   }
-  return { members: unique(members), source_refs: files.map((f) => f.ref) };
+  routes.sort((a, b) => a.key.localeCompare(b.key) || a.operationId.localeCompare(b.operationId));
+  return { routes, source_refs: files.map((f) => f.ref) };
 }
 
-function httpRouteMembersFiltered(repoRoot, relDir, fileNameRe) {
-  const files = repoFiles(repoRoot, relDir, (f) => f.endsWith(".ts") && fileNameRe.test(path.basename(f)));
-  const members = [];
-  for (const { abs } of files) {
-    for (const m of readText(abs).matchAll(/\bpath:\s*["'`]([^"'`]+)["'`]/g)) members.push(m[1]);
+// --- Independent contract lens: the CI-enforced API route contract snapshot,
+// built by the real runtime registry — a separate code path from the route files.
+export function routeContractSnapshot(repoRoot) {
+  const abs = path.join(repoRoot, ROUTE_CONTRACT_SNAPSHOT_REL);
+  if (!fs.existsSync(abs)) return { available: false, routes: [], ref: null };
+  const snap = readText(abs);
+  const marker = "captures the full route surface";
+  const start = snap.indexOf(marker);
+  if (start < 0) return { available: false, routes: [], ref: null };
+  const next = snap.indexOf("exports[", start + marker.length);
+  const block = snap.slice(start, next < 0 ? undefined : next);
+  const routes = [];
+  const seen = new Set();
+  for (const m of block.matchAll(/\{\s*"authKind":[\s\S]*?\}/g)) {
+    const o = m[0];
+    const method = o.match(/"method":\s*"([A-Z]+)"/);
+    const routePath = o.match(/"path":\s*"([^"]+)"/);
+    const operationId = o.match(/"operationId":\s*"([^"]+)"/);
+    if (!method || !routePath) continue;
+    const key = `${method[1]} ${routePath[1]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    routes.push({ operationId: operationId ? operationId[1] : null, method: method[1], path: routePath[1], key });
   }
-  return { members: unique(members), source_refs: files.map((f) => f.ref) };
+  return { available: true, routes, ref: repoFileRef(repoRoot, abs) };
 }
 
-function wsMessageMembers(repoRoot) {
+// --- P0-3: reconcile the definition lens against the independent contract lens.
+export function reconcileHttpRoutes(defRoutes, contract) {
+  if (!contract.available) {
+    return { available: false, clean: false, reason: "no_independent_contract_lens", definition_only: [], contract_only: [], confirmed: 0 };
+  }
+  const defKeys = new Set(defRoutes.map((r) => r.key));
+  const conKeys = new Set(contract.routes.map((r) => r.key));
+  const definition_only = [...defKeys].filter((k) => !conKeys.has(k)).sort();
+  const contract_only = [...conKeys].filter((k) => !defKeys.has(k)).sort();
+  return {
+    available: true,
+    clean: definition_only.length === 0 && contract_only.length === 0,
+    definition_only,
+    contract_only,
+    confirmed: [...defKeys].filter((k) => conKeys.has(k)).length,
+  };
+}
+
+// --- Other open-world lenses (member identity is already unique per member). ---
+export function wsMessageMembers(repoRoot) {
   const rel = "rust-core/crates/friday-protocol/src/lib.rs";
   const abs = path.join(repoRoot, rel);
   if (!fs.existsSync(abs)) return { members: [], source_refs: [] };
@@ -178,7 +232,7 @@ function wsMessageMembers(repoRoot) {
   return { members: unique(members), source_refs: [repoFileRef(repoRoot, abs)] };
 }
 
-function uiRouteMembers(repoRoot) {
+export function uiRouteMembers(repoRoot) {
   const rel = "ui/src/router.tsx";
   const abs = path.join(repoRoot, rel);
   if (!fs.existsSync(abs)) return { members: [], source_refs: [] };
@@ -189,65 +243,108 @@ function uiRouteMembers(repoRoot) {
   return { members: unique(routes), source_refs: [repoFileRef(repoRoot, abs)] };
 }
 
-function nativeScreenMembers(repoRoot, relDir, exts) {
+export function nativeScreenMembers(repoRoot, relDir, exts) {
   const files = repoFiles(repoRoot, relDir, (f) => exts.some((e) => f.endsWith(e)));
   return { members: unique(files.map((f) => path.basename(f.abs))), source_refs: files.map((f) => f.ref) };
 }
 
-function crateFileMembers(repoRoot, crateRel) {
+export function crateFileMembers(repoRoot, crateRel) {
   const files = repoFiles(repoRoot, crateRel, (f) => f.endsWith(".rs"));
   return { members: unique(files.map((f) => f.rel)), source_refs: files.map((f) => f.ref) };
 }
 
-// A declared class with NO real discovery input yet: emit an EXPLICIT provisional
-// member (never a silent collapse), evidenced by the overlay bytes.
-function provisionalDeclared(coverageClass) {
-  return (ctx) => ({
-    members: [`PROVISIONAL:${coverageClass}`],
-    source_refs: [ctx.overlayRef],
-    resolution_basis: "overlay_declared_placeholder_no_real_discovery_input",
-  });
+function overlayRefEntry(ctx) {
+  return ctx.overlayRef;
 }
 
-function repoStatic(fn) {
-  return (ctx) => {
-    const { members, source_refs } = fn(ctx.repoRoot);
-    return { members, source_refs, resolution_basis: "repo_static_regex_proxy" };
+// coverage_class -> spec. `discover(ctx)` returns { members: [{member_id, extra}],
+// source_refs, resolution_basis, reconciliation }. All discovery is a static
+// proxy (never structurally sealed); `reconciliation.available` is true only for
+// classes with a genuinely independent second lens (HTTP contract snapshot).
+export const CLASS_SPEC = {
+  http: {
+    authority: "S_static", subject_kind: "node", risk: "high", platform_ids: ["hub"], mechanism_ids: [], control_ids: [],
+    discover: (ctx) => {
+      const def = httpRouteObjects(ctx.repoRoot);
+      const contract = routeContractSnapshot(ctx.repoRoot);
+      const rec = reconcileHttpRoutes(def.routes, contract);
+      const members = def.routes.map((r) => ({
+        member_id: r.key, // METHOD PATH — GET vs POST are distinct
+        operation_id: r.operationId,
+        independent_lens: "api_route_contract_snapshot",
+        independent_lens_confirmed: contract.available ? contract.routes.some((c) => c.key === r.key) : false,
+      }));
+      const source_refs = [...def.source_refs, ...(contract.ref ? [contract.ref] : [])];
+      return { members, source_refs, resolution_basis: "repo_route_object_lens_reconciled_vs_contract_snapshot", reconciliation: rec };
+    },
+  },
+  websocket_sse: repoStaticClass("S_static", "node", "high", ["hub"], (r) => wsMessageMembers(r)),
+  cli_ipc_ffi: repoStaticClass("S_static", "node", "medium", ["hub"], (r) => crateFileMembers(r, "rust-core/crates/friday-ffi")),
+  database_storage: repoStaticClass("S_static", "node", "critical", ["hub"], (r) => crateFileMembers(r, "rust-core/crates/friday-storage")),
+  remote_network: repoStaticClass("S_static", "edge", "high", ["hub"], (r) => crateFileMembers(r, "rust-core/crates/friday-system-remote")),
+
+  exec_sandbox: repoStaticClass("D_runtime", "node", "high", ["hub"], (r) => crateFileMembers(r, "rust-core/crates/friday-core"), ["execution_agent_run"]),
+  job_timer_os_event: provisionalClass("D_runtime", "os_entry", "medium", ["hub"], "job_timer_os_event", ["needs_me_activity", "smart_watch"]),
+
+  install_release: provisionalClass("A_artifact", "release_path", "critical", ["desktop", "ios", "android", "ipad"], "install_release"),
+
+  provider: repoStaticClass("L_ledger", "edge", "critical", ["hub"], (r) => crateFileMembers(r, "rust-core/crates/friday-providers"), ["provider_workspace"]),
+  telegram: { authority: "L_ledger", subject_kind: "edge", risk: "medium", platform_ids: ["hub"], mechanism_ids: ["channels"], control_ids: [], discover: httpFilteredClass(/channel/i) },
+  plugin_skill_mcp: provisionalClass("L_ledger", "node", "medium", ["hub"], "plugin_skill_mcp", ["skills"]),
+  voice: repoStaticClass("L_ledger", "control", "high", ["ios", "android"], (r) => crateFileMembers(r, "rust-core/crates/friday-tts"), ["voice"], ["control:voice"]),
+  data_lifecycle: provisionalClass("L_ledger", "lifecycle", "critical", ["hub"], "data_lifecycle", ["memory_confirm_recall", "crash_recovery"]),
+
+  desktop_ui: repoStaticClass("S_ui", "control", "high", ["desktop"], (r) => uiRouteMembers(r), [], ["control:desktop_route"]),
+  ios_ui: repoStaticClass("S_ui", "control", "high", ["ios"], (r) => nativeScreenMembers(r, "apps/friday-ios", [".swift"]), [], ["control:ios_screen"]),
+  android_ui: repoStaticClass("S_ui", "control", "high", ["android"], (r) => nativeScreenMembers(r, "apps/friday-android", [".kt", ".java", ".xml"]), [], ["control:android_screen"]),
+  ipad_ui: provisionalClass("S_ui", "control", "medium", ["ipad"], "ipad_ui", [], ["control:ipad_surface"]),
+
+  share: provisionalClass("R_ui", "control", "high", ["ios", "android"], "share", [], ["control:share_sheet"]),
+  notification_deeplink: provisionalClass("R_ui", "transition", "medium", ["ios", "android"], "notification_deeplink", [], ["control:deeplink"]),
+
+  approval: provisionalClass("C_ui", "transition", "critical", ["desktop", "ios", "android"], "approval", ["approval_gate"], ["control:approval"]),
+  auth_owner: { authority: "C_ui", subject_kind: "transition", risk: "critical", platform_ids: ["desktop", "hub"], mechanism_ids: ["trust_grant_dial"], control_ids: ["control:owner_auth"], discover: httpFilteredClass(/auth|owner/i) },
+};
+
+function repoStaticClass(authority, subject_kind, risk, platform_ids, fn, mechanism_ids = [], control_ids = []) {
+  return {
+    authority, subject_kind, risk, platform_ids, mechanism_ids, control_ids,
+    discover: (ctx) => {
+      const { members, source_refs } = fn(ctx.repoRoot);
+      return {
+        members: members.map((m) => ({ member_id: m, independent_lens: null, independent_lens_confirmed: false })),
+        source_refs,
+        resolution_basis: "repo_static_regex_proxy",
+        reconciliation: { available: false, clean: false, reason: "no_independent_second_lens", definition_only: [], contract_only: [], confirmed: 0 },
+      };
+    },
   };
 }
 
-// coverage_class -> { authority, subject_kind, risk, platform_ids, mechanism_ids,
-// control_ids, discover }. Every discover() is a static PROXY (discovery is
-// never sealed here — see HONESTY BOUNDARY above).
-export const CLASS_SPEC = {
-  http: { authority: "S_static", subject_kind: "node", risk: "high", platform_ids: ["hub"], mechanism_ids: [], control_ids: [], discover: repoStatic((r) => httpRouteMembers(r, "src/api/http/routes")) },
-  websocket_sse: { authority: "S_static", subject_kind: "node", risk: "high", platform_ids: ["hub"], mechanism_ids: [], control_ids: [], discover: repoStatic((r) => wsMessageMembers(r)) },
-  cli_ipc_ffi: { authority: "S_static", subject_kind: "node", risk: "medium", platform_ids: ["hub"], mechanism_ids: [], control_ids: [], discover: repoStatic((r) => crateFileMembers(r, "rust-core/crates/friday-ffi")) },
-  database_storage: { authority: "S_static", subject_kind: "node", risk: "critical", platform_ids: ["hub"], mechanism_ids: [], control_ids: [], discover: repoStatic((r) => crateFileMembers(r, "rust-core/crates/friday-storage")) },
-  remote_network: { authority: "S_static", subject_kind: "edge", risk: "high", platform_ids: ["hub"], mechanism_ids: [], control_ids: [], discover: repoStatic((r) => crateFileMembers(r, "rust-core/crates/friday-system-remote")) },
+function httpFilteredClass(fileNameRe) {
+  return (ctx) => {
+    const { routes, source_refs } = httpRouteObjects(ctx.repoRoot);
+    const filtered = routes.filter((r) => fileNameRe.test(path.basename(r.source)));
+    return {
+      members: filtered.map((r) => ({ member_id: r.key, operation_id: r.operationId, independent_lens: null, independent_lens_confirmed: false })),
+      source_refs,
+      resolution_basis: "repo_route_object_lens_filtered_provisional",
+      reconciliation: { available: false, clean: false, reason: "filtered_subset_no_independent_lens", definition_only: [], contract_only: [], confirmed: 0 },
+    };
+  };
+}
 
-  exec_sandbox: { authority: "D_runtime", subject_kind: "node", risk: "high", platform_ids: ["hub"], mechanism_ids: ["execution_agent_run"], control_ids: [], discover: repoStatic((r) => crateFileMembers(r, "rust-core/crates/friday-core")) },
-  job_timer_os_event: { authority: "D_runtime", subject_kind: "os_entry", risk: "medium", platform_ids: ["hub"], mechanism_ids: ["needs_me_activity", "smart_watch"], control_ids: [], discover: provisionalDeclared("job_timer_os_event") },
-
-  install_release: { authority: "A_artifact", subject_kind: "release_path", risk: "critical", platform_ids: ["desktop", "ios", "android", "ipad"], mechanism_ids: [], control_ids: [], discover: provisionalDeclared("install_release") },
-
-  provider: { authority: "L_ledger", subject_kind: "edge", risk: "critical", platform_ids: ["hub"], mechanism_ids: ["provider_workspace"], control_ids: [], discover: repoStatic((r) => crateFileMembers(r, "rust-core/crates/friday-providers")) },
-  telegram: { authority: "L_ledger", subject_kind: "edge", risk: "medium", platform_ids: ["hub"], mechanism_ids: ["channels"], control_ids: [], discover: repoStatic((r) => httpRouteMembersFiltered(r, "src/api/http/routes", /channel/i)) },
-  plugin_skill_mcp: { authority: "L_ledger", subject_kind: "node", risk: "medium", platform_ids: ["hub"], mechanism_ids: ["skills"], control_ids: [], discover: provisionalDeclared("plugin_skill_mcp") },
-  voice: { authority: "L_ledger", subject_kind: "control", risk: "high", platform_ids: ["ios", "android"], mechanism_ids: ["voice"], control_ids: ["control:voice"], discover: repoStatic((r) => crateFileMembers(r, "rust-core/crates/friday-tts")) },
-  data_lifecycle: { authority: "L_ledger", subject_kind: "lifecycle", risk: "critical", platform_ids: ["hub"], mechanism_ids: ["memory_confirm_recall", "crash_recovery"], control_ids: [], discover: provisionalDeclared("data_lifecycle") },
-
-  desktop_ui: { authority: "S_ui", subject_kind: "control", risk: "high", platform_ids: ["desktop"], mechanism_ids: [], control_ids: ["control:desktop_route"], discover: repoStatic((r) => uiRouteMembers(r)) },
-  ios_ui: { authority: "S_ui", subject_kind: "control", risk: "high", platform_ids: ["ios"], mechanism_ids: [], control_ids: ["control:ios_screen"], discover: repoStatic((r) => nativeScreenMembers(r, "apps/friday-ios", [".swift"])) },
-  android_ui: { authority: "S_ui", subject_kind: "control", risk: "high", platform_ids: ["android"], mechanism_ids: [], control_ids: ["control:android_screen"], discover: repoStatic((r) => nativeScreenMembers(r, "apps/friday-android", [".kt", ".java", ".xml"])) },
-  ipad_ui: { authority: "S_ui", subject_kind: "control", risk: "medium", platform_ids: ["ipad"], mechanism_ids: [], control_ids: ["control:ipad_surface"], discover: provisionalDeclared("ipad_ui") },
-
-  share: { authority: "R_ui", subject_kind: "control", risk: "high", platform_ids: ["ios", "android"], mechanism_ids: [], control_ids: ["control:share_sheet"], discover: provisionalDeclared("share") },
-  notification_deeplink: { authority: "R_ui", subject_kind: "transition", risk: "medium", platform_ids: ["ios", "android"], mechanism_ids: [], control_ids: ["control:deeplink"], discover: provisionalDeclared("notification_deeplink") },
-
-  approval: { authority: "C_ui", subject_kind: "transition", risk: "critical", platform_ids: ["desktop", "ios", "android"], mechanism_ids: ["approval_gate"], control_ids: ["control:approval"], discover: provisionalDeclared("approval") },
-  auth_owner: { authority: "C_ui", subject_kind: "transition", risk: "critical", platform_ids: ["desktop", "hub"], mechanism_ids: ["trust_grant_dial"], control_ids: ["control:owner_auth"], discover: repoStatic((r) => httpRouteMembersFiltered(r, "src/api/http/routes", /auth|owner/i)) },
-};
+function provisionalClass(authority, subject_kind, risk, platform_ids, coverageClass, mechanism_ids = [], control_ids = []) {
+  return {
+    authority, subject_kind, risk, platform_ids, mechanism_ids, control_ids,
+    discover: (ctx) => ({
+      members: [{ member_id: `PROVISIONAL:${coverageClass}`, independent_lens: null, independent_lens_confirmed: false }],
+      source_refs: [overlayRefEntry(ctx)],
+      resolution_basis: "overlay_declared_placeholder_no_real_discovery_input",
+      reconciliation: { available: false, clean: false, reason: "no_real_discovery_input", definition_only: [], contract_only: [], confirmed: 0 },
+    }),
+  };
+}
 
 export function implementedCoverageClasses() {
   return Object.keys(CLASS_SPEC).sort();
@@ -257,8 +354,7 @@ export function implementedAuthorityKinds() {
   return unique(Object.values(CLASS_SPEC).map((s) => s.authority));
 }
 
-// --- F2: runtime profile bound to FULL declared content (values, not key names).
-// Declared, NOT runtime-observed -> provisional.
+// --- F2: runtime profile bound to FULL declared content (declared, not observed). ---
 export function runtimeProfileValue(overlay) {
   return {
     platform_scope: overlay?.platform_scope ?? null,
@@ -268,8 +364,7 @@ export function runtimeProfileValue(overlay) {
   };
 }
 
-// --- F2: artifact set bound to the ACTUAL required-artifact schema BYTES.
-// Schemas, NOT built binaries -> provisional.
+// --- F2: artifact set bound to ACTUAL required-artifact schema BYTES (not binaries). ---
 export function artifactSchemaValue(overlay, sourcesRoot) {
   const arts = Array.isArray(overlay?.required_runtime_artifacts) ? overlay.required_runtime_artifacts : [];
   const schemas = [];
