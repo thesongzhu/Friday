@@ -154,13 +154,20 @@ export interface FridayLargeWriteVerdict {
 // ─── Fail-closed helpers ───
 
 /**
- * A finite, non-negative byte count within the exact-integer range. Rejects NaN,
- * ±Infinity, negative, or a magnitude beyond `MAX_SAFE_INTEGER` (where integer
- * arithmetic silently loses precision) — the choke-point defeating the "integer
- * overflow" and "unknown" negative controls.
+ * A valid byte COUNT: a non-negative SAFE INTEGER. Byte counts are DISCRETE — a
+ * fractional count is physically impossible (`fs.statfsSync` always returns whole
+ * bytes), so a non-integer is an untrustworthy/impossible reading and is REJECTED
+ * (same fail-closed class as `capacity=0` / `free>capacity`). Also rejects NaN,
+ * ±Infinity, negative, and any magnitude beyond `MAX_SAFE_INTEGER` (where integer
+ * arithmetic silently loses precision).
+ *
+ * NOTE: this predicate is for byte COUNTS only (free/capacity/peak_temp/
+ * persistent_growth). The growth RATE (bytes/day) is a CONTINUOUS quantity and is
+ * validated separately (finite && >= 0 + overflow guard) — it may legitimately be
+ * fractional (e.g. 0.5 GiB/day) and MUST NOT be integer-restricted.
  */
 function isValidByteCount(x: unknown): x is number {
-  return typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= Number.MAX_SAFE_INTEGER;
+  return typeof x === "number" && Number.isInteger(x) && x >= 0 && x <= Number.MAX_SAFE_INTEGER;
 }
 
 /** Checked addition: `null` on any non-finite/negative term or overflow past MAX_SAFE_INTEGER. */

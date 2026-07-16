@@ -32,7 +32,8 @@ const BYTE_VALUES: Array<number | null> = [
   -1 * GIB,
   0,
   1,
-  1.5, // non-integer → still a valid byte magnitude
+  1.5, // non-integer byte COUNT → physically impossible → INVALID (fail-closed)
+  5 * GIB + 0.5, // another non-integer byte COUNT → INVALID
   5 * GIB, // reserve==5 GiB boundary (for 100 GiB capacity)
   10 * GIB - 1,
   10 * GIB, // floor abs boundary; reserve==10 GiB boundary (for 200 GiB capacity)
@@ -53,8 +54,11 @@ const GROWTH_VALUES: Array<number | null | undefined> = [
   -1,
   0, // measured no-growth (KNOWN)
   1,
+  1.5, // NON-INTEGER growth RATE — CONTINUOUS, legitimately valid (NOT integer-restricted)
   1024,
   1 * GIB,
+  (100 * GIB) / 10.5, // non-integer rate → days ≈ 10.5 (beyond 7d)
+  (100 * GIB) / 3.5, // non-integer rate → days ≈ 3.5 (within 7d)
   10 * GIB,
   Number.MAX_SAFE_INTEGER,
   Number.MIN_VALUE, // sub-normal rate → free/rate overflow → unobservable
@@ -67,6 +71,7 @@ const LW_BYTE: Array<number | null> = [
   Number.POSITIVE_INFINITY,
   -1,
   0,
+  5 * GIB + 0.5, // non-integer byte COUNT → INVALID (fail-closed for non-escape)
   5 * GIB,
   10 * GIB,
   100 * GIB,
@@ -269,5 +274,90 @@ describe("Advisor round-4 counterexamples (large-write relationship validity) �
     expect(v.safe).toBe(false);
     expect(v.failClosed).toBe(true);
     expect(oracleEvaluateLargeWrite(200 * GIB, 100 * GIB, 0, 0, false).safe).toBe(false);
+  });
+});
+
+describe("Non-integer byte COUNT is fail-closed (impossible reading); growth RATE stays continuous", () => {
+  const nonInt = 5 * GIB + 0.5; // a fractional byte count (physically impossible)
+
+  it("(a) RED→green: non-integer byte COUNT in a NON-escape large-write → UNSAFE, fail-closed", () => {
+    // Each count position, one at a time, with the others valid integers.
+    const cases = [
+      { currentFreeBytes: nonInt, totalCapacityBytes: 100 * GIB, estimatedPeakTempBytes: 0, estimatedPersistentGrowthBytes: 0 },
+      { currentFreeBytes: 50 * GIB, totalCapacityBytes: 100 * GIB + 0.5, estimatedPeakTempBytes: 0, estimatedPersistentGrowthBytes: 0 },
+      { currentFreeBytes: 50 * GIB, totalCapacityBytes: 100 * GIB, estimatedPeakTempBytes: 1.5, estimatedPersistentGrowthBytes: 0 },
+      { currentFreeBytes: 50 * GIB, totalCapacityBytes: 100 * GIB, estimatedPeakTempBytes: 0, estimatedPersistentGrowthBytes: 2.25 },
+    ];
+    for (const c of cases) {
+      const v = evaluateLargeWriteSafety(c);
+      expect(v.safe, JSON.stringify(c)).toBe(false);
+      expect(v.failClosed, JSON.stringify(c)).toBe(true);
+      // oracle agrees:
+      expect(
+        oracleEvaluateLargeWrite(
+          c.currentFreeBytes,
+          c.totalCapacityBytes,
+          c.estimatedPeakTempBytes,
+          c.estimatedPersistentGrowthBytes,
+          false,
+        ).safe,
+      ).toBe(false);
+    }
+  });
+
+  it("(b) RED→green: non-integer byte COUNT in the warning classifier → unknown / healthy=false", () => {
+    const freeFrac = classifyDiskGrowth({ freeBytes: 50 * GIB + 0.5, totalCapacityBytes: 100 * GIB, growthRateBytesPerDay: 0 });
+    expect(freeFrac.status).toBe("unknown");
+    expect(freeFrac.status === "ok").toBe(false); // healthy=false
+    expect(freeFrac.failClosed).toBe(true);
+
+    const capFrac = classifyDiskGrowth({ freeBytes: 50 * GIB, totalCapacityBytes: 100 * GIB + 0.5, growthRateBytesPerDay: 0 });
+    expect(capFrac.status).toBe("unknown");
+    expect(capFrac.failClosed).toBe(true);
+
+    // oracle agrees on both:
+    expect(oracleClassifyDiskGrowth(50 * GIB + 0.5, 100 * GIB, 0).status).toBe("unknown");
+    expect(oracleClassifyDiskGrowth(50 * GIB, 100 * GIB + 0.5, 0).status).toBe("unknown");
+  });
+
+  it("(c) NO-DEGRADE: an ESCAPE op with a non-integer byte count is STILL safe (reads/deletes unaffected)", () => {
+    const v = evaluateLargeWriteSafety({
+      currentFreeBytes: nonInt,
+      totalCapacityBytes: 100 * GIB + 0.5,
+      estimatedPeakTempBytes: 1.5,
+      estimatedPersistentGrowthBytes: 2.25,
+      isEscapeOperation: true,
+    });
+    expect(v.safe).toBe(true);
+    expect(v.escapeOperation).toBe(true);
+    expect(oracleEvaluateLargeWrite(nonInt, 100 * GIB + 0.5, 1.5, 2.25, true).safe).toBe(true);
+  });
+
+  it("(d) NO-DEGRADE: a NON-INTEGER growth RATE with valid integer counts still computes the correct verdict", () => {
+    // Rate is CONTINUOUS: a fractional bytes/day must NOT be rejected.
+    const free = 100 * GIB;
+    const capacity = 200 * GIB; // above the 20 GiB floor → only the exhaustion branch decides
+
+    const beyond = classifyDiskGrowth({ freeBytes: free, totalCapacityBytes: capacity, growthRateBytesPerDay: free / 10.5 });
+    expect(beyond.growthBranch).toBe("known"); // rate ACCEPTED, not rejected
+    expect(beyond.projectedExhaustionDays).toBeCloseTo(10.5, 6);
+    expect(beyond.withinExhaustionWindow).toBe(false);
+    expect(beyond.status).toBe("ok");
+
+    const within = classifyDiskGrowth({ freeBytes: free, totalCapacityBytes: capacity, growthRateBytesPerDay: free / 3.5 });
+    expect(within.growthBranch).toBe("known");
+    expect(within.projectedExhaustionDays).toBeCloseTo(3.5, 6);
+    expect(within.withinExhaustionWindow).toBe(true);
+    expect(within.status).toBe("warn");
+
+    // A directly-fractional small rate (0.5 B/day) is also accepted (never exhausts within 7d here).
+    const tiny = classifyDiskGrowth({ freeBytes: free, totalCapacityBytes: capacity, growthRateBytesPerDay: 0.5 });
+    expect(tiny.growthBranch).toBe("known");
+    expect(tiny.status).toBe("ok");
+
+    // oracle agrees:
+    expect(oracleClassifyDiskGrowth(free, capacity, free / 3.5).status).toBe("warn");
+    expect(oracleClassifyDiskGrowth(free, capacity, free / 10.5).status).toBe("ok");
+    expect(oracleClassifyDiskGrowth(free, capacity, 0.5).status).toBe("ok");
   });
 });

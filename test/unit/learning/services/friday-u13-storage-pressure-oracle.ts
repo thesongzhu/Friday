@@ -27,10 +27,22 @@ const RESERVE_ABS = 5 * GIB;
 const RESERVE_FRACTION = 0.05;
 
 /**
- * A finite, non-negative byte count within the exact-integer range. This is a spec
- * primitive ("a trustworthy byte magnitude"), independently stated here.
+ * A valid byte COUNT: a non-negative SAFE INTEGER. Byte counts are discrete — a
+ * fractional count is a physically-impossible/untrustworthy reading → invalid
+ * (same fail-closed class as capacity=0 / free>capacity). This is a spec primitive
+ * ("a trustworthy byte magnitude"), independently stated here. The growth RATE
+ * (bytes/day) is CONTINUOUS and validated separately below — never integer-restricted.
  */
 function isValidByte(x: unknown): x is number {
+  return typeof x === "number" && Number.isInteger(x) && x >= 0 && x <= Number.MAX_SAFE_INTEGER;
+}
+
+/**
+ * A valid growth RATE (bytes/day): CONTINUOUS, so finite && non-negative within the
+ * safe range — deliberately NOT integer-restricted (a fractional rate like
+ * 0.5 GiB/day is legitimate). Mirrors production's inline rate validity.
+ */
+function isValidRate(x: unknown): x is number {
   return typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= Number.MAX_SAFE_INTEGER;
 }
 
@@ -72,8 +84,8 @@ export function oracleClassifyDiskGrowth(
   let projectedExhaustionDays: number | null = null;
   let withinExhaustionWindow: boolean | null = null;
   let growthUnknown: boolean;
-  if (!isValidByte(growth)) {
-    growthUnknown = true; // null/NaN/±Inf/negative/overflow → unobservable
+  if (!isValidRate(growth)) {
+    growthUnknown = true; // null/NaN/±Inf/negative/overflow → unobservable (RATE is continuous)
   } else if (growth === 0) {
     growthUnknown = false; // measured no-growth → never exhausts
     withinExhaustionWindow = false;
