@@ -5,10 +5,13 @@
  * production is the definition of a "valid byte count" (a spec primitive, not a
  * decision branch).
  *
- * The cross-check tests run the COMPLETE input domain through BOTH production and
- * this oracle and assert they agree, so a production branching bug the oracle does
- * NOT share is caught (rather than the tests grading production against a copy of
- * its own logic).
+ * The cross-check tests run CURATED BOUNDARY GRIDS (non-divisible capacities,
+ * threshold-triples t−1/t/t+1, special/degenerate values) plus DETERMINISTIC
+ * SEEDED RANDOM SAMPLING (fixed seeds, N iterations) through BOTH production and
+ * this oracle and assert they agree — strong boundary + mutation-sensitivity
+ * coverage, NOT exhaustive execution of the (infinite) full input domain. The point
+ * is that a production branching bug the oracle does NOT share is caught (rather
+ * than the tests grading production against a copy of its own logic).
  *
  * U13 spec (verbatim intent):
  *   Warn when free space is below max(10 GiB, 10% capacity) OR projected exhaustion

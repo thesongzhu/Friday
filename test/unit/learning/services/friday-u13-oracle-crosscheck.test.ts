@@ -12,17 +12,18 @@ import {
 /**
  * RETENTION-R3b — root-cause deliverable (advisor round-4). BOTH U13 evaluators are
  * graded by an INDEPENDENT clean-room oracle (friday-u13-storage-pressure-oracle.ts),
- * not by duplicating production's own branching. The COMPLETE input domain is run
- * through production and the oracle and asserted to agree — so a production bug the
- * oracle does not share is caught. A grid over the boundary/degenerate values plus a
- * deterministically-seeded random sample make the cross-check exhaustive over the
- * domain rather than a couple of hand-picked cases.
+ * not by duplicating production's own branching. CURATED BOUNDARY GRIDS (non-divisible
+ * capacities, threshold-triples t−1/t/t+1, special/degenerate values) plus a
+ * DETERMINISTIC SEEDED RANDOM SAMPLE (fixed seeds, N iterations) are run through
+ * production and the oracle and asserted to agree — so a production bug the oracle
+ * does not share is caught. This is strong BOUNDARY + MUTATION-SENSITIVITY coverage,
+ * NOT exhaustive execution of the (infinite) full input domain.
  */
 
 const GIB = 1024 ** 3;
 
-// ── Input domain: null, NaN, ±Inf, negative, non-integer, zero capacity,
-//    free>capacity, MAX_SAFE boundaries, floor/reserve boundaries, etc. ──
+// ── Curated boundary/degenerate value set: null, NaN, ±Inf, negative, non-integer,
+//    zero capacity, free>capacity, MAX_SAFE boundaries, floor/reserve boundaries, etc. ──
 const BYTE_VALUES: Array<number | null> = [
   null,
   Number.NaN,
@@ -159,7 +160,7 @@ function randByte(rng: () => number): number | null {
   return Math.floor(rng() * 300 * GIB); // 0 .. 300 GiB continuous
 }
 
-describe("U13 disk-growth: production == independent oracle over the full input domain", () => {
+describe("U13 disk-growth: production == independent oracle over curated boundary grids + seeded sampling", () => {
   it("grid free × capacity × growth agrees on every decision field", () => {
     const mismatches: string[] = [];
     let count = 0;
@@ -205,7 +206,7 @@ describe("U13 disk-growth: production == independent oracle over the full input 
   });
 });
 
-describe("U13 large-write: production == independent oracle over the full input domain", () => {
+describe("U13 large-write: production == independent oracle over curated boundary grids + seeded sampling", () => {
   it("grid current_free × capacity × peak × growth × escape agrees on every decision field", () => {
     const mismatches: string[] = [];
     let count = 0;

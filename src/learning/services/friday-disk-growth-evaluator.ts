@@ -70,8 +70,8 @@ export interface FridayDiskGrowthInput {
    * missing/null/NaN/±Inf/negative/overflow the estimate is UNKNOWN: the
    * projected-exhaustion branch is UNOBSERVABLE, so ABOVE the floor the whole
    * reading FAILS CLOSED to `unknown` (never `ok`/healthy) per U13 — while
-   * BELOW the floor the absolute max(10 GiB, 10%) floor still forces `warn`
-   * regardless of the growth branch.
+   * BELOW the floor the absolute max(10 GiB, EXACT 10% = ceilDiv(capacity, 10))
+   * floor still forces `warn` regardless of the growth branch.
    */
   growthRateBytesPerDay?: number | null;
   /** Optional report-only NON-authoritative context; NEVER affects status. */
@@ -84,7 +84,7 @@ export interface FridayDiskGrowthWarning {
   freeBytes: number | null;
   totalCapacityBytes: number | null;
   freeFraction: number | null;
-  /** The computed max(10 GiB, 10% capacity) floor. */
+  /** The computed max(10 GiB, ceilDiv(capacity, 10)) free-space floor (EXACT 10%, NOT floor-rounded). */
   freeSpaceFloorBytes: number | null;
   belowFloor: boolean | null;
   /**
@@ -238,8 +238,9 @@ export function failClosedDiskGrowth(reason: string): FridayDiskGrowthWarning {
  *  1. Inputs invalid (free/capacity null/NaN/±Inf/negative/overflow, capacity ≤ 0,
  *     or free > capacity) → `unknown` (fail-closed); belowFloor / projected /
  *     withinWindow all `null`; reason `invalid_inputs`.
- *  2. FLOOR branch (always): `floor = max(10 GiB, floor(10% capacity))`;
- *     `belowFloor = free < floor` (strict).
+ *  2. FLOOR branch (always): `floor = max(10 GiB, ceilDiv(capacity, 10))`;
+ *     `belowFloor = free < floor` (strict) — i.e. EXACTLY `free < capacity/10` at the
+ *     % branch (the operator-locked 10%, NOT floor-rounded).
  *  3. EXHAUSTION branch (always, when the rate is KNOWN finite `>= 0`):
  *       • rate == 0 (measured no-growth): `projectedExhaustionDays = null`
  *         (never-exhausts sentinel), `withinExhaustionWindow = false`.
@@ -381,9 +382,10 @@ function failClosedWrite(
 
 /**
  * The operator-locked large-write space-safety evaluator (U13-STORAGE-PRESSURE).
- * reserve = max(5 GiB, floor(5% capacity)); projected_free = current_free −
- * checkedAdd(estimated_peak_temp, estimated_persistent_growth). PAUSE (unsafe) when
- * current OR projected free is below reserve.
+ * reserve = max(5 GiB, ceilDiv(capacity, 20)) — i.e. EXACTLY 5% (`free < capacity/20`
+ * at the % branch, the operator-locked 5%, NOT floor-rounded); projected_free =
+ * current_free − checkedAdd(estimated_peak_temp, estimated_persistent_growth). PAUSE
+ * (unsafe) when current OR projected free is below reserve.
  *
  * FAIL-CLOSED (unsafe) for NON-escape operations on ANY untrustworthy reading —
  * individually-finite values are NOT sufficient, the RELATIONSHIPS must be
