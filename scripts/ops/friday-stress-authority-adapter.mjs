@@ -378,7 +378,7 @@ export function buildSubjectInventory({
       cross_platform_artifact_set_sha256: { basis: "declared_required_artifact_schema_bytes", sealed: false, caveat: "schemas, not built cross-platform binaries" },
       runtime_profile_digest: { basis: "declared_full_content", sealed: false, caveat: "declared runtime profile, not runtime-observed" },
       obligation_set_sha256: { basis: obligation.basis, sealed: obligation.sealed, caveat: obligation.sealed ? null : "two-pass ledger not yet authored" },
-      verification_policy_set_sha256: { basis: "consumed_from_TEST-STRESS-POLICY-BINDING-001", sealed: true },
+      verification_policy_set_sha256: { basis: "consumed_from_TEST-STRESS-POLICY-BINDING-001", sealed: true }, // pragma: allowlist secret
     },
     authority_seal: authoritySeal,
     reconciliation: { unknown_count: unknown_ids.length, ghost_count: ghost_ids.length, independence: "provisional_proxy_pending_ast_registration_signal" },

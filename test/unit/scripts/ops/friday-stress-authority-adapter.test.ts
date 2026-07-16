@@ -31,7 +31,7 @@ const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const GEN = path.join(REPO_ROOT, "scripts", "ops", "friday-stress-authority-adapter.mjs");
 const REVIEWER = path.join(REPO_ROOT, "scripts", "ops", "friday-stress-authority-review.mjs");
 const VENDORED_VALIDATOR = path.join(__dirname, "fixtures", "verify-endbar-stress-evidence-r13.vendored.mjs");
-const VENDORED_VALIDATOR_SHA = "4287ef02e4cae753f457fa8ef61e8436fe6e8e291ad62f2750cd69d81dbbb323";
+const VENDORED_VALIDATOR_SHA = "4287ef02e4cae753f457fa8ef61e8436fe6e8e291ad62f2750cd69d81dbbb323"; // pragma: allowlist secret
 const LIVE_VALIDATOR = path.join(os.homedir(), "Desktop", "Friday-Handoff-Log", "tools", "verify-endbar-stress-evidence-r13.mjs");
 
 const REV = "ENDBAR-20260713-R13-EXHAUSTIVE-STRESS";
