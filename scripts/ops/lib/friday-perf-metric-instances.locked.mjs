@@ -51,6 +51,26 @@ export const LOCKED_STATISTICS_POLICY = Object.freeze({
   gate_uses_p95_ci_upper: true,
 });
 
+// The EXACT recompute-opts triple actually consumed by the seeded percentile-bootstrap
+// estimator (`percentileBootstrapCi` reads `{ seed, iterations, confidence }`). It is
+// DERIVED from `LOCKED_STATISTICS_POLICY` (single source of truth), frozen, and
+// SELF-AUTHENTICATED against a pinned canonical sha256 below. The report-producing path
+// accepts a caller `statsOpts` ONLY if it is byte-for-byte deep-equal to this object
+// (no omitted/extra/weakened field). A weakened estimator (fewer iterations => a
+// degenerate zero-width CI, a looser confidence, a different seed) is a FALSE GREEN, so
+// a drifting `statsOpts` must go RED (LOCKED_STATS_POLICY_DRIFT) BEFORE any report is
+// emitted. The pinned sha lets a tamper of THIS constant itself be caught (the guard
+// re-derives sha256(canonical(...)) and compares).
+export const LOCKED_STATS_RECOMPUTE_OPTS = Object.freeze({
+  seed: LOCKED_STATISTICS_POLICY.bootstrap_seed,
+  iterations: LOCKED_STATISTICS_POLICY.bootstrap_iterations,
+  confidence: LOCKED_STATISTICS_POLICY.confidence_level,
+});
+// sha256 of the validator-dialect canonical form of LOCKED_STATS_RECOMPUTE_OPTS
+// (`{"confidence":0.95,"iterations":10000,"seed":20260711}`). Self-authentication anchor.
+export const LOCKED_STATS_RECOMPUTE_OPTS_SHA256 =
+  "ae1fa453272a2789f5e754ae8831c94b5bff7441051957892947b213f8ede485"; // pragma: allowlist secret
+
 // The 20 operator-frozen metric-matrix rules (sum of profile_ids = 96 instances).
 // Transcribed verbatim from `performance_policy.metric_matrix_rules`.
 export const LOCKED_METRIC_MATRIX_RULES = Object.freeze([

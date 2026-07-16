@@ -55,6 +55,8 @@ import {
   LOCKED_METRIC_INSTANCE_SET_SHA256,
   LOCKED_METRIC_INSTANCE_COUNT,
   LOCKED_STATISTICS_POLICY,
+  LOCKED_STATS_RECOMPUTE_OPTS,
+  LOCKED_STATS_RECOMPUTE_OPTS_SHA256,
   PERFORMANCE_POLICY_FROZEN_AT,
 } from "./lib/friday-perf-metric-instances.locked.mjs";
 
@@ -329,11 +331,19 @@ function refsShapeOk(x) {
 }
 
 /**
- * Internal resource-report validator — mirrors the R13 validator's resource-report
- * gates (lines 60 & 64) PLUS canonical-finite-timestamp + monotonic continuity +
- * duration. Returns { result: "GREEN"|"RED", code, detail }. This is the verdict the
- * sensitivity detectors flip. `lockedMetricIds` defaults to the self-authenticated
- * locked 96 so the denominator can never be silently shrunk.
+ * NON-AUTHORITATIVE, resource-report-scoped SUBSET of the vendored R13 validator's
+ * resource gates (lines 60 & 64) PLUS canonical-finite-timestamp + monotonic continuity +
+ * duration. Returns { result: "GREEN"|"RED", code, detail }.
+ *
+ * This is a FAST in-process tripwire used ONLY to flip the sensitivity detectors — it is
+ * NOT the authority for any SOAK_INVALID / HOST_SAFETY_INVALID claim. It deliberately
+ * CANNOT reproduce the real validator's ledger-derived bindings (e.g. the obligation-derived
+ * resource-budget / performance-metric denominators, tuple/component reconciliation across
+ * the 10-doc bundle), because it sees only the resource report in isolation. The
+ * AUTHORITATIVE oracle is the vendored `verify-endbar-stress-evidence-r13` validator,
+ * EXECUTED end-to-end over a complete fixture in the (FIX 4) test — so this mirror is never
+ * the sole oracle. `lockedMetricIds` defaults to the self-authenticated locked 96 so the
+ * one denominator this subset DOES enforce can never be silently shrunk.
  */
 export function validateResourceReport(report, opts = {}) {
   const lockedMetricIds = opts.lockedMetricIds ?? lockedMetricInstanceIds();
@@ -549,23 +559,27 @@ export function syntheticSamplesFor(metricInstanceId, budget, count = 50, warmup
 }
 
 // ---------------------------------------------------------------------------
-// (G) Honest host-safety preflight of THIS generator's OWN execution. Every boolean
-//     is legitimately true because a read-only recompute/writer performs none of the
-//     forbidden host actions (no port bind, no prod DB/service, no OS lifecycle, no
-//     unowned process, no keychain). This preflight attests the GENERATOR is host-safe;
-//     it does NOT attest a future real stress campaign's harness — that is disclosed
-//     as operator/physical-gated in the sidecar.
+// (G) HONEST GATED host-safety placeholder. FIX 2 (P0 evidence-truth): an agent CANNOT
+//     truthfully attest host isolation / hard quotas / scratch keychain / owned-process /
+//     prod-port + prod-DB untouched / destructive-lifecycle-absent for a REAL stress
+//     campaign harness — those are operator- and physically-gated observations. So every
+//     one of the 8 booleans is emitted as `false` (a non-passing placeholder, exactly like
+//     soaks[]), and the independent R13 validator correctly REDs (HOST_SAFETY_INVALID) once
+//     it reaches the host-safety gate. There is NO fabricated preflight_passed=true. The
+//     generator-only, non-authoritative status/basis disclosure lives OUTSIDE these
+//     authoritative fields — in the SEAL_STATUS sidecar — so nothing here over-claims.
 // ---------------------------------------------------------------------------
-function hostSafetyPreflight() {
+export const HOST_SAFETY_STATUS_GATED = "operator_physical_gated";
+function hostSafetyGatedPlaceholder() {
   return {
-    isolated_non_prod: true,
-    hard_quotas: true,
-    scratch_keychain: true,
-    owned_processes_only: true,
-    prod_ports_untouched: true,
-    prod_db_data_services_untouched: true,
-    destructive_host_lifecycle_absent: true,
-    preflight_passed: true,
+    isolated_non_prod: false,
+    hard_quotas: false,
+    scratch_keychain: false,
+    owned_processes_only: false,
+    prod_ports_untouched: false,
+    prod_db_data_services_untouched: false,
+    destructive_host_lifecycle_absent: false,
+    preflight_passed: false,
   };
 }
 
@@ -577,14 +591,36 @@ function hostSafetyPreflight() {
 //     independent R13 validator REDs at SOAK_INVALID). NEVER synthesises a passing
 //     72h/24h soak or a physical device identity.
 // ---------------------------------------------------------------------------
+/**
+ * The report-producing path MUST use ONLY the locked R7 statistics policy. A caller may
+ * pass `statsOpts` (an in-process hook) ONLY if it is byte-for-byte deep-equal (in the
+ * validator's canonical dialect) to the locked `{seed, iterations, confidence}` triple —
+ * no omitted, extra, or weakened field. Anything else (e.g. iterations=1 => a degenerate
+ * zero-width CI, a looser confidence, a different seed) is a would-be FALSE GREEN and
+ * THROWS `LOCKED_STATS_POLICY_DRIFT` BEFORE any report is produced. The locked constant is
+ * self-authenticated against its pinned sha first, so tampering the constant itself is RED.
+ */
+export function assertLockedStatisticsPolicy(statsOpts) {
+  if (sha(Buffer.from(canonical(LOCKED_STATS_RECOMPUTE_OPTS))) !== LOCKED_STATS_RECOMPUTE_OPTS_SHA256) {
+    throw new Red("LOCKED_STATS_POLICY_SELF_AUTH_FAILED", { got: canonical(LOCKED_STATS_RECOMPUTE_OPTS) });
+  }
+  if (statsOpts === undefined) return; // no override -> estimator uses the locked defaults.
+  if (canonical(statsOpts) !== canonical(LOCKED_STATS_RECOMPUTE_OPTS)) {
+    throw new Red("LOCKED_STATS_POLICY_DRIFT", { got: statsOpts, want: LOCKED_STATS_RECOMPUTE_OPTS });
+  }
+}
+
 export function buildResourceReport(opts = {}) {
   const tuple = opts.tuple ?? null;
   if (tuple !== null && !(typeof tuple === "string" && /^[0-9a-f]{64}$/.test(tuple))) throw new Red("TUPLE_INVALID", { tuple });
+  // FIX 1 (P0 false-green): the locked statistics policy is not caller-weakenable. Guard
+  // BEFORE deriving/emitting anything so a drifting statsOpts never produces a report.
+  const statsOpts = opts.statsOpts; // in-process test hook ONLY; CLI never passes it.
+  assertLockedStatisticsPolicy(statsOpts);
   // Provisional sentinel tuple when none supplied (the real tuple is produced by the
   // subject-inventory/policy-binding siblings; here it is explicitly unsealed).
   const tupleSha = tuple ?? sha(Buffer.from("PROVISIONAL_UNSEALED_TUPLE_NOT_FROZEN_CANDIDATE"));
   const instances = deriveLockedMetricInstances();
-  const statsOpts = opts.statsOpts; // in-process test hook ONLY; CLI never passes it.
 
   const rawFiles = [];
   const performance_metrics = [];
@@ -610,13 +646,16 @@ export function buildResourceReport(opts = {}) {
     { resource_budget_id: "budget:hub-rss-mib", bounded: budgetStats.bounded, growth_slope_pass: budgetStats.growth_slope_pass, teardown_baseline_restored: budgetStats.teardown_baseline_restored, result: budgetStats.result, evidence_refs: [{ path: budgetRawPath, sha256: budgetRawSha, bytes: Buffer.byteLength(budgetRawContent), kind: "stress_resource_sample" }] },
   ];
 
-  // Host-safety preflight of THIS generator (honest, all true) + evidence.
-  const preflight = hostSafetyPreflight();
-  const preflightContent = `${JSON.stringify({ preflight, basis: "generator_self_preflight_read_only_recompute_and_single_out_write", not_campaign_harness_attestation: true }, null, 2)}\n`;
+  // Host-safety: HONEST gated placeholder (all 8 booleans false, preflight_passed false).
+  // An agent cannot attest a real campaign harness's host isolation/quota/keychain, so this
+  // is non-passing exactly like soaks[]; the independent R13 validator REDs (HOST_SAFETY_INVALID)
+  // at the host-safety gate. The status/basis disclosure lives in the sidecar, NOT here.
+  const preflight = hostSafetyGatedPlaceholder();
+  const preflightContent = `${JSON.stringify({ host_safety: preflight, host_safety_status: HOST_SAFETY_STATUS_GATED, basis: "operator_and_physically_gated_no_agent_side_host_isolation_quota_or_keychain_attestation", not_campaign_harness_attestation: true }, null, 2)}\n`;
   const preflightSha = sha(Buffer.from(preflightContent));
-  const preflightPath = `raw/host-safety-preflight-${preflightSha}.json`;
+  const preflightPath = `raw/host-safety-gated-${preflightSha}.json`;
   rawFiles.push({ path: preflightPath, content: preflightContent });
-  const host_safety = { ...preflight, evidence_refs: [{ path: preflightPath, sha256: preflightSha, bytes: Buffer.byteLength(preflightContent), kind: "stress_host_safety" }] };
+  const host_safety = { ...preflight, evidence_refs: [{ path: preflightPath, sha256: preflightSha, bytes: Buffer.byteLength(preflightContent), kind: "operator_physical_gated_placeholder" }] };
 
   // Soaks: HONEST provisional placeholders. uninterrupted:false and
   // result:"operator_physical_gated" => never a passing/uninterrupted claim; the
@@ -658,7 +697,7 @@ export function buildResourceReport(opts = {}) {
     "performance_metric_samples_are_synthetic_fixture_not_physical_device_measurements",
     "resource_budget_series_is_synthetic_fixture_not_real_soak_measurement",
     "final_release_candidate_tuple_is_provisional_sentinel_unless_supplied",
-    "host_safety_is_generator_self_preflight_not_real_campaign_harness_attestation",
+    "host_safety_is_operator_and_physically_gated_all_booleans_false_no_agent_side_attestation",
   ];
   const sealStatus = {
     schema_version: SEAL_STATUS_SCHEMA_VERSION,
@@ -667,6 +706,7 @@ export function buildResourceReport(opts = {}) {
     seal_status: "PROVISIONAL_UNSEALED",
     final_authority: false,
     can_ever_self_seal_agent_side: false,
+    host_safety_status: HOST_SAFETY_STATUS_GATED,
     final_release_candidate_tuple_sha256: tupleSha,
     performance_policy_frozen_at: PERFORMANCE_POLICY_FROZEN_AT,
     locked_metric_instance_set_sha256: LOCKED_METRIC_INSTANCE_SET_SHA256,
@@ -675,7 +715,7 @@ export function buildResourceReport(opts = {}) {
     component_basis: {
       performance_metrics: { basis: "recompute_over_synthetic_fixture_samples_not_physical_device", sealed: false },
       resource_budgets: { basis: "growth_slope_over_synthetic_fixture_series", sealed: false },
-      host_safety: { basis: "generator_self_preflight_not_campaign_harness_attestation", sealed: false, note: "the 8 booleans are genuinely true for THIS read-only generator, but this is NOT the real stress-campaign harness attestation, which is operator/physically gated" },
+      host_safety: { basis: "operator_and_physically_gated_placeholder", sealed: false, note: "all 8 host-safety booleans are emitted as false: an agent cannot truthfully attest a real stress-campaign harness's host isolation/quota/keychain/prod-boundary, which is operator/physically gated. The independent R13 validator REDs (HOST_SAFETY_INVALID) at this gate." },
       soaks: { basis: "operator_and_physically_gated_provisional_placeholder", sealed: false },
       device_identity: { basis: "physical_signed_campaign_gated", sealed: false },
     },
@@ -688,22 +728,94 @@ export function buildResourceReport(opts = {}) {
   return { report, sealStatus, rawFiles, tuple: tupleSha, sensitivity };
 }
 
-// Single-destination writer. Writes ONLY under `outPath`'s directory: the report at
-// outPath, the sidecar next to it, and raw/ evidence files under the same dir. No
-// env/argv arbitrary destination exists.
-export function writeBundle(outPath, built) {
-  const outDir = path.dirname(outPath);
-  fs.mkdirSync(path.join(outDir, "raw"), { recursive: true });
-  for (const file of built.rawFiles) {
-    const abs = path.join(outDir, file.path);
-    if (path.relative(outDir, abs).startsWith("..")) throw new Red("RAW_PATH_ESCAPE", { path: file.path });
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, file.content);
+// FIX 3 (P1 filesystem boundary): hardened single-destination writer. A lexical path
+// check follows a pre-existing symlink (the Advisor's probe: `<out>/raw` as a symlink to a
+// sibling wrote 101 files OUTSIDE the declared dir at exit 0). This writer fails CLOSED:
+//   * the output ROOT is `realpathSync(outDir)` (absorbs only legitimate system-level
+//     symlinks like macOS /var), and ALL writes are re-based onto that resolved root;
+//   * every intermediate directory component is `lstat`-checked — an existing symlink or a
+//     non-directory special file (FIFO/socket/device) is rejected (SYMLINK_REJECTED);
+//   * every file is created with `O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW` (exclusive + no-follow),
+//     so a symlink or pre-existing file at the target fails the open, and the fresh file is
+//     asserted regular with nlink===1 (no hardlink) and a realpath strictly inside the root.
+// On ANY violation it throws (Red) and writes ZERO files outside the resolved root.
+const NOFOLLOW_CREATE = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
+
+function lstatOrNull(p) {
+  try {
+    return fs.lstatSync(p);
+  } catch (error) {
+    if (error && error.code === "ENOENT") return null;
+    throw error;
   }
-  fs.writeFileSync(outPath, `${JSON.stringify(built.report, null, 2)}\n`);
-  const sidecarPath = `${outPath.replace(/\.json$/, "")}.SEAL_STATUS.json`;
-  fs.writeFileSync(sidecarPath, `${JSON.stringify(built.sealStatus, null, 2)}\n`);
-  // Self-verify every evidence ref resolves + hash-matches on disk.
+}
+
+// Ensure `<root>/<relDir>` exists as a chain of REAL directories, creating missing links
+// and rejecting any existing component that is a symlink or a non-directory special file.
+function ensureDirNoFollow(root, relDir) {
+  if (relDir === "" || relDir === ".") return;
+  if (relDir.startsWith("..") || path.isAbsolute(relDir)) throw new Red("RAW_PATH_ESCAPE", { path: relDir });
+  let cur = root;
+  for (const part of relDir.split(path.sep)) {
+    if (part === "" || part === "." || part === "..") throw new Red("RAW_PATH_ESCAPE", { path: relDir });
+    cur = path.join(cur, part);
+    const st = lstatOrNull(cur);
+    if (st === null) {
+      fs.mkdirSync(cur); // fresh, cannot be a symlink
+    } else if (st.isSymbolicLink()) {
+      throw new Red("SYMLINK_REJECTED", { path: cur });
+    } else if (!st.isDirectory()) {
+      throw new Red("SYMLINK_REJECTED", { path: cur, reason: "non_directory_component" });
+    }
+  }
+}
+
+// Create + write `<root>/<rel>` with no-follow exclusive semantics. Rejects a symlink at the
+// final component, a pre-existing file, a hardlink, or any escape of the resolved root.
+function writeFileNoFollow(root, rel, content) {
+  if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Red("RAW_PATH_ESCAPE", { path: rel });
+  ensureDirNoFollow(root, path.dirname(rel) === "." ? "" : path.dirname(rel));
+  const abs = path.join(root, rel);
+  if (path.relative(root, abs).startsWith("..")) throw new Red("RAW_PATH_ESCAPE", { path: rel });
+  const pre = lstatOrNull(abs);
+  if (pre && pre.isSymbolicLink()) throw new Red("SYMLINK_REJECTED", { path: abs });
+  let fd;
+  try {
+    fd = fs.openSync(abs, NOFOLLOW_CREATE, 0o600);
+  } catch (error) {
+    // ELOOP (symlink under O_NOFOLLOW) / EEXIST (pre-existing) / etc. => fail closed.
+    throw new Red("SYMLINK_REJECTED", { path: abs, detail: (error && error.code) || String(error) });
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1) throw new Red("SYMLINK_REJECTED", { path: abs, reason: "not_a_fresh_regular_file" });
+    const real = fs.realpathSync(abs);
+    if (real !== abs || path.relative(root, real).startsWith("..")) throw new Red("RAW_PATH_ESCAPE", { path: abs, real });
+    fs.writeFileSync(fd, content);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return abs;
+}
+
+export function writeBundle(outPath, built) {
+  const resolvedOut = path.resolve(outPath);
+  const outDir = path.dirname(resolvedOut);
+  // Ensure the declared out dir exists, then anchor on its realpath (the resolved ROOT).
+  fs.mkdirSync(outDir, { recursive: true });
+  const outRoot = fs.realpathSync(outDir);
+  const reportRel = path.basename(resolvedOut);
+  const sidecarRel = `${reportRel.replace(/\.json$/, "")}.SEAL_STATUS.json`;
+
+  // raw/ evidence first (each under the resolved root, no-follow).
+  for (const file of built.rawFiles) {
+    if (typeof file.path !== "string" || !file.path.startsWith("raw/")) throw new Red("RAW_PATH_ESCAPE", { path: file.path });
+    writeFileNoFollow(outRoot, file.path, file.content);
+  }
+  const reportAbs = writeFileNoFollow(outRoot, reportRel, `${JSON.stringify(built.report, null, 2)}\n`);
+  const sidecarAbs = writeFileNoFollow(outRoot, sidecarRel, `${JSON.stringify(built.sealStatus, null, 2)}\n`);
+
+  // Self-verify every evidence ref resolves + hash-matches on disk (read no-follow).
   const allRefs = [
     ...built.report.performance_metrics.flatMap((m) => m.evidence_refs),
     ...built.report.resource_budgets.flatMap((b) => b.evidence_refs),
@@ -711,11 +823,22 @@ export function writeBundle(outPath, built) {
     ...built.report.host_safety.evidence_refs,
   ];
   for (const ref of allRefs) {
-    const abs = path.join(outDir, ref.path);
-    const bytes = fs.readFileSync(abs);
-    if (sha(bytes) !== ref.sha256 || bytes.length !== ref.bytes) throw new Red("SELF_VERIFY_DRIFT", { path: ref.path });
+    if (typeof ref.path !== "string" || ref.path.startsWith("/") || ref.path.split("/").includes("..")) throw new Red("RAW_PATH_ESCAPE", { path: ref.path });
+    const abs = path.join(outRoot, ref.path);
+    let rfd;
+    try {
+      rfd = fs.openSync(abs, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    } catch (error) {
+      throw new Red("SELF_VERIFY_DRIFT", { path: ref.path, detail: (error && error.code) || String(error) });
+    }
+    try {
+      const bytes = fs.readFileSync(rfd);
+      if (sha(bytes) !== ref.sha256 || bytes.length !== ref.bytes) throw new Red("SELF_VERIFY_DRIFT", { path: ref.path });
+    } finally {
+      fs.closeSync(rfd);
+    }
   }
-  return { outPath, sidecarPath, rawCount: built.rawFiles.length };
+  return { outPath: reportAbs, sidecarPath: sidecarAbs, rawCount: built.rawFiles.length };
 }
 
 function parseArgs(argv) {
