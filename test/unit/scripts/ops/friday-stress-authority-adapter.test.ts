@@ -888,7 +888,7 @@ describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", 
     expect(runGen({ sourcesRoot: d.sourcesRoot }).err().code).toBe("MISSING_REPO_ROOT");
   }, 40000);
 
-  // (finding-r8) TRANSACTIONAL, FAIL-CLOSED PUBLICATION. Pre-fix main() wrote the COMPLETE
+  // (finding-r8/r9) TRANSACTIONAL, FAIL-CLOSED PUBLICATION. Pre-r8 main() wrote the COMPLETE
   // final bundle (inventory + seal sidecar + raw evidence) into --out-dir and ONLY THEN
   // called assertSourceUnchanged. So a source that mutated DURING the (possibly slow)
   // evidence write correctly exited 3 SOURCE_MUTATED_DURING_BUILD, but the already-written
@@ -896,35 +896,98 @@ describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", 
   // clean_worktree=true / expected_match=true for the PRE-mutation observation. A downstream
   // consumer could pick up that stale bundle as if valid: a fail-closed integrity hole.
   //
-  // The full-CLI driver injects a real source mutation AFTER the bundle is staged (via the
-  // FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE test hook — inert unless set, only ever ADDS
-  // fail-closed mutation detection) and asserts (a) exit 3 + SOURCE_MUTATED_DURING_BUILD and
-  // (b) the final out-dir holds NO consumable bundle (no inventory, no seal sidecar, no raw),
-  // and no staging dir leaks. RED-first: with the hook present but the OLD write-then-check
-  // ordering, (a) passes but (b) FAILS (the stale bundle is retained). GREEN after the
-  // staged-then-atomic-rename fix.
-  it("(finding-r8) a source mutation DURING the build is fail-closed transactionally: exit 3 SOURCE_MUTATED_DURING_BUILD and the final out-dir keeps NO consumable bundle (no partial/stale publish)", () => {
+  // r9: the TOCTOU window is now exercised via an IN-PROCESS DEPENDENCY-INJECTION seam
+  // (`afterStageHook`), NOT an env-driven file-append primitive in shipped code. We build an
+  // ephemeral committed git fixture, call `publishBundleTransactionally` DIRECTLY (real
+  // outDir + a hook that mutates a FIXED tracked source file AFTER staging, BEFORE the source
+  // re-observation), and assert (a) it fails closed with SOURCE_MUTATED_DURING_BUILD, (b) the
+  // final out-dir holds NO consumable bundle (no inventory, no seal sidecar, no raw), and (c)
+  // the staging dir was cleaned (no leak). The hook is reachable ONLY by this in-process
+  // caller; main() never passes it and there is NO env/argv route to it (proved inert by the
+  // negative-control below) — so shipped CLI code exposes ZERO filesystem-write capability.
+  it("(finding-r9) a source mutation mid-staging is fail-closed transactionally (in-process DI): publishBundleTransactionally throws SOURCE_MUTATED_DURING_BUILD, the staging dir is cleaned, and the out-dir keeps NO consumable bundle", async () => {
     expect.hasAssertions();
+    const adapter = await import(ADAPTER_MOD);
     const roots = writeFixture();
     const head = initGitCommitted(roots.repoRoot);
+    const built = adapter.buildSubjectInventory({ sourcesRoot: roots.sourcesRoot, repoRoot: roots.repoRoot, expectedSha: head });
     const parent = mkRealDir("saa-txn-mut-");
     const outDir = path.join(parent, "bundle");
     fs.mkdirSync(outDir); // a pre-existing EMPTY out-dir (as the harness always passes)
+    // A FIXED tracked source file mutated by the test-only in-process hook AFTER staging.
     const mutateTarget = path.join(roots.repoRoot, "src/api/http/routes/friday-sample-routes.ts");
-    const r = spawnSync(process.execPath, [GEN, "--sources-root", roots.sourcesRoot, "--repo-root", roots.repoRoot, "--out-dir", outDir, "--expected-sha", head], {
-      encoding: "utf8",
-      env: { ...process.env, FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE: mutateTarget },
-    });
-    // (a) fail-closed with the mutation code.
-    expect(r.status).toBe(3);
-    expect(JSON.parse(r.stderr).code).toBe("SOURCE_MUTATED_DURING_BUILD");
+    let hookCalls = 0;
+    let thrown: any = null;
+    try {
+      adapter.publishBundleTransactionally({
+        finalOutDir: outDir,
+        repoRoot: roots.repoRoot,
+        sourcesRoot: roots.sourcesRoot,
+        expectedSha: head,
+        built,
+        afterStageHook: () => {
+          hookCalls += 1;
+          fs.appendFileSync(mutateTarget, "\n// mid-staging tracked-source mutation (in-process DI)\n");
+        },
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    // the hook fired exactly once, AFTER staging completed and BEFORE re-observation.
+    expect(hookCalls).toBe(1);
+    // (a) fail-closed with the mutation code (or the seal re-verify mismatch).
+    expect(thrown).not.toBeNull();
+    expect(["SOURCE_MUTATED_DURING_BUILD", "SOURCE_SEAL_REVERIFY_MISMATCH"]).toContain(thrown.code);
+    expect(thrown.code).toBe("SOURCE_MUTATED_DURING_BUILD");
     // (b) NO consumable bundle in the final out-dir (no inventory, no seal sidecar, no raw).
     expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"))).toBe(false);
     expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"))).toBe(false);
     expect(fs.existsSync(path.join(outDir, "raw"))).toBe(false);
     expect(fs.readdirSync(outDir)).toEqual([]); // the pre-existing empty dir is left untouched
-    // and NO staging dir leaks next to the out-dir (fail-closed cleanup removed it).
+    // (c) NO staging dir leaks next to the out-dir (fail-closed cleanup removed it).
     expect(fs.readdirSync(parent).filter((n) => n.startsWith(".friday-stress-staging-"))).toEqual([]);
+  }, 40000);
+
+  // (finding-r9 negative-control) The round-8 env hook FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE
+  // was an UNRESTRICTED arbitrary-file append primitive in shipped ops code — it is REMOVED.
+  // This proves the ambient variable (and any similarly-named ambient var) is now INERT: no
+  // shipped code reads it. Running the NORMAL full CLI with it (and a second lookalike) set to
+  // point at SENTINEL files OUTSIDE the attested roots leaves the sentinels byte-unchanged
+  // (never created/appended) AND publishes the bundle identically to a no-env run (same seal
+  // tuple + subject-set). RED-first: with the old hook present the sentinel WOULD be appended.
+  it("(finding-r9 negative-control) the removed env hook is INERT: setting FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE (and a lookalike) at sentinel files has NO effect — no shipped code reads it; CLI behaves identically to no-env", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    const scratch = mkRealDir("saa-neg-ctl-"); // OUTSIDE repoRoot/sourcesRoot — an old hook could not even detect a mutation here
+    // (i) a sentinel that ALREADY EXISTS must be byte-identical afterward (never appended to).
+    const sentinel = path.join(scratch, "sentinel.txt");
+    const SENTINEL_BYTES = "untouched sentinel bytes\n";
+    fs.writeFileSync(sentinel, SENTINEL_BYTES);
+    // (ii) a lookalike ambient var pointed at a NON-existent path must never create it.
+    const absentSentinel = path.join(scratch, "absent-sentinel.txt");
+    const outDir = path.join(mkRealDir("saa-neg-ctl-out-"), "bundle"); // create-on-publish branch
+    const r = spawnSync(process.execPath, [GEN, "--sources-root", roots.sourcesRoot, "--repo-root", roots.repoRoot, "--out-dir", outDir, "--expected-sha", head], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE: sentinel,
+        FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE_TARGET: absentSentinel,
+      },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    // (a) the ambient vars are INERT: the existing sentinel is byte-identical, the absent one uncreated.
+    expect(fs.readFileSync(sentinel, "utf8")).toBe(SENTINEL_BYTES);
+    expect(fs.existsSync(absentSentinel)).toBe(false);
+    // (b) the CLI behaves IDENTICALLY to a no-env run: bundle published + seal tuple identical.
+    const out = JSON.parse(r.stdout);
+    expect(out.result).toBe("OK");
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"))).toBe(true);
+    const control = generateBundle(roots, undefined, { expectedSha: head });
+    expect(out.final_release_candidate_tuple_sha256).toBe(control.inventory.final_release_candidate_tuple_sha256);
+    expect(out.subject_set_sha256).toBe(control.inventory.subject_set_sha256);
+    expect(out.seal_status).toBe("PROVISIONAL_UNSEALED");
   }, 40000);
 
   // (finding-r8) ATOMIC-SUCCESS CONTROL: a clean full-CLI run publishes the COMPLETE bundle

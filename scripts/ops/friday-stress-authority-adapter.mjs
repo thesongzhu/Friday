@@ -518,7 +518,7 @@ function isInsideOrEqual(child, parent) {
 // publish happens ONLY if every check passes. On ANY error after staging begins the staging
 // dir is recursively removed and NO consumable bundle is left in the final out-dir. A
 // destination that overlaps the source/repo tree, or a planted destination symlink, is refused.
-function publishBundleTransactionally({ finalOutDir, repoRoot, sourcesRoot, expectedSha, built }) {
+export function publishBundleTransactionally({ finalOutDir, repoRoot, sourcesRoot, expectedSha, built, afterStageHook }) {
   const parentDir = path.dirname(finalOutDir);
   fs.mkdirSync(parentDir, { recursive: true }); // preserve the prior mkdir -p of the out-dir path
   const realParent = fs.realpathSync(parentDir); // collapse ancestor symlinks (e.g. /tmp) ONCE, consistently
@@ -551,13 +551,13 @@ function publishBundleTransactionally({ finalOutDir, repoRoot, sourcesRoot, expe
   try {
     writeBundle(staging, built);
 
-    // TEST-ONLY deterministic injection of a source mutation DURING the evidence-writing
-    // phase, so the transactional guard can be exercised end-to-end through the real CLI.
-    // Inert unless the env var is set; NEVER exercised in production; can ONLY ADD fail-closed
-    // mutation detection (it appends to a caller-named path) — it can never launder a seal.
-    if (process.env.FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE) {
-      fs.appendFileSync(process.env.FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE, "\n// test-injected source mutation during build\n");
-    }
+    // TEST-ONLY dependency-injection seam (IN-PROCESS ONLY): an OPTIONAL callback invoked
+    // AFTER all staging writes complete and BEFORE the source re-observation, so a direct
+    // in-process caller (a test importing this module and passing `afterStageHook`) can
+    // deterministically exercise the mid-staging TOCTOU window. main() NEVER passes it and
+    // there is NO env/argv route that can set it, so the shipped CLI exposes ZERO
+    // filesystem-write capability through this seam (unlike an env-driven append primitive).
+    if (typeof afterStageHook === "function") afterStageHook({ staging, finalOutDir });
 
     // RE-OBSERVE the bound source ONCE, AFTER staging is complete — closes the TOCTOU. This is
     // the SAME check assertSourceUnchanged performs (signature equality => SOURCE_MUTATED_DURING_BUILD)
