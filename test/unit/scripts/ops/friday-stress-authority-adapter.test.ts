@@ -574,6 +574,62 @@ describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", 
     expect(dirty.unsealed_reasons).toContain("source_worktree_dirty_or_untracked_present");
   }, 60000);
 
+  // (finding-1b) LS-TREE SILENT-TRUNCATION P0. The round-5 F1 fix trusted the new
+  // `git ls-tree -r -z HEAD` output UNCONDITIONALLY — no `maxBuffer`, no status/error
+  // check (unlike the file's OTHER git calls). On a repo whose ls-tree output exceeds
+  // Node's ~1MiB spawnSync default, stdout is SILENTLY TRUNCATED (spawnSync returns
+  // status:null + an ENOBUFS error, stdout capped) and the partial list was parsed
+  // anyway -> sealed:true with a WRONG file_count and a tracked symlink past the cut
+  // UNDETECTED. Fix: (a) an explicit 64MiB maxBuffer so a legitimately large repo seals
+  // over the FULL tree; (b) a status/error/truncation check that treats any non-zero /
+  // errored / truncated ls-tree as a GROUNDING FAILURE (never parse partial output ->
+  // unsealed with `source_ls_tree_failed_or_truncated`). Red-first: on 33f3a3f2 this
+  // 20k-file repo seals:true with file_count ~15916 of 20000 and the trailing symlink
+  // hidden; GREEN here (full tree, symlink seen, or fail-closed on forced excess).
+  it("(finding-1b) a >1MiB ls-tree is NOT silently truncated: FULL tree enumerated (trailing symlink detected) and forced excess fails closed — never sealed:true over an incomplete tree", async () => {
+    expect.hasAssertions();
+    const enums = await import(ENUM_MOD);
+    const root = mkRealDir("saa-bigtree-");
+    const git = (...a: string[]): string => {
+      const r = spawnSync("git", ["-C", root, "-c", "user.email=t@t.test", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...a], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+      if (r.status !== 0) throw new Error(`git ${a.join(" ")} failed: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    git("init", "-q");
+    const N = 20000; // ~1.4MB of `ls-tree -r -z` output — comfortably over the ~1MiB default
+    for (let i = 0; i < N; i += 1) {
+      const d = path.join(root, "f", String(Math.floor(i / 1000)).padStart(3, "0"));
+      fs.mkdirSync(d, { recursive: true });
+      fs.writeFileSync(path.join(d, `${String(i).padStart(6, "0")}.txt`), "x");
+    }
+    // a tracked symlink that sorts ALPHABETICALLY LAST (after "f/") -> on the pre-fix
+    // truncated parse it fell past the cut and was NEVER observed.
+    fs.symlinkSync("f/000/000000.txt", path.join(root, "zzz-trailing-symlink"));
+    git("add", "-A");
+    git("commit", "-q", "-m", "big");
+    const head = git("rev-parse", "HEAD");
+    expect(head).toMatch(/^[0-9a-f]{40}$/);
+
+    // generous default (64MiB) buffer: the FULL tree is enumerated; the trailing symlink
+    // is now OBSERVED -> specialSeen -> sealed:false (honest), with the COMPLETE file_count.
+    const full = enums.sourceProvenance(root, head);
+    expect(full.file_count).toBe(N); // OLD: ~15916 (silently truncated ~20% of the tree)
+    expect(full.sealed).toBe(false); // OLD: symlink truncated away -> sealed:true over a partial tree
+    expect(full.unsealed_reasons).toContain("source_manifest_has_symlink_or_special_file");
+
+    // genuine excess (forced tiny buffer): truncation is DETECTED and fails closed — the
+    // partial output is NEVER parsed and it can never seal:true over an incomplete tree.
+    process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER = "1024";
+    try {
+      const truncated = enums.sourceProvenance(root, head);
+      expect(truncated.sealed).toBe(false);
+      expect(truncated.file_count).toBe(0); // partial output is NEVER parsed
+      expect(truncated.unsealed_reasons).toContain("source_ls_tree_failed_or_truncated");
+    } finally {
+      delete process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER;
+    }
+  }, 120000);
+
   // (finding-3) EXIT-CODE LAUNDERING GUARD. A non-SEALED bundle must never be read as a
   // PASS by a `... && GATE_PASS` wrapper: the default run still exits 0 (honest generation)
   // but ALWAYS prints a loud PROVISIONAL_UNSEALED banner to stderr; --strict fails closed
@@ -676,6 +732,38 @@ describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", 
     expect(sidecar.independent_reconciliation.http.available).toBe(true);
     expect(sidecar.independent_reconciliation.http.clean).toBe(true);
     expect(ARTIFACTS).not.toContain("FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json");
+  }, 30000);
+
+  // (finding-2) verification_policy_set_sha256 is HONEST-PROVISIONAL (sealed:false), NOT
+  // git-verified: it is derived by fs.readFileSync over --sources-root (no git, no
+  // clean-worktree, no expected-sha pin, not covered by assertSourceUnchanged) — exactly
+  // like its 3 declared-content siblings. Pre-fix (33f3a3f2) BOTH the seal-truth
+  // componentSeal AND the sidecar component_binding hardcoded sealed:true, even after
+  // tampering a sources-root file. Red-first: sealed:true there; sealed:false + reason here.
+  it("(finding-2) verification_policy_set_sha256 is provisional (sealed:false + reason), even after tampering a sources-root file; sidecar never prints sealed:true for it", () => {
+    expect.hasAssertions();
+    const clean = generateBundle(writeFixture());
+    const vpc = clean.sidecar.component_binding.verification_policy_set_sha256;
+    expect(vpc.sealed).toBe(false); // OLD: hardcoded sealed:true with ZERO grounding
+    expect(vpc.reason).toBe("declared_content_not_git_verified");
+    // honest parity with its 3 declared-content siblings (all sealed:false).
+    expect(clean.sidecar.component_binding.cross_platform_artifact_set_sha256.sealed).toBe(false);
+    expect(clean.sidecar.component_binding.runtime_profile_digest.sealed).toBe(false);
+    expect(clean.sidecar.component_binding.obligation_set_sha256.sealed).toBe(false);
+    // global seal remains (independently) unreachable agent-side — this only makes the
+    // per-component sidecar HONEST; it does not change computeSealStatus's verdict.
+    expect(clean.out.seal_status).toBe("PROVISIONAL_UNSEALED");
+    expect(clean.out.can_ever_self_seal_agent_side).toBe(false);
+
+    // tampering a sources-root policy input does NOT flip it to sealed (it was never
+    // git-grounded) — the persisted sidecar on disk still shows sealed:false + reason.
+    const roots = writeFixture();
+    fs.appendFileSync(path.join(roots.sourcesRoot, schemaFileFor(ARTIFACTS[0])), "// policy drift\n");
+    const tampered = generateBundle(roots);
+    const tv = tampered.sidecar.component_binding.verification_policy_set_sha256;
+    expect(tv.sealed).toBe(false);
+    expect(tv.reason).toBe("declared_content_not_git_verified");
+    expect(tampered.out.seal_status).toBe("PROVISIONAL_UNSEALED");
   }, 30000);
 
   it("is deterministic and self-consistent (subject_set + tuple recompute)", () => {

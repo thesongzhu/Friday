@@ -44,18 +44,23 @@
  *    HEAD≠expected / special => unsealed.
  *
  * `source_sha` (git-tracked content at HEAD, via `git ls-tree -r HEAD`; immune to
- * gitignored/untracked bytes) seals ONLY under the F-B conditions above;
- * the consumed `verification_policy_set_sha256` is sealed; runtime/artifact are
- * declared-content / schema-byte provisional; obligation is an explicit unsealed
- * two-pass sentinel. A `FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json` sidecar
- * (NOT a validator-graded artifact) names every unsealed reason.
+ * gitignored/untracked bytes) seals ONLY under the F-B conditions above; the consumed
+ * `verification_policy_set_sha256` is PROVISIONAL — declared content read via
+ * `fs.readFileSync` over `--sources-root` (no git, no clean-worktree, no expected-sha
+ * pin, not covered by `assertSourceUnchanged`), exactly like its runtime/artifact
+ * siblings (declared-content / schema-byte provisional); obligation is an explicit
+ * unsealed two-pass sentinel. A `FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json`
+ * sidecar (NOT a validator-graded artifact) names every unsealed reason.
  *
- * Exit: 0 = an honest bundle was produced (exit 0 does NOT mean sealed/PASS — a
- * loud PROVISIONAL_UNSEALED banner is ALWAYS printed to stderr on a non-SEALED
- * exit-0 so a `... && GATE_PASS` wrapper cannot misread generation success as a
- * pass); 3 = RED (missing/invalid source, drift, empty enumerator); 4 = `--strict`
- * was given and `seal_status !== SEALED` (fail-closed one-liner for gate callers;
- * agent-side this is ALWAYS the case, so `--strict` always exits non-zero here).
+ * Exit: 0 = an honest bundle was produced (exit 0 does NOT mean sealed/PASS). On a
+ * non-SEALED exit-0 a loud PROVISIONAL_UNSEALED banner is ALWAYS printed to stderr —
+ * but that banner only protects HUMAN / LOG review: a `... && GATE_PASS` shell wrapper
+ * branches on the EXIT CODE ALONE and never reads stderr, so the banner by itself does
+ * NOT stop it. `--strict` (exit 4, below) is the ONLY mechanism that fails such an
+ * automated `&&`-style exit-code wrapper closed. 3 = RED (missing/invalid source,
+ * drift, empty enumerator); 4 = `--strict` was given and `seal_status !== SEALED`
+ * (fail-closed one-liner for gate callers; agent-side this is ALWAYS the case, so
+ * `--strict` always exits non-zero here).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -376,7 +381,7 @@ export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFA
     cross_platform_artifact_set_sha256: false, // schema bytes, not built binaries
     runtime_profile_digest: false, // declared, not runtime-observed
     obligation_set_sha256: false, // two-pass, not authored
-    verification_policy_set_sha256: true,
+    verification_policy_set_sha256: false, // declared content read via fs over --sources-root, NOT git-verified (provisional, like its 3 siblings)
   };
   const gatesSealed = {
     http_independent_reconciliation: httpReconciliation.available === true && httpReconciliation.clean === true,
@@ -418,7 +423,7 @@ export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFA
         expected_match: source.expected_match,
         file_count: source.file_count,
       },
-      verification_policy_set_sha256: { basis: "consumed_from_TEST-STRESS-POLICY-BINDING-001", sealed: true }, // pragma: allowlist secret
+      verification_policy_set_sha256: { basis: "consumed_from_TEST-STRESS-POLICY-BINDING-001", sealed: false, reason: "declared_content_not_git_verified" }, // pragma: allowlist secret
       cross_platform_artifact_set_sha256: { basis: "declared_required_artifact_schema_bytes", sealed: false },
       runtime_profile_digest: { basis: "declared_full_content", sealed: false },
       obligation_set_sha256: { basis: "unsealed_two_pass_sentinel", sealed: false },

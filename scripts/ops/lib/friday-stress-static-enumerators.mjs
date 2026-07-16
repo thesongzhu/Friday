@@ -130,18 +130,27 @@ function repoFiles(repoRoot, relDir, predicate) {
 // NEVER sealed (isGit is false), so no gitignored byte is laundered into a seal.
 // `signature` supports mutation detection between the source snapshot and the write.
 export function sourceProvenance(repoRoot, expectedSha = null) {
-  const runGit = (args) => {
+  // `error` is captured (not just `status`) so a spawnSync TRUNCATION — which sets
+  // `status:null` + an ENOBUFS `error` and a CAPPED stdout — can NEVER be mistaken
+  // for a clean run. `maxBuffer` may be raised per-call for output that legitimately
+  // exceeds Node's ~1MiB default.
+  const runGit = (args, opts = {}) => {
     try {
-      const r = spawnSync("git", ["-C", repoRoot, ...args], { encoding: "utf8" });
-      return { status: r.status, out: (r.stdout || "").trim(), raw: r.stdout || "" };
-    } catch {
-      return { status: 1, out: "", raw: "" };
+      const r = spawnSync("git", ["-C", repoRoot, ...args], { encoding: "utf8", ...opts });
+      return { status: r.status, error: r.error ?? null, out: (r.stdout || "").trim(), raw: r.stdout || "" };
+    } catch (error) {
+      return { status: 1, error, out: "", raw: "" };
     }
   };
-  const treeR = runGit(["rev-parse", "HEAD^{tree}"]);
+  // FINDING 4 hardening: resolve HEAD ONCE and pin the tree + ls-tree calls to that
+  // exact commit sha (not a second/third bare `HEAD`), shrinking the window in which a
+  // concurrent HEAD change could yield an inconsistent snapshot. `assertSourceUnchanged`
+  // still re-checks the signature after the write.
   const headR = runGit(["rev-parse", "HEAD"]);
-  const gitTreeOid = treeR.status === 0 && /^[0-9a-f]{40}$/.test(treeR.out) ? treeR.out : null;
   const headSha = headR.status === 0 && /^[0-9a-f]{40}$/.test(headR.out) ? headR.out : null;
+  const commitRef = headSha ?? "HEAD";
+  const treeR = runGit(["rev-parse", `${commitRef}^{tree}`]);
+  const gitTreeOid = treeR.status === 0 && /^[0-9a-f]{40}$/.test(treeR.out) ? treeR.out : null;
   const isGit = gitTreeOid !== null && headSha !== null;
   let cleanWorktree = false;
   if (isGit) {
@@ -157,26 +166,47 @@ export function sourceProvenance(repoRoot, expectedSha = null) {
   const expectedMatch = expectedValid && headSha !== null && headSha === expectedSha; // STRICT equality, no startsWith
   const files = [];
   let specialSeen = false;
+  let lsTreeFailed = false;
   if (isGit) {
     // GIT-TRACKED grounding: enumerate tracked blobs at HEAD. Entry format (NUL-
     // separated via -z, so paths are literal / unquoted): "<mode> <type> <oid>\t<path>".
     // A tracked symlink (mode 120000) or gitlink/submodule (mode 160000 / type
     // "commit") is OBSERVED so it can force unsealed. The oid IS the content hash.
-    const lsR = runGit(["ls-tree", "-r", "-z", "HEAD"]);
-    for (const entry of lsR.raw.split("\0")) {
-      if (!entry) continue;
-      const tab = entry.indexOf("\t");
-      if (tab < 0) continue;
-      const meta = entry.slice(0, tab).split(" ");
-      const relPath = entry.slice(tab + 1);
-      const mode = meta[0];
-      const type = meta[1];
-      const oid = meta[2];
-      if (mode === "120000" || mode === "160000" || type === "commit") {
-        specialSeen = true; // tracked symlink / gitlink — forces unsealed
-        continue;
+    //
+    // FINDING 1 (silent-truncation P0): an EXPLICIT generous `maxBuffer` is passed so a
+    // legitimately large repo (ls-tree output > Node's ~1MiB spawnSync default) is not
+    // needlessly failed; AND the result is checked for `status===0` with NO error before
+    // its raw output is trusted. On any non-zero / errored / TRUNCATED ls-tree
+    // (spawnSync returns status:null + an ENOBUFS error with capped stdout) this is a
+    // GROUNDING FAILURE: never parse partial output — force unsealed with an explicit
+    // reason so a truncated tree can NEVER seal with a wrong file_count/digest or hide a
+    // trailing symlink/gitlink past the truncation point. (The env override exists ONLY
+    // to exercise the fail-closed branch under test; it can only LOWER the cap, i.e. make
+    // sealing HARDER — never launder a seal.)
+    const lsTreeMaxBuffer = (() => {
+      const raw = process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER;
+      const n = raw != null ? Number(raw) : NaN;
+      return Number.isInteger(n) && n > 0 ? n : 64 * 1024 * 1024;
+    })();
+    const lsR = runGit(["ls-tree", "-r", "-z", commitRef], { maxBuffer: lsTreeMaxBuffer });
+    if (lsR.status !== 0 || lsR.error) {
+      lsTreeFailed = true; // non-zero / errored / truncated — never trust partial output
+    } else {
+      for (const entry of lsR.raw.split("\0")) {
+        if (!entry) continue;
+        const tab = entry.indexOf("\t");
+        if (tab < 0) continue;
+        const meta = entry.slice(0, tab).split(" ");
+        const relPath = entry.slice(tab + 1);
+        const mode = meta[0];
+        const type = meta[1];
+        const oid = meta[2];
+        if (mode === "120000" || mode === "160000" || type === "commit") {
+          specialSeen = true; // tracked symlink / gitlink — forces unsealed
+          continue;
+        }
+        files.push({ path: relPath, oid });
       }
-      files.push({ path: relPath, oid });
     }
   } else {
     // NON-git fallback (NEVER sealed): dedicated traversal (NOT the shared `walk`,
@@ -212,9 +242,10 @@ export function sourceProvenance(repoRoot, expectedSha = null) {
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
   const digest = digestOf({ git_tree_oid: gitTreeOid, file_count: files.length, files });
-  const sealed = isGit && cleanWorktree && expectedValid && expectedMatch && !specialSeen;
+  const sealed = isGit && !lsTreeFailed && cleanWorktree && expectedValid && expectedMatch && !specialSeen;
   const unsealed_reasons = [];
   if (!isGit) unsealed_reasons.push("source_root_not_a_git_repository");
+  if (isGit && lsTreeFailed) unsealed_reasons.push("source_ls_tree_failed_or_truncated");
   if (isGit && !cleanWorktree) unsealed_reasons.push("source_worktree_dirty_or_untracked_present");
   if (!expectedGiven) unsealed_reasons.push("source_expected_sha_not_provided");
   else if (!expectedValid) unsealed_reasons.push("source_expected_sha_not_full_40hex");
