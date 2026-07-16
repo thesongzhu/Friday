@@ -352,32 +352,42 @@ function failClosedWrite(
 }
 
 /**
- * The operator-locked large-write space-safety evaluator. reserve = max(5 GiB, 5%
- * capacity); projected_free = current_free − estimated_peak_temp −
- * estimated_persistent_growth (CHECKED arithmetic). PAUSE (unsafe) when current OR
- * projected free is below reserve. Fails closed to unsafe on any unknown/overflow
- * estimate. ESCAPE operations (reads/search/streaming export/settings/diagnostics/
- * deletion) are ALWAYS `safe:true` — never blocked — while still reporting the
- * estimate. Pure formula plus tests; NOT wired as a pre-flight gate at any write
- * site in this slice.
+ * The operator-locked large-write space-safety evaluator (U13-STORAGE-PRESSURE).
+ * reserve = max(5 GiB, floor(5% capacity)); projected_free = current_free −
+ * checkedAdd(estimated_peak_temp, estimated_persistent_growth). PAUSE (unsafe) when
+ * current OR projected free is below reserve.
+ *
+ * FAIL-CLOSED (unsafe) for NON-escape operations on ANY untrustworthy reading —
+ * individually-finite values are NOT sufficient, the RELATIONSHIPS must be
+ * consistent too: a missing/NaN/±Inf/negative/overflow estimate, `capacity <= 0`,
+ * `current_free > capacity` (an impossible reading), OR checked-add/subtraction
+ * overflow all force `safe=false`.
+ *
+ * ESCAPE operations (reads/search/streaming export/settings/diagnostics/deletion)
+ * are ALWAYS `safe:true` — checked FIRST, before any validity/relationship/pressure
+ * logic — so they can never be blocked, while still reporting the estimate. Pure
+ * formula plus tests; NOT wired as a pre-flight gate at any write site in this slice.
  */
 export function evaluateLargeWriteSafety(input: FridayLargeWriteInput): FridayLargeWriteVerdict {
   const A = FRIDAY_STORAGE_PRESSURE_AUTHORITY;
   const isEscape = input.isEscapeOperation === true;
 
+  // Normalize each field for report-only surfacing (null when individually invalid).
+  const currentValid = isValidByteCount(input.currentFreeBytes);
   const capacityValid = isValidByteCount(input.totalCapacityBytes);
-  const capacity = capacityValid ? input.totalCapacityBytes : null;
+  const peakValid = isValidByteCount(input.estimatedPeakTempBytes);
+  const growthValid = isValidByteCount(input.estimatedPersistentGrowthBytes);
+  const currentFree = currentValid ? (input.currentFreeBytes as number) : null;
+  const capacity = capacityValid ? (input.totalCapacityBytes as number) : null;
+  const peakTemp = peakValid ? (input.estimatedPeakTempBytes as number) : null;
+  const persistentGrowth = growthValid ? (input.estimatedPersistentGrowthBytes as number) : null;
+
+  // reserve = max(5 GiB, floor(5% capacity)) — reportable whenever capacity is a
+  // valid byte count (even 0; a 0 capacity still fails closed for non-escape ops).
   const reserveBytes =
     capacity === null ? null : Math.max(A.largeWriteReserveBytes, fractionBytes(capacity, A.largeWriteReserveFraction));
 
-  const currentValid = isValidByteCount(input.currentFreeBytes);
-  const currentFree = currentValid ? input.currentFreeBytes : null;
-  const peakValid = isValidByteCount(input.estimatedPeakTempBytes);
-  const peakTemp = peakValid ? input.estimatedPeakTempBytes : null;
-  const growthValid = isValidByteCount(input.estimatedPersistentGrowthBytes);
-  const persistentGrowth = growthValid ? input.estimatedPersistentGrowthBytes : null;
-
-  // projected_free = current_free − peak_temp − persistent_growth (checked).
+  // projected_free = current_free − checkedAdd(peak_temp, persistent_growth).
   let projectedFree: number | null = null;
   let projectedOverflow = false;
   if (currentValid && peakValid && growthValid) {
@@ -391,55 +401,61 @@ export function evaluateLargeWriteSafety(input: FridayLargeWriteInput): FridayLa
     }
   }
 
-  // Escape operations always remain available regardless of pressure.
-  if (isEscape) {
-    return {
-      safe: true,
-      reserveBytes,
-      currentFreeBytes: currentFree,
-      projectedFreeBytes: projectedFree,
-      totalCapacityBytes: capacity,
-      estimatedPeakTempBytes: peakTemp,
-      estimatedPersistentGrowthBytes: persistentGrowth,
-      reason:
-        "escape operation (reads/search/streaming export/settings/diagnostics/deletion) always available; disk pressure never blocks it",
-      escapeOperation: true,
-    };
-  }
-
-  // Non-escape: fail-closed on any unknown / overflow estimate.
-  if (!currentValid || !capacityValid || !peakValid || !growthValid || reserveBytes === null) {
-    return failClosedWrite("current_free/capacity/peak_temp/persistent_growth is null/NaN/overflow", {
-      reserveBytes,
-      currentFreeBytes: currentFree,
-      projectedFreeBytes: null,
-      totalCapacityBytes: capacity,
-      estimatedPeakTempBytes: peakTemp,
-      estimatedPersistentGrowthBytes: persistentGrowth,
-    });
-  }
-  if (projectedOverflow || projectedFree === null) {
-    return failClosedWrite("overflow computing projected_free = current_free − peak_temp − persistent_growth", {
-      reserveBytes,
-      currentFreeBytes: currentFree,
-      projectedFreeBytes: null,
-      totalCapacityBytes: capacity,
-      estimatedPeakTempBytes: peakTemp,
-      estimatedPersistentGrowthBytes: persistentGrowth,
-    });
-  }
-
-  const currentBelow = (currentFree as number) < reserveBytes;
-  const projectedBelow = projectedFree < reserveBytes;
-  const paused = currentBelow || projectedBelow;
-  return {
-    safe: !paused,
+  const reportFields = {
     reserveBytes,
     currentFreeBytes: currentFree,
     projectedFreeBytes: projectedFree,
     totalCapacityBytes: capacity,
     estimatedPeakTempBytes: peakTemp,
     estimatedPersistentGrowthBytes: persistentGrowth,
+  };
+
+  // (0) ESCAPE operations ALWAYS remain available — checked FIRST, before any
+  // validity/relationship/pressure logic can ever pause them.
+  if (isEscape) {
+    return {
+      safe: true,
+      ...reportFields,
+      reason:
+        "escape operation (reads/search/streaming export/settings/diagnostics/deletion) always available; disk pressure never blocks it",
+      escapeOperation: true,
+    };
+  }
+
+  // (1) FAIL-CLOSED for non-escape ops on any invalid OR INCONSISTENT reading:
+  // capacity must be a valid byte count > 0, and current_free must not exceed it.
+  const capacityPositive = capacityValid && (capacity as number) > 0;
+  const currentExceedsCapacity =
+    currentValid && capacityValid && (currentFree as number) > (capacity as number);
+  if (
+    !currentValid ||
+    !capacityValid ||
+    !peakValid ||
+    !growthValid ||
+    !capacityPositive ||
+    currentExceedsCapacity ||
+    reserveBytes === null
+  ) {
+    return failClosedWrite(
+      "current_free/capacity/peak_temp/persistent_growth invalid, capacity<=0, or current_free>capacity (inconsistent reading)",
+      { ...reportFields, projectedFreeBytes: null },
+    );
+  }
+  // (2) FAIL-CLOSED on checked-add / subtraction overflow.
+  if (projectedOverflow || projectedFree === null) {
+    return failClosedWrite(
+      "overflow computing projected_free = current_free − peak_temp − persistent_growth",
+      { ...reportFields, projectedFreeBytes: null },
+    );
+  }
+
+  // (3) U13 pressure formula: pause when current OR projected free is below reserve.
+  const currentBelow = (currentFree as number) < reserveBytes;
+  const projectedBelow = projectedFree < reserveBytes;
+  const paused = currentBelow || projectedBelow;
+  return {
+    safe: !paused,
+    ...reportFields,
     reason: paused
       ? `PAUSE: ${currentBelow ? "current_free" : "projected_free"} < reserve max(5 GiB, 5% capacity)=${reserveBytes} bytes`
       : `fits: current_free ${currentFree} and projected_free ${projectedFree} both >= reserve ${reserveBytes} bytes`,
