@@ -114,6 +114,13 @@ function requireArray(value, code, detail) {
 // CLOSED key set — an empty, partial, extra-key, or non-boolean map can NEVER seal.
 // A generic `Object.values(map).every(Boolean)` is unsafe: `{}` passes it, and an
 // unknown extra `true` cannot be distinguished from a real component.
+//
+// EXTERNALLY GROUNDED: this list is the exact final-release-candidate tuple the
+// INDEPENDENT R13 validator enumerates as `componentsKeys` (same members, same
+// order) in verify-endbar-stress-evidence-r13.mjs. It is drift-locked to the
+// vendored validator fixture by an automated test (see the "(f) drift-lock" case
+// in the adapter unit suite), so a silent divergence between the seal denominator
+// and the authoritative validator goes RED instead of quietly mis-sealing.
 export const SEAL_COMPONENT_KEYS = Object.freeze([
   "source_sha",
   "cross_platform_artifact_set_sha256",
@@ -121,6 +128,13 @@ export const SEAL_COMPONENT_KEYS = Object.freeze([
   "obligation_set_sha256",
   "verification_policy_set_sha256",
 ]);
+// ADAPTER-INTERNAL, NO EXTERNAL VALIDATOR CONTRACT: gates are additional necessary
+// seal conditions authored here; the R13 validator has no concept of "gates" and
+// does NOT read or grade the `...SEAL_STATUS.json` sidecar, so there is no external
+// source to reconcile this set against. It is therefore design-authored and PINNED
+// here (frozen + exactness-locked by the "(g) gate-set" test) purely to prevent
+// silent drift. Sealing requires ALL declared gates `true` AND all components
+// `true` AND authorityPresent — this set only ever adds conditions, never relaxes.
 export const SEAL_GATE_KEYS = Object.freeze([
   "http_independent_reconciliation",
   "all_class_reconciliation",
@@ -148,6 +162,17 @@ export function exactAllTrue(map, expectedKeys) {
 // 5-key tuple all `true`, the gate map is EXACTLY the closed gate set all `true`,
 // AND a trusted authority is present. Returns { status, reasons } with a specific
 // reason per failing dimension. Any deviation => PROVISIONAL_UNSEALED.
+//
+// SEAL-TRUTH MODEL (honest disclosure of what each denominator is grounded on):
+//  - components (SEAL_COMPONENT_KEYS) are EXTERNALLY GROUNDED against the R13
+//    validator's own `componentsKeys` and drift-locked by an automated test;
+//  - gates (SEAL_GATE_KEYS) are ADAPTER-INTERNAL necessary conditions with no
+//    external validator contract, exactness-locked by an automated test;
+//  - `authorityPresent` is the HARD gate. Agent-side it is hardcoded `false` (no
+//    trusted OIDC/operator identity exists to a local caller), so `SEALED` is
+//    STRUCTURALLY UNREACHABLE agent-side regardless of the component/gate sets —
+//    the closed denominators exist so the FUTURE trusted path (real OIDC/operator
+//    authority) cannot be quietly mis-sealed by a drifted key list.
 export function computeSealStatus({ componentSeal, gatesSealed, authorityPresent }) {
   const reasons = [];
   const comp = exactAllTrue(componentSeal, SEAL_COMPONENT_KEYS);

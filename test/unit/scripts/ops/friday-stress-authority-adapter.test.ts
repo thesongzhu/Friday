@@ -20,6 +20,10 @@
  *  (e) F-B EXACT-candidate source provenance: source_sha seals ONLY for a real git
  *      repo at the expected HEAD with a clean worktree; non-git / dirty / untracked
  *      / HEAD≠expected -> unsealed; a mutation between snapshot and write -> RED.
+ *  (f) DRIFT-LOCK: SEAL_COMPONENT_KEYS is bound to the vendored validator's own
+ *      `componentsKeys` (exact members + order) so a silent divergence goes RED.
+ *  (g) GATE-SET LOCK: SEAL_GATE_KEYS is pinned to exactly the 3 adapter-internal
+ *      gates (no external validator contract) to prevent silent drift.
  */
 import { describe, it, expect, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -231,6 +235,17 @@ function addSiblingStubs(bundleDir: string): void {
   for (const name of SIBLING_STUBS) fs.writeFileSync(path.join(bundleDir, name), "{}\n");
 }
 
+// Extract the AUTHORITATIVE component tuple from the vendored R13 validator (its own
+// `const componentsKeys=[...]`). We READ the fixture text (it does not export the
+// symbol) rather than duplicate the list, so the drift-lock is grounded on the real
+// validator, not a hand-copy. The vendored file is byte-identity-checked elsewhere.
+function vendoredComponentsKeys(): string[] {
+  const src = fs.readFileSync(VENDORED_VALIDATOR, "utf8");
+  const m = src.match(/const\s+componentsKeys\s*=\s*(\[[^\]]*\])/);
+  if (!m) throw new Error("componentsKeys not found in vendored validator fixture");
+  return JSON.parse(m[1]);
+}
+
 describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", () => {
   it("vendored independent validator is byte-identical to the live Handoff tool", () => {
     expect.hasAssertions();
@@ -421,6 +436,40 @@ describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", 
     expect(thrown).not.toBeNull();
     expect(thrown.code).toBe("SOURCE_MUTATED_DURING_BUILD");
   }, 30000);
+
+  // (f) DRIFT-LOCK: the closed-denominator is only sound if its component key set
+  // matches the AUTHORITATIVE validator. Bind SEAL_COMPONENT_KEYS to the vendored
+  // validator's own `componentsKeys` (exact members AND order). Any silent drift on
+  // either side -> RED. Red-first proven by mutating SEAL_COMPONENT_KEYS (drop / add
+  // / reorder) -> this test RED; restore -> green.
+  it("(f) SEAL_COMPONENT_KEYS is drift-locked to the vendored validator's componentsKeys (exact members + order)", async () => {
+    expect.hasAssertions();
+    const mod = await import(ADAPTER_MOD);
+    const vendored = vendoredComponentsKeys();
+    // deep-equal INCLUDING order (toEqual on arrays is order-sensitive).
+    expect([...mod.SEAL_COMPONENT_KEYS]).toEqual(vendored);
+    expect([...mod.SEAL_COMPONENT_KEYS]).toStrictEqual([...vendored]);
+    // sanity: the extraction found the authoritative 5-tuple (guards a silent regex miss).
+    expect(vendored).toEqual(["source_sha", "cross_platform_artifact_set_sha256", "runtime_profile_digest", "obligation_set_sha256", "verification_policy_set_sha256"]);
+    expect(vendored).toHaveLength(5);
+  });
+
+  // (g) GATE-SET EXACTNESS LOCK: gates are ADAPTER-INTERNAL (the R13 validator has
+  // no gate concept and never reads the ...SEAL_STATUS.json sidecar), so there is no
+  // external contract — the set is design-authored and PINNED here to prevent silent
+  // drift. Red-first: mutate SEAL_GATE_KEYS -> this test RED; restore -> green.
+  it("(g) SEAL_GATE_KEYS is pinned to exactly the 3 adapter-internal gates with no external validator contract", async () => {
+    expect.hasAssertions();
+    const mod = await import(ADAPTER_MOD);
+    expect([...mod.SEAL_GATE_KEYS]).toEqual(["http_independent_reconciliation", "all_class_reconciliation", "discovery_ast_registration"]);
+    expect(mod.SEAL_GATE_KEYS).toHaveLength(3);
+    // the validator's component contract must NEVER contain a gate key (they are disjoint concepts).
+    const vendored = vendoredComponentsKeys();
+    for (const g of mod.SEAL_GATE_KEYS) expect(vendored).not.toContain(g);
+    // frozen: the runtime set cannot be silently mutated in-process.
+    expect(Object.isFrozen(mod.SEAL_GATE_KEYS)).toBe(true);
+    expect(Object.isFrozen(mod.SEAL_COMPONENT_KEYS)).toBe(true);
+  });
 
   // F2 / P0-2: source_sha binds the COMPLETE tree; an uncovered src/jobs file flips it.
   it("F2: an uncovered src/jobs source flips source_sha+tuple; other bindings flip on their real content", () => {
