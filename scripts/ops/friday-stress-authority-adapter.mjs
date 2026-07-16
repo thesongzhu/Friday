@@ -27,14 +27,21 @@
  *    the R13 validator therefore correctly REDs (`DISCOVERY_AUTHORITY_INVALID`).
  *    Real sealing would require independently-verified OIDC token claims or an
  *    operator signature — absent agent-side, so it never seals.
- *  - P0-2 (global seal truth): `computeSealStatus` returns SEALED only when
- *    EVERY tuple component AND every independently-derived gate is sealed AND a
- *    trusted authority is present. Any unsealed component / provisional gate /
- *    absent authority forces PROVISIONAL_UNSEALED. Agent-side this is always
- *    PROVISIONAL for several independent reasons.
+ *  - P0-2 / F-A (CLOSED-DENOMINATOR seal truth): `computeSealStatus` validates the
+ *    component map against the FIXED closed key set `SEAL_COMPONENT_KEYS` and the
+ *    gate map against `SEAL_GATE_KEYS` via `exactAllTrue` — an empty, partial,
+ *    unknown-extra-key, or non-boolean map can NEVER seal. SEALED requires the
+ *    EXACT 5-component tuple all `true`, the EXACT gate set all `true`, AND a
+ *    trusted authority; any deviation forces PROVISIONAL_UNSEALED with a specific
+ *    reason. Agent-side this is always PROVISIONAL for several independent reasons.
+ *  - F-B (EXACT-candidate source provenance): `source_sha` seals ONLY for a real
+ *    git repo (`--expected-sha` HEAD equality), a clean worktree (`git status
+ *    --porcelain` empty — no dirty, no untracked), and no symlink/special file;
+ *    a mutation between snapshot and write is caught by `assertSourceUnchanged`
+ *    (=> RED). Non-git / dirty / untracked / HEAD≠expected / special => unsealed.
  *
- * Only `source_sha` (COMPLETE candidate tree) and the consumed
- * `verification_policy_set_sha256` are genuinely sealed; runtime/artifact are
+ * `source_sha` (COMPLETE candidate tree) seals ONLY under the F-B conditions above;
+ * the consumed `verification_policy_set_sha256` is sealed; runtime/artifact are
  * declared-content / schema-byte provisional; obligation is an explicit unsealed
  * two-pass sentinel. A `FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json` sidecar
  * (NOT a validator-graded artifact) names every unsealed reason.
@@ -54,7 +61,7 @@ import {
   CLASS_SPEC,
   implementedCoverageClasses,
   implementedAuthorityKinds,
-  completeSourceManifest,
+  sourceProvenance,
   runtimeProfileValue,
   artifactSchemaValue,
   unique,
@@ -103,12 +110,52 @@ function requireArray(value, code, detail) {
   return value;
 }
 
-// P0-2 GLOBAL SEAL TRUTH: SEALED only when every tuple component AND every gate
-// is genuinely sealed AND a trusted authority is present. Any false => PROVISIONAL.
+// F-A CLOSED-DENOMINATOR SEAL TRUTH. The seal maps are validated against a FIXED,
+// CLOSED key set — an empty, partial, extra-key, or non-boolean map can NEVER seal.
+// A generic `Object.values(map).every(Boolean)` is unsafe: `{}` passes it, and an
+// unknown extra `true` cannot be distinguished from a real component.
+export const SEAL_COMPONENT_KEYS = Object.freeze([
+  "source_sha",
+  "cross_platform_artifact_set_sha256",
+  "runtime_profile_digest",
+  "obligation_set_sha256",
+  "verification_policy_set_sha256",
+]);
+export const SEAL_GATE_KEYS = Object.freeze([
+  "http_independent_reconciliation",
+  "all_class_reconciliation",
+  "discovery_ast_registration",
+]);
+
+// Returns { ok, reason }. `ok` is true ONLY when `map` is a plain object whose key
+// set is EXACTLY `expectedKeys` (no missing, no unknown-extra) and every value is
+// the boolean literal `true`. Anything else yields a specific machine reason.
+export function exactAllTrue(map, expectedKeys) {
+  if (map === null || typeof map !== "object" || Array.isArray(map)) return { ok: false, reason: "not_a_plain_object" };
+  const expected = new Set(expectedKeys);
+  const actual = Object.keys(map);
+  const actualSet = new Set(actual);
+  const missing = expectedKeys.filter((k) => !actualSet.has(k));
+  if (missing.length) return { ok: false, reason: `missing_keys:${missing.sort().join(",")}` };
+  const extra = actual.filter((k) => !expected.has(k));
+  if (extra.length) return { ok: false, reason: `unknown_keys:${extra.sort().join(",")}` };
+  const notTrue = expectedKeys.filter((k) => map[k] !== true);
+  if (notTrue.length) return { ok: false, reason: `keys_not_strictly_true:${notTrue.sort().join(",")}` };
+  return { ok: true, reason: null };
+}
+
+// P0-2 GLOBAL SEAL TRUTH: SEALED only when the component map is EXACTLY the closed
+// 5-key tuple all `true`, the gate map is EXACTLY the closed gate set all `true`,
+// AND a trusted authority is present. Returns { status, reasons } with a specific
+// reason per failing dimension. Any deviation => PROVISIONAL_UNSEALED.
 export function computeSealStatus({ componentSeal, gatesSealed, authorityPresent }) {
-  const components = Object.values(componentSeal).every(Boolean);
-  const gates = Object.values(gatesSealed).every(Boolean);
-  return components && gates && authorityPresent === true ? "SEALED" : "PROVISIONAL_UNSEALED";
+  const reasons = [];
+  const comp = exactAllTrue(componentSeal, SEAL_COMPONENT_KEYS);
+  if (!comp.ok) reasons.push(`component_seal_${comp.reason}`);
+  const gate = exactAllTrue(gatesSealed, SEAL_GATE_KEYS);
+  if (!gate.ok) reasons.push(`gate_seal_${gate.reason}`);
+  if (authorityPresent !== true) reasons.push("authority_not_present");
+  return { status: reasons.length === 0 ? "SEALED" : "PROVISIONAL_UNSEALED", reasons };
 }
 
 // Internal coverage invariant (subject set == authority-partition union). This is
@@ -129,10 +176,11 @@ export function recomputeFinalTupleSha(components) {
   return digestOf(components);
 }
 
-export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFAULT_PRODUCER_ID }) {
+export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFAULT_PRODUCER_ID, expectedSha = null }) {
   if (typeof sourcesRoot !== "string" || !path.isAbsolute(sourcesRoot)) throw new Red("SOURCES_ROOT_MUST_BE_ABSOLUTE", { sourcesRoot });
   if (typeof repoRoot !== "string" || !path.isAbsolute(repoRoot)) throw new Red("REPO_ROOT_MUST_BE_ABSOLUTE", { repoRoot });
   if (typeof producerId !== "string" || !producerId) throw new Red("PRODUCER_ID_INVALID");
+  if (expectedSha !== null && !(typeof expectedSha === "string" && /^[0-9a-f]{7,40}$/.test(expectedSha))) throw new Red("EXPECTED_SHA_INVALID", { expectedSha });
 
   const { overlay, overlayRef } = readOverlayRef(sourcesRoot);
   const contract_revision = overlay.contract_revision;
@@ -225,8 +273,9 @@ export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFA
   const subject_set_sha256 = digestOf(sortedSubjects);
   const subjectIdSet = new Set(sortedSubjects.map((s) => s.subject_id));
 
-  // F2 denominators.
-  const source = completeSourceManifest(repoRoot);
+  // F2 denominators. F-B: source_sha is sealed ONLY for a real git repo at the
+  // EXACT expected HEAD with a clean worktree and no symlink/special entry.
+  const source = sourceProvenance(repoRoot, expectedSha);
   if (source.file_count === 0) throw new Red("SOURCE_TREE_EMPTY");
   // obligation is ALWAYS an explicit unsealed two-pass sentinel (no caller ledger).
   const obligationSentinel = digestOf({ unsealed: "OBLIGATION_LEDGER_TWO_PASS_NOT_YET_AUTHORED", subject_set_sha256 });
@@ -286,13 +335,13 @@ export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFA
     ghost_ids,
   };
 
-  // P0-2 global seal truth.
+  // P0-2 global seal truth. componentSeal keys MUST be exactly SEAL_COMPONENT_KEYS.
   const componentSeal = {
-    source_sha: true,
-    verification_policy_set_sha256: true,
+    source_sha: source.sealed === true, // F-B: git-verified exact candidate, clean, no special file
     cross_platform_artifact_set_sha256: false, // schema bytes, not built binaries
     runtime_profile_digest: false, // declared, not runtime-observed
     obligation_set_sha256: false, // two-pass, not authored
+    verification_policy_set_sha256: true,
   };
   const gatesSealed = {
     http_independent_reconciliation: httpReconciliation.available === true && httpReconciliation.clean === true,
@@ -300,15 +349,18 @@ export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFA
     discovery_ast_registration: false, // static proxy discovery, not AST/registration
   };
   const authorityPresent = false; // no trusted OIDC / operator signature agent-side
-  const seal_status = computeSealStatus({ componentSeal, gatesSealed, authorityPresent });
+  const { status: seal_status, reasons: sealReasons } = computeSealStatus({ componentSeal, gatesSealed, authorityPresent });
 
   const unsealed_reasons = ["authority_absent_no_trusted_oidc_or_operator_signature", "obligation_ledger_two_pass_not_authored",
     "artifact_set_declared_schema_bytes_not_built_binaries", "runtime_profile_declared_not_runtime_observed",
     "discovery_static_proxy_not_ast_or_runtime_registration"];
+  unsealed_reasons.push(...source.unsealed_reasons);
   if (!(httpReconciliation.available && httpReconciliation.clean)) {
     unsealed_reasons.push(`http_definition_vs_contract_reconciliation_not_clean:${httpReconciliation.definition_only.length}_def_only/${httpReconciliation.contract_only.length}_contract_only`);
   }
   if (provisionalReconClasses.length) unsealed_reasons.push(`reconciliation_provisional_no_independent_lens:${provisionalReconClasses.sort().join(",")}`);
+  unsealed_reasons.push(...sealReasons);
+  const dedupedUnsealedReasons = [...new Set(unsealed_reasons)];
 
   const sealStatus = {
     schema_version: SEAL_STATUS_SCHEMA,
@@ -321,7 +373,16 @@ export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFA
     seal_status,
     can_ever_self_seal_agent_side: false,
     component_binding: {
-      source_sha: { basis: source.basis, sealed: true, git_tree_oid: source.git_tree_oid, file_count: source.file_count },
+      source_sha: {
+        basis: source.basis,
+        sealed: source.sealed,
+        git_tree_oid: source.git_tree_oid,
+        head_sha: source.head_sha,
+        clean_worktree: source.clean_worktree,
+        expected_sha: source.expected_sha,
+        expected_match: source.expected_match,
+        file_count: source.file_count,
+      },
       verification_policy_set_sha256: { basis: "consumed_from_TEST-STRESS-POLICY-BINDING-001", sealed: true }, // pragma: allowlist secret
       cross_platform_artifact_set_sha256: { basis: "declared_required_artifact_schema_bytes", sealed: false },
       runtime_profile_digest: { basis: "declared_full_content", sealed: false },
@@ -342,12 +403,23 @@ export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFA
     },
     authority_seal: authoritySeal,
     provisional_placeholder_classes: provisionalClasses.sort(),
-    unsealed_reasons,
+    unsealed_reasons: dedupedUnsealedReasons,
     does_not_prove:
       "does not close #45 / TEST-STRESS-AUTHORITY-ADAPTER-001 / R13 authority; agent-side the adapter is ALWAYS provisional (no trusted OIDC/operator authority). Not R13 GO, not final authority, not exhaustive completeness, not real runtime/artifact/ledger reality, not independent trust, not closure of any product, soak, device, execution or external leaf.",
   };
 
-  return { inventory, sealStatus, rawFiles, components, tuple, subjectSetSha: subject_set_sha256, seal_status };
+  return { inventory, sealStatus, rawFiles, components, tuple, subjectSetSha: subject_set_sha256, seal_status, sourceSignature: source.signature };
+}
+
+// F-B mutation guard: re-observe the source AFTER the bundle is written and confirm
+// the exact-candidate signature is byte-identical. A mutation between snapshot and
+// write invalidates the binding => RED (never a silent stale seal).
+export function assertSourceUnchanged(repoRoot, expectedSha, priorSignature) {
+  const now = sourceProvenance(repoRoot, expectedSha);
+  if (now.signature !== priorSignature) {
+    throw new Red("SOURCE_MUTATED_DURING_BUILD", { prior: priorSignature, now: now.signature });
+  }
+  return true;
 }
 
 export function writeBundle(outDir, { inventory, sealStatus, rawFiles }) {
@@ -368,12 +440,13 @@ export function writeBundle(outDir, { inventory, sealStatus, rawFiles }) {
 }
 
 function parseArgs(argv) {
-  const args = { sourcesRoot: null, repoRoot: null, outDir: null, producerId: DEFAULT_PRODUCER_ID };
+  const args = { sourcesRoot: null, repoRoot: null, outDir: null, producerId: DEFAULT_PRODUCER_ID, expectedSha: null };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--sources-root") args.sourcesRoot = argv[(i += 1)];
     else if (argv[i] === "--repo-root") args.repoRoot = argv[(i += 1)];
     else if (argv[i] === "--out-dir") args.outDir = argv[(i += 1)];
     else if (argv[i] === "--producer-id") args.producerId = argv[(i += 1)];
+    else if (argv[i] === "--expected-sha") args.expectedSha = argv[(i += 1)];
   }
   return args;
 }
@@ -387,7 +460,8 @@ function main() {
   if (!args.sourcesRoot) return fail("MISSING_SOURCES_ROOT", { usage: "--sources-root <dir> --repo-root <dir> [--out-dir <dir>]" });
   if (!args.repoRoot) return fail("MISSING_REPO_ROOT");
   try {
-    const built = buildSubjectInventory({ sourcesRoot: path.resolve(args.sourcesRoot), repoRoot: path.resolve(args.repoRoot), producerId: args.producerId });
+    const repoRoot = path.resolve(args.repoRoot);
+    const built = buildSubjectInventory({ sourcesRoot: path.resolve(args.sourcesRoot), repoRoot, producerId: args.producerId, expectedSha: args.expectedSha });
     if (recomputeSubjectSetSha(built.inventory.subjects) !== built.inventory.subject_set_sha256) return fail("SUBJECT_SET_SELF_RECOMPUTE_MISMATCH");
     if (recomputeFinalTupleSha(built.components) !== built.tuple) return fail("TUPLE_SELF_RECOMPUTE_MISMATCH");
     let outDir = null;
@@ -395,6 +469,8 @@ function main() {
       outDir = path.resolve(args.outDir);
       writeBundle(outDir, built);
     }
+    // F-B: re-observe source after write; RED if it mutated during the build/write.
+    assertSourceUnchanged(repoRoot, args.expectedSha, built.sourceSignature);
     console.log(
       JSON.stringify({
         result: "OK",

@@ -23,9 +23,10 @@
  * HONESTY BOUNDARY: discovery is still static (regex per-route-object + declared
  * overlay); it is not a full TypeScript AST, runtime route registration probe,
  * built-artifact manifest, or mechanism ledger. The independent contract lens is
- * the mitigation, not a substitute. `completeSourceManifest` binds the COMPLETE
- * candidate tree (git tree oid + full working-tree manifest) — the one exact
- * genuinely-sealed binding.
+ * the mitigation, not a substitute. `sourceProvenance` binds the COMPLETE
+ * candidate tree (git tree oid + full working-tree manifest) but seals it ONLY
+ * for a real git repo at the EXACT expected HEAD with a clean worktree and no
+ * symlink/special entry — otherwise it is provisional-unsealed.
  *
  * Canonicalization mirrors the R13 validator BYTE-FOR-BYTE (verify-...-r13.mjs:8-9).
  */
@@ -106,22 +107,88 @@ function repoFiles(repoRoot, relDir, predicate) {
   return walk(path.join(repoRoot, relDir), predicate).map((abs) => ({ abs, rel: toRel(repoRoot, abs), ref: repoFileRef(repoRoot, abs) }));
 }
 
-// --- F2/P0-2: COMPLETE source identity (git tree oid + full working manifest). --
-export function completeSourceManifest(repoRoot) {
-  let gitTreeOid = null;
-  try {
-    const r = spawnSync("git", ["-C", repoRoot, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" });
-    if (r.status === 0 && /^[0-9a-f]{40}$/.test((r.stdout || "").trim())) gitTreeOid = r.stdout.trim();
-  } catch {
-    gitTreeOid = null;
+// --- F-B: EXACT-candidate source provenance. `sealed` is true ONLY for a real
+// git repo, at the exact EXPECTED HEAD sha, with a clean worktree (no dirty
+// tracked, no untracked). A non-git root, dirty/untracked worktree, absent or
+// mismatched expected sha, or any symlink/special file in the manifest all force
+// `sealed:false` (the digest still binds the observed working bytes, but is NOT
+// a sealed candidate). `signature` supports mutation detection between the source
+// snapshot and the bundle write.
+export function sourceProvenance(repoRoot, expectedSha = null) {
+  const runGit = (args) => {
+    try {
+      const r = spawnSync("git", ["-C", repoRoot, ...args], { encoding: "utf8" });
+      return { status: r.status, out: (r.stdout || "").trim() };
+    } catch {
+      return { status: 1, out: "" };
+    }
+  };
+  const treeR = runGit(["rev-parse", "HEAD^{tree}"]);
+  const headR = runGit(["rev-parse", "HEAD"]);
+  const gitTreeOid = treeR.status === 0 && /^[0-9a-f]{40}$/.test(treeR.out) ? treeR.out : null;
+  const headSha = headR.status === 0 && /^[0-9a-f]{40}$/.test(headR.out) ? headR.out : null;
+  const isGit = gitTreeOid !== null && headSha !== null;
+  let cleanWorktree = false;
+  if (isGit) {
+    const st = runGit(["status", "--porcelain"]);
+    cleanWorktree = st.status === 0 && st.out === "";
   }
-  const files = walk(repoRoot).map((abs) => {
-    const bytes = fs.readFileSync(abs);
-    return { path: toRel(repoRoot, abs), sha256: sha(bytes), bytes: bytes.length };
-  });
+  const expectedProvided = typeof expectedSha === "string" && /^[0-9a-f]{7,40}$/.test(expectedSha);
+  const expectedMatch = expectedProvided && headSha !== null && (headSha === expectedSha || headSha.startsWith(expectedSha));
+  // Dedicated traversal (NOT the shared `walk`, which silently skips symlinks):
+  // here a symlink or non-regular file must be OBSERVED so it can force unsealed.
+  const files = [];
+  let specialSeen = false;
+  const stack = [repoRoot];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let st;
+    try {
+      st = fs.lstatSync(current);
+    } catch {
+      specialSeen = true;
+      continue;
+    }
+    if (st.isSymbolicLink()) {
+      specialSeen = true;
+      continue;
+    }
+    if (st.isDirectory()) {
+      for (const entry of fs.readdirSync(current)) {
+        if (IGNORED_DIRS.has(entry)) continue;
+        stack.push(path.join(current, entry));
+      }
+      continue;
+    }
+    if (st.isFile()) {
+      const bytes = fs.readFileSync(current);
+      files.push({ path: toRel(repoRoot, current), sha256: sha(bytes), bytes: bytes.length });
+    } else {
+      specialSeen = true; // fifo / socket / block / char device
+    }
+  }
   files.sort((a, b) => a.path.localeCompare(b.path));
-  const value = { git_tree_oid: gitTreeOid, file_count: files.length, files };
-  return { basis: "git_tree_and_full_working_manifest", git_tree_oid: gitTreeOid, file_count: files.length, digest: digestOf(value) };
+  const digest = digestOf({ git_tree_oid: gitTreeOid, file_count: files.length, files });
+  const sealed = isGit && cleanWorktree && expectedProvided && expectedMatch && !specialSeen;
+  const unsealed_reasons = [];
+  if (!isGit) unsealed_reasons.push("source_root_not_a_git_repository");
+  if (isGit && !cleanWorktree) unsealed_reasons.push("source_worktree_dirty_or_untracked_present");
+  if (!expectedProvided) unsealed_reasons.push("source_expected_sha_not_provided");
+  else if (isGit && !expectedMatch) unsealed_reasons.push("source_head_sha_not_equal_expected");
+  if (specialSeen) unsealed_reasons.push("source_manifest_has_symlink_or_special_file");
+  return {
+    basis: "git_head_verified_full_working_manifest",
+    sealed,
+    git_tree_oid: gitTreeOid,
+    head_sha: headSha,
+    clean_worktree: cleanWorktree,
+    expected_sha: expectedProvided ? expectedSha : null,
+    expected_match: expectedMatch,
+    file_count: files.length,
+    digest,
+    unsealed_reasons,
+    signature: `${gitTreeOid}|${headSha}|${cleanWorktree}|${digest}`,
+  };
 }
 
 function normalizeUiRoute(route) {

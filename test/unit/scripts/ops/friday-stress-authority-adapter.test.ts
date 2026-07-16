@@ -15,7 +15,11 @@
  *  (b) a route in one lens but not the other -> reconciliation RED (validator
  *      SUBJECT_RECONCILIATION_NONZERO + sidecar clean:false);
  *  (c) arbitrary caller identity can NOT seal (stays PROVISIONAL);
- *  (d) any single unsealed tuple component prevents global SEALED.
+ *  (d) F-A CLOSED-DENOMINATOR seal: empty / partial / extra-key / non-boolean seal
+ *      maps can NEVER seal; only the EXACT closed key sets all-true + authority seal;
+ *  (e) F-B EXACT-candidate source provenance: source_sha seals ONLY for a real git
+ *      repo at the expected HEAD with a clean worktree; non-git / dirty / untracked
+ *      / HEAD≠expected -> unsealed; a mutation between snapshot and write -> RED.
  */
 import { describe, it, expect, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -27,6 +31,7 @@ import * as crypto from "node:crypto";
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
 const GEN = path.join(REPO_ROOT, "scripts", "ops", "friday-stress-authority-adapter.mjs");
 const ADAPTER_MOD = path.join(REPO_ROOT, "scripts/ops/friday-stress-authority-adapter.mjs");
+const ENUM_MOD = path.join(REPO_ROOT, "scripts/ops/lib/friday-stress-static-enumerators.mjs");
 const VENDORED_VALIDATOR = path.join(__dirname, "fixtures", "verify-endbar-stress-evidence-r13.vendored.mjs");
 const VENDORED_VALIDATOR_SHA = "4287ef02e4cae753f457fa8ef61e8436fe6e8e291ad62f2750cd69d81dbbb323"; // pragma: allowlist secret
 const LIVE_VALIDATOR = path.join(os.homedir(), "Desktop", "Friday-Handoff-Log", "tools", "verify-endbar-stress-evidence-r13.mjs");
@@ -182,18 +187,32 @@ function writeFixture(repoOpts: Parameters<typeof writeRepoRoot>[0] = {}): Roots
 }
 
 interface GenResult { status: number | null; stdout: string; stderr: string; json: () => any; err: () => any }
-function runGen(roots: Partial<Roots>, opts: { outDir?: string; producerId?: string } = {}): GenResult {
+function runGen(roots: Partial<Roots>, opts: { outDir?: string; producerId?: string; expectedSha?: string } = {}): GenResult {
   const args: string[] = [];
   if (roots.sourcesRoot !== undefined) args.push("--sources-root", roots.sourcesRoot);
   if (roots.repoRoot !== undefined) args.push("--repo-root", roots.repoRoot);
   if (opts.outDir) args.push("--out-dir", opts.outDir);
   if (opts.producerId) args.push("--producer-id", opts.producerId);
+  if (opts.expectedSha) args.push("--expected-sha", opts.expectedSha);
   const r = spawnSync(process.execPath, [GEN, ...args], { encoding: "utf8" });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, json: () => JSON.parse(r.stdout), err: () => JSON.parse(r.stderr) };
 }
-function generateBundle(roots: Roots, producerId?: string): { outDir: string; inventory: any; sidecar: any; out: any } {
+
+// Turn a fixture repo into a real git repo with everything committed; returns HEAD.
+function initGitCommitted(root: string): string {
+  const git = (...a: string[]) => {
+    const r = spawnSync("git", ["-C", root, "-c", "user.email=t@t.test", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...a], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`git ${a.join(" ")} failed: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  git("init", "-q");
+  git("add", "-A");
+  git("commit", "-q", "-m", "fixture");
+  return git("rev-parse", "HEAD");
+}
+function generateBundle(roots: Roots, producerId?: string, opts: { expectedSha?: string } = {}): { outDir: string; inventory: any; sidecar: any; out: any } {
   const outDir = mkRealDir("saa-bundle-");
-  const r = runGen(roots, { outDir, producerId });
+  const r = runGen(roots, { outDir, producerId, expectedSha: opts.expectedSha });
   expect(r.status, r.stderr).toBe(0);
   return {
     outDir,
@@ -280,16 +299,128 @@ describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", 
     expect(untrusted.sidecar.unsealed_reasons).toContain("authority_absent_no_trusted_oidc_or_operator_signature");
   }, 30000);
 
-  // P0-2 (d): global SEALED requires EVERY component + gate + authority; any false -> PROVISIONAL.
-  it("(d) computeSealStatus: any single unsealed component/gate/authority prevents global SEALED", async () => {
+  // F-A (d): CLOSED-DENOMINATOR seal. Only the EXACT closed key sets all-true + authority
+  // can SEAL; empty / missing / extra-key / non-boolean maps can NEVER seal. The old
+  // `Object.values(map).every(Boolean)` sealed `{}` and could not reject unknown extras.
+  it("(d) computeSealStatus is closed-key exact: empty/partial/extra/non-boolean never seal", async () => {
     expect.hasAssertions();
     const mod = await import(ADAPTER_MOD);
-    const allSealed = { componentSeal: { a: true, b: true }, gatesSealed: { g1: true, g2: true }, authorityPresent: true };
-    expect(mod.computeSealStatus(allSealed)).toBe("SEALED");
-    expect(mod.computeSealStatus({ ...allSealed, authorityPresent: false })).toBe("PROVISIONAL_UNSEALED");
-    expect(mod.computeSealStatus({ ...allSealed, componentSeal: { a: true, b: false } })).toBe("PROVISIONAL_UNSEALED");
-    expect(mod.computeSealStatus({ ...allSealed, gatesSealed: { g1: true, g2: false } })).toBe("PROVISIONAL_UNSEALED");
+    const fullComp = Object.fromEntries(mod.SEAL_COMPONENT_KEYS.map((k: string) => [k, true]));
+    const fullGate = Object.fromEntries(mod.SEAL_GATE_KEYS.map((k: string) => [k, true]));
+    const base = { componentSeal: fullComp, gatesSealed: fullGate, authorityPresent: true };
+
+    // the ONLY sealing input: exact closed keys all-true + authority present.
+    expect(mod.computeSealStatus(base)).toEqual({ status: "SEALED", reasons: [] });
+
+    // empty maps must NEVER seal (the round-3 `.every(Boolean)` defect returned SEALED for {}).
+    const empty = mod.computeSealStatus({ componentSeal: {}, gatesSealed: {}, authorityPresent: true });
+    expect(empty.status).toBe("PROVISIONAL_UNSEALED");
+    expect(empty.reasons.some((r: string) => r.startsWith("component_seal_missing_keys:"))).toBe(true);
+    expect(empty.reasons.some((r: string) => r.startsWith("gate_seal_missing_keys:"))).toBe(true);
+
+    // authority absent -> PROVISIONAL with a specific reason.
+    const noAuth = mod.computeSealStatus({ ...base, authorityPresent: false });
+    expect(noAuth.status).toBe("PROVISIONAL_UNSEALED");
+    expect(noAuth.reasons).toContain("authority_not_present");
+
+    // one component missing -> PROVISIONAL.
+    const { source_sha: _drop, ...missingOne } = fullComp;
+    expect(mod.computeSealStatus({ ...base, componentSeal: missingOne }).status).toBe("PROVISIONAL_UNSEALED");
+
+    // one component false -> PROVISIONAL.
+    expect(mod.computeSealStatus({ ...base, componentSeal: { ...fullComp, source_sha: false } }).status).toBe("PROVISIONAL_UNSEALED");
+
+    // unknown extra key -> PROVISIONAL (cannot be distinguished from a real component by .every).
+    const extra = mod.computeSealStatus({ ...base, componentSeal: { ...fullComp, invented_component: true } });
+    expect(extra.status).toBe("PROVISIONAL_UNSEALED");
+    expect(extra.reasons.some((r: string) => r.startsWith("component_seal_unknown_keys:"))).toBe(true);
+
+    // non-boolean truthy value -> PROVISIONAL (strict === true required).
+    expect(mod.computeSealStatus({ ...base, gatesSealed: { ...fullGate, [mod.SEAL_GATE_KEYS[0]]: 1 } }).status).toBe("PROVISIONAL_UNSEALED");
+    expect(mod.computeSealStatus({ ...base, gatesSealed: { ...fullGate, [mod.SEAL_GATE_KEYS[0]]: "true" } }).status).toBe("PROVISIONAL_UNSEALED");
+
+    // non-object seal map -> PROVISIONAL.
+    expect(mod.computeSealStatus({ ...base, componentSeal: null }).status).toBe("PROVISIONAL_UNSEALED");
+    expect(mod.exactAllTrue(null, mod.SEAL_COMPONENT_KEYS)).toEqual({ ok: false, reason: "not_a_plain_object" });
+
+    // the closed key sets are exactly the documented 5 components / 3 gates.
+    expect(new Set(mod.SEAL_COMPONENT_KEYS)).toEqual(new Set(["source_sha", "cross_platform_artifact_set_sha256", "runtime_profile_digest", "obligation_set_sha256", "verification_policy_set_sha256"]));
+    expect(mod.SEAL_COMPONENT_KEYS).toHaveLength(5);
+    expect(mod.SEAL_GATE_KEYS).toHaveLength(3);
   });
+
+  // F-B (e): EXACT-candidate source provenance.
+  it("(e) source_sha seals ONLY for a real git repo at the expected HEAD with a clean worktree", async () => {
+    expect.hasAssertions();
+
+    // non-git default fixture -> source unsealed (round-3 hardcoded `true` is the defect here).
+    const nonGit = generateBundle(writeFixture());
+    expect(nonGit.sidecar.component_binding.source_sha.sealed).toBe(false);
+    expect(nonGit.sidecar.component_binding.source_sha.git_tree_oid).toBeNull();
+    expect(nonGit.sidecar.unsealed_reasons).toContain("source_root_not_a_git_repository");
+    expect(nonGit.out.seal_status).toBe("PROVISIONAL_UNSEALED");
+
+    // clean git repo at the exact expected HEAD -> source_sha SEALS (but bundle stays
+    // PROVISIONAL because authority is absent — an honest partial seal).
+    const clean = writeFixture();
+    const head = initGitCommitted(clean.repoRoot);
+    const ok = generateBundle(clean, undefined, { expectedSha: head });
+    expect(ok.sidecar.component_binding.source_sha.sealed).toBe(true);
+    expect(ok.sidecar.component_binding.source_sha.clean_worktree).toBe(true);
+    expect(ok.sidecar.component_binding.source_sha.expected_match).toBe(true);
+    expect(ok.sidecar.component_binding.source_sha.head_sha).toBe(head);
+    expect(ok.sidecar.component_binding.source_sha.git_tree_oid).toMatch(/^[0-9a-f]{40}$/);
+    expect(ok.out.seal_status).toBe("PROVISIONAL_UNSEALED"); // authority still absent
+    expect(ok.sidecar.unsealed_reasons).not.toContain("source_root_not_a_git_repository");
+
+    // dirty tracked file -> unsealed.
+    const dirty = writeFixture();
+    const dHead = initGitCommitted(dirty.repoRoot);
+    fs.appendFileSync(path.join(dirty.repoRoot, "src/api/http/routes/friday-sample-routes.ts"), "\n// dirty edit\n");
+    const dRes = generateBundle(dirty, undefined, { expectedSha: dHead });
+    expect(dRes.sidecar.component_binding.source_sha.sealed).toBe(false);
+    expect(dRes.sidecar.component_binding.source_sha.clean_worktree).toBe(false);
+    expect(dRes.sidecar.unsealed_reasons).toContain("source_worktree_dirty_or_untracked_present");
+
+    // untracked file -> unsealed.
+    const untracked = writeFixture();
+    const uHead = initGitCommitted(untracked.repoRoot);
+    fs.writeFileSync(path.join(untracked.repoRoot, "src/newfile.ts"), "export const x = 1;\n");
+    const uRes = generateBundle(untracked, undefined, { expectedSha: uHead });
+    expect(uRes.sidecar.component_binding.source_sha.sealed).toBe(false);
+    expect(uRes.sidecar.unsealed_reasons).toContain("source_worktree_dirty_or_untracked_present");
+
+    // HEAD != expected candidate sha -> unsealed.
+    const wrong = writeFixture();
+    initGitCommitted(wrong.repoRoot);
+    const wRes = generateBundle(wrong, undefined, { expectedSha: "0".repeat(40) });
+    expect(wRes.sidecar.component_binding.source_sha.sealed).toBe(false);
+    expect(wRes.sidecar.component_binding.source_sha.expected_match).toBe(false);
+    expect(wRes.sidecar.unsealed_reasons).toContain("source_head_sha_not_equal_expected");
+
+    // git repo but NO expected sha provided -> unsealed (cannot pin the candidate).
+    const noExp = writeFixture();
+    initGitCommitted(noExp.repoRoot);
+    const nRes = generateBundle(noExp);
+    expect(nRes.sidecar.component_binding.source_sha.sealed).toBe(false);
+    expect(nRes.sidecar.unsealed_reasons).toContain("source_expected_sha_not_provided");
+  }, 60000);
+
+  // F-B: a mutation between the source snapshot and the bundle write is RED, never a stale seal.
+  it("(e) assertSourceUnchanged REDs on a source mutation between snapshot and write", async () => {
+    expect.hasAssertions();
+    const enums = await import(ENUM_MOD);
+    const adapter = await import(ADAPTER_MOD);
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    const prior = enums.sourceProvenance(roots.repoRoot, head).signature;
+    expect(adapter.assertSourceUnchanged(roots.repoRoot, head, prior)).toBe(true); // unchanged -> ok
+    fs.appendFileSync(path.join(roots.repoRoot, "src/api/http/routes/friday-sample-routes.ts"), "\n// mutated after snapshot\n");
+    let thrown: any = null;
+    try { adapter.assertSourceUnchanged(roots.repoRoot, head, prior); } catch (e) { thrown = e; }
+    expect(thrown).not.toBeNull();
+    expect(thrown.code).toBe("SOURCE_MUTATED_DURING_BUILD");
+  }, 30000);
 
   // F2 / P0-2: source_sha binds the COMPLETE tree; an uncovered src/jobs file flips it.
   it("F2: an uncovered src/jobs source flips source_sha+tuple; other bindings flip on their real content", () => {
@@ -327,7 +458,8 @@ describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", 
     const { sidecar } = generateBundle(writeFixture());
     expect(sidecar.seal_status).toBe("PROVISIONAL_UNSEALED");
     expect(sidecar.can_ever_self_seal_agent_side).toBe(false);
-    expect(sidecar.component_binding.source_sha.sealed).toBe(true);
+    // non-git default fixture: source_sha is honestly UNSEALED (no expected-candidate pin).
+    expect(sidecar.component_binding.source_sha.sealed).toBe(false);
     expect(sidecar.component_binding.obligation_set_sha256.sealed).toBe(false);
     expect(sidecar.component_binding.runtime_profile_digest.sealed).toBe(false);
     expect(sidecar.component_binding.cross_platform_artifact_set_sha256.sealed).toBe(false);
