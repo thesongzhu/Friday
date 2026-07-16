@@ -36,9 +36,11 @@ describe("classifyDiskGrowth — U13 warning formula", () => {
   });
 
   it("boundary: free == 10 GiB floor on a 50 GiB volume → ok (below is strict <)", () => {
-    const out = classifyDiskGrowth({ freeBytes: 10 * GiB, totalCapacityBytes: 50 * GiB });
+    // measured-zero growth isolates the FLOOR signal: above floor + known no-growth → ok.
+    const out = classifyDiskGrowth({ freeBytes: 10 * GiB, totalCapacityBytes: 50 * GiB, growthRateBytesPerDay: 0 });
     expect(out.status).toBe("ok");
     expect(out.belowFloor).toBe(false);
+    // below the floor is a warn REGARDLESS of the growth branch (here: growth unknown).
     const justBelow = classifyDiskGrowth({ freeBytes: 10 * GiB - 1, totalCapacityBytes: 50 * GiB });
     expect(justBelow.status).toBe("warn");
   });
@@ -46,18 +48,34 @@ describe("classifyDiskGrowth — U13 warning formula", () => {
   it("boundary: 10% branch dominates on a large volume — free == 10% → ok, just below → warn", () => {
     // 200 GiB capacity → floor = max(10 GiB, 20 GiB) = 20 GiB.
     const floor = 20 * GiB;
-    const at = classifyDiskGrowth({ freeBytes: floor, totalCapacityBytes: 200 * GiB });
+    const at = classifyDiskGrowth({ freeBytes: floor, totalCapacityBytes: 200 * GiB, growthRateBytesPerDay: 0 });
     expect(at.freeSpaceFloorBytes).toBe(floor);
     expect(at.status).toBe("ok");
     const below = classifyDiskGrowth({ freeBytes: floor - 1, totalCapacityBytes: 200 * GiB });
     expect(below.status).toBe("warn");
   });
 
-  it("healthy: free well above both floors, growth unknown → ok", () => {
-    const out = classifyDiskGrowth({ freeBytes: 500 * GiB, totalCapacityBytes: 1000 * GiB });
-    expect(out.status).toBe("ok");
-    expect(out.belowFloor).toBe(false);
-    expect(out.growthBranch).toBe("unknown");
+  it("FAIL-CLOSED (advisor P1): free well above the floor but growth UNKNOWN → unknown, never ok/healthy", () => {
+    // The advisor counterexample: 50 GiB free on a 100 GiB volume (above the
+    // floor = max(10 GiB, 10 GiB) = 10 GiB) with a null growth rate. The 7-day
+    // projected-exhaustion branch is UNOBSERVABLE, so U13 requires fail-closed
+    // `unknown` (never a false healthy `ok`).
+    const ce = classifyDiskGrowth({ freeBytes: 50 * GiB, totalCapacityBytes: 100 * GiB, growthRateBytesPerDay: null });
+    expect(ce.status).toBe("unknown");
+    expect(ce.status).not.toBe("ok");
+    expect(ce.belowFloor).toBe(false); // NOT below the floor — the floor branch alone would say ok
+    expect(ce.growthBranch).toBe("unknown");
+    expect(ce.failClosed).toBe(true);
+    // free/capacity are still reported (the probe worked; only the growth trend is unknown).
+    expect(ce.freeBytes).toBe(50 * GiB);
+    expect(ce.totalCapacityBytes).toBe(100 * GiB);
+
+    // Same for an omitted growth rate and for above-floor with no growth field at all.
+    expect(classifyDiskGrowth({ freeBytes: 500 * GiB, totalCapacityBytes: 1000 * GiB }).status).toBe("unknown");
+    expect(
+      classifyDiskGrowth({ freeBytes: 500 * GiB, totalCapacityBytes: 1000 * GiB, growthRateBytesPerDay: undefined })
+        .status,
+    ).toBe("unknown");
   });
 
   it("projected-exhaustion boundary: == 7 days → warn; just over 7 → ok (floor otherwise satisfied)", () => {
@@ -83,20 +101,39 @@ describe("classifyDiskGrowth — U13 warning formula", () => {
     expect(over.status).toBe("ok");
   });
 
-  it("growth branch unknown does NOT force unknown: floor still governs (ok when above floor)", () => {
+  it("FAIL-CLOSED: above the floor + null growth does NOT collapse to ok — it fails closed to unknown", () => {
     const out = classifyDiskGrowth({
       freeBytes: 800 * GiB,
       totalCapacityBytes: 1000 * GiB,
       growthRateBytesPerDay: null,
     });
-    expect(out.status).toBe("ok");
+    expect(out.status).toBe("unknown");
+    expect(out.status).not.toBe("ok");
+    expect(out.belowFloor).toBe(false);
     expect(out.growthBranch).toBe("unknown");
+    expect(out.failClosed).toBe(true);
   });
 
-  it("zero/negative growth never exhausts → not a warning by the exhaustion branch", () => {
+  it("KNOWN measured-zero growth → ok; NEGATIVE/NaN/±Inf/overflow growth is UNKNOWN → fail-closed", () => {
+    // A measured ZERO is a KNOWN no-growth estimate → ok (must NOT collapse with unknown/null).
     const zero = classifyDiskGrowth({ freeBytes: 800 * GiB, totalCapacityBytes: 1000 * GiB, growthRateBytesPerDay: 0 });
+    expect(zero.growthBranch).toBe("known");
     expect(zero.withinExhaustionWindow).toBe(false);
     expect(zero.status).toBe("ok");
+    // A negative / NaN / ±Inf growth estimate is invalid → fail-closed unknown (never ok).
+    for (const bad of [-1, -1000, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const out = classifyDiskGrowth({ freeBytes: 800 * GiB, totalCapacityBytes: 1000 * GiB, growthRateBytesPerDay: bad });
+      expect(out.status, `growth=${bad}`).toBe("unknown");
+      expect(out.failClosed, `growth=${bad}`).toBe(true);
+    }
+    // A sub-normal positive rate that overflows free/rate to Infinity → fail-closed unknown.
+    const overflow = classifyDiskGrowth({
+      freeBytes: 800 * GiB,
+      totalCapacityBytes: 1000 * GiB,
+      growthRateBytesPerDay: Number.MIN_VALUE,
+    });
+    expect(overflow.status).toBe("unknown");
+    expect(overflow.failClosed).toBe(true);
   });
 
   it("FAIL-CLOSED (free space itself): null / NaN / overflow / inconsistent → unknown, never ok", () => {

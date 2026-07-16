@@ -169,10 +169,14 @@ export interface CreateSystemHealthMonitorDeps {
   probeDiskSpace?: () => { freeBytes: number; totalBytes: number } | null;
   /**
    * Optional AUTHORITATIVE growth-rate probe (bytes/day) for the U13 projected-
-   * exhaustion branch. When omitted / null, that branch is UNEVALUATED and the
-   * absolute `max(10 GiB, 10% capacity)` free-space floor still governs the
-   * warning. (Real growth-window tracking is a clean follow-up; the floor is the
-   * live authoritative signal today.)
+   * exhaustion branch. A measured `0` is a KNOWN no-growth estimate. When omitted
+   * or it returns null (the estimate is UNKNOWN), the projected-exhaustion branch
+   * is UNOBSERVABLE: BELOW the `max(10 GiB, 10% capacity)` floor the reading is
+   * still `warn`, but ABOVE the floor the reading FAILS CLOSED to `unknown`
+   * (healthy=false) — it never publishes a false healthy `ok`. An authoritative
+   * production growth-window measurement is the named R3c follow-up; until then
+   * production wires this to `null` and honestly reports the exhaustion branch as
+   * `unknown`.
    */
   probeGrowthRateBytesPerDay?: () => number | null;
 }

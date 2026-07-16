@@ -8287,11 +8287,15 @@ export async function createFridayHub(
                 return null;
               }
             },
-            // U13 projected-exhaustion branch: no growth-window tracking exists in
-            // the TS runtime yet, so the growth rate is UNKNOWN today. That leaves
-            // only the exhaustion branch unevaluated — the absolute max(10 GiB, 10%)
-            // free-space floor is the live authoritative warning. Real bytes/day
-            // growth tracking is a clean follow-up.
+            // U13 projected-exhaustion branch: no AUTHORITATIVE growth-window
+            // measurement exists in the TS runtime yet, so the growth rate is
+            // UNKNOWN today. Returning null is the HONEST fail-closed posture — per
+            // U13, above the max(10 GiB, 10%) free-space floor the disk_growth
+            // reading reports `unknown` (healthy=false), NEVER a false healthy `ok`;
+            // below the floor it still warns (the live authoritative signal). An
+            // authoritative bytes/day growth-window measurement is the named R3c
+            // follow-up; it will replace this null with a real rate so the 7-day
+            // projected-exhaustion warning becomes observable.
             probeGrowthRateBytesPerDay: () => null,
             onRunComplete: (summary) => {
               // Log an unhealthy/warn/critical/degraded check only on a status
