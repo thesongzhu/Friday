@@ -36,7 +36,7 @@
  *      fixture and authoritatively REDs at SOAK_INVALID (and HOST_SAFETY_INVALID once soaks are
  *      structurally patched); the in-process mirror is a non-authoritative subset, never the sole oracle.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -109,6 +109,17 @@ function independentInstanceRows(rule: any): any[] {
   }));
 }
 
+// FIX 1 LOCKED the R7 statistics policy, so EVERY report build now runs the full
+// 10,000-iteration seeded bootstrap over all 96 metrics (no fast statsOpts shortcut). A
+// single build takes several seconds; two builds in one test blow vitest's default 10 s
+// per-test timeout on a loaded CI runner. Raise the file-level test + hook timeouts to 60 s
+// (comfortable margin) — this covers ALL heavy tests uniformly (the legit-policy compare,
+// the golden/determinism tests, and the FIX-4 full-build + real-validator-spawn probes). We
+// do NOT reduce bootstrap iterations (that would undo FIX 1); we only give the tests time.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
+
+// The default full report is built ONCE here and reused everywhere a test compares against
+// "the default", so no test needs to rebuild it (each heavy test builds at most one report).
 let EMITTED: any;
 beforeAll(() => {
   EMITTED = buildResourceReport({});
@@ -380,10 +391,11 @@ describe("perf-soak-authority (FIX 1) locked R7 statistics policy is NOT caller-
   });
 
   it("accepts statsOpts byte-for-byte equal to the locked policy (any key order) and emits the SAME numbers as the default", () => {
+    // Only ONE fresh build here (the locked-statsOpts one under test); the default is the
+    // already-built EMITTED report (buildResourceReport({})), reused to stay within timeout.
     const withLocked = buildResourceReport({ statsOpts: { confidence: 0.95, iterations: 10000, seed: 20260711 } });
-    const def = buildResourceReport({});
     // Identical estimator params => byte-identical rows (this is the ONLY accepted statsOpts).
-    expect(withLocked.report.performance_metrics).toEqual(def.report.performance_metrics);
+    expect(withLocked.report.performance_metrics).toEqual(EMITTED.report.performance_metrics);
     expect(withLocked.report.performance_metrics.every((m: any) => m.result === "passed")).toBe(true);
   });
 });
@@ -746,8 +758,8 @@ describe("perf-soak-authority (FIX 4) authoritative oracle: execute the REAL ven
 
   it("AUTHORITATIVE: the REAL validator REDs at SOAK_INVALID (exit 65) on the emitted (honest, non-passing) soaks", () => {
     // Sanity: the emitted report is genuinely embedded (its soaks are the honest placeholders).
-    const built = buildResourceReport({});
-    expect(built.report.soaks.every((s: any) => s.uninterrupted === false && s.result !== "passed")).toBe(true);
+    // Reuse the already-built EMITTED default so this test builds only the tuple-bound fixture report.
+    expect(EMITTED.report.soaks.every((s: any) => s.uninterrupted === false && s.result !== "passed")).toBe(true);
     const dir = writeFixture({ passingSoaks: false });
     const { status, out } = runRealValidator(dir);
     expect(status, JSON.stringify(out)).toBe(65); // real validator die() exit code
@@ -756,8 +768,8 @@ describe("perf-soak-authority (FIX 4) authoritative oracle: execute the REAL ven
   }, 120000);
 
   it("AUTHORITATIVE: with soaks structurally patched (probe), the REAL validator REDs at HOST_SAFETY_INVALID (exit 65) on the emitted (all-false) host_safety", () => {
-    const built = buildResourceReport({});
-    expect(built.report.host_safety.preflight_passed).toBe(false); // the emitted host_safety is honest-false (FIX 2)
+    // Reuse the already-built EMITTED default (host_safety is honest-false, FIX 2).
+    expect(EMITTED.report.host_safety.preflight_passed).toBe(false);
     const dir = writeFixture({ passingSoaks: true });
     const { status, out } = runRealValidator(dir);
     expect(status, JSON.stringify(out)).toBe(65);
