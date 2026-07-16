@@ -85,12 +85,28 @@ export interface FridayDiskGrowthWarning {
   /** The computed max(10 GiB, 10% capacity) floor. */
   freeSpaceFloorBytes: number | null;
   belowFloor: boolean | null;
-  /** free / growthRate; `null` when the growth branch is unknown or non-exhausting. */
+  /**
+   * `free / growthRate` in days. BOTH warning branches are evaluated independently,
+   * so this is computed and exposed TRUTHFULLY whenever the growth rate is KNOWN —
+   * EVEN when `belowFloor` is true (a simultaneously-active exhaustion signal is
+   * never hidden). `null` when: inputs invalid, growth rate unknown/invalid, the
+   * `free/rate` division overflowed to non-finite, or growth is a measured `0`
+   * (never-exhausts sentinel).
+   */
   projectedExhaustionDays: number | null;
-  withinExhaustionWindow: boolean;
+  /**
+   * `projectedExhaustionDays <= 7`. Exposed truthfully even when `belowFloor` is
+   * true. `false` for measured-zero (never-exhausts) growth; `null` when the growth
+   * branch is UNOBSERVABLE (unknown/invalid rate or overflow) or inputs are invalid.
+   */
+  withinExhaustionWindow: boolean | null;
   growthBranch: "known" | "unknown";
   authority: typeof FRIDAY_STORAGE_PRESSURE_AUTHORITY;
-  /** Human-readable reasons for any warn/unknown signal (empty when ok). */
+  /**
+   * Machine reason codes for any warn/unknown signal (empty when ok):
+   * `below_floor`, `within_7d_exhaustion`, `growth_rate_unknown_above_floor`,
+   * `invalid_inputs`. Multiple codes may be present (e.g. both warning branches active).
+   */
   reasons: string[];
   /** Optional NON-authoritative diagnostics (never affect `status`). */
   diagnostics?: FridayDiskGrowthDiagnostics;
@@ -176,7 +192,7 @@ export function failClosedDiskGrowth(reason: string): FridayDiskGrowthWarning {
     freeSpaceFloorBytes: null,
     belowFloor: null,
     projectedExhaustionDays: null,
-    withinExhaustionWindow: false,
+    withinExhaustionWindow: null,
     growthBranch: "unknown",
     authority: FRIDAY_STORAGE_PRESSURE_AUTHORITY,
     reasons: [`fail-closed to unknown: ${reason}`],
@@ -184,153 +200,141 @@ export function failClosedDiskGrowth(reason: string): FridayDiskGrowthWarning {
   };
 }
 
-function unknownDiskGrowth(input: FridayDiskGrowthInput, reason: string): FridayDiskGrowthWarning {
-  const out = failClosedDiskGrowth(reason);
-  out.freeBytes = isValidByteCount(input.freeBytes) ? input.freeBytes : null;
-  out.totalCapacityBytes = isValidByteCount(input.totalCapacityBytes) ? input.totalCapacityBytes : null;
-  if (input.diagnostics) out.diagnostics = input.diagnostics;
-  return out;
-}
-
 // ─── U13 warning formula ───
 
 /**
- * The operator-locked disk-growth warning formula. Exact U13 truth table:
+ * The operator-locked disk-growth warning formula. Both U13 warning branches — the
+ * absolute free-space FLOOR and the 7-day projected-EXHAUSTION window — are
+ * evaluated INDEPENDENTLY, and their observed fields (`belowFloor`,
+ * `projectedExhaustionDays`, `withinExhaustionWindow`) are exposed TRUTHFULLY so
+ * the owner-facing readback never hides a simultaneously-active signal. Status is
+ * then DERIVED from both:
  *
- *  1. FREE-SPACE reading invalid (free/capacity null/NaN/±Inf/negative/overflow,
- *     capacity ≤ 0, or free > capacity) → `unknown` (never `ok`).
- *  2. Compute `floor = max(10 GiB, floor(10% capacity))`; `belowFloor = free < floor`.
- *  3. `belowFloor` → `warn` — the absolute floor governs the warn REGARDLESS of the
- *     growth branch (even when the growth estimate is unknown).
- *  4. ABOVE the floor, the 7-day projected-exhaustion branch decides:
- *     a. growth estimate is a KNOWN finite `>= 0`:
- *        - `== 0` (measured no-growth) → never exhausts → `ok`.
- *        - `> 0` → `days = free / rate`; non-finite/overflow → `unknown` (fail-closed);
- *          else `warn` when `days <= 7`, otherwise `ok`.
- *     b. growth estimate is UNKNOWN/invalid (null/undefined/NaN/±Inf/negative/overflow)
- *        → the projected-exhaustion branch is UNOBSERVABLE → U13 FAIL-CLOSED to
- *        `unknown` (never `ok`/healthy). A measured ZERO is KNOWN and must NOT be
- *        collapsed with an unknown/null estimate.
+ *  1. Inputs invalid (free/capacity null/NaN/±Inf/negative/overflow, capacity ≤ 0,
+ *     or free > capacity) → `unknown` (fail-closed); belowFloor / projected /
+ *     withinWindow all `null`; reason `invalid_inputs`.
+ *  2. FLOOR branch (always): `floor = max(10 GiB, floor(10% capacity))`;
+ *     `belowFloor = free < floor` (strict).
+ *  3. EXHAUSTION branch (always, when the rate is KNOWN finite `>= 0`):
+ *       • rate == 0 (measured no-growth): `projectedExhaustionDays = null`
+ *         (never-exhausts sentinel), `withinExhaustionWindow = false`.
+ *       • rate > 0: `days = free / rate`; overflow (non-finite) → branch UNOBSERVABLE
+ *         (`projectedExhaustionDays = null`, `withinExhaustionWindow = null`); else
+ *         `projectedExhaustionDays = days`, `withinExhaustionWindow = days <= 7`.
+ *       • rate unknown/null/NaN/±Inf/negative → branch UNOBSERVABLE
+ *         (`projectedExhaustionDays = null`, `withinExhaustionWindow = null`).
+ *  4. DERIVE status from BOTH branches:
+ *       • `belowFloor === true` OR `withinExhaustionWindow === true` → `warn`
+ *         (reasons `below_floor` and/or `within_7d_exhaustion`).
+ *       • else if the growth branch is UNOBSERVABLE (above floor, growth unknown) →
+ *         FAIL-CLOSED `unknown` (reason `growth_rate_unknown_above_floor`).
+ *       • else (above floor, growth known & beyond 7d, or measured-zero) → `ok`.
  *
+ * A measured ZERO is KNOWN and must NOT be collapsed with an unknown/null estimate.
  * `unknown` is never `ok`/healthy — the monitor maps `status !== "ok"` to
- * `healthy=false`, so an unobservable exhaustion branch can never publish a false
- * healthy reading. Performs NO IO and can never delete.
+ * `healthy=false`. Performs NO IO and can never delete.
  */
 export function classifyDiskGrowth(input: FridayDiskGrowthInput): FridayDiskGrowthWarning {
   const A = FRIDAY_STORAGE_PRESSURE_AUTHORITY;
 
-  // (1) FAIL-CLOSED on the FREE-SPACE reading itself: free + capacity must be
-  // resolvable and consistent, else nothing downstream can be trusted → unknown.
-  if (!isValidByteCount(input.freeBytes) || !isValidByteCount(input.totalCapacityBytes)) {
-    return unknownDiskGrowth(input, "free-space/capacity is null/NaN/overflow/invalid");
-  }
-  const freeBytes = input.freeBytes;
-  const capacity = input.totalCapacityBytes;
-  if (capacity <= 0) {
-    return unknownDiskGrowth(input, "capacity is zero/invalid");
-  }
-  if (freeBytes > capacity) {
-    return unknownDiskGrowth(input, "inconsistent reading: freeBytes exceeds capacity");
-  }
+  const withDiagnostics = (out: FridayDiskGrowthWarning): FridayDiskGrowthWarning => {
+    if (input.diagnostics) out.diagnostics = input.diagnostics;
+    return out;
+  };
 
-  // (2) Absolute + relative free-space floor = max(10 GiB, 10% capacity).
+  // ── (1) VALIDATE the free-space reading. Invalid free/capacity → nothing
+  // downstream can be trusted → fail-closed `unknown`; all derived fields null.
+  const freeValid = isValidByteCount(input.freeBytes);
+  const capValid = isValidByteCount(input.totalCapacityBytes);
+  if (
+    !freeValid ||
+    !capValid ||
+    (input.totalCapacityBytes as number) <= 0 ||
+    (input.freeBytes as number) > (input.totalCapacityBytes as number)
+  ) {
+    return withDiagnostics({
+      status: "unknown",
+      freeBytes: freeValid ? (input.freeBytes as number) : null,
+      totalCapacityBytes: capValid ? (input.totalCapacityBytes as number) : null,
+      freeFraction: null,
+      freeSpaceFloorBytes: null,
+      belowFloor: null,
+      projectedExhaustionDays: null,
+      withinExhaustionWindow: null,
+      growthBranch: "unknown",
+      authority: A,
+      reasons: ["invalid_inputs"],
+      failClosed: true,
+    });
+  }
+  const freeBytes = input.freeBytes as number;
+  const capacity = input.totalCapacityBytes as number;
+
+  // ── (2) FLOOR branch — ALWAYS computed. Absolute + relative floor = max(10 GiB, 10%).
   const floorBytes = Math.max(A.freeSpaceFloorBytes, fractionBytes(capacity, A.freeSpaceFloorFraction));
-  const belowFloor = freeBytes < floorBytes;
+  const belowFloor = freeBytes < floorBytes; // strict <
 
-  // Is the growth-rate estimate a KNOWN, finite, non-negative magnitude? A measured
-  // ZERO (no-growth) is KNOWN; null/undefined/NaN/±Inf/negative/overflow are UNKNOWN
-  // and must NOT be treated as a healthy `ok`.
+  // ── (3) EXHAUSTION branch — ALWAYS computed, INDEPENDENT of the floor branch. A
+  // measured ZERO is a KNOWN no-growth estimate; null/undefined/NaN/±Inf/negative/
+  // overflow leaves the branch UNOBSERVABLE (never a false `ok`).
   const rate = input.growthRateBytesPerDay;
   const rateKnown =
     typeof rate === "number" && Number.isFinite(rate) && rate >= 0 && rate <= Number.MAX_SAFE_INTEGER;
 
-  const reasons: string[] = [];
+  let projectedExhaustionDays: number | null = null;
+  let withinExhaustionWindow: boolean | null = null;
+  let growthUnknown: boolean;
+  if (!rateKnown) {
+    growthUnknown = true; // unknown/null/NaN/±Inf/negative → branch unobservable
+  } else if ((rate as number) === 0) {
+    growthUnknown = false; // measured no-growth → never exhausts
+    withinExhaustionWindow = false;
+  } else {
+    const days = freeBytes / (rate as number);
+    if (!Number.isFinite(days)) {
+      growthUnknown = true; // overflow (e.g. sub-normal rate) → branch unobservable
+    } else {
+      growthUnknown = false;
+      projectedExhaustionDays = days;
+      withinExhaustionWindow = days <= A.projectedExhaustionWarnDays;
+    }
+  }
+  const growthBranch: "known" | "unknown" = growthUnknown ? "unknown" : "known";
+
+  // ── (4) DERIVE status/health from BOTH branches. All observed fields are exposed
+  // truthfully regardless of which branch drives the status.
   const base = {
     freeBytes,
     totalCapacityBytes: capacity,
     freeFraction: freeBytes / capacity,
     freeSpaceFloorBytes: floorBytes,
     belowFloor,
+    projectedExhaustionDays,
+    withinExhaustionWindow,
+    growthBranch,
     authority: A,
   };
-  const withDiagnostics = (out: FridayDiskGrowthWarning): FridayDiskGrowthWarning => {
-    if (input.diagnostics) out.diagnostics = input.diagnostics;
-    return out;
-  };
 
-  // (3) The absolute floor governs the WARN regardless of the growth branch (U13):
-  // below-floor is ALWAYS a warn, even when the growth estimate is unknown.
-  if (belowFloor) {
-    reasons.push(
-      `free ${freeBytes} < floor max(${A.freeSpaceFloorBytes}, 10% capacity)=${floorBytes} bytes`,
-    );
-    return withDiagnostics({
-      ...base,
-      status: "warn",
-      projectedExhaustionDays: null,
-      withinExhaustionWindow: false,
-      growthBranch: rateKnown ? "known" : "unknown",
-      reasons,
-    });
+  if (belowFloor || withinExhaustionWindow === true) {
+    const reasons: string[] = [];
+    if (belowFloor) reasons.push("below_floor");
+    if (withinExhaustionWindow === true) reasons.push("within_7d_exhaustion");
+    return withDiagnostics({ ...base, status: "warn", reasons, failClosed: false });
   }
 
-  // (4b) ABOVE the floor + UNKNOWN/invalid growth estimate → the projected-exhaustion
-  // branch is UNOBSERVABLE → U13 FAIL-CLOSED to `unknown` (never `ok`/healthy). This
-  // is the fix: above-floor + null/unknown growth must NOT silently report healthy.
-  if (!rateKnown) {
-    reasons.push(
-      "growth-rate estimate is null/undefined/NaN/±Inf/negative/overflow → projected-exhaustion " +
-        "branch UNOBSERVABLE; U13 fail-closed to unknown (never ok/healthy)",
-    );
+  // Above the floor and NOT within the exhaustion window. If the growth branch is
+  // UNOBSERVABLE, U13 requires FAIL-CLOSED `unknown` (never a false healthy `ok`).
+  if (growthUnknown) {
     return withDiagnostics({
       ...base,
       status: "unknown",
-      projectedExhaustionDays: null,
-      withinExhaustionWindow: false,
-      growthBranch: "unknown",
-      reasons,
+      reasons: ["growth_rate_unknown_above_floor"],
       failClosed: true,
     });
   }
 
-  // (4a) ABOVE the floor + KNOWN finite non-negative growth estimate.
-  let projectedExhaustionDays: number | null = null;
-  let withinExhaustionWindow = false;
-  if ((rate as number) > 0) {
-    const days = freeBytes / (rate as number);
-    if (!Number.isFinite(days)) {
-      // Overflow (e.g. a sub-normal rate) → the estimate is unusable → fail-closed.
-      reasons.push("projected exhaustion (free / growth) is not finite → U13 fail-closed to unknown");
-      return withDiagnostics({
-        ...base,
-        status: "unknown",
-        projectedExhaustionDays: null,
-        withinExhaustionWindow: false,
-        growthBranch: "known",
-        reasons,
-        failClosed: true,
-      });
-    }
-    projectedExhaustionDays = days;
-    withinExhaustionWindow = days <= A.projectedExhaustionWarnDays;
-    if (withinExhaustionWindow) {
-      reasons.push(
-        `projected exhaustion ${days.toFixed(2)}d <= ${A.projectedExhaustionWarnDays}d ` +
-          `(free ${freeBytes} / growth ${rate as number} B/day)`,
-      );
-    }
-  }
-  // rate === 0 → measured no-growth → never exhausts → ok.
-
-  const status: FridayDiskGrowthStatus = withinExhaustionWindow ? "warn" : "ok";
-  return withDiagnostics({
-    ...base,
-    status,
-    projectedExhaustionDays,
-    withinExhaustionWindow,
-    growthBranch: "known",
-    reasons,
-  });
+  // Above floor, growth KNOWN & beyond 7 days (or measured-zero) → healthy `ok`.
+  return withDiagnostics({ ...base, status: "ok", reasons: [], failClosed: false });
 }
 
 // ─── U13 large-write formula (formula only; NOT wired as a gate) ───

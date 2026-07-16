@@ -170,6 +170,90 @@ describe("classifyDiskGrowth — U13 warning formula", () => {
   });
 });
 
+describe("classifyDiskGrowth — U13 FULL combination matrix (both branches evaluated independently)", () => {
+  // capacity 100 GiB → floor = max(10 GiB, 10% × 100 GiB = 10 GiB) = 10 GiB.
+  const cap = 100 * GiB;
+  const belowFree = 5 * GiB; // below the 10 GiB floor
+  const aboveFree = 50 * GiB; // above the 10 GiB floor
+
+  interface Cell {
+    name: string;
+    free: number;
+    growth: number | null | undefined;
+    status: "ok" | "warn" | "unknown";
+    healthy: boolean;
+    failClosed: boolean;
+    belowFloor: boolean;
+    projectedDays: number | null;
+    within: boolean | null;
+    reasons: string[];
+  }
+
+  // belowFloor ∈ {true, false} × growth ∈ {null, measured-zero, within-7d, beyond-7d,
+  // NaN, +Inf, negative, overflow}. Every cell asserts status, healthy, failClosed,
+  // belowFloor, projectedExhaustionDays, withinExhaustionWindow, and reasons.
+  const cells: Cell[] = [
+    // ── belowFloor = true (free 5 GiB) — floor warns; exhaustion fields still truthful ──
+    { name: "below + null growth", free: belowFree, growth: null, status: "warn", healthy: false, failClosed: false, belowFloor: true, projectedDays: null, within: null, reasons: ["below_floor"] },
+    { name: "below + measured-zero", free: belowFree, growth: 0, status: "warn", healthy: false, failClosed: false, belowFloor: true, projectedDays: null, within: false, reasons: ["below_floor"] },
+    { name: "below + within-7d (5 GiB / 1 GiB-day = 5d) [ADVISOR CE]", free: belowFree, growth: 1 * GiB, status: "warn", healthy: false, failClosed: false, belowFloor: true, projectedDays: 5, within: true, reasons: ["below_floor", "within_7d_exhaustion"] },
+    { name: "below + beyond-7d (5 GiB / 0.5 GiB-day = 10d)", free: belowFree, growth: 0.5 * GiB, status: "warn", healthy: false, failClosed: false, belowFloor: true, projectedDays: 10, within: false, reasons: ["below_floor"] },
+    { name: "below + NaN growth", free: belowFree, growth: Number.NaN, status: "warn", healthy: false, failClosed: false, belowFloor: true, projectedDays: null, within: null, reasons: ["below_floor"] },
+    { name: "below + +Inf growth", free: belowFree, growth: Number.POSITIVE_INFINITY, status: "warn", healthy: false, failClosed: false, belowFloor: true, projectedDays: null, within: null, reasons: ["below_floor"] },
+    { name: "below + negative growth", free: belowFree, growth: -1, status: "warn", healthy: false, failClosed: false, belowFloor: true, projectedDays: null, within: null, reasons: ["below_floor"] },
+    { name: "below + overflow growth (sub-normal rate)", free: belowFree, growth: Number.MIN_VALUE, status: "warn", healthy: false, failClosed: false, belowFloor: true, projectedDays: null, within: null, reasons: ["below_floor"] },
+    // ── belowFloor = false (free 50 GiB) — exhaustion branch decides; unknown fails closed ──
+    { name: "above + null growth → fail-closed unknown", free: aboveFree, growth: null, status: "unknown", healthy: false, failClosed: true, belowFloor: false, projectedDays: null, within: null, reasons: ["growth_rate_unknown_above_floor"] },
+    { name: "above + measured-zero → ok", free: aboveFree, growth: 0, status: "ok", healthy: true, failClosed: false, belowFloor: false, projectedDays: null, within: false, reasons: [] },
+    { name: "above + within-7d (50 GiB / 10 GiB-day = 5d) → warn", free: aboveFree, growth: 10 * GiB, status: "warn", healthy: false, failClosed: false, belowFloor: false, projectedDays: 5, within: true, reasons: ["within_7d_exhaustion"] },
+    { name: "above + beyond-7d (50 GiB / 5 GiB-day = 10d) → ok", free: aboveFree, growth: 5 * GiB, status: "ok", healthy: true, failClosed: false, belowFloor: false, projectedDays: 10, within: false, reasons: [] },
+    { name: "above + NaN growth → fail-closed unknown", free: aboveFree, growth: Number.NaN, status: "unknown", healthy: false, failClosed: true, belowFloor: false, projectedDays: null, within: null, reasons: ["growth_rate_unknown_above_floor"] },
+    { name: "above + +Inf growth → fail-closed unknown", free: aboveFree, growth: Number.POSITIVE_INFINITY, status: "unknown", healthy: false, failClosed: true, belowFloor: false, projectedDays: null, within: null, reasons: ["growth_rate_unknown_above_floor"] },
+    { name: "above + negative growth → fail-closed unknown", free: aboveFree, growth: -1, status: "unknown", healthy: false, failClosed: true, belowFloor: false, projectedDays: null, within: null, reasons: ["growth_rate_unknown_above_floor"] },
+    { name: "above + overflow growth (sub-normal rate) → fail-closed unknown", free: aboveFree, growth: Number.MIN_VALUE, status: "unknown", healthy: false, failClosed: true, belowFloor: false, projectedDays: null, within: null, reasons: ["growth_rate_unknown_above_floor"] },
+  ];
+
+  it.each(cells)("$name", (cell) => {
+    const out = classifyDiskGrowth({
+      freeBytes: cell.free,
+      totalCapacityBytes: cap,
+      growthRateBytesPerDay: cell.growth,
+    });
+    expect(out.status, "status").toBe(cell.status);
+    // healthy is derived by the monitor as `status === "ok"`; assert the mapping.
+    expect(out.status === "ok", "healthy(status===ok)").toBe(cell.healthy);
+    expect(out.failClosed ?? false, "failClosed").toBe(cell.failClosed);
+    expect(out.belowFloor, "belowFloor").toBe(cell.belowFloor);
+    if (cell.projectedDays === null) {
+      expect(out.projectedExhaustionDays, "projectedExhaustionDays").toBeNull();
+    } else {
+      expect(out.projectedExhaustionDays, "projectedExhaustionDays").toBeCloseTo(cell.projectedDays, 9);
+    }
+    expect(out.withinExhaustionWindow, "withinExhaustionWindow").toBe(cell.within);
+    expect([...out.reasons].sort(), "reasons").toEqual([...cell.reasons].sort());
+  });
+
+  it("ADVISOR counterexample exposed truthfully: 5 GiB / 100 GiB / 1 GiB-day → warn with 5 days + within=true (NOT hidden by below-floor)", () => {
+    const out = classifyDiskGrowth({ freeBytes: 5 * GiB, totalCapacityBytes: 100 * GiB, growthRateBytesPerDay: 1 * GiB });
+    expect(out.status).toBe("warn");
+    expect(out.belowFloor).toBe(true);
+    expect(out.projectedExhaustionDays).toBe(5); // NOT null — simultaneous exhaustion signal exposed
+    expect(out.withinExhaustionWindow).toBe(true); // NOT false
+    expect([...out.reasons].sort()).toEqual(["below_floor", "within_7d_exhaustion"]);
+    expect(out.status === "ok").toBe(false); // healthy=false
+  });
+
+  it("invalid inputs → unknown with belowFloor/projected/within all null", () => {
+    const out = classifyDiskGrowth({ freeBytes: null, totalCapacityBytes: 100 * GiB, growthRateBytesPerDay: 1 * GiB });
+    expect(out.status).toBe("unknown");
+    expect(out.failClosed).toBe(true);
+    expect(out.belowFloor).toBeNull();
+    expect(out.projectedExhaustionDays).toBeNull();
+    expect(out.withinExhaustionWindow).toBeNull();
+    expect(out.reasons).toEqual(["invalid_inputs"]);
+  });
+});
+
 describe("evaluateLargeWriteSafety — U13 large-write formula", () => {
   it("CE2 (advisor): 1 MiB write, 40 GiB free on a 1 TiB volume → PAUSE (40 < reserve max(5 GiB,5%)=51.2 GiB)", () => {
     const v = evaluateLargeWriteSafety({

@@ -241,6 +241,44 @@ describe("FridayHttpServer — /v1/uix/retention-policy/disk-usage canonical-own
     expect(Array.isArray(body.data.diskUsage!.reasons)).toBe(true);
   });
 
+  it("canonical owner → 200 readback exposes BOTH warning branches truthfully (below-floor + within-7d)", async () => {
+    // Combined-signal reading: 5 GiB free on a 100 GiB volume (below the 10 GiB
+    // floor) growing 1 GiB/day → exhausts in 5 days. The owner-bound readback must
+    // surface the truthful projectedExhaustionDays=5 / withinExhaustionWindow=true /
+    // belowFloor=true — NOT null/false hidden behind the floor warning.
+    holder.set(
+      classifyDiskGrowth({
+        freeBytes: 5 * GiB,
+        totalCapacityBytes: 100 * GiB,
+        growthRateBytesPerDay: 1 * GiB,
+        diagnostics: { totalDbBytes: 10_000_000, realtimeEventsEstimatedBytes: 1_000_000 },
+      }),
+    );
+    await startServer({ "tok-admin-001": CANONICAL_OWNER });
+    const res = await get({ Authorization: "Bearer tok-admin-001" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: true;
+      data: {
+        diskUsage:
+          | {
+              status: string;
+              belowFloor: boolean | null;
+              projectedExhaustionDays: number | null;
+              withinExhaustionWindow: boolean | null;
+              reasons: string[];
+            }
+          | null;
+      };
+    };
+    expect(body.data.diskUsage).not.toBeNull();
+    expect(body.data.diskUsage!.status).toBe("warn");
+    expect(body.data.diskUsage!.belowFloor).toBe(true);
+    expect(body.data.diskUsage!.projectedExhaustionDays).toBe(5);
+    expect(body.data.diskUsage!.withinExhaustionWindow).toBe(true);
+    expect([...body.data.diskUsage!.reasons].sort()).toEqual(["below_floor", "within_7d_exhaustion"]);
+  });
+
   // ── NO-LEAK regression (#1606 SEC-NET-PRINCIPAL-001): the disk-usage reading
   //    must appear on NO /v1/observability/* route. ────────────────────────────
   it("no-leak: disk-usage sentinels appear on NO /v1/observability/* route", async () => {

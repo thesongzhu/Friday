@@ -176,6 +176,35 @@ describe("friday-system-health-monitor — disk_growth (report-only; zero deleti
     expect(pastDisk.healthy).toBe(true);
   });
 
+  it("COMBINED SIGNAL (advisor P1): below-floor AND within-7d exposes BOTH truthfully at the monitor seam", () => {
+    // 5 GiB free on a 100 GiB volume (below the 10 GiB floor) growing 1 GiB/day →
+    // exhausts in 5 days. The readback detail must surface status=warn, belowFloor=true,
+    // AND the simultaneously-active exhaustion signal (projectedExhaustionDays=5,
+    // withinExhaustionWindow=true) — not hide it behind the floor warning.
+    const db = makeDb();
+    insertRealtimeEvents(db, 5, JSON.stringify({ data: "z" }));
+    const summary = createFridaySystemHealthMonitor({
+      db,
+      nowIso: () => NOW,
+      probeDiskSpace: () => ({ freeBytes: 5 * GiB, totalBytes: 100 * GiB }),
+      probeGrowthRateBytesPerDay: () => 1 * GiB,
+    }).runAll();
+    const disk = summary.checks.find((c) => c.name === "disk_growth")!;
+    const detail = disk.detail as {
+      status: string;
+      belowFloor: boolean | null;
+      projectedExhaustionDays: number | null;
+      withinExhaustionWindow: boolean | null;
+      reasons: string[];
+    };
+    expect(detail.status).toBe("warn");
+    expect(detail.belowFloor).toBe(true);
+    expect(detail.projectedExhaustionDays).toBe(5); // NOT null
+    expect(detail.withinExhaustionWindow).toBe(true); // NOT false
+    expect([...detail.reasons].sort()).toEqual(["below_floor", "within_7d_exhaustion"]);
+    expect(disk.healthy).toBe(false);
+  });
+
   it("WARN below the U13 floor: free 5 GiB on a 1000 GiB volume → disk_growth warn (below max(10GiB,10%))", () => {
     const db = makeDb();
     insertRealtimeEvents(db, 3, JSON.stringify({ data: "y" }));
