@@ -8271,10 +8271,12 @@ export async function createFridayHub(
       const systemHealthLogDeduper = createFridayHealthLogDeduper();
       // RETENTION-R3c: created ONCE so the rolling window persists across ticks (the
       // monitor itself is recreated every tick). Each tick's probeDiskSpace records a
-      // (now, freeBytes) sample; probeGrowthRateBytesPerDay serves the bounded-window
-      // least-squares consumption rate. Bounded both ways (count cap + age window), so
-      // memory stays bounded; NOT restart-durable (re-accrues after restart, reads
-      // `unknown` until enough samples — the correct fail-closed startup posture).
+      // freeBytes sample (timestamped by the sampler's own MONOTONIC clock, immune to
+      // wall-clock jumps); probeGrowthRateBytesPerDay serves the conservative
+      // (full-window vs recent-horizon) least-squares consumption rate. Bounded both
+      // ways (count cap + age window), so memory stays bounded; NOT restart-durable
+      // (re-accrues after restart, reads `unknown` until enough samples — the correct
+      // fail-closed startup posture).
       const diskGrowthRateSampler = createFridayDiskGrowthRateSampler();
       schedulerJobs.push({
         id: "system-health-monitor",
@@ -8299,23 +8301,27 @@ export async function createFridayHub(
                 // valid free-space reading. probeDiskSpace is called BEFORE
                 // probeGrowthRateBytesPerDay in the monitor's disk_growth check, so the
                 // sample is visible to the rate accessor within the same tick. Only
-                // finite readings reach here, so the buffer is never poisoned.
-                diskGrowthRateSampler.record(Date.now(), freeBytes);
+                // finite readings reach here, so the buffer is never poisoned. The
+                // sampler timestamps the sample with its own MONOTONIC clock (never
+                // Date.now) so a wall-clock jump cannot distort the rate.
+                diskGrowthRateSampler.record(freeBytes);
                 return { freeBytes, totalBytes };
               } catch {
                 return null;
               }
             },
             // RETENTION-R3c: U13 projected-exhaustion branch, now backed by a REAL
-            // bounded rolling measurement. The sampler returns the net consumption
-            // rate (bytes/day) over its window: `null` while samples are insufficient/
-            // invalid (→ #1613 fail-closes `unknown`, healthy=false — the correct
-            // startup posture before enough samples accrue), `0` when free is stable/
-            // increasing (KNOWN no-growth → `ok`), or a positive rate for a genuine
+            // bounded rolling measurement. The sampler returns the SAFETY-CONSERVATIVE
+            // net consumption rate (bytes/day) — the sooner-exhaustion max of its full
+            // window and a recent 6h horizon (so a fresh cliff on top of a rising trend
+            // still warns): `null` while neither horizon is observable (→ #1613
+            // fail-closes `unknown`, healthy=false — the correct startup posture before
+            // enough samples accrue), `0` when free is stable/increasing over BOTH
+            // horizons (KNOWN no-growth → `ok`), or a positive rate for a genuine
             // sustained decrease (→ #1613 projects `days = free/rate`, warns if ≤ 7).
-            // Passing Date.now() also age-prunes stale samples so a stalled loop can
-            // never serve a rate from stale data.
-            probeGrowthRateBytesPerDay: () => diskGrowthRateSampler.getGrowthRateBytesPerDay(Date.now()),
+            // Elapsed time and stale-sample pruning use the sampler's MONOTONIC clock
+            // (never Date.now), so a wall-clock jump cannot distort the rate.
+            probeGrowthRateBytesPerDay: () => diskGrowthRateSampler.getGrowthRateBytesPerDay(),
             onRunComplete: (summary) => {
               // Log an unhealthy/warn/critical/degraded check only on a status
               // TRANSITION; feed healthy statuses too so a recovery resets state
