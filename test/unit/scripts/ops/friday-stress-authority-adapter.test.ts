@@ -1,0 +1,1057 @@
+/**
+ * TEST-STRESS-AUTHORITY-ADAPTER-001 — PROVISIONAL-ONLY subject-inventory adapter.
+ *
+ * Agent-side the adapter can NEVER self-seal (no trusted OIDC / operator
+ * signature), so `seal_status` is always `PROVISIONAL_UNSEALED` and the
+ * INDEPENDENT vendored R13 validator correctly REDs the bundle. These tests
+ * root-verify the round-2 recurrences:
+ *  P0-3 open-world route×METHOD identity + a GENUINELY INDEPENDENT reconciliation
+ *       (definition lens vs the CI API route CONTRACT SNAPSHOT).
+ *  P0-1 no caller-controllable SEALED path (review/allowlist/ledger removed).
+ *  P0-2 global SEALED requires EVERY component + gate + authority sealed.
+ *
+ * Red-first negatives (RED on the round-2 code, GREEN here):
+ *  (a) same-path GET/POST/PUT are DISTINCT subjects;
+ *  (b) a route in one lens but not the other -> reconciliation RED (validator
+ *      SUBJECT_RECONCILIATION_NONZERO + sidecar clean:false);
+ *  (c) arbitrary caller identity can NOT seal (stays PROVISIONAL);
+ *  (d) F-A CLOSED-DENOMINATOR seal: empty / partial / extra-key / non-boolean seal
+ *      maps can NEVER seal; only the EXACT closed key sets all-true + authority seal;
+ *  (e) F-B EXACT-candidate source provenance: source_sha seals ONLY for a real git
+ *      repo whose HEAD equals the FULL 40-char --expected-sha with `===` and a clean
+ *      worktree; non-git / dirty / untracked / abbreviated-or-prefix / HEAD≠expected
+ *      -> unsealed (or typed EXPECTED_SHA_INVALID); a mutation snapshot→write -> RED.
+ *  (f) DRIFT-LOCK: SEAL_COMPONENT_KEYS is bound to the vendored validator's own
+ *      `componentsKeys` (exact members + order) so a silent divergence goes RED.
+ *  (g) GATE-SET LOCK: SEAL_GATE_KEYS is pinned to exactly the 3 adapter-internal
+ *      gates (no external validator contract) to prevent silent drift.
+ */
+import { describe, it, expect, afterAll } from "vitest";
+import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import * as crypto from "node:crypto";
+
+const REPO_ROOT = path.resolve(__dirname, "../../../..");
+const GEN = path.join(REPO_ROOT, "scripts", "ops", "friday-stress-authority-adapter.mjs");
+const ADAPTER_MOD = path.join(REPO_ROOT, "scripts/ops/friday-stress-authority-adapter.mjs");
+const ENUM_MOD = path.join(REPO_ROOT, "scripts/ops/lib/friday-stress-static-enumerators.mjs");
+const VENDORED_VALIDATOR = path.join(__dirname, "fixtures", "verify-endbar-stress-evidence-r13.vendored.mjs");
+// OPERATOR-ATTESTED HASH-OF-RECORD. This is the sha256 of the vendored R13 validator
+// fixture at the moment an operator attested it byte-identical to the live Handoff tool
+// (LIVE_VALIDATOR below). The equality check `sha256(vendored) === VENDORED_VALIDATOR_SHA`
+// (test "vendored ... byte-identical ...") is the ONLY drift gate reachable in CI —
+// ubuntu-latest has no ~/Desktop, so the `fs.existsSync(LIVE_VALIDATOR)` byte-identity
+// branch is an ADDITIONAL check that only runs on operator machines. The CI gate is
+// therefore DELIBERATELY load-bearing and ALWAYS runs (never gated/skipped).
+// TRUST BOUNDARY (disclosed, not concealed): this record and the vendored bytes travel
+// together in-repo, so within a single PR the pair is SELF-REFERENTIAL — a reviewing
+// OPERATOR, not this test, is the authority that the vendored bytes equal the live tool.
+// UPDATE PROCEDURE: changing the fixture REQUIRES a reviewed PR in which the operator
+// re-attests the source against the live tool and updates BOTH the fixture bytes AND
+// this hash in the same commit. The "(finding-2) integrity gate FAILS on drift" test
+// proves the gate is not vacuous: any byte change to the fixture breaks this equality.
+const VENDORED_VALIDATOR_SHA = "4287ef02e4cae753f457fa8ef61e8436fe6e8e291ad62f2750cd69d81dbbb323"; // pragma: allowlist secret
+const LIVE_VALIDATOR = path.join(os.homedir(), "Desktop", "Friday-Handoff-Log", "tools", "verify-endbar-stress-evidence-r13.mjs");
+const REMOVED_REVIEWER = path.join(REPO_ROOT, "scripts", "ops", "friday-stress-authority-review.mjs");
+
+const REV = "ENDBAR-20260713-R13-EXHAUSTIVE-STRESS";
+const ROUTE_SNAPSHOT_REL = "test/contracts/api/__snapshots__/friday-api-route-contract.snapshot.test.ts.snap";
+
+const sha = (bytes: Buffer | string): string => crypto.createHash("sha256").update(bytes).digest("hex");
+const canonical = (value: unknown): string =>
+  Array.isArray(value)
+    ? `[${value.map(canonical).join(",")}]`
+    : value && typeof value === "object"
+      ? `{${Object.keys(value as object)
+          .sort()
+          .map((k) => `${JSON.stringify(k)}:${canonical((value as Record<string, unknown>)[k])}`)
+          .join(",")}}`
+      : JSON.stringify(value);
+const digestOf = (value: unknown): string => sha(Buffer.from(canonical(value)));
+
+const COVERAGE_CLASSES = [
+  "http", "websocket_sse", "cli_ipc_ffi", "database_storage", "desktop_ui", "ios_ui", "android_ui",
+  "ipad_ui", "share", "voice", "approval", "auth_owner", "data_lifecycle", "install_release", "provider",
+  "telegram", "plugin_skill_mcp", "exec_sandbox", "notification_deeplink", "remote_network", "job_timer_os_event",
+];
+const DIMENSIONS = [
+  "steady_sustained", "burst_ramp_to_limit", "concurrency_race_toctou", "duplicate_replay_idempotency",
+  "scale_data_volume", "latency_partition_half_open_reconnect", "cancel_timeout_process_death_restart",
+  "fault_before_during_after_effect", "resource_pressure_and_bounds", "malformed_oversized_deep_unicode_clock",
+  "backpressure_load_shed_retry_ceiling", "recovery_rto_readback_exactly_once", "cleanup_leak_secret_absence",
+  "security_owner_tenant_capability_under_load", "ui_interaction_a11y_visual_state_storm",
+  "install_update_rollback_backup_restore_export_delete_uninstall", "version_skew_and_migration_compatibility",
+];
+const AUTHORITY_KINDS = ["S_static", "D_runtime", "A_artifact", "L_ledger", "S_ui", "R_ui", "C_ui"];
+const COVERS = ["applicability rules", "runner", "harness", "test binary", "fault schedules", "resource and performance budgets", "oracles", "schemas", "sensitivity detectors"];
+const ARTIFACTS = [
+  "FRIDAY_STRESS_SUBJECT_INVENTORY.json", "FRIDAY_STRESS_OBLIGATION_LEDGER.json", "FRIDAY_STRESS_MECHANISM_MATRIX.json",
+  "FRIDAY_STRESS_UI_CONTROL_MATRIX.json", "FRIDAY_STRESS_DEVICE_MATRIX.json", "FRIDAY_STRESS_EXECUTION_CENSUS.json",
+  "FRIDAY_STRESS_RESOURCE_REPORT.json", "FRIDAY_STRESS_FAILURE_RECOVERY_REPORT.json",
+  "FRIDAY_STRESS_SENSITIVITY_REPORT.json", "FRIDAY_STRESS_FINAL_RECEIPT.json",
+];
+const SIBLING_STUBS = ARTIFACTS.filter((a) => a !== "FRIDAY_STRESS_SUBJECT_INVENTORY.json");
+const ORACLE_FIELDS = ["authoritative_oracles", "backpressure_oracle", "recovery_oracle", "cleanup_oracle", "security_invariants", "zero_effect_invariants"];
+const HARNESS_FILES = ["cases.mjs", "contract-error.mjs", "detectors.mjs", "positive-worlds.mjs", "validator-result-adapter.mjs", "world-schema.json"];
+const VALIDATOR_REL = "tools/verify-endbar-stress-evidence-r13.mjs";
+const RUNNER_REL = "tools/run-endbar-stress-evidence-r13-negatives.mjs";
+const VALIDATOR_STUB = `#!/usr/bin/env node
+const locked = { fault_schedule_id: "before-during-after", network_profile_id: "partition-reconnect", fault_phases: ["before_effect", "during_effect", "after_effect"] };
+export default locked;
+`;
+
+// The 7 canonical routes present in BOTH lenses (clean reconciliation). Includes
+// same-path GET/POST and GET/PUT to prove route×method identity.
+const ROUTES = [
+  { operationId: "health.check", method: "GET", path: "/v1/health", file: "friday-sample-routes.ts" },
+  { operationId: "workflows.list", method: "GET", path: "/v1/workflows", file: "friday-sample-routes.ts" },
+  { operationId: "workflows.create", method: "POST", path: "/v1/workflows", file: "friday-sample-routes.ts" },
+  { operationId: "uix.retention.get", method: "GET", path: "/v1/uix/retention-policy", file: "friday-sample-routes.ts" },
+  { operationId: "uix.retention.update", method: "PUT", path: "/v1/uix/retention-policy", file: "friday-sample-routes.ts" },
+  { operationId: "channels.telegram.webhook", method: "POST", path: "/v1/channels/telegram/webhook", file: "friday-channel-routes.ts" },
+  { operationId: "auth.owner.grant", method: "POST", path: "/v1/auth/owner/grant", file: "friday-auth-routes.ts" },
+];
+
+const createdRoots: string[] = [];
+afterAll(() => {
+  for (const root of createdRoots) fs.rmSync(root, { recursive: true, force: true });
+});
+function mkRealDir(prefix: string): string {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  createdRoots.push(dir);
+  return dir;
+}
+function schemaFileFor(artifact: string): string {
+  const kebab = artifact.replace(/^FRIDAY_STRESS_/, "").replace(/\.json$/, "").toLowerCase().replace(/_/g, "-");
+  return `schemas/endbar-stress-${kebab}-r13.schema.json`;
+}
+
+function writeSourcesRoot(): string {
+  const root = mkRealDir("saa-sources-");
+  const overlay = {
+    contract_revision: REV,
+    additive_requirement: { requirement_id: "TEST-STRESS-ALL-001" },
+    candidate_policy: { verification_policy_covers: [...COVERS] },
+    applicability_policy: { allowed_terminal_states: ["passed", "failed", "not_applicable"], not_applicable_requires: ["closed rule", "absence proof"] },
+    subject_model: { sources: ["S_static_discovery", "S_ui", "R_ui", "C_ui"], unknown_formula: "SUBJECTS - DECLARED_STRESS = empty", ghost_formula: "DECLARED_STRESS - (SUBJECTS + approved_tombstones) = empty" },
+    stress_dimensions: [...DIMENSIONS],
+    platform_scope: { desktop: ["Friday.app"], ios: ["iOS 17+"], android: ["API 24"], ipad: ["resize"], web: ["diagnostics only"] },
+    performance_preservation: { locked_metric_instances: 96, warmups: 5, raw_samples: 50, max_relative_ci_width_percent: 15 },
+    host_safety: { preflight_required: true, forbidden: ["bind prod ports"] },
+    interaction_minimums: { ordinary_control_repetitions: 100, desktop_primary_route_cycles: 1000 },
+    external_policy: { soak: "Hub 72h isolated" },
+    obligation_required_fields: ["stress_obligation_id", ...ORACLE_FIELDS, "disposition"],
+    required_runtime_artifacts: [...ARTIFACTS],
+    runtime_evidence_verification: { validator: VALIDATOR_REL, negative_runner: RUNNER_REL, required_negative_classes: ["unknown", "ghost", "tuple_drift", "zero_work"] },
+    runtime_evidence_bundle_contract: {
+      authority_sources: [...AUTHORITY_KINDS],
+      minimum_coverage_classes: [...COVERAGE_CLASSES],
+      tuple_components: ["source_sha", "cross_platform_artifact_set_sha256", "runtime_profile_digest", "obligation_set_sha256", "verification_policy_set_sha256"],
+    },
+  };
+  fs.writeFileSync(path.join(root, "FRIDAY_ENDBAR_R13_STRESS_OVERLAY.json"), `${JSON.stringify(overlay, null, 2)}\n`);
+  fs.mkdirSync(path.join(root, "tools", "endbar-detector-harness"), { recursive: true });
+  fs.writeFileSync(path.join(root, VALIDATOR_REL), VALIDATOR_STUB);
+  fs.writeFileSync(path.join(root, RUNNER_REL), "#!/usr/bin/env node\n// stub\n");
+  for (const f of HARNESS_FILES) fs.writeFileSync(path.join(root, "tools", "endbar-detector-harness", f), `// ${f} stub\n`);
+  fs.mkdirSync(path.join(root, "schemas"), { recursive: true });
+  for (const a of ARTIFACTS) fs.writeFileSync(path.join(root, schemaFileFor(a)), `{"$id":"${a}"}\n`);
+  return root;
+}
+
+function routeFileContent(routes: { operationId: string; method: string; path: string }[]): string {
+  const objs = routes
+    .map((r) => `    {\n      operationId: "${r.operationId}",\n      method: "${r.method}",\n      path: "${r.path}",\n      auth: { public: true },\n      handler: async () => ({}),\n    },`)
+    .join("\n");
+  return `import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";\nexport function createRoutes(): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {\n  return [\n${objs}\n  ];\n}\n`;
+}
+function snapshotContent(routes: { operationId: string; method: string; path: string }[]): string {
+  const objs = routes
+    .map((r, i) => `  {\n    "authKind": "public",\n    "index": ${i},\n    "method": "${r.method}",\n    "operationId": "${r.operationId}",\n    "path": "${r.path}",\n    "rateLimitPolicyId": null,\n    "roles": [],\n    "scopes": [],\n  },`)
+    .join("\n");
+  return `// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html\n\nexports[\`MECHANISM-4 — API Route Contract (Snapshot) > captures route count to detect accidental additions/removals 1\`] = \`${routes.length}\`;\n\nexports[\`MECHANISM-4 — API Route Contract (Snapshot) > captures the full route surface as a stable contract 1\`] = \`\n[\n${objs}\n]\n\`;\n`;
+}
+
+function writeRepoRoot(opts: { defRoutes?: typeof ROUTES; snapshotRoutes?: typeof ROUTES } = {}): string {
+  const root = mkRealDir("saa-repo-");
+  const defRoutes = opts.defRoutes ?? ROUTES;
+  const snapRoutes = opts.snapshotRoutes ?? ROUTES;
+  const write = (rel: string, content: string) => {
+    const abs = path.join(root, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, content);
+  };
+  // route files grouped by file
+  const byFile: Record<string, typeof ROUTES> = {};
+  for (const r of defRoutes) (byFile[r.file] ||= []).push(r);
+  for (const [file, rs] of Object.entries(byFile)) write(`src/api/http/routes/${file}`, routeFileContent(rs));
+  // independent contract snapshot lens
+  write(ROUTE_SNAPSHOT_REL, snapshotContent(snapRoutes));
+  // other real surfaces
+  write("rust-core/crates/friday-protocol/src/lib.rs", `pub enum Message {\n    Hello,\n    Ping { id: u64 },\n    Bye,\n}\n`);
+  for (const crate of ["friday-ffi", "friday-storage", "friday-system-remote", "friday-core", "friday-providers", "friday-tts"]) {
+    write(`rust-core/crates/${crate}/src/lib.rs`, `// ${crate}\npub fn probe() -> u8 { 0 }\n`);
+  }
+  write("ui/src/router.tsx", `export const router = [\n  { path: "/dashboard" },\n  { path: "/settings" },\n  { index: true },\n];\n`);
+  write("apps/friday-ios/HomeScreen.swift", `import SwiftUI\nstruct HomeScreen: View { var body: some View { Text("h") } }\n`);
+  write("apps/friday-android/HomeScreen.kt", `class HomeScreen {}\n`);
+  return root;
+}
+
+interface Roots { sourcesRoot: string; repoRoot: string }
+function writeFixture(repoOpts: Parameters<typeof writeRepoRoot>[0] = {}): Roots {
+  return { sourcesRoot: writeSourcesRoot(), repoRoot: writeRepoRoot(repoOpts) };
+}
+
+interface GenResult { status: number | null; stdout: string; stderr: string; json: () => any; err: () => any }
+function runGen(roots: Partial<Roots>, opts: { outDir?: string; producerId?: string; expectedSha?: string; strict?: boolean } = {}): GenResult {
+  const args: string[] = [];
+  if (roots.sourcesRoot !== undefined) args.push("--sources-root", roots.sourcesRoot);
+  if (roots.repoRoot !== undefined) args.push("--repo-root", roots.repoRoot);
+  if (opts.outDir) args.push("--out-dir", opts.outDir);
+  if (opts.producerId) args.push("--producer-id", opts.producerId);
+  if (opts.expectedSha) args.push("--expected-sha", opts.expectedSha);
+  if (opts.strict) args.push("--strict");
+  const r = spawnSync(process.execPath, [GEN, ...args], { encoding: "utf8" });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr, json: () => JSON.parse(r.stdout), err: () => JSON.parse(r.stderr) };
+}
+
+// Turn a fixture repo into a real git repo with everything committed; returns HEAD.
+function initGitCommitted(root: string): string {
+  const git = (...a: string[]) => {
+    const r = spawnSync("git", ["-C", root, "-c", "user.email=t@t.test", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...a], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`git ${a.join(" ")} failed: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  git("init", "-q");
+  git("add", "-A");
+  git("commit", "-q", "-m", "fixture");
+  return git("rev-parse", "HEAD");
+}
+function generateBundle(roots: Roots, producerId?: string, opts: { expectedSha?: string } = {}): { outDir: string; inventory: any; sidecar: any; out: any } {
+  const outDir = mkRealDir("saa-bundle-");
+  const r = runGen(roots, { outDir, producerId, expectedSha: opts.expectedSha });
+  expect(r.status, r.stderr).toBe(0);
+  return {
+    outDir,
+    inventory: JSON.parse(fs.readFileSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"), "utf8")),
+    sidecar: JSON.parse(fs.readFileSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"), "utf8")),
+    out: r.json(),
+  };
+}
+function runValidator(bundleDir: string): { status: number | null; err: any } {
+  const r = spawnSync(process.execPath, [VENDORED_VALIDATOR, bundleDir, "--fixture"], { encoding: "utf8", env: { ...process.env, FRIDAY_R13_NEGATIVE_FIXTURE: "1" } });
+  let err: any = null;
+  try { err = JSON.parse(r.stderr); } catch { err = null; }
+  return { status: r.status, err };
+}
+function addSiblingStubs(bundleDir: string): void {
+  for (const name of SIBLING_STUBS) fs.writeFileSync(path.join(bundleDir, name), "{}\n");
+}
+
+// Extract the AUTHORITATIVE component tuple from the vendored R13 validator (its own
+// `const componentsKeys=[...]`). We READ the fixture text (it does not export the
+// symbol) rather than duplicate the list, so the drift-lock is grounded on the real
+// validator, not a hand-copy. The vendored file is byte-identity-checked elsewhere.
+function vendoredComponentsKeys(): string[] {
+  const src = fs.readFileSync(VENDORED_VALIDATOR, "utf8");
+  const m = src.match(/const\s+componentsKeys\s*=\s*(\[[^\]]*\])/);
+  if (!m) throw new Error("componentsKeys not found in vendored validator fixture");
+  return JSON.parse(m[1]);
+}
+
+describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", () => {
+  it("vendored independent validator is byte-identical to the live Handoff tool", () => {
+    expect.hasAssertions();
+    // LOAD-BEARING, ALWAYS-RUN CI GATE: sha256(vendored) === operator-attested record.
+    // This is the ONLY drift gate reachable on ubuntu-latest (no ~/Desktop there), so it
+    // is intentionally unconditional — see the VENDORED_VALIDATOR_SHA comment for the
+    // operator-attested trust boundary and update procedure.
+    const vendoredSha = sha(fs.readFileSync(VENDORED_VALIDATOR));
+    expect(vendoredSha).toBe(VENDORED_VALIDATOR_SHA);
+    // ADDITIONAL operator-machine check: re-verify byte-identity against the live tool
+    // when it is present (never reachable in CI; not a substitute for the gate above).
+    if (fs.existsSync(LIVE_VALIDATOR)) expect(sha(fs.readFileSync(LIVE_VALIDATOR))).toBe(vendoredSha);
+  });
+
+  // (finding-2) The CI-reachable drift gate must not be vacuous / fail-open. Prove that
+  // ANY change to the vendored fixture bytes breaks equality with the operator-attested
+  // record (so a future PR cannot weaken the fixture and stay green without ALSO editing
+  // the record — which the update procedure requires an operator to attest). We do NOT
+  // touch the real fixture: mutate an in-memory copy only.
+  it("(finding-2) the vendored-validator drift gate FAILS if the fixture bytes drift without updating the record", () => {
+    expect.hasAssertions();
+    const original = fs.readFileSync(VENDORED_VALIDATOR);
+    expect(sha(original)).toBe(VENDORED_VALIDATOR_SHA); // control: record matches current bytes
+    // appended byte -> different sha -> gate would FAIL.
+    const appended = Buffer.concat([original, Buffer.from("\n// unreviewed drift\n")]);
+    expect(sha(appended)).not.toBe(VENDORED_VALIDATOR_SHA);
+    // single-byte flip -> different sha -> gate would FAIL.
+    const flipped = Buffer.from(original);
+    flipped[0] = flipped[0] ^ 0xff;
+    expect(sha(flipped)).not.toBe(VENDORED_VALIDATOR_SHA);
+    // and pointing the gate's comparison at the mutated bytes throws (the assertion is real).
+    expect(() => expect(sha(appended)).toBe(VENDORED_VALIDATOR_SHA)).toThrow();
+  });
+
+  // P0-3 (a): route×METHOD identity — same-path GET/POST and GET/PUT are DISTINCT subjects.
+  it("(a) same-path GET/POST/PUT are distinct open-world subjects (not path-collapsed)", () => {
+    expect.hasAssertions();
+    const { inventory, out } = generateBundle(writeFixture());
+    const ids = new Set(inventory.subjects.map((s: any) => s.subject_id));
+    expect(ids.has("http::GET /v1/workflows")).toBe(true);
+    expect(ids.has("http::POST /v1/workflows")).toBe(true);
+    expect(ids.has("http::GET /v1/uix/retention-policy")).toBe(true);
+    expect(ids.has("http::PUT /v1/uix/retention-policy")).toBe(true);
+    const httpSubjects = inventory.subjects.filter((s: any) => s.coverage_class === "http");
+    const httpPaths = new Set(httpSubjects.map((s: any) => s.subject_id.replace(/^http::(GET|POST|PUT|PATCH|DELETE) /, "")));
+    expect(httpSubjects.length).toBeGreaterThan(httpPaths.size); // method-distinct > path-unique
+    expect(new Set(inventory.subjects.map((s: any) => s.coverage_class))).toEqual(new Set(COVERAGE_CLASSES));
+    expect(out.seal_status).toBe("PROVISIONAL_UNSEALED");
+  }, 30000);
+
+  // P0-1 no-fake-pass: clean fixture reaches authority, which is UNREVIEWED -> validator REDs.
+  it("DEFAULT bundle is PROVISIONAL_UNSEALED; the independent validator REDs (DISCOVERY_AUTHORITY_INVALID)", () => {
+    expect.hasAssertions();
+    const { outDir, out } = generateBundle(writeFixture());
+    expect(out.seal_status).toBe("PROVISIONAL_UNSEALED");
+    expect(out.can_ever_self_seal_agent_side).toBe(false);
+    addSiblingStubs(outDir);
+    const v = runValidator(outDir);
+    expect(v.status).toBe(65);
+    expect(v.err?.code).toBe("DISCOVERY_AUTHORITY_INVALID");
+  }, 30000);
+
+  // P0-3 (b): a route in the definition lens but not the contract lens -> reconciliation RED.
+  it("(b) a route present in one lens but omitted by the other -> reconciliation RED", () => {
+    expect.hasAssertions();
+    // definition has an extra route the contract snapshot does NOT.
+    const extra = { operationId: "workflows.secret", method: "DELETE", path: "/v1/workflows/secret", file: "friday-sample-routes.ts" };
+    const roots = writeFixture({ defRoutes: [...ROUTES, extra], snapshotRoutes: ROUTES });
+    const { outDir, inventory, sidecar } = generateBundle(roots);
+    expect(sidecar.independent_reconciliation.http.clean).toBe(false);
+    expect(sidecar.independent_reconciliation.http.definition_only_count).toBeGreaterThan(0);
+    expect(inventory.unknown_ids.length).toBeGreaterThan(0);
+    expect(inventory.unknown_ids).toContain("http::DELETE /v1/workflows/secret");
+    addSiblingStubs(outDir);
+    const v = runValidator(outDir);
+    expect(v.status).toBe(65);
+    expect(v.err?.code).toBe("SUBJECT_RECONCILIATION_NONZERO");
+  }, 30000);
+
+  // P0-1 (c): NO caller-controllable path can seal. Arbitrary identity stays PROVISIONAL.
+  it("(c) arbitrary caller identity can NOT seal; no review/allowlist/ledger surface exists", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const untrusted = generateBundle(roots, "untrusted-attacker-producer");
+    expect(untrusted.out.seal_status).toBe("PROVISIONAL_UNSEALED");
+    expect(untrusted.sidecar.authority_seal.S_static.reviewed).toBe(false);
+    for (const kind of AUTHORITY_KINDS) expect(untrusted.sidecar.authority_seal[kind].reviewed).toBe(false);
+    // the authority-laundering reviewer script is removed; no seal CLI surface exists.
+    expect(fs.existsSync(REMOVED_REVIEWER)).toBe(false);
+    const usage = JSON.parse(runGen({ repoRoot: roots.repoRoot }).stderr).detail.usage as string;
+    expect(usage).not.toMatch(/review|allowlist|ledger/i);
+    expect(untrusted.sidecar.unsealed_reasons).toContain("authority_absent_no_trusted_oidc_or_operator_signature");
+  }, 30000);
+
+  // F-A (d): CLOSED-DENOMINATOR seal. Only the EXACT closed key sets all-true + authority
+  // can SEAL; empty / missing / extra-key / non-boolean maps can NEVER seal. The old
+  // `Object.values(map).every(Boolean)` sealed `{}` and could not reject unknown extras.
+  it("(d) computeSealStatus is closed-key exact: empty/partial/extra/non-boolean never seal", async () => {
+    expect.hasAssertions();
+    const mod = await import(ADAPTER_MOD);
+    const fullComp = Object.fromEntries(mod.SEAL_COMPONENT_KEYS.map((k: string) => [k, true]));
+    const fullGate = Object.fromEntries(mod.SEAL_GATE_KEYS.map((k: string) => [k, true]));
+    const base = { componentSeal: fullComp, gatesSealed: fullGate, authorityPresent: true };
+
+    // the ONLY sealing input: exact closed keys all-true + authority present.
+    expect(mod.computeSealStatus(base)).toEqual({ status: "SEALED", reasons: [] });
+
+    // empty maps must NEVER seal (the round-3 `.every(Boolean)` defect returned SEALED for {}).
+    const empty = mod.computeSealStatus({ componentSeal: {}, gatesSealed: {}, authorityPresent: true });
+    expect(empty.status).toBe("PROVISIONAL_UNSEALED");
+    expect(empty.reasons.some((r: string) => r.startsWith("component_seal_missing_keys:"))).toBe(true);
+    expect(empty.reasons.some((r: string) => r.startsWith("gate_seal_missing_keys:"))).toBe(true);
+
+    // authority absent -> PROVISIONAL with a specific reason.
+    const noAuth = mod.computeSealStatus({ ...base, authorityPresent: false });
+    expect(noAuth.status).toBe("PROVISIONAL_UNSEALED");
+    expect(noAuth.reasons).toContain("authority_not_present");
+
+    // one component missing -> PROVISIONAL.
+    const { source_sha: _drop, ...missingOne } = fullComp;
+    expect(mod.computeSealStatus({ ...base, componentSeal: missingOne }).status).toBe("PROVISIONAL_UNSEALED");
+
+    // one component false -> PROVISIONAL.
+    expect(mod.computeSealStatus({ ...base, componentSeal: { ...fullComp, source_sha: false } }).status).toBe("PROVISIONAL_UNSEALED");
+
+    // unknown extra key -> PROVISIONAL (cannot be distinguished from a real component by .every).
+    const extra = mod.computeSealStatus({ ...base, componentSeal: { ...fullComp, invented_component: true } });
+    expect(extra.status).toBe("PROVISIONAL_UNSEALED");
+    expect(extra.reasons.some((r: string) => r.startsWith("component_seal_unknown_keys:"))).toBe(true);
+
+    // non-boolean truthy value -> PROVISIONAL (strict === true required).
+    expect(mod.computeSealStatus({ ...base, gatesSealed: { ...fullGate, [mod.SEAL_GATE_KEYS[0]]: 1 } }).status).toBe("PROVISIONAL_UNSEALED");
+    expect(mod.computeSealStatus({ ...base, gatesSealed: { ...fullGate, [mod.SEAL_GATE_KEYS[0]]: "true" } }).status).toBe("PROVISIONAL_UNSEALED");
+
+    // non-object seal map -> PROVISIONAL.
+    expect(mod.computeSealStatus({ ...base, componentSeal: null }).status).toBe("PROVISIONAL_UNSEALED");
+    expect(mod.exactAllTrue(null, mod.SEAL_COMPONENT_KEYS)).toEqual({ ok: false, reason: "not_a_plain_object" });
+
+    // the closed key sets are exactly the documented 5 components / 3 gates.
+    expect(new Set(mod.SEAL_COMPONENT_KEYS)).toEqual(new Set(["source_sha", "cross_platform_artifact_set_sha256", "runtime_profile_digest", "obligation_set_sha256", "verification_policy_set_sha256"]));
+    expect(mod.SEAL_COMPONENT_KEYS).toHaveLength(5);
+    expect(mod.SEAL_GATE_KEYS).toHaveLength(3);
+  });
+
+  // F-B (e): EXACT-candidate source provenance.
+  it("(e) source_sha seals ONLY for a real git repo at the expected HEAD with a clean worktree", async () => {
+    expect.hasAssertions();
+
+    // non-git default fixture -> source unsealed (round-3 hardcoded `true` is the defect here).
+    const nonGit = generateBundle(writeFixture());
+    expect(nonGit.sidecar.component_binding.source_sha.sealed).toBe(false);
+    expect(nonGit.sidecar.component_binding.source_sha.git_tree_oid).toBeNull();
+    expect(nonGit.sidecar.unsealed_reasons).toContain("source_root_not_a_git_repository");
+    expect(nonGit.out.seal_status).toBe("PROVISIONAL_UNSEALED");
+
+    // clean git repo at the exact expected HEAD -> source_sha SEALS (but bundle stays
+    // PROVISIONAL because authority is absent — an honest partial seal).
+    const clean = writeFixture();
+    const head = initGitCommitted(clean.repoRoot);
+    const ok = generateBundle(clean, undefined, { expectedSha: head });
+    expect(ok.sidecar.component_binding.source_sha.sealed).toBe(true);
+    expect(ok.sidecar.component_binding.source_sha.clean_worktree).toBe(true);
+    expect(ok.sidecar.component_binding.source_sha.expected_match).toBe(true);
+    expect(ok.sidecar.component_binding.source_sha.head_sha).toBe(head);
+    expect(ok.sidecar.component_binding.source_sha.git_tree_oid).toMatch(/^[0-9a-f]{40}$/);
+    expect(ok.out.seal_status).toBe("PROVISIONAL_UNSEALED"); // authority still absent
+    expect(ok.sidecar.unsealed_reasons).not.toContain("source_root_not_a_git_repository");
+
+    // dirty tracked file -> unsealed.
+    const dirty = writeFixture();
+    const dHead = initGitCommitted(dirty.repoRoot);
+    fs.appendFileSync(path.join(dirty.repoRoot, "src/api/http/routes/friday-sample-routes.ts"), "\n// dirty edit\n");
+    const dRes = generateBundle(dirty, undefined, { expectedSha: dHead });
+    expect(dRes.sidecar.component_binding.source_sha.sealed).toBe(false);
+    expect(dRes.sidecar.component_binding.source_sha.clean_worktree).toBe(false);
+    expect(dRes.sidecar.unsealed_reasons).toContain("source_worktree_dirty_or_untracked_present");
+
+    // untracked file -> unsealed.
+    const untracked = writeFixture();
+    const uHead = initGitCommitted(untracked.repoRoot);
+    fs.writeFileSync(path.join(untracked.repoRoot, "src/newfile.ts"), "export const x = 1;\n");
+    const uRes = generateBundle(untracked, undefined, { expectedSha: uHead });
+    expect(uRes.sidecar.component_binding.source_sha.sealed).toBe(false);
+    expect(uRes.sidecar.unsealed_reasons).toContain("source_worktree_dirty_or_untracked_present");
+
+    // HEAD != expected candidate sha -> unsealed.
+    const wrong = writeFixture();
+    initGitCommitted(wrong.repoRoot);
+    const wRes = generateBundle(wrong, undefined, { expectedSha: "0".repeat(40) });
+    expect(wRes.sidecar.component_binding.source_sha.sealed).toBe(false);
+    expect(wRes.sidecar.component_binding.source_sha.expected_match).toBe(false);
+    expect(wRes.sidecar.unsealed_reasons).toContain("source_head_sha_not_equal_expected");
+
+    // git repo but NO expected sha provided -> unsealed (cannot pin the candidate).
+    const noExp = writeFixture();
+    initGitCommitted(noExp.repoRoot);
+    const nRes = generateBundle(noExp);
+    expect(nRes.sidecar.component_binding.source_sha.sealed).toBe(false);
+    expect(nRes.sidecar.unsealed_reasons).toContain("source_expected_sha_not_provided");
+  }, 60000);
+
+  // (e) FAIL-OPEN FIX: an abbreviated/prefix `--expected-sha` must NEVER seal. On the
+  // pre-fix head this sealed because the boundary accepted `{7,40}` hex and the match
+  // used `headSha.startsWith(expectedSha)`; now the value must be a FULL 40-char sha
+  // and HEAD must equal it with `===`. Red-first: each case seals / expected_match=true
+  // on the old code -> RED there; UNSEALED or typed-error after.
+  it("(e) an abbreviated/prefix --expected-sha never seals (full 40-hex + strict === required)", async () => {
+    expect.hasAssertions();
+    const enums = await import(ENUM_MOD);
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    expect(head).toMatch(/^[0-9a-f]{40}$/);
+    const prefix7 = head.slice(0, 7);
+    const prefix39 = head.slice(0, 39);
+
+    // library layer (sourceProvenance): a 7-char matching prefix -> UNSEALED, not matched.
+    const p7 = enums.sourceProvenance(roots.repoRoot, prefix7);
+    expect(p7.sealed).toBe(false); // OLD: startsWith -> true -> sealed
+    expect(p7.expected_match).toBe(false);
+    expect(p7.expected_sha).toBeNull(); // not a valid full candidate
+    expect(p7.unsealed_reasons).toContain("source_expected_sha_not_full_40hex");
+
+    // a 39-char matching prefix -> UNSEALED too (off-by-one is not the candidate).
+    const p39 = enums.sourceProvenance(roots.repoRoot, prefix39);
+    expect(p39.sealed).toBe(false);
+    expect(p39.expected_match).toBe(false);
+    expect(p39.unsealed_reasons).toContain("source_expected_sha_not_full_40hex");
+
+    // uppercase full-length hex is rejected (not lowercase canonical) -> UNSEALED.
+    const pUpper = enums.sourceProvenance(roots.repoRoot, head.toUpperCase());
+    expect(pUpper.sealed).toBe(false);
+    expect(pUpper.unsealed_reasons).toContain("source_expected_sha_not_full_40hex");
+
+    // a valid-format full 40-char but NON-matching sha -> UNSEALED, expected_match=false.
+    const pWrong = enums.sourceProvenance(roots.repoRoot, "0".repeat(40));
+    expect(pWrong.sealed).toBe(false);
+    expect(pWrong.expected_match).toBe(false);
+    expect(pWrong.unsealed_reasons).toContain("source_head_sha_not_equal_expected");
+
+    // the exact full 40-char HEAD on a clean checkout -> SEALS (control).
+    const pExact = enums.sourceProvenance(roots.repoRoot, head);
+    expect(pExact.sealed).toBe(true);
+    expect(pExact.expected_match).toBe(true);
+
+    // CLI layer: an abbreviated value is a typed EXPECTED_SHA_INVALID (never a bundle).
+    const cli7 = runGen(roots, { expectedSha: prefix7 });
+    expect(cli7.status).not.toBe(0); // OLD: {7,40} accepted -> exit 0 with a sealed source
+    expect(cli7.err().code).toBe("EXPECTED_SHA_INVALID");
+    const cli39 = runGen(roots, { expectedSha: prefix39 });
+    expect(cli39.err().code).toBe("EXPECTED_SHA_INVALID");
+    const cliUpper = runGen(roots, { expectedSha: head.toUpperCase() });
+    expect(cliUpper.err().code).toBe("EXPECTED_SHA_INVALID");
+  }, 60000);
+
+  // F-B: a mutation between the source snapshot and the bundle write is RED, never a stale seal.
+  it("(e) assertSourceUnchanged REDs on a source mutation between snapshot and write", async () => {
+    expect.hasAssertions();
+    const enums = await import(ENUM_MOD);
+    const adapter = await import(ADAPTER_MOD);
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    const prior = enums.sourceProvenance(roots.repoRoot, head).signature;
+    expect(adapter.assertSourceUnchanged(roots.repoRoot, head, prior)).toBe(true); // unchanged -> ok
+    fs.appendFileSync(path.join(roots.repoRoot, "src/api/http/routes/friday-sample-routes.ts"), "\n// mutated after snapshot\n");
+    let thrown: any = null;
+    try { adapter.assertSourceUnchanged(roots.repoRoot, head, prior); } catch (e) { thrown = e; }
+    expect(thrown).not.toBeNull();
+    expect(thrown.code).toBe("SOURCE_MUTATED_DURING_BUILD");
+  }, 30000);
+
+  // (finding-1) SOURCE DIGEST IS GIT-TRACKED-GROUNDED: a gitignored on-disk payload is
+  // EXCLUDED from the source digest and the tracked file_count. On the pre-fix whole-disk
+  // walk the payload's bytes folded into the digest while `git status --porcelain` stayed
+  // EMPTY (gitignored) -> the sealed digest silently changed: RED there, GREEN here.
+  it("(finding-1) a gitignored payload is EXCLUDED from the git-tracked source digest (unchanged by add/remove); dirty tracked -> unsealed", async () => {
+    expect.hasAssertions();
+    const enums = await import(ENUM_MOD);
+    const roots = writeFixture();
+    // .gitignore (itself tracked) lists arbitrary paths; commit the whole tree.
+    fs.writeFileSync(path.join(roots.repoRoot, ".gitignore"), ".DS_Store\nlocal-junk/\n");
+    const head = initGitCommitted(roots.repoRoot);
+    const before = enums.sourceProvenance(roots.repoRoot, head);
+    expect(before.sealed).toBe(true); // clean git at the exact HEAD -> honest partial seal
+    const baseDigest = before.digest;
+    const baseCount = before.file_count;
+
+    // add arbitrary-content GITIGNORED payloads — `git status --porcelain` stays EMPTY.
+    const payload = path.join(roots.repoRoot, ".DS_Store");
+    fs.writeFileSync(payload, "arbitrary untrusted payload bytes that must NOT bind the seal");
+    fs.mkdirSync(path.join(roots.repoRoot, "local-junk"), { recursive: true });
+    fs.writeFileSync(path.join(roots.repoRoot, "local-junk", "x.bin"), "more untrusted bytes");
+    const after = enums.sourceProvenance(roots.repoRoot, head);
+    expect(after.clean_worktree).toBe(true); // gitignored files do NOT dirty the worktree
+    expect(after.file_count).toBe(baseCount); // EXCLUDED from the tracked file count
+    expect(after.digest).toBe(baseDigest); // digest UNCHANGED by the payload bytes
+    expect(after.sealed).toBe(true); // still an honest seal (nothing tracked changed)
+
+    // removing the payload also leaves the digest byte-identical (symmetry).
+    fs.rmSync(payload);
+    fs.rmSync(path.join(roots.repoRoot, "local-junk"), { recursive: true, force: true });
+    const removed = enums.sourceProvenance(roots.repoRoot, head);
+    expect(removed.digest).toBe(baseDigest);
+    expect(removed.file_count).toBe(baseCount);
+
+    // a DIRTY *tracked* file DOES flip the seal (git status non-empty) -> sealed:false.
+    fs.appendFileSync(path.join(roots.repoRoot, "src/api/http/routes/friday-sample-routes.ts"), "\n// dirty tracked edit\n");
+    const dirty = enums.sourceProvenance(roots.repoRoot, head);
+    expect(dirty.clean_worktree).toBe(false);
+    expect(dirty.sealed).toBe(false);
+    expect(dirty.unsealed_reasons).toContain("source_worktree_dirty_or_untracked_present");
+  }, 60000);
+
+  // (finding-1b) LS-TREE SILENT-TRUNCATION P0. The round-5 F1 fix trusted the new
+  // `git ls-tree -r -z HEAD` output UNCONDITIONALLY — no `maxBuffer`, no status/error
+  // check (unlike the file's OTHER git calls). On a repo whose ls-tree output exceeds
+  // Node's ~1MiB spawnSync default, stdout is SILENTLY TRUNCATED (spawnSync returns
+  // status:null + an ENOBUFS error, stdout capped) and the partial list was parsed
+  // anyway -> sealed:true with a WRONG file_count and a tracked symlink past the cut
+  // UNDETECTED. Fix: (a) an explicit 64MiB maxBuffer so a legitimately large repo seals
+  // over the FULL tree; (b) a status/error/truncation check that treats any non-zero /
+  // errored / truncated ls-tree as a GROUNDING FAILURE (never parse partial output ->
+  // unsealed with `source_ls_tree_failed_or_truncated`). Red-first: on 33f3a3f2 this
+  // 20k-file repo seals:true with file_count ~15916 of 20000 and the trailing symlink
+  // hidden; GREEN here (full tree, symlink seen, or fail-closed on forced excess).
+  it("(finding-1b) a >1MiB ls-tree is NOT silently truncated: FULL tree enumerated (trailing symlink detected) and forced excess fails closed — never sealed:true over an incomplete tree", async () => {
+    expect.hasAssertions();
+    const enums = await import(ENUM_MOD);
+    const root = mkRealDir("saa-bigtree-");
+    const git = (...a: string[]): string => {
+      const r = spawnSync("git", ["-C", root, "-c", "user.email=t@t.test", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...a], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+      if (r.status !== 0) throw new Error(`git ${a.join(" ")} failed: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    git("init", "-q");
+    const N = 20000; // ~1.4MB of `ls-tree -r -z` output — comfortably over the ~1MiB default
+    for (let i = 0; i < N; i += 1) {
+      const d = path.join(root, "f", String(Math.floor(i / 1000)).padStart(3, "0"));
+      fs.mkdirSync(d, { recursive: true });
+      fs.writeFileSync(path.join(d, `${String(i).padStart(6, "0")}.txt`), "x");
+    }
+    // a tracked symlink that sorts ALPHABETICALLY LAST (after "f/") -> on the pre-fix
+    // truncated parse it fell past the cut and was NEVER observed.
+    fs.symlinkSync("f/000/000000.txt", path.join(root, "zzz-trailing-symlink"));
+    git("add", "-A");
+    git("commit", "-q", "-m", "big");
+    const head = git("rev-parse", "HEAD");
+    expect(head).toMatch(/^[0-9a-f]{40}$/);
+
+    // generous default (64MiB) buffer: the FULL tree is enumerated; the trailing symlink
+    // is now OBSERVED -> specialSeen -> sealed:false (honest), with the COMPLETE file_count.
+    const full = enums.sourceProvenance(root, head);
+    expect(full.file_count).toBe(N); // OLD: ~15916 (silently truncated ~20% of the tree)
+    expect(full.sealed).toBe(false); // OLD: symlink truncated away -> sealed:true over a partial tree
+    expect(full.unsealed_reasons).toContain("source_manifest_has_symlink_or_special_file");
+
+    // genuine excess (forced tiny buffer): truncation is DETECTED and fails closed — the
+    // partial output is NEVER parsed and it can never seal:true over an incomplete tree.
+    process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER = "1024";
+    try {
+      const truncated = enums.sourceProvenance(root, head);
+      expect(truncated.sealed).toBe(false);
+      expect(truncated.file_count).toBe(0); // partial output is NEVER parsed
+      expect(truncated.unsealed_reasons).toContain("source_ls_tree_failed_or_truncated");
+    } finally {
+      delete process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER;
+    }
+  }, 120000);
+
+  // (finding-r7-1) MAXBUFFER ENV IS CLAMPED ONLY-LOWER. The round-6 override read the env
+  // unconditionally, so a value ABOVE the 64MiB default RAISED the effective cap — letting
+  // an ambient-env caller widen the buffer and flip source_sha.sealed on a >64MiB tree the
+  // default would (correctly) fail closed on, contradicting the "no caller-controllable
+  // sealed path" invariant. Fix: resolveLsTreeMaxBuffer clamps to min(env, default). Red-first:
+  // resolveLsTreeMaxBuffer/LS_TREE_MAX_BUFFER_DEFAULT don't exist on efd93c62 -> RED; and the
+  // effective buffer for env=100MiB is now the 64MiB default (a raise is impossible).
+  it("(finding-r7-1) FRIDAY_STRESS_LS_TREE_MAXBUFFER is clamped ONLY-LOWER: a raise above the 64MiB default is impossible; a lower value is honored", async () => {
+    expect.hasAssertions();
+    const enums = await import(ENUM_MOD);
+    const DEF = enums.LS_TREE_MAX_BUFFER_DEFAULT;
+    expect(DEF).toBe(64 * 1024 * 1024);
+    // a RAISE is clamped to the default (the load-bearing invariant): 100MiB -> 64MiB.
+    expect(enums.resolveLsTreeMaxBuffer("104857600")).toBe(DEF); // OLD: 104857600 (raised)
+    expect(enums.resolveLsTreeMaxBuffer(String(DEF * 4))).toBe(DEF);
+    expect(enums.resolveLsTreeMaxBuffer("999999999999")).toBe(DEF);
+    // a LOWER value is honored (fail-closed direction — forces truncation sooner for tests).
+    expect(enums.resolveLsTreeMaxBuffer("1024")).toBe(1024);
+    expect(enums.resolveLsTreeMaxBuffer("1")).toBe(1);
+    // absent / empty / non-positive / non-numeric -> default (never a raise, never 0/negative).
+    for (const bad of [undefined, "", "0", "-5", "abc"]) expect(enums.resolveLsTreeMaxBuffer(bad as any)).toBe(DEF);
+    // a fractional string parses (parseInt) to its floor — a LOWER value, still fail-closed direction.
+    expect(enums.resolveLsTreeMaxBuffer("3.9")).toBe(3);
+    // the effective buffer is EXACTLY min(env, default) for any positive integer request.
+    for (const v of [1, 1024, DEF - 1, DEF, DEF + 1, DEF * 10]) {
+      expect(enums.resolveLsTreeMaxBuffer(String(v))).toBe(Math.min(v, DEF));
+    }
+  });
+
+  // (finding-r7-2) TRUNCATION FAIL-CLOSED REASON IS DIAGNOSABLE FROM THE CLI. On a real
+  // ls-tree truncation sourceProvenance returns file_count===0 + unsealed_reasons naming the
+  // truncation, but buildSubjectInventory threw a detail-less SOURCE_TREE_EMPTY BEFORE folding
+  // those reasons in — so the CLI emitted `{code:SOURCE_TREE_EMPTY, detail:{}}`, indistinguishable
+  // from an empty repo (still fail-closed, but the diagnostic was lost, and round-6's test only
+  // exercised the library fn, never the CLI). Fix: propagate the reasons + a distinct code.
+  // Red-first (CLI-level): on efd93c62 the RED JSON does NOT name the truncation.
+  it("(finding-r7-2) a CLI-level ls-tree truncation emits a RED that NAMES the truncation reason (not a detail-less SOURCE_TREE_EMPTY)", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    expect(head).toMatch(/^[0-9a-f]{40}$/);
+    const prev = process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER;
+    process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER = "256"; // genuine excess -> the real CLI path truncates
+    try {
+      const r = runGen(roots, { expectedSha: head });
+      expect(r.status).toBe(3); // RED, fail-closed
+      const red = r.err();
+      expect(red.code).toBe("SOURCE_LS_TREE_TRUNCATED"); // OLD: detail-less "SOURCE_TREE_EMPTY"
+      expect(red.detail.unsealed_reasons).toContain("source_ls_tree_failed_or_truncated");
+    } finally {
+      if (prev === undefined) delete process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER;
+      else process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER = prev;
+    }
+  }, 30000);
+
+  // (finding-r7-3) CROSS-MODULE Red IS PRESERVED, NOT COLLAPSED TO UNEXPECTED.
+  // buildVerificationPolicyManifest throws its OWN local `class Red` (a distinct class object),
+  // so main()'s `error instanceof Red` was false for its errors and collapsed them to
+  // `{code:UNEXPECTED}` — losing the machine-readable code for the verification_policy component.
+  // Fix: the adapter catch-and-rewraps as its OWN Red preserving `.code`/`.detail`. Red-first:
+  // deleting a declared verification-policy source emits UNEXPECTED on efd93c62, its real code here.
+  it("(finding-r7-3) a missing declared verification-policy source surfaces its real code (DECLARED_SOURCE_MISSING), not UNEXPECTED", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    fs.rmSync(path.join(roots.sourcesRoot, VALIDATOR_REL)); // a declared source the manifest consumes
+    const r = runGen(roots);
+    expect(r.status).toBe(3); // RED, fail-closed
+    const red = r.err();
+    expect(red.code).toBe("DECLARED_SOURCE_MISSING"); // OLD: "UNEXPECTED" (cross-module Red lost)
+    expect(red.code).not.toBe("UNEXPECTED");
+    expect(red.detail?.path).toBe(VALIDATOR_REL); // the preserved machine-readable detail
+  }, 30000);
+
+  // (finding-3) EXIT-CODE LAUNDERING GUARD. A non-SEALED bundle must never be read as a
+  // PASS by a `... && GATE_PASS` wrapper: the default run still exits 0 (honest generation)
+  // but ALWAYS prints a loud PROVISIONAL_UNSEALED banner to stderr; --strict fails closed
+  // with a distinct non-zero code (4). Pre-fix: no --strict (arg ignored -> exit 0) and no
+  // banner -> RED here; GREEN after.
+  it("(finding-3) --strict exits non-zero on a provisional bundle; a loud banner ALWAYS prints on a provisional exit-0", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    // default: honest generation exits 0, but the loud banner MUST be on stderr.
+    const lax = runGen(roots);
+    expect(lax.status).toBe(0);
+    expect(lax.stderr).toMatch(/PROVISIONAL_UNSEALED/);
+    expect(lax.stderr).toMatch(/exit 0 does NOT mean sealed\/PASS/i);
+    // --strict: a non-SEALED bundle is a distinct non-zero exit (fail-closed for gates).
+    const strict = runGen(roots, { strict: true });
+    expect(strict.status).not.toBe(0);
+    expect(strict.status).toBe(4);
+    expect(strict.stderr).toMatch(/PROVISIONAL_UNSEALED/); // banner still printed before exit 4
+    // stdout is still the honest OK JSON in both cases (the banner is stderr-only).
+    expect(JSON.parse(lax.stdout).seal_status).toBe("PROVISIONAL_UNSEALED");
+    expect(JSON.parse(strict.stdout).seal_status).toBe("PROVISIONAL_UNSEALED");
+  }, 30000);
+
+  // (f) DRIFT-LOCK: the closed-denominator is only sound if its component key set
+  // matches the AUTHORITATIVE validator. Bind SEAL_COMPONENT_KEYS to the vendored
+  // validator's own `componentsKeys` (exact members AND order). Any silent drift on
+  // either side -> RED. Red-first proven by mutating SEAL_COMPONENT_KEYS (drop / add
+  // / reorder) -> this test RED; restore -> green.
+  it("(f) SEAL_COMPONENT_KEYS is drift-locked to the vendored validator's componentsKeys (exact members + order)", async () => {
+    expect.hasAssertions();
+    const mod = await import(ADAPTER_MOD);
+    const vendored = vendoredComponentsKeys();
+    // deep-equal INCLUDING order (toEqual on arrays is order-sensitive).
+    expect([...mod.SEAL_COMPONENT_KEYS]).toEqual(vendored);
+    expect([...mod.SEAL_COMPONENT_KEYS]).toStrictEqual([...vendored]);
+    // sanity: the extraction found the authoritative 5-tuple (guards a silent regex miss).
+    expect(vendored).toEqual(["source_sha", "cross_platform_artifact_set_sha256", "runtime_profile_digest", "obligation_set_sha256", "verification_policy_set_sha256"]);
+    expect(vendored).toHaveLength(5);
+  });
+
+  // (g) GATE-SET EXACTNESS LOCK: gates are ADAPTER-INTERNAL (the R13 validator has
+  // no gate concept and never reads the ...SEAL_STATUS.json sidecar), so there is no
+  // external contract — the set is design-authored and PINNED here to prevent silent
+  // drift. Red-first: mutate SEAL_GATE_KEYS -> this test RED; restore -> green.
+  it("(g) SEAL_GATE_KEYS is pinned to exactly the 3 adapter-internal gates with no external validator contract", async () => {
+    expect.hasAssertions();
+    const mod = await import(ADAPTER_MOD);
+    expect([...mod.SEAL_GATE_KEYS]).toEqual(["http_independent_reconciliation", "all_class_reconciliation", "discovery_ast_registration"]);
+    expect(mod.SEAL_GATE_KEYS).toHaveLength(3);
+    // the validator's component contract must NEVER contain a gate key (they are disjoint concepts).
+    const vendored = vendoredComponentsKeys();
+    for (const g of mod.SEAL_GATE_KEYS) expect(vendored).not.toContain(g);
+    // frozen: the runtime set cannot be silently mutated in-process.
+    expect(Object.isFrozen(mod.SEAL_GATE_KEYS)).toBe(true);
+    expect(Object.isFrozen(mod.SEAL_COMPONENT_KEYS)).toBe(true);
+  });
+
+  // F2 / P0-2: source_sha binds the COMPLETE tree; an uncovered src/jobs file flips it.
+  it("F2: an uncovered src/jobs source flips source_sha+tuple; other bindings flip on their real content", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const before = generateBundle(roots).inventory.final_release_candidate_components;
+    fs.mkdirSync(path.join(roots.repoRoot, "src/jobs"), { recursive: true });
+    fs.writeFileSync(path.join(roots.repoRoot, "src/jobs/nightly.ts"), `export const j = () => 1;\n`);
+    const after = generateBundle(roots).inventory.final_release_candidate_components;
+    expect(after.source_sha).not.toBe(before.source_sha);
+    for (const k of ["runtime_profile_digest", "cross_platform_artifact_set_sha256", "verification_policy_set_sha256"]) expect(after[k]).toBe(before[k]);
+
+    // runtime full-content value change flips runtime_profile_digest only.
+    const r2 = writeFixture();
+    const b2 = generateBundle(r2).inventory.final_release_candidate_components;
+    const ovp = path.join(r2.sourcesRoot, "FRIDAY_ENDBAR_R13_STRESS_OVERLAY.json");
+    const ov = JSON.parse(fs.readFileSync(ovp, "utf8"));
+    ov.platform_scope.web = ["diagnostics only", "added scope"];
+    fs.writeFileSync(ovp, `${JSON.stringify(ov, null, 2)}\n`);
+    const a2 = generateBundle(r2).inventory.final_release_candidate_components;
+    expect(a2.runtime_profile_digest).not.toBe(b2.runtime_profile_digest);
+    expect(a2.source_sha).toBe(b2.source_sha);
+
+    // artifact + policy bind real schema bytes.
+    const r3 = writeFixture();
+    const b3 = generateBundle(r3).inventory.final_release_candidate_components;
+    fs.appendFileSync(path.join(r3.sourcesRoot, schemaFileFor(ARTIFACTS[0])), "// drift\n");
+    const a3 = generateBundle(r3).inventory.final_release_candidate_components;
+    expect(a3.cross_platform_artifact_set_sha256).not.toBe(b3.cross_platform_artifact_set_sha256);
+    expect(a3.verification_policy_set_sha256).not.toBe(b3.verification_policy_set_sha256);
+  }, 60000);
+
+  it("seal-status sidecar names unsealed reasons incl authority-absent, marks obligation unsealed, is not a validator artifact", () => {
+    expect.hasAssertions();
+    const { sidecar } = generateBundle(writeFixture());
+    expect(sidecar.seal_status).toBe("PROVISIONAL_UNSEALED");
+    expect(sidecar.can_ever_self_seal_agent_side).toBe(false);
+    // non-git default fixture: source_sha is honestly UNSEALED (no expected-candidate pin).
+    expect(sidecar.component_binding.source_sha.sealed).toBe(false);
+    expect(sidecar.component_binding.obligation_set_sha256.sealed).toBe(false);
+    expect(sidecar.component_binding.runtime_profile_digest.sealed).toBe(false);
+    expect(sidecar.component_binding.cross_platform_artifact_set_sha256.sealed).toBe(false);
+    expect(sidecar.unsealed_reasons).toContain("authority_absent_no_trusted_oidc_or_operator_signature");
+    expect(sidecar.independent_reconciliation.http.available).toBe(true);
+    expect(sidecar.independent_reconciliation.http.clean).toBe(true);
+    expect(ARTIFACTS).not.toContain("FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json");
+  }, 30000);
+
+  // (finding-2) verification_policy_set_sha256 is HONEST-PROVISIONAL (sealed:false), NOT
+  // git-verified: it is derived by fs.readFileSync over --sources-root (no git, no
+  // clean-worktree, no expected-sha pin, not covered by assertSourceUnchanged) — exactly
+  // like its 3 declared-content siblings. Pre-fix (33f3a3f2) BOTH the seal-truth
+  // componentSeal AND the sidecar component_binding hardcoded sealed:true, even after
+  // tampering a sources-root file. Red-first: sealed:true there; sealed:false + reason here.
+  it("(finding-2) verification_policy_set_sha256 is provisional (sealed:false + reason), even after tampering a sources-root file; sidecar never prints sealed:true for it", () => {
+    expect.hasAssertions();
+    const clean = generateBundle(writeFixture());
+    const vpc = clean.sidecar.component_binding.verification_policy_set_sha256;
+    expect(vpc.sealed).toBe(false); // OLD: hardcoded sealed:true with ZERO grounding
+    expect(vpc.reason).toBe("declared_content_not_git_verified");
+    // honest parity with its 3 declared-content siblings (all sealed:false).
+    expect(clean.sidecar.component_binding.cross_platform_artifact_set_sha256.sealed).toBe(false);
+    expect(clean.sidecar.component_binding.runtime_profile_digest.sealed).toBe(false);
+    expect(clean.sidecar.component_binding.obligation_set_sha256.sealed).toBe(false);
+    // global seal remains (independently) unreachable agent-side — this only makes the
+    // per-component sidecar HONEST; it does not change computeSealStatus's verdict.
+    expect(clean.out.seal_status).toBe("PROVISIONAL_UNSEALED");
+    expect(clean.out.can_ever_self_seal_agent_side).toBe(false);
+
+    // tampering a sources-root policy input does NOT flip it to sealed (it was never
+    // git-grounded) — the persisted sidecar on disk still shows sealed:false + reason.
+    const roots = writeFixture();
+    fs.appendFileSync(path.join(roots.sourcesRoot, schemaFileFor(ARTIFACTS[0])), "// policy drift\n");
+    const tampered = generateBundle(roots);
+    const tv = tampered.sidecar.component_binding.verification_policy_set_sha256;
+    expect(tv.sealed).toBe(false);
+    expect(tv.reason).toBe("declared_content_not_git_verified");
+    expect(tampered.out.seal_status).toBe("PROVISIONAL_UNSEALED");
+  }, 30000);
+
+  it("is deterministic and self-consistent (subject_set + tuple recompute)", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const a1 = generateBundle(roots).inventory;
+    const a2 = generateBundle(roots).inventory;
+    expect(a2.subject_set_sha256).toBe(a1.subject_set_sha256);
+    expect(a2.final_release_candidate_tuple_sha256).toBe(a1.final_release_candidate_tuple_sha256);
+    const b1 = generateBundle(writeFixture()).inventory;
+    expect(b1.subject_set_sha256).toBe(a1.subject_set_sha256);
+    const sorted = [...a1.subjects].sort((x: any, y: any) => x.subject_id.localeCompare(y.subject_id));
+    expect(digestOf(sorted)).toBe(a1.subject_set_sha256);
+    expect(digestOf(a1.final_release_candidate_components)).toBe(a1.final_release_candidate_tuple_sha256);
+  }, 40000);
+
+  it("independent validator REDs (EVIDENCE_REF_DRIFT) when a raw observation is tampered (structure otherwise valid)", () => {
+    expect.hasAssertions();
+    const { outDir, inventory } = generateBundle(writeFixture());
+    addSiblingStubs(outDir);
+    fs.appendFileSync(path.join(outDir, inventory.subjects[0].discovery_refs[0].path), "tamper");
+    const v = runValidator(outDir);
+    expect(v.status).toBe(65);
+    expect(v.err?.code).toBe("EVIDENCE_REF_DRIFT");
+  }, 30000);
+
+  it("turns RED on born-current authority and coverage denominator drift, empty enumerator, and missing inputs", () => {
+    expect.hasAssertions();
+    const a = writeFixture();
+    const ovA = path.join(a.sourcesRoot, "FRIDAY_ENDBAR_R13_STRESS_OVERLAY.json");
+    const oa = JSON.parse(fs.readFileSync(ovA, "utf8"));
+    oa.runtime_evidence_bundle_contract.authority_sources = AUTHORITY_KINDS.slice(0, 6);
+    fs.writeFileSync(ovA, `${JSON.stringify(oa, null, 2)}\n`);
+    expect(runGen(a).err().code).toBe("AUTHORITY_DENOMINATOR_DRIFT");
+
+    const b = writeFixture();
+    const ovB = path.join(b.sourcesRoot, "FRIDAY_ENDBAR_R13_STRESS_OVERLAY.json");
+    const ob = JSON.parse(fs.readFileSync(ovB, "utf8"));
+    ob.runtime_evidence_bundle_contract.minimum_coverage_classes = COVERAGE_CLASSES.concat("new_class");
+    fs.writeFileSync(ovB, `${JSON.stringify(ob, null, 2)}\n`);
+    expect(runGen(b).err().code).toBe("COVERAGE_CLASS_DENOMINATOR_DRIFT");
+
+    const c = writeFixture();
+    fs.rmSync(path.join(c.repoRoot, "src/api/http/routes"), { recursive: true, force: true });
+    expect(runGen(c).err().code).toBe("ENUMERATOR_EMPTY");
+
+    const d = writeFixture();
+    expect(runGen({ repoRoot: d.repoRoot }).err().code).toBe("MISSING_SOURCES_ROOT");
+    expect(runGen({ sourcesRoot: d.sourcesRoot }).err().code).toBe("MISSING_REPO_ROOT");
+  }, 40000);
+
+  // (finding-r8/r9) TRANSACTIONAL, FAIL-CLOSED PUBLICATION. Pre-r8 main() wrote the COMPLETE
+  // final bundle (inventory + seal sidecar + raw evidence) into --out-dir and ONLY THEN
+  // called assertSourceUnchanged. So a source that mutated DURING the (possibly slow)
+  // evidence write correctly exited 3 SOURCE_MUTATED_DURING_BUILD, but the already-written
+  // final files REMAINED — the retained seal sidecar still claiming source_sha.sealed=true /
+  // clean_worktree=true / expected_match=true for the PRE-mutation observation. A downstream
+  // consumer could pick up that stale bundle as if valid: a fail-closed integrity hole.
+  //
+  // r9: the TOCTOU window is now exercised via an IN-PROCESS DEPENDENCY-INJECTION seam
+  // (`afterStageHook`), NOT an env-driven file-append primitive in shipped code. We build an
+  // ephemeral committed git fixture, call `publishBundleTransactionally` DIRECTLY (real
+  // outDir + a hook that mutates a FIXED tracked source file AFTER staging, BEFORE the source
+  // re-observation), and assert (a) it fails closed with SOURCE_MUTATED_DURING_BUILD, (b) the
+  // final out-dir holds NO consumable bundle (no inventory, no seal sidecar, no raw), and (c)
+  // the staging dir was cleaned (no leak). The hook is reachable ONLY by this in-process
+  // caller; main() never passes it and there is NO env/argv route to it (proved inert by the
+  // negative-control below) — so shipped CLI code exposes ZERO filesystem-write capability.
+  it("(finding-r9) a source mutation mid-staging is fail-closed transactionally (in-process DI): publishBundleTransactionally throws SOURCE_MUTATED_DURING_BUILD, the staging dir is cleaned, and the out-dir keeps NO consumable bundle", async () => {
+    expect.hasAssertions();
+    const adapter = await import(ADAPTER_MOD);
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    const built = adapter.buildSubjectInventory({ sourcesRoot: roots.sourcesRoot, repoRoot: roots.repoRoot, expectedSha: head });
+    const parent = mkRealDir("saa-txn-mut-");
+    const outDir = path.join(parent, "bundle");
+    fs.mkdirSync(outDir); // a pre-existing EMPTY out-dir (as the harness always passes)
+    // A FIXED tracked source file mutated by the test-only in-process hook AFTER staging.
+    const mutateTarget = path.join(roots.repoRoot, "src/api/http/routes/friday-sample-routes.ts");
+    let hookCalls = 0;
+    let thrown: any = null;
+    try {
+      adapter.publishBundleTransactionally({
+        finalOutDir: outDir,
+        repoRoot: roots.repoRoot,
+        sourcesRoot: roots.sourcesRoot,
+        expectedSha: head,
+        built,
+        afterStageHook: () => {
+          hookCalls += 1;
+          fs.appendFileSync(mutateTarget, "\n// mid-staging tracked-source mutation (in-process DI)\n");
+        },
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    // the hook fired exactly once, AFTER staging completed and BEFORE re-observation.
+    expect(hookCalls).toBe(1);
+    // (a) fail-closed with the mutation code (or the seal re-verify mismatch).
+    expect(thrown).not.toBeNull();
+    expect(["SOURCE_MUTATED_DURING_BUILD", "SOURCE_SEAL_REVERIFY_MISMATCH"]).toContain(thrown.code);
+    expect(thrown.code).toBe("SOURCE_MUTATED_DURING_BUILD");
+    // (b) NO consumable bundle in the final out-dir (no inventory, no seal sidecar, no raw).
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "raw"))).toBe(false);
+    expect(fs.readdirSync(outDir)).toEqual([]); // the pre-existing empty dir is left untouched
+    // (c) NO staging dir leaks next to the out-dir (fail-closed cleanup removed it).
+    expect(fs.readdirSync(parent).filter((n) => n.startsWith(".friday-stress-staging-"))).toEqual([]);
+  }, 40000);
+
+  // (finding-r9 negative-control) The round-8 env hook FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE
+  // was an UNRESTRICTED arbitrary-file append primitive in shipped ops code — it is REMOVED.
+  // This proves the ambient variable (and any similarly-named ambient var) is now INERT: no
+  // shipped code reads it. Running the NORMAL full CLI with it (and a second lookalike) set to
+  // point at SENTINEL files OUTSIDE the attested roots leaves the sentinels byte-unchanged
+  // (never created/appended) AND publishes the bundle identically to a no-env run (same seal
+  // tuple + subject-set). RED-first: with the old hook present the sentinel WOULD be appended.
+  it("(finding-r9 negative-control) the removed env hook is INERT: setting FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE (and a lookalike) at sentinel files has NO effect — no shipped code reads it; CLI behaves identically to no-env", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    const scratch = mkRealDir("saa-neg-ctl-"); // OUTSIDE repoRoot/sourcesRoot — an old hook could not even detect a mutation here
+    // (i) a sentinel that ALREADY EXISTS must be byte-identical afterward (never appended to).
+    const sentinel = path.join(scratch, "sentinel.txt");
+    const SENTINEL_BYTES = "untouched sentinel bytes\n";
+    fs.writeFileSync(sentinel, SENTINEL_BYTES);
+    // (ii) a lookalike ambient var pointed at a NON-existent path must never create it.
+    const absentSentinel = path.join(scratch, "absent-sentinel.txt");
+    const outDir = path.join(mkRealDir("saa-neg-ctl-out-"), "bundle"); // create-on-publish branch
+    const r = spawnSync(process.execPath, [GEN, "--sources-root", roots.sourcesRoot, "--repo-root", roots.repoRoot, "--out-dir", outDir, "--expected-sha", head], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE: sentinel,
+        FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE_TARGET: absentSentinel,
+      },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    // (a) the ambient vars are INERT: the existing sentinel is byte-identical, the absent one uncreated.
+    expect(fs.readFileSync(sentinel, "utf8")).toBe(SENTINEL_BYTES);
+    expect(fs.existsSync(absentSentinel)).toBe(false);
+    // (b) the CLI behaves IDENTICALLY to a no-env run: bundle published + seal tuple identical.
+    const out = JSON.parse(r.stdout);
+    expect(out.result).toBe("OK");
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"))).toBe(true);
+    const control = generateBundle(roots, undefined, { expectedSha: head });
+    expect(out.final_release_candidate_tuple_sha256).toBe(control.inventory.final_release_candidate_tuple_sha256);
+    expect(out.subject_set_sha256).toBe(control.inventory.subject_set_sha256);
+    expect(out.seal_status).toBe("PROVISIONAL_UNSEALED");
+  }, 40000);
+
+  // (finding-r8) ATOMIC-SUCCESS CONTROL: a clean full-CLI run publishes the COMPLETE bundle
+  // to --out-dir exactly as before (all files present; seal tuple + subject-set identical to
+  // prior behavior — only the ordering/atomicity changed, never the content). Also exercises
+  // the "out-dir does not pre-exist" publish branch and confirms no staging dir leaks.
+  it("(finding-r8) a clean full-CLI run atomically publishes the COMPLETE bundle (all files present; seal tuple identical to prior behavior)", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    const parent = mkRealDir("saa-txn-ok-");
+    const outDir = path.join(parent, "bundle"); // does NOT pre-exist -> create-on-publish branch
+    const r = runGen(roots, { outDir, expectedSha: head });
+    expect(r.status, r.stderr).toBe(0);
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "raw"))).toBe(true);
+    const inv = JSON.parse(fs.readFileSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"), "utf8"));
+    const side = JSON.parse(fs.readFileSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"), "utf8"));
+    // every declared raw ref is present on disk (no partial/truncated publish).
+    for (const s of inv.subjects) for (const ref of s.discovery_refs) expect(fs.existsSync(path.join(outDir, ref.path))).toBe(true);
+    for (const ai of inv.authority_inputs) expect(fs.existsSync(path.join(outDir, ai.path))).toBe(true);
+    // seal tuple + subject-set identical to a control run (behavior unchanged; only atomicity did).
+    const control = generateBundle(roots, undefined, { expectedSha: head });
+    expect(inv.final_release_candidate_tuple_sha256).toBe(control.inventory.final_release_candidate_tuple_sha256);
+    expect(inv.subject_set_sha256).toBe(control.inventory.subject_set_sha256);
+    expect(side.seal_status).toBe("PROVISIONAL_UNSEALED");
+    expect(side.component_binding.source_sha.sealed).toBe(true); // honest partial seal (git @ exact HEAD)
+    expect(fs.readdirSync(parent).filter((n) => n.startsWith(".friday-stress-staging-"))).toEqual([]);
+  }, 40000);
+
+  // (finding-r8) OVERLAP + SYMLINK GUARDS. The publish must never (i) land INSIDE / over the
+  // attested source or repo tree, nor (ii) be redirected through a planted destination
+  // symlink. RED-first: with no guards the overlap run writes a sidecar INTO sources_root
+  // (exit 0) and the symlink run publishes through the link — GREEN after the guards.
+  it("(finding-r8) refuses to publish into the source/repo tree and refuses a planted destination symlink — fail-closed, no publish", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+
+    // (i) out-dir == sources_root -> refused; the source tree gets NO bundle.
+    const overSrc = runGen(roots, { outDir: roots.sourcesRoot, expectedSha: head });
+    expect(overSrc.status).toBe(3);
+    expect(overSrc.err().code).toBe("OUT_DIR_OVERLAPS_SOURCE");
+    expect(fs.existsSync(path.join(roots.sourcesRoot, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"))).toBe(false);
+    expect(fs.existsSync(path.join(roots.sourcesRoot, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"))).toBe(false);
+
+    // (ii) out-dir == repo_root -> refused too.
+    const overRepo = runGen(roots, { outDir: roots.repoRoot, expectedSha: head });
+    expect(overRepo.status).toBe(3);
+    expect(overRepo.err().code).toBe("OUT_DIR_OVERLAPS_SOURCE");
+
+    // (iii) a planted symlink AT the destination is refused (the publish is not redirected).
+    const parent = mkRealDir("saa-txn-sym-");
+    const realTarget = path.join(parent, "real-dir");
+    fs.mkdirSync(realTarget);
+    const linkOut = path.join(parent, "link-out");
+    fs.symlinkSync(realTarget, linkOut);
+    const sym = runGen(roots, { outDir: linkOut, expectedSha: head });
+    expect(sym.status).toBe(3);
+    expect(sym.err().code).toBe("OUT_DIR_IS_SYMLINK");
+    // the symlink target was NOT populated with a bundle.
+    expect(fs.existsSync(path.join(realTarget, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"))).toBe(false);
+    expect(fs.readdirSync(realTarget)).toEqual([]);
+    expect(fs.readdirSync(parent).filter((n) => n.startsWith(".friday-stress-staging-"))).toEqual([]);
+  }, 40000);
+});
