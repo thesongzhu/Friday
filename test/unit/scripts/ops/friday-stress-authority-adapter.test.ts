@@ -630,6 +630,79 @@ describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", 
     }
   }, 120000);
 
+  // (finding-r7-1) MAXBUFFER ENV IS CLAMPED ONLY-LOWER. The round-6 override read the env
+  // unconditionally, so a value ABOVE the 64MiB default RAISED the effective cap — letting
+  // an ambient-env caller widen the buffer and flip source_sha.sealed on a >64MiB tree the
+  // default would (correctly) fail closed on, contradicting the "no caller-controllable
+  // sealed path" invariant. Fix: resolveLsTreeMaxBuffer clamps to min(env, default). Red-first:
+  // resolveLsTreeMaxBuffer/LS_TREE_MAX_BUFFER_DEFAULT don't exist on efd93c62 -> RED; and the
+  // effective buffer for env=100MiB is now the 64MiB default (a raise is impossible).
+  it("(finding-r7-1) FRIDAY_STRESS_LS_TREE_MAXBUFFER is clamped ONLY-LOWER: a raise above the 64MiB default is impossible; a lower value is honored", async () => {
+    expect.hasAssertions();
+    const enums = await import(ENUM_MOD);
+    const DEF = enums.LS_TREE_MAX_BUFFER_DEFAULT;
+    expect(DEF).toBe(64 * 1024 * 1024);
+    // a RAISE is clamped to the default (the load-bearing invariant): 100MiB -> 64MiB.
+    expect(enums.resolveLsTreeMaxBuffer("104857600")).toBe(DEF); // OLD: 104857600 (raised)
+    expect(enums.resolveLsTreeMaxBuffer(String(DEF * 4))).toBe(DEF);
+    expect(enums.resolveLsTreeMaxBuffer("999999999999")).toBe(DEF);
+    // a LOWER value is honored (fail-closed direction — forces truncation sooner for tests).
+    expect(enums.resolveLsTreeMaxBuffer("1024")).toBe(1024);
+    expect(enums.resolveLsTreeMaxBuffer("1")).toBe(1);
+    // absent / empty / non-positive / non-numeric -> default (never a raise, never 0/negative).
+    for (const bad of [undefined, "", "0", "-5", "abc"]) expect(enums.resolveLsTreeMaxBuffer(bad as any)).toBe(DEF);
+    // a fractional string parses (parseInt) to its floor — a LOWER value, still fail-closed direction.
+    expect(enums.resolveLsTreeMaxBuffer("3.9")).toBe(3);
+    // the effective buffer is EXACTLY min(env, default) for any positive integer request.
+    for (const v of [1, 1024, DEF - 1, DEF, DEF + 1, DEF * 10]) {
+      expect(enums.resolveLsTreeMaxBuffer(String(v))).toBe(Math.min(v, DEF));
+    }
+  });
+
+  // (finding-r7-2) TRUNCATION FAIL-CLOSED REASON IS DIAGNOSABLE FROM THE CLI. On a real
+  // ls-tree truncation sourceProvenance returns file_count===0 + unsealed_reasons naming the
+  // truncation, but buildSubjectInventory threw a detail-less SOURCE_TREE_EMPTY BEFORE folding
+  // those reasons in — so the CLI emitted `{code:SOURCE_TREE_EMPTY, detail:{}}`, indistinguishable
+  // from an empty repo (still fail-closed, but the diagnostic was lost, and round-6's test only
+  // exercised the library fn, never the CLI). Fix: propagate the reasons + a distinct code.
+  // Red-first (CLI-level): on efd93c62 the RED JSON does NOT name the truncation.
+  it("(finding-r7-2) a CLI-level ls-tree truncation emits a RED that NAMES the truncation reason (not a detail-less SOURCE_TREE_EMPTY)", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    expect(head).toMatch(/^[0-9a-f]{40}$/);
+    const prev = process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER;
+    process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER = "256"; // genuine excess -> the real CLI path truncates
+    try {
+      const r = runGen(roots, { expectedSha: head });
+      expect(r.status).toBe(3); // RED, fail-closed
+      const red = r.err();
+      expect(red.code).toBe("SOURCE_LS_TREE_TRUNCATED"); // OLD: detail-less "SOURCE_TREE_EMPTY"
+      expect(red.detail.unsealed_reasons).toContain("source_ls_tree_failed_or_truncated");
+    } finally {
+      if (prev === undefined) delete process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER;
+      else process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER = prev;
+    }
+  }, 30000);
+
+  // (finding-r7-3) CROSS-MODULE Red IS PRESERVED, NOT COLLAPSED TO UNEXPECTED.
+  // buildVerificationPolicyManifest throws its OWN local `class Red` (a distinct class object),
+  // so main()'s `error instanceof Red` was false for its errors and collapsed them to
+  // `{code:UNEXPECTED}` — losing the machine-readable code for the verification_policy component.
+  // Fix: the adapter catch-and-rewraps as its OWN Red preserving `.code`/`.detail`. Red-first:
+  // deleting a declared verification-policy source emits UNEXPECTED on efd93c62, its real code here.
+  it("(finding-r7-3) a missing declared verification-policy source surfaces its real code (DECLARED_SOURCE_MISSING), not UNEXPECTED", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    fs.rmSync(path.join(roots.sourcesRoot, VALIDATOR_REL)); // a declared source the manifest consumes
+    const r = runGen(roots);
+    expect(r.status).toBe(3); // RED, fail-closed
+    const red = r.err();
+    expect(red.code).toBe("DECLARED_SOURCE_MISSING"); // OLD: "UNEXPECTED" (cross-module Red lost)
+    expect(red.code).not.toBe("UNEXPECTED");
+    expect(red.detail?.path).toBe(VALIDATOR_REL); // the preserved machine-readable detail
+  }, 30000);
+
   // (finding-3) EXIT-CODE LAUNDERING GUARD. A non-SEALED bundle must never be read as a
   // PASS by a `... && GATE_PASS` wrapper: the default run still exits 0 (honest generation)
   // but ALWAYS prints a loud PROVISIONAL_UNSEALED banner to stderr; --strict fails closed

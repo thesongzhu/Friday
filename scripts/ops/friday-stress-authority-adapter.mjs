@@ -316,10 +316,28 @@ export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFA
   // F2 denominators. F-B: source_sha is sealed ONLY for a real git repo at the
   // EXACT expected HEAD with a clean worktree and no symlink/special entry.
   const source = sourceProvenance(repoRoot, expectedSha);
-  if (source.file_count === 0) throw new Red("SOURCE_TREE_EMPTY");
+  if (source.file_count === 0) {
+    // Propagate the library's unsealed reasons so a real ls-tree TRUNCATION is DIAGNOSABLE
+    // from the CLI. Previously this threw a detail-less SOURCE_TREE_EMPTY — indistinguishable
+    // from a genuinely empty repo — silently dropping the `source_ls_tree_failed_or_truncated`
+    // diagnostic the library set. A truncation gets a DISTINCT code; still fail-closed (exit 3).
+    const truncated = source.unsealed_reasons.includes("source_ls_tree_failed_or_truncated");
+    throw new Red(truncated ? "SOURCE_LS_TREE_TRUNCATED" : "SOURCE_TREE_EMPTY", { unsealed_reasons: source.unsealed_reasons });
+  }
   // obligation is ALWAYS an explicit unsealed two-pass sentinel (no caller ledger).
   const obligationSentinel = digestOf({ unsealed: "OBLIGATION_LEDGER_TWO_PASS_NOT_YET_AUTHORED", subject_set_sha256 });
-  const { verification_policy_set_sha256 } = buildVerificationPolicyManifest({ sourcesRoot });
+  // buildVerificationPolicyManifest throws its OWN local `class Red` (a DISTINCT class
+  // object from this module's Red), so main()'s `error instanceof Red` check would be false
+  // for its errors and collapse them to `{code:UNEXPECTED}` — losing the machine-readable
+  // code/detail for exactly the verification_policy_set_sha256 component. Re-wrap as THIS
+  // module's Red, preserving `.code`/`.detail`. Still fail-closed (exit 3), now diagnosable.
+  let verification_policy_set_sha256;
+  try {
+    ({ verification_policy_set_sha256 } = buildVerificationPolicyManifest({ sourcesRoot }));
+  } catch (error) {
+    if (error && typeof error.code === "string") throw new Red(error.code, error.detail ?? {});
+    throw new Red("VERIFICATION_POLICY_MANIFEST_ERROR", { detail: String(error) });
+  }
   const components = {
     source_sha: source.digest,
     cross_platform_artifact_set_sha256: digestOf(artifact.value),

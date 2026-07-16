@@ -129,6 +129,22 @@ function repoFiles(repoRoot, relDir, predicate) {
 // observed working bytes purely for signature/mutation detection — such a root is
 // NEVER sealed (isGit is false), so no gitignored byte is laundered into a seal.
 // `signature` supports mutation detection between the source snapshot and the write.
+
+// Explicit generous cap for the `git ls-tree -r -z` spawn so a legitimately large repo
+// (output > Node's ~1MiB spawnSync default) is not needlessly failed.
+export const LS_TREE_MAX_BUFFER_DEFAULT = 64 * 1024 * 1024;
+// ONLY-LOWER clamp for the `FRIDAY_STRESS_LS_TREE_MAXBUFFER` test knob. A valid positive
+// override may SHRINK the buffer (the fail-closed direction — forces truncation sooner so
+// the truncation-detection branch can be exercised) but can NEVER RAISE it above the
+// default. This is load-bearing for the "P0-1: no caller-controllable sealed path"
+// invariant: an ambient-env caller must not be able to widen the buffer to seal an
+// oversized tree the default would (correctly) fail closed on. Absent / non-integer /
+// non-positive values fall back to the default.
+export function resolveLsTreeMaxBuffer(rawEnv = process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER) {
+  const n = parseInt(rawEnv ?? "", 10);
+  return Number.isInteger(n) && n > 0 ? Math.min(n, LS_TREE_MAX_BUFFER_DEFAULT) : LS_TREE_MAX_BUFFER_DEFAULT;
+}
+
 export function sourceProvenance(repoRoot, expectedSha = null) {
   // `error` is captured (not just `status`) so a spawnSync TRUNCATION — which sets
   // `status:null` + an ENOBUFS `error` and a CAPPED stdout — can NEVER be mistaken
@@ -180,15 +196,10 @@ export function sourceProvenance(repoRoot, expectedSha = null) {
     // (spawnSync returns status:null + an ENOBUFS error with capped stdout) this is a
     // GROUNDING FAILURE: never parse partial output — force unsealed with an explicit
     // reason so a truncated tree can NEVER seal with a wrong file_count/digest or hide a
-    // trailing symlink/gitlink past the truncation point. (The env override exists ONLY
-    // to exercise the fail-closed branch under test; it can only LOWER the cap, i.e. make
-    // sealing HARDER — never launder a seal.)
-    const lsTreeMaxBuffer = (() => {
-      const raw = process.env.FRIDAY_STRESS_LS_TREE_MAXBUFFER;
-      const n = raw != null ? Number(raw) : NaN;
-      return Number.isInteger(n) && n > 0 ? n : 64 * 1024 * 1024;
-    })();
-    const lsR = runGit(["ls-tree", "-r", "-z", commitRef], { maxBuffer: lsTreeMaxBuffer });
+    // trailing symlink/gitlink past the truncation point. (The env override is CLAMPED
+    // ONLY-LOWER by `resolveLsTreeMaxBuffer` — it can make sealing HARDER, never launder a
+    // seal by widening the buffer.)
+    const lsR = runGit(["ls-tree", "-r", "-z", commitRef], { maxBuffer: resolveLsTreeMaxBuffer() });
     if (lsR.status !== 0 || lsR.error) {
       lsTreeFailed = true; // non-zero / errored / truncated — never trust partial output
     } else {
