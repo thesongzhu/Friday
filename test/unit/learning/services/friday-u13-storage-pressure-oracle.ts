@@ -21,10 +21,20 @@
 
 const GIB = 1024 ** 3;
 const FLOOR_ABS = 10 * GIB;
-const FLOOR_FRACTION = 0.1;
 const WARN_DAYS = 7;
 const RESERVE_ABS = 5 * GIB;
-const RESERVE_FRACTION = 0.05;
+
+/**
+ * GENUINE-INDEPENDENCE NOTE: the EXACT percentage thresholds are formulated here via
+ * BigInt CROSS-MULTIPLICATION — `10 * free < capacity` (10% branch) and `20 * free <
+ * capacity` (5% branch) — a STRUCTURALLY DIFFERENT exact form from production's
+ * integer `ceilDiv`. The oracle deliberately does NOT import or replicate `ceilDiv`,
+ * so a shared spec-error (e.g. floor-rounding) cannot hide: if the two formulations
+ * ever disagree on any grid/random cell, the cross-check REDs. BigInt is exact and
+ * overflow-free for any safe-integer input. Reported threshold VALUES (reserveBytes)
+ * use BigInt ceil-division `(cap + d - 1) / d`, again distinct from production.
+ */
+const bi = (x: number): bigint => BigInt(x);
 
 /**
  * A valid byte COUNT: a non-negative SAFE INTEGER. Byte counts are discrete — a
@@ -76,9 +86,10 @@ export function oracleClassifyDiskGrowth(
     };
   }
 
-  // (2) Floor branch.
-  const floor = Math.max(FLOOR_ABS, Math.floor(capacity * FLOOR_FRACTION));
-  const belowFloor = free < floor;
+  // (2) Floor branch. belowFloor = free < max(10 GiB, EXACT 10% capacity), where
+  // the % branch is `10 * free < capacity` by BigInt cross-multiplication (distinct
+  // from production's ceilDiv). `free < max(A, B)` ⟺ `free < A OR free < B`.
+  const belowFloor = free < FLOOR_ABS || bi(free) * 10n < bi(capacity);
 
   // (3) Exhaustion branch (independent of the floor branch).
   let projectedExhaustionDays: number | null = null;
@@ -132,7 +143,9 @@ export function oracleEvaluateLargeWrite(
   isEscape: boolean,
 ): OracleLargeWrite {
   const capValid = isValidByte(capacity);
-  const reserveBytes = capValid ? Math.max(RESERVE_ABS, Math.floor(capacity * RESERVE_FRACTION)) : null;
+  // reserve = max(5 GiB, EXACT 5% capacity). The 5% is ceil(capacity/20) via BigInt
+  // ceil-division `(cap + 19) / 20` — a distinct exact form from production's ceilDiv.
+  const reserveBytes = capValid ? Math.max(RESERVE_ABS, Number((bi(capacity) + 19n) / 20n)) : null;
 
   // projected_free = current_free − (peak + growth), with overflow guard.
   let projectedFreeBytes: number | null = null;
@@ -172,7 +185,13 @@ export function oracleEvaluateLargeWrite(
     return { safe: false, failClosed: true, escapeOperation: false, reserveBytes, projectedFreeBytes: null };
   }
 
-  // (3) Pressure formula.
-  const paused = currentFree < reserveBytes || projectedFreeBytes < reserveBytes;
+  // (3) Pressure formula: pause when current OR projected free < reserve, where the
+  // % branch is `20 * free < capacity` by BigInt cross-multiplication (distinct from
+  // production). `free < max(5 GiB, 5% cap)` ⟺ `free < 5 GiB OR 20 * free < cap`.
+  const paused =
+    currentFree < RESERVE_ABS ||
+    bi(currentFree) * 20n < bi(capacity) ||
+    projectedFreeBytes < RESERVE_ABS ||
+    bi(projectedFreeBytes) * 20n < bi(capacity);
   return { safe: !paused, failClosed: false, escapeOperation: false, reserveBytes, projectedFreeBytes };
 }

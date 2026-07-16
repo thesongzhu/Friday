@@ -263,7 +263,9 @@ describe("evaluateLargeWriteSafety — U13 large-write formula", () => {
       estimatedPersistentGrowthBytes: 0,
     });
     expect(v.safe).toBe(false);
-    expect(v.reserveBytes).toBe(Math.floor(1024 * GiB * 0.05)); // ≈ 51.2 GiB
+    // reserve = max(5 GiB, EXACT 5% of 1 TiB) = ceil(1 TiB / 20). 1 TiB is NOT
+    // divisible by 20, so this is ceil (54975581389), NOT floor (54975581388).
+    expect(v.reserveBytes).toBe(Math.max(5 * GiB, Math.ceil((1024 * GiB) / 20))); // ≈ 51.2 GiB
     expect(v.currentFreeBytes! < v.reserveBytes!).toBe(true);
   });
 

@@ -36,13 +36,15 @@ const GIB = 1024 ** 3;
 export const FRIDAY_STORAGE_PRESSURE_AUTHORITY = {
   decision: "U13-STORAGE-PRESSURE",
   authority: "operator_locked",
-  /** Warn when free space is below max(10 GiB, 10% of capacity). */
+  /** Warn when free space is below max(10 GiB, EXACT 10% of capacity). */
   freeSpaceFloorBytes: 10 * GIB,
+  /** Metadata: the 10% is EXACT (free < capacity/10), computed via ceilDiv(capacity, 10) — NOT floor-rounded. */
   freeSpaceFloorFraction: 0.1,
   /** ...OR when projected exhaustion is within 7 days. */
   projectedExhaustionWarnDays: 7,
-  /** Large-write reserve = max(5 GiB, 5% of capacity). */
+  /** Large-write reserve = max(5 GiB, EXACT 5% of capacity). */
   largeWriteReserveBytes: 5 * GIB,
+  /** Metadata: the 5% is EXACT (free < capacity/20), computed via ceilDiv(capacity, 20) — NOT floor-rounded. */
   largeWriteReserveFraction: 0.05,
 } as const;
 
@@ -181,9 +183,25 @@ function checkedAddAll(terms: number[]): number | null {
   return sum;
 }
 
-/** 10% / 5% thresholds computed integer-safe (`Math.floor`) so exact byte boundaries are stable. */
-function fractionBytes(capacity: number, fraction: number): number {
-  return Math.floor(capacity * fraction);
+/**
+ * Overflow/precision-safe integer ceiling division `ceil(n / d)` for non-negative
+ * safe-integer `n` and positive integer `d`, via remainder decomposition (no
+ * addition that can overflow past MAX_SAFE_INTEGER): `n - r` is exactly divisible
+ * by `d`, so `(n - r) / d` is an exact safe integer, and `q + 1` cannot overflow
+ * for `n <= MAX_SAFE_INTEGER`.
+ *
+ * This gives the EXACT operator-locked U13 percentage thresholds — `free < capacity/10`
+ * (warn) and `free < capacity/20` (pause) — because `free < ceilDiv(capacity, k)`
+ * is equivalent to `k * free < capacity` for integer `free`. `Math.floor(capacity *
+ * fraction)` was WRONG: it rounded the threshold DOWN at non-divisible capacities,
+ * warning/pausing LATER than the true boundary (a fail-closed DEGRADE + authority
+ * violation). Exact-boundary behavior is preserved when capacity is divisible
+ * (`r === 0 → q`).
+ */
+function ceilDiv(n: number, d: number): number {
+  const r = n % d;
+  const q = (n - r) / d;
+  return r === 0 ? q : q + 1;
 }
 
 /**
@@ -277,8 +295,11 @@ export function classifyDiskGrowth(input: FridayDiskGrowthInput): FridayDiskGrow
   const freeBytes = input.freeBytes as number;
   const capacity = input.totalCapacityBytes as number;
 
-  // ── (2) FLOOR branch — ALWAYS computed. Absolute + relative floor = max(10 GiB, 10%).
-  const floorBytes = Math.max(A.freeSpaceFloorBytes, fractionBytes(capacity, A.freeSpaceFloorFraction));
+  // ── (2) FLOOR branch — ALWAYS computed. Absolute + relative floor =
+  // max(10 GiB, EXACT 10% capacity). The 10% sub-threshold is ceilDiv(capacity, 10)
+  // so `free < floorBytes` is exactly `free < capacity/10` at the % branch (not
+  // floor-rounded, which would warn LATER than the operator-locked boundary).
+  const floorBytes = Math.max(A.freeSpaceFloorBytes, ceilDiv(capacity, 10));
   const belowFloor = freeBytes < floorBytes; // strict <
 
   // ── (3) EXHAUSTION branch — ALWAYS computed, INDEPENDENT of the floor branch. A
@@ -389,10 +410,13 @@ export function evaluateLargeWriteSafety(input: FridayLargeWriteInput): FridayLa
   const peakTemp = peakValid ? (input.estimatedPeakTempBytes as number) : null;
   const persistentGrowth = growthValid ? (input.estimatedPersistentGrowthBytes as number) : null;
 
-  // reserve = max(5 GiB, floor(5% capacity)) — reportable whenever capacity is a
+  // reserve = max(5 GiB, EXACT 5% capacity) — reportable whenever capacity is a
   // valid byte count (even 0; a 0 capacity still fails closed for non-escape ops).
+  // The 5% sub-threshold is ceilDiv(capacity, 20) so `free < reserve` is exactly
+  // `free < capacity/20` at the % branch (not floor-rounded, which would pause
+  // LATER than the operator-locked boundary).
   const reserveBytes =
-    capacity === null ? null : Math.max(A.largeWriteReserveBytes, fractionBytes(capacity, A.largeWriteReserveFraction));
+    capacity === null ? null : Math.max(A.largeWriteReserveBytes, ceilDiv(capacity, 20));
 
   // projected_free = current_free − checkedAdd(peak_temp, persistent_growth).
   let projectedFree: number | null = null;

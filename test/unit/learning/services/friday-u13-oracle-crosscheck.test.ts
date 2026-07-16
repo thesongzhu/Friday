@@ -41,6 +41,11 @@ const BYTE_VALUES: Array<number | null> = [
   50 * GIB,
   100 * GIB,
   200 * GIB,
+  // NON-DIVISIBLE capacities (not multiples of 10/20) — expose floor-vs-exact-ceil at
+  // the % branch. e.g. free=20 GiB × cap=(200 GiB + 1) is the classifier counterexample.
+  200 * GIB + 1,
+  100 * GIB + 7,
+  137 * GIB + 3,
   Number.MAX_SAFE_INTEGER,
   Number.MAX_SAFE_INTEGER + 1, // just past the exact-integer range → invalid
 ];
@@ -76,6 +81,8 @@ const LW_BYTE: Array<number | null> = [
   10 * GIB,
   100 * GIB,
   200 * GIB,
+  200 * GIB + 1, // NON-DIVISIBLE — e.g. cf=10 GiB × cap=(200 GiB + 1) is the large-write CE
+  137 * GIB + 3, // NON-DIVISIBLE
   Number.MAX_SAFE_INTEGER,
 ];
 
@@ -359,5 +366,105 @@ describe("Non-integer byte COUNT is fail-closed (impossible reading); growth RAT
     expect(oracleClassifyDiskGrowth(free, capacity, free / 3.5).status).toBe("warn");
     expect(oracleClassifyDiskGrowth(free, capacity, free / 10.5).status).toBe("ok");
     expect(oracleClassifyDiskGrowth(free, capacity, 0.5).status).toBe("ok");
+  });
+});
+
+describe("EXACT percentage thresholds (free < capacity/10, free < capacity/20) — NOT floor-rounded", () => {
+  const TEN_GIB = 10 * GIB;
+  const FIVE_GIB = 5 * GIB;
+  // Independent BigInt references (distinct from BOTH production ceilDiv and the oracle).
+  const ceil10 = (cap: number): number => Number((BigInt(cap) + 9n) / 10n);
+  const ceil20 = (cap: number): number => Number((BigInt(cap) + 19n) / 20n);
+  const below10 = (free: number, cap: number): boolean => free < TEN_GIB || BigInt(free) * 10n < BigInt(cap);
+  const below20 = (free: number, cap: number): boolean => free < FIVE_GIB || BigInt(free) * 20n < BigInt(cap);
+
+  it("Advisor CE (classifier): free=20 GiB on cap=(200 GiB + 1) is below EXACT 10% → warn (floor-code gave ok)", () => {
+    const cap = 200 * GIB + 1; // 214748364801; 10% = 21474836480.1
+    const out = classifyDiskGrowth({ freeBytes: 20 * GIB, totalCapacityBytes: cap, growthRateBytesPerDay: 0 });
+    expect(out.status).toBe("warn"); // RED on 3d1513fe floor-code: was "ok"
+    expect(out.belowFloor).toBe(true);
+    expect(below10(20 * GIB, cap)).toBe(true); // 10*20 GiB = 214748364800 < 214748364801
+    expect(oracleClassifyDiskGrowth(20 * GIB, cap, 0).status).toBe("warn");
+    expect(diffDiskGrowth(20 * GIB, cap, 0)).toEqual([]);
+  });
+
+  it("Advisor CE (large-write): cf=10 GiB on cap=(200 GiB + 1) is below EXACT 5% → PAUSE (floor-code gave safe)", () => {
+    const cap = 200 * GIB + 1; // 5% = 10737418240.05
+    const v = evaluateLargeWriteSafety({
+      currentFreeBytes: 10 * GIB,
+      totalCapacityBytes: cap,
+      estimatedPeakTempBytes: 0,
+      estimatedPersistentGrowthBytes: 0,
+    });
+    expect(v.safe).toBe(false); // RED on 3d1513fe floor-code: was true
+    expect(v.failClosed ?? false).toBe(false); // a genuine PAUSE, not a fail-closed
+    expect(v.reserveBytes).toBe(ceil20(cap)); // exact ceil = 10737418241, NOT floor 10737418240
+    expect(below20(10 * GIB, cap)).toBe(true);
+    expect(oracleEvaluateLargeWrite(10 * GIB, cap, 0, 0, false).safe).toBe(false);
+    expect(diffLargeWrite(10 * GIB, cap, 0, 0, false)).toEqual([]);
+  });
+
+  it("threshold triple (free = threshold−1 / threshold / threshold+1) at NON-DIVISIBLE capacities, both branches", () => {
+    // capacities > 100 GiB so the % sub-threshold governs (exceeds the 10 GiB / 5 GiB abs floors); non-divisible.
+    const caps = [200 * GIB + 1, 137 * GIB + 3, 250 * GIB + 13, 999 * GIB + 7];
+    for (const cap of caps) {
+      // 10% classifier branch — threshold t10 = ceil(cap/10).
+      const t10 = ceil10(cap);
+      for (const free of [t10 - 1, t10, t10 + 1]) {
+        const out = classifyDiskGrowth({ freeBytes: free, totalCapacityBytes: cap, growthRateBytesPerDay: 0 });
+        const refBelow = below10(free, cap);
+        const label = `cap=${cap} free=${free}`;
+        expect(out.belowFloor, label).toBe(refBelow);
+        expect(out.status, label).toBe(refBelow ? "warn" : "ok");
+        expect(diffDiskGrowth(free, cap, 0), label).toEqual([]);
+      }
+      // 5% large-write branch — threshold t20 = ceil(cap/20).
+      const t20 = ceil20(cap);
+      for (const cf of [t20 - 1, t20, t20 + 1]) {
+        const v = evaluateLargeWriteSafety({
+          currentFreeBytes: cf,
+          totalCapacityBytes: cap,
+          estimatedPeakTempBytes: 0,
+          estimatedPersistentGrowthBytes: 0,
+        });
+        const refBelow = below20(cf, cap);
+        const label = `cap=${cap} cf=${cf}`;
+        expect(v.safe, label).toBe(!refBelow);
+        expect(v.reserveBytes, label).toBe(Math.max(FIVE_GIB, t20));
+        expect(diffLargeWrite(cf, cap, 0, 0, false), label).toEqual([]);
+      }
+    }
+  });
+
+  it("safe-integer property: production matches the BigInt exact-% reference across random non-divisible capacities", () => {
+    const rng = makeRng(20260715);
+    let checked = 0;
+    for (let i = 0; i < 3000; i++) {
+      // capacity in (100 GiB, 1000 GiB], forced non-divisible by adding 1..19.
+      const base = 100 * GIB + Math.floor(rng() * 900 * GIB);
+      const cap = base + 1 + Math.floor(rng() * 19);
+      const t10 = ceil10(cap);
+      const t20 = ceil20(cap);
+      for (const free of [t10 - 1, t10, t10 + 1]) {
+        if (free < 0 || free > cap) continue;
+        const out = classifyDiskGrowth({ freeBytes: free, totalCapacityBytes: cap, growthRateBytesPerDay: 0 });
+        const refBelow = below10(free, cap);
+        expect(out.belowFloor, `cap=${cap} free=${free}`).toBe(refBelow);
+        expect(out.status, `cap=${cap} free=${free}`).toBe(refBelow ? "warn" : "ok");
+        checked++;
+      }
+      for (const cf of [t20 - 1, t20, t20 + 1]) {
+        if (cf < 0 || cf > cap) continue;
+        const v = evaluateLargeWriteSafety({
+          currentFreeBytes: cf,
+          totalCapacityBytes: cap,
+          estimatedPeakTempBytes: 0,
+          estimatedPersistentGrowthBytes: 0,
+        });
+        expect(v.safe, `cap=${cap} cf=${cf}`).toBe(!below20(cf, cap));
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(15000);
   });
 });
