@@ -887,4 +887,108 @@ describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", 
     expect(runGen({ repoRoot: d.repoRoot }).err().code).toBe("MISSING_SOURCES_ROOT");
     expect(runGen({ sourcesRoot: d.sourcesRoot }).err().code).toBe("MISSING_REPO_ROOT");
   }, 40000);
+
+  // (finding-r8) TRANSACTIONAL, FAIL-CLOSED PUBLICATION. Pre-fix main() wrote the COMPLETE
+  // final bundle (inventory + seal sidecar + raw evidence) into --out-dir and ONLY THEN
+  // called assertSourceUnchanged. So a source that mutated DURING the (possibly slow)
+  // evidence write correctly exited 3 SOURCE_MUTATED_DURING_BUILD, but the already-written
+  // final files REMAINED — the retained seal sidecar still claiming source_sha.sealed=true /
+  // clean_worktree=true / expected_match=true for the PRE-mutation observation. A downstream
+  // consumer could pick up that stale bundle as if valid: a fail-closed integrity hole.
+  //
+  // The full-CLI driver injects a real source mutation AFTER the bundle is staged (via the
+  // FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE test hook — inert unless set, only ever ADDS
+  // fail-closed mutation detection) and asserts (a) exit 3 + SOURCE_MUTATED_DURING_BUILD and
+  // (b) the final out-dir holds NO consumable bundle (no inventory, no seal sidecar, no raw),
+  // and no staging dir leaks. RED-first: with the hook present but the OLD write-then-check
+  // ordering, (a) passes but (b) FAILS (the stale bundle is retained). GREEN after the
+  // staged-then-atomic-rename fix.
+  it("(finding-r8) a source mutation DURING the build is fail-closed transactionally: exit 3 SOURCE_MUTATED_DURING_BUILD and the final out-dir keeps NO consumable bundle (no partial/stale publish)", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    const parent = mkRealDir("saa-txn-mut-");
+    const outDir = path.join(parent, "bundle");
+    fs.mkdirSync(outDir); // a pre-existing EMPTY out-dir (as the harness always passes)
+    const mutateTarget = path.join(roots.repoRoot, "src/api/http/routes/friday-sample-routes.ts");
+    const r = spawnSync(process.execPath, [GEN, "--sources-root", roots.sourcesRoot, "--repo-root", roots.repoRoot, "--out-dir", outDir, "--expected-sha", head], {
+      encoding: "utf8",
+      env: { ...process.env, FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE: mutateTarget },
+    });
+    // (a) fail-closed with the mutation code.
+    expect(r.status).toBe(3);
+    expect(JSON.parse(r.stderr).code).toBe("SOURCE_MUTATED_DURING_BUILD");
+    // (b) NO consumable bundle in the final out-dir (no inventory, no seal sidecar, no raw).
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"))).toBe(false);
+    expect(fs.existsSync(path.join(outDir, "raw"))).toBe(false);
+    expect(fs.readdirSync(outDir)).toEqual([]); // the pre-existing empty dir is left untouched
+    // and NO staging dir leaks next to the out-dir (fail-closed cleanup removed it).
+    expect(fs.readdirSync(parent).filter((n) => n.startsWith(".friday-stress-staging-"))).toEqual([]);
+  }, 40000);
+
+  // (finding-r8) ATOMIC-SUCCESS CONTROL: a clean full-CLI run publishes the COMPLETE bundle
+  // to --out-dir exactly as before (all files present; seal tuple + subject-set identical to
+  // prior behavior — only the ordering/atomicity changed, never the content). Also exercises
+  // the "out-dir does not pre-exist" publish branch and confirms no staging dir leaks.
+  it("(finding-r8) a clean full-CLI run atomically publishes the COMPLETE bundle (all files present; seal tuple identical to prior behavior)", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    const parent = mkRealDir("saa-txn-ok-");
+    const outDir = path.join(parent, "bundle"); // does NOT pre-exist -> create-on-publish branch
+    const r = runGen(roots, { outDir, expectedSha: head });
+    expect(r.status, r.stderr).toBe(0);
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, "raw"))).toBe(true);
+    const inv = JSON.parse(fs.readFileSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"), "utf8"));
+    const side = JSON.parse(fs.readFileSync(path.join(outDir, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"), "utf8"));
+    // every declared raw ref is present on disk (no partial/truncated publish).
+    for (const s of inv.subjects) for (const ref of s.discovery_refs) expect(fs.existsSync(path.join(outDir, ref.path))).toBe(true);
+    for (const ai of inv.authority_inputs) expect(fs.existsSync(path.join(outDir, ai.path))).toBe(true);
+    // seal tuple + subject-set identical to a control run (behavior unchanged; only atomicity did).
+    const control = generateBundle(roots, undefined, { expectedSha: head });
+    expect(inv.final_release_candidate_tuple_sha256).toBe(control.inventory.final_release_candidate_tuple_sha256);
+    expect(inv.subject_set_sha256).toBe(control.inventory.subject_set_sha256);
+    expect(side.seal_status).toBe("PROVISIONAL_UNSEALED");
+    expect(side.component_binding.source_sha.sealed).toBe(true); // honest partial seal (git @ exact HEAD)
+    expect(fs.readdirSync(parent).filter((n) => n.startsWith(".friday-stress-staging-"))).toEqual([]);
+  }, 40000);
+
+  // (finding-r8) OVERLAP + SYMLINK GUARDS. The publish must never (i) land INSIDE / over the
+  // attested source or repo tree, nor (ii) be redirected through a planted destination
+  // symlink. RED-first: with no guards the overlap run writes a sidecar INTO sources_root
+  // (exit 0) and the symlink run publishes through the link — GREEN after the guards.
+  it("(finding-r8) refuses to publish into the source/repo tree and refuses a planted destination symlink — fail-closed, no publish", () => {
+    expect.hasAssertions();
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+
+    // (i) out-dir == sources_root -> refused; the source tree gets NO bundle.
+    const overSrc = runGen(roots, { outDir: roots.sourcesRoot, expectedSha: head });
+    expect(overSrc.status).toBe(3);
+    expect(overSrc.err().code).toBe("OUT_DIR_OVERLAPS_SOURCE");
+    expect(fs.existsSync(path.join(roots.sourcesRoot, "FRIDAY_STRESS_SUBJECT_INVENTORY.SEAL_STATUS.json"))).toBe(false);
+    expect(fs.existsSync(path.join(roots.sourcesRoot, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"))).toBe(false);
+
+    // (ii) out-dir == repo_root -> refused too.
+    const overRepo = runGen(roots, { outDir: roots.repoRoot, expectedSha: head });
+    expect(overRepo.status).toBe(3);
+    expect(overRepo.err().code).toBe("OUT_DIR_OVERLAPS_SOURCE");
+
+    // (iii) a planted symlink AT the destination is refused (the publish is not redirected).
+    const parent = mkRealDir("saa-txn-sym-");
+    const realTarget = path.join(parent, "real-dir");
+    fs.mkdirSync(realTarget);
+    const linkOut = path.join(parent, "link-out");
+    fs.symlinkSync(realTarget, linkOut);
+    const sym = runGen(roots, { outDir: linkOut, expectedSha: head });
+    expect(sym.status).toBe(3);
+    expect(sym.err().code).toBe("OUT_DIR_IS_SYMLINK");
+    // the symlink target was NOT populated with a bundle.
+    expect(fs.existsSync(path.join(realTarget, "FRIDAY_STRESS_SUBJECT_INVENTORY.json"))).toBe(false);
+    expect(fs.readdirSync(realTarget)).toEqual([]);
+    expect(fs.readdirSync(parent).filter((n) => n.startsWith(".friday-stress-staging-"))).toEqual([]);
+  }, 40000);
 });

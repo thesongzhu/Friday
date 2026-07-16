@@ -62,6 +62,7 @@
  * (fail-closed one-liner for gate callers; agent-side this is ALWAYS the case, so
  * `--strict` always exits non-zero here).
  */
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -497,6 +498,105 @@ export function writeBundle(outDir, { inventory, sealStatus, rawFiles }) {
   return { rawCount: rawFiles.length };
 }
 
+function isInsideOrEqual(child, parent) {
+  return child === parent || child.startsWith(parent + path.sep);
+}
+
+// TRANSACTIONAL, FAIL-CLOSED PUBLICATION. The pre-fix path wrote the COMPLETE final bundle
+// into `--out-dir` and only AFTERWARD re-checked the bound source: on a source mutation
+// during the (possibly slow) evidence write it correctly exited 3 SOURCE_MUTATED_DURING_BUILD
+// but LEFT the already-written final files — a retained seal sidecar still claiming
+// source_sha.sealed=true/clean_worktree=true/expected_match=true for the PRE-mutation
+// observation, which a downstream consumer could pick up as if valid (a fail-closed hole).
+//
+// Now the whole bundle is written into a request-unique STAGING sibling of the final out-dir
+// (same filesystem => the publish is a single atomic `fs.renameSync`). ONLY AFTER the bundle
+// is fully staged do we RE-OBSERVE every bound-source integrity check — the SAME signature
+// equality assertSourceUnchanged enforces (=> SOURCE_MUTATED_DURING_BUILD) PLUS a re-verify
+// of every seal-gating source field (digest/source_sha, sealed, clean_worktree, expected_match,
+// head_sha) — closing the TOCTOU where a source mutates during evidence writing. The atomic
+// publish happens ONLY if every check passes. On ANY error after staging begins the staging
+// dir is recursively removed and NO consumable bundle is left in the final out-dir. A
+// destination that overlaps the source/repo tree, or a planted destination symlink, is refused.
+function publishBundleTransactionally({ finalOutDir, repoRoot, sourcesRoot, expectedSha, built }) {
+  const parentDir = path.dirname(finalOutDir);
+  fs.mkdirSync(parentDir, { recursive: true }); // preserve the prior mkdir -p of the out-dir path
+  const realParent = fs.realpathSync(parentDir); // collapse ancestor symlinks (e.g. /tmp) ONCE, consistently
+  const target = path.join(realParent, path.basename(finalOutDir));
+
+  // OVERLAP GUARD (realpath-based): never publish evidence INTO / over the attested trees.
+  const repoRootReal = fs.realpathSync(repoRoot);
+  const sourcesRootReal = fs.realpathSync(sourcesRoot);
+  for (const [name, root] of [["repo_root", repoRootReal], ["sources_root", sourcesRootReal]]) {
+    if (isInsideOrEqual(target, root) || isInsideOrEqual(root, target)) {
+      throw new Red("OUT_DIR_OVERLAPS_SOURCE", { out_dir: target, overlaps: name, root });
+    }
+  }
+
+  // SYMLINK GUARD: a planted symlink AT the destination must not redirect the atomic publish.
+  const lstatOrNull = (p) => {
+    try { return fs.lstatSync(p); } catch { return null; }
+  };
+  const existing = lstatOrNull(target);
+  if (existing && existing.isSymbolicLink()) throw new Red("OUT_DIR_IS_SYMLINK", { out_dir: target });
+  if (existing && !existing.isDirectory()) throw new Red("OUT_DIR_NOT_A_DIRECTORY", { out_dir: target });
+  if (existing && existing.isDirectory()) {
+    // OUT_DIR_EXISTS: prefer fail-closed on a NON-empty pre-existing bundle dir (the prior
+    // in-place overwrite left stale files); an EMPTY dir is replaced atomically below.
+    const entries = fs.readdirSync(target);
+    if (entries.length > 0) throw new Red("OUT_DIR_EXISTS", { out_dir: target, entry_sample: entries.slice(0, 10).sort() });
+  }
+
+  const staging = path.join(realParent, `.friday-stress-staging-${crypto.randomBytes(12).toString("hex")}`);
+  try {
+    writeBundle(staging, built);
+
+    // TEST-ONLY deterministic injection of a source mutation DURING the evidence-writing
+    // phase, so the transactional guard can be exercised end-to-end through the real CLI.
+    // Inert unless the env var is set; NEVER exercised in production; can ONLY ADD fail-closed
+    // mutation detection (it appends to a caller-named path) — it can never launder a seal.
+    if (process.env.FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE) {
+      fs.appendFileSync(process.env.FRIDAY_STRESS_TEST_MUTATE_AFTER_STAGE, "\n// test-injected source mutation during build\n");
+    }
+
+    // RE-OBSERVE the bound source ONCE, AFTER staging is complete — closes the TOCTOU. This is
+    // the SAME check assertSourceUnchanged performs (signature equality => SOURCE_MUTATED_DURING_BUILD)
+    // plus a re-verify of every seal-gating source field still equalling what was sealed.
+    const reobs = sourceProvenance(repoRoot, expectedSha);
+    if (reobs.signature !== built.sourceSignature) {
+      throw new Red("SOURCE_MUTATED_DURING_BUILD", { prior: built.sourceSignature, now: reobs.signature });
+    }
+    const bound = built.sealStatus.component_binding.source_sha;
+    if (
+      reobs.digest !== built.components.source_sha ||
+      reobs.sealed !== bound.sealed ||
+      reobs.clean_worktree !== bound.clean_worktree ||
+      reobs.expected_match !== bound.expected_match ||
+      reobs.head_sha !== bound.head_sha
+    ) {
+      throw new Red("SOURCE_SEAL_REVERIFY_MISMATCH", {
+        expected: { source_sha: built.components.source_sha, sealed: bound.sealed, clean_worktree: bound.clean_worktree, expected_match: bound.expected_match, head_sha: bound.head_sha },
+        reobserved: { source_sha: reobs.digest, sealed: reobs.sealed, clean_worktree: reobs.clean_worktree, expected_match: reobs.expected_match, head_sha: reobs.head_sha },
+      });
+    }
+
+    // ATOMIC PUBLISH: replace an EMPTY pre-existing target (re-checked at the last moment to
+    // catch a race), else create it. A non-empty / symlink / non-dir target was refused above.
+    const now = lstatOrNull(target);
+    if (now) {
+      if (now.isSymbolicLink() || !now.isDirectory()) throw new Red("OUT_DIR_IS_SYMLINK", { out_dir: target });
+      if (fs.readdirSync(target).length > 0) throw new Red("OUT_DIR_EXISTS", { out_dir: target });
+      fs.rmdirSync(target); // empty dir -> remove so the rename target does not exist (portable atomic create)
+    }
+    fs.renameSync(staging, target);
+    return target;
+  } catch (error) {
+    // FAIL-CLOSED cleanup: remove the staged bundle; leave NO consumable bundle in the out-dir.
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 function parseArgs(argv) {
   const args = { sourcesRoot: null, repoRoot: null, outDir: null, producerId: DEFAULT_PRODUCER_ID, expectedSha: null, strict: false };
   for (let i = 0; i < argv.length; i += 1) {
@@ -525,11 +625,21 @@ function main() {
     if (recomputeFinalTupleSha(built.components) !== built.tuple) return fail("TUPLE_SELF_RECOMPUTE_MISMATCH");
     let outDir = null;
     if (args.outDir) {
-      outDir = path.resolve(args.outDir);
-      writeBundle(outDir, built);
+      // TRANSACTIONAL publish: stage the whole bundle, RE-OBSERVE the bound source AFTER
+      // staging, and atomically rename into place ONLY if every integrity check passes;
+      // fail-closed cleanup on any error leaves no partial/stale bundle in the out-dir.
+      outDir = publishBundleTransactionally({
+        finalOutDir: path.resolve(args.outDir),
+        repoRoot,
+        sourcesRoot: path.resolve(args.sourcesRoot),
+        expectedSha: args.expectedSha,
+        built,
+      });
+    } else {
+      // No out-dir (nothing published): still re-observe the bound source — RED if it
+      // mutated during the build.
+      assertSourceUnchanged(repoRoot, args.expectedSha, built.sourceSignature);
     }
-    // F-B: re-observe source after write; RED if it mutated during the build/write.
-    assertSourceUnchanged(repoRoot, args.expectedSha, built.sourceSignature);
     console.log(
       JSON.stringify({
         result: "OK",
