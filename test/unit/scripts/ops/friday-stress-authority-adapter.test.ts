@@ -18,8 +18,9 @@
  *  (d) F-A CLOSED-DENOMINATOR seal: empty / partial / extra-key / non-boolean seal
  *      maps can NEVER seal; only the EXACT closed key sets all-true + authority seal;
  *  (e) F-B EXACT-candidate source provenance: source_sha seals ONLY for a real git
- *      repo at the expected HEAD with a clean worktree; non-git / dirty / untracked
- *      / HEAD≠expected -> unsealed; a mutation between snapshot and write -> RED.
+ *      repo whose HEAD equals the FULL 40-char --expected-sha with `===` and a clean
+ *      worktree; non-git / dirty / untracked / abbreviated-or-prefix / HEAD≠expected
+ *      -> unsealed (or typed EXPECTED_SHA_INVALID); a mutation snapshot→write -> RED.
  *  (f) DRIFT-LOCK: SEAL_COMPONENT_KEYS is bound to the vendored validator's own
  *      `componentsKeys` (exact members + order) so a silent divergence goes RED.
  *  (g) GATE-SET LOCK: SEAL_GATE_KEYS is pinned to exactly the 3 adapter-internal
@@ -419,6 +420,59 @@ describe("friday-stress-authority-adapter (TEST-STRESS-AUTHORITY-ADAPTER-001)", 
     const nRes = generateBundle(noExp);
     expect(nRes.sidecar.component_binding.source_sha.sealed).toBe(false);
     expect(nRes.sidecar.unsealed_reasons).toContain("source_expected_sha_not_provided");
+  }, 60000);
+
+  // (e) FAIL-OPEN FIX: an abbreviated/prefix `--expected-sha` must NEVER seal. On the
+  // pre-fix head this sealed because the boundary accepted `{7,40}` hex and the match
+  // used `headSha.startsWith(expectedSha)`; now the value must be a FULL 40-char sha
+  // and HEAD must equal it with `===`. Red-first: each case seals / expected_match=true
+  // on the old code -> RED there; UNSEALED or typed-error after.
+  it("(e) an abbreviated/prefix --expected-sha never seals (full 40-hex + strict === required)", async () => {
+    expect.hasAssertions();
+    const enums = await import(ENUM_MOD);
+    const roots = writeFixture();
+    const head = initGitCommitted(roots.repoRoot);
+    expect(head).toMatch(/^[0-9a-f]{40}$/);
+    const prefix7 = head.slice(0, 7);
+    const prefix39 = head.slice(0, 39);
+
+    // library layer (sourceProvenance): a 7-char matching prefix -> UNSEALED, not matched.
+    const p7 = enums.sourceProvenance(roots.repoRoot, prefix7);
+    expect(p7.sealed).toBe(false); // OLD: startsWith -> true -> sealed
+    expect(p7.expected_match).toBe(false);
+    expect(p7.expected_sha).toBeNull(); // not a valid full candidate
+    expect(p7.unsealed_reasons).toContain("source_expected_sha_not_full_40hex");
+
+    // a 39-char matching prefix -> UNSEALED too (off-by-one is not the candidate).
+    const p39 = enums.sourceProvenance(roots.repoRoot, prefix39);
+    expect(p39.sealed).toBe(false);
+    expect(p39.expected_match).toBe(false);
+    expect(p39.unsealed_reasons).toContain("source_expected_sha_not_full_40hex");
+
+    // uppercase full-length hex is rejected (not lowercase canonical) -> UNSEALED.
+    const pUpper = enums.sourceProvenance(roots.repoRoot, head.toUpperCase());
+    expect(pUpper.sealed).toBe(false);
+    expect(pUpper.unsealed_reasons).toContain("source_expected_sha_not_full_40hex");
+
+    // a valid-format full 40-char but NON-matching sha -> UNSEALED, expected_match=false.
+    const pWrong = enums.sourceProvenance(roots.repoRoot, "0".repeat(40));
+    expect(pWrong.sealed).toBe(false);
+    expect(pWrong.expected_match).toBe(false);
+    expect(pWrong.unsealed_reasons).toContain("source_head_sha_not_equal_expected");
+
+    // the exact full 40-char HEAD on a clean checkout -> SEALS (control).
+    const pExact = enums.sourceProvenance(roots.repoRoot, head);
+    expect(pExact.sealed).toBe(true);
+    expect(pExact.expected_match).toBe(true);
+
+    // CLI layer: an abbreviated value is a typed EXPECTED_SHA_INVALID (never a bundle).
+    const cli7 = runGen(roots, { expectedSha: prefix7 });
+    expect(cli7.status).not.toBe(0); // OLD: {7,40} accepted -> exit 0 with a sealed source
+    expect(cli7.err().code).toBe("EXPECTED_SHA_INVALID");
+    const cli39 = runGen(roots, { expectedSha: prefix39 });
+    expect(cli39.err().code).toBe("EXPECTED_SHA_INVALID");
+    const cliUpper = runGen(roots, { expectedSha: head.toUpperCase() });
+    expect(cliUpper.err().code).toBe("EXPECTED_SHA_INVALID");
   }, 60000);
 
   // F-B: a mutation between the source snapshot and the bundle write is RED, never a stale seal.

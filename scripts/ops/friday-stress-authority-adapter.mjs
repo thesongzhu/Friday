@@ -35,10 +35,13 @@
  *    trusted authority; any deviation forces PROVISIONAL_UNSEALED with a specific
  *    reason. Agent-side this is always PROVISIONAL for several independent reasons.
  *  - F-B (EXACT-candidate source provenance): `source_sha` seals ONLY for a real
- *    git repo (`--expected-sha` HEAD equality), a clean worktree (`git status
- *    --porcelain` empty — no dirty, no untracked), and no symlink/special file;
- *    a mutation between snapshot and write is caught by `assertSourceUnchanged`
- *    (=> RED). Non-git / dirty / untracked / HEAD≠expected / special => unsealed.
+ *    git repo whose HEAD equals the FULL 40-char lowercase-hex `--expected-sha`
+ *    EXACTLY (an abbreviated/prefix value is rejected — a typed EXPECTED_SHA_INVALID
+ *    at the boundary and `source_expected_sha_not_full_40hex` in the library), a
+ *    clean worktree (`git status --porcelain` empty — no dirty, no untracked), and
+ *    no symlink/special file; a mutation between snapshot and write is caught by
+ *    `assertSourceUnchanged` (=> RED). Non-git / dirty / untracked / abbreviated /
+ *    HEAD≠expected / special => unsealed.
  *
  * `source_sha` (COMPLETE candidate tree) seals ONLY under the F-B conditions above;
  * the consumed `verification_policy_set_sha256` is sealed; runtime/artifact are
@@ -205,7 +208,9 @@ export function buildSubjectInventory({ sourcesRoot, repoRoot, producerId = DEFA
   if (typeof sourcesRoot !== "string" || !path.isAbsolute(sourcesRoot)) throw new Red("SOURCES_ROOT_MUST_BE_ABSOLUTE", { sourcesRoot });
   if (typeof repoRoot !== "string" || !path.isAbsolute(repoRoot)) throw new Red("REPO_ROOT_MUST_BE_ABSOLUTE", { repoRoot });
   if (typeof producerId !== "string" || !producerId) throw new Red("PRODUCER_ID_INVALID");
-  if (expectedSha !== null && !(typeof expectedSha === "string" && /^[0-9a-f]{7,40}$/.test(expectedSha))) throw new Red("EXPECTED_SHA_INVALID", { expectedSha });
+  // EXACT full 40-char lowercase hex only: reject abbreviated (7/39-char), 41-char,
+  // uppercase, or non-hex — a prefix is NOT the reviewed candidate commit.
+  if (expectedSha !== null && !(typeof expectedSha === "string" && /^[0-9a-f]{40}$/.test(expectedSha))) throw new Red("EXPECTED_SHA_INVALID", { expectedSha });
 
   const { overlay, overlayRef } = readOverlayRef(sourcesRoot);
   const contract_revision = overlay.contract_revision;

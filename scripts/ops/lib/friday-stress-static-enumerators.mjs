@@ -109,8 +109,11 @@ function repoFiles(repoRoot, relDir, predicate) {
 
 // --- F-B: EXACT-candidate source provenance. `sealed` is true ONLY for a real
 // git repo, at the exact EXPECTED HEAD sha, with a clean worktree (no dirty
-// tracked, no untracked). A non-git root, dirty/untracked worktree, absent or
-// mismatched expected sha, or any symlink/special file in the manifest all force
+// tracked, no untracked). The expected sha must be a FULL 40-char lowercase hex
+// commit id and HEAD must equal it EXACTLY — an abbreviated/prefix value is NOT
+// the reviewed candidate (a different commit can share a prefix) and is rejected.
+// A non-git root, dirty/untracked worktree, absent / abbreviated / mismatched
+// expected sha, or any symlink/special file in the manifest all force
 // `sealed:false` (the digest still binds the observed working bytes, but is NOT
 // a sealed candidate). `signature` supports mutation detection between the source
 // snapshot and the bundle write.
@@ -133,8 +136,10 @@ export function sourceProvenance(repoRoot, expectedSha = null) {
     const st = runGit(["status", "--porcelain"]);
     cleanWorktree = st.status === 0 && st.out === "";
   }
-  const expectedProvided = typeof expectedSha === "string" && /^[0-9a-f]{7,40}$/.test(expectedSha);
-  const expectedMatch = expectedProvided && headSha !== null && (headSha === expectedSha || headSha.startsWith(expectedSha));
+  // EXACT full-40-hex only: an abbreviated/prefix value is never a valid candidate.
+  const expectedGiven = typeof expectedSha === "string" && expectedSha.length > 0;
+  const expectedValid = typeof expectedSha === "string" && /^[0-9a-f]{40}$/.test(expectedSha);
+  const expectedMatch = expectedValid && headSha !== null && headSha === expectedSha; // STRICT equality, no startsWith
   // Dedicated traversal (NOT the shared `walk`, which silently skips symlinks):
   // here a symlink or non-regular file must be OBSERVED so it can force unsealed.
   const files = [];
@@ -169,11 +174,12 @@ export function sourceProvenance(repoRoot, expectedSha = null) {
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
   const digest = digestOf({ git_tree_oid: gitTreeOid, file_count: files.length, files });
-  const sealed = isGit && cleanWorktree && expectedProvided && expectedMatch && !specialSeen;
+  const sealed = isGit && cleanWorktree && expectedValid && expectedMatch && !specialSeen;
   const unsealed_reasons = [];
   if (!isGit) unsealed_reasons.push("source_root_not_a_git_repository");
   if (isGit && !cleanWorktree) unsealed_reasons.push("source_worktree_dirty_or_untracked_present");
-  if (!expectedProvided) unsealed_reasons.push("source_expected_sha_not_provided");
+  if (!expectedGiven) unsealed_reasons.push("source_expected_sha_not_provided");
+  else if (!expectedValid) unsealed_reasons.push("source_expected_sha_not_full_40hex");
   else if (isGit && !expectedMatch) unsealed_reasons.push("source_head_sha_not_equal_expected");
   if (specialSeen) unsealed_reasons.push("source_manifest_has_symlink_or_special_file");
   return {
@@ -182,7 +188,7 @@ export function sourceProvenance(repoRoot, expectedSha = null) {
     git_tree_oid: gitTreeOid,
     head_sha: headSha,
     clean_worktree: cleanWorktree,
-    expected_sha: expectedProvided ? expectedSha : null,
+    expected_sha: expectedValid ? expectedSha : null,
     expected_match: expectedMatch,
     file_count: files.length,
     digest,
