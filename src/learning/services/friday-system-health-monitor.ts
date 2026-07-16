@@ -1,4 +1,9 @@
 import type { FridaySqliteLayer } from "#state";
+import {
+  classifyDiskGrowth,
+  failClosedDiskGrowth,
+  type FridayDiskGrowthWarning,
+} from "./friday-disk-growth-evaluator.js";
 
 // ─── Types ───
 
@@ -9,11 +14,11 @@ export interface FridaySystemHealthResult {
   unit: string;
   /**
    * Optional report-only diagnostic detail. Populated by diagnose-only checks
-   * (e.g. `realtime_events_growth`) that surface richer, multi-field telemetry
-   * than the binary healthy/value/unit shape. Never used to gate, schedule, or
-   * perform any maintenance/deletion.
+   * (e.g. `realtime_events_growth`, `disk_growth`) that surface richer,
+   * multi-field telemetry than the binary healthy/value/unit shape. Never used to
+   * gate, schedule, or perform any maintenance/deletion.
    */
-  detail?: FridaySystemHealthGrowthDetail;
+  detail?: FridaySystemHealthGrowthDetail | FridayDiskGrowthWarning;
 }
 
 /** Heuristic status for a report-only growth observation. */
@@ -152,6 +157,16 @@ export interface CreateSystemHealthMonitorDeps {
   nowIso: () => string;
   /** Optional callback invoked after each run for audit/observability. */
   onRunComplete?: (summary: FridaySystemHealthRunSummary) => void;
+  /**
+   * Report-only free-space probe for the `disk_growth` check (RETENTION-R3b).
+   * INJECTED to keep this module IO-pure and testable. Returns free + total
+   * capacity bytes for the state volume, or `null` when the reading is
+   * unresolvable (unsupported platform / throw). Production wires
+   * `fs.statfsSync(stateDir)` → `{ freeBytes: bavail×bsize, totalBytes: blocks×bsize }`.
+   * When omitted, `disk_growth` fails closed to `unknown` (never `ok`) — it never
+   * assumes healthy free space.
+   */
+  probeDiskSpace?: () => { freeBytes: number; totalBytes: number } | null;
 }
 
 // ─── Checks ───
@@ -384,6 +399,62 @@ const HEALTH_CHECKS: HealthCheck[] = [
     },
     // No maintenance: diagnose-only. Space reclaim is deferred to the Rust
     // realtime epoch-resync path, never performed here.
+  },
+  {
+    // REPORT-ONLY disk-growth observability (RETENTION-R3b). A sibling of
+    // realtime_events_growth: it feeds the PURE disk-growth warning evaluator
+    // (total DB bytes + free-space fraction). Deliberately has NO `maintenance`
+    // block — it can never prune, vacuum, delete, or gate cleanup. Fails closed to
+    // `unknown` (never `ok`) on any read/probe failure. Surfaced ONLY via the
+    // monitor's run summary → transition-only warning logs plus the owner-bound
+    // readback holder; never published to any observability route (the #1606 split).
+    name: "disk_growth",
+    check: (deps) => {
+      let detail: FridayDiskGrowthWarning;
+      try {
+        const totalDbBytes = deps.db.withReadConnection((db) => {
+          const pageCount = db.pragma("page_count", { simple: true }) as number;
+          const pageSize = db.pragma("page_size", { simple: true }) as number;
+          return pageCount * pageSize;
+        });
+        const realtimeEventsEstimatedBytes = deps.db.withReadConnection((db) => {
+          const countRow = db.prepare(REALTIME_EVENTS_ROWCOUNT_PROXY_SQL).get() as
+            | { max_rowid: number | null }
+            | undefined;
+          const rowCount = countRow?.max_rowid ?? 0;
+          const sampleRow = db.prepare(REALTIME_EVENTS_SAMPLE_BYTES_SQL).get() as
+            | { avg_bytes: number | null }
+            | undefined;
+          const avgBytes = sampleRow?.avg_bytes ?? 0;
+          return Math.round(avgBytes * rowCount);
+        });
+        // The free-space probe is INJECTED (prod = statfsSync). A missing or null
+        // probe yields a null free reading → classifyDiskGrowth fails closed to
+        // `unknown` (never assumes healthy free space).
+        const probe = deps.probeDiskSpace ? deps.probeDiskSpace() : null;
+        detail = classifyDiskGrowth({
+          totalDbBytes,
+          realtimeEventsEstimatedBytes,
+          freeBytes: probe ? probe.freeBytes : null,
+          totalDiskBytes: probe ? probe.totalBytes : null,
+        });
+      } catch (err) {
+        // FAIL-CLOSED: an unknown DB read / probe error reports `unknown` (never
+        // `ok`) and performs NO deletion. Report-only.
+        detail = failClosedDiskGrowth(err instanceof Error ? err.message : String(err));
+      }
+      // Report-only: the reading rides in the check `detail` and is surfaced ONLY
+      // via the monitor's run summary → transition-only logs (Hub onRunComplete)
+      // and the owner-bound readback holder. NOT on any observability/HTTP route.
+      return {
+        name: "disk_growth",
+        healthy: detail.status === "ok",
+        value: detail.totalDbBytes ?? -1,
+        unit: "bytes",
+        detail,
+      };
+    },
+    // No maintenance: diagnose-only. Disk pressure here can ONLY warn — never prune/vacuum/delete.
   },
   {
     name: "process_heap",
