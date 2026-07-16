@@ -207,4 +207,64 @@ describe("FridayMemoryGuard — PII + Namespace + Rate Limit (Integration)", () 
       }
     });
   });
+
+  // ─── Typed-value PII: preserved at rest + redacted on authoritative read-back (R62) ───
+  //
+  // Exercises the REAL guard write path (guard.store → write-time redactDeep → core.store) with
+  // an authoritative echoing core (store persists exactly what it is handed; get returns it).
+  // Proves (a) ambiguous numeric ids are preserved AT REST (no irreversible masking) and
+  // (b) registry-keyed numeric PII is redacted before persistence and never returned in
+  // cleartext on read-back. Metadata is JSON (numbers, not bigint) — the store path is JSON-
+  // validated. Key-driven redaction is context-aware: shape/Luhn is never consulted.
+  describe("typed-value PII at rest + authoritative read-back (R62)", () => {
+    it("preserves ambiguous numeric ids at rest and redacts registry-keyed numeric PII", async () => {
+      const { guard, core, piiGuard } = createGuardTestSetup();
+      const realGuard = createFridayMemoryPiiGuard("redact");
+      vi.mocked(piiGuard.scanAndTransform).mockImplementation((c) => realGuard.scanAndTransform(c));
+      vi.mocked(piiGuard.redactDeep).mockImplementation((v) => realGuard.redactDeep(v));
+
+      // Authoritative store: persist exactly what the guard hands to core, echo it back on get.
+      let persisted: ReturnType<typeof createMockMemoryItem> | undefined;
+      vi.mocked(core.store).mockImplementation(async (namespace, content, meta) => {
+        persisted = createMockMemoryItem({
+          namespace,
+          content,
+          metadata: (meta?.metadata ?? {}) as Record<string, unknown>,
+          tags: meta?.tags ?? [],
+        });
+        return persisted;
+      });
+      vi.mocked(core.get).mockImplementation(async () => persisted!);
+
+      const stored = await guard.store("test-ns", "profile", {
+        metadata: {
+          order_id: 123456789, // ambiguous business id → preserved
+          epoch_ms: 1_700_000_000_000, // epoch timestamp → preserved
+          txn: 4111111111111111, // Luhn-valid under a NON-sensitive key → preserved
+          sim_card: 2, // sensitive-SOUNDING key but value not card-shaped → preserved (value gate)
+          ssn: 123456789, // registry key + SSN-shaped value → redacted
+          phone: 5552345678, // registry key + phone-shaped value → redacted
+          card: 4111111111111111, // registry key + Luhn card value → redacted
+        },
+      });
+
+      // (a) authoritative AT-REST state = exactly what was handed to core.store for persistence.
+      const atRest = vi.mocked(core.store).mock.calls.at(-1)![2]!.metadata as Record<string, unknown>;
+      expect(atRest.order_id).toBe(123456789);
+      expect(atRest.epoch_ms).toBe(1_700_000_000_000);
+      expect(atRest.txn).toBe(4111111111111111);
+      expect(atRest.sim_card).toBe(2); // benign business field survives at rest
+      expect(atRest.ssn).toBe("[SSN_US]");
+      expect(atRest.phone).toBe("[PHONE_US]");
+      expect(atRest.card).toBe("[CREDIT_CARD]");
+
+      // (b) authoritative READ-BACK returns the same preserved ids and no cleartext PII.
+      const readBack = await guard.get(stored.id);
+      const meta = readBack.metadata as Record<string, unknown>;
+      expect(meta.order_id).toBe(123456789);
+      expect(meta.ssn).toBe("[SSN_US]");
+      expect(meta.phone).toBe("[PHONE_US]");
+      expect(JSON.stringify(meta)).not.toContain("5552345678"); // phone value not leaked
+    });
+  });
 });

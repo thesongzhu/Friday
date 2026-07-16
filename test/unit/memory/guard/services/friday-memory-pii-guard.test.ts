@@ -411,4 +411,590 @@ describe("FridayMemoryPiiGuard", () => {
       expect(tagsToAdd).toContain("pii.email");
     });
   });
+
+  // ─── redactDeep — CONTEXT-AWARE typed PII + object-KEY coverage (lane R62) ───
+  //
+  // Honest boundary: redactDeep closes three gaps in the deep walker — (1) typed number/bigint
+  // values, (2) Date corruption to `{}`, (3) object-KEY PII — WITHOUT inferring PII from digit
+  // shape alone. A bare number/bigint is redacted only under TWO gates: its object KEY names a
+  // known sensitive field AND the value's string form matches that type's canonical detector
+  // (SSN / phone / Luhn card). Ambiguous numerics (business ids, order numbers, epochs, Luhn-
+  // valid non-cards), benign numerics under sensitive-SOUNDING keys (gift_card: 3), and pure-
+  // numeric object keys are PRESERVED unchanged. The existing string at-rest policy is untouched.
+  // This is NOT a claim that every PII representation is caught.
+
+  describe("redactDeep context-aware typed PII — PRESERVED (ambiguous numerics/ids)", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("preserves a 9-digit business id under a non-sensitive key", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ user_id: 123456789 });
+      expect(value).toEqual({ user_id: 123456789 });
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("preserves a 10-digit number under a non-sensitive key", () => {
+      const { value } = guard.redactDeep({ order_ref: 5552345678 });
+      expect((value as { order_ref: unknown }).order_ref).toBe(5552345678);
+    });
+
+    it("preserves a 13-digit epoch timestamp", () => {
+      const { value } = guard.redactDeep({ created_at_ms: 1_700_000_000_000 });
+      expect((value as { created_at_ms: unknown }).created_at_ms).toBe(1_700_000_000_000);
+    });
+
+    it("preserves a Luhn-valid 16-digit order id carried as a bigint (no irreversible masking)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ order_id: 4111111111111111n });
+      expect((value as { order_id: unknown }).order_id).toBe(4111111111111111n);
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("preserves context-less numbers inside an array (no sensitive parent key)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ values: [123456789, 5552345678] });
+      expect((value as { values: unknown[] }).values).toEqual([123456789, 5552345678]);
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("preserves pure-numeric object keys and their values", () => {
+      const { value, tagsToAdd } = guard.redactDeep({
+        "123456789": "a",
+        "5552345678": "b",
+        "4111111111111111": "c",
+      });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out).sort()).toEqual(["123456789", "4111111111111111", "5552345678"]);
+      expect(out["123456789"]).toBe("a");
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("preserves a Date's original type (never corrupted to {})", () => {
+      const iso = "2026-07-15T00:00:00.000Z";
+      const { value } = guard.redactDeep({ when: new Date(iso) });
+      const when = (value as { when: unknown }).when;
+      expect(when).toBeInstanceOf(Date);
+      expect((when as Date).toISOString()).toBe(iso);
+    });
+
+    it("does not treat sensitive-look-alike keys as sensitive", () => {
+      const input = {
+        phone_count: 5552345678,
+        telemetry: 123456789,
+        cardinality: 5551234567,
+        scorecard: 987654321,
+      };
+      const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual(input);
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("preserves benign numerics under sensitive-SOUNDING keys whose value is not type-shaped (value gate)", () => {
+      // The key's final normalized token equals a registry word, but the value is a small count
+      // / grade / quantity — not card/phone/SSN shaped — so the value gate preserves it. Under
+      // key-alone matching (pre-fix) every one of these was masked to a PII token.
+      const input = {
+        gift_card: 3,
+        sim_card: 2,
+        sd_card: 1,
+        memory_card: 8,
+        sound_card: 1,
+        graphics_card: 2,
+        score_card: 95,
+        report_card: 4,
+        time_card: 40,
+        wild_card: 7,
+        head_phone: 42,
+        auto_mobile: 9,
+        mega_phone: 3,
+        saxo_phone: 1,
+        dust_pan: 5,
+        sauce_pan: 2,
+        bed_pan: 6,
+        card: 3,
+        phone: 42,
+        pan: 5,
+        mobile: 7,
+        cards: 2,
+        phones: 1,
+      };
+      const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual(input);
+      expect(tagsToAdd).toHaveLength(0);
+    });
+  });
+
+  describe("redactDeep context-aware typed PII — REDACTED (registry-keyed) [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("redacts a numeric SSN under an `ssn` key", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ ssn: 123456789 });
+      expect((value as { ssn: unknown }).ssn).toBe("[SSN_US]");
+      expect(tagsToAdd).toContain("pii.ssn_us");
+    });
+
+    it("redacts a numeric phone under a `phone` key", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ phone: 5552345678 });
+      expect((value as { phone: unknown }).phone).toBe("[PHONE_US]");
+      expect(tagsToAdd).toContain("pii.phone_us");
+    });
+
+    it("redacts a bigint card under a `card` key", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ card: 4111111111111111n });
+      expect((value as { card: unknown }).card).toBe("[CREDIT_CARD]");
+      expect(tagsToAdd).toContain("pii.credit_card");
+    });
+
+    it("redacts under normalized key variants (social_security_number / mobileNumber / creditCardNumber / pan)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({
+        social_security_number: 123456789,
+        mobileNumber: 5552345678,
+        creditCardNumber: 4111111111111111n,
+        pan: 4111111111111111n,
+      });
+      const out = value as Record<string, unknown>;
+      expect(out.social_security_number).toBe("[SSN_US]");
+      expect(out.mobileNumber).toBe("[PHONE_US]");
+      expect(out.creditCardNumber).toBe("[CREDIT_CARD]");
+      expect(out.pan).toBe("[CREDIT_CARD]");
+      expect(tagsToAdd).toEqual(
+        expect.arrayContaining(["pii.ssn_us", "pii.phone_us", "pii.credit_card"]),
+      );
+    });
+
+    it("redacts type-shaped numerics under sensitive keys (both key AND value gates pass)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({
+        credit_card: 4111111111111111, // Luhn-16 (exactly representable as a number)
+        card_number: 4111111111111111,
+        creditCardNumber: 4111111111111111n, // bigint
+        ssn: 123456789, // 9-digit
+        social_security: 123456789,
+        phone: 5552345678, // valid US phone (area 555, exchange 234)
+        tel: 5552345678,
+        mobile: 5552345678,
+        home_phone: 5552345678,
+        mobileNumber: 5552345678,
+      });
+      const out = value as Record<string, unknown>;
+      expect(out.credit_card).toBe("[CREDIT_CARD]");
+      expect(out.card_number).toBe("[CREDIT_CARD]");
+      expect(out.creditCardNumber).toBe("[CREDIT_CARD]");
+      expect(out.ssn).toBe("[SSN_US]");
+      expect(out.social_security).toBe("[SSN_US]");
+      expect(out.phone).toBe("[PHONE_US]");
+      expect(out.tel).toBe("[PHONE_US]");
+      expect(out.mobile).toBe("[PHONE_US]");
+      expect(out.home_phone).toBe("[PHONE_US]");
+      expect(out.mobileNumber).toBe("[PHONE_US]");
+      expect(tagsToAdd).toEqual(
+        expect.arrayContaining(["pii.credit_card", "pii.ssn_us", "pii.phone_us"]),
+      );
+    });
+
+    it("redacts numeric elements of an array under a sensitive (plural) key", () => {
+      const { value } = guard.redactDeep({ phones: [5552345678, 5559876543] });
+      expect((value as { phones: unknown[] }).phones).toEqual(["[PHONE_US]", "[PHONE_US]"]);
+    });
+
+    it("does NOT propagate a sensitive key into a nested object (context re-established)", () => {
+      const { value } = guard.redactDeep({ ssn: { note: 123456789 } });
+      const out = value as { ssn: { note: unknown } };
+      expect(out.ssn.note).toBe(123456789);
+    });
+
+    it("redacts an email object KEY, preserving the value", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ "user@example.com": "hello" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).not.toContain("user@example.com");
+      expect(Object.keys(out)).toContain("[EMAIL]");
+      expect(out["[EMAIL]"]).toBe("hello");
+      expect(tagsToAdd).toContain("pii.email");
+    });
+
+    it("redacts an explicit formatted-SSN object KEY (separators present → not a pure-numeric id)", () => {
+      const { value } = guard.redactDeep({ "123-45-6789": 1 });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toContain("[SSN_US]");
+      expect(out["[SSN_US]"]).toBe(1);
+    });
+
+    it("redacts only the PII span of a compound object KEY, keeping surrounding text", () => {
+      // String value keeps this focused on KEY redaction (strings are unaffected by the key's
+      // inherited PII type; only number/bigint values inherit it).
+      const { value } = guard.redactDeep({ "ssn:123-45-6789": "keep" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toContain("ssn:[SSN_US]");
+      expect(out["ssn:[SSN_US]"]).toBe("keep");
+    });
+
+    it("keeps BOTH values when two distinct PII keys collapse to the same token (lossless)", () => {
+      const { value } = guard.redactDeep({ "a@x.com": 1, "b@y.com": 2 });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).not.toContain("a@x.com");
+      expect(Object.keys(out)).not.toContain("b@y.com");
+      expect(Object.values(out).sort()).toEqual([1, 2]);
+    });
+  });
+
+  describe("redactDeep — idempotence & PII modes", () => {
+    it("is idempotent over key-driven numeric redaction (second pass is a no-op)", () => {
+      const guard = createFridayMemoryPiiGuard("redact");
+      const once = guard.redactDeep({ ssn: 123456789 }).value;
+      const twice = guard.redactDeep(once).value;
+      expect(twice).toEqual(once);
+      expect(JSON.stringify(twice)).not.toContain("123456789");
+    });
+
+    it("tag mode: detects registry-keyed numeric PII WITHOUT altering the value", () => {
+      const tagGuard = createFridayMemoryPiiGuard("tag");
+      const { value, tagsToAdd } = tagGuard.redactDeep({ ssn: 123456789 });
+      expect((value as { ssn: unknown }).ssn).toBe(123456789);
+      expect(tagsToAdd).toContain("pii.ssn_us");
+    });
+
+    it("block mode: detects registry-keyed numeric PII without altering the value (blocking is enforced by the guard service)", () => {
+      const blockGuard = createFridayMemoryPiiGuard("block");
+      const { value, tagsToAdd } = blockGuard.redactDeep({ card: 4111111111111111n });
+      expect((value as { card: unknown }).card).toBe(4111111111111111n);
+      expect(tagsToAdd).toContain("pii.credit_card");
+    });
+  });
+
+  // ─── Advisor round 2 ─────────────────────────────────────────────────────────
+  //
+  // Three real defects the independent Advisor found in the two-gate typed-PII redactor.
+  // Each block is red-first: it reproduces the leak/bug against the pre-fix code, then the
+  // fix makes it pass. Benign controls assert no over-redaction is introduced.
+
+  // ─── F1: keyed numeric US phone stored as a country-code integer (1XXXXXXXXXX) ───
+  //
+  // A US number persisted numerically loses its leading '+', becoming the 11-digit form
+  // 1XXXXXXXXXX. The reused phone detector only accepts +1XXXXXXXXXX (which it cannot even
+  // anchor at string start) or the bare 10-digit form, so `redactDeep({phone: 15552345678})`
+  // returned the CLEAR value. The fix normalizes the numeric string ONLY under an already-
+  // phone-typed key (no shape-only redaction) against the SAME detector.
+  describe("redactDeep F1 — keyed numeric country-code US phone (1XXXXXXXXXX) [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("redacts a numeric country-code phone (1XXXXXXXXXX) under a `phone` key", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ phone: 15552345678 });
+      expect((value as { phone: unknown }).phone).toBe("[PHONE_US]");
+      expect(tagsToAdd).toContain("pii.phone_us");
+    });
+
+    it("redacts a bigint country-code phone under a `phone` key", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ phone: 15552345678n });
+      expect((value as { phone: unknown }).phone).toBe("[PHONE_US]");
+      expect(tagsToAdd).toContain("pii.phone_us");
+    });
+
+    // Benign controls that MUST still preserve (no new over-redaction, no shape-only path).
+    it("preserves a tiny number under a `phone` key (value gate still applies)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ phone: 42 });
+      expect((value as { phone: unknown }).phone).toBe(42);
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("preserves an 11-digit phone-ish value under a NON-phone key (gift_card → credit_card type)", () => {
+      // The KEY governs the type; gift_card is a card key, and 11 digits is not card-shaped,
+      // so the value gate preserves it. The phone normalization must NOT leak across key types.
+      const { value, tagsToAdd } = guard.redactDeep({ gift_card: 15552345678 });
+      expect((value as { gift_card: unknown }).gift_card).toBe(15552345678);
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("preserves an 11-digit value under a non-sensitive key (order_id)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ order_id: 15552345678 });
+      expect((value as { order_id: unknown }).order_id).toBe(15552345678);
+      expect(tagsToAdd).toHaveLength(0);
+    });
+  });
+
+  // ─── F2 (Advisor round 2): deep nesting is FULLY SCANNED — no cap, no sentinel ───
+  //
+  // The prior round replaced every subtree past a fixed recursion cap (depth 500) with a
+  // "[REDACTED_DEPTH]" sentinel in ALL modes. That silently CORRUPTED valid deep user metadata
+  // (canonical-data loss — DATA-RETENTION-001) and violated the tag/block non-transform
+  // contract. The rewrite makes the walker ITERATIVE (heap work stack) + CYCLE-AWARE + FULL-
+  // SCAN: bounded only by the upstream 16 KiB metadata byte-limit, every admitted structure is
+  // scanned to its leaves. Deep PII is ALWAYS found (the F2 leak stays closed) AND benign deep
+  // data round-trips UNCHANGED (the new data-loss defect is fixed). No sentinel exists anymore.
+  describe("redactDeep F2 — deep nesting fully scanned, no cap/sentinel [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    // `depth` levels of {child: …} wrapping a leaf object with an email + keyed phone/ssn.
+    function deepPii(depth: number): unknown {
+      let node: Record<string, unknown> = {
+        contact: "owner@example.com",
+        phone: 5552345678,
+        ssn: 123456789,
+      };
+      for (let i = 0; i < depth; i += 1) node = { child: node };
+      return node;
+    }
+
+    // `depth` levels of {child: …} wrapping a purely BENIGN leaf that must round-trip unchanged.
+    function deepBenign(depth: number): unknown {
+      let node: Record<string, unknown> = { keepme: "benign-canonical-marker", count: 42 };
+      for (let i = 0; i < depth; i += 1) node = { child: node, idx: i };
+      return node;
+    }
+
+    it("redacts PII at depth 7 (regression — was the depth-6 fail-open boundary)", () => {
+      const { value, tagsToAdd } = guard.redactDeep(deepPii(7));
+      const json = JSON.stringify(value);
+      expect(json).not.toContain("owner@example.com");
+      expect(json).not.toContain("5552345678");
+      expect(json).not.toContain("123456789");
+      expect(json).toContain("[EMAIL]");
+      expect(json).toContain("[PHONE_US]");
+      expect(json).toContain("[SSN_US]");
+      expect(tagsToAdd).toEqual(
+        expect.arrayContaining(["pii.email", "pii.phone_us", "pii.ssn_us"]),
+      );
+    });
+
+    it("redacts PII much deeper (depth 300) — regression, was below the old cap", () => {
+      const { value } = guard.redactDeep(deepPii(300));
+      const json = JSON.stringify(value);
+      expect(json).not.toContain("owner@example.com");
+      expect(json).not.toContain("5552345678");
+      expect(json).toContain("[EMAIL]");
+    });
+
+    // Red-first: on the pre-fix code the leaf sits past the depth-500 cap, so it was replaced by
+    // the sentinel (no [EMAIL], a "[REDACTED_DEPTH]" instead). Now it is fully scanned.
+    it.each([501, 1200, 2000])(
+      "redacts deep PII at depth %i — no sentinel, no leak (red-first)",
+      (depth) => {
+        const { value, tagsToAdd } = guard.redactDeep(deepPii(depth));
+        const json = JSON.stringify(value);
+        expect(json).not.toContain("owner@example.com"); // no cleartext leak
+        expect(json).not.toContain("5552345678");
+        expect(json).not.toContain("123456789");
+        expect(json).not.toContain("[REDACTED_DEPTH]"); // sentinel is gone entirely
+        expect(json).toContain("[EMAIL]"); // deep PII actually redacted
+        expect(json).toContain("[PHONE_US]");
+        expect(json).toContain("[SSN_US]");
+        expect(tagsToAdd).toEqual(
+          expect.arrayContaining(["pii.email", "pii.phone_us", "pii.ssn_us"]),
+        );
+      },
+    );
+
+    // Red-first: on the pre-fix code the benign leaf past depth 500 was CORRUPTED to the
+    // sentinel (silent canonical-data loss). Now deep benign metadata round-trips byte-identical.
+    it.each([501, 1200, 2000])(
+      "round-trips BENIGN deep data UNCHANGED at depth %i (no silent loss — red-first)",
+      (depth) => {
+        const input = deepBenign(depth);
+        const { value, tagsToAdd } = guard.redactDeep(input);
+        const json = JSON.stringify(value);
+        expect(json).not.toContain("[REDACTED_DEPTH]"); // never corrupted
+        expect(json).toContain("benign-canonical-marker"); // deep canonical value survives
+        expect(json).toBe(JSON.stringify(input)); // byte-identical round-trip
+        expect(tagsToAdd).toHaveLength(0); // no PII → no tags
+      },
+    );
+  });
+
+  // ─── F2b (Advisor round 2): the tag/block MODE CONTRACTS hold at ANY depth ───
+  //
+  // The old sentinel replaced deep subtrees regardless of mode. tag mode MUST NOT transform any
+  // value; block mode MUST surface a pii.* tag for PII at any depth so the guard service can
+  // reject the whole write (never persist an untagged "scanned-clean" sentinel).
+  describe("redactDeep F2b — deep mode contracts (tag non-transform / block tags) [red-first]", () => {
+    function deepNode(depth: number, leaf: Record<string, unknown>): unknown {
+      let node: Record<string, unknown> = leaf;
+      for (let i = 0; i < depth; i += 1) node = { child: node };
+      return node;
+    }
+
+    it("tag mode: deep subtree is returned UNCHANGED (no sentinel, no value transform)", () => {
+      const tagGuard = createFridayMemoryPiiGuard("tag");
+      const input = deepNode(1200, { contact: "owner@example.com", phone: 5552345678, note: "keep-me" });
+      const { value, tagsToAdd } = tagGuard.redactDeep(input);
+      const json = JSON.stringify(value);
+      expect(json).not.toContain("[REDACTED_DEPTH]");
+      expect(json).toBe(JSON.stringify(input)); // tag mode transforms NOTHING, even deep
+      expect(json).toContain("owner@example.com"); // value untouched
+      expect(json).toContain("5552345678");
+      // …but the deep PII is still DETECTED and reported as tags.
+      expect(tagsToAdd).toEqual(expect.arrayContaining(["pii.email", "pii.phone_us"]));
+    });
+
+    it("block mode: deep PII yields pii.* tags (so the blocker can reject) — no untagged sentinel", () => {
+      const blockGuard = createFridayMemoryPiiGuard("block");
+      const input = deepNode(1200, { contact: "owner@example.com", ssn: 123456789 });
+      const { value, tagsToAdd } = blockGuard.redactDeep(input);
+      const json = JSON.stringify(value);
+      // block mode does not transform values here (the guard service throws on tagsToAdd);
+      // crucially the deep PII must be TAGGED, never silently replaced by an untagged sentinel.
+      expect(json).not.toContain("[REDACTED_DEPTH]");
+      expect(tagsToAdd).toEqual(expect.arrayContaining(["pii.email", "pii.ssn_us"]));
+    });
+  });
+
+  // ─── F2c (Advisor round 2): cycle safety — no hang, no stack overflow ───
+  //
+  // A cyclic object must terminate: the ancestor-path guard breaks the back-edge (structural
+  // share, no data loss) instead of infinite-looping. The old recursive walker would stack-
+  // overflow (or, past the cap, sentinel-truncate) a deep/cyclic structure.
+  describe("redactDeep F2c — cycle safety (terminates, each node once) [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("terminates on a direct self-cycle and still redacts the PII leaf", () => {
+      const node: Record<string, unknown> = { contact: "owner@example.com", phone: 5552345678 };
+      node.self = node; // cycle
+      const { value, tagsToAdd } = guard.redactDeep(node);
+      const out = value as Record<string, unknown>;
+      expect(out.contact).toBe("[EMAIL]"); // PII in the cyclic node is redacted
+      expect(out.phone).toBe("[PHONE_US]");
+      expect(out.self).toBe(out); // back-edge preserved as a structural self-reference
+      expect(tagsToAdd).toEqual(expect.arrayContaining(["pii.email", "pii.phone_us"]));
+    });
+
+    it("terminates on a mutual (A→B→A) cycle nested under a benign parent", () => {
+      const a: Record<string, unknown> = { email: "a-owner@example.com" };
+      const b: Record<string, unknown> = { ssn: 123456789, back: a };
+      a.next = b; // A → B → A
+      const { value } = guard.redactDeep({ root: a, note: "keep" });
+      const out = value as { root: Record<string, unknown>; note: string };
+      expect(out.note).toBe("keep");
+      expect(out.root.email).toBe("[EMAIL]");
+      const bOut = out.root.next as Record<string, unknown>;
+      expect(bOut.ssn).toBe("[SSN_US]");
+      expect(bOut.back).toBe(out.root); // cycle closed back onto the same output node
+    });
+  });
+
+  // ─── F3: JSON-originated dangerous keys must be OWN data properties (no proto pollution) ───
+  //
+  // `out[key] = val` invokes the legacy `__proto__` setter for a JSON-originated own key
+  // `__proto__`, mutating the output object's prototype AND dropping the field. The fix
+  // defines an OWN data property so `__proto__` round-trips and the prototype is unchanged.
+  describe("redactDeep F3 — JSON-originated dangerous keys are own data properties [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("round-trips a JSON `__proto__` own key without mutating the output prototype or dropping data", () => {
+      const input = JSON.parse(String.raw`{"__proto__": {"polluted": true}, "safe": 1}`);
+      const { value } = guard.redactDeep(input);
+      const out = value as Record<string, unknown>;
+      expect(Object.getPrototypeOf(out)).toBe(Object.prototype); // prototype untouched
+      expect(Object.prototype.hasOwnProperty.call(out, "__proto__")).toBe(true); // no data drop
+      expect(Object.keys(out)).toContain("__proto__");
+      expect(out.safe).toBe(1);
+      expect(JSON.parse(JSON.stringify(out)).safe).toBe(1); // still JSON-round-trips
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined(); // no global pollution
+    });
+
+    it("preserves JSON `constructor` and `prototype` own keys as own data properties", () => {
+      const input = JSON.parse(String.raw`{"constructor": 1, "prototype": 2, "clean": 3}`);
+      const { value } = guard.redactDeep(input);
+      const out = value as Record<string, unknown>;
+      expect(Object.prototype.hasOwnProperty.call(out, "constructor")).toBe(true);
+      expect(out.constructor).toBe(1);
+      expect(out.prototype).toBe(2);
+      expect(out.clean).toBe(3);
+      expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    });
+
+    it("keeps idempotence and collision-safety with a dangerous key", () => {
+      const input = JSON.parse(String.raw`{"__proto__": 1}`);
+      const once = guard.redactDeep(input).value;
+      const twice = guard.redactDeep(once).value;
+      expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
+      expect(Object.prototype.hasOwnProperty.call(twice as object, "__proto__")).toBe(true);
+    });
+  });
+
+  // ─── Advisor round 3 — pure-numeric object-KEY exemption is Unicode-width/script-consistent ───
+  //
+  // The pure-numeric object-KEY exemption ("a bare digit-only key is an ambiguous business id —
+  // preserve it verbatim") was tested with an ASCII-only /^\d+$/, but the PII matcher applies a
+  // full-width fold. So the ASCII key "4111111111111111" was preserved (correct) while its
+  // semantically-identical FULL-WIDTH form was folded, matched as a card, and IRREVERSIBLY renamed
+  // to "[CREDIT_CARD]" — silently breaking canonical-lookup identity (DATA-RETENTION-001 no
+  // corruption; PRIV-UNICODE-REDACTION-001 benign-multilingual no-degrade). The exemption is now
+  // Unicode-decimal-aware (/^\p{Nd}+$/u): a KEY composed ENTIRELY of Unicode decimal digits in ANY
+  // script (ASCII / full-width / Arabic-Indic / mixed) with NO separators is preserved; a FORMATTED
+  // PII key (separators/context present) STILL redacts; the VALUE path is unchanged (a full-width
+  // card VALUE still redacts). Red-first: tests [1] and [3] FAIL on the pre-fix ASCII-only check.
+  describe("redactDeep — pure-numeric object-KEY exemption is Unicode-width/script-consistent (Advisor round 3) [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    // ASCII 0x21–0x7E → full-width (U+FF01–FF5E); ASCII space → ideographic space.
+    const fw = (s: string): string =>
+      [...s]
+        .map((ch) => {
+          const c = ch.charCodeAt(0);
+          if (c === 0x20) return "　";
+          if (c >= 0x21 && c <= 0x7e) return String.fromCharCode(c + 0xfee0);
+          return ch;
+        })
+        .join("");
+    // ASCII digits → Arabic-Indic digits (U+0660–U+0669).
+    const ai = (s: string): string =>
+      [...s]
+        .map((ch) =>
+          ch >= "0" && ch <= "9" ? String.fromCharCode(0x0660 + (ch.charCodeAt(0) - 0x30)) : ch,
+        )
+        .join("");
+
+    const CARD = "4111111111111111"; // Luhn-valid Visa test number
+
+    it("[1] preserves a FULL-WIDTH pure-numeric KEY byte-identical (NOT renamed to [CREDIT_CARD])", () => {
+      const key = fw(CARD);
+      const { value, tagsToAdd } = guard.redactDeep({ [key]: "x" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toContain(key); // byte-identical preservation of the business id
+      expect(Object.keys(out)).not.toContain("[CREDIT_CARD]");
+      expect(out[key]).toBe("x");
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("[2] preserves an ASCII pure-numeric KEY (regression)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ [CARD]: "x" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toContain(CARD);
+      expect(Object.keys(out)).not.toContain("[CREDIT_CARD]");
+      expect(out[CARD]).toBe("x");
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("[3] preserves a MIXED-WIDTH digit-only KEY (ASCII + full-width, no separators)", () => {
+      const key = "4111" + fw("111111111111"); // 16 digits, mixed width, no separators
+      const { value, tagsToAdd } = guard.redactDeep({ [key]: "x" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toContain(key);
+      expect(Object.keys(out)).not.toContain("[CREDIT_CARD]");
+      expect(out[key]).toBe("x");
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("[4] preserves an ARABIC-INDIC digit-only KEY", () => {
+      const key = ai(CARD);
+      const { value, tagsToAdd } = guard.redactDeep({ [key]: "x" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toContain(key);
+      expect(Object.keys(out)).not.toContain("[CREDIT_CARD]");
+      expect(out[key]).toBe("x");
+      expect(tagsToAdd).toHaveLength(0);
+    });
+
+    it("[5] CONTROL: a FORMATTED full-width card KEY (separators present) STILL redacts", () => {
+      const key = fw("4111-1111-1111-1111"); // full-width dashes → not a pure digit-only id → PII
+      const { value, tagsToAdd } = guard.redactDeep({ [key]: "x" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).not.toContain(key);
+      expect(Object.keys(out)).toContain("[CREDIT_CARD]");
+      expect(out["[CREDIT_CARD]"]).toBe("x");
+      expect(tagsToAdd).toContain("pii.credit_card");
+    });
+
+    it("[6] CONTROL: a full-width card as a VALUE still redacts (key-path change did not weaken values)", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ note: fw(CARD) });
+      const out = value as { note: string };
+      expect(out.note).toBe("[CREDIT_CARD]");
+      expect(out.note).not.toContain(fw(CARD));
+      expect(tagsToAdd).toContain("pii.credit_card");
+    });
+  });
 });

@@ -187,6 +187,100 @@ function redactContent(content: string, matches: FridayMemoryGuardPiiMatch[]): s
   return result;
 }
 
+/**
+ * Sensitive-field registry for CONTEXT-AWARE typed redaction.
+ *
+ * A bare `number`/`bigint` carries no reliable signal of being PII: a 9/10/13–19-digit run or a
+ * Luhn-valid value is just as likely an order number, invoice id, account id, or epoch
+ * timestamp. `redactDeep` therefore redacts a numeric/bigint value only under TWO gates:
+ *  (1) its OBJECT KEY names a known sensitive field (this registry), AND
+ *  (2) the value's string form ACTUALLY matches that type's canonical detector (SSN / phone /
+ *      Luhn-gated card) — see the value gate in `redactDeep`.
+ * Never by digit shape or Luhn validity ALONE. Ambiguous numerics under other keys, benign
+ * numerics under sensitive-sounding keys (`gift_card: 3`, `head_phone: 42`), and pure-numeric
+ * object keys are preserved unchanged (no irreversible masking of legitimate ids). The string
+ * at-rest policy is untouched: string values/keys still use the existing shape-based patterns.
+ *
+ * Key matching is by normalized token SUFFIX so prefixed variants match (`home_phone`,
+ * `user_ssn`, `billing_card_number`) while unrelated names do not (`phone_count`, `telemetry`,
+ * `discard`, `cardinality`, `order_id`). The final-token footgun (`gift_card`, `dust_pan`, …) is
+ * covered by the value gate rather than a brittle denylist. Keys are normalized: camelCase is
+ * split, digits and separators are dropped, and a trailing plural `s` on the final token folded.
+ */
+type FridayKeyDrivenPiiType = Extract<FridayMemoryGuardPiiType, "ssn_us" | "phone_us" | "credit_card">;
+
+const SENSITIVE_KEY_PHRASE_TO_TYPE = new Map<string, FridayKeyDrivenPiiType>([
+  ["ssn", "ssn_us"],
+  ["ssn number", "ssn_us"],
+  ["social security", "ssn_us"],
+  ["social security number", "ssn_us"],
+  ["phone", "phone_us"],
+  ["phone number", "phone_us"],
+  ["telephone", "phone_us"],
+  ["tel", "phone_us"],
+  ["mobile", "phone_us"],
+  ["mobile number", "phone_us"],
+  ["mobile phone", "phone_us"],
+  ["card", "credit_card"],
+  ["card number", "credit_card"],
+  ["credit card", "credit_card"],
+  ["credit card number", "credit_card"],
+  ["pan", "credit_card"],
+]);
+const SENSITIVE_KEY_MAX_PHRASE_TOKENS = 3;
+
+function normalizeKeyTokens(key: string): string[] {
+  const tokens = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter((t) => t.length > 0);
+  const last = tokens.pop();
+  if (last === undefined) return tokens;
+  const singular =
+    last.length > 3 && last.endsWith("s") && !last.endsWith("ss") ? last.slice(0, -1) : last;
+  tokens.push(singular);
+  return tokens;
+}
+
+/**
+ * Resolve the PII type a value inherits from its object KEY, or `undefined` for a non-sensitive
+ * key. The longest matching suffix wins (most specific). Purely key-driven — the value itself is
+ * never inspected, so no benign number can be redacted by this path.
+ */
+function sensitiveTypeForKey(key: string): FridayKeyDrivenPiiType | undefined {
+  const tokens = normalizeKeyTokens(key);
+  if (tokens.length === 0) return undefined;
+  const maxLen = Math.min(SENSITIVE_KEY_MAX_PHRASE_TOKENS, tokens.length);
+  for (let len = maxLen; len >= 1; len -= 1) {
+    const suffix = tokens.slice(tokens.length - len).join(" ");
+    const type = SENSITIVE_KEY_PHRASE_TO_TYPE.get(suffix);
+    if (type) return type;
+  }
+  return undefined;
+}
+
+/**
+ * VALUE gate for a numeric/bigint value whose OBJECT KEY already resolved to `type`
+ * (sensitiveTypeForKey). Returns true only when the value's string form actually matches that
+ * type's canonical detector. This runs strictly AFTER the sensitive-key gate, so it can never
+ * reintroduce shape-only inference — a value under a non-sensitive key never reaches here.
+ *
+ * Phone normalization (F1): a US number persisted as a numeric loses its leading '+', producing
+ * the 11-digit country-code form 1XXXXXXXXXX. The reused phone detector only accepts +1XXXXXXXXXX
+ * or the bare 10-digit form, so that numeric form leaked. Because the key is ALREADY a registered
+ * phone key, we may safely normalize by stripping the leading country-code '1' to the 10-digit
+ * form the SAME detector recognizes — no new shape-only redaction is introduced.
+ */
+function numericValueMatchesKeyedType(str: string, type: FridayKeyDrivenPiiType): boolean {
+  if (findMatches(str).some((m) => m.type === type)) return true;
+  if (type === "phone_us" && /^1\d{10}$/.test(str)) {
+    return findMatches(str.slice(1)).some((m) => m.type === "phone_us");
+  }
+  return false;
+}
+
 export function createFridayMemoryPiiGuard(
   mode?: FridayMemoryGuardPiiMode,
 ): FridayMemoryGuardPiiGuard {
@@ -215,32 +309,197 @@ export function createFridayMemoryPiiGuard(
 
     redactDeep(value: unknown): { value: unknown; tagsToAdd: string[] } {
       const tagSet = new Set<string>();
-      const MAX_DEPTH = 6;
+      // Traversal is ITERATIVE (an explicit heap-allocated work stack), CYCLE-AWARE, and
+      // FULL-SCAN — there is NO depth cap and NO truncation sentinel. The real resource bound
+      // is the UPSTREAM 16 KiB metadata byte-limit (validateMetadata runs before this on the
+      // store path); every structure admitted by that bound is scanned to its leaves. Because
+      // the work stack lives on the heap (not the ~2000–5000-frame JS call stack), arbitrarily
+      // deep byte-bounded input is scanned without stack overflow. This replaces the previous
+      // fixed recursion that returned a "[REDACTED_DEPTH]" sentinel past a depth cap in ALL
+      // modes — silently corrupting valid deep metadata (canonical-data loss, DATA-RETENTION-001)
+      // and violating the tag/block mode contracts. Deep PII is still ALWAYS found (the F2 leak
+      // stays closed) and benign deep data now round-trips UNCHANGED.
 
-      const walk = (v: unknown, depth: number): unknown => {
-        if (depth > MAX_DEPTH) return v;
+      // String leaves keep the EXISTING shape-based at-rest policy (unchanged by this lane):
+      // scan with the PII patterns and redact in place in redact mode, tag-only otherwise.
+      const redactStringLeaf = (s: string): string => {
+        const matches = findMatches(s);
+        if (matches.length === 0) return s;
+        for (const m of matches) {
+          tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${m.type}`);
+        }
+        return effectiveMode === "redact" ? redactContent(s, matches) : s;
+      };
+
+      // Redact PII carried in an object KEY. String key CONTENT that is itself recognizable PII
+      // (email, or a formatted phone/SSN/card) is redacted in place, so `user@example.com` →
+      // `[EMAIL]` and a compound `ssn:123-45-6789` → `ssn:[SSN_US]`. A PURE-DIGIT key is NEVER
+      // shape-redacted — it is an ambiguous business id and is preserved verbatim.
+      //
+      // The pure-digit exemption is Unicode-decimal-aware (`/^\p{Nd}+$/u`), NOT ASCII-only
+      // (`/^\d+$/`). The PII matcher folds full-width digits before matching, so an ASCII-only
+      // exemption let the ASCII key "4111111111111111" through (correct) but folded its
+      // semantically-identical FULL-WIDTH form "４１１１…" into a card and irreversibly renamed it
+      // to "[CREDIT_CARD]" — corrupting a benign business id (DATA-RETENTION-001 no-corruption;
+      // PRIV-UNICODE-REDACTION-001 benign-multilingual no-degrade). Testing `\p{Nd}` makes ASCII,
+      // full-width, Arabic-Indic, and MIXED-width digit-only keys reach the SAME exempt outcome —
+      // width/script-consistent with the matcher's fold. Only keys composed ENTIRELY of decimal
+      // digits (any script, NON-empty, NO separators/other chars) are exempt: a FORMATTED PII key
+      // (dashes/spaces/letters, e.g. "４１１１-…" or "ssn:123-45-6789") contains a non-`Nd` char, so
+      // it fails the exemption and STILL redacts. This is purely the key-preservation exemption —
+      // it does NOT weaken the value path (a full-width card VALUE is redacted as before).
+      const redactKey = (key: string): string => {
+        if (/^\p{Nd}+$/u.test(key)) return key;
+        const matches = findMatches(key);
+        if (matches.length === 0) return key;
+        for (const m of matches) {
+          tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${m.type}`);
+        }
+        return effectiveMode === "redact" ? redactContent(key, matches) : key;
+      };
+
+      // Write `val` under `key` as an OWN DATA property rather than `out[key] = val`: a
+      // JSON-originated own key named `__proto__` would otherwise invoke the legacy prototype
+      // setter, mutating the output object's prototype (prototype confusion) AND dropping the
+      // field from serialization. `Object.defineProperty` round-trips such keys as ordinary own
+      // enumerable data properties with the prototype untouched. (F3 — preserved.)
+      const defineOwn = (out: Record<string, unknown>, key: string, val: unknown): void => {
+        Object.defineProperty(out, key, {
+          value: val,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      };
+
+      // Resolve the collision-disambiguated final key for `key` in `out`, WITHOUT writing the
+      // value. Redacting keys can collapse two distinct PII keys onto the same token (e.g.
+      // `a@x.com` and `b@y.com` → `[EMAIL]`); on collision the later entry is disambiguated
+      // deterministically so both VALUES survive. The `#N` suffix contains no PII pattern, so a
+      // second redactDeep pass is a no-op (idempotent). The slot is RESERVED in forward key
+      // order (see the object branch) so the resulting key set and enumeration order are
+      // byte-identical to the previous recursive walker; the deep value fills the slot later.
+      const resolveFinalKey = (out: Record<string, unknown>, key: string): string => {
+        if (!Object.prototype.hasOwnProperty.call(out, key)) return key;
+        let suffix = 2;
+        while (Object.prototype.hasOwnProperty.call(out, `${key}#${suffix}`)) {
+          suffix += 1;
+        }
+        return `${key}#${suffix}`;
+      };
+
+      // Transform a scalar leaf. `keyedType` is the PII type a numeric/bigint value INHERITS
+      // FROM ITS OBJECT KEY (see sensitiveTypeForKey); it is threaded through arrays (a list
+      // under a sensitive key) but NOT into nested objects, which re-establish their own key
+      // context. Containers (array/object) are NOT handled here — the iterative loop below
+      // reconstructs them so the traversal never touches the call stack.
+      const transformScalar = (v: unknown, keyedType?: FridayKeyDrivenPiiType): unknown => {
         if (typeof v === "string") {
-          const matches = findMatches(v);
-          if (matches.length === 0) return v;
-          for (const m of matches) {
-            tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${m.type}`);
-          }
-          return effectiveMode === "redact" ? redactContent(v, matches) : v;
+          return redactStringLeaf(v);
         }
-        if (Array.isArray(v)) {
-          return v.map((entry) => walk(entry, depth + 1));
+        // CONTEXT-AWARE typed redaction, gated on BOTH the key AND the value:
+        //  (1) key gate  — the object key must name a known PII type (keyedType); unknown keys
+        //      and context-less/array numbers are never candidates.
+        //  (2) value gate — the value's string form must ACTUALLY match that type's canonical
+        //      detector (SSN / phone / Luhn-gated card). This is strictly more conservative than
+        //      key-alone: a benign numeric under a sensitive-sounding field (gift_card: 3,
+        //      head_phone: 42, sim_card: 2) is preserved because "3"/"42"/"2" is not card/phone
+        //      shaped. It does NOT reintroduce shape-alone inference — the value gate only runs
+        //      AFTER the sensitive-key gate, so a Luhn-valid `order_id` under a NON-sensitive key
+        //      is still preserved. In tag/block mode the value is returned UNCHANGED (contract:
+        //      those modes never transform data) while the pii.* tag is still collected.
+        if (typeof v === "number" || typeof v === "bigint") {
+          if (!keyedType) return v;
+          if (!numericValueMatchesKeyedType(String(v), keyedType)) return v;
+          tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${keyedType}`);
+          return effectiveMode === "redact" ? `[${keyedType.toUpperCase()}]` : v;
         }
-        if (v && typeof v === "object") {
-          const out: Record<string, unknown> = {};
-          for (const [k, entry] of Object.entries(v as Record<string, unknown>)) {
-            out[k] = walk(entry, depth + 1);
-          }
-          return out;
-        }
+        // Preserve a Date's original TYPE (the object branch would otherwise walk its zero
+        // own-enumerable props and corrupt it into `{}`). A Date is not a numeric PII carrier.
         return v;
       };
 
-      return { value: walk(value, 0), tagsToAdd: [...tagSet] };
+      // Explicit work stack. Each `value` frame writes its transformed result into a parent slot
+      // via `assign`; each `exit` frame pops a container off the ancestor path once its whole
+      // subtree is processed. `onPath` maps a container currently on the DFS ancestor path to
+      // its output container; a back-edge to a node still on the path is a CYCLE — we assign the
+      // (in-progress) output reference and do NOT recurse, so a cyclic input never infinite-loops
+      // or stack-overflows and no data is lost. `onPath` is cleared on exit, so a re-referenced
+      // node reached via a sibling path (a DAG, not a cycle) is fully re-walked — byte-identical
+      // to the old recursive walker for every acyclic input.
+      type ValueFrame = { value: unknown; keyedType?: FridayKeyDrivenPiiType; assign: (r: unknown) => void };
+      type ExitFrame = { exit: object };
+      const root: { out: unknown } = { out: undefined };
+      const onPath = new WeakMap<object, unknown>();
+      const stack: Array<ValueFrame | ExitFrame> = [
+        { value, assign: (r) => { root.out = r; } },
+      ];
+
+      while (stack.length > 0) {
+        const frame = stack.pop() as ValueFrame | ExitFrame;
+        if ("exit" in frame) {
+          onPath.delete(frame.exit);
+          continue;
+        }
+        const { value: v, keyedType, assign } = frame;
+
+        if (Array.isArray(v)) {
+          if (onPath.has(v)) {
+            assign(onPath.get(v)); // cycle back-edge → structural share (no data loss)
+            continue;
+          }
+          const out: unknown[] = new Array(v.length);
+          onPath.set(v, out);
+          assign(out);
+          stack.push({ exit: v });
+          // Push in reverse so element frames are processed in forward index order (arrays
+          // thread the parent keyedType into their elements).
+          for (let i = v.length - 1; i >= 0; i -= 1) {
+            const idx = i;
+            stack.push({ value: v[idx], keyedType, assign: (r) => { out[idx] = r; } });
+          }
+          continue;
+        }
+
+        if (v instanceof Date) {
+          assign(v);
+          continue;
+        }
+
+        if (v && typeof v === "object") {
+          if (onPath.has(v)) {
+            assign(onPath.get(v)); // cycle back-edge → structural share (no data loss)
+            continue;
+          }
+          const out: Record<string, unknown> = {};
+          onPath.set(v, out);
+          assign(out);
+          stack.push({ exit: v });
+          // Reserve every key slot in FORWARD Object.entries order (collision-disambiguated,
+          // own data property) so the key set / enumeration order match the old recursive
+          // walker exactly; deep values fill the reserved slots as their frames complete.
+          const childFrames: ValueFrame[] = [];
+          for (const [k, entry] of Object.entries(v as Record<string, unknown>)) {
+            const finalKey = resolveFinalKey(out, redactKey(k));
+            defineOwn(out, finalKey, undefined);
+            const childKeyedType = sensitiveTypeForKey(k);
+            childFrames.push({
+              value: entry,
+              keyedType: childKeyedType,
+              assign: (r) => { defineOwn(out, finalKey, r); },
+            });
+          }
+          for (let i = childFrames.length - 1; i >= 0; i -= 1) {
+            stack.push(childFrames[i]);
+          }
+          continue;
+        }
+
+        // Scalar leaf (string / number / bigint / Date / null / boolean / undefined / other).
+        assign(transformScalar(v, keyedType));
+      }
+
+      return { value: root.out, tagsToAdd: [...tagSet] };
     },
   };
 }

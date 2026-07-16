@@ -125,10 +125,21 @@ export interface FridayMemoryGuardQuotaRepository {
 export interface FridayMemoryGuardPiiGuard {
   scanAndTransform(content: string): FridayMemoryGuardPiiScanResult;
   /**
-   * Recursively redact PII in the string leaves of an arbitrary structured value
-   * (memory metadata objects, tag arrays). Returns the redacted value (or the original
-   * when not in redact mode) plus the PII-type tags discovered, so callers can scan
-   * metadata/tags the same way `scanAndTransform` scans content.
+   * Recursively redact PII in an arbitrary structured value (memory metadata objects, tag
+   * arrays, learned-fact values). Coverage:
+   *  - STRING leaves and STRING key content: existing shape-based patterns (email / phone /
+   *    SSN / Luhn-gated card), unchanged by this contract.
+   *  - Typed `number` / `bigint` values: redacted CONTEXT-AWARELY under TWO gates — the value's
+   *    object KEY names a known sensitive field (ssn / phone / card and variants) AND the value's
+   *    string form actually matches that type's detector (SSN / phone / Luhn card). A bare number
+   *    is never redacted by digit shape or Luhn ALONE, so business ids, order numbers, epoch
+   *    timestamps, benign numerics under sensitive-sounding keys (`gift_card: 3`), and
+   *    pure-numeric object keys are preserved. Array elements inherit a sensitive parent key;
+   *    nested objects do not.
+   *  - `Date` values: their original type is preserved (never corrupted into `{}`).
+   * Returns the (possibly) redacted value plus the PII-type tags discovered. This closes the
+   * typed-value, Date-corruption, and object-KEY coverage gaps; it is NOT a guarantee that every
+   * possible PII representation is caught.
    */
   redactDeep(value: unknown): { value: unknown; tagsToAdd: string[] };
 }
