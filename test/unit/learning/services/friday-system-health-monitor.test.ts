@@ -29,6 +29,14 @@ describe("FridaySystemHealthMonitor", () => {
       db,
       nowIso: () => NOW,
       onRunComplete: (summary) => summaries.push(summary),
+      // RETENTION-R3b: inject a healthy free-space probe AND a KNOWN measured
+      // no-growth rate (0 B/day) so the report-only `disk_growth` check resolves to
+      // `ok` on this fresh test DB. Without a probe — OR with a healthy probe but an
+      // UNKNOWN/null growth rate — the check correctly fails closed to `unknown`
+      // (never assumes healthy free space); those fail-closed paths are covered in
+      // friday-system-health-disk-growth.test.ts.
+      probeDiskSpace: () => ({ freeBytes: 500_000_000_000, totalBytes: 1_000_000_000_000 }),
+      probeGrowthRateBytesPerDay: () => 0,
     });
   });
 

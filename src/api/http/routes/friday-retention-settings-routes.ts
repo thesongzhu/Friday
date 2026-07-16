@@ -2,6 +2,7 @@ import { FridayDomainError } from "#errors";
 import type { CategoryRetention, FridayRetentionSettingsStore } from "#jobs";
 import { FRIDAY_MAX_AFTER_DAYS, FRIDAY_MIN_AFTER_DAYS, isValidAfterDays } from "#jobs";
 import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
+import type { FridayDiskGrowthWarning } from "../../../learning/services/friday-disk-growth-evaluator.js";
 import {
   assertBoundPrincipalAuthorityForOperation,
   isUnauthenticatedPublicPrincipal,
@@ -49,10 +50,22 @@ export interface FridayRetentionSettingsRoutesDeps {
    * "any admin".
    */
   resolveCanonicalOwnerId: () => string | null | undefined;
+  /**
+   * RETENTION-R3b: reads the latest REPORT-ONLY disk-growth warning snapshot (the
+   * in-memory holder the system-health-monitor job updates each run). Optional:
+   * when omitted (or it returns null), the owner-bound disk-usage readback returns
+   * `{ diskUsage: null }` — still owner-gated, never dark-open. The reading is
+   * DERIVED/observable and never persisted as canonical (DATA-RETENTION-001).
+   */
+  readDiskUsage?: () => FridayDiskGrowthWarning | null;
 }
 
 interface FridayRetentionPolicyResponse {
   policy: Record<string, CategoryRetention>;
+}
+
+interface FridayRetentionDiskUsageResponse {
+  diskUsage: FridayDiskGrowthWarning | null;
 }
 
 function requireUserId(principal: { userId?: string } | null): string {
@@ -251,6 +264,28 @@ export function createFridayRetentionSettingsRoutes(
         return {
           policy: deps.store.applyOwnerContentPolicy({ principalId: ownerId, updates }),
         };
+      },
+    },
+    {
+      // RETENTION-R3b: owner-bound REPORT-ONLY disk-usage/alerts readback — the
+      // "disk usage/alerts are visible" seam the Settings UI later consumes. It is
+      // guarded by the SAME canonical-owner binding as GET/PUT above (owner/admin
+      // ROLE is a floor; the authenticated principal's userId MUST match the single
+      // canonical owner; fail-closed 403 if unresolvable). This is the ONLY read
+      // surface for the disk-growth reading: it is NEVER published to any
+      // /v1/observability/* or other public route (the #1606 SEC-NET-PRINCIPAL-001
+      // lesson). Read-only: it never triggers any deletion.
+      operationId: "uix.retention.policy.diskusage.get",
+      method: "GET",
+      path: "/v1/uix/retention-policy/disk-usage",
+      auth: { public: true },
+      async handler(ctx): Promise<FridayRetentionDiskUsageResponse> {
+        assertCanonicalRetentionOwner(
+          ctx.principal ?? null,
+          "retention.policy.read",
+          deps.resolveCanonicalOwnerId,
+        );
+        return { diskUsage: deps.readDiskUsage ? deps.readDiskUsage() : null };
       },
     },
   ];

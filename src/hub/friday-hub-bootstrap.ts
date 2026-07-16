@@ -323,6 +323,11 @@ import {
   type FridayExtractedSignal,
 } from "#learning";
 import {
+  createFridayDiskGrowthHolder,
+  type FridayDiskGrowthHolder,
+  type FridayDiskGrowthWarning,
+} from "../learning/services/friday-disk-growth-evaluator.js";
+import {
   createFridayObservabilityApiService,
 } from "../observability/services/friday-observability-api-service.js";
 import { createFridaySatelliteRuntimeRoutes } from "../api/http/routes/friday-satellite-runtime-routes.js";
@@ -6743,6 +6748,14 @@ export async function createFridayHub(
     principalId: learningDefaultUserId,
   });
 
+  // RETENTION-R3b: report-only disk-growth snapshot holder. The system-health
+  // monitor job (below) updates it each run; the owner-bound
+  // GET /v1/uix/retention-policy/disk-usage serves it. Declared HERE (before the
+  // retentionSettings deps at the api-runtime call) so both the reader closure and
+  // the scheduler-job writer capture the same in-memory holder. It is
+  // DERIVED/observable — never persisted as canonical (DATA-RETENTION-001).
+  const diskGrowthHolder: FridayDiskGrowthHolder = createFridayDiskGrowthHolder();
+
   // ─── Satellite runtime ───
   const satelliteRuntime = createFridaySatelliteRuntime({
     db: stateRuntime.sqlite,
@@ -7482,6 +7495,9 @@ export async function createFridayHub(
     retentionSettings: {
       store: retentionSettingsStore,
       resolveCanonicalOwnerId: () => learningDefaultUserId,
+      // RETENTION-R3b: owner-bound disk-usage readback source (report-only; the
+      // ONLY read surface for the disk-growth reading — never on any public route).
+      readDiskUsage: () => diskGrowthHolder.get(),
     },
     uix: {
       service: uixService,
@@ -8256,6 +8272,31 @@ export async function createFridayHub(
           const monitor = createFridaySystemHealthMonitor({
             db: stateRuntime!.sqlite,
             nowIso,
+            // RETENTION-R3b: report-only free-space probe for the `disk_growth`
+            // check. Node >=22 provides statfsSync; fail-closed to `null` on any
+            // throw/unsupported platform so the evaluator reports `unknown` (never
+            // a false healthy). Never reads or writes any DB row.
+            probeDiskSpace: () => {
+              try {
+                const st = fs.statfsSync(stateRuntime!.stateDir);
+                const freeBytes = st.bavail * st.bsize;
+                const totalBytes = st.blocks * st.bsize;
+                if (!Number.isFinite(freeBytes) || !Number.isFinite(totalBytes)) return null;
+                return { freeBytes, totalBytes };
+              } catch {
+                return null;
+              }
+            },
+            // U13 projected-exhaustion branch: no AUTHORITATIVE growth-window
+            // measurement exists in the TS runtime yet, so the growth rate is
+            // UNKNOWN today. Returning null is the HONEST fail-closed posture — per
+            // U13, above the max(10 GiB, 10%) free-space floor the disk_growth
+            // reading reports `unknown` (healthy=false), NEVER a false healthy `ok`;
+            // below the floor it still warns (the live authoritative signal). An
+            // authoritative bytes/day growth-window measurement is the named R3c
+            // follow-up; it will replace this null with a real rate so the 7-day
+            // projected-exhaustion warning becomes observable.
+            probeGrowthRateBytesPerDay: () => null,
             onRunComplete: (summary) => {
               // Log an unhealthy/warn/critical/degraded check only on a status
               // TRANSITION; feed healthy statuses too so a recovery resets state
@@ -8282,7 +8323,16 @@ export async function createFridayHub(
               }
             },
           });
-          monitor.runAll();
+          const summary = monitor.runAll();
+          // RETENTION-R3b: refresh the report-only disk-usage snapshot that the
+          // owner-bound GET /v1/uix/retention-policy/disk-usage serves. Held in
+          // memory only (derived/observable; never persisted as canonical).
+          const diskDetail = summary.checks.find((c) => c.name === "disk_growth")?.detail as
+            | FridayDiskGrowthWarning
+            | undefined;
+          if (diskDetail) {
+            diskGrowthHolder.set(diskDetail);
+          }
         },
       });
     }
