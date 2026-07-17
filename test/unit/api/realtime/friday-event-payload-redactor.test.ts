@@ -568,3 +568,60 @@ describe("redactEventPayload — field-role-aware identity (re-audit)", () => {
     }
   });
 });
+
+// ─── Over-exemption leak hardening (re-audit #2) ───
+//
+// An identifier field is exempt from value-PII redaction. Two exemptions were too
+// broad and could carry CONTENT PII that then persisted CLEAR: (FIX 1) an ARRAY
+// under an id-role key, and (FIX 2) a BARE `signature` / `fingerprint` field.
+
+describe("redactEventPayload — over-exemption leak hardening", () => {
+  it("FIX1: an array under an identifier-role key is content-redacted, not exempt", () => {
+    const out = redactEventPayload({ externalId: ["alice@example.com", "bob@example.com"] });
+    const s = serialize(out);
+    expect(s).not.toContain("alice@example.com");
+    expect(s).not.toContain("bob@example.com");
+    expect((out as { externalId: string[] }).externalId).toEqual(["[EMAIL]", "[EMAIL]"]);
+  });
+
+  it("FIX1: a nested PII array under an id key is redacted at every element", () => {
+    const out = redactEventPayload({ runId: [PHONE, { note: `SSN ${SSN}` }] });
+    const s = serialize(out);
+    expect(s).not.toContain(PHONE);
+    expect(s).not.toContain(SSN);
+    expect(s).toContain("[PHONE_US]");
+    expect(s).toContain("[SSN_US]");
+  });
+
+  it("FIX1: the SCALAR-id exemption is preserved (findings #1/#2 intact)", () => {
+    // Opaque scalar id round-trips; distinct PII-shaped scalar ids stay distinct
+    // (disclosed owner-scoped residual — NOT collapsed to one marker).
+    expect(redactEventPayload({ externalId: "opaque-123" }).externalId).toBe("opaque-123");
+    const a = redactEventPayload({ executionId: "alice@example.com" });
+    const b = redactEventPayload({ executionId: "bob@example.com" });
+    expect(a.executionId).toBe("alice@example.com");
+    expect(b.executionId).toBe("bob@example.com");
+    expect(a.executionId).not.toBe(b.executionId);
+  });
+
+  it("FIX2: a bare free-text signature field is content-redacted (not exempt)", () => {
+    const out = redactEventPayload({ signature: `reach me at ${EMAIL}` });
+    const s = serialize(out);
+    expect(s).not.toContain(EMAIL);
+    expect(s).toContain("[EMAIL]");
+  });
+
+  it("FIX2: a bare fingerprint field is content-redacted", () => {
+    const out = redactEventPayload({ fingerprint: `call ${PHONE}` });
+    const s = serialize(out);
+    expect(s).not.toContain(PHONE);
+    expect(s).toContain("[PHONE_US]");
+  });
+
+  it("FIX2: the in-domain crash-fingerprint field stays exempt (no regression to legit fingerprints)", () => {
+    // errorFingerprint is a system-generated opaque hash that must NOT be corrupted
+    // even if it accidentally matches a PII shape — it remains exempt.
+    const out = redactEventPayload({ errorFingerprint: PHONE });
+    expect((out as { errorFingerprint: string }).errorFingerprint).toBe(PHONE);
+  });
+});

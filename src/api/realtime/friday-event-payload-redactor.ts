@@ -182,10 +182,14 @@ const IDENTIFIER_FIELD_NAMES = new Set<string>([
   "userid",
   "diagnosisid",
   "actionid",
-  // hash / fingerprint correlation keys (not PII)
-  "fingerprint",
+  // in-domain crash-fingerprint / version correlation fields (system-generated,
+  // opaque, non-PII) — exempt so an accidental PII-shape match cannot corrupt a
+  // legitimate fingerprint. SCOPED to specific compound field names: a BARE
+  // "signature" / "fingerprint" (which an arbitrary-payload caller could fill with
+  // free-text PII) is deliberately NOT exempt and is content-redacted.
   "errorfingerprint",
-  "signature",
+  "errorsignature",
+  "crashsignature",
   "etag",
   // common business identifiers
   "id",
@@ -281,9 +285,14 @@ function redactNode(
   if (Array.isArray(value)) {
     const out: unknown[] = [];
     seen.set(container, out);
-    // Elements inherit the array's own field role + key context.
+    // An ARRAY is never a scalar routing identifier, so its elements are ALWAYS
+    // treated as CONTENT — the identifier exemption is NOT propagated into a list
+    // under an id-role key (otherwise `externalId: ["a@b.com", …]` would inherit
+    // the exemption and persist CLEAR). The SCALAR-id exemption is unaffected: a
+    // scalar directly under an id key is still exempt (findings #1/#2 intact). The
+    // array's own key context is still threaded for the numeric two-gate.
     for (const item of value) {
-      out.push(redactNode(item, enclosingKey, role, seen));
+      out.push(redactNode(item, enclosingKey, "content", seen));
     }
     return out;
   }
