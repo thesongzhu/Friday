@@ -484,6 +484,36 @@ function redactContentChannelPhones(input: string): string {
 }
 
 /**
+ * CONTENT pre-pass (Pass 1), applied to every CONTENT string leaf BEFORE the ASCII PII guard
+ * (`redactDeep`, Pass 2) sees it. Two layers:
+ *   1. the ASCII/full-width channel-phone pre-pass (US then international) — a `+`-E.164 becomes
+ *      `[PHONE]` before Pass 2's CARD detector, so it is never mislabeled `+[CREDIT_CARD]` (F-3);
+ *   2. the shared Unicode-aware content leaf on the ORIGINAL value.
+ *
+ * Layer 2 closes a pass-ordering residual (round-8 follow-up): Pass 2's ASCII detectors run on the
+ * RAW value, and when an obfuscating (non-ASCII) code point sits where a VALID ASCII sub-shape
+ * remains — most sharply an accent / zero-width in an email LOCAL-PART (`víctim@example.com` →
+ * matches the still-valid `ctim@example.com` and leaves the accented prefix) — Pass 2 FRAGMENTS the
+ * value, redacting only the ASCII tail; Pass 3's full-span Unicode redaction then can no longer
+ * apply, so the accented prefix persisted (and NFC vs NFD left DIFFERENT residual bytes — a
+ * canonical-equivalence inconsistency). Running the Unicode leaf on the ORIGINAL value HERE maps the
+ * WHOLE detected span (email / secret / PII-by-value over the de-obfuscated detection copy) back to
+ * the original and redacts it cleanly BEFORE Pass 2 can fragment it — NFC ≡ NFD, no fragment.
+ *
+ * NO-DEGRADE — this is strictly additive: `redactUnicodeObfuscated` is a NO-OP on a value whose
+ * detection copy is unchanged (pure ASCII → `changed=false`, short-circuit returns the input) and on
+ * any value where no finder matches (benign accented / multilingual / ZWJ-emoji text). So a
+ * pure-ASCII content string is byte-identical to today's phone-only pre-pass, ASCII PII stays with
+ * Pass 2's KEY-CONTEXT-aware detection, and benign Unicode text is returned verbatim. Only an
+ * actually-obfuscated PII/secret is touched, and only ever redacted MORE completely (full original
+ * span vs a fragment) — never less. Forensic-identifier leaves are cut to an `AuditForensicRef`
+ * BEFORE this runs, so their benign-phone-shaped-id preservation is unaffected.
+ */
+function redactContentPrePass(input: string): string {
+  return redactUnicodeContentLeaf(redactContentChannelPhones(input));
+}
+
+/**
  * Build the CONTENT SKELETON for `redactAuditDetails` Pass 1 — RECURSIVE / path-aware field-role
  * classification applied at EVERY object level (finding 2). Iterative + cycle-aware (a back-edge to
  * a node still on the DFS path becomes a structural share, so deep/cyclic input neither overflows
@@ -498,9 +528,13 @@ function redactContentChannelPhones(input: string): string {
  *   - sensitive-secret key     → the whole value is nuked to the secret marker (an opaque
  *     credential has no shape and is only catchable by its key);
  *   - content key              → cloned through and descended, so `redactDeep` redacts its PII.
- * CONTENT string leaves get the phone pre-pass HERE (F-3): a Luhn-valid 13–16-digit `+`-E.164 phone
- * becomes `[PHONE]` BEFORE `redactDeep`'s CARD detector runs in Pass 2, so it is never mislabeled
- * `+[CREDIT_CARD]`. Array elements inherit their container's content role; an OBJECT element
+ * CONTENT string leaves get the CONTENT PRE-PASS HERE (`redactContentPrePass`): the phone pre-pass
+ * (F-3) — a Luhn-valid 13–16-digit `+`-E.164 phone becomes `[PHONE]` BEFORE `redactDeep`'s CARD
+ * detector runs in Pass 2, so it is never mislabeled `+[CREDIT_CARD]` — PLUS the Unicode-aware content
+ * leaf on the ORIGINAL value, so an obfuscated email/secret/PII is redacted on its FULL span before
+ * Pass 2's ASCII guard can FRAGMENT it (the local-part-accent residual; NFC ≡ NFD). The Unicode leaf
+ * is a NO-OP on pure ASCII / benign text, so ASCII PII stays with Pass 2's key-context detection.
+ * Array elements inherit their container's content role; an OBJECT element
  * re-establishes per-key roles. Keys are reserved in FORWARD `Object.entries` order and written as
  * own data properties, so enumeration order is byte-identical to the input and a JSON `__proto__`
  * key cannot pollute.
@@ -565,8 +599,11 @@ function buildContentSkeleton(root: unknown): unknown {
     }
 
     // Scalar leaf. Only genuine CONTENT scalars reach here (forensic subtrees are cut, secret values
-    // nuked). Content strings get the phone pre-pass BEFORE `redactDeep` sees them (F-3).
-    assign(typeof v === "string" ? redactContentChannelPhones(v) : v);
+    // nuked). Content strings get the CONTENT PRE-PASS BEFORE `redactDeep` sees them: the phone
+    // pre-pass (F-3) PLUS the Unicode-aware content leaf on the ORIGINAL value, so an obfuscated
+    // email/secret/PII is redacted on its FULL span before Pass 2's ASCII guard can FRAGMENT it (the
+    // local-part-accent residual). The Unicode leaf is a no-op on pure ASCII / benign text (NO-DEGRADE).
+    assign(typeof v === "string" ? redactContentPrePass(v) : v);
   }
 
   return outRef.value;
@@ -655,8 +692,9 @@ function finalizeRedactedSkeleton(root: unknown): unknown {
  *     object/array is RECURSED and a forensic scalar that is PII/secret by value is REDACTED — the
  *     exemption is a benign-opaque LEAF, never a subtree exemption (Advisor round-4 blocking finding);
  *   - sensitive-secret field NAMES (any depth)          → whole value nuked to the secret marker;
- *   - every other CONTENT field                         → phone pre-pass, then PII-by-value
- *     redaction via `redactDeep`, then the content-leaf (secret shapes + US/intl phone).
+ *   - every other CONTENT field                         → content pre-pass (phone pre-pass + Unicode
+ *     leaf on the ORIGINAL value so obfuscated PII/secrets are redacted full-span before Pass 2 can
+ *     fragment them), then PII-by-value redaction via `redactDeep`, then the content-leaf.
  *
  * The whole content skeleton is handed to `redactDeep` in ONE call, so the guard's FULL capability
  * (numeric key-context, array threading, key-collision handling, hardened cycle-aware traversal)
@@ -666,7 +704,9 @@ function finalizeRedactedSkeleton(root: unknown): unknown {
 function redactAuditDetails(details: Record<string, unknown>): Record<string, unknown> {
   // Pass 1 — structural cut walk: benign-opaque forensic LEAVES → AuditForensicRef; secret values →
   // marker; forensic objects/arrays + PII/secret forensic scalars descend as content; content
-  // strings → phone pre-pass (US + intl) so `+`-E.164 never reaches the card detector.
+  // strings → content pre-pass (phone pre-pass so `+`-E.164 never reaches the card detector, PLUS the
+  // Unicode leaf on the ORIGINAL value so an obfuscated PII/secret is redacted full-span before Pass 2
+  // can fragment it — the local-part-accent residual; no-op on ASCII/benign, so NO-DEGRADE).
   const skeleton = buildContentSkeleton(details);
 
   // Pass 2 — PII-by-value redaction over the whole content skeleton via the shared guard. The

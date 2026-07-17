@@ -1582,4 +1582,71 @@ describe("FridayHubAuditLogWriter — PRIV-UNICODE-REDACTION-001 details Unicode
       expect(sink).toContain(LATIN_PRE);
     }
   });
+
+  // -- Round-8 residual: a LOCAL-PART (fragmenting) accent must redact CLEANLY, NFC === NFD --
+  //
+  // The round-8 fold closed the canonical-equivalence bypass in the DETECTION COPY, but one
+  // residual remained in the WRITER's pass ordering: the ASCII PII guard (Pass 2, redactDeep on
+  // the RAW value) runs BEFORE the Unicode residual (Pass 3). When the obfuscating accent sits in
+  // the email LOCAL-PART, the ASCII email regex fragments the value -- it matches the still-valid
+  // ASCII suffix (`ctim@example.com`) and leaves the accented prefix (`vic-acute` / `vi`+U+0301),
+  // so Pass 3's full-span redaction never applied and the sinks kept `v[i-acute][EMAIL]`. Worse,
+  // NFC (precomposed) and NFD (base+mark) left DIFFERENT residual bytes -- a canonical-equivalence
+  // inconsistency. Fix: the Pass-1 CONTENT PRE-PASS now also runs the Unicode-aware content leaf on
+  // the ORIGINAL value (it is a strict no-op on pure ASCII / benign accented text), so an
+  // obfuscated email/secret/PII is redacted on its FULL original span BEFORE Pass 2 can fragment
+  // it. RED on 9edd12ca (fragment residual, NFC != NFD); GREEN post-fix (clean [EMAIL], NFC === NFD).
+  const LP_ACUTE = "\u0301"; // COMBINING ACUTE ACCENT (Mn)
+
+  it("RED->GREEN round-8 (local-part / fragmenting accent): a local-part-accented email is CLEANLY full-span redacted (no fragment), NFC === NFD, in BOTH sinks", async () => {
+    const EMAIL_LP_PRE = "v\u00EDctim@example.com"; // precomposed i-acute in the LOCAL part
+    const EMAIL_LP_DEC = `vi${LP_ACUTE}ctim@example.com`; // i + U+0301 decomposed twin
+    const EMAIL_FOLDED = "victim@example.com";
+    // A secret whose accent sits mid-body, plus combining SSN/card -- all clean full redactions.
+    const SK_BODY = "abcdefghijklmnop0123456789"; // pragma: allowlist secret
+    const SK_MIDBODY = "sk-abcd\u00E9fghijklmnop0123456789"; // e-acute mid-body -> sk-abcdefghijklmnop... // pragma: allowlist secret
+    const SSN_CB = `123-45-6${LP_ACUTE}789`; // -> 123-45-6789 -> [SSN_US]
+    const CARD_CB = `411111111111${LP_ACUTE}1111`; // -> 4111111111111111 -> [CREDIT_CARD] // pragma: allowlist secret
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-localpart-fragment", {
+        emailLpPre: EMAIL_LP_PRE, // content
+        emailLpDec: EMAIL_LP_DEC, // content
+        // A FORENSIC-named key carrying the same local-part-accented email: the forensic-leaf gate
+        // de-obfuscates, disqualifies it, and routes it to the content path -> clean full-span [EMAIL].
+        correlationId: EMAIL_LP_PRE, // forensic key
+        secretMid: SK_MIDBODY, // content
+        ssn: SSN_CB, // content
+        card: CARD_CB, // content
+        // NO-DEGRADE control: a benign-opaque forensic leaf survives verbatim.
+        requestId: "run-abc-123",
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(EMAIL_LP_PRE);
+      expect(sink).not.toContain(EMAIL_LP_DEC);
+      expect(sink).not.toContain(EMAIL_FOLDED);
+      expect(sink).not.toContain("ctim@example.com"); // no fragmented email suffix
+      expect(sink).not.toContain("\u00ED"); // no precomposed i-acute residue
+      expect(sink).not.toContain(SK_BODY);
+      expect(sink).not.toContain("123-45-6789");
+      expect(sink).not.toContain("4111111111111111"); // pragma: allowlist secret
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      // Clean full-span redaction: EXACTLY the marker, no accented-prefix fragment.
+      expect(details.emailLpPre).toBe("[EMAIL]");
+      expect(details.emailLpDec).toBe("[EMAIL]");
+      // Canonical-equivalence: NFC (precomposed) and NFD (base+mark) redact to IDENTICAL bytes.
+      expect(details.emailLpPre).toBe(details.emailLpDec);
+      // Forensic key with the same fragmenting email -> also clean full-span [EMAIL] (no residue).
+      expect(details.correlationId).toBe("[EMAIL]");
+      expect(details.secretMid).toBe("[REDACTED_SECRET]");
+      expect(details.ssn).toBe("[SSN_US]");
+      expect(details.card).toBe("[CREDIT_CARD]");
+      // NO-DEGRADE: benign-opaque forensic leaf preserved verbatim.
+      expect(details.requestId).toBe("run-abc-123");
+    }
+  });
 });
