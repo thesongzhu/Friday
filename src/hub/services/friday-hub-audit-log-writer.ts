@@ -92,13 +92,20 @@ function redactResidualUsPhone(input: string): string {
 // memory / learned-fact / typed-PII, where a blanket international rule would over-redact benign
 // international-looking numbers). Channel identities arrive as E.164 `+<cc><number>` (Signal
 // `sourceNumber`, WhatsApp non-US `from`), so a UK `+447911123456` embedded in `chatId` /
-// `sessionKey` / `correlationId` would otherwise persist CLEAR. The discriminator that keeps this
-// from collapsing benign machine identifiers is the MANDATORY leading `+` (or full-width `＋`): a
-// benign numeric id, epoch, or SHA never carries one, so it can never match. ASCII and full-width
-// digits / separators are both recognized; the fold is used only to COUNT digits (8–15 = E.164).
+// `sessionKey` / `correlationId` would otherwise persist CLEAR. Three discriminators keep this from
+// collapsing benign machine identifiers OR signed monetary amounts (reviewer finding F-2):
+//   1. a MANDATORY leading `+` / full-width `＋` — a benign numeric id, epoch, or SHA never carries one;
+//   2. a candidate that contains a DECIMAL POINT or thousands grouping (`+100000.00`, `+1,000,000`) is
+//      a monetary amount, never a channel phone → rejected outright;
+//   3. the digit count must be a PLAUSIBLE international channel phone: 11–15 digits (1–3-digit
+//      country code + national number). A short `+`-number (`+12345678`, `+1000000000`) is a signed
+//      amount / id, not a channel identity, and is left intact.
+// ASCII and full-width digits / separators are both recognized; the fold is used only to COUNT digits.
 const AUDIT_INTL_PHONE_CANDIDATE =
-  /(?<![0-9０-９A-Za-z+＋])[+＋][1-9１-９][0-9０-９()\-.\s　（）－．]{6,18}/gu;
-const AUDIT_INTL_PHONE_TRAILING_SEP = /[()\-.\s　（）－．]+$/u;
+  /(?<![0-9０-９A-Za-z+＋])[+＋][1-9１-９][0-9０-９()\-.,\s　（）－．，]{6,18}/gu;
+const AUDIT_INTL_PHONE_TRAILING_SEP = /[()\-.,\s　（）－．，]+$/u;
+// A decimal point / comma INSIDE the core marks a monetary amount (or grouped number), not a phone.
+const AUDIT_INTL_PHONE_AMOUNT_SEP = /[.,．，]/u;
 
 function foldedDigitCount(candidate: string): number {
   let count = 0;
@@ -112,10 +119,12 @@ function foldedDigitCount(candidate: string): number {
 function redactInternationalChannelPhone(input: string): string {
   return input.replace(AUDIT_INTL_PHONE_CANDIDATE, (match) => {
     // The greedy separator class may capture trailing separators/punctuation; strip them so we
-    // never eat following benign text and count digits on the phone core only.
+    // never eat following benign text and count digits on the phone core only. Trailing sentence
+    // punctuation (`.`, `,`) is stripped here BEFORE the amount check, so it does not mask a phone.
     const core = match.replace(AUDIT_INTL_PHONE_TRAILING_SEP, "");
+    if (AUDIT_INTL_PHONE_AMOUNT_SEP.test(core)) return match; // decimal / grouped amount → leave intact
     const digits = foldedDigitCount(core);
-    if (digits < 8 || digits > 15) return match; // not an E.164-length number → leave intact
+    if (digits < 11 || digits > 15) return match; // not a channel-phone-length number → leave intact
     return `${AUDIT_INTL_PHONE_MARKER}${match.slice(core.length)}`;
   });
 }
@@ -276,31 +285,46 @@ function isForensicIdentifierKey(key: string): boolean {
   return AUDIT_FORENSIC_IDENTIFIER_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
 }
 
-// Opaque placeholder for a cut-out forensic subtree. Null-delimited so it can never appear in real
-// caller content and carries no PII / secret shape (survives `redactDeep` verbatim).
-const AUDIT_FORENSIC_PLACEHOLDER_PREFIX = "\u0000\u0000AUDIT_FORENSIC_";
-const AUDIT_FORENSIC_PLACEHOLDER_SUFFIX = "\u0000\u0000";
+/**
+ * OUT-OF-BAND marker for a cut-out forensic subtree (reviewer finding F-1). Restoration keys on
+ * OBJECT IDENTITY (`instanceof`), NEVER on a string value — so NO untrusted content value can ever
+ * be mistaken for a marker (a prior in-band NUL-delimited string sentinel could be forged verbatim
+ * by a caller `details` value, corrupting the record). It extends `Date` because a `Date` is the
+ * ONLY value the shared guard's `redactDeep` (and `mapStringsDeep`) passes through BY REFERENCE, so
+ * the marker survives the PII pass with its identity — and its captured `original` — intact.
+ */
+class AuditForensicRef extends Date {
+  readonly original: unknown;
+  constructor(original: unknown) {
+    super(0);
+    this.original = original;
+  }
+}
+
+/** Content phone pre-pass (US then international), applied to CONTENT strings BEFORE `redactDeep`. */
+function redactContentChannelPhones(input: string): string {
+  return redactInternationalChannelPhone(redactResidualUsPhone(input));
+}
 
 /**
  * Build the CONTENT SKELETON for `redactAuditDetails` Pass 1 — RECURSIVE / path-aware field-role
  * classification applied at EVERY object level (finding 2). Iterative + cycle-aware (a back-edge to
  * a node still on the DFS path becomes a structural share, so deep/cyclic input neither overflows
  * the stack nor loops). At each object key:
- *   - forensic identifier key  → the whole value is CUT: replaced by an opaque placeholder and its
- *     original recorded in `forensicOriginals`, so the PII guard never sees (and never corrupts) a
- *     nested benign identifier such as `nested.requestId = "2015550123"`;
+ *   - forensic identifier key  → the whole value is CUT: replaced by an `AuditForensicRef` wrapper
+ *     (out-of-band identity), so the PII guard never sees (and never corrupts) a nested benign
+ *     identifier such as `nested.requestId = "2015550123"`;
  *   - sensitive-secret key     → the whole value is nuked to the secret marker (an opaque
  *     credential has no shape and is only catchable by its key);
  *   - content key              → cloned through and descended, so `redactDeep` redacts its PII.
- * Array elements inherit their container's content role; an OBJECT element re-establishes per-key
- * roles. Keys are reserved in FORWARD `Object.entries` order and written as own data properties, so
- * enumeration order is byte-identical to the input and a JSON `__proto__` key cannot pollute.
+ * CONTENT string leaves get the phone pre-pass HERE (F-3): a Luhn-valid 13–16-digit `+`-E.164 phone
+ * becomes `[PHONE]` BEFORE `redactDeep`'s CARD detector runs in Pass 2, so it is never mislabeled
+ * `+[CREDIT_CARD]`. Array elements inherit their container's content role; an OBJECT element
+ * re-establishes per-key roles. Keys are reserved in FORWARD `Object.entries` order and written as
+ * own data properties, so enumeration order is byte-identical to the input and a JSON `__proto__`
+ * key cannot pollute.
  */
-function buildContentSkeleton(
-  root: unknown,
-  forensicOriginals: Map<string, unknown>,
-  nextPlaceholder: () => string,
-): unknown {
+function buildContentSkeleton(root: unknown): unknown {
   type ValueFrame = { v: unknown; assign: (r: unknown) => void };
   type ExitFrame = { exit: object };
   const outRef: { value: unknown } = { value: undefined };
@@ -341,9 +365,7 @@ function buildContentSkeleton(
       const childFrames: ValueFrame[] = [];
       for (const [key, child] of Object.entries(v as Record<string, unknown>)) {
         if (isForensicIdentifierKey(key)) {
-          const token = nextPlaceholder();
-          forensicOriginals.set(token, child); // cut point — preserved as identifier in Pass 3
-          defineOwn(obj, key, token);
+          defineOwn(obj, key, new AuditForensicRef(child)); // cut point — restored by identity in Pass 3
         } else if (isSensitiveSecretFieldName(key)) {
           defineOwn(obj, key, AUDIT_SECRET_MARKER); // nuke the whole value regardless of shape
         } else {
@@ -357,7 +379,82 @@ function buildContentSkeleton(
       continue;
     }
 
-    assign(v); // scalar / Date / null / undefined
+    // Scalar leaf. Only genuine CONTENT scalars reach here (forensic subtrees are cut, secret values
+    // nuked). Content strings get the phone pre-pass BEFORE `redactDeep` sees them (F-3).
+    assign(typeof v === "string" ? redactContentChannelPhones(v) : v);
+  }
+
+  return outRef.value;
+}
+
+/**
+ * Pass 3 — finalize the redacted skeleton. Iterative + cycle-aware. For each node:
+ *   - `AuditForensicRef`  → restore the cut-out subtree, run through the identifier-leaf. Keyed on
+ *     OBJECT IDENTITY, so a content value can NEVER be mistaken for a marker (F-1 fix);
+ *   - genuine `Date`      → preserved (type + value);
+ *   - string leaf         → content-leaf (secret shapes + US/intl phone);
+ *   - array / object      → rebuilt, keys reserved in FORWARD order (order + `__proto__` safety).
+ */
+function finalizeRedactedSkeleton(root: unknown): unknown {
+  type ValueFrame = { v: unknown; assign: (r: unknown) => void };
+  type ExitFrame = { exit: object };
+  const outRef: { value: unknown } = { value: undefined };
+  const onPath = new WeakMap<object, unknown>();
+  const stack: Array<ValueFrame | ExitFrame> = [{ v: root, assign: (r) => { outRef.value = r; } }];
+
+  const defineOwn = (target: Record<string, unknown>, key: string, val: unknown): void => {
+    Object.defineProperty(target, key, { value: val, enumerable: true, writable: true, configurable: true });
+  };
+
+  while (stack.length > 0) {
+    const frame = stack.pop() as ValueFrame | ExitFrame;
+    if ("exit" in frame) {
+      onPath.delete(frame.exit);
+      continue;
+    }
+    const { v, assign } = frame;
+
+    if (typeof v === "string") {
+      assign(redactContentLeaf(v));
+      continue;
+    }
+    if (v instanceof AuditForensicRef) {
+      assign(mapStringsDeep(v.original, redactIdentifierLeaf));
+      continue;
+    }
+    if (v instanceof Date) {
+      assign(v); // genuine caller Date — preserve
+      continue;
+    }
+    if (Array.isArray(v)) {
+      if (onPath.has(v)) { assign(onPath.get(v)); continue; }
+      const arr: unknown[] = new Array(v.length);
+      onPath.set(v, arr);
+      assign(arr);
+      stack.push({ exit: v });
+      for (let i = v.length - 1; i >= 0; i -= 1) {
+        const idx = i;
+        stack.push({ v: v[idx], assign: (r) => { arr[idx] = r; } });
+      }
+      continue;
+    }
+    if (v && typeof v === "object") {
+      if (onPath.has(v)) { assign(onPath.get(v)); continue; }
+      const obj: Record<string, unknown> = {};
+      onPath.set(v, obj);
+      assign(obj);
+      stack.push({ exit: v });
+      const objectEntries = Object.entries(v as Record<string, unknown>);
+      for (const [key] of objectEntries) defineOwn(obj, key, undefined); // reserve forward order
+      for (let i = objectEntries.length - 1; i >= 0; i -= 1) {
+        const key = objectEntries[i][0];
+        const child = objectEntries[i][1];
+        stack.push({ v: child, assign: (r) => { defineOwn(obj, key, r); } });
+      }
+      continue;
+    }
+
+    assign(v); // number / bigint / boolean / null / undefined
   }
 
   return outRef.value;
@@ -370,38 +467,26 @@ function buildContentSkeleton(
  *     PII guard, identifier-leaf only), so distinct ids stay distinct and a nested benign
  *     phone-shaped id is never corrupted to `[PHONE_US]`;
  *   - sensitive-secret field NAMES (any depth)          → whole value nuked to the secret marker;
- *   - every other CONTENT field                         → PII-by-value redaction via the shared
- *     guard's `redactDeep`, then the content-leaf (secret shapes + US/international phone).
+ *   - every other CONTENT field                         → phone pre-pass, then PII-by-value
+ *     redaction via `redactDeep`, then the content-leaf (secret shapes + US/intl phone).
  *
  * The whole content skeleton is handed to `redactDeep` in ONE call, so the guard's FULL capability
  * (numeric key-context, array threading, key-collision handling, hardened cycle-aware traversal)
- * applies to all content with zero degrade while the opaque forensic placeholders survive it. A
- * benign payload round-trips byte-identically (structure + key order preserved).
+ * applies to all content with zero degrade while the out-of-band `AuditForensicRef` markers survive
+ * it by reference. A benign payload round-trips byte-identically (structure + key order preserved).
  */
 function redactAuditDetails(details: Record<string, unknown>): Record<string, unknown> {
-  // Pass 1 — structural cut walk: forensic subtrees → opaque placeholders; secret values → marker.
-  const forensicOriginals = new Map<string, unknown>();
-  let placeholderSeq = 0;
-  const skeleton = buildContentSkeleton(details, forensicOriginals, () => {
-    const token = `${AUDIT_FORENSIC_PLACEHOLDER_PREFIX}${String(placeholderSeq)}${AUDIT_FORENSIC_PLACEHOLDER_SUFFIX}`;
-    placeholderSeq += 1;
-    return token;
-  });
+  // Pass 1 — structural cut walk: forensic subtrees → AuditForensicRef; secret values → marker;
+  // content strings → phone pre-pass (US + intl) so `+`-E.164 never reaches the card detector.
+  const skeleton = buildContentSkeleton(details);
 
-  // Pass 2 — PII-by-value redaction over the whole content skeleton via the shared guard. Opaque
-  // placeholders and the secret marker (no PII shape) survive unchanged.
+  // Pass 2 — PII-by-value redaction over the whole content skeleton via the shared guard. The
+  // out-of-band markers (Date subclass) and the secret marker survive unchanged.
   const redactedSkeleton = auditPiiGuard.redactDeep(skeleton).value;
 
-  // Pass 3 — finalize leaves: restore each forensic placeholder with its original subtree run
+  // Pass 3 — finalize: restore each forensic marker (by identity) with its original subtree run
   // through the identifier-leaf; apply the content-leaf to every remaining content string.
-  const finalized = mapStringsDeep(redactedSkeleton, (leaf) => {
-    if (forensicOriginals.has(leaf)) {
-      return mapStringsDeep(forensicOriginals.get(leaf), redactIdentifierLeaf);
-    }
-    return redactContentLeaf(leaf);
-  });
-
-  return finalized as Record<string, unknown>;
+  return finalizeRedactedSkeleton(redactedSkeleton) as Record<string, unknown>;
 }
 
 // ─── Adapter ───

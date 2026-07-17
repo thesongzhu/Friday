@@ -686,4 +686,104 @@ describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 details redaction"
     expect(sqliteDetailsJson).toContain(BENIGN_LONG_NUMERIC_ID);
     expect(sqliteDetailsJson).toContain(BENIGN_EPOCH_MS);
   });
+
+  // ─── Reviewer round-3 F-1: placeholder collision → out-of-band (object-identity) restore ───
+  it("RED→GREEN F-1: a content string equal to / containing the internal cut sentinel round-trips byte-identical (no collision, no corruption)", async () => {
+    // The round-2 redactor cut forensic subtrees to an in-band NUL-delimited STRING sentinel and
+    // restored by value-equality. A content value that forged that sentinel was overwritten with a
+    // DIFFERENT field's value. The out-of-band (object-identity) marker makes this impossible for
+    // ANY content value. Reviewer's reproducing input reproduced here exactly.
+    const SENTINEL = "\u0000\u0000AUDIT_FORENSIC_0\u0000\u0000";
+    const entry: FridayAuditLogWrite = {
+      id: "collision-1",
+      ts: "2026-07-17T00:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-1",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-5",
+      details: {
+        correlationId: "MACHINE_ID_XYZ", // forensic → cut FIRST (sentinel #0 under round-2)
+        evil: SENTINEL, // content string forging the sentinel verbatim
+        evilSubstring: `prefix ${SENTINEL} suffix`, // sentinel as a substring
+      },
+    };
+
+    const { sqliteDetails, jsonlRecord } = await writeAndReadBack(entry);
+    const details = sqliteDetails as Record<string, string>;
+
+    // The forensic id is preserved; the forging content value is NOT overwritten by it.
+    expect(details.correlationId).toBe("MACHINE_ID_XYZ");
+    expect(details.evil).toBe(SENTINEL);
+    expect(details.evil).not.toBe("MACHINE_ID_XYZ");
+    expect(details.evilSubstring).toBe(`prefix ${SENTINEL} suffix`);
+
+    // Sink B agrees.
+    const jsonlDetails = jsonlRecord.details as Record<string, string>;
+    expect(jsonlDetails.evil).toBe(SENTINEL);
+    expect(jsonlDetails.correlationId).toBe("MACHINE_ID_XYZ");
+  });
+
+  // ─── Reviewer round-3 F-2: intl phone must not over-redact benign signed amounts ───
+  it("RED→GREEN F-2: the international phone pass leaves benign signed amounts intact while still redacting real E.164", async () => {
+    const entry: FridayAuditLogWrite = {
+      id: "amount-1",
+      ts: "2026-07-17T01:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-1",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-6",
+      details: {
+        priceDelta: "+100000.00",
+        smallDelta: "+1234.56",
+        shortNum: "+12345678",
+        roundNum: "+1000000000",
+        grouped: "+1,000,000",
+        // Real E.164 channel phones in the SAME record must STILL be redacted.
+        chatId: "+447911123456",
+        note: "billed to +4915112345678 on file",
+      },
+    };
+
+    const { sqliteDetails } = await writeAndReadBack(entry);
+    const details = sqliteDetails as Record<string, string>;
+
+    // Benign amounts preserved byte-identical (decimal/grouping or sub-11-digit → not a phone).
+    expect(details.priceDelta).toBe("+100000.00");
+    expect(details.smallDelta).toBe("+1234.56");
+    expect(details.shortNum).toBe("+12345678");
+    expect(details.roundNum).toBe("+1000000000");
+    expect(details.grouped).toBe("+1,000,000");
+    // Real international channel phones still redacted.
+    expect(details.chatId).toBe("[PHONE]");
+    expect(details.note).toBe("billed to [PHONE] on file");
+  });
+
+  // ─── Reviewer round-3 F-3: +E.164 phone redacted BEFORE the card detector (no +[CREDIT_CARD]) ───
+  it("RED→GREEN F-3: a Luhn-valid +E.164 phone is marked [PHONE], never +[CREDIT_CARD] (phone pass runs before redactDeep's card detector)", async () => {
+    const entry: FridayAuditLogWrite = {
+      id: "phone-before-card-1",
+      ts: "2026-07-17T02:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-1",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-7",
+      details: {
+        senderId: "+4915112345678", // DE, 13 Luhn-valid digits → cards in redactDeep unless pre-redacted
+        note: "sent to +4915112345678",
+      },
+    };
+
+    const { sqliteDetailsJson, sqliteDetails } = await writeAndReadBack(entry);
+    const details = sqliteDetails as Record<string, string>;
+
+    expect(details.senderId).toBe("[PHONE]");
+    expect(details.note).toBe("sent to [PHONE]");
+    // No CARD mislabel and no stray leading '+' anywhere in the sink.
+    expect(sqliteDetailsJson).not.toContain("[CREDIT_CARD]");
+    expect(sqliteDetailsJson).not.toContain("+[");
+    expect(sqliteDetailsJson).not.toContain("4915112345678");
+  });
 });
