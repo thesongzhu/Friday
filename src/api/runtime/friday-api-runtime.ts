@@ -2100,7 +2100,19 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   });
 
   // Realtime
-  const eventRepo = createFridayRealtimeEventRepository();
+  // SEC-EVENT-REDACTION-001 / P0#2: bind the realtime event log to the canonical
+  // hub owner (learningUserId = admin-001 — the SAME single owner the retention
+  // path resolves). When present the repo stamps `owner_id` on persist and the
+  // subscription service gates subscribe/authorize/pull to that owner (a
+  // non-canonical principal is denied even with matching topic scope + a known
+  // stream id). When absent (test construction) the pre-existing topic-scope authz
+  // is unchanged.
+  const resolveRealtimeOwnerId = deps.learningUserId
+    ? () => deps.learningUserId
+    : undefined;
+  const eventRepo = createFridayRealtimeEventRepository({
+    resolveOwnerId: resolveRealtimeOwnerId,
+  });
   const checkpointRepo = createFridayRealtimeCheckpointRepository();
 
   const eventBus = createFridayRealtimeEventBus({
@@ -2122,6 +2134,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
     currentEpoch: CURRENT_EPOCH,
     cursorSecret: deps.tokenSecret,
+    // SEC-EVENT-REDACTION-001 / P0#2: gate realtime reads to the canonical owner.
+    resolveCanonicalOwnerId: resolveRealtimeOwnerId,
     // TS-runtime-retirement (method-level guard): same top-level flag the HTTP
     // realtime route + WS ack frame use, so ackEvent fail-closes by default in
     // live (all three sites fenced) and the legacy path is reachable only under

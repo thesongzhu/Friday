@@ -127,6 +127,17 @@ export interface CreateFridayRealtimeSubscriptionServiceDeps {
   currentEpoch: number;
   cursorSecret?: string;
   /**
+   * SEC-EVENT-REDACTION-001 / P0#2 — canonical-hub-owner binding for the realtime
+   * read plane. Realtime events are owned by the single canonical hub owner. When
+   * this resolver is PROVIDED (production wiring), subscribe / authorize / pull are
+   * gated to that owner: a non-canonical principal is DENIED even with matching
+   * topic scope and a known stream id, and pulls are owner-scoped at the repo. If
+   * it resolves to nullish/blank the gate FAILS CLOSED (denies). When it is OMITTED
+   * (legacy/test construction) the pre-existing topic-scope authz is unchanged — so
+   * this is additive and never weakens today's behavior. Production MUST provide it.
+   */
+  resolveCanonicalOwnerId?: () => string | null | undefined;
+  /**
    * Test-oracle only: allows the legacy TypeScript realtime checkpoint-ack
    * mutation (`ackEvent`) in isolated test/validation harnesses. Default/live
    * runtime must leave this unset so the method fails closed for ALL ingress
@@ -145,6 +156,32 @@ export function createFridayRealtimeSubscriptionService(
   deps: CreateFridayRealtimeSubscriptionServiceDeps,
 ): FridayRealtimeSubscriptionService {
   const cursorSecret = deps.cursorSecret ?? crypto.randomBytes(16).toString("hex");
+
+  // ─── SEC-EVENT-REDACTION-001 / P0#2: canonical-hub-owner gate ───
+  // Resolve the canonical owner (fail-closed on throw/blank). Returns `undefined`
+  // ONLY when the resolver dep is not configured (legacy/test) — meaning the gate
+  // is inactive and the pre-existing topic-scope authz applies unchanged.
+  function resolveCanonicalOwner(): string | null | undefined {
+    if (!deps.resolveCanonicalOwnerId) return undefined;
+    let owner: string | null | undefined;
+    try {
+      owner = deps.resolveCanonicalOwnerId();
+    } catch {
+      owner = null;
+    }
+    return typeof owner === "string" && owner.trim().length > 0 ? owner : null;
+  }
+
+  // True when the principal is authorized under the owner gate: allowed if the gate
+  // is inactive (undefined), else the principal's identity MUST equal the canonical
+  // owner. A configured-but-unresolvable owner (null) fails CLOSED.
+  function principalPassesOwnerGate(principal: FridayAuthPrincipal): boolean {
+    const canonical = resolveCanonicalOwner();
+    if (canonical === undefined) return true; // gate not configured → legacy behavior
+    if (canonical === null) return false; // configured but unresolvable → fail-closed
+    const identity = principal.userId ?? principal.principalId;
+    return typeof identity === "string" && identity === canonical;
+  }
 
   // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
   // Defense-in-depth (orphan off-route leak audit, 2026-06-10): the realtime
@@ -183,6 +220,20 @@ export function createFridayRealtimeSubscriptionService(
       const accepted: FridayRealtimeSubscription[] = [];
       const rejected: Array<{ subscriptionId: string; code: string; message: string }> = [];
 
+      // Canonical-owner gate: a non-canonical principal is denied ALL subscriptions
+      // (even with matching topic scope) — cross-principal isolation of the owner's
+      // realtime streams.
+      if (!principalPassesOwnerGate(principal)) {
+        return {
+          accepted,
+          rejected: subscriptions.map((sub) => ({
+            subscriptionId: sub.subscriptionId,
+            code: "NOT_CANONICAL_OWNER",
+            message: "Realtime streams are readable only by the canonical hub owner.",
+          })),
+        };
+      }
+
       for (const sub of subscriptions) {
         const requiredScopes = TOPIC_SCOPES[sub.topic];
         if (!requiredScopes) {
@@ -220,6 +271,10 @@ export function createFridayRealtimeSubscriptionService(
     },
 
     isStreamAuthorized(principal, streamId, acceptedSubscriptions) {
+      // Canonical-owner gate first: a non-canonical principal is never authorized
+      // for any realtime stream, even one they know the id of and hold scope for.
+      if (!principalPassesOwnerGate(principal)) return false;
+
       // If we have accepted subscriptions, check if the stream is in them
       if (acceptedSubscriptions) {
         for (const sub of acceptedSubscriptions.values()) {
@@ -241,8 +296,15 @@ export function createFridayRealtimeSubscriptionService(
     },
 
     pullEvents(streamId, afterSeq, limit) {
+      // Defense-in-depth: when the owner gate is configured, scope the read to the
+      // canonical owner's rows at the repo (excludes NULL-owner sentinel + any other
+      // owner). Only the canonical owner reaches here (isStreamAuthorized gates the
+      // route/WS callers first), so filtering by that owner is exactly the reader.
+      const canonical = resolveCanonicalOwner();
+      if (canonical === null) return []; // configured but unresolvable → fail-closed
+      const ownerFilter = canonical === undefined ? undefined : canonical;
       return deps.db.withReadConnection((db) =>
-        deps.eventRepo.listAfterSeq(db, streamId, afterSeq, limit),
+        deps.eventRepo.listAfterSeq(db, streamId, afterSeq, limit, ownerFilter),
       );
     },
 

@@ -104,6 +104,7 @@ import { V102_PROVIDER_CALL_RECEIPT_MIGRATION } from "./v102-provider-call-recei
 import { V103_SETUP_BOOTSTRAP_DEVICE_CLAIM_MIGRATION } from "./v103-setup-bootstrap-device-claim.js";
 import { V104_SETUP_BOOTSTRAP_MIGRATION_STATE_MIGRATION } from "./v104-setup-bootstrap-migration-state.js";
 import { V105_RETENTION_SETTINGS_MIGRATION } from "./v105-retention-settings.js";
+import { V106_REALTIME_EVENTS_OWNER_MIGRATION } from "./v106-realtime-events-owner.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -214,6 +215,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V103_SETUP_BOOTSTRAP_DEVICE_CLAIM_MIGRATION,
   V104_SETUP_BOOTSTRAP_MIGRATION_STATE_MIGRATION,
   V105_RETENTION_SETTINGS_MIGRATION,
+  V106_REALTIME_EVENTS_OWNER_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };

@@ -22,19 +22,37 @@ export interface FridayRealtimeEventRow {
 export interface FridayRealtimeEventRepository {
   append(db: Database.Database, envelope: FridayRealtimeEventEnvelope): void;
   getNextSeq(db: Database.Database, streamId: string): number;
+  /**
+   * Read events after `afterSeq`. When `ownerId` is supplied the read is
+   * owner-scoped (`owner_id = ?`) so a NULL-owner (legacy/sentinel) row and any
+   * other owner's row are NEVER returned (fail-closed). Callers on an
+   * authenticated read path MUST pass the reader's canonical owner id.
+   */
   listAfterSeq(
     db: Database.Database,
     streamId: string,
     afterSeq: number,
     limit: number,
+    ownerId?: string,
   ): FridayRealtimeEventEnvelope[];
   listByStream(
     db: Database.Database,
     streamId: string,
     limit: number,
+    ownerId?: string,
   ): FridayRealtimeEventEnvelope[];
   deleteOlderThan(db: Database.Database, before: string): number;
   getLatestSeq(db: Database.Database, streamId: string): number;
+}
+
+export interface CreateFridayRealtimeEventRepositoryDeps {
+  /**
+   * Resolve the canonical hub owner id that OWNS every realtime event this repo
+   * persists (SEC-EVENT-REDACTION-001 / P0#2). Written to `owner_id` on append.
+   * If it resolves to nullish/blank, `owner_id` is written NULL → the row is an
+   * inaccessible fail-closed sentinel (never returned by an owner-scoped read).
+   */
+  resolveOwnerId?: () => string | null | undefined;
 }
 
 function rowToEnvelope(row: FridayRealtimeEventRow): FridayRealtimeEventEnvelope {
@@ -52,13 +70,27 @@ function rowToEnvelope(row: FridayRealtimeEventRow): FridayRealtimeEventEnvelope
 
 // ─── Factory ───
 
-export function createFridayRealtimeEventRepository(): FridayRealtimeEventRepository {
+export function createFridayRealtimeEventRepository(
+  deps: CreateFridayRealtimeEventRepositoryDeps = {},
+): FridayRealtimeEventRepository {
+  function resolveOwnerIdOrNull(): string | null {
+    let ownerId: string | null | undefined;
+    try {
+      ownerId = deps.resolveOwnerId?.();
+    } catch {
+      ownerId = null;
+    }
+    // Fail-closed: an unresolvable/blank owner is persisted as NULL so the row is
+    // an inaccessible sentinel — never returned by an owner-scoped read.
+    return typeof ownerId === "string" && ownerId.trim().length > 0 ? ownerId : null;
+  }
+
   return {
     append(db, envelope) {
       const redactedPayload = redactEventPayload(envelope.payload);
       db.prepare(
-        `INSERT INTO realtime_events (event_id, stream_id, seq, event, payload_json, emitted_at, correlation_id, state_version_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO realtime_events (event_id, stream_id, seq, event, payload_json, emitted_at, correlation_id, state_version_json, created_at, owner_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         envelope.eventId,
         envelope.streamId,
@@ -69,6 +101,7 @@ export function createFridayRealtimeEventRepository(): FridayRealtimeEventReposi
         envelope.correlationId ?? null,
         envelope.stateVersion ? JSON.stringify(envelope.stateVersion) : null,
         envelope.emittedAt,
+        resolveOwnerIdOrNull(),
       );
     },
 
@@ -79,21 +112,37 @@ export function createFridayRealtimeEventRepository(): FridayRealtimeEventReposi
       return (row.max_seq ?? 0) + 1;
     },
 
-    listAfterSeq(db, streamId, afterSeq, limit) {
-      const rows = db
-        .prepare(
-          "SELECT * FROM realtime_events WHERE stream_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?",
-        )
-        .all(streamId, afterSeq, limit) as FridayRealtimeEventRow[];
+    listAfterSeq(db, streamId, afterSeq, limit, ownerId) {
+      // Owner-scoped when ownerId is provided: `owner_id = ?` excludes NULL-owner
+      // (legacy/sentinel) rows and every other owner's rows (fail-closed).
+      const rows =
+        ownerId === undefined
+          ? (db
+              .prepare(
+                "SELECT * FROM realtime_events WHERE stream_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?",
+              )
+              .all(streamId, afterSeq, limit) as FridayRealtimeEventRow[])
+          : (db
+              .prepare(
+                "SELECT * FROM realtime_events WHERE owner_id = ? AND stream_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?",
+              )
+              .all(ownerId, streamId, afterSeq, limit) as FridayRealtimeEventRow[]);
       return rows.map(rowToEnvelope);
     },
 
-    listByStream(db, streamId, limit) {
-      const rows = db
-        .prepare(
-          "SELECT * FROM realtime_events WHERE stream_id = ? ORDER BY seq ASC LIMIT ?",
-        )
-        .all(streamId, limit) as FridayRealtimeEventRow[];
+    listByStream(db, streamId, limit, ownerId) {
+      const rows =
+        ownerId === undefined
+          ? (db
+              .prepare(
+                "SELECT * FROM realtime_events WHERE stream_id = ? ORDER BY seq ASC LIMIT ?",
+              )
+              .all(streamId, limit) as FridayRealtimeEventRow[])
+          : (db
+              .prepare(
+                "SELECT * FROM realtime_events WHERE owner_id = ? AND stream_id = ? ORDER BY seq ASC LIMIT ?",
+              )
+              .all(ownerId, streamId, limit) as FridayRealtimeEventRow[]);
       return rows.map(rowToEnvelope);
     },
 
