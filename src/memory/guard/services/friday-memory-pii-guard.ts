@@ -49,8 +49,13 @@ import {
   redactSecretShapesInString,
 } from "../../../security/friday-secret-shape-redactor.js";
 
-/** Marker spliced for a secret-shape KEY match — byte-identical to the value path's secret marker. */
-const KEY_SECRET_MARKER = FRIDAY_DEFAULT_SECRET_MARKER;
+/**
+ * Marker spliced for a secret-shape match in a KEY or a string VALUE — byte-identical to the audit
+ * writer's `AUDIT_SECRET_MARKER`, so the key leg, the value leg (`redactStringLeaf`/`scanAndTransform`),
+ * and the audit content/identifier legs all splice the SAME `[REDACTED_SECRET]` token. ONE canonical
+ * marker, no sink-local divergence.
+ */
+const SECRET_MARKER = FRIDAY_DEFAULT_SECRET_MARKER;
 
 interface PiiPattern {
   type: FridayMemoryGuardPiiType;
@@ -227,13 +232,17 @@ function redactContent(content: string, matches: FridayMemoryGuardPiiMatch[]): s
 /**
  * Report every PII match in `normalized` as a `[start, end)` span plus the SAME placeholder
  * `redactContent` would splice for it (`[EMAIL]` / `[SSN_US]` / `[CREDIT_CARD]` / `[PHONE_US]`), so
- * span-based Unicode redaction is byte-consistent with the in-place ASCII redactor. This is the SPAN
- * entry point `redactKey`'s Unicode pass hands to the shared `redactUnicodeObfuscated`: the matcher
- * runs over the de-obfuscated DETECTION COPY, and each span is mapped back to the ORIGINAL key and
- * redacted there. Reusing `findMatches` keeps the credit-card Luhn + false-positive gates identical
- * to how the guard classifies the same shape as a VALUE — no divergent copy of the detectors.
+ * span-based Unicode redaction is byte-consistent with the in-place ASCII redactor. This is the KEY-leg
+ * Unicode-PII SPAN entry point `redactKey` hands to `redactUnicodeObfuscated`: the matcher runs over the
+ * de-obfuscated DETECTION COPY, and each span is mapped back to the ORIGINAL key and redacted there.
+ * Reusing `findMatches` keeps the credit-card Luhn + false-positive gates identical to how the guard
+ * classifies the same shape as a raw VALUE — no divergent copy of the detectors.
+ *
+ * NOTE: the string-VALUE leg (`redactSecretAndPiiValueString`) deliberately does NOT run this over the
+ * NFKD detection copy — it keeps PII on `findMatches` (which does not fold U+3000 / U+FF0C) to avoid the
+ * ideographic-space card-bridge over-redaction. See `redactSecretAndPiiValueString`'s header.
  */
-function findKeyPiiSpans(normalized: string): UnicodeNormalizedSpan[] {
+function findPiiSpans(normalized: string): UnicodeNormalizedSpan[] {
   return findMatches(normalized).map((m) => ({
     start: m.start,
     end: m.end,
@@ -242,25 +251,83 @@ function findKeyPiiSpans(normalized: string): UnicodeNormalizedSpan[] {
 }
 
 /**
- * SEC-EVENT-REDACTION-001 (round-12; round-13 subspan): secret-SHAPE spans in a KEY scan, via the SAME
- * value-side detector (`findSecretShapeSpans`) the audit writer uses for VALUES — NOT a divergent
- * key-local copy. Each match is reported as its sensitive CREDENTIAL `[start, end)` subspan + the
- * marker: for a whole-value shape (`sk-…`, a JWT, …) that is the whole match; for a PREFIX-BEARING
- * shape (`Authorization: Bearer …`, `api_key=…`) it is ONLY the credential AFTER the preserved
- * scheme / label + separator (round-13). So when `redactUnicodeObfuscated` maps the span back from the
- * de-obfuscated detection copy into the ORIGINAL key, ONLY the credential becomes the marker and the
- * ORIGINAL (possibly fullwidth / combining / zero-width) prefix + separator bytes survive BYTE-FOR-BYTE
- * — no ASCII reconstruction of the benign prefix. It composes with `findKeyPiiSpans` over the Unicode
- * detection copy inside `redactUnicodeObfuscated`. Together `[findKeySecretSpans, findKeyPiiSpans]` are
- * the unified structured-key sensitive-span coverage (secret ∪ PII). Secret is listed FIRST so an
- * overlap keeps the secret marker — mirroring the writer's content-leaf precedence (secret ≻ PII).
+ * SEC-EVENT-REDACTION-001 (round-12; round-13 subspan; round-14 value leg): secret-SHAPE spans in a
+ * KEY or string-VALUE scan, via the SAME canonical detector (`findSecretShapeSpans`) the audit writer
+ * uses for VALUES — NOT a divergent sink-local copy. Each match is reported as its sensitive CREDENTIAL
+ * `[start, end)` subspan + the marker: for a whole-value shape (`sk-…`, a JWT, …) that is the whole
+ * match; for a PREFIX-BEARING shape (`Authorization: Bearer …`, `api_key=…`) it is ONLY the credential
+ * AFTER the preserved scheme / label + separator (round-13). So when `redactUnicodeObfuscated` maps the
+ * span back from the de-obfuscated detection copy into the ORIGINAL key/value, ONLY the credential
+ * becomes the marker and the ORIGINAL (possibly fullwidth / combining / zero-width) prefix + separator
+ * bytes survive BYTE-FOR-BYTE — no ASCII reconstruction of the benign prefix. This is the SHARED SECRET
+ * SPAN entry point reused by BOTH the key leg (`redactKey`, where it composes with `findPiiSpans` as
+ * `[findSecretSpans, findPiiSpans]` — secret ∪ PII) AND the value leg
+ * (`redactSecretAndPiiValueString`, where it runs ALONE as `[findSecretSpans]` — the value leg keeps
+ * PII on `findMatches`; see that function's header). No divergent sink-local copy. Secret is listed
+ * FIRST in the key leg so an overlap keeps the secret marker — the writer's content-leaf `secret ≻ PII`.
  */
-function findKeySecretSpans(scan: string): UnicodeNormalizedSpan[] {
-  return findSecretShapeSpans(scan, KEY_SECRET_MARKER).map((s) => ({
+function findSecretSpans(scan: string): UnicodeNormalizedSpan[] {
+  return findSecretShapeSpans(scan, SECRET_MARKER).map((s) => ({
     start: s.start,
     end: s.end,
     replacement: s.replacement,
   }));
+}
+
+/**
+ * SEC-EVENT-REDACTION-001 (round-14): the CANONICAL secret-shape redaction for a string VALUE,
+ * composed WITH the UNCHANGED PII value leg (redact mode). Before round-14 the value leg
+ * (`redactStringLeaf` / `scanAndTransform`) ran ONLY the PII detectors, so a SECRET-shape string VALUE
+ * (`sk-proj-…` / a JWT / a PEM block / `Authorization: Bearer …` / `api_key=…` / `github_pat_…`, raw
+ * OR Unicode-obfuscated) escaped every `redactDeep` consumer — memory egress, the learned-fact output
+ * filter, and the public UIX / asset-inventory routes returned it verbatim. This adds the SAME
+ * canonical secret detector (`findSecretShapeSpans` / `redactSecretShapesInString`) the audit writer
+ * and `redactKey` already use — reused, NO sink-local copy — over BOTH the raw string AND its Unicode
+ * de-obfuscation copy, secret FIRST so an overlapping credential keeps the secret marker
+ * (`token=123-45-6789` → `token=[REDACTED_SECRET]`, mirroring the writer's content-leaf `secret ≻ PII`).
+ * There is deliberately NO pure-`\p{Nd}` exemption (that is a KEY-only preservation for ambiguous
+ * business ids; a full-width / Arabic-Indic card VALUE must still redact, exactly as the legacy value
+ * leg redacted a full-width card).
+ *
+ * WHY PII STAYS ON `findMatches` (NOT the NFKD detection copy). The Unicode pass runs ONLY the SECRET
+ * finder, never the PII finder. Secret shapes are contiguous / structured, so folding on the NFKD copy
+ * only ever REVEALS a real obfuscated credential. The PII CARD detector is different: running it over
+ * the NFKD copy would fold an ideographic space U+3000 / full-width comma U+FF0C into an ASCII
+ * space/comma the card regex's `[ -]` class bridges, turning two benign full-width digit groups into a
+ * false 16-digit card — the exact over-redaction `foldWidthForMatching` deliberately AVOIDS by NOT
+ * folding U+3000 / U+FF0C (the "ideographic-space non-bridge" contract). So PII keeps the legacy
+ * `findMatches` (ASCII + the length-preserving full-width fold) here, which makes the whole value leg a
+ * PROVABLE STRICT SUPERSET of pre-round-14: identical PII behavior, ZERO over-redaction regression, and
+ * the ONLY new redactions are raw + Unicode-obfuscated SECRET shapes. (Unicode-obfuscated PII-by-value
+ * in the memory VALUE leg was NOT covered before round-14 and stays uncovered here — an intentional
+ * exception recorded in the round-14 inventory; the audit content path covers it via the audit writer's
+ * own pre/finalize passes, accepting that tradeoff for its owner-scoped 0600 sink.)
+ *
+ * STRICT SUPERSET / NO-DEGRADE. On a value whose Unicode detection copy is UNCHANGED (pure ASCII) AND
+ * that carries NO secret shape, Pass 1 is skipped, Pass 2's raw secret scrubber is a no-op, and the
+ * result is EXACTLY `redactContent(s, findMatches(s))` — byte-identical to the pre-round-14 PII-only
+ * leg (and identical to returning `s` when there is no PII). A benign multilingual value folds to no
+ * secret / PII shape, so every pass is a no-op and it round-trips verbatim.
+ */
+function redactSecretAndPiiValueString(s: string): string {
+  // Pass 1 — Unicode-aware SECRET redaction over the de-obfuscated detection copy (secret shapes ONLY:
+  // a Unicode-obfuscated sk-/JWT/PEM/github_pat/Bearer/assignment de-obfuscates and is redacted, its
+  // ORIGINAL prefix bytes preserved via the credential-subspan mapping). Skipped (no-op) when the copy
+  // is unchanged (pure ASCII). PII is deliberately NOT run here (see the header note).
+  const detection = buildUnicodeDetectionCopy(s);
+  const secretUnicode = detection.changed
+    ? redactUnicodeObfuscated(s, [findSecretSpans])
+    : s;
+  // Pass 2 — raw secret residual: the in-place secret-shape scrubber (no-op on any string with no
+  // secret shape → byte-identical to the legacy leg on a non-secret value). For a PURE-ASCII secret
+  // this is the ONLY leg that catches it (Pass 1 was skipped).
+  const secretResidual = redactSecretShapesInString(secretUnicode, SECRET_MARKER);
+  // Pass 3 — PII residual: the UNCHANGED legacy value-PII leg (`findMatches` = ASCII + full-width fold,
+  // U+3000 / U+FF0C-safe) over the secret-scrubbed result. Byte-identical to pre-round-14 for every
+  // non-secret value; on a secret whose credential is also PII-shaped the secret marker already
+  // consumed those bytes, so PII finds nothing (secret precedence).
+  const piiResidual = findMatches(secretResidual);
+  return piiResidual.length > 0 ? redactContent(secretResidual, piiResidual) : secretResidual;
 }
 
 /**
@@ -397,16 +464,25 @@ export function createFridayMemoryPiiGuard(
 
   return {
     scanAndTransform(content: string): FridayMemoryGuardPiiScanResult {
+      // `matches` / `distinctTypes` / `tagsToAdd` remain PII-ONLY (secrets carry no guard tag — the
+      // guard is a PII tagger; secret redaction is a mutation, matching the key leg + the audit
+      // value-secret path which also emit no tag). So a secret-only content string still returns
+      // `matches: []`, keeping every downstream consumer (store-path block/tag decisions, the audit
+      // writer's `findPiiValueSpans`) byte-identical.
       const matches = findMatches(content);
       const distinctTypes = [...new Set(matches.map((m) => m.type))];
       const tagsToAdd = distinctTypes.map(
         (type) => `${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${type}`,
       );
 
-      let transformedContent = content;
-      if (effectiveMode === "redact" && matches.length > 0) {
-        transformedContent = redactContent(content, matches);
-      }
+      // SEC-EVENT-REDACTION-001 (round-14): in redact mode `transformedContent` now composes the
+      // shared secret-shape scrubber (raw ∪ Unicode) WITH the existing PII redaction via the ONE
+      // canonical value transform — so a secret string VALUE is scrubbed exactly as `redactKey`
+      // scrubs a secret KEY. On a PII-only / benign / pure-ASCII content string this is
+      // byte-identical to the pre-round-14 `redactContent(content, matches)` (see
+      // `redactSecretAndPiiValueString`). tag/block mode leaves content unchanged (unchanged).
+      const transformedContent =
+        effectiveMode === "redact" ? redactSecretAndPiiValueString(content) : content;
 
       return {
         matches,
@@ -429,15 +505,21 @@ export function createFridayMemoryPiiGuard(
       // and violating the tag/block mode contracts. Deep PII is still ALWAYS found (the F2 leak
       // stays closed) and benign deep data now round-trips UNCHANGED.
 
-      // String leaves keep the EXISTING shape-based at-rest policy (unchanged by this lane):
-      // scan with the PII patterns and redact in place in redact mode, tag-only otherwise.
+      // String VALUE leaf. PII tags are collected from `findMatches` (ASCII + full-width) exactly as
+      // before — secrets carry NO guard tag (mirrors `redactKey` + the audit value-secret path), and
+      // tag/block mode never mutates the value. In REDACT mode the value is scrubbed by the ONE
+      // canonical secret ∪ PII value transform (`redactSecretAndPiiValueString`) so a secret-shape
+      // string VALUE (raw or Unicode-obfuscated) is redacted exactly as `redactKey` redacts a secret
+      // KEY — closing SEC-EVENT-REDACTION-001's memory-egress leak. On a PII-only / benign /
+      // pure-ASCII value that transform is byte-identical to the pre-round-14
+      // `redactContent(s, findMatches(s))` (or to returning `s` unchanged when there is no PII), so
+      // this is a STRICT SUPERSET.
       const redactStringLeaf = (s: string): string => {
         const matches = findMatches(s);
-        if (matches.length === 0) return s;
         for (const m of matches) {
           tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${m.type}`);
         }
-        return effectiveMode === "redact" ? redactContent(s, matches) : s;
+        return effectiveMode === "redact" ? redactSecretAndPiiValueString(s) : s;
       };
 
       // Redact PII carried in an object KEY. String key CONTENT that is itself recognizable PII
@@ -464,7 +546,7 @@ export function createFridayMemoryPiiGuard(
       // decimal script (Arabic-Indic `١٢٣-٤٥-٦٧٨٩`), a combining-mark splice, or a precomposed accent
       // persisted BYTE-FOR-BYTE in both audit sinks and in memory egress. This is an ADDITIVE UNION of
       // two passes — the SAME strict-superset discipline the audit writer's content pre-pass uses:
-      //   (1) UNICODE PASS FIRST — `redactUnicodeObfuscated(key, [findKeyPiiSpans])` runs the guard's
+      //   (1) UNICODE PASS FIRST — `redactUnicodeObfuscated(key, [findPiiSpans])` runs the guard's
       //       OWN PII detectors over the shared de-obfuscated DETECTION COPY (NFKD → strip `\p{M}` →
       //       strip Cf / Default_Ignorable → fold `\p{Nd}`), maps each matched span back to the
       //       ORIGINAL key span, and redacts the FULL original span. Running FULL-SPAN de-obfuscated
@@ -493,10 +575,10 @@ export function createFridayMemoryPiiGuard(
       // redaction only to string VALUES. Both legs of the round-11 two-pass now compose the SAME
       // value-side secret detector alongside the PII one, secret FIRST (precedence on overlap, mirroring
       // the writer's content-leaf `secret ≻ PII`):
-      //   (1) UNICODE PASS — `redactUnicodeObfuscated(key, [findKeySecretSpans, findKeyPiiSpans])` runs
+      //   (1) UNICODE PASS — `redactUnicodeObfuscated(key, [findSecretSpans, findPiiSpans])` runs
       //       BOTH finders over the de-obfuscated detection copy, so an OBFUSCATED secret key
       //       (`sk-<U+200B>…`, a full-width / combining-spliced credential) maps back and redacts
-      //       exactly as an obfuscated PII key does. Round-13: `findKeySecretSpans` reports ONLY the
+      //       exactly as an obfuscated PII key does. Round-13: `findSecretSpans` reports ONLY the
       //       sensitive CREDENTIAL subspan, so for a PREFIX-BEARING secret key
       //       (`Ａｕｔｈｏｒｉｚａｔｉｏｎ： Ｂｅａｒｅｒ <token>`, `ａｐｉ＿ｋｅｙ＝<token>`) the marker is spliced at the
       //       credential ALONE and the ORIGINAL fullwidth / combining / zero-width prefix + separator
@@ -535,7 +617,7 @@ export function createFridayMemoryPiiGuard(
         // (`rawMatches.length === 0 && !detection.changed`) LEAKED it verbatim — the secret probe
         // closes that. (An OBFUSCATED secret key already has `detection.changed === true`, so it never
         // hit the fast path; its secret is caught by the Unicode pass below.)
-        const hasRawSecret = findSecretShapeSpans(key, KEY_SECRET_MARKER).length > 0;
+        const hasRawSecret = findSecretShapeSpans(key, SECRET_MARKER).length > 0;
 
         // Benign key (no secret/PII in either view): byte-identical fast path, no tags — matches the
         // pre-round-11 `matches.length === 0` early return for pure ASCII and adds nothing for benign
@@ -547,12 +629,12 @@ export function createFridayMemoryPiiGuard(
         // Pass (1) Unicode-aware full-span redaction — secret ∪ PII (skipped when the copy is
         // unchanged — pure ASCII). Secret finder FIRST so an overlap keeps the secret marker.
         const unicodeRedacted = detection.changed
-          ? redactUnicodeObfuscated(key, [findKeySecretSpans, findKeyPiiSpans])
+          ? redactUnicodeObfuscated(key, [findSecretSpans, findPiiSpans])
           : key;
         // Pass (2) raw residual — secret-shape FIRST (no-op when no secret shape), then the UNCHANGED
         // round-11 PII residual. On a non-secret key `secretResidual === unicodeRedacted`, so this is
         // byte-identical to round-11.
-        const secretResidual = redactSecretShapesInString(unicodeRedacted, KEY_SECRET_MARKER);
+        const secretResidual = redactSecretShapesInString(unicodeRedacted, SECRET_MARKER);
         const rawResidual = findMatches(secretResidual);
         return rawResidual.length > 0
           ? redactContent(secretResidual, rawResidual)

@@ -1,6 +1,10 @@
 import type { FridayMemoryItem, FridayMemorySearchResult } from "../../model/friday-memory.types.js";
 import type { FridayMemoryGuardOutputFilter } from "../model/friday-memory-guard.types.js";
 import { createFridayMemoryPiiGuard } from "./friday-memory-pii-guard.js";
+// SEC-EVENT-REDACTION-001 (round-14): the SAME canonical secret-shape detector the shared guard's
+// value/key legs compose — reused, NOT re-copied — so a secret-shaped TAG is dropped on egress exactly
+// as a PII-bearing tag is (a "[REDACTED_SECRET]" marker is not a valid constrained-charset tag).
+import { findSecretShapeSpans } from "../../../security/friday-secret-shape-redactor.js";
 
 import {
   FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS,
@@ -19,15 +23,20 @@ function redactAndTruncate(value: string, maxChars: number): string {
   return truncateString(piiRedactor.scanAndTransform(value).transformedContent, maxChars);
 }
 
-// Strip PII from metadata + tags on read-back (defense in depth: items stored before
-// metadata/tag PII handling existed must not leak PII when returned). Metadata values are
-// free-form, so PII is redacted in place; a tag whose content is PII is dropped (a
-// "[EMAIL]"-style marker would not be a valid tag), mirroring the store path.
+// Strip PII + secrets from metadata + tags on read-back (defense in depth: items stored before
+// metadata/tag sensitive-value handling existed must not leak when returned). Metadata values are
+// free-form, so PII AND secret shapes are redacted in place by the shared `redactDeep` (its round-14
+// string-VALUE leg now composes the canonical secret detector with PII); a tag whose content is PII
+// OR a secret shape is dropped (a "[EMAIL]" / "[REDACTED_SECRET]" marker would not be a valid tag),
+// mirroring the store path's drop-and-surface handling.
 function redactMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
   return piiRedactor.redactDeep(metadata).value as Record<string, unknown>;
 }
-function dropPiiTags(tags: string[]): string[] {
-  return tags.filter((tag) => piiRedactor.scanAndTransform(tag).matches.length === 0);
+function dropSensitiveTags(tags: string[]): string[] {
+  return tags.filter(
+    (tag) =>
+      piiRedactor.scanAndTransform(tag).matches.length === 0 && findSecretShapeSpans(tag).length === 0,
+  );
 }
 
 function filterItemImpl(item: FridayMemoryItem): FridayMemoryItem {
@@ -35,7 +44,7 @@ function filterItemImpl(item: FridayMemoryItem): FridayMemoryItem {
     ...item,
     content: redactAndTruncate(item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
     metadata: redactMetadata(item.metadata),
-    tags: dropPiiTags(item.tags),
+    tags: dropSensitiveTags(item.tags),
   };
 }
 
