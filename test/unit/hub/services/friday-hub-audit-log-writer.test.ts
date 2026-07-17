@@ -786,4 +786,129 @@ describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 details redaction"
     expect(sqliteDetailsJson).not.toContain("+[");
     expect(sqliteDetailsJson).not.toContain("4915112345678");
   });
+
+  // ─── Advisor round-4 blocking finding: forensic preservation is LEAF-and-TYPE-aware, never a
+  //     subtree exemption ───
+  //
+  // The round-3 forensic treatment cut the ENTIRE value subtree under a forensic-named key
+  // (`requestId`/`traceId`/`correlationId`/…) out of the PII guard and restored it applying ONLY the
+  // secret-shape + phone passes — so nested email/SSN/card/password and DIRECT PII on a forensic leaf
+  // survived VERBATIM. These tests drive the real writer and raw-read BOTH at-rest sinks (SQLite
+  // `details_json` + `audit.jsonl`); they are RED on 381d7cf5 and GREEN post-fix.
+  const ADVISOR_CANARY_EMAIL = "advisor-canary@example.com";
+  // Shape-less credential (no recognizable secret shape) — catchable ONLY by its sensitive KEY name.
+  const OPAQUE_CREDENTIAL = "opaque-credential-no-recognized-shape"; // pragma: allowlist secret
+
+  it("RED→GREEN advisor-4 (nested): PII/secrets nested UNDER a forensic-named object/array key are removed (no subtree exemption)", async () => {
+    const entry: FridayAuditLogWrite = {
+      id: "forensic-subtree-1",
+      ts: "2026-07-17T03:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-1",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-8",
+      details: {
+        // Forensic key holding an OBJECT — round-3 exempted the whole subtree; these MUST be redacted.
+        requestId: {
+          userEmail: ADVISOR_CANARY_EMAIL,
+          userSsn: SSN,
+          card: CARD,
+          password: OPAQUE_CREDENTIAL, // shape-less credential under a sensitive key name
+        },
+        // Forensic key holding an ARRAY of PII objects — each element re-establishes per-key roles.
+        traceId: [
+          { userEmail: ADVISOR_CANARY_EMAIL, userSsn: SSN },
+          { password: OPAQUE_CREDENTIAL, card: CARD },
+        ],
+        // Forensic key holding an object with NESTED BENIGN forensic ids + benign content — these
+        // MUST survive byte-identical while the sibling PII is removed (NO-DEGRADE inside recursion).
+        correlationId: {
+          innerRunId: RUN_ID, // nested forensic-keyed benign opaque id → preserved
+          label: "delivery", // benign content → preserved
+          chatId: CHAT_ID_SIGNAL, // nested PII (content) → redacted
+        },
+      },
+    };
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine } = await writeAndReadBack(entry);
+
+    // Every nested canary is ABSENT from BOTH raw at-rest sinks.
+    const forbidden = [ADVISOR_CANARY_EMAIL, SSN, CARD, OPAQUE_CREDENTIAL, "14155552671"];
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      for (const secret of forbidden) {
+        expect(sink).not.toContain(secret);
+      }
+    }
+
+    const details = sqliteDetails as Record<string, unknown>;
+    const req = details.requestId as Record<string, string>;
+    expect(req.userEmail).toBe("[EMAIL]");
+    expect(req.userSsn).toBe("[SSN_US]");
+    expect(req.card).toBe("[CREDIT_CARD]");
+    expect(req.password).toBe("[REDACTED_SECRET]");
+
+    const trace = details.traceId as Array<Record<string, string>>;
+    expect(trace[0].userEmail).toBe("[EMAIL]");
+    expect(trace[0].userSsn).toBe("[SSN_US]");
+    expect(trace[1].password).toBe("[REDACTED_SECRET]");
+    expect(trace[1].card).toBe("[CREDIT_CARD]");
+
+    // NO-DEGRADE inside the recursion: nested benign forensic id + benign content survive; nested PII redacted.
+    const corr = details.correlationId as Record<string, string>;
+    expect(corr.innerRunId).toBe(RUN_ID);
+    expect(corr.label).toBe("delivery");
+    expect(corr.chatId).toBe("[PHONE_US]");
+  });
+
+  it("RED→GREEN advisor-4 (direct leaf): DIRECT PII/secret on a forensic-named SCALAR leaf is redacted; benign-opaque leaves preserved", async () => {
+    const entry: FridayAuditLogWrite = {
+      id: "forensic-leaf-1",
+      ts: "2026-07-17T04:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-1",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-9",
+      details: {
+        // DIRECT PII on forensic leaves — round-3 preserved these verbatim; they MUST be redacted.
+        traceId: ADVISOR_CANARY_EMAIL, // email on a forensic leaf
+        correlationId: SSN, // bare SSN on a forensic leaf
+        spanId: CARD, // bare Luhn card on a forensic leaf
+        // Benign-opaque forensic leaves — MUST survive (NO-DEGRADE).
+        requestId: RUN_ID,
+        messageId: MESSAGE_ID,
+        // Phone-shaped benign id — preserved (phone shape does NOT disqualify a forensic id).
+        nodeId: BENIGN_PHONE_SHAPED_ID,
+        // Channel-embedded phone in a forensic id — phone redacted, routing prefix + msg tail survive.
+        channelCorrelationId: CORRELATION_ID_SIGNAL,
+      },
+    };
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine } = await writeAndReadBack(entry);
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(ADVISOR_CANARY_EMAIL);
+      expect(sink).not.toContain(SSN);
+      expect(sink).not.toContain(CARD);
+      expect(sink).not.toContain("14155552671"); // channel-embedded phone digits
+    }
+
+    const details = sqliteDetails as Record<string, string>;
+    // Direct PII on forensic leaves → redacted (not preserved just because the key is forensic-named).
+    expect(details.traceId).toBe("[EMAIL]");
+    expect(details.correlationId).toBe("[SSN_US]");
+    expect(details.spanId).toBe("[CREDIT_CARD]");
+    // Benign-opaque forensic leaves preserved byte-identical.
+    expect(details.requestId).toBe(RUN_ID);
+    expect(details.messageId).toBe(MESSAGE_ID);
+    expect(details.nodeId).toBe(BENIGN_PHONE_SHAPED_ID);
+    expect(details.nodeId).not.toBe("[PHONE_US]");
+    // Channel-embedded phone redacted, routing prefix + message id survive.
+    expect(details.channelCorrelationId).toBe(CORRELATION_ID_SIGNAL_REDACTED);
+    expect(details.channelCorrelationId).toContain("channel:signal:");
+    expect(details.channelCorrelationId).toContain(MESSAGE_ID);
+  });
 });

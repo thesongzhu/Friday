@@ -236,14 +236,20 @@ function mapStringsDeep(value: unknown, fn: (s: string) => unknown): unknown {
 }
 
 /**
- * Curated forensic-identifier allowlist (normalized to compact lowercase). Values under these
- * keys are PRESERVED — they skip the `redactDeep` PII-by-value pass and only the identifier-leaf
- * pass runs on them (secret shapes + residual leading-country-code E.164 phone; see
- * `redactIdentifierLeaf`) — so distinct correlation / trace / run / request / resource identifiers
- * stay distinct and a benign national-format numeric id is never corrupted by a false-positive PII
- * match, while a phone embedded in a channel-derived id (`channel:<kind>:<phone>:…`) is still
- * stripped. This is the #1618 field-role lesson: a blunt deep-redact over a whole payload collapses
- * distinct identifiers and corrupts benign business ids.
+ * Curated forensic-identifier allowlist (normalized to compact lowercase). A value under one of
+ * these keys is preserved ONLY when it is a validated benign-opaque identifier LEAF (see
+ * `isPreservableForensicLeaf` — Advisor round-4): such a leaf skips the `redactDeep` PII-by-value
+ * pass and only the identifier-leaf pass runs on it (secret shapes + residual leading-country-code
+ * E.164 phone; see `redactIdentifierLeaf`) — so distinct correlation / trace / run / request /
+ * resource identifiers stay distinct and a benign national-format numeric id is never corrupted by a
+ * false-positive PII match, while a phone embedded in a channel-derived id (`channel:<kind>:<phone>:…`)
+ * is still stripped. This is the #1618 field-role lesson: a blunt deep-redact over a whole payload
+ * collapses distinct identifiers and corrupts benign business ids.
+ *
+ * The forensic key is NOT a subtree exemption: a forensic key over an OBJECT / ARRAY is RECURSED
+ * (its descendants get the full sensitive-key + PII-by-value + secret classification), and a forensic
+ * key over a scalar that is itself email / SSN / card by value or a secret shape is REDACTED — a
+ * forensic-named key never launders raw PII (Advisor round-4 blocking finding).
  *
  * The allowlist holds ONLY machine-generated correlation / trace / run / request / sequence ids —
  * values that are never user PII but CAN coincidentally match a PII shape (e.g. a phone-shaped
@@ -286,12 +292,68 @@ function isForensicIdentifierKey(key: string): boolean {
 }
 
 /**
- * OUT-OF-BAND marker for a cut-out forensic subtree (reviewer finding F-1). Restoration keys on
+ * PII types (by value) that DISQUALIFY a forensic-named scalar leaf from identifier preservation.
+ * A forensic key preserves a value only when it is a validated BENIGN OPAQUE identifier; a scalar
+ * that is genuinely email / SSN / credit-card by value is user PII and MUST be redacted (Advisor
+ * round-4: "do NOT preserve raw PII just because the key is forensic-named"). `phone_us` is
+ * DELIBERATELY EXCLUDED: a phone-SHAPED value is routinely a benign machine id (a false-positive we
+ * must not corrupt — the #1618 lesson: `requestId:"2015550123"` stays verbatim), and an embedded
+ * CHANNEL phone (`channel:<kind>:<+1…>:<msgid>`) is stripped by `redactIdentifierLeaf`'s
+ * leading-country-code passes while the routing prefix + id structure survive. So a phone shape
+ * never disqualifies a forensic identifier — only email / SSN / card do.
+ */
+const FORENSIC_LEAF_REDACT_PII_TYPES = new Set<string>(["email", "ssn_us", "credit_card"]);
+
+/**
+ * True when a forensic-named SCALAR STRING is a validated BENIGN OPAQUE identifier that may be
+ * PRESERVED (cut out of the PII pass, then run through the identifier-leaf only). It is NOT benign —
+ * and is instead routed to the CONTENT path for redaction — when it carries a secret SHAPE (opaque
+ * credential assignment / token / key / JWT / PEM / Bearer) OR direct email / SSN / card PII by
+ * value. The PII check reuses the shared guard's own detectors (via `redactDeep`'s emitted tags) so
+ * it is byte-consistent with how the same value would be classified as content, and it excludes the
+ * phone type by design (see `FORENSIC_LEAF_REDACT_PII_TYPES`).
+ */
+function isBenignOpaqueForensicScalar(value: string): boolean {
+  if (redactSecretShapesInString(value) !== value) return false;
+  const piiTags = auditPiiGuard.redactDeep(value).tagsToAdd;
+  for (const tag of piiTags) {
+    const type = tag.slice(tag.lastIndexOf(".") + 1);
+    if (FORENSIC_LEAF_REDACT_PII_TYPES.has(type)) return false;
+  }
+  return true;
+}
+
+/**
+ * Leaf-and-type-aware forensic gate (Advisor round-4 blocking-finding fix). A forensic-named key
+ * PRESERVES its value ONLY when this returns true; otherwise the value is routed to the normal
+ * CONTENT path (descended + PII/secret-redacted). The forensic exemption is therefore "preserve a
+ * validated benign-opaque identifier LEAF", NEVER "exempt an arbitrary subtree" and NEVER "preserve
+ * a PII/secret value":
+ *   - OBJECT / ARRAY  → NOT preservable. Routed to content so its descendants get the FULL
+ *     sensitive-key + PII-by-value + secret classification; nested forensic-keyed benign leaves are
+ *     re-preserved one level down by their own key.
+ *   - non-string scalar (number / bigint / boolean / null) and genuine `Date` → preservable: it can
+ *     never be email / SSN / card by value here (the shared guard only redacts a numeric under a
+ *     SENSITIVE key, which a forensic key is not).
+ *   - scalar STRING  → preservable ONLY when validated benign-opaque (no email / SSN / card, no
+ *     secret shape); a PII/secret scalar is routed to content and redacted.
+ */
+function isPreservableForensicLeaf(value: unknown): boolean {
+  if (value !== null && typeof value === "object" && !(value instanceof Date)) return false;
+  if (typeof value !== "string") return true;
+  return isBenignOpaqueForensicScalar(value);
+}
+
+/**
+ * OUT-OF-BAND marker for a cut-out benign-opaque forensic identifier LEAF (reviewer finding F-1;
+ * Advisor round-4 narrowed the cut from a whole subtree to a validated leaf). Restoration keys on
  * OBJECT IDENTITY (`instanceof`), NEVER on a string value — so NO untrusted content value can ever
  * be mistaken for a marker (a prior in-band NUL-delimited string sentinel could be forged verbatim
  * by a caller `details` value, corrupting the record). It extends `Date` because a `Date` is the
  * ONLY value the shared guard's `redactDeep` (and `mapStringsDeep`) passes through BY REFERENCE, so
- * the marker survives the PII pass with its identity — and its captured `original` — intact.
+ * the marker survives the PII pass with its identity — and its captured `original` — intact. The
+ * wrapped `original` is only ever a scalar leaf (a validated benign-opaque string, or a number /
+ * boolean / null / Date), never an arbitrary subtree.
  */
 class AuditForensicRef extends Date {
   readonly original: unknown;
@@ -311,9 +373,13 @@ function redactContentChannelPhones(input: string): string {
  * classification applied at EVERY object level (finding 2). Iterative + cycle-aware (a back-edge to
  * a node still on the DFS path becomes a structural share, so deep/cyclic input neither overflows
  * the stack nor loops). At each object key:
- *   - forensic identifier key  → the whole value is CUT: replaced by an `AuditForensicRef` wrapper
- *     (out-of-band identity), so the PII guard never sees (and never corrupts) a nested benign
- *     identifier such as `nested.requestId = "2015550123"`;
+ *   - forensic identifier key holding a PRESERVABLE LEAF (validated benign-opaque scalar, or a
+ *     number / boolean / null / Date; see `isPreservableForensicLeaf`) → the LEAF is CUT: replaced
+ *     by an `AuditForensicRef` wrapper (out-of-band identity), so the PII guard never sees (and never
+ *     corrupts) a benign identifier such as `requestId = "2015550123"`. A forensic key over an
+ *     OBJECT / ARRAY, or over a scalar that is itself email / SSN / card / secret, is NOT cut — it
+ *     falls through to the content path so its descendants are fully classified (Advisor round-4:
+ *     the exemption is a benign-opaque LEAF, never a subtree, never a PII/secret value);
  *   - sensitive-secret key     → the whole value is nuked to the secret marker (an opaque
  *     credential has no shape and is only catchable by its key);
  *   - content key              → cloned through and descended, so `redactDeep` redacts its PII.
@@ -364,7 +430,11 @@ function buildContentSkeleton(root: unknown): unknown {
       stack.push({ exit: v });
       const childFrames: ValueFrame[] = [];
       for (const [key, child] of Object.entries(v as Record<string, unknown>)) {
-        if (isForensicIdentifierKey(key)) {
+        if (isForensicIdentifierKey(key) && isPreservableForensicLeaf(child)) {
+          // LEAF-and-type-aware forensic preservation: cut ONLY a validated benign-opaque
+          // identifier LEAF out of the PII pass — never an arbitrary subtree, never a PII/secret
+          // value. A forensic key over an object/array or a PII/secret scalar falls through to the
+          // content path below, so its descendants get the full PII-by-value + secret classification.
           defineOwn(obj, key, new AuditForensicRef(child)); // cut point — restored by identity in Pass 3
         } else if (isSensitiveSecretFieldName(key)) {
           defineOwn(obj, key, AUDIT_SECRET_MARKER); // nuke the whole value regardless of shape
@@ -389,8 +459,9 @@ function buildContentSkeleton(root: unknown): unknown {
 
 /**
  * Pass 3 — finalize the redacted skeleton. Iterative + cycle-aware. For each node:
- *   - `AuditForensicRef`  → restore the cut-out subtree, run through the identifier-leaf. Keyed on
- *     OBJECT IDENTITY, so a content value can NEVER be mistaken for a marker (F-1 fix);
+ *   - `AuditForensicRef`  → restore the cut-out benign-opaque identifier leaf, run through the
+ *     identifier-leaf. Keyed on OBJECT IDENTITY, so a content value can NEVER be mistaken for a
+ *     marker (F-1 fix);
  *   - genuine `Date`      → preserved (type + value);
  *   - string leaf         → content-leaf (secret shapes + US/intl phone);
  *   - array / object      → rebuilt, keys reserved in FORWARD order (order + `__proto__` safety).
@@ -463,9 +534,11 @@ function finalizeRedactedSkeleton(root: unknown): unknown {
 /**
  * Redact the caller `details` payload before persistence. RECURSIVE, field-role aware at EVERY
  * nesting level (SEC-EVENT-REDACTION-001):
- *   - forensic identifier fields (allowlist, any depth) → PRESERVED as identifiers (cut out of the
- *     PII guard, identifier-leaf only), so distinct ids stay distinct and a nested benign
- *     phone-shaped id is never corrupted to `[PHONE_US]`;
+ *   - forensic identifier fields (allowlist, any depth) holding a benign-opaque LEAF → PRESERVED as
+ *     identifiers (cut out of the PII guard, identifier-leaf only), so distinct ids stay distinct and
+ *     a nested benign phone-shaped id is never corrupted to `[PHONE_US]`. A forensic key over an
+ *     object/array is RECURSED and a forensic scalar that is PII/secret by value is REDACTED — the
+ *     exemption is a benign-opaque LEAF, never a subtree exemption (Advisor round-4 blocking finding);
  *   - sensitive-secret field NAMES (any depth)          → whole value nuked to the secret marker;
  *   - every other CONTENT field                         → phone pre-pass, then PII-by-value
  *     redaction via `redactDeep`, then the content-leaf (secret shapes + US/intl phone).
@@ -476,8 +549,9 @@ function finalizeRedactedSkeleton(root: unknown): unknown {
  * it by reference. A benign payload round-trips byte-identically (structure + key order preserved).
  */
 function redactAuditDetails(details: Record<string, unknown>): Record<string, unknown> {
-  // Pass 1 — structural cut walk: forensic subtrees → AuditForensicRef; secret values → marker;
-  // content strings → phone pre-pass (US + intl) so `+`-E.164 never reaches the card detector.
+  // Pass 1 — structural cut walk: benign-opaque forensic LEAVES → AuditForensicRef; secret values →
+  // marker; forensic objects/arrays + PII/secret forensic scalars descend as content; content
+  // strings → phone pre-pass (US + intl) so `+`-E.164 never reaches the card detector.
   const skeleton = buildContentSkeleton(details);
 
   // Pass 2 — PII-by-value redaction over the whole content skeleton via the shared guard. The
