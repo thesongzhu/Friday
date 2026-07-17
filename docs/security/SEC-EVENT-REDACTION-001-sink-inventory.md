@@ -1,4 +1,4 @@
-# SEC-EVENT-REDACTION-001 + PRIV-UNICODE-REDACTION-001 — redaction sink × branch inventory (round-16)
+# SEC-EVENT-REDACTION-001 + PRIV-UNICODE-REDACTION-001 — redaction sink × branch inventory (round-17)
 
 Mechanical map of **every production redaction sink that emits strings to a persistence or egress
 surface**, and, for each sink × branch, the **canonical transform** applied or an **explicit,
@@ -63,6 +63,71 @@ round-15 revision states the reconciliation and corrects the convergence claim (
    applied `outputFilter.filterItem`. A secret / PII / secret-shaped tag in an item written before the
    store-time guard leaked here. Round-16 routes it through the SAME `outputFilter.filterItem` (sink #12).
 
+## Round-17 — one discovered miss + a PROVABLY-COMPLETE catalog sweep (so no round-18)
+
+1. **[SECURITY] HuggingFace `hf_` token was uncovered.** `detectFridayProviderKindFromApiKey`
+   (`friday-provider-catalog.ts:165-166`) classifies `hf_` as `{kind:"huggingface", confidence:"high"}`
+   — a real, fully-wired Friday provider bearer credential — in the SAME function round-16 mined for
+   `gsk_`/`xai-`, yet the canonical detector MISSED it, so an `hf_` token leaked VERBATIM on memory-egress
+   + audit sinks (raw + Unicode-obfuscated) under a non-sensitive key. Added
+   `\bhf_[A-Za-z0-9]{34,}\b`. Real HF user access tokens are `hf_` + 34 **base62** chars (digits INCLUDED);
+   the char class `[A-Za-z0-9]` is a strict SUPERSET of the letters-only `hf_[a-zA-Z]{34}` secret-scanner
+   rule, so a digit-bearing token is never under-matched, and `{34,}` (open-ended, NOT exact `{34}`) means
+   a longer fine-grained token cannot slip the trailing `\b` and leak — mirroring the `gsk_`/`glpat-`
+   open-ended convention. The body excludes `_`, so a benign `hf_docs` / `hf_` / `hf_config_value` never
+   matches. RED on d2e0e222 (0 spans; verbatim in redactor + redactDeep + output filter + `memory.get`/
+   `memory.list` routes + audit `details_json`/`audit.jsonl`, raw AND ZWSP-mid-body); GREEN after. Because
+   the SAME detector backs audit + memory + realtime, memory==audit parity holds automatically.
+
+2. **PROVABLY-COMPLETE catalog sweep.** Every credential-recognition / classification site in the repo was
+   enumerated. There are exactly **three** such sites; after the `hf_` add, **no Friday-recognized real
+   credential shape is left uncovered as a bare value** — each is EITHER covered by the canonical detector
+   OR a documented, justified exclusion. The sweep (grep-verified — no other `startsWith(<prefix>)` /
+   prefix-classifier / literal-token site exists):
+
+   **Site A — `detectFridayProviderKindFromApiKey` (`friday-provider-catalog.ts`), the ONE key classifier
+   (consumed by `friday-setup-routes.ts` + the fallback display scrubber):**
+
+   | Prefix / shape it recognizes | → kind (confidence) | Disposition |
+   |---|---|---|
+   | `sk-ant-` | anthropic (high) | **covered** by the `sk-` shape (`-` inside value class) |
+   | `sk-or-` | openrouter (high) | **covered** by the `sk-` shape |
+   | `gsk_` | groq (high) | **covered** (added round-16) |
+   | `xai-` | xai (high) | **covered** (added round-16, in the hyphen alternation) |
+   | `hf_` | huggingface (high) | **covered — ADDED round-17** |
+   | `mistral-` | mistral (high) | **EXCLUDED** — Friday-internal heuristic of **unverified provenance**; real Mistral API keys are a **shapeless** ~32-char alphanumeric string with NO `mistral-` prefix (caught by key name), so shipping `mistral-` as a bare shape would redact a non-credential and never protect the real (shapeless) key. Not added unless a real Mistral secret is verified to use it. |
+   | `sk-<32-hex>` | deepseek (medium) | **covered** by the `sk-` shape |
+   | `<32-hex>` (bare) | glm (medium) | **EXCLUDED** — SHAPELESS 32-hex with unacceptable FP (collides with md5 / git blob / build SHA); the GLM key is caught by its KEY NAME, exactly like the AWS/Twilio secret. A bare-`<32-hex>` shape is the Twilio-SID precedent (E4). |
+   | `<a.b.c>` 3-segment JWT-like | glm (medium) | **covered** for the real JWT form (`eyJ….….…`); a generic non-`eyJ` 3-dot string is NOT a distinctive secret shape (high FP: version strings, paths) and is out of scope by the same FP rule. |
+   | `sk-proj-` / `sk-svcacct-` | openai (high) | **covered** by `sk-(?:proj-)?…` / the general `sk-` shape |
+   | `sk-` | openai (medium) | **covered** |
+   | `AI[a-zA-Z]…` | google (medium) | the real Google key form `AIza…` (39-char) is **covered**; the broad `AI[a-zA-Z]` first-run heuristic is too generic to ship as a redaction shape (FP on ordinary words). |
+
+   **Site B — `redactKeyMaterial` display scrubber (`src/providers/routing/friday-provider-fallback.ts`),
+   an AGGRESSIVE error-message DISPLAY scrubber that TOLERATES over-redaction (this canonical
+   persistence/egress detector must NOT):**
+
+   | It redacts | Disposition in the canonical detector |
+   |---|---|
+   | `sk-` / `rk-` / `xai-` / `gsk_` | **covered** |
+   | `AIza…` / `ya29.…` | **covered** |
+   | `pk-` | **EXCLUDED** — client-safe publishable / Friday satellite `publicKey` (round-16 NO-DEGRADE) |
+   | `key-` / `aip-` / `whsk-` / `sess-` / `ssm-` | **EXCLUDED** — too generic (`key-<8+>` collides with `key-management…`) or of unverified provider provenance; display-only over-redactors |
+   | `[A-Za-z0-9/+]{40,}={0,2}` (base64 blob) | **EXCLUDED** — a bare-length base64 catch-all with unacceptable FP (any 40-char base64 id / hash); display-only |
+
+   **Site C — setup recipes (`friday-setup-builtin-recipes.ts`), which mark credential inputs
+   `sensitive: true` / name their prefixes:**
+
+   | It recognizes | Disposition |
+   |---|---|
+   | Slack `xoxb-` bot token | **covered** by the Slack `xox[abprs]-` shape |
+   | Slack `xapp-` app-level token | **covered** (added round-16) |
+   | Discord / Telegram bot tokens; every provider `apiKey`/`token`/TTS/search key | **key-name only** — these are SHAPELESS values caught by their sensitive KEY NAME (`token`/`apiKey`/`secret`), the same class as the AWS/Twilio/GLM secret; no bare shape by design |
+
+   Conclusion: with `hf_` added, the canonical detector covers every **HIGH-confidence, distinctively-shaped**
+   real credential Friday recognizes; every remaining recognized prefix is a documented exclusion
+   (shapeless→key-name, publishable→non-secret, identifier→not-the-credential, or unverified/high-FP→display-only).
+
 ## Secret-shape coverage (the ONE canonical detector — `friday-secret-shape-redactor.ts`)
 
 | Provider / form | Shape | Status |
@@ -71,6 +136,7 @@ round-15 revision states the reconciliation and corrects the convergence claim (
 | Anthropic | `sk-ant-…` | covered by the `sk-` shape (`-` is inside the value class) |
 | xAI (Grok) | `xai-` | **added round-16** (Friday's provider-catalog classifies `xai-` HIGH-confidence) |
 | Groq | `gsk_` (40+ base62 body) | **added round-16** (provider-catalog HIGH-confidence; `_` excluded from body) |
+| HuggingFace | `hf_` (34+ base62 body) | **added round-17** (provider-catalog HIGH-confidence; base62 superset of the letters-only scanner rule; `{34,}` open-ended; `_` excluded from body — `hf_docs`/`hf_config` never match) |
 | Stripe SECRET / RESTRICTED | `sk_live_` / `sk_test_` / `rk_live_` / `rk_test_` | **added round-15** |
 | Stripe webhook signing secret | `whsec_` | **added round-15** |
 | Stripe/Google PUBLISHABLE (hyphen) | `pk-…` | **DELIBERATELY EXCLUDED round-16** (client-safe; Friday satellite `publicKey` uses `pk-`) |
@@ -94,14 +160,22 @@ round-15 revision states the reconciliation and corrects the convergence claim (
 | Bearer / `Authorization: Bearer` | scheme kept, credential redacted | pre-existing |
 | Generic `key=value` / `key: value` | credential label kept, value redacted (also catches `"apiKey":"…"` in stringified JSON) | pre-existing |
 
-**Excluded from the ADDED set (round-16 audit) — over-redactors / non-secrets, documented not shipped:**
+**Excluded from the ADDED set (round-16 + round-17 audit) — over-redactors / non-secrets / identifiers,
+documented not shipped:**
 Twilio API Key SID `SK<32-hex>` (identifier, not the credential — the Twilio secret is shapeless and
 caught by key name, and a bare `SK`+32-hex false-fires on benign 34-char hex; E4); the generic /
 unverified prefixes Friday's aggressive **error-message DISPLAY scrubber** (`friday-provider-fallback.ts`)
 uses — `key-` / `sess-` / `ssm-` / `aip-` / `whsk-` — which are either too generic (`key-<8+>` collides
 with benign `key-management…`) or of unverified provider provenance (that display scrubber tolerates
-over-redaction; this canonical persistence/egress detector must not); Square `EAAA…` (4-char base64
-prefix). Publishable `pk-` / `pk_live_` / `pk_test_` are excluded as non-secrets.
+over-redaction; this canonical persistence/egress detector must not); the display scrubber's bare-length
+base64 catch-all `[A-Za-z0-9/+]{40,}={0,2}` (unacceptable FP on any 40-char base64 id/hash; display-only);
+Square `EAAA…` (4-char base64 prefix). Publishable `pk-` / `pk_live_` / `pk_test_` are excluded as
+non-secrets. **Round-17 exclusions:** `mistral-` (Friday-internal heuristic of unverified provenance —
+real Mistral keys are shapeless ~32-char alphanumeric caught by key name; not added unless a real Mistral
+secret is verified to use the prefix); bare `<32-hex>` GLM keys and the broad `AI[a-zA-Z]` / non-`eyJ`
+3-segment first-run heuristics (SHAPELESS / high-FP — caught by key name for the real value, and the real
+distinctive forms `AIza…` / `eyJ….….…` are already covered). See the round-17 catalog-sweep tables above
+for the full site-by-site enumeration.
 
 ## Sensitive KEY-NAME set (the ONE canonical predicate — `isSensitiveSecretFieldName`)
 

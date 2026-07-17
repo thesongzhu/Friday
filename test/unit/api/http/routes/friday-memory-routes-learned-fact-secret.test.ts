@@ -124,4 +124,52 @@ describe("FridayMemoryRoutes — SECRET egress (round-15 key-name parity)", () =
     expect(JSON.stringify(res)).not.toContain(PLAIN_PW);
     expect(JSON.stringify(res)).not.toContain(OPAQUE_TOKEN);
   });
+
+  // ─── SEC-EVENT-REDACTION-001 round-17: a HuggingFace `hf_` token in a STORED item's content / metadata /
+  //     tags must be shape-redacted on the REAL public GET routes (`memory.get` single-item AND
+  //     `memory.list`), which both funnel through `outputFilter.filterItem`. RED on d2e0e222 (`hf_`+34
+  //     returned verbatim); GREEN after the `hf_` pattern is added. Built from parts so no contiguous
+  //     literal token appears in SOURCE. ───
+  describe("round-17 HuggingFace hf_ egress on the real memory.get / memory.list routes", () => {
+    const HF_BODY = "AbCdEfGhIjKlMnOpQrStUvWxYz01234567"; // pragma: allowlist secret — 34 base62 chars
+    const HF = ["hf", HF_BODY].join("_"); // pragma: allowlist secret
+    const hfItem: FridayMemoryItem = {
+      id: "m-hf",
+      namespace: "default",
+      key: "k-hf",
+      content: `auth used ${HF} today`,
+      source: "test",
+      tags: ["ok", HF, "fine"], // the hf_-shaped tag must be DROPPED
+      metadata: { tokenPreview: HF, note: "keep" }, // non-sensitive key → the SHAPE detector must catch it
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+
+    it("memory.get shape-redacts hf_ in content + metadata and DROPS the hf_-shaped tag", async () => {
+      memoryService.get = vi.fn().mockResolvedValue(hfItem);
+      const route = findRoute("memory.get");
+      const res = (await route.handler(makeCtx({ params: { id: "m-hf" } }))) as { item: FridayMemoryItem };
+      const item = res.item;
+      expect(item.content).toContain(M);
+      expect(item.content).not.toContain(HF);
+      expect(item.content).toContain("auth used");
+      const md = item.metadata as { tokenPreview: string; note: string };
+      expect(md.tokenPreview).toBe(M);
+      expect(md.note).toBe("keep");
+      expect(item.tags).toEqual(["ok", "fine"]); // hf_-shaped tag dropped, benign tags survive
+      expect(JSON.stringify(res)).not.toContain(HF);
+      expect(JSON.stringify(res)).not.toContain(HF_BODY);
+    });
+
+    it("memory.list shape-redacts hf_ in a stored item's content + metadata", async () => {
+      memoryService.list = vi.fn().mockResolvedValue([hfItem] as FridayMemoryItem[]);
+      const route = findRoute("memory.list");
+      const res = (await route.handler(makeCtx({ query: {} }))) as { items: FridayMemoryItem[] };
+      const item = res.items.find((i) => i.id === "m-hf")!;
+      expect(item.content).not.toContain(HF);
+      expect(item.content).toContain(M);
+      expect((item.metadata as { tokenPreview: string }).tokenPreview).toBe(M);
+      expect(JSON.stringify(res)).not.toContain(HF);
+    });
+  });
 });

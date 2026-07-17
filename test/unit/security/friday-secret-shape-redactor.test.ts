@@ -350,4 +350,60 @@ describe("friday-secret-shape-redactor", () => {
       }
     });
   });
+
+  // ─── SEC-EVENT-REDACTION-001 round-17: HuggingFace `hf_` user access token. The provider-catalog's
+  //     `detectFridayProviderKindFromApiKey` classifies `hf_` as HuggingFace with HIGH confidence (a real
+  //     bearer credential, a fully-wired Friday provider), yet the canonical detector MISSED it — round-16
+  //     mined the SAME function for `gsk_`/`xai-` but left `hf_` uncovered, so it leaked verbatim on
+  //     memory-egress + audit sinks. RED on d2e0e222 (bare `hf_`+34 returned verbatim, 0 spans); GREEN
+  //     after `\bhf_[A-Za-z0-9]{34,}\b` is added. Fixtures are BUILT from parts (`seg`) so no contiguous
+  //     literal token appears in SOURCE (GitHub push protection); the body is an obviously-fake sequence. ───
+  describe("round-17 HuggingFace hf_ token", () => {
+    const seg = (...p: string[]): string => p.join(""); // pragma: allowlist secret
+    // 34-char base62 body WITH digits — proves the `[A-Za-z0-9]` class (real HF tokens include digits,
+    // unlike the letters-only `hf_[a-zA-Z]{34}` secret-scanner rule this pattern is a strict superset of).
+    const HF_BODY = "AbCdEfGhIjKlMnOpQrStUvWxYz01234567"; // pragma: allowlist secret — 34 base62 chars
+    const HF = seg("hf_", HF_BODY); // pragma: allowlist secret
+
+    it("redacts a bare hf_ token AND embedded in free text (whole value → marker)", () => {
+      expect(redactSecretShapesInString(HF)).toBe(M);
+      expect(redactSecretShapesInString(`use ${HF} now`)).toBe(`use ${M} now`);
+    });
+
+    it("redacts a LONGER fine-grained hf_ token (open-ended {34,} — no boundary leak)", () => {
+      // A fine-grained token longer than 34 must not slip the trailing \b and leak (why `{34,}`, not `{34}`).
+      const HF_LONG = seg("hf_", HF_BODY, "890abcXYZ"); // pragma: allowlist secret — 43-char body
+      expect(redactSecretShapesInString(HF_LONG)).toBe(M);
+      expect(redactSecretShapesInString(`k ${HF_LONG} k`)).toBe(`k ${M} k`);
+    });
+
+    it("reports the hf_ token as a whole-value span (memory key/value legs + audit consume it)", () => {
+      const input = `leak ${HF} here`;
+      const spans = findSecretShapeSpans(input);
+      expect(spans).toHaveLength(1);
+      expect(input.slice(spans[0]!.start, spans[0]!.end)).toBe(HF);
+      expect(spans[0]!.replacement).toBe(M);
+    });
+
+    // NO-DEGRADE: the body class excludes `_` and requires a leading word boundary + 34+ chars, so a
+    // benign `hf_`-prefixed snake_case identifier, a short form, a bare 34-char hash (no prefix), and a
+    // mid-word `…hf_…` all survive byte-identical with NO span (not an over-redactor).
+    it("does NOT redact benign hf_ near-misses (hf_docs / short / underscore body / bare hash / mid-word)", () => {
+      for (const benign of [
+        "hf_docs", // short (4 body chars)
+        "hf_", // prefix only
+        "hf_config_value_thing", // underscore-separated identifier, no 34-char base62 run
+        "AbCdEfGhIjKlMnOpQrStUvWxYz01234567", // pragma: allowlist secret — bare 34-char hash, NO hf_ prefix
+        seg("shf_", HF_BODY), // pragma: allowlist secret — no word boundary before `hf` (embedded in a longer token)
+      ]) {
+        expect(redactSecretShapesInString(benign), benign).toBe(benign);
+        expect(findSecretShapeSpans(benign), benign).toEqual([]);
+      }
+    });
+
+    it("SENSITIVITY: the hf_ shape produces the marker (no silent pass-through)", () => {
+      expect(redactSecretShapesInString(HF)).toContain(M);
+      expect(redactSecretShapesInString(HF)).not.toContain(HF);
+    });
+  });
 });

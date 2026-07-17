@@ -18,10 +18,10 @@
  *     + Google OAuth client secrets (`GOCSPX-…`);
  *   - npm access tokens (`npm_…`);
  *   - additional provider credential SHAPES Friday itself recognizes (round-16 consolidated audit):
- *     Groq (`gsk_…`), GitLab PAT (`glpat-…`), SendGrid (`SG.<22>.<43>`), Square (`sq0atp-…` / `sq0csp-…`),
- *     DigitalOcean PAT (`dop_v1_<64-hex>`), Slack app-level tokens (`xapp-…`). Each has a distinctive,
- *     low-false-positive prefix. Publishable / IDENTIFIER-only formats are NOT added (see the exclusion
- *     note below);
+ *     Groq (`gsk_…`), HuggingFace (`hf_…`, round-17), GitLab PAT (`glpat-…`), SendGrid (`SG.<22>.<43>`),
+ *     Square (`sq0atp-…` / `sq0csp-…`), DigitalOcean PAT (`dop_v1_<64-hex>`), Slack app-level tokens
+ *     (`xapp-…`). Each has a distinctive, low-false-positive prefix. Publishable / IDENTIFIER-only formats
+ *     are NOT added (see the exclusion note below);
  *   - Stripe UNDERSCORE-format SECRET keys (`sk_live_` / `sk_test_`) + RESTRICTED keys
  *     (`rk_live_` / `rk_test_`) + the webhook signing secret (`whsec_`) — the hyphenated `sk-` /
  *     `rk-` shapes above MISS the underscore forms Stripe actually issues. The PUBLISHABLE keys
@@ -263,6 +263,17 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   // HIGH confidence; the body class excludes `_`, so a benign `gsk_` snake_case identifier never matches).
   {
     pattern: /\bgsk_[A-Za-z0-9]{40,}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  // HuggingFace user access token — `hf_` + 34+ base62 chars (Friday's provider-catalog classifies `hf_`
+  // as HuggingFace with HIGH confidence, `detectFridayProviderKindFromApiKey`; a real bearer credential).
+  // Real HF tokens are base62 (`[A-Za-z0-9]`, digits INCLUDED) — a strict SUPERSET of the letters-only
+  // `hf_[a-zA-Z]{34}` secret-scanner rule, so a digit-bearing token is never under-matched. `{34,}` is
+  // open-ended (NOT exact `{34}`) so a longer fine-grained token cannot slip the trailing `\b` and leak,
+  // mirroring the `gsk_`/`glpat-` open-ended convention. The body class excludes `_`, so a benign short
+  // `hf_docs` / `hf_` / `hf_config_value` snake_case identifier never matches (distinctive, low false-positive).
+  {
+    pattern: /\bhf_[A-Za-z0-9]{34,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // npm access token — `npm_` + 36 base62 chars. The body class excludes `_`, so a benign `npm_`

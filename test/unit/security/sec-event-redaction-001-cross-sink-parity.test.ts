@@ -176,4 +176,35 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
       }
     }
   });
+
+  // ─── round-17: the HuggingFace `hf_` shape under a NON-sensitive key redacts identically in the audit
+  //     sink and memory egress, RAW and Unicode-obfuscated (ZWSP mid-body) — the SAME canonical detector
+  //     backs both, so parity holds automatically. RED on d2e0e222 (both sinks leak `hf_` verbatim); GREEN
+  //     after the `hf_` pattern is added. This is the memory==audit parity proof for the new shape. ───
+  const HF_BODY = "AbCdEfGhIjKlMnOpQrStUvWxYz01234567"; // pragma: allowlist secret — 34 base62 chars
+  const HF_RAW = seg("hf_", HF_BODY); // pragma: allowlist secret
+  const HF_ZWSP = seg("hf_", HF_BODY.slice(0, 17), "​", HF_BODY.slice(17)); // pragma: allowlist secret — ZWSP mid-body → hf_+34 after de-obfuscation
+  const HF_PAYLOAD = (): Record<string, unknown> => ({
+    // non-sensitive KEY NAMES so the key-name nuke does NOT fire — the SHAPE detector (raw ∪ Unicode) must.
+    hftoken: HF_RAW,
+    hfobf: HF_ZWSP,
+    note: "just a note",
+  });
+
+  it("round-17 hf_ (raw + ZWSP mid-body) redacts identically in the AUDIT sink and MEMORY redactDeep", async () => {
+    const auditDetails = await auditRedactedDetails(HF_PAYLOAD());
+    const memoryGuard = createFridayMemoryPiiGuard("redact");
+    const memoryValue = memoryGuard.redactDeep(HF_PAYLOAD()).value as Record<string, unknown>;
+    // memory egress == audit sink for the new shape (raw AND Unicode-obfuscated).
+    expect(memoryValue).toEqual(auditDetails);
+    expect(memoryValue.hftoken).toBe(M);
+    expect(memoryValue.hfobf).toBe(M);
+    expect(memoryValue.note).toBe("just a note");
+    // No hf_ credential byte survives in either sink's serialization (raw body or its de-obfuscated form).
+    for (const sink of [auditDetails, memoryValue]) {
+      const json = JSON.stringify(sink);
+      expect(json).not.toContain(HF_BODY);
+      expect(json).not.toContain(HF_RAW);
+    }
+  });
 });

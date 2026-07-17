@@ -232,3 +232,42 @@ describe("FridayMemoryOutputFilter — FINDING 1: Unicode-obfuscated secret TAG 
     }
   });
 });
+
+// ─── SEC-EVENT-REDACTION-001 round-17: the HuggingFace `hf_` shape on the memory OUTPUT FILTER. The
+//     provider-catalog classifies `hf_` as HuggingFace HIGH-confidence, yet the canonical detector missed
+//     it, so it leaked through `filterItem.content` (scanAndTransform string leg) and survived as a
+//     `filterItem.tags` value. RED on d2e0e222 (verbatim in content, kept as a tag); GREEN after the
+//     `hf_` pattern is added. Built from parts so no contiguous literal token appears in SOURCE. ───
+describe("FridayMemoryOutputFilter — round-17 HuggingFace hf_ shape (content + tag drop)", () => {
+  const filter = createFridayMemoryOutputFilter();
+  const HF_BODY = "AbCdEfGhIjKlMnOpQrStUvWxYz01234567"; // pragma: allowlist secret — 34 base62 chars
+  const HF = ["hf", HF_BODY].join("_"); // pragma: allowlist secret
+
+  it("redacts an hf_ token in item.content (scanAndTransform leg), surrounding text preserved", () => {
+    const out = filter.filterItem(makeItem({ content: `auth used ${HF} today` }));
+    expect(out.content).toContain(M);
+    expect(out.content).not.toContain(HF);
+    expect(out.content).toContain("auth used");
+  });
+
+  it("redacts an hf_ token carried in item.metadata VALUES (redactDeep leg) under a non-sensitive key", () => {
+    const out = filter.filterItem(makeItem({ metadata: { tokenPreview: HF, note: "keep" } }));
+    const md = out.metadata as { tokenPreview: string; note: string };
+    expect(md.tokenPreview).toBe(M);
+    expect(md.note).toBe("keep");
+    expect(JSON.stringify(md)).not.toContain(HF);
+  });
+
+  it("DROPS an hf_-shaped tag, preserving benign tags byte-identical", () => {
+    const out = filter.filterItem(makeItem({ tags: ["ok", HF, "fine"] }));
+    expect(out.tags).not.toContain(HF);
+    expect(JSON.stringify(out.tags)).not.toContain(HF_BODY);
+    expect(out.tags).toEqual(["ok", "fine"]);
+  });
+
+  it("NO-DEGRADE: benign hf_ near-misses survive (short / underscore body are not tokens)", () => {
+    const out = filter.filterItem(makeItem({ tags: ["hf_docs", "hf_config_value_thing"], content: "hf_docs reference" }));
+    expect(out.tags).toEqual(["hf_docs", "hf_config_value_thing"]);
+    expect(out.content).toBe("hf_docs reference");
+  });
+});

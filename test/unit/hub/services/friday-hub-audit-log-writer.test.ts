@@ -472,6 +472,50 @@ describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 details redaction"
     expect(jsonlRecord.details).toEqual(benignDetails);
   });
 
+  // ─── round-17: HuggingFace `hf_` token under a NON-sensitive key must be shape-redacted from BOTH the
+  //     SQLite `audit_logs.details_json` column AND the `audit.jsonl` mirror (raw + readback). Under a
+  //     non-secret key name the key-name nuke does NOT fire, so ONLY the newly-added `hf_` SHAPE catches
+  //     it. RED on d2e0e222 (`hf_`+34 persisted verbatim to both at-rest sinks); GREEN after the pattern.
+  //     Built at runtime (`["hf", body].join("_")`) so no contiguous literal token appears in SOURCE. ───
+  it("RED→GREEN round-17: strips a HuggingFace hf_ token (non-sensitive key) from SQLite details_json + audit.jsonl", async () => {
+    const HF_BODY = "AbCdEfGhIjKlMnOpQrStUvWxYz01234567"; // pragma: allowlist secret — 34 base62 chars
+    const HF = ["hf", HF_BODY].join("_"); // pragma: allowlist secret
+    const entry: FridayAuditLogWrite = {
+      id: "hf-token-1",
+      ts: "2026-07-17T05:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-1",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-hf",
+      details: {
+        // NON-sensitive key name — the shape detector (not the key-name nuke) is what must catch this.
+        tokenPreview: HF,
+        note: `deploy used ${HF} to auth`,
+        keepMe: "delivery ok",
+      },
+    };
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlRecord } = await writeAndReadBack(entry);
+
+    // The hf_ token body is ABSENT from BOTH raw at-rest sink strings.
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(HF);
+      expect(sink).not.toContain(HF_BODY);
+    }
+    // Readback markers on both sinks; benign sibling + surrounding text preserved.
+    const details = sqliteDetails as Record<string, string>;
+    expect(details.tokenPreview).toBe("[REDACTED_SECRET]");
+    expect(details.note).toContain("[REDACTED_SECRET]");
+    expect(details.note).toContain("deploy used");
+    expect(details.note).not.toContain(HF);
+    expect(details.keepMe).toBe("delivery ok");
+    const jsonlDetails = jsonlRecord.details as Record<string, string>;
+    expect(jsonlDetails.tokenPreview).toBe("[REDACTED_SECRET]");
+    expect(jsonlDetails.note).not.toContain(HF);
+  });
+
   it("keeps the append-only mirror intact across multiple redacted entries (one line each, canonical columns preserved)", async () => {
     const stateDir = fs.mkdtempSync(path.join(root, "append-"));
     fs.mkdirSync(path.join(stateDir, ".friday"), { recursive: true });
