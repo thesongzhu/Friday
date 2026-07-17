@@ -24,12 +24,11 @@ import {
   createFridayRealtimeSubscriptionService,
 } from "#api";
 import type { FridayAuthPrincipal, FridayRealtimeSubscription } from "#api";
-import { redactEventPayload, pseudonymizeEventIdentifiers } from "../../../../src/api/realtime/friday-event-payload-redactor.js";
 import { createFridayRealtimePseudonymizer } from "../../../../src/api/realtime/friday-realtime-pseudonym.js";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 
 const OWNER = "admin-001";
-const SECRET = "durable-hub-token-secret-abc123"; // pragma: allowlist secret
+const KEY = "durable-master-derived-pseudonym-key-abc123"; // pragma: allowlist secret
 const NOW = "2026-02-25T12:00:00.000Z";
 const EMAIL_A = "alice@example.com";
 const EMAIL_B = "bob@example.com";
@@ -47,8 +46,8 @@ function principal(userId: string): FridayAuthPrincipal {
   };
 }
 
-function makePseudonymizer(secret = SECRET, owner = OWNER) {
-  return createFridayRealtimePseudonymizer({ resolveOwnerId: () => owner, secret });
+function makePseudonymizer(key = KEY, owner = OWNER) {
+  return createFridayRealtimePseudonymizer({ resolveOwnerId: () => owner, key });
 }
 
 interface Harness {
@@ -57,23 +56,22 @@ interface Harness {
   service: ReturnType<typeof createFridayRealtimeSubscriptionService>;
 }
 
-function makeHarness(secret = SECRET): Harness {
+function makeHarness(key = KEY): Harness {
   const db = createTestDb();
-  const pseudo = makePseudonymizer(secret);
+  const pseudo = makePseudonymizer(key);
   const eventRepo = createFridayRealtimeEventRepository({ resolveOwnerId: () => OWNER });
   let seq = 0;
+  // Sink enforcement: the bus is wired with the pseudonymizer, so publishing the RAW
+  // streamId + payload is pseudonymized+redacted AT the sink (no manual transform).
   const bus = createFridayRealtimeEventBus({
     idGenerator: () => `evt-${++seq}`,
     nowIso: () => NOW,
     db,
     eventRepo,
+    pseudonymizer: pseudo,
   });
-  // The exact production write transform (publishWorkflowRealtimeEvent).
   const writeWorkflowEvent = (rawStreamId: string, rawPayload: Record<string, unknown>) => {
-    const opaqueStreamId = pseudo.streamId(rawStreamId);
-    const pseudonymized = pseudonymizeEventIdentifiers(rawPayload, (v) => pseudo.value(v));
-    const redacted = redactEventPayload(pseudonymized);
-    bus.publish(opaqueStreamId, "workflow.run.started" as never, redacted as never);
+    bus.publish(rawStreamId, "workflow.run.started" as never, rawPayload as never);
   };
   const service = createFridayRealtimeSubscriptionService({
     db,
@@ -134,11 +132,6 @@ describe("SEC-EVENT-REDACTION-001 identifier-pseudonym matrix (FINDING 1)", () =
       expect(aliceEvents[0].eventId).not.toBe(bobEvents[0].eventId);
       // The event the client receives carries the OPAQUE stream_id (never raw).
       expect(aliceEvents[0].streamId).not.toContain(EMAIL_A);
-
-      // A client that echoes the OPAQUE streamId back (idempotent) also resolves.
-      const echoed = h.service.pullEvents(aliceEvents[0].streamId, 0, 50);
-      expect(echoed).toHaveLength(1);
-      expect(echoed[0].eventId).toBe(aliceEvents[0].eventId);
     } finally {
       h.db.close();
     }

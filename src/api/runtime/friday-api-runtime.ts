@@ -65,8 +65,7 @@ import { createFridayRealtimeEventBus } from "../realtime/friday-realtime-event-
 import { createFridayRealtimeEventRepository } from "../persistence/friday-realtime-event-repository.js";
 import { createFridayRealtimeCheckpointRepository } from "../persistence/friday-realtime-checkpoint-repository.js";
 import { createFridayRealtimeSubscriptionService } from "../realtime/friday-realtime-subscription-service.js";
-import { pseudonymizeEventIdentifiers, redactEventPayload } from "../realtime/friday-event-payload-redactor.js";
-import { createFridayRealtimePseudonymizer } from "../realtime/friday-realtime-pseudonym.js";
+import { createFridayRealtimePseudonymizer, deriveFridayRealtimePseudonymKey } from "../realtime/friday-realtime-pseudonym.js";
 import { createFridayRealtimeWsGateway } from "../realtime/friday-realtime-ws-gateway.js";
 import { createFridayFleetDashboardService } from "../fleet/friday-fleet-dashboard-service.js";
 import { createFridayWorkflowConflictService } from "../conflicts/friday-workflow-conflict-service.js";
@@ -2116,9 +2115,23 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // the write path (persist opaque stream_id + payload id fields) and the read
   // path (subscription-service resolves the client's raw streamId the same way), so
   // they stay symmetric. Inactive no-op when owner/secret are absent (tests).
+  // SEC-EVENT-REDACTION-001 / P1-D: derive the pseudonymization key from the DURABLE
+  // encryption root (FRIDAY_MASTER_KEY via getStrictMasterKey), NOT the rotatable
+  // auth `tokenSecret` — so authorized token rotation cannot orphan durable realtime
+  // streams. HKDF-derived into a dedicated, domain-separated, versioned subkey. When
+  // the master key is unavailable (tests), the key is undefined and the pseudonymizer
+  // is an inactive no-op (legacy/test-safe); production provisions the master key, so
+  // it is active. This is the SAME key the v106 legacy-rewrite migration derives, so
+  // legacy + runtime + read all share one keyspace.
+  let realtimePseudonymKey: string | undefined;
+  try {
+    realtimePseudonymKey = deriveFridayRealtimePseudonymKey(getStrictMasterKey());
+  } catch {
+    realtimePseudonymKey = undefined;
+  }
   const realtimePseudonymizer = createFridayRealtimePseudonymizer({
     resolveOwnerId: () => deps.learningUserId,
-    secret: deps.tokenSecret,
+    key: realtimePseudonymKey,
   });
   const eventRepo = createFridayRealtimeEventRepository({
     resolveOwnerId: resolveRealtimeOwnerId,
@@ -2135,6 +2148,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     },
     db: deps.db,
     eventRepo,
+    // SEC-EVENT-REDACTION-001 / P0-A: enforce identifier pseudonymization at the
+    // event-bus sink so NO producer (incl. the Hub's direct eventBus.publish) bypasses.
+    pseudonymizer: realtimePseudonymizer,
   });
 
   const subscriptions = createFridayRealtimeSubscriptionService({
@@ -2174,27 +2190,18 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     payload: unknown,
   ): Promise<void> => {
     const normalizedPayload = asRecord(payload);
-    const rawStreamId = resolveWorkflowRealtimeStreamId(event, normalizedPayload);
-    if (!rawStreamId) {
+    const streamId = resolveWorkflowRealtimeStreamId(event, normalizedPayload);
+    if (!streamId) {
       return;
     }
-    // SEC-EVENT-REDACTION-001 / FINDING 1: persist NO raw identifier bytes.
-    //  - stream_id: derive from raw, then pseudonymize the id-part (topic prefix
-    //    preserved). The read path pseudonymizes the client's raw streamId the SAME
-    //    way, so both land on the identical opaque value (symmetric, clients unchanged).
-    //  - payload id fields: pseudonymize before content redaction, so payload_json
-    //    (and any id derived from it downstream) carries the opaque pseudonym.
-    const opaqueStreamId = realtimePseudonymizer.streamId(rawStreamId);
-    const pseudonymizedPayload = pseudonymizeEventIdentifiers(
-      normalizedPayload,
-      (raw) => realtimePseudonymizer.value(raw),
-    );
-    const redactedPayload = redactEventPayload(pseudonymizedPayload);
-
+    // SEC-EVENT-REDACTION-001 / P0-A: publish the RAW streamId + payload. Identifier
+    // pseudonymization + content redaction are enforced at the event-bus SINK
+    // (createFridayRealtimeEventBus.publish), so EVERY producer -- this fallback AND
+    // the Hub's direct eventBus.publish -- is covered and cannot bypass it.
     eventBus.publish(
-      opaqueStreamId,
+      streamId,
       event as never,
-      redactedPayload as never,
+      normalizedPayload as never,
     );
   };
 

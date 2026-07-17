@@ -206,18 +206,15 @@ describe("API Runtime — Workflow Generator Registration", () => {
       /const publishWorkflowRealtimeEvent = async \([\s\S]*?\n  \};/u,
     )?.[0];
 
-    // SEC-EVENT-REDACTION-001 / FINDING 1: identifier VALUES are pseudonymized and
-    // content is redacted BEFORE the publish sink, and the streamId is the opaque
-    // (pseudonymized) form — no raw identifier bytes reach realtime_events.
-    expect(publishWorkflowRealtimeEvent).toContain(
-      "pseudonymizeEventIdentifiers(\n      normalizedPayload,",
-    );
-    expect(publishWorkflowRealtimeEvent).toContain("redactEventPayload(pseudonymizedPayload)");
-    expect(publishWorkflowRealtimeEvent).toContain(
-      "realtimePseudonymizer.streamId(rawStreamId)",
-    );
+    // SEC-EVENT-REDACTION-001 / P0-A: content redaction + identifier pseudonymization
+    // are enforced at the event-bus SINK (createFridayRealtimeEventBus.publish), so
+    // EVERY producer — this fallback AND the Hub's direct eventBus.publish — is
+    // covered and none can bypass it. The fallback forwards the raw payload; the sink
+    // pseudonymizes + redacts.
     expect(publishWorkflowRealtimeEvent).toMatch(
-      /eventBus\.publish\(\s*opaqueStreamId,\s*event as never,\s*redactedPayload as never,\s*\)/u,
+      /eventBus\.publish\(\s*streamId,\s*event as never,\s*normalizedPayload as never,\s*\)/u,
     );
+    // The event bus is constructed WITH the identifier pseudonymizer (sink enforcement).
+    expect(source).toContain("pseudonymizer: realtimePseudonymizer");
   });
 });

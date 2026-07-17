@@ -8,7 +8,7 @@ import type {
   FridayEventBusListener,
   FridayRealtimeEventBus,
 } from "./friday-realtime-event-bus.types.js";
-import { redactEventPayload } from "./friday-event-payload-redactor.js";
+import { pseudonymizeEventIdentifiers, redactEventPayload } from "./friday-event-payload-redactor.js";
 
 export function createFridayRealtimeEventBus(
   deps: CreateFridayRealtimeEventBusDeps,
@@ -53,15 +53,25 @@ export function createFridayRealtimeEventBus(
       correlationId?: string,
     ): FridayRealtimeEventEnvelope<TEvent> {
       let envelope: FridayRealtimeEventEnvelope<TEvent>;
-      const redactedPayload = redactEventPayload(payload);
+      // SEC-EVENT-REDACTION-001 / P0-A: pseudonymize at THIS sink (the unavoidable
+      // boundary for every producer) BEFORE building the envelope, so the SAME
+      // opaque envelope is used for both persistence and in-memory (WS) delivery --
+      // no producer, including the Hub's direct eventBus.publish, can bypass it.
+      const opaqueStreamId = deps.pseudonymizer
+        ? deps.pseudonymizer.streamId(streamId)
+        : streamId;
+      const pseudonymizedPayload = deps.pseudonymizer
+        ? pseudonymizeEventIdentifiers(payload, (raw) => deps.pseudonymizer!.value(raw))
+        : payload;
+      const redactedPayload = redactEventPayload(pseudonymizedPayload);
 
       if (deps.db && deps.eventRepo) {
         // Durable path: allocate seq + persist in ONE atomic transaction
         envelope = deps.db.withWriteTransaction((db) => {
-          const seq = deps.eventRepo!.getNextSeq(db, streamId);
+          const seq = deps.eventRepo!.getNextSeq(db, opaqueStreamId);
           const env: FridayRealtimeEventEnvelope<TEvent> = {
             eventId: deps.idGenerator(),
-            streamId,
+            streamId: opaqueStreamId,
             seq,
             event,
             payload: redactedPayload,
@@ -71,20 +81,20 @@ export function createFridayRealtimeEventBus(
           deps.eventRepo!.append(db, env);
           return env;
         });
-        streamSeqs.set(streamId, envelope.seq);
+        streamSeqs.set(opaqueStreamId, envelope.seq);
       } else {
         // Fallback: process-local counter (tests without DB)
-        const seq = nextSeq(streamId);
+        const seq = nextSeq(opaqueStreamId);
         envelope = {
           eventId: deps.idGenerator(),
-          streamId,
+          streamId: opaqueStreamId,
           seq,
           event,
           payload: redactedPayload,
           emittedAt: deps.nowIso(),
           correlationId,
         };
-        streamSeqs.set(streamId, seq);
+        streamSeqs.set(opaqueStreamId, seq);
         if (deps.persistEvent) {
           deps.persistEvent(envelope);
         }
