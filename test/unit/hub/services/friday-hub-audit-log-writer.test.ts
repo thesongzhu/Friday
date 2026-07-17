@@ -233,8 +233,8 @@ describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 details redaction"
   const PEM = `-----BEGIN RSA PRIVATE KEY-----\n${PEM_BODY}\n-----END RSA PRIVATE KEY-----`; // pragma: allowlist secret
 
   // Forensic identifiers that MUST survive verbatim (#1618 field-role lesson). Note the benign
-  // correlation id is deliberately phone-SHAPED: a blunt deep-redact would collapse it to
-  // "[PHONE_US]" and corrupt/merge distinct ids.
+  // requestId below is deliberately phone-SHAPED (national 10-digit, NO country code): a blunt
+  // deep-redact would collapse it to "[PHONE_US]" and corrupt/merge distinct ids.
   const BENIGN_PHONE_SHAPED_ID = "2015550123";
   const RUN_ID = "run-42";
   const MESSAGE_ID = "wamid.HBgLABC123";
@@ -242,6 +242,18 @@ describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 details redaction"
   // Channel session key embeds the chatId phone (`channel:<kind>:<chatId>`, normalized not hashed),
   // so its routing prefix must survive while the embedded phone is redacted.
   const SESSION_KEY = "channel:signal:+14155552671";
+  // REAL caller shape (friday-hub-bootstrap channelMessageHandler): the channel correlation ids and
+  // idempotency key are built as `channel:<kind>:<chatId>:<msg.id>` where chatId IS the user's phone
+  // (Signal E.164 `+1…`, WhatsApp bare country-code `1…`). The embedded phone MUST be redacted while
+  // the `channel:<kind>:` routing prefix and the trailing message id survive. Using the benign
+  // non-embedding `2015550123` here (as the prior fixture did) sidesteps this shape and masks the leak.
+  const CHAT_ID_WHATSAPP = "14155552671"; // WhatsApp chatId = msg.from — bare country-code, no '+'
+  const CORRELATION_ID_SIGNAL = `channel:signal:${CHAT_ID_SIGNAL}:${MESSAGE_ID}`;
+  const CORRELATION_ID_SIGNAL_REDACTED = `channel:signal:[PHONE_US]:${MESSAGE_ID}`;
+  const CHANNEL_IDEMPOTENCY_KEY_SIGNAL = `${CORRELATION_ID_SIGNAL}:user`;
+  const CHANNEL_IDEMPOTENCY_KEY_SIGNAL_REDACTED = `${CORRELATION_ID_SIGNAL_REDACTED}:user`;
+  const CORRELATION_ID_WHATSAPP = `channel:whatsapp:${CHAT_ID_WHATSAPP}:${MESSAGE_ID}`;
+  const CORRELATION_ID_WHATSAPP_REDACTED = `channel:whatsapp:[PHONE_US]:${MESSAGE_ID}`;
 
   function piiEntry(id: string): FridayAuditLogWrite {
     return {
@@ -259,8 +271,14 @@ describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 details redaction"
       details: {
         code: "CHANNEL_DELIVERY_FAILED",
         routeId: ROUTE_ID,
-        correlationId: BENIGN_PHONE_SHAPED_ID,
-        channelCorrelationId: BENIGN_PHONE_SHAPED_ID,
+        // Real caller shape: channel correlation ids + idempotency key embed the chatId phone. The
+        // embedded phone must be redacted; the `channel:<kind>:` prefix and message id must survive.
+        correlationId: CORRELATION_ID_SIGNAL,
+        channelCorrelationId: CORRELATION_ID_SIGNAL,
+        idempotencyKey: CHANNEL_IDEMPOTENCY_KEY_SIGNAL,
+        // Genuinely-opaque forensic id, deliberately phone-SHAPED (national 10-digit, no country
+        // code) to prove benign ids are NOT collapsed by the residual E.164 pass.
+        requestId: BENIGN_PHONE_SHAPED_ID,
         runId: RUN_ID,
         channelKind: "signal",
         chatId: CHAT_ID_SIGNAL,
@@ -317,26 +335,73 @@ describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 details redaction"
     // Phone-derived sessionKey: routing prefix preserved, embedded phone redacted (no residual leak).
     expect(details.sessionKey).toBe("channel:signal:[PHONE_US]");
 
+    // Channel correlation ids + idempotency key (REAL caller shape `channel:<kind>:<phone>:<msgid>`):
+    // the embedded chatId phone is redacted while the routing prefix and message id survive. This is
+    // the #1618 over-exemption class — the SAME phone must not be redacted in chatId yet leak here.
+    expect(details.correlationId).toBe(CORRELATION_ID_SIGNAL_REDACTED);
+    expect(details.channelCorrelationId).toBe(CORRELATION_ID_SIGNAL_REDACTED);
+    expect(details.idempotencyKey).toBe(CHANNEL_IDEMPOTENCY_KEY_SIGNAL_REDACTED);
+    expect(details.correlationId).toContain("channel:signal:");
+    expect(details.correlationId).not.toContain("14155552671");
+    expect(details.channelCorrelationId).not.toContain("14155552671");
+    expect(details.idempotencyKey).not.toContain("14155552671");
+
     // Sink B parsed must agree with sink A (both fed by the same redacted record).
     const jsonlDetails = jsonlRecord.details as Record<string, string>;
     expect(jsonlDetails.chatId).toBe("[PHONE_US]");
     expect(jsonlDetails.apiKey).toBe("[REDACTED_SECRET]");
+    expect(jsonlDetails.correlationId).toBe(CORRELATION_ID_SIGNAL_REDACTED);
+    expect(jsonlDetails.channelCorrelationId).toBe(CORRELATION_ID_SIGNAL_REDACTED);
+    expect(jsonlDetails.idempotencyKey).toBe(CHANNEL_IDEMPOTENCY_KEY_SIGNAL_REDACTED);
   });
 
   it("preserves forensic identifier fields verbatim — does NOT collapse or corrupt distinct ids (#1618 field-role lesson)", async () => {
     const { sqliteDetailsJson, sqliteDetails } = await writeAndReadBack(piiEntry("preserve-1"));
     const details = sqliteDetails as Record<string, string>;
 
-    // The phone-SHAPED benign id survives on every identifier field (never merged to [PHONE_US]).
-    expect(details.correlationId).toBe(BENIGN_PHONE_SHAPED_ID);
-    expect(details.channelCorrelationId).toBe(BENIGN_PHONE_SHAPED_ID);
+    // Genuinely-opaque forensic ids survive verbatim (never masked, never collapsed).
     expect(details.routeId).toBe(ROUTE_ID);
     expect(details.runId).toBe(RUN_ID);
     expect(details.messageId).toBe(MESSAGE_ID);
+    // The phone-SHAPED benign requestId (national 10-digit, NO country code) survives: the residual
+    // E.164 pass requires a leading `1` country code, so a benign national-format id is NOT collapsed
+    // to [PHONE_US] and distinct ids stay distinct.
+    expect(details.requestId).toBe(BENIGN_PHONE_SHAPED_ID);
+    expect(details.requestId).not.toBe("[PHONE_US]");
     // Proof of preservation at the raw-sink level: the benign phone-shaped id is present.
     expect(sqliteDetailsJson).toContain(BENIGN_PHONE_SHAPED_ID);
-    // Distinct-entity proof: correlationId and channelCorrelationId are NOT masked to one marker.
+    // Distinct opaque ids are not merged to a single marker.
+    expect(details.messageId).not.toBe(details.runId);
+    expect(details.runId).not.toBe(details.routeId);
+    // The channel correlation id keeps its message-id tail (only the phone segment is redacted), so it
+    // stays a distinct, non-collapsed value.
     expect(details.correlationId).not.toBe("[PHONE_US]");
+    expect(details.correlationId).toContain(MESSAGE_ID);
+  });
+
+  it("redacts the WhatsApp bare country-code chatId phone (no `+`) embedded in channel correlation ids", async () => {
+    // WhatsApp `msg.from` arrives WITHOUT the `+` (bare `1XXXXXXXXXX`); the residual E.164 pass must
+    // still catch it (leading `1` country code), not only the Signal `+1…` form.
+    const entry = piiEntry("whatsapp-1");
+    const d = entry.details as Record<string, unknown>;
+    d.channelKind = "whatsapp";
+    d.chatId = CHAT_ID_WHATSAPP;
+    d.correlationId = CORRELATION_ID_WHATSAPP;
+    d.channelCorrelationId = CORRELATION_ID_WHATSAPP;
+    d.idempotencyKey = `${CORRELATION_ID_WHATSAPP}:user`;
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine } = await writeAndReadBack(entry);
+    const details = sqliteDetails as Record<string, string>;
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain("14155552671");
+    }
+    expect(details.correlationId).toBe(CORRELATION_ID_WHATSAPP_REDACTED);
+    expect(details.channelCorrelationId).toBe(CORRELATION_ID_WHATSAPP_REDACTED);
+    expect(details.idempotencyKey).toBe(`${CORRELATION_ID_WHATSAPP_REDACTED}:user`);
+    expect(details.correlationId).toContain("channel:whatsapp:");
+    expect(details.chatId).toBe("[PHONE_US]");
   });
 
   it("leaves canonical audit columns and benign details byte-identical (NO-DEGRADE)", async () => {

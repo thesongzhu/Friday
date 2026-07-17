@@ -100,9 +100,25 @@ function redactResidualUsPhone(input: string): string {
   );
 }
 
-/** Secret-shape pass only — applied to PRESERVED forensic identifier fields. */
+/**
+ * Preserved-identifier leaf pass: secret shapes + residual country-code (E.164) US phone.
+ *
+ * Forensic identifier fields are preserved (they skip the `redactDeep` PII-by-value pass) so that
+ * distinct correlation / trace / run ids stay distinct and a benign national-format numeric id is
+ * never collapsed. But the LIVE channel caller builds `correlationId` / `channelCorrelationId` /
+ * (channel) `idempotencyKey` as `channel:<kind>:<chatId>:<msg.id>`, where `chatId` IS the user's
+ * phone for Signal/WhatsApp (Signal E.164 `+1…`, WhatsApp bare `1…`). Without a phone pass those
+ * ids would persist the phone CLEAR — the same phone we already redact in the `chatId` /
+ * `sessionKey` content fields in the SAME record (the #1618 over-exemption class). The residual
+ * pass strips exactly the leading-country-code phone segment while the `channel:<kind>:` routing
+ * prefix and the trailing message id survive; because it REQUIRES the leading `1` country code
+ * (and is digit-run-bounded), a benign national-format id like `2015550123` — or any opaque
+ * `run-…` / `wamid.…` / UUID id — is left intact, so distinct ids are not collapsed or corrupted.
+ * (The bare national / full-width phone forms remain the CONTENT-path `redactDeep` responsibility
+ * and are deliberately NOT applied to preserved identifiers, to avoid false-positive collapse.)
+ */
 function redactIdentifierLeaf(input: string): string {
-  return redactSecretShapes(input);
+  return redactResidualUsPhone(redactSecretShapes(input));
 }
 
 /** Secret shapes + residual E.164 phone — applied to CONTENT fields (after `redactDeep`). */
@@ -191,11 +207,13 @@ function mapStringsDeep(value: unknown, fn: (s: string) => string): unknown {
 
 /**
  * Curated forensic-identifier allowlist (normalized to compact lowercase). Values under these
- * keys are PRESERVED verbatim — only the secret-shape pass runs on them — so distinct
- * correlation / trace / run / request / resource identifiers stay distinct and a benign numeric
- * business id is never corrupted by a false-positive PII match. This is the #1618 field-role
- * lesson: a blunt deep-redact over a whole payload collapses distinct identifiers and corrupts
- * benign business ids.
+ * keys are PRESERVED — they skip the `redactDeep` PII-by-value pass and only the identifier-leaf
+ * pass runs on them (secret shapes + residual leading-country-code E.164 phone; see
+ * `redactIdentifierLeaf`) — so distinct correlation / trace / run / request / resource identifiers
+ * stay distinct and a benign national-format numeric id is never corrupted by a false-positive PII
+ * match, while a phone embedded in a channel-derived id (`channel:<kind>:<phone>:…`) is still
+ * stripped. This is the #1618 field-role lesson: a blunt deep-redact over a whole payload collapses
+ * distinct identifiers and corrupts benign business ids.
  *
  * The allowlist holds ONLY machine-generated correlation / trace / run / request / sequence ids —
  * values that are never user PII but CAN coincidentally match a PII shape (e.g. a phone-shaped
