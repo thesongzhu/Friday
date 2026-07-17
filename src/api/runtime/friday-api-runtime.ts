@@ -66,6 +66,7 @@ import { createFridayRealtimeEventRepository } from "../persistence/friday-realt
 import { createFridayRealtimeCheckpointRepository } from "../persistence/friday-realtime-checkpoint-repository.js";
 import { createFridayRealtimeSubscriptionService } from "../realtime/friday-realtime-subscription-service.js";
 import { createFridayRealtimePseudonymizer, deriveFridayRealtimePseudonymKey } from "../realtime/friday-realtime-pseudonym.js";
+import { rewriteLegacyRealtimeIdentifiers } from "../realtime/friday-realtime-legacy-rewrite.js";
 import { createFridayRealtimeWsGateway } from "../realtime/friday-realtime-ws-gateway.js";
 import { createFridayFleetDashboardService } from "../fleet/friday-fleet-dashboard-service.js";
 import { createFridayWorkflowConflictService } from "../conflicts/friday-workflow-conflict-service.js";
@@ -2136,6 +2137,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const eventRepo = createFridayRealtimeEventRepository({
     resolveOwnerId: resolveRealtimeOwnerId,
   });
+  // SEC-EVENT-REDACTION-001 / P0-C: one-time upgrade rewrite of any legacy raw
+  // realtime_events rows into the opaque namespace (seq-preserving), so pre-upgrade
+  // history stays readable via the new opaque read path and no raw legacy PII remains
+  // at rest. Idempotent + no-op on fresh installs / when the pseudonymizer is inactive.
+  rewriteLegacyRealtimeIdentifiers(deps.db, realtimePseudonymizer);
   const checkpointRepo = createFridayRealtimeCheckpointRepository();
 
   const eventBus = createFridayRealtimeEventBus({
