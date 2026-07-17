@@ -176,4 +176,39 @@ describe("FridayMemoryOutputFilter", () => {
     const filtered = filter.filterSearchResults([]);
     expect(filtered).toHaveLength(0);
   });
+
+  // ─── memory-egress blast radius (PRIV-UNICODE-REDACTION-001 round-10) ───
+  //
+  // The shared guard's key-name canonicalization also governs MEMORY egress (this filter calls
+  // `redactDeep` on item.metadata and on learned-fact values). A numeric/bigint PII value under a
+  // Unicode-OBFUSCATED PII-context metadata key leaked RAW on read-back before round-10; it is now
+  // redacted. NO-DEGRADE: benign metadata (ASCII keys, benign numerics, structure) round-trips
+  // unchanged, so the egress path is a strict superset with zero benign divergence.
+  describe("Unicode-obfuscated metadata KEY (egress redactDeep)", () => {
+    const ZW_PHONE_KEY = "ph​one"; // U+200B zero-width space
+    const FW_SSN_KEY = "ｓｓｎ"; // full-width `ssn`
+
+    it("redacts a numeric phone under a zero-width-spliced metadata key on filterItem (egress)", () => {
+      const item = makeItem({ metadata: { [ZW_PHONE_KEY]: 14155552671 } });
+      const filtered = filter.filterItem(item);
+      expect(filtered.metadata[ZW_PHONE_KEY]).toBe("[PHONE_US]");
+      expect(Object.keys(filtered.metadata)).toContain(ZW_PHONE_KEY); // key bytes preserved
+    });
+
+    it("redacts a bigint SSN under a full-width metadata key on a learned-fact value (egress)", () => {
+      const redacted = filter.redactLearnedFactValue({ [FW_SSN_KEY]: 123456789n }) as Record<string, unknown>;
+      expect(redacted[FW_SSN_KEY]).toBe("[SSN_US]");
+    });
+
+    it("NO-DEGRADE: benign metadata (ASCII keys + benign numerics + near-miss) round-trips unchanged", () => {
+      const metadata = {
+        phone_count: 14155552671, // benign: `count` is the final token
+        "iph​one": 42, // ZW → `iphone` ≠ `phone`
+        order_id: 5552345678, // benign business id under non-sensitive key
+        note: "clean",
+      };
+      const filtered = filter.filterItem(makeItem({ metadata: { ...metadata } }));
+      expect(filtered.metadata).toEqual(metadata);
+    });
+  });
 });

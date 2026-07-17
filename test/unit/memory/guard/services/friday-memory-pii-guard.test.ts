@@ -633,6 +633,143 @@ describe("FridayMemoryPiiGuard", () => {
     });
   });
 
+  // ─── redactDeep — Unicode-obfuscated KEY canonicalization (PRIV-UNICODE-REDACTION-001 round-10) ───
+  //
+  // A bare number/bigint PII value has NO string shape; it relies ENTIRELY on its object KEY naming a
+  // PII field (sensitiveTypeForKey → SENSITIVE_KEY_PHRASE_TO_TYPE) to be redacted. The key-NAME
+  // classifier derives tokens by ASCII camelCase/lowercase splitting, so a PII-context key hidden
+  // behind a zero-width splice, a combining mark, a full-width form, or a precomposed accent never
+  // folded to `phone`/`ssn`/`card` — and the numeric value under it LEAKED RAW (RED on 5ec445ed). The
+  // guard now Unicode-canonicalizes the key (buildUnicodeDetectionCopy: NFKD → strip \p{M} → strip
+  // Cf/Default_Ignorable → fold \p{Nd}) BEFORE token derivation, so the obfuscated key classifies
+  // identically to its de-obfuscated ASCII form and the EXISTING key+value gates redact the value.
+  // Original obfuscated KEY BYTES are preserved (only the classification input is normalized).
+  describe("redactDeep Unicode-obfuscated KEY canonicalization — REDACTED [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+    // ASCII canary in the name; the constant carries the obfuscation.
+    const ZW_PHONE_KEY = "ph​one"; // U+200B zero-width space between `ph` and `one`
+    const CM_PHONE_KEY = "phóne"; // U+0301 combining acute over `o`
+    const FW_PHONE_KEY = "ｐｈｏｎｅ"; // full-width latin `phone`
+    const NF_PHONE_KEY = "phóne"; // precomposed ó (single NFC code point U+00F3)
+    const ZWJ_SSN_KEY = "ss‍n"; // U+200D zero-width joiner
+    const FW_SSN_KEY = "ｓｓｎ"; // full-width `ssn`
+    const FW_CARD_KEY = "ｃａｒｄ"; // full-width `card`
+    const CM_MOBILE_KEY = "mobíle"; // combining acute → `mobile`
+    const PHONE_NUM = 14155552671; // 11-digit country-code numeric form → [PHONE_US]
+    const PHONE_NATIONAL = 5552345678; // 10-digit national → [PHONE_US]
+    const SSN_NUM = 123456789;
+    const CARD_BIGINT = 4111111111111111n; // pragma: allowlist secret
+
+    it("redacts a numeric phone under each obfuscated `phone` key form (ZW / combining / full-width / precomposed); key bytes preserved", () => {
+      for (const key of [ZW_PHONE_KEY, CM_PHONE_KEY, FW_PHONE_KEY, NF_PHONE_KEY]) {
+        const { value, tagsToAdd } = guard.redactDeep({ [key]: PHONE_NUM });
+        const out = value as Record<string, unknown>;
+        expect(out[key]).toBe("[PHONE_US]");
+        expect(Object.keys(out)).toEqual([key]); // ORIGINAL obfuscated key bytes preserved exactly
+        expect(tagsToAdd).toContain("pii.phone_us");
+      }
+    });
+
+    it("redacts a numeric SSN under a ZWJ-spliced `ssn` key and a full-width `ssn` key", () => {
+      for (const key of [ZWJ_SSN_KEY, FW_SSN_KEY]) {
+        const { value, tagsToAdd } = guard.redactDeep({ [key]: SSN_NUM });
+        const out = value as Record<string, unknown>;
+        expect(out[key]).toBe("[SSN_US]");
+        expect(Object.keys(out)).toEqual([key]);
+        expect(tagsToAdd).toContain("pii.ssn_us");
+      }
+    });
+
+    it("redacts a bigint card under a full-width `card` key", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ [FW_CARD_KEY]: CARD_BIGINT });
+      const out = value as Record<string, unknown>;
+      expect(out[FW_CARD_KEY]).toBe("[CREDIT_CARD]");
+      expect(Object.keys(out)).toEqual([FW_CARD_KEY]);
+      expect(tagsToAdd).toContain("pii.credit_card");
+    });
+
+    it("redacts number AND bigint PII under obfuscated keys NESTED and IN ARRAYS", () => {
+      const { value } = guard.redactDeep({
+        outer: { [FW_PHONE_KEY]: PHONE_NATIONAL }, // nested object, obfuscated key
+        [ZW_PHONE_KEY]: [PHONE_NUM, PHONE_NUM], // array threaded from an obfuscated sensitive key
+        deep: { level2: { [CM_MOBILE_KEY]: 5552345678n } }, // deep bigint under obfuscated mobile key
+        cards: { [FW_CARD_KEY]: [CARD_BIGINT, CARD_BIGINT] }, // array of bigint cards under obf key
+      });
+      const out = value as {
+        outer: Record<string, unknown>;
+        deep: { level2: Record<string, unknown> };
+        cards: Record<string, unknown>;
+      } & Record<string, unknown>;
+      expect(out.outer[FW_PHONE_KEY]).toBe("[PHONE_US]");
+      expect(out[ZW_PHONE_KEY]).toEqual(["[PHONE_US]", "[PHONE_US]"]);
+      expect(out.deep.level2[CM_MOBILE_KEY]).toBe("[PHONE_US]");
+      expect(out.cards[FW_CARD_KEY]).toEqual(["[CREDIT_CARD]", "[CREDIT_CARD]"]);
+    });
+
+    it("redacts under an obfuscated compound/camelCase key (full-width `mobilePhone`, NFKD preserves case for the split)", () => {
+      const key = "ｍｏｂｉｌｅＰｈｏｎｅ"; // full-width `mobilePhone` → NFKD → `mobilePhone` → split → phone
+      const { value } = guard.redactDeep({ [key]: PHONE_NATIONAL });
+      expect((value as Record<string, unknown>)[key]).toBe("[PHONE_US]");
+    });
+
+    it("STRICT SUPERSET: a complete PII token isolated by a foldable non-ASCII letter still redacts (no regression)", () => {
+      // The RAW `.split(/[^a-z]+/)` treats the trailing accented letter as a token SEPARATOR that
+      // ISOLATES the complete PII token (`ssné`→`ssn`, `telé`→`tel`, `cardé`→`card`) — a match the
+      // guard made BEFORE round-10. Canonicalizing the key FIRST would fold `é`→`e` and MERGE it
+      // (`ssn`→`ssne`), dropping the match — a superset VIOLATION. The additive union keeps the RAW
+      // pass first, so every legacy match survives. (Regression guard: RED if canonicalization ever
+      // replaces the raw pass instead of augmenting it.)
+      const { value } = guard.redactDeep({
+        ssné: 123456789,
+        telé: 5552345678,
+        cardé: 4111111111111111n, // pragma: allowlist secret
+      });
+      const out = value as Record<string, unknown>;
+      expect(out.ssné).toBe("[SSN_US]");
+      expect(out.telé).toBe("[PHONE_US]");
+      expect(out.cardé).toBe("[CREDIT_CARD]");
+    });
+  });
+
+  // NO-DEGRADE: the centralized key canonicalization is a strict SUPERSET — it catches obfuscated PII
+  // keys with ZERO benign divergence. The value gate is untouched, so a benign number under a benign
+  // (or coincidental) key is never newly over-redacted, and ASCII keys fold BYTE-IDENTICAL (fast path).
+  describe("redactDeep Unicode-obfuscated KEY canonicalization — NO-DEGRADE (benign near-miss preserved)", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("preserves a benign number under a key that FOLDS CLOSE to but ≠ a PII key (byte-identical)", () => {
+      const input = {
+        "iph​one": 14155552671, // ZW-spliced → `iphone` (one token) ≠ `phone`
+        "café": 14155552671, // precomposed é → `cafe` ≠ any PII key
+        "ｔｅｌｅｍｅｔｒｙ": 14155552671, // full-width → `telemetry` ≠ `tel`
+        phone_count: 14155552671, // `phone count` — `count` is the final token, not a PII field
+        "discárd": 14155552671, // combining mark → `discard` ≠ `card`
+      };
+      const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual(input); // no over-redaction; every key + value byte-identical
+      expect(tagsToAdd).toEqual([]);
+    });
+
+    it("preserves a benign numeric under an obfuscated sensitive-SOUNDING key whose value is not type-shaped (value gate intact)", () => {
+      // full-width `gift_card`/`head_phone` fold to card/phone key-types, but 3/42 are not card/phone
+      // shaped, so the VALUE gate preserves them — the same guarantee as the ASCII case.
+      const input = { "ｇｉｆｔ_ｃａｒｄ": 3, "ｈｅａｄ_ｐｈｏｎｅ": 42 };
+      const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual(input);
+      expect(tagsToAdd).toEqual([]);
+    });
+
+    it("ASCII keys → byte-identical decisions (fast path unchanged: ascii PII redacts, benign preserved)", () => {
+      const input = { phone: 5552345678, order_id: 4111111111111111n, gift_card: 3, note: "clean" }; // pragma: allowlist secret
+      const { value } = guard.redactDeep(structuredClone(input));
+      const out = value as Record<string, unknown>;
+      expect(out.phone).toBe("[PHONE_US]"); // ASCII sensitive key still redacts
+      expect(out.order_id).toBe(4111111111111111n); // benign bigint id preserved
+      expect(out.gift_card).toBe(3); // value gate preserves
+      expect(out.note).toBe("clean");
+    });
+  });
+
   describe("redactDeep — idempotence & PII modes", () => {
     it("is idempotent over key-driven numeric redaction (second pass is a no-op)", () => {
       const guard = createFridayMemoryPiiGuard("redact");

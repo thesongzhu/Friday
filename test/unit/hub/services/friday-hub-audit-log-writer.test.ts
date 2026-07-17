@@ -1743,3 +1743,193 @@ describe("FridayHubAuditLogWriter — PRIV-UNICODE-REDACTION-001 details Unicode
     }
   });
 });
+
+// ── PRIV-UNICODE-REDACTION-001 (round-10) — numeric/bigint PII under a Unicode-OBFUSCATED KEY ──
+//
+// A bare number/bigint PII value (phone/SSN/card) has NO string shape; it is caught ONLY because its
+// object KEY names a PII field (the shared guard's `sensitiveTypeForKey` key-context + value gate). On
+// 5ec445ed that key-NAME classifier split the RAW key with an ASCII-only tokenizer, so a PII-context
+// key hidden behind a zero-width splice (`ph<U+200B>one`), a combining mark (`pho<U+0301>ne`), a
+// full-width form (`ｐｈｏｎｅ`), or a precomposed accent (`phóne`) never folded to `phone`/`ssn`/`card`
+// and the numeric value under it persisted RAW into BOTH at-rest sinks. Round-10 Unicode-canonicalizes
+// the key INSIDE the shared guard (centralized), so these drive the REAL `appendFridayAuditLog` and
+// raw-read BOTH the SQLite `audit_logs.details_json` column AND the `audit.jsonl` mirror. RED on
+// 5ec445ed, GREEN after the centralized guard fix. Benign numeric near-misses MUST survive verbatim.
+describe("FridayHubAuditLogWriter — PRIV-UNICODE-REDACTION-001 numeric PII under obfuscated KEY", () => {
+  const AUDIT_SCHEMA = `
+    CREATE TABLE audit_logs (
+      id TEXT PRIMARY KEY,
+      ts TEXT NOT NULL,
+      actor_type TEXT NOT NULL,
+      actor_id TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
+      request_id TEXT,
+      trace_id TEXT,
+      ip TEXT,
+      details_json TEXT
+    );
+  `;
+
+  let root: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "friday-audit-obfkey-"));
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  interface Ctx {
+    stateDir: string;
+    canonicalLogPath: string;
+    sqlitePath: string;
+  }
+  function newCtx(): Ctx {
+    const stateDir = fs.mkdtempSync(path.join(root, "state-"));
+    fs.mkdirSync(path.join(stateDir, ".friday"), { recursive: true });
+    const sqlitePath = path.join(stateDir, "friday.db");
+    const setupDb = new Database(sqlitePath);
+    setupDb.exec(AUDIT_SCHEMA);
+    setupDb.close();
+    return { stateDir, canonicalLogPath: resolveFridayAuditLogPath(stateDir), sqlitePath };
+  }
+  async function readBack(ctx: Ctx, id: string): Promise<{
+    sqliteDetailsJson: string;
+    sqliteDetails: Record<string, unknown>;
+    sqliteRow: Record<string, unknown>;
+    jsonlLine: string;
+    jsonlDetails: Record<string, unknown>;
+  }> {
+    const verifyDb = new Database(ctx.sqlitePath, { readonly: true });
+    const sqliteRow = verifyDb
+      .prepare("SELECT id, ts, actor_type, actor_id, action, resource_type, resource_id, trace_id, details_json FROM audit_logs WHERE id = ?")
+      .get(id) as Record<string, unknown>;
+    verifyDb.close();
+    const sqliteDetailsJson = (sqliteRow.details_json as string | null) ?? "";
+    const jsonlContent = fs.readFileSync(ctx.canonicalLogPath, "utf8");
+    const jsonlLine =
+      jsonlContent.trim().split("\n").filter(Boolean).find((line) => (JSON.parse(line) as { id?: string }).id === id) ?? "";
+    return {
+      sqliteDetailsJson,
+      sqliteDetails: sqliteDetailsJson ? (JSON.parse(sqliteDetailsJson) as Record<string, unknown>) : {},
+      sqliteRow,
+      jsonlLine,
+      jsonlDetails: (JSON.parse(jsonlLine) as { details?: Record<string, unknown> }).details ?? {},
+    };
+  }
+
+  // ASCII canary in the name; the constant carries the obfuscation.
+  const ZW_PHONE_KEY = "ph​one"; // U+200B zero-width space
+  const CM_PHONE_KEY = "phóne"; // U+0301 combining acute over `o`
+  const FW_PHONE_KEY = "ｐｈｏｎｅ"; // full-width `phone`
+  const NF_PHONE_KEY = "phóne"; // precomposed ó (U+00F3)
+  const ZWJ_SSN_KEY = "ss‍n"; // U+200D zero-width joiner
+  const FW_CARD_KEY = "ｃａｒｄ"; // full-width `card`
+  const PHONE_NUM = 14155552671; // 11-digit country-code numeric form → [PHONE_US]
+  const PHONE_NUM_DIGITS = "14155552671";
+  const SSN_NUM = 123456789;
+  const SSN_NUM_DIGITS = "123456789";
+  const CARD_BIGINT = 4111111111111111n; // pragma: allowlist secret
+  const CARD_DIGITS = "4111111111111111"; // pragma: allowlist secret
+
+  function obfEntry(id: string, details: Record<string, unknown>): FridayAuditLogWrite {
+    return {
+      id,
+      ts: "2026-07-17T00:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-signal",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-o",
+      result: "error",
+      errorCode: "CHANNEL_DELIVERY_FAILED",
+      details,
+    };
+  }
+
+  it("RED→GREEN: strips a numeric phone under each obfuscated `phone` key form from BOTH sinks; obfuscated key bytes preserved", async () => {
+    const ctx = newCtx();
+    const details: Record<string, unknown> = {
+      [ZW_PHONE_KEY]: PHONE_NUM,
+      [CM_PHONE_KEY]: PHONE_NUM,
+      [FW_PHONE_KEY]: PHONE_NUM,
+      [NF_PHONE_KEY]: PHONE_NUM,
+    };
+    // CM and NF fold to the SAME key `phóne`; the guard disambiguates the collision so both survive.
+    await appendFridayAuditLog(ctx.canonicalLogPath, obfEntry("obf-phone", details));
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await readBack(ctx, "obf-phone");
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(PHONE_NUM_DIGITS); // raw numeric phone ABSENT from both sinks
+      expect(sink).toContain("[PHONE_US]");
+    }
+    for (const parsed of [sqliteDetails, jsonlDetails]) {
+      // Each distinct obfuscated key's value is redacted; the ORIGINAL obfuscated key bytes survive.
+      expect(parsed[ZW_PHONE_KEY]).toBe("[PHONE_US]");
+      expect(parsed[FW_PHONE_KEY]).toBe("[PHONE_US]");
+      expect(Object.keys(parsed)).toContain(ZW_PHONE_KEY);
+      expect(Object.keys(parsed)).toContain(FW_PHONE_KEY);
+      // No raw phone survives under ANY key.
+      expect(Object.values(parsed)).not.toContain(PHONE_NUM);
+    }
+  });
+
+  it("RED→GREEN: strips a numeric SSN (ZWJ key) and a bigint card (full-width key), incl. NESTED + ARRAY, from BOTH sinks", async () => {
+    const ctx = newCtx();
+    await appendFridayAuditLog(
+      ctx.canonicalLogPath,
+      obfEntry("obf-mix", {
+        [ZWJ_SSN_KEY]: SSN_NUM, // top-level numeric SSN under ZWJ `ssn`
+        nested: { [FW_CARD_KEY]: CARD_BIGINT }, // nested bigint card under full-width `card`
+        list: { [ZW_PHONE_KEY]: [PHONE_NUM, PHONE_NUM] }, // array threaded from an obfuscated phone key
+      }),
+    );
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await readBack(ctx, "obf-mix");
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink).not.toContain(SSN_NUM_DIGITS);
+      expect(sink).not.toContain(CARD_DIGITS);
+      expect(sink).not.toContain(PHONE_NUM_DIGITS);
+      expect(sink).toContain("[SSN_US]");
+      expect(sink).toContain("[CREDIT_CARD]");
+      expect(sink).toContain("[PHONE_US]");
+    }
+    for (const parsed of [sqliteDetails, jsonlDetails]) {
+      expect(parsed[ZWJ_SSN_KEY]).toBe("[SSN_US]");
+      expect((parsed.nested as Record<string, unknown>)[FW_CARD_KEY]).toBe("[CREDIT_CARD]");
+      expect((parsed.list as Record<string, unknown>)[ZW_PHONE_KEY]).toEqual(["[PHONE_US]", "[PHONE_US]"]);
+    }
+  });
+
+  it("NO-DEGRADE: benign numeric near-misses under obfuscated keys survive byte-identical in BOTH sinks; append-only + canonical columns intact", async () => {
+    const ctx = newCtx();
+    // Benign numbers under keys that fold CLOSE to but ≠ a PII key, or whose value is not type-shaped.
+    const benign: Record<string, number> = {
+      "iph​one": 14155552671, // ZW → `iphone` (one token) ≠ `phone`
+      "ｔｅｌｅｍｅｔｒｙ": 14155552671, // full-width → `telemetry` ≠ `tel`
+      "ｇｉｆｔ_ｃａｒｄ": 3, // full-width → card type, but 3 is not card-shaped (value gate)
+      "ｈｅａｄ_ｐｈｏｎｅ": 42, // full-width → phone type, but 42 is not phone-shaped (value gate)
+    };
+    await appendFridayAuditLog(ctx.canonicalLogPath, obfEntry("obf-benign-1", { ...benign }));
+    await appendFridayAuditLog(ctx.canonicalLogPath, obfEntry("obf-benign-2", { ...benign })); // append-only proof
+
+    const first = await readBack(ctx, "obf-benign-1");
+    const second = await readBack(ctx, "obf-benign-2");
+
+    for (const parsed of [first.sqliteDetails, first.jsonlDetails, second.sqliteDetails, second.jsonlDetails]) {
+      for (const [k, v] of Object.entries(benign)) {
+        expect(parsed[k]).toBe(v); // benign numeric preserved, no over-redaction
+      }
+      expect(JSON.stringify(parsed)).not.toContain("[PHONE_US]");
+      expect(JSON.stringify(parsed)).not.toContain("[CREDIT_CARD]");
+    }
+    // Append-only: two rows exist; the first is unchanged by the second write (canonical columns intact).
+    const jsonlLineCount = fs.readFileSync(ctx.canonicalLogPath, "utf8").trim().split("\n").filter(Boolean).length;
+    expect(jsonlLineCount).toBe(2);
+    expect(first.sqliteRow.action).toBe("channel.channel_delivery_failed");
+    expect(first.sqliteRow.id).toBe("obf-benign-1");
+    expect(first.sqliteRow.ts).toBe("2026-07-17T00:00:00.000Z");
+  });
+});

@@ -15,6 +15,15 @@ import {
   FRIDAY_MEMORY_GUARD_US_SSN_REGEX,
 } from "../friday-memory-guard.constants.js";
 
+// PRIV-UNICODE-REDACTION-001 (round-10): the SAME shared Unicode DETECTION primitive the audit
+// writer's field-name classifiers use (NFKD → strip `\p{M}` → strip Cf / Default_Ignorable → fold
+// `\p{Nd}`). Imported to Unicode-canonicalize the KEY as an ADDITIVE second pass in the guard's
+// key-NAME classifier so a PII-context key hidden behind zero-width / combining / full-width /
+// precomposed obfuscation is classified identically to its de-obfuscated ASCII form (see the
+// strict-superset union in `sensitiveTypeForKey`). No import cycle: `friday-unicode-pii-normalizer.ts`
+// is a dependency-free LEAF module (imports nothing), so the guard importing it introduces no cycle.
+import { buildUnicodeDetectionCopy } from "../../../security/friday-unicode-pii-normalizer.js";
+
 interface PiiPattern {
   type: FridayMemoryGuardPiiType;
   regex: RegExp;
@@ -244,13 +253,8 @@ function normalizeKeyTokens(key: string): string[] {
   return tokens;
 }
 
-/**
- * Resolve the PII type a value inherits from its object KEY, or `undefined` for a non-sensitive
- * key. The longest matching suffix wins (most specific). Purely key-driven — the value itself is
- * never inspected, so no benign number can be redacted by this path.
- */
-function sensitiveTypeForKey(key: string): FridayKeyDrivenPiiType | undefined {
-  const tokens = normalizeKeyTokens(key);
+/** Longest-suffix (most specific) lookup of a token list against the sensitive-key phrase registry. */
+function matchSensitiveTypeForTokens(tokens: string[]): FridayKeyDrivenPiiType | undefined {
   if (tokens.length === 0) return undefined;
   const maxLen = Math.min(SENSITIVE_KEY_MAX_PHRASE_TOKENS, tokens.length);
   for (let len = maxLen; len >= 1; len -= 1) {
@@ -259,6 +263,44 @@ function sensitiveTypeForKey(key: string): FridayKeyDrivenPiiType | undefined {
     if (type) return type;
   }
   return undefined;
+}
+
+/**
+ * Resolve the PII type a value inherits from its object KEY, or `undefined` for a non-sensitive key.
+ * The longest matching suffix wins (most specific). Purely key-driven — the value itself is never
+ * inspected, so no benign number can be redacted by this path.
+ *
+ * PRIV-UNICODE-REDACTION-001 (round-10): classified over an ADDITIVE UNION of two tokenizations — the
+ * same strict-superset discipline `findMatches` uses for value shapes — so a numeric/bigint PII value
+ * under a Unicode-OBFUSCATED PII-context key is caught with ZERO regression:
+ *   (1) RAW key tokens (`normalizeKeyTokens(key)`) — the EXACT pre-round-10 pass. Preserving it first
+ *       means every key the guard classified before still classifies identically, so nothing is lost.
+ *       This matters because the raw `.split(/[^a-z]+/)` treats a non-ASCII char as a token SEPARATOR
+ *       that ISOLATES an adjacent complete PII token (`ssné`/`telé`/`cardé` → `ssn`/`tel`/`card`);
+ *       canonicalizing FIRST would fold that separator into a letter and MERGE it away, dropping a
+ *       match the guard used to make (a superset violation). Raw-first forecloses that.
+ *   (2) UNICODE-CANONICAL key tokens — the key run through the SHARED detection primitive
+ *       (`buildUnicodeDetectionCopy`: NFKD → strip `\p{M}` → strip Cf / Default_Ignorable → fold
+ *       `\p{Nd}`, the SAME form the audit writer's field-name classifiers use) BEFORE the same
+ *       camelCase-split derivation. This ADDS the obfuscated forms the raw split fragmented — a
+ *       zero-width splice (`ph<U+200B>one`), a combining mark (`pho<U+0301>ne`), a full-width form
+ *       (`ｐｈｏｎｅ`), or a precomposed accent (`phóne`) all fold to `phone`. NFKD preserves case, so a
+ *       full-width camelCase key (`ｈｏｍｅＰｈｏｎｅ` → `homePhone`) still splits correctly.
+ * The union returns the RAW match when present (byte-identical legacy decision) and otherwise the
+ * canonical match, so NEW ⊇ OLD (strict superset). ASCII fast path: for a pure-ASCII key
+ * `buildUnicodeDetectionCopy` returns the input unchanged, so pass (2) is skipped and the result is
+ * byte-identical to the legacy classifier at zero extra cost. Only the CLASSIFICATION input is
+ * normalized — the guard still writes/preserves ORIGINAL key bytes (`redactKey` and the redactDeep
+ * slot keys are untouched), and the numeric VALUE gate (`numericValueMatchesKeyedType`) is unchanged,
+ * so a benign number under a benign / coincidental key (`gift_card: 3`, `head_phone: 42`) is never
+ * over-redacted.
+ */
+function sensitiveTypeForKey(key: string): FridayKeyDrivenPiiType | undefined {
+  const rawType = matchSensitiveTypeForTokens(normalizeKeyTokens(key));
+  if (rawType) return rawType;
+  const canonicalKey = buildUnicodeDetectionCopy(key).normalized;
+  if (canonicalKey === key) return undefined; // pure-ASCII (or no-op) fast path: nothing new to add
+  return matchSensitiveTypeForTokens(normalizeKeyTokens(canonicalKey));
 }
 
 /**
