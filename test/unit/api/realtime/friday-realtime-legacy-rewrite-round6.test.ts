@@ -41,7 +41,7 @@ function activePseudonymizer() {
 }
 
 /** A raw stream id whose id-part is EXACTLY the opaque shape `o1_<40 hex>`. */
-const SHAPE_COLLIDING_STREAM = `run:o1_${"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"}`;
+const SHAPE_COLLIDING_STREAM = `run:o1_${"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"}`; // pragma: allowlist secret
 
 function insertRow(
   db: FridaySqliteLayer,
@@ -112,7 +112,7 @@ describe("SEC-REALTIME-EVENT-PII-BY-VALUE round-6 legacy rewrite", () => {
       insertRow(db, "evt-legacy", "run:legacy-run", 1, {
         runId: "legacy-run",
         message: "reach me at legacy-owner-canary@example.com or +1 (415) 555-0132",
-        credential: "sk-legacylegacylegacylegacylegacy00",
+        credential: "sk-legacylegacylegacylegacylegacy00", // pragma: allowlist secret
         unicode: "e​mail: legacy＠example.com", // zero-width + fullwidth @
         nested: { note: "backup legacy-owner-canary@example.com", langs: ["café", "日本語"] },
       });
@@ -125,7 +125,7 @@ describe("SEC-REALTIME-EVENT-PII-BY-VALUE round-6 legacy rewrite", () => {
       const raw = rows.map((r) => r.payload_json).join("\n");
       expect(raw).not.toContain("legacy-owner-canary@example.com");
       expect(raw).not.toContain("415) 555-0132");
-      expect(raw).not.toContain("sk-legacylegacylegacylegacylegacy00");
+      expect(raw).not.toContain("sk-legacylegacylegacylegacylegacy00"); // pragma: allowlist secret
       // Benign multilingual content stays usable.
       expect(raw).toContain("café");
       expect(raw).toContain("日本語");
@@ -144,7 +144,7 @@ describe("SEC-REALTIME-EVENT-PII-BY-VALUE round-6 legacy rewrite", () => {
       const events = service.pullEvents("run:legacy-run", 0, 50);
       const pulled = JSON.stringify(events);
       expect(pulled).not.toContain("legacy-owner-canary@example.com");
-      expect(pulled).not.toContain("sk-legacylegacylegacylegacylegacy00");
+      expect(pulled).not.toContain("sk-legacylegacylegacylegacylegacy00"); // pragma: allowlist secret
     } finally {
       db.close();
     }
