@@ -1249,4 +1249,189 @@ describe("FridayHubAuditLogWriter — PRIV-UNICODE-REDACTION-001 details Unicode
       expect(details.nodeId).toBe("[CREDIT_CARD]");
     }
   });
+
+  // ── Round-7 blocking finding (PRIV-UNICODE-REDACTION-001): COMBINING MARKS + NFKC compatibility
+  //    forms defeat shape recognition ──
+  //
+  // An independent real-append probe (real SQLite `audit_logs.details_json` + `audit.jsonl`) proved
+  // that an ordinary Unicode COMBINING MARK (General_Category Mn/Mc/Me) spliced into a token breaks
+  // the SSN / card / email / secret shape matchers — `123-45-6́789` and `sk-́…` persisted
+  // VERBATIM in BOTH at-rest sinks, because the shared detection normalizer folded Nd digits and
+  // stripped Cf/default-ignorable but passed combining marks through unchanged. The class fix extends
+  // the normalizer to (a) apply NFKC compatibility folding (mathematical alphanumerics `\u{1D5CC}` →
+  // `s`, fullwidth, ligatures, circled/superscript) and (b) strip combining marks (Mn/Mc/Me) on the
+  // DETECTION COPY only, while storage stays byte-identical. RED on 027fabf1; GREEN post-fix.
+
+  // Map ASCII digits to Mathematical Bold Digits (U+1D7CE + d) — NFKC-folds to ASCII by value.
+  function toMathBoldDigits(ascii: string): string {
+    return ascii.replace(/[0-9]/g, (d) => String.fromCodePoint(0x1d7ce + Number(d)));
+  }
+  // Map ASCII lowercase letters to Mathematical Sans-Serif Small (U+1D5BA + offset) — NFKC → ASCII.
+  function toMathSansLower(ascii: string): string {
+    return ascii.replace(/[a-z]/g, (c) => String.fromCodePoint(0x1d5ba + (c.charCodeAt(0) - 0x61)));
+  }
+  // Map ASCII digits to Circled Digits (0 → U+24EA, 1-9 → U+2460 + (d-1)) — NFKC → ASCII by value.
+  function toCircledDigits(ascii: string): string {
+    return ascii.replace(/[0-9]/g, (d) => {
+      const n = Number(d);
+      return n === 0 ? "⓪" : String.fromCodePoint(0x2460 + (n - 1));
+    });
+  }
+
+  const CB = "́"; // COMBINING ACUTE ACCENT (Mn) — the Advisor's obfuscation code point
+
+  it("RED→GREEN round-7 (combining marks): SSN/card/email/secret obfuscated by combining marks are redacted on CONTENT keys in BOTH sinks", async () => {
+    // The Advisor's exact probe (`123-45-6́789`, `sk-́…`) plus interspersed marks.
+    const CB_SSN = `123-45-6${CB}789`; // → 123-45-6789 → [SSN_US]
+    const CB_SSN_MULTI = `1${CB}23-4${CB}5-67${CB}89`; // marks at multiple positions → 123-45-6789
+    const CB_CARD = `411111111111${CB}1111`; // → 4111111111111111 → [CREDIT_CARD] // pragma: allowlist secret
+    const CB_EMAIL = `victim@exa${CB}mple.com`; // combining mark on a letter → victim@example.com → [EMAIL]
+    const SK_BODY = "abcdefghijklmnop0123456789"; // pragma: allowlist secret
+    const CB_SK_SECRET = `sk-${CB}${SK_BODY}`; // the Advisor's `sk-́…` probe → [REDACTED_SECRET] // pragma: allowlist secret
+    const GH_BODY = "github_pat_11ABCDEF0aBcDeFgHiJkL0123456789abcdefghij"; // pragma: allowlist secret
+    const CB_GH_PAT = `github_pat_${CB}11ABCDEF0aBcDeFgHiJkL0123456789abcdefghij`; // pragma: allowlist secret
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-combining-content", {
+        ssn: CB_SSN,
+        ssnMulti: CB_SSN_MULTI,
+        card: CB_CARD,
+        errorMessage: `mail ${CB_EMAIL}; key ${CB_SK_SECRET}`,
+        note: `deploy used ${CB_GH_PAT}`,
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      // Neither the raw combining-obfuscated form NOR the folded ASCII shape survives.
+      expect(sink).not.toContain(CB_SSN);
+      expect(sink).not.toContain(CB_SSN_MULTI);
+      expect(sink).not.toContain(CB_CARD);
+      expect(sink).not.toContain(CB_EMAIL);
+      expect(sink).not.toContain(CB_SK_SECRET);
+      expect(sink).not.toContain(CB_GH_PAT);
+      expect(sink).not.toContain("123-45-6789");
+      expect(sink).not.toContain("4111111111111111"); // pragma: allowlist secret
+      expect(sink).not.toContain("victim@example.com");
+      expect(sink).not.toContain(SK_BODY);
+      expect(sink).not.toContain(GH_BODY);
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details.ssn).toBe("[SSN_US]");
+      expect(details.ssnMulti).toBe("[SSN_US]");
+      expect(details.card).toBe("[CREDIT_CARD]");
+      expect(details.errorMessage).toContain("[EMAIL]");
+      expect(details.errorMessage).toContain("[REDACTED_SECRET]");
+      expect(details.note).toContain("[REDACTED_SECRET]");
+      expect(details.note).toContain("deploy used");
+    }
+  });
+
+  it("RED→GREEN round-7 (combining marks on FORENSIC keys): combining-obfuscated email/SSN/card on forensic keys are redacted in BOTH sinks (gate de-obfuscates)", async () => {
+    // Same #1618 forensic-leaf gate as round-6, now over combining-mark obfuscation.
+    const CB_SSN = `123-45-6${CB}789`;
+    const CB_CARD = `411111111111${CB}1111`; // pragma: allowlist secret
+    const CB_EMAIL = `victim@exa${CB}mple.com`;
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-combining-forensic", {
+        traceId: CB_SSN, // forensic key
+        spanId: CB_CARD, // forensic key
+        correlationId: CB_EMAIL, // forensic key
+        // NO-DEGRADE controls: benign-opaque forensic leaves survive verbatim.
+        requestId: "run-abc-123",
+        messageId: "wamid.XYZ",
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(CB_SSN);
+      expect(sink).not.toContain(CB_CARD);
+      expect(sink).not.toContain(CB_EMAIL);
+      expect(sink).not.toContain("123-45-6789");
+      expect(sink).not.toContain("4111111111111111"); // pragma: allowlist secret
+      expect(sink).not.toContain("victim@example.com");
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details.traceId).toBe("[SSN_US]");
+      expect(details.spanId).toBe("[CREDIT_CARD]");
+      expect(details.correlationId).toBe("[EMAIL]");
+      expect(details.requestId).toBe("run-abc-123");
+      expect(details.messageId).toBe("wamid.XYZ");
+    }
+  });
+
+  it("RED→GREEN round-7 (NFKC class closure): mathematical-alphanumeric / circled / superscript obfuscated secret + PII redacted on CONTENT and FORENSIC keys in BOTH sinks", async () => {
+    const MATH_SK_SECRET = `${toMathSansLower("sk")}-${"abcdefghijklmnop0123456789"}`; // 𝗌𝗄-… → [REDACTED_SECRET] // pragma: allowlist secret
+    const MATH_CARD = toMathBoldDigits("4111111111111111"); // math-digit card (re-confirm) → [CREDIT_CARD] // pragma: allowlist secret
+    const CIRCLED_SSN = toCircledDigits("123-45-6789").replace(/-/g, "-"); // circled digits → 123-45-6789 → [SSN_US]
+    const SUPERSCRIPT_CARD = "⁴¹¹¹¹¹¹¹¹¹¹¹¹¹¹¹"; // ⁴¹¹… → 4111111111111111 // pragma: allowlist secret
+    const SK_BODY = "abcdefghijklmnop0123456789"; // pragma: allowlist secret
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-nfkc-class", {
+        errorMessage: `secret ${MATH_SK_SECRET} leaked`, // content
+        cardContent: MATH_CARD, // content
+        spanId: CIRCLED_SSN, // forensic key → de-obfuscated + redacted
+        traceId: SUPERSCRIPT_CARD, // forensic key → de-obfuscated + redacted
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(MATH_SK_SECRET);
+      expect(sink).not.toContain(MATH_CARD);
+      expect(sink).not.toContain(CIRCLED_SSN);
+      expect(sink).not.toContain(SUPERSCRIPT_CARD);
+      expect(sink).not.toContain(SK_BODY);
+      expect(sink).not.toContain("4111111111111111"); // pragma: allowlist secret
+      expect(sink).not.toContain("123-45-6789");
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details.errorMessage).toContain("[REDACTED_SECRET]");
+      expect(details.cardContent).toBe("[CREDIT_CARD]");
+      expect(details.spanId).toBe("[SSN_US]");
+      expect(details.traceId).toBe("[CREDIT_CARD]");
+    }
+  });
+
+  it("NO-DEGRADE round-7: benign combining / diacritic multilingual text + benign math-word survive BYTE-IDENTICAL in BOTH sinks; benign phone-shaped forensic id preserved", async () => {
+    const BENIGN_COMBINING_CAFE = "café résumé"; // café résumé via combining acute
+    const BENIGN_ARABIC_HARAKAT = "مَرْحَبًا بِكَ"; // Arabic with harakat (Mn marks)
+    const BENIGN_HEBREW_NIQQUD = "שָׁלוֹם עוֹלָם"; // Hebrew with niqqud (Mn marks)
+    const BENIGN_DEVANAGARI = "नमस्ते दुनिया"; // Devanagari with matras (Mc/Mn marks)
+    const BENIGN_VIETNAMESE = "Xin chào thế giới"; // Vietnamese (precomposed diacritics)
+    const BENIGN_MATH_WORD = "\u{1D5DB}\u{1D5D8}\u{1D5DF}\u{1D5DF}\u{1D5E2}"; // 𝗛𝗘𝗟𝗟𝗢 — benign math word, no PII shape
+    const BENIGN_AR_FORENSIC = "٢٠١٥٥٥٠١٢٣"; // ٢٠١٥٥٥٠١٢٣ → 2015550123 (phone_us)
+
+    const details = {
+      cafe: BENIGN_COMBINING_CAFE,
+      harakat: BENIGN_ARABIC_HARAKAT,
+      niqqud: BENIGN_HEBREW_NIQQUD,
+      devanagari: BENIGN_DEVANAGARI,
+      vietnamese: BENIGN_VIETNAMESE,
+      mathWord: BENIGN_MATH_WORD,
+      requestId: BENIGN_AR_FORENSIC, // forensic, phone-shaped when folded → must NOT be redacted
+    };
+    const { sqliteDetails, jsonlDetails, sqliteDetailsJson, jsonlLine } = await writeAndReadBack(
+      unicodeEntry("unicode-benign-round7", details),
+    );
+
+    for (const readBack of [sqliteDetails, jsonlDetails]) {
+      expect(readBack.cafe).toBe(BENIGN_COMBINING_CAFE);
+      expect(readBack.harakat).toBe(BENIGN_ARABIC_HARAKAT);
+      expect(readBack.niqqud).toBe(BENIGN_HEBREW_NIQQUD);
+      expect(readBack.devanagari).toBe(BENIGN_DEVANAGARI);
+      expect(readBack.vietnamese).toBe(BENIGN_VIETNAMESE);
+      expect(readBack.mathWord).toBe(BENIGN_MATH_WORD);
+      expect(readBack.requestId).toBe(BENIGN_AR_FORENSIC);
+      expect(readBack.requestId).not.toBe("[PHONE_US]");
+    }
+    // Raw sink bytes carry the combining/diacritic/math forms verbatim (no detection-copy leakage).
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink).toContain(BENIGN_COMBINING_CAFE);
+      expect(sink).toContain(BENIGN_MATH_WORD);
+    }
+  });
 });
