@@ -14,8 +14,10 @@ import { createFridaySetupBootstrapNonceRepository } from "#api";
 import {
   createFridayRetentionSettingsRoutes,
   createFridayRetentionPolicyAuditAppender,
+  createFridayRetentionReceiptRecovery,
 } from "#api";
 import type { FridayHttpContext } from "#api";
+import type { FridayRetentionPolicyUpdateReceipt } from "#api";
 import {
   createFridayRetentionJob,
   createFridayRetentionPolicyLoader,
@@ -86,7 +88,12 @@ function makeRoutes(layer: FridaySqliteLayer) {
     }),
     nowIso: () => NOW,
     idGenerator: () => `op-${++idc}`,
+    readReceiptByRecoveryKey: createFridayRetentionReceiptRecovery({ sqlite: layer }),
   });
+}
+
+function makeKeyedCtx(idempotencyKey: string, body?: unknown): FridayHttpContext<unknown, unknown, unknown> {
+  return makeCtx({ headers: { "idempotency-key": idempotencyKey }, ...(body ? { body } : {}) });
 }
 
 describe("RETENTION-R3a restart-readback (integration)", () => {
@@ -220,5 +227,54 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
     } finally {
       layer2.close();
     }
+  });
+
+  // RETENTION-R3d (P0 — uncertain-outcome recovery): an interrupted PUT whose
+  // mutation + durable receipt COMMITTED but whose HTTP response was lost is
+  // recoverable, after a full process restart, through the owner-bound product seam
+  // by the CLIENT-KNOWN idempotency key — and cross-principal lookup is denied.
+  it("a committed receipt survives restart and is recoverable by the client key; cross-principal denied", () => {
+    const KEY = "client-restart-key-001";
+    return (async () => {
+      // ── Session 1: PUT with the client key commits the mutation + durable receipt,
+      //    then the process 'crashes' (close) BEFORE the caller observed the response. ──
+      const layer1 = openLayer(dbPath);
+      const routes1 = makeRoutes(layer1);
+      const put1 = routes1.find((r) => r.operationId === "uix.retention.policy.update")!;
+      const putResult = (await put1.handler(
+        makeKeyedCtx(KEY, { policy: { auditLogs: { mode: "after_days", days: 90 } } }),
+      )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+      const committedReceipt = putResult.receipt;
+      layer1.close(); // simulate crash: in-memory state gone, on-disk committed.
+
+      // ── Session 2: fresh process on the SAME on-disk db. ──
+      const layer2 = openLayer(dbPath);
+      try {
+        const routes2 = makeRoutes(layer2);
+        const recover = routes2.find((r) => r.operationId === "uix.retention.policy.receipt.get")!;
+
+        // The EXACT committed receipt is recovered through the product seam by key.
+        const recovered = (await recover.handler(makeKeyedCtx(KEY))) as {
+          receipt: FridayRetentionPolicyUpdateReceipt | null;
+        };
+        expect(recovered.receipt).not.toBeNull();
+        expect(recovered.receipt!.receiptId).toBe(committedReceipt.receiptId);
+        expect(recovered.receipt!.correlationId).toBe(committedReceipt.correlationId);
+        expect(recovered.receipt!.auditId).toBe(committedReceipt.auditId);
+        expect(recovered.receipt!.evidence.after).toEqual(committedReceipt.evidence.after);
+
+        // Cross-principal recovery (a distinct authenticated admin) → 403, zero disclosure.
+        await expect(
+          recover.handler(
+            makeCtx({
+              principal: { userId: "admin-002", principalId: "admin-002", role: "admin", scopes: ["hub.admin"] } as never,
+              headers: { "idempotency-key": KEY },
+            }),
+          ),
+        ).rejects.toMatchObject({ httpStatus: 403 });
+      } finally {
+        layer2.close();
+      }
+    })();
   });
 });

@@ -249,6 +249,7 @@ export type { FridayUixRoutesDeps } from "./http/routes/friday-uix-routes.js";
 export {
   createFridayRetentionSettingsRoutes,
   createFridayRetentionPolicyAuditAppender,
+  createFridayRetentionReceiptRecovery,
 } from "./http/routes/friday-retention-settings-routes.js";
 export type {
   FridayRetentionSettingsRoutesDeps,

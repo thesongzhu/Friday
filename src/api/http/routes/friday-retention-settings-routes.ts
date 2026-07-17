@@ -13,7 +13,11 @@ import {
   isUnauthenticatedPublicPrincipal,
 } from "../../../security/friday-owner-session-channel-capability.js";
 import { createSqliteAuditPersistence } from "../../../security/multi-tenant/persistence/friday-multi-tenant-sqlite-store.js";
-import type { JsonObject } from "../../../security/multi-tenant/model/friday-multi-tenant-security.types.js";
+import type {
+  FridaySecurityAuditEntry,
+  JsonObject,
+} from "../../../security/multi-tenant/model/friday-multi-tenant-security.types.js";
+import { readIdempotencyKeyHeader } from "./friday-route-idempotency.js";
 
 /**
  * Owner-bound retention-Settings HTTP surface (RETENTION-R3a).
@@ -75,14 +79,39 @@ export interface FridayRetentionSettingsRoutesDeps {
   db: FridaySqliteLayer;
   /**
    * RETENTION-R3d: FAIL-CLOSED audit sink. Appends exactly ONE durable audit
-   * entry for a successful retention-policy mutation and returns its id. Called
-   * INSIDE the `db.withWriteTransaction` that applies the policy so both commit or
-   * both roll back. THROWS (never fails open) on any persistence failure: the
-   * throw aborts the enclosing transaction → the policy write rolls back → the PUT
-   * handler surfaces 503 and NO mutation is left un-audited. Build it with
-   * `createFridayRetentionPolicyAuditAppender` (closing over the SAME layer).
+   * entry (carrying the full receipt facts) for a successful retention-policy
+   * mutation and returns the persisted `FridaySecurityAuditEntry`. Called INSIDE
+   * the `db.withWriteTransaction` that applies the policy so both commit or both
+   * roll back. THROWS (never fails open) on any persistence failure: the throw
+   * aborts the enclosing transaction → the policy write rolls back → the PUT
+   * handler surfaces 503 and NO mutation is left un-audited. The returned entry is
+   * fed to `projectCommittedAudit` (below) AFTER commit so the LIVE audit
+   * projection sees it. Build it with `createFridayRetentionPolicyAuditAppender`
+   * (closing over the SAME layer).
    */
-  appendPolicyAudit: (entry: FridayRetentionPolicyAuditEntry) => string;
+  appendPolicyAudit: (entry: FridayRetentionPolicyAuditEntry) => FridaySecurityAuditEntry;
+  /**
+   * RETENTION-R3d (P0 — audit-projection VISIBILITY). Optional post-commit hook
+   * that reflects the committed audit entry into the product's LIVE audit
+   * projection (the boot-hydrated `AuditLogger`), so the raw `security_audit_log`
+   * insert is not invisible to `queryAuditLog`. Called ONLY after the write
+   * transaction commits — a pure in-memory upsert (cannot fail), so it preserves
+   * rollback-safety (no phantom on failure) AND visibility on success. Absent when
+   * no in-memory projection is wired (the committed row is then the record).
+   */
+  projectCommittedAudit?: (entry: FridaySecurityAuditEntry) => void;
+  /**
+   * RETENTION-R3d (P0 — uncertain-outcome RECOVERY). Owner-bound lookup of a
+   * durably-committed receipt by the client-known idempotency/operation key. Reads
+   * the committed audit row (scoped to the canonical owner) and reconstructs the
+   * exact receipt, so an interrupted PUT (mutation committed, HTTP response lost)
+   * is recoverable through a product seam — never raw DB access, never blind
+   * replay. Returns null when no receipt is bound to that key for this owner.
+   */
+  readReceiptByRecoveryKey?: (input: {
+    ownerId: string;
+    recoveryKey: string;
+  }) => FridayRetentionPolicyUpdateReceipt | null;
   /**
    * Injected clock (RETENTION-R3d: no inline `Date.now()`). Drives the receipt
    * `runAt`. It is NOT the source of correlation/receipt UNIQUENESS — two writes
@@ -125,6 +154,13 @@ export interface FridayRetentionPolicyAuditEntry {
   appliedUpdates: Record<string, CategoryRetention>;
   /** Content categories whose EFFECTIVE policy changed (before ≠ after). */
   changedCategories: string[];
+  /**
+   * RETENTION-R3d (P0 — recovery): the CLIENT-KNOWN idempotency/operation key
+   * (from the request `Idempotency-Key` header), persisted so the committed
+   * receipt is retrievable via the owner-bound recovery seam. Absent when the
+   * client supplied no key (the write is still fully audited + receipted).
+   */
+  recoveryKey?: string;
 }
 
 /**
@@ -158,6 +194,11 @@ interface FridayRetentionPolicyResponse {
 interface FridayRetentionPolicyUpdateResponse {
   policy: Record<string, CategoryRetention>;
   receipt: FridayRetentionPolicyUpdateReceipt;
+}
+
+interface FridayRetentionReceiptRecoveryResponse {
+  /** The durably-committed receipt for the recovery key, or null if none. */
+  receipt: FridayRetentionPolicyUpdateReceipt | null;
 }
 
 interface FridayRetentionDiskUsageResponse {
@@ -331,22 +372,24 @@ function computeChangedCategories(
  *
  * FAIL-CLOSED: any persistence failure is re-thrown as a typed 503 (mirrors the
  * observability audit posture) so the enclosing transaction ABORTS and no policy
- * mutation is ever left un-audited. The appender bypasses the in-memory
- * `AuditLogger` map deliberately: only the SQLite write participates in the
- * transaction, so a rollback cannot leave a phantom in-memory audit entry.
+ * mutation is ever left un-audited. The SQLite write is the ONLY thing that
+ * participates in the transaction (so a rollback can't leave a phantom in-memory
+ * audit entry); making the committed entry visible in the LIVE audit projection is
+ * done SEPARATELY, post-commit, via `projectCommittedAudit` — the returned
+ * `FridaySecurityAuditEntry` is what the handler feeds to that hook.
  */
 export function createFridayRetentionPolicyAuditAppender(deps: {
   sqlite: FridaySqliteLayer;
   idGenerator: () => string;
-}): (entry: FridayRetentionPolicyAuditEntry) => string {
+}): (entry: FridayRetentionPolicyAuditEntry) => FridaySecurityAuditEntry {
   const persistence = createSqliteAuditPersistence(deps.sqlite);
   return (entry) => {
     const auditId = deps.idGenerator();
     // Persist the FULL receipt facts on the committed audit row so a committed
     // policy effect is never left without a durably-recoverable receipt: the row
     // `id` is the auditId, and this metadata carries receiptId + correlationId +
-    // before + after + changed + deletedData (everything needed to reconstruct the
-    // exact receipt from committed state).
+    // before + after + changed + deletedData + the client recovery key (everything
+    // needed to reconstruct + look up the exact receipt from committed state).
     const metadata = {
       receiptId: entry.receiptId,
       correlationId: entry.correlationId,
@@ -355,21 +398,23 @@ export function createFridayRetentionPolicyAuditAppender(deps: {
       before: entry.before,
       after: entry.after,
       appliedUpdates: entry.appliedUpdates,
+      ...(entry.recoveryKey ? { recoveryKey: entry.recoveryKey } : {}),
     } as unknown as JsonObject;
+    const securityEntry: FridaySecurityAuditEntry = {
+      id: auditId,
+      tenantId: null,
+      principalId: entry.ownerId,
+      action: "retention.policy.update",
+      resourceType: "policy",
+      resourceId: `retention-policy:${entry.ownerId}`,
+      decision: "allow",
+      reason: "canonical-owner retention policy update",
+      sessionId: entry.correlationId,
+      metadata,
+      createdAt: entry.occurredAt,
+    };
     try {
-      persistence.saveAuditEntry({
-        id: auditId,
-        tenantId: null,
-        principalId: entry.ownerId,
-        action: "retention.policy.update",
-        resourceType: "policy",
-        resourceId: `retention-policy:${entry.ownerId}`,
-        decision: "allow",
-        reason: "canonical-owner retention policy update",
-        sessionId: entry.correlationId,
-        metadata,
-        createdAt: entry.occurredAt,
-      });
+      persistence.saveAuditEntry(securityEntry);
     } catch (cause) {
       throw new FridayDomainError(
         "RETENTION_AUDIT_APPEND_FAILED",
@@ -377,7 +422,76 @@ export function createFridayRetentionPolicyAuditAppender(deps: {
         { httpStatus: 503, cause },
       );
     }
-    return auditId;
+    return securityEntry;
+  };
+}
+
+/** SQLite row shape for a `security_audit_log` row this domain reads back. */
+interface RetentionAuditRow {
+  id: string;
+  principal_id: string;
+  created_at: string;
+  metadata_json: string;
+}
+
+/**
+ * RETENTION-R3d (P0 — uncertain-outcome RECOVERY): build the owner-bound receipt
+ * recovery reader. Given the canonical owner + the CLIENT-KNOWN recovery key, it
+ * reads the durably-committed audit row (scoped to that owner's `principal_id`) and
+ * reconstructs the EXACT receipt from its metadata — so an interrupted PUT whose
+ * mutation committed but whose HTTP response was lost is recoverable through a
+ * product seam after restart, WITHOUT raw DB access or blind replay. Owner scoping
+ * is enforced in the query (a different principal's rows are never matched); the
+ * route additionally denies non-canonical principals before this ever runs.
+ */
+export function createFridayRetentionReceiptRecovery(deps: {
+  sqlite: FridaySqliteLayer;
+}): (input: { ownerId: string; recoveryKey: string }) => FridayRetentionPolicyUpdateReceipt | null {
+  return (input) => {
+    const row = deps.sqlite.withReadConnection((db) =>
+      db
+        .prepare(
+          `SELECT id, principal_id, created_at, metadata_json
+             FROM security_audit_log
+            WHERE principal_id = ?
+              AND action = 'retention.policy.update'
+              AND json_extract(metadata_json, '$.recoveryKey') = ?
+            ORDER BY created_at DESC
+            LIMIT 1`,
+        )
+        .get(input.ownerId, input.recoveryKey) as RetentionAuditRow | undefined,
+    );
+    if (!row) return null;
+    let meta: {
+      receiptId?: string;
+      correlationId?: string;
+      before?: FridayRetentionContentPolicy;
+      after?: FridayRetentionContentPolicy;
+      changedCategories?: string[];
+    };
+    try {
+      meta = JSON.parse(row.metadata_json) as typeof meta;
+    } catch {
+      return null;
+    }
+    if (!meta.receiptId || !meta.correlationId || !meta.before || !meta.after) {
+      return null;
+    }
+    return {
+      receiptId: meta.receiptId,
+      correlationId: meta.correlationId,
+      auditId: row.id,
+      status: "applied",
+      runAt: row.created_at,
+      requestedBy: row.principal_id,
+      rollbackClass: "reversible_local_settings",
+      evidence: {
+        before: meta.before,
+        after: meta.after,
+        changed: meta.changedCategories ?? [],
+        deletedData: false,
+      },
+    };
   };
 }
 
@@ -431,15 +545,13 @@ export function createFridayRetentionSettingsRoutes(
           );
         }
 
-        // 2. Authoritative BEFORE-state: read from the STORE (never the request),
-        //    which also yields the known content categories (all 7) for unknown-key
-        //    rejection — keeping this handler decoupled from the category list.
-        const before = deps.store.readOwnerContentPolicy({ principalId: ownerId });
-        const known = new Set(Object.keys(before));
-
-        // 3. Validate the WHOLE body FIRST (reject → 400, persist nothing / no
-        //    audit / no receipt), THEN apply. An invalid entry mid-batch throws
-        //    here, before the transaction opens.
+        // 2. Validate the WHOLE body FIRST (reject → 400, persist nothing / no
+        //    audit / no receipt), THEN apply. The KNOWN content-category set is the
+        //    invariant 7 categories — derived from a read of the current policy's
+        //    KEYS only (values are irrelevant to validation), so unknown-key
+        //    rejection stays fail-closed BEFORE any mutation. Authoritative
+        //    before/after VALUES are read IN-TXN below (never from this snapshot).
+        const known = new Set(Object.keys(deps.store.readOwnerContentPolicy({ principalId: ownerId })));
         const updates: Record<string, CategoryRetention> = {};
         for (const [category, raw] of Object.entries(policyInput as Record<string, unknown>)) {
           if (!known.has(category)) {
@@ -452,40 +564,43 @@ export function createFridayRetentionSettingsRoutes(
           updates[category] = parseCategoryRetention(category, raw);
         }
 
-        // 4. UNIQUE operation identity (P0 #1 — traceability). Uniqueness comes
-        //    from the injected collision-resistant id generator, NOT the clock:
-        //    two same-owner writes in the SAME millisecond get DISTINCT correlation
-        //    AND receipt ids. The readable domain prefix is cosmetic; `operationId`
-        //    is what guarantees no collision. (The audit-row id is independently
-        //    unique, generated inside `appendPolicyAudit`.)
+        // 3. UNIQUE operation identity (P0 — traceability). Uniqueness comes from
+        //    the injected collision-resistant id generator, NOT the clock: two
+        //    same-owner/same-millisecond writes get DISTINCT correlation AND receipt
+        //    ids. The readable domain prefix is cosmetic. The CLIENT-KNOWN recovery
+        //    key (Idempotency-Key header, optional) binds the durable receipt for
+        //    owner-bound recovery of an interrupted request.
         const runAt = deps.nowIso();
         const operationId = deps.idGenerator();
         const correlationId = `retention-policy-update:${ownerId}:${operationId}`;
         const receiptId = `retention-receipt:${ownerId}:${operationId}`;
+        const recoveryKey = readIdempotencyKeyHeader(
+          ctx.headers as Record<string, string | undefined> | undefined,
+        );
 
-        // 5. Authoritative AFTER-state captured IN-TXN, WITHOUT a fallible
-        //    post-commit read (P0 #2 — write-closure). The applied-but-not-yet-
-        //    committed effective policy is provably identical to what the commit
-        //    persists: `updates` is already validated, and the store applies each
-        //    entry cleanly (`permanent` clears the override → effective permanent;
-        //    `after_days` upserts that exact honored window), while the store's read
-        //    defaults every absent category to permanent. So `{...before,...updates}`
-        //    IS the authoritative committed state — derived, not re-read.
-        const after = { ...before, ...updates } as FridayRetentionContentPolicy;
-        const changed = computeChangedCategories(before, after);
-
-        // 6. ATOMIC apply + DURABLE-receipt capture + audit, all in ONE write
-        //    transaction. The store write nests as a SAVEPOINT on the same writer
-        //    connection; the audit append (which persists the FULL receipt facts
-        //    onto the committed audit row) nests likewise. If the audit append
-        //    THROWS (fail-closed 503) the whole transaction rolls back → policy
-        //    byte-unchanged, no audit row, no orphan. It is therefore impossible to
-        //    commit a policy effect without its receipt ALSO durably committed, and
-        //    impossible to return 503 with a committed write.
-        let auditId = "";
-        deps.db.withWriteTransaction(() => {
-          deps.store.applyOwnerContentPolicy({ principalId: ownerId, updates });
-          auditId = deps.appendPolicyAudit({
+        // 4. ONE writer transaction carries the AUTHORITATIVE before-read, the
+        //    apply, the AUTHORITATIVE after-read, the durable-receipt capture, and
+        //    the audit — all on the SAME writer connection (P0 — concurrent
+        //    readback + write-closure). Reading on the writer connection inside its
+        //    own transaction SEES this txn's uncommitted apply AND reflects any
+        //    disjoint write another connection committed before this txn opened, so
+        //    `before`/`after` are the TRUE committed states — never a racy pre-txn
+        //    read-pool snapshot (which `{...before,...updates}` synthesis would
+        //    miss). If the audit append THROWS (fail-closed 503) the whole
+        //    transaction rolls back → policy byte-unchanged, no audit row, no orphan;
+        //    it is impossible to commit a policy effect without its receipt also
+        //    durably committed on the same row, or to return 503 with a committed
+        //    write.
+        let before!: FridayRetentionContentPolicy;
+        let after!: FridayRetentionContentPolicy;
+        let changed: string[] = [];
+        let auditEntry!: FridaySecurityAuditEntry;
+        deps.db.withWriteTransaction((conn) => {
+          before = deps.store.readOwnerContentPolicyOnConnection(conn, { principalId: ownerId });
+          deps.store.applyOwnerContentPolicyOnConnection(conn, { principalId: ownerId, updates });
+          after = deps.store.readOwnerContentPolicyOnConnection(conn, { principalId: ownerId });
+          changed = computeChangedCategories(before, after);
+          auditEntry = deps.appendPolicyAudit({
             correlationId,
             receiptId,
             ownerId,
@@ -494,18 +609,23 @@ export function createFridayRetentionSettingsRoutes(
             after,
             appliedUpdates: updates,
             changedCategories: changed,
+            ...(recoveryKey ? { recoveryKey } : {}),
           });
         });
 
-        // 7. The response is a PURE serialization of already-durable in-memory
-        //    facts — there is NO DB access after commit, so a caller can never
-        //    observe an error AFTER a committed effect. The same facts are durably
-        //    recoverable from the committed audit row (id = auditId; metadata holds
-        //    receiptId/correlationId/before/after/changed/deletedData).
+        // 5. Post-commit: make the committed audit entry VISIBLE in the LIVE audit
+        //    projection (P0 — audit visibility). Pure in-memory upsert, cannot
+        //    fail, runs ONLY after a successful commit → preserves rollback-safety
+        //    AND live visibility. No fallible DB access after commit.
+        deps.projectCommittedAudit?.(auditEntry);
+
+        // 6. The response is a PURE serialization of already-durable in-memory
+        //    facts (also recoverable from the committed audit row: id = auditId;
+        //    metadata holds receiptId/correlationId/before/after/changed/recoveryKey).
         const receipt: FridayRetentionPolicyUpdateReceipt = {
           receiptId,
           correlationId,
-          auditId,
+          auditId: auditEntry.id,
           status: "applied",
           runAt,
           requestedBy: ownerId,
@@ -514,6 +634,42 @@ export function createFridayRetentionSettingsRoutes(
         };
 
         return { policy: after, receipt };
+      },
+    },
+    {
+      // RETENTION-R3d (P0 — uncertain-outcome RECOVERY): owner-bound receipt
+      // recovery. An interrupted PUT can commit its mutation + durable receipt yet
+      // lose its HTTP response; the client re-sends the SAME Idempotency-Key here to
+      // retrieve the EXACT committed receipt from the durable audit row — a product
+      // seam, not raw DB access. Canonical-owner-gated: a non-canonical principal
+      // (admin-002) is refused 403 BEFORE any lookup (zero cross-principal
+      // disclosure), and the query itself is scoped to the owner's principal_id.
+      operationId: "uix.retention.policy.receipt.get",
+      method: "GET",
+      path: "/v1/uix/retention-policy/receipt",
+      auth: { public: true },
+      async handler(ctx): Promise<FridayRetentionReceiptRecoveryResponse> {
+        const ownerId = assertCanonicalRetentionOwner(
+          ctx.principal ?? null,
+          "retention.policy.read",
+          deps.resolveCanonicalOwnerId,
+        );
+        const recoveryKey =
+          readIdempotencyKeyHeader(ctx.headers as Record<string, string | undefined> | undefined) ??
+          (typeof (ctx.query as { key?: unknown } | undefined)?.key === "string"
+            ? ((ctx.query as { key?: string }).key as string).trim() || undefined
+            : undefined);
+        if (!recoveryKey) {
+          throw new FridayDomainError(
+            "RETENTION_RECOVERY_KEY_REQUIRED",
+            "An Idempotency-Key header (or ?key=) is required to recover a retention-policy receipt.",
+            { httpStatus: 400 },
+          );
+        }
+        const receipt = deps.readReceiptByRecoveryKey
+          ? deps.readReceiptByRecoveryKey({ ownerId, recoveryKey })
+          : null;
+        return { receipt };
       },
     },
     {

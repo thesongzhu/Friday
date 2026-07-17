@@ -43,6 +43,7 @@ import { FridayDomainError } from "#errors";
 import { buildOpenBrowserUrlCommand, isFridayTestSecurityWarningSuppressed, safeJsonParse } from "#utilities";
 import { initializeFridayState } from "#state";
 import type { FridayStateRuntime } from "#state";
+import type { FridaySecurityAuditEntry } from "../security/multi-tenant/model/friday-multi-tenant-security.types.js";
 import { createFridayLocalDaemonService } from "#daemon";
 import { createFridayMutatingActionGate } from "../security/friday-mutating-action-gate.js";
 import {
@@ -113,6 +114,7 @@ import {
   createFridayMissionAutoDispatchDriver,
   createFridayReflexRoutes,
   createFridayRetentionPolicyAuditAppender,
+  createFridayRetentionReceiptRecovery,
   createFridayRustHubSystemIntentService,
   getChannelPersona,
   hydrateChannelPersonaStore,
@@ -6751,6 +6753,16 @@ export async function createFridayHub(
     sqlite: stateRuntime.sqlite,
     idGenerator,
   });
+  // RETENTION-R3d (P0 — uncertain-outcome recovery): owner-bound receipt recovery
+  // reader over the durable audit row (scoped to the canonical owner).
+  const retentionReceiptRecovery = createFridayRetentionReceiptRecovery({
+    sqlite: stateRuntime.sqlite,
+  });
+  // RETENTION-R3d (P0 — audit-projection visibility): when the multi-tenant audit
+  // projection is wired (below), reflect each committed retention audit row into
+  // its boot-hydrated in-memory map POST-COMMIT so `queryAuditLog` sees it. Stays
+  // undefined otherwise (the committed `security_audit_log` row is then the record).
+  let retentionAuditProjector: ((entry: FridaySecurityAuditEntry) => void) | undefined;
   const retentionPolicyLoader = createFridayRetentionPolicyLoader({
     db: stateRuntime.sqlite,
     repo: retentionSettingsRepository,
@@ -7054,6 +7066,9 @@ export async function createFridayHub(
     const scopedResourcePersistence = createSqliteTenantScopedResourcePersistence(stateRuntime.sqlite);
 
     const mtAuditLogger = new AuditLogger({ persistence: auditPersistence });
+    // RETENTION-R3d (P0): the retention route's committed audit rows become visible
+    // in this live projection via a post-commit, in-memory-only hydration.
+    retentionAuditProjector = (entry) => mtAuditLogger.hydratePersistedEntry(entry);
     const mtTenantManager = new TenantManager(mtAuditLogger, { persistence: tenantPersistence });
     const mtRbacEngine = new RbacEngine(mtAuditLogger);
     const mtPolicyEngine = new PolicyEngine(mtAuditLogger);
@@ -7514,9 +7529,13 @@ export async function createFridayHub(
       db: stateRuntime.sqlite,
       appendPolicyAudit: retentionPolicyAuditAppender,
       nowIso,
-      // RETENTION-R3d (P0 #1): collision-resistant per-write id seeding the unique
+      // RETENTION-R3d: collision-resistant per-write id seeding the unique
       // correlation + receipt identities (crypto.randomUUID — never clock-derived).
       idGenerator,
+      // RETENTION-R3d (P0): post-commit audit-projection visibility (undefined when
+      // no in-memory projection is wired) + owner-bound receipt recovery.
+      projectCommittedAudit: retentionAuditProjector,
+      readReceiptByRecoveryKey: retentionReceiptRecovery,
     },
     uix: {
       service: uixService,

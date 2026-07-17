@@ -5,6 +5,7 @@ import {
   createFridayHttpServer,
   createFridayRetentionSettingsRoutes,
   createFridayRetentionPolicyAuditAppender,
+  createFridayRetentionReceiptRecovery,
 } from "#api";
 import type {
   FridayAuthMiddlewareFactory,
@@ -16,6 +17,9 @@ import type {
 } from "#api";
 import type { FridaySqliteLayer } from "#state";
 import { FridayDomainError } from "#errors";
+import { AuditLogger } from "../../../../../src/security/multi-tenant/engine/audit-logger.js";
+import { createSqliteAuditPersistence } from "../../../../../src/security/multi-tenant/persistence/friday-multi-tenant-sqlite-store.js";
+import type { FridaySecurityAuditEntry } from "../../../../../src/security/multi-tenant/model/friday-multi-tenant-security.types.js";
 import {
   createFridayRetentionJob,
   createFridayRetentionPolicyLoader,
@@ -112,23 +116,34 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
   }
 
   function makeRoutes(
-    appendPolicyAudit: (entry: FridayRetentionPolicyAuditEntry) => string,
+    appendPolicyAudit: (entry: FridayRetentionPolicyAuditEntry) => FridaySecurityAuditEntry,
+    opts: {
+      projectCommittedAudit?: (entry: FridaySecurityAuditEntry) => void;
+      store?: FridayRetentionSettingsStore;
+      db?: FridaySqliteLayer;
+    } = {},
   ): ReturnType<typeof createFridayRetentionSettingsRoutes> {
     return createFridayRetentionSettingsRoutes({
-      store,
+      store: opts.store ?? store,
       resolveCanonicalOwnerId: () => CANON,
-      db,
+      db: opts.db ?? db,
       appendPolicyAudit,
       nowIso: () => NOW,
       idGenerator: () => `op-${String(++idCounter).padStart(4, "0")}`,
+      readReceiptByRecoveryKey: createFridayRetentionReceiptRecovery({ sqlite: db }),
+      ...(opts.projectCommittedAudit ? { projectCommittedAudit: opts.projectCommittedAudit } : {}),
     });
   }
 
-  function realAppender(): (entry: FridayRetentionPolicyAuditEntry) => string {
+  function realAppender(): (entry: FridayRetentionPolicyAuditEntry) => FridaySecurityAuditEntry {
     return createFridayRetentionPolicyAuditAppender({
       sqlite: db,
       idGenerator: () => `aud-${String(++idCounter).padStart(4, "0")}`,
     });
+  }
+
+  function receiptRouteOf(routes: ReturnType<typeof createFridayRetentionSettingsRoutes>) {
+    return routes.find((r) => r.operationId === "uix.retention.policy.receipt.get")!;
   }
 
   function putRouteOf(routes: ReturnType<typeof createFridayRetentionSettingsRoutes>) {
@@ -422,14 +437,19 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
         return out;
       },
     };
-    // store proxy: any read AFTER commit throws (the Advisor's post-commit probe).
+    // store proxy: ANY effective-policy read AFTER commit throws (the Advisor's
+    // post-commit probe). The fixed handler reads before/after IN-TXN (committed is
+    // still false there) and performs NO store read after commit, so this never
+    // fires — proving the orphan window is closed.
     const storeProxy: FridayRetentionSettingsStore = {
+      ...store,
       readOwnerContentPolicy(input) {
         if (committed) throw new Error("injected post-commit read failure");
         return store.readOwnerContentPolicy(input);
       },
-      applyOwnerContentPolicy(input) {
-        return store.applyOwnerContentPolicy(input);
+      readOwnerContentPolicyOnConnection(conn, input) {
+        if (committed) throw new Error("injected post-commit read failure");
+        return store.readOwnerContentPolicyOnConnection(conn, input);
       },
     };
     const routes = createFridayRetentionSettingsRoutes({
@@ -461,6 +481,157 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     expect(meta.receiptId).toBe(result.receipt.receiptId);
     expect(meta.correlationId).toBe(result.receipt.correlationId);
     expect(meta.after).toEqual(result.receipt.evidence.after);
+  });
+
+  // ── 10. P0 — CONCURRENT authoritative readback: a DISJOINT-category write that
+  //        commits just before this PUT's txn opens → the receipt's authoritative
+  //        after (and changed[] and the DB) reflect BOTH categories' TRUE committed
+  //        values, never a stale pre-txn synthesis. ──────────────────────────────
+  it("a disjoint concurrent commit before this txn → receipt.after + DB reflect BOTH categories (no stale snapshot)", async () => {
+    let injected = false;
+    const dbProxy: FridaySqliteLayer = {
+      ...db,
+      withWriteTransaction<T>(fn: Parameters<FridaySqliteLayer["withWriteTransaction"]>[0]): T {
+        if (!injected) {
+          injected = true;
+          // A legitimate DISJOINT write commits in the interval a pre-txn snapshot
+          // would have missed — but before this PUT's txn opens.
+          store.applyOwnerContentPolicy({
+            principalId: CANON,
+            updates: { learningEvents: { mode: "after_days", days: 90 } },
+          });
+        }
+        return db.withWriteTransaction(fn) as T;
+      },
+    };
+    const routes = createFridayRetentionSettingsRoutes({
+      store,
+      resolveCanonicalOwnerId: () => CANON,
+      db: dbProxy,
+      appendPolicyAudit: realAppender(),
+      nowIso: () => NOW,
+      idGenerator: () => `op-${String(++idCounter).padStart(4, "0")}`,
+    });
+
+    const result = (await putRouteOf(routes).handler(
+      makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { policy: Record<string, unknown>; receipt: FridayRetentionPolicyUpdateReceipt };
+
+    // Authoritative after reflects the concurrent disjoint commit AND this write.
+    expect(result.receipt.evidence.after.learningEvents).toEqual({ mode: "after_days", days: 90 });
+    expect(result.receipt.evidence.after.auditLogs).toEqual({ mode: "after_days", days: 30 });
+    expect(result.policy.learningEvents).toEqual({ mode: "after_days", days: 90 });
+    // This operation only changed auditLogs (learningEvents was already committed).
+    expect(result.receipt.evidence.changed).toEqual(["auditLogs"]);
+    // Durable DB state matches the receipt.
+    expect(policyRows(CANON)).toEqual([
+      { content_category: "auditLogs", after_days: 30 },
+      { content_category: "learningEvents", after_days: 90 },
+    ]);
+    // The committed audit row carries the same authoritative after.
+    const meta = JSON.parse(auditRows()[0].metadata_json) as { after: Record<string, unknown> };
+    expect(meta.after).toEqual(result.receipt.evidence.after);
+  });
+
+  // ── 11. P0 — concurrent SAME-category commit before this txn → the authoritative
+  //        BEFORE reflects the committed value (not a stale permanent snapshot). ──
+  it("a same-category concurrent commit before this txn → receipt.before is the TRUE committed value", async () => {
+    let injected = false;
+    const dbProxy: FridaySqliteLayer = {
+      ...db,
+      withWriteTransaction<T>(fn: Parameters<FridaySqliteLayer["withWriteTransaction"]>[0]): T {
+        if (!injected) {
+          injected = true;
+          store.applyOwnerContentPolicy({
+            principalId: CANON,
+            updates: { auditLogs: { mode: "after_days", days: 5 } },
+          });
+        }
+        return db.withWriteTransaction(fn) as T;
+      },
+    };
+    const routes = createFridayRetentionSettingsRoutes({
+      store,
+      resolveCanonicalOwnerId: () => CANON,
+      db: dbProxy,
+      appendPolicyAudit: realAppender(),
+      nowIso: () => NOW,
+      idGenerator: () => `op-${String(++idCounter).padStart(4, "0")}`,
+    });
+
+    const result = (await putRouteOf(routes).handler(
+      makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+
+    // BEFORE = the concurrently-committed 5 (authoritative in-txn read), not permanent.
+    expect(result.receipt.evidence.before.auditLogs).toEqual({ mode: "after_days", days: 5 });
+    expect(result.receipt.evidence.after.auditLogs).toEqual({ mode: "after_days", days: 30 });
+    expect(result.receipt.evidence.changed).toEqual(["auditLogs"]);
+  });
+
+  // ── 12. P0 — audit-projection VISIBILITY: the committed retention audit is
+  //        queryable through the product's live AuditLogger projection (not just a
+  //        raw SQLite row), while staying rollback-safe. ──────────────────────────
+  it("committed retention audit is visible through the live AuditLogger projection", async () => {
+    const auditLogger = new AuditLogger({ persistence: createSqliteAuditPersistence(db) });
+    const routes = makeRoutes(realAppender(), {
+      projectCommittedAudit: (e) => auditLogger.hydratePersistedEntry(e),
+    });
+    // The boot-hydrated projection is empty before the write.
+    expect(auditLogger.queryAuditLog({ tenantId: null }).length).toBe(0);
+
+    const result = (await putRouteOf(routes).handler(
+      makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+
+    // The committed entry is now returned by the LIVE projection query (not zero).
+    const projected = auditLogger.queryAuditLog({ tenantId: null });
+    expect(projected.length).toBe(1);
+    expect(projected[0].id).toBe(result.receipt.auditId);
+    expect(projected[0].action).toBe("retention.policy.update");
+    expect(auditLogger.getAuditEntry(null, result.receipt.auditId)?.resourceType).toBe("policy");
+  });
+
+  // ── 13. P0 — uncertain-outcome RECOVERY: an owner-bound seam returns the EXACT
+  //        committed receipt by the client-known key; cross-principal is denied. ──
+  it("committed receipt is recoverable by client key via the owner-bound seam; cross-principal denied", async () => {
+    const routes = makeRoutes(realAppender());
+    const KEY = "client-key-abc";
+    const put = (await putRouteOf(routes).handler(
+      makeCtx({
+        headers: { "idempotency-key": KEY },
+        body: { policy: { auditLogs: { mode: "after_days", days: 30 } } },
+      }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+
+    // Recover the EXACT committed receipt through the product seam by the client key.
+    const rec = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(rec.receipt).not.toBeNull();
+    expect(rec.receipt!.receiptId).toBe(put.receipt.receiptId);
+    expect(rec.receipt!.correlationId).toBe(put.receipt.correlationId);
+    expect(rec.receipt!.auditId).toBe(put.receipt.auditId);
+    expect(rec.receipt!.evidence.after).toEqual(put.receipt.evidence.after);
+    expect(rec.receipt!.evidence.changed).toEqual(put.receipt.evidence.changed);
+
+    // Unknown key → null (never fabricated).
+    const miss = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": "no-such-key" } }),
+    )) as { receipt: unknown };
+    expect(miss.receipt).toBeNull();
+
+    // Cross-principal (admin-002) → 403 BEFORE any lookup (zero disclosure).
+    await expect(
+      receiptRouteOf(routes).handler(
+        makeCtx({ principal: owner("admin-002"), headers: { "idempotency-key": KEY } }),
+      ),
+    ).rejects.toMatchObject({ httpStatus: 403 });
+
+    // Missing key → 400.
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: {} })),
+    ).rejects.toMatchObject({ httpStatus: 400 });
   });
 });
 
