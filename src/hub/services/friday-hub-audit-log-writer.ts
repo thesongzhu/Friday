@@ -23,10 +23,20 @@ import { createFridayMemoryPiiGuard } from "../../memory/guard/services/friday-m
 // assignment + github_pat_/ghp_ + sk-/JWT/PEM/Bearer + AWS/Slack). Independent string primitive,
 // layered OVER the PII guard.
 import {
+  findSecretShapeSpans,
   FRIDAY_DEFAULT_SECRET_MARKER,
   isSensitiveSecretFieldName,
   redactSecretShapesInString,
 } from "../../security/friday-secret-shape-redactor.js";
+// PRIV-UNICODE-REDACTION-001: shared, additive, non-destructive Unicode-aware detection layer. It
+// folds Unicode decimal digits (Arabic-Indic / Extended Arabic-Indic / Devanagari / full-width / …)
+// to ASCII and strips zero-width + format code points on a DETECTION COPY only, maps matches back to
+// the ORIGINAL span, and redacts just that span — catching PII / secrets that Unicode obfuscation
+// hides from the ASCII (+ full-width) matchers above, WITHOUT altering benign multilingual text.
+import {
+  redactUnicodeObfuscated,
+  type UnicodeNormalizedSpan,
+} from "../../security/friday-unicode-pii-normalizer.js";
 import type { FridayAuditLogWrite } from "./friday-hub-memory-state.types.js";
 
 // ─── Types (legacy compatibility re-export) ───
@@ -80,11 +90,11 @@ const AUDIT_INTL_PHONE_MARKER = "[PHONE]";
  * `1` country code and is digit-run-bounded (`(?<![\w+])` … `(?!\d)`) so it never fires on a benign
  * national-format id, an epoch timestamp, or a longer numeric id.
  */
+const AUDIT_RESIDUAL_US_PHONE =
+  /(?<![\w+])\+?1[-.\s]?\(?[2-9]\d{2}\)?[-.\s]?[2-9]\d{2}[-.\s]?\d{4}(?!\d)/g;
+
 function redactResidualUsPhone(input: string): string {
-  return input.replace(
-    /(?<![\w+])\+?1[-.\s]?\(?[2-9]\d{2}\)?[-.\s]?[2-9]\d{2}[-.\s]?\d{4}(?!\d)/g,
-    "[PHONE_US]",
-  );
+  return input.replace(AUDIT_RESIDUAL_US_PHONE, "[PHONE_US]");
 }
 
 // International-channel-phone pass (SEC-EVENT-REDACTION-001 finding 3). Context-scoped to the AUDIT
@@ -144,12 +154,96 @@ function redactInternationalChannelPhone(input: string): string {
  * epoch, or SHA is left intact — distinct ids are not collapsed or corrupted.
  */
 function redactIdentifierLeaf(input: string): string {
-  return redactInternationalChannelPhone(redactResidualUsPhone(redactSecretShapesInString(input)));
+  return redactUnicodeIdentifierLeaf(
+    redactInternationalChannelPhone(redactResidualUsPhone(redactSecretShapesInString(input))),
+  );
 }
 
 /** Secret shapes + US + international channel phone — applied to CONTENT strings (after `redactDeep`). */
 function redactContentLeaf(input: string): string {
-  return redactInternationalChannelPhone(redactResidualUsPhone(redactSecretShapesInString(input)));
+  return redactUnicodeContentLeaf(
+    redactInternationalChannelPhone(redactResidualUsPhone(redactSecretShapesInString(input))),
+  );
+}
+
+// ─── Unicode-obfuscation residual pass (PRIV-UNICODE-REDACTION-001) ───
+//
+// The ASCII (+ full-width) matchers above miss PII / secrets hidden by a non-ASCII decimal script
+// (Arabic-Indic `+١٤١٥…`, Devanagari, …) or by zero-width / format code points spliced into a token
+// (`sk-<U+200B>…`). These SPAN FINDERS run the SAME matchers over the shared Unicode DETECTION COPY
+// (digits folded to ASCII by value, zero-width / format / default-ignorable stripped); each reported
+// [start,end) span is mapped back to the ORIGINAL span by `redactUnicodeObfuscated` and only that
+// original span is redacted, so benign multilingual text stays byte-identical. The finder ORDER is
+// PRECEDENCE (secret ≻ US phone ≻ intl phone ≻ PII-by-value), so a `+`-E.164 stays `[PHONE]` rather
+// than `[CREDIT_CARD]` — mirroring the ASCII phone-before-card ordering.
+
+/** Residual leading-country-code US phone spans over the (folded) detection copy. */
+function findResidualUsPhoneSpans(normalized: string): UnicodeNormalizedSpan[] {
+  const regex = new RegExp(AUDIT_RESIDUAL_US_PHONE.source, AUDIT_RESIDUAL_US_PHONE.flags);
+  const spans: UnicodeNormalizedSpan[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(normalized)) !== null) {
+    spans.push({ start: match.index, end: match.index + match[0].length, replacement: "[PHONE_US]" });
+  }
+  return spans;
+}
+
+/**
+ * International E.164 channel-phone spans over the (folded) detection copy — the SAME candidate
+ * regex + amount/decimal reject + 11–15-digit gate + trailing-separator trim as
+ * `redactInternationalChannelPhone`, reported as spans instead of an in-place replacement.
+ */
+function findIntlChannelPhoneSpans(normalized: string): UnicodeNormalizedSpan[] {
+  const regex = new RegExp(AUDIT_INTL_PHONE_CANDIDATE.source, AUDIT_INTL_PHONE_CANDIDATE.flags);
+  const spans: UnicodeNormalizedSpan[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(normalized)) !== null) {
+    const core = match[0].replace(AUDIT_INTL_PHONE_TRAILING_SEP, "");
+    if (AUDIT_INTL_PHONE_AMOUNT_SEP.test(core)) continue; // decimal / grouped amount → not a phone
+    const digits = foldedDigitCount(core);
+    if (digits < 11 || digits > 15) continue; // not a channel-phone-length number
+    spans.push({ start: match.index, end: match.index + core.length, replacement: AUDIT_INTL_PHONE_MARKER });
+  }
+  return spans;
+}
+
+/**
+ * PII-by-value spans (email / phone_us / ssn_us / Luhn-gated credit_card) over the (folded)
+ * detection copy, via the shared guard's own detectors — so Unicode-obfuscated PII is classified
+ * byte-consistently with how the guard would classify the ASCII form. Used for CONTENT strings ONLY;
+ * the identifier-leaf variant deliberately omits it so a benign phone-SHAPED forensic id (e.g. an
+ * Arabic-digit `requestId` folding to `2015550123`) is NOT collapsed — the #1618 field-role lesson,
+ * carried into Unicode.
+ */
+function findPiiValueSpans(normalized: string): UnicodeNormalizedSpan[] {
+  return auditPiiGuard.scanAndTransform(normalized).matches.map((m) => ({
+    start: m.start,
+    end: m.end,
+    replacement: `[${m.type.toUpperCase()}]`,
+  }));
+}
+
+/** CONTENT-string Unicode residual: secret ≻ US phone ≻ intl phone ≻ PII-by-value. */
+function redactUnicodeContentLeaf(input: string): string {
+  return redactUnicodeObfuscated(input, [
+    findSecretShapeSpans,
+    findResidualUsPhoneSpans,
+    findIntlChannelPhoneSpans,
+    findPiiValueSpans,
+  ]);
+}
+
+/**
+ * IDENTIFIER-leaf Unicode residual: secret + channel phones ONLY (NO PII-by-value), so a benign
+ * phone-shaped forensic identifier written in a non-ASCII digit script survives while a phone
+ * embedded in a channel-derived id (`channel:<kind>:<+١٤١٥…>:…`) is still stripped.
+ */
+function redactUnicodeIdentifierLeaf(input: string): string {
+  return redactUnicodeObfuscated(input, [
+    findSecretShapeSpans,
+    findResidualUsPhoneSpans,
+    findIntlChannelPhoneSpans,
+  ]);
 }
 
 /**

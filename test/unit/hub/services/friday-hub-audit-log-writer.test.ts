@@ -912,3 +912,239 @@ describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 details redaction"
     expect(details.channelCorrelationId).toContain(MESSAGE_ID);
   });
 });
+
+// ── PRIV-UNICODE-REDACTION-001 — Unicode-obfuscation de-obfuscation at the details sink ──
+//
+// Round-4→5 blocking finding: an independent real-SQLite + audit.jsonl probe proved two
+// Unicode-obfuscation bypasses persisted VERBATIM in BOTH at-rest sinks:
+//   (1) an Arabic-Indic-digit E.164 phone (`+١٤١٥…`) — the ASCII / full-width phone matchers do not
+//       recognize Arabic-Indic (U+0660–0669) / Extended Arabic-Indic (U+06F0–06F9) / other Nd digits;
+//   (2) an `sk-` credential broken by a U+200B ZERO WIDTH SPACE — the secret-shape regex did not
+//       normalize zero-width / format code points.
+// These drive the REAL `appendFridayAuditLog` and raw-read BOTH the SQLite `audit_logs.details_json`
+// column AND the `audit.jsonl` mirror. They are RED on f944407a and GREEN after the additive shared
+// Unicode-aware detection layer. Benign multilingual text MUST survive BYTE-IDENTICAL (no degrade).
+describe("FridayHubAuditLogWriter — PRIV-UNICODE-REDACTION-001 details Unicode de-obfuscation", () => {
+  const AUDIT_SCHEMA = `
+    CREATE TABLE audit_logs (
+      id TEXT PRIMARY KEY,
+      ts TEXT NOT NULL,
+      actor_type TEXT NOT NULL,
+      actor_id TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
+      request_id TEXT,
+      trace_id TEXT,
+      ip TEXT,
+      details_json TEXT
+    );
+  `;
+
+  let root: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "friday-audit-unicode-"));
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  async function writeAndReadBack(entry: FridayAuditLogWrite): Promise<{
+    sqliteDetailsJson: string;
+    sqliteDetails: Record<string, unknown>;
+    jsonlLine: string;
+    jsonlDetails: Record<string, unknown>;
+  }> {
+    const stateDir = fs.mkdtempSync(path.join(root, "state-"));
+    fs.mkdirSync(path.join(stateDir, ".friday"), { recursive: true });
+    const sqlitePath = path.join(stateDir, "friday.db");
+    const setupDb = new Database(sqlitePath);
+    setupDb.exec(AUDIT_SCHEMA);
+    setupDb.close();
+
+    const canonicalLogPath = resolveFridayAuditLogPath(stateDir);
+    await appendFridayAuditLog(canonicalLogPath, entry);
+
+    const verifyDb = new Database(sqlitePath, { readonly: true });
+    const sqliteRow = verifyDb
+      .prepare("SELECT details_json FROM audit_logs WHERE id = ?")
+      .get(entry.id) as { details_json: string | null } | undefined;
+    verifyDb.close();
+
+    const sqliteDetailsJson = (sqliteRow?.details_json as string | null) ?? "";
+    const jsonlContent = fs.readFileSync(canonicalLogPath, "utf8");
+    const jsonlLine =
+      jsonlContent
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .find((line) => (JSON.parse(line) as { id?: string }).id === entry.id) ?? "";
+
+    return {
+      sqliteDetailsJson,
+      sqliteDetails: sqliteDetailsJson ? (JSON.parse(sqliteDetailsJson) as Record<string, unknown>) : {},
+      jsonlLine,
+      jsonlDetails: (JSON.parse(jsonlLine) as { details?: Record<string, unknown> }).details ?? {},
+    };
+  }
+
+  // ── Obfuscated PII / secret fixtures (ASCII-folded canary in the comment) ──
+  // Arabic-Indic (U+0660–0669) US E.164 → folds to +14155552671 → [PHONE_US].
+  const AR_INDIC_US_PHONE = "+١٤١٥٥٥٥٢٦٧١";
+  const AR_INDIC_US_DIGITS = "14155552671";
+  // Extended Arabic-Indic (U+06F0–06F9) UK E.164 (no leading `1`) → +447911123456 → [PHONE] (intl).
+  const EXT_AR_UK_PHONE = "+۴۴۷۹۱۱۱۲۳۴۵۶";
+  const EXT_AR_UK_DIGITS = "447911123456";
+  // Devanagari (U+0966–096F) Luhn-valid card → 4111111111111111 → [CREDIT_CARD].
+  const DEVANAGARI_CARD = "४१११११११११११११११"; // pragma: allowlist secret
+  const CARD_DIGITS = "4111111111111111"; // pragma: allowlist secret
+  // U+200B-obfuscated SSN → strip ZWSP → 123-45-6789 → [SSN_US].
+  const ZW_SSN = "123-45-​6789";
+  // U+200B-obfuscated Luhn card → strip ZWSP → 4111111111111111 → [CREDIT_CARD].
+  const ZW_CARD = "4111​1111​1111​1111"; // pragma: allowlist secret
+  // Vector (2): `sk-` broken by a U+200B ZERO WIDTH SPACE → [REDACTED_SECRET].
+  const SK_CANARY = "abcdefghijklmnop0123456789"; // pragma: allowlist secret
+  const ZW_SK_SECRET = `sk-​${SK_CANARY}`; // pragma: allowlist secret
+  // U+200D (ZWJ)-obfuscated fine-grained GitHub PAT → [REDACTED_SECRET].
+  const GH_PAT_CANARY = "github_pat_11ABCDEF0aBcDeFgHiJkL0123456789abcdefghij"; // pragma: allowlist secret
+  const ZW_GH_PAT = "github_pat_‍11ABCDEF0aBcDeFgHiJkL0123456789abcdefghij"; // pragma: allowlist secret
+  // Full-width (CJK Forms) national phone → folds to 2135550188 → [PHONE_US].
+  const FULLWIDTH_PHONE = "２１３５５５０１８８";
+  const FULLWIDTH_DIGITS = "2135550188";
+
+  // ── NO-DEGRADE benign multilingual fixtures — MUST survive BYTE-IDENTICAL ──
+  const BENIGN_ARABIC_PROSE = "طلبك رقم ٣ جاهز"; // "your order no. 3 is ready" — short digit run
+  const BENIGN_CJK = "订单号 42 已完成"; // "order 42 complete"
+  const BENIGN_ZWJ_EMOJI = "family 👨‍👩‍👧 dinner"; // ZWJ emoji must survive
+  const BENIGN_COMBINING = "café résumé"; // combining marks
+  const BENIGN_ERROR_MESSAGE = "connection reset by peer"; // no secret
+  // Benign phone-SHAPED forensic id written in Arabic-Indic digits → folds to 2015550123. Under a
+  // forensic key it MUST survive verbatim (#1618 field-role lesson, carried into Unicode): the
+  // identifier-leaf Unicode residual omits the PII-by-value pass, so this is never collapsed.
+  const BENIGN_AR_FORENSIC_ID = "٢٠١٥٥٥٠١٢٣";
+
+  function unicodeEntry(id: string, details: Record<string, unknown>): FridayAuditLogWrite {
+    return {
+      id,
+      ts: "2026-07-17T00:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-signal",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-u",
+      result: "error",
+      errorCode: "CHANNEL_DELIVERY_FAILED",
+      details,
+    };
+  }
+
+  it("RED→GREEN (vector 1): strips an Arabic-Indic-digit E.164 phone from senderId (content) AND routeId (forensic) in BOTH sinks", async () => {
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-ar-phone", {
+        senderId: AR_INDIC_US_PHONE, // content field
+        routeId: AR_INDIC_US_PHONE, // forensic identifier field
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(AR_INDIC_US_PHONE); // raw Arabic digits absent
+      expect(sink).not.toContain(AR_INDIC_US_DIGITS); // folded ASCII digits absent
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details.senderId).toBe("[PHONE_US]");
+      expect(details.routeId).toBe("[PHONE_US]");
+    }
+  });
+
+  it("RED→GREEN (vector 2): strips an `sk-` credential broken by a U+200B ZERO WIDTH SPACE in errorMessage in BOTH sinks", async () => {
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-zw-secret", {
+        errorMessage: `send failed: ${ZW_SK_SECRET} rejected`,
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(SK_CANARY); // the credential body is absent
+      expect(sink).not.toContain("sk-\\u200b"); // and no escaped-ZWSP `sk-` residue
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details.errorMessage).toContain("[REDACTED_SECRET]");
+      expect(details.errorMessage).not.toContain(SK_CANARY);
+      // Surrounding benign text is preserved (no whole-field nuke).
+      expect(details.errorMessage).toContain("send failed:");
+      expect(details.errorMessage).toContain("rejected");
+    }
+  });
+
+  it("redacts the full PRIV-UNICODE corpus (Arabic-Indic / Extended Arabic-Indic / Devanagari / full-width / zero-width) in BOTH sinks", async () => {
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-corpus", {
+        arIndicPhone: AR_INDIC_US_PHONE,
+        extArUkPhone: EXT_AR_UK_PHONE,
+        devanagariCard: DEVANAGARI_CARD,
+        fullwidthPhone: FULLWIDTH_PHONE,
+        zwSsn: ZW_SSN,
+        zwCard: ZW_CARD,
+        zwSecret: ZW_SK_SECRET,
+        zwGithubPat: ZW_GH_PAT,
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      for (const canary of [
+        AR_INDIC_US_DIGITS,
+        EXT_AR_UK_DIGITS,
+        CARD_DIGITS,
+        FULLWIDTH_DIGITS,
+        "123-45-6789",
+        SK_CANARY,
+        GH_PAT_CANARY,
+      ]) {
+        expect(sink).not.toContain(canary);
+      }
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details.arIndicPhone).toBe("[PHONE_US]");
+      expect(details.extArUkPhone).toBe("[PHONE]");
+      expect(details.devanagariCard).toBe("[CREDIT_CARD]");
+      expect(details.fullwidthPhone).toBe("[PHONE_US]");
+      expect(details.zwSsn).toBe("[SSN_US]");
+      expect(details.zwCard).toBe("[CREDIT_CARD]");
+      expect(details.zwSecret).toBe("[REDACTED_SECRET]");
+      expect(details.zwGithubPat).toBe("[REDACTED_SECRET]");
+    }
+  });
+
+  it("NO-DEGRADE: benign multilingual text (Arabic prose / CJK / ZWJ emoji / combining marks / benign id) survives BYTE-IDENTICAL in BOTH sinks", async () => {
+    const details = {
+      arabicProse: BENIGN_ARABIC_PROSE,
+      cjk: BENIGN_CJK,
+      zwjEmoji: BENIGN_ZWJ_EMOJI,
+      combining: BENIGN_COMBINING,
+      errorMessage: BENIGN_ERROR_MESSAGE,
+      requestId: BENIGN_AR_FORENSIC_ID, // forensic, phone-shaped when folded — must NOT be redacted
+    };
+    const { sqliteDetails, jsonlDetails, sqliteDetailsJson, jsonlLine } = await writeAndReadBack(
+      unicodeEntry("unicode-benign", details),
+    );
+
+    for (const readBack of [sqliteDetails, jsonlDetails]) {
+      expect(readBack.arabicProse).toBe(BENIGN_ARABIC_PROSE);
+      expect(readBack.cjk).toBe(BENIGN_CJK);
+      expect(readBack.zwjEmoji).toBe(BENIGN_ZWJ_EMOJI);
+      expect(readBack.combining).toBe(BENIGN_COMBINING);
+      expect(readBack.errorMessage).toBe(BENIGN_ERROR_MESSAGE);
+      // #1618 under Unicode: a benign phone-shaped forensic id is preserved, NOT collapsed.
+      expect(readBack.requestId).toBe(BENIGN_AR_FORENSIC_ID);
+      expect(readBack.requestId).not.toBe("[PHONE_US]");
+    }
+    // The ZWJ emoji + combining marks are present byte-identical in the raw sink bytes too.
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink).toContain(BENIGN_ZWJ_EMOJI);
+      expect(sink).toContain(BENIGN_COMBINING);
+    }
+  });
+});

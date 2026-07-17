@@ -132,3 +132,42 @@ export function redactSecretShapesInString(
   }
   return redacted;
 }
+
+/** A secret-shape match reported as a SPAN + the replacement string (for out-of-band redaction). */
+export interface FridaySecretShapeSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly replacement: string;
+}
+
+/**
+ * Report every secret-shape match in `input` as a `[start, end)` span plus the exact replacement
+ * string `redactSecretShapesInString` would produce for it (marker for a whole-value shape;
+ * `scheme`/`label` + marker for the Bearer / generic-assignment shapes). Same ordered pattern set
+ * as the string scrubber, so span coverage is byte-consistent with in-place redaction — this is the
+ * SPAN entry point the Unicode-normalizer de-obfuscation layer consults so a match found on the
+ * normalized detection copy can be mapped back and redacted in the ORIGINAL string. Empty-width
+ * matches are skipped (with a `lastIndex` bump) so a global regex cannot spin.
+ */
+export function findSecretShapeSpans(
+  input: string,
+  marker: string = FRIDAY_DEFAULT_SECRET_MARKER,
+): FridaySecretShapeSpan[] {
+  const spans: FridaySecretShapeSpan[] = [];
+  for (const { pattern, replacement } of buildSecretContentPatterns(marker)) {
+    const regex = new RegExp(pattern.source, pattern.flags);
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(input)) !== null) {
+      if (match[0].length === 0) {
+        regex.lastIndex += 1;
+        continue;
+      }
+      const replaced =
+        typeof replacement === "string"
+          ? replacement
+          : replacement(match[0], ...match.slice(1));
+      spans.push({ start: match.index, end: match.index + match[0].length, replacement: replaced });
+    }
+  }
+  return spans;
+}

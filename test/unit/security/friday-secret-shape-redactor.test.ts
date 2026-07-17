@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   FRIDAY_DEFAULT_SECRET_MARKER,
+  findSecretShapeSpans,
   isSensitiveSecretFieldName,
   redactSecretShapesInString,
 } from "../../../src/security/friday-secret-shape-redactor.js";
@@ -90,6 +91,36 @@ describe("friday-secret-shape-redactor", () => {
     it("is idempotent (re-running over an already-redacted string is a no-op)", () => {
       const once = redactSecretShapesInString("token=supersecretvalue00 and sk-abcdefghijklmnopqrstuv0123456789"); // pragma: allowlist secret
       expect(redactSecretShapesInString(once)).toBe(once);
+    });
+  });
+
+  // PRIV-UNICODE-REDACTION-001: the SPAN entry point consulted by the Unicode-normalizer
+  // de-obfuscation layer. Spans + replacement must reconstruct exactly what the in-place scrubber
+  // produces, so a match found on the normalized detection copy maps back and redacts the original.
+  describe("findSecretShapeSpans", () => {
+    it("reports a whole-value shape as a single span whose replacement is the marker", () => {
+      const input = "leak: sk-abcdefghijklmnopqrstuv0123456789 here"; // pragma: allowlist secret
+      const spans = findSecretShapeSpans(input);
+      expect(spans).toHaveLength(1);
+      const [s] = spans;
+      expect(input.slice(s.start, s.end)).toBe("sk-abcdefghijklmnopqrstuv0123456789"); // pragma: allowlist secret
+      expect(s.replacement).toBe(M);
+      // Splicing the span reproduces the in-place scrubber output exactly.
+      const spliced = input.slice(0, s.start) + s.replacement + input.slice(s.end);
+      expect(spliced).toBe(redactSecretShapesInString(input));
+    });
+
+    it("keeps the scheme / label prefix in the replacement for Bearer and generic-assignment shapes", () => {
+      const bearer = findSecretShapeSpans("Bearer abcdefghijklmnopqrstuvwx"); // pragma: allowlist secret
+      expect(bearer[0].replacement).toBe(`Bearer ${M}`);
+      const assign = findSecretShapeSpans("api_key=genericcredential123abc"); // pragma: allowlist secret
+      expect(assign[0].replacement).toBe(`api_key=${M}`);
+    });
+
+    it("returns no spans for benign text (no over-redaction)", () => {
+      for (const benign of ["delivery ok", "run-42", "channel:signal:route-in", "2015550123"]) {
+        expect(findSecretShapeSpans(benign)).toEqual([]);
+      }
     });
   });
 });
