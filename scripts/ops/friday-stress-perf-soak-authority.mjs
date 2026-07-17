@@ -591,32 +591,70 @@ function hostSafetyGatedPlaceholder() {
 //     independent R13 validator REDs at SOAK_INVALID). NEVER synthesises a passing
 //     72h/24h soak or a physical device identity.
 // ---------------------------------------------------------------------------
+// Internal, deeply-frozen PLAIN-SCALAR snapshot of the locked recompute policy. The report
+// path computes the 96 recomputes ONLY from THESE primitives — never from a caller-supplied
+// object, getter, or proxy. This is the single source of the estimator's seed/iterations/
+// confidence.
+export const LOCKED_STATS_INTERNAL_SNAPSHOT = Object.freeze({
+  seed: Number(LOCKED_STATS_RECOMPUTE_OPTS.seed),
+  iterations: Number(LOCKED_STATS_RECOMPUTE_OPTS.iterations),
+  confidence: Number(LOCKED_STATS_RECOMPUTE_OPTS.confidence),
+});
+
 /**
- * The report-producing path MUST use ONLY the locked R7 statistics policy. A caller may
- * pass `statsOpts` (an in-process hook) ONLY if it is byte-for-byte deep-equal (in the
- * validator's canonical dialect) to the locked `{seed, iterations, confidence}` triple —
- * no omitted, extra, or weakened field. Anything else (e.g. iterations=1 => a degenerate
- * zero-width CI, a looser confidence, a different seed) is a would-be FALSE GREEN and
- * THROWS `LOCKED_STATS_POLICY_DRIFT` BEFORE any report is produced. The locked constant is
- * self-authenticated against its pinned sha first, so tampering the constant itself is RED.
+ * The report-producing path MUST use ONLY the locked R7 statistics policy, and MUST NOT be
+ * influenceable by a caller object even one that passes validation (the Advisor's TOCTOU:
+ * an enumerable-getter / Proxy statsOpts that returns the locked values during validation
+ * and weakened values during the 96 bootstrap reads, or an object mutated after validation).
+ *
+ * If a caller passes `statsOpts` at all, we take a ONE-SHOT snapshot — reading each field
+ * EXACTLY ONCE, coerced to a primitive number — plus an exact key-set check (Object.keys does
+ * NOT invoke value getters). We validate THAT plain-scalar snapshot against the internal
+ * locked scalars; anything omitted/extra/weakened THROWS `LOCKED_STATS_POLICY_DRIFT`. The
+ * caller object is then DISCARDED and NEVER read again — the actual recompute uses only
+ * `LOCKED_STATS_INTERNAL_SNAPSHOT`, so even a statsOpts that passes cannot change the numbers.
+ * The locked constant is self-authenticated against its pinned sha first (tamper => RED).
  */
 export function assertLockedStatisticsPolicy(statsOpts) {
   if (sha(Buffer.from(canonical(LOCKED_STATS_RECOMPUTE_OPTS))) !== LOCKED_STATS_RECOMPUTE_OPTS_SHA256) {
     throw new Red("LOCKED_STATS_POLICY_SELF_AUTH_FAILED", { got: canonical(LOCKED_STATS_RECOMPUTE_OPTS) });
   }
-  if (statsOpts === undefined) return; // no override -> estimator uses the locked defaults.
-  if (canonical(statsOpts) !== canonical(LOCKED_STATS_RECOMPUTE_OPTS)) {
-    throw new Red("LOCKED_STATS_POLICY_DRIFT", { got: statsOpts, want: LOCKED_STATS_RECOMPUTE_OPTS });
+  if (statsOpts === undefined) return; // no override -> the internal locked snapshot is used.
+  if (statsOpts === null || typeof statsOpts !== "object") {
+    throw new Red("LOCKED_STATS_POLICY_DRIFT", { reason: "not_an_object" });
   }
+  // ONE-SHOT read: each field read EXACTLY once, coerced to a primitive. The object is never
+  // read again after this line (defeats getter/proxy/TOCTOU and post-validation mutation).
+  const snap = {
+    seed: Number(statsOpts.seed),
+    iterations: Number(statsOpts.iterations),
+    confidence: Number(statsOpts.confidence),
+  };
+  // Exact key set (no omitted / no extra). Object.keys enumerates names without reading values.
+  const keys = Object.keys(statsOpts).sort();
+  const wantKeys = ["confidence", "iterations", "seed"];
+  const keysOk = keys.length === wantKeys.length && keys.every((k, i) => k === wantKeys[i]);
+  if (
+    !keysOk ||
+    !Object.is(snap.seed, LOCKED_STATS_INTERNAL_SNAPSHOT.seed) ||
+    !Object.is(snap.iterations, LOCKED_STATS_INTERNAL_SNAPSHOT.iterations) ||
+    !Object.is(snap.confidence, LOCKED_STATS_INTERNAL_SNAPSHOT.confidence)
+  ) {
+    throw new Red("LOCKED_STATS_POLICY_DRIFT", { got: snap, want: LOCKED_STATS_INTERNAL_SNAPSHOT });
+  }
+  // snapshot + caller object are DISCARDED: the recompute uses LOCKED_STATS_INTERNAL_SNAPSHOT.
 }
 
 export function buildResourceReport(opts = {}) {
   const tuple = opts.tuple ?? null;
   if (tuple !== null && !(typeof tuple === "string" && /^[0-9a-f]{64}$/.test(tuple))) throw new Red("TUPLE_INVALID", { tuple });
-  // FIX 1 (P0 false-green): the locked statistics policy is not caller-weakenable. Guard
-  // BEFORE deriving/emitting anything so a drifting statsOpts never produces a report.
-  const statsOpts = opts.statsOpts; // in-process test hook ONLY; CLI never passes it.
-  assertLockedStatisticsPolicy(statsOpts);
+  // FIX 1 (P0 false-green + TOCTOU): the locked statistics policy is not caller-weakenable.
+  // Validate any caller statsOpts via a one-shot plain-scalar snapshot, then DISCARD it — the
+  // recompute below reads ONLY the internal frozen snapshot, so a getter/proxy/mutated object
+  // that survives validation still cannot influence the 96 recomputes. Guard BEFORE deriving/
+  // emitting anything so a drifting statsOpts never produces a report.
+  assertLockedStatisticsPolicy(opts.statsOpts); // one read of the caller object happens HERE only.
+  const lockedStats = LOCKED_STATS_INTERNAL_SNAPSHOT; // internal, frozen, plain scalars.
   // Provisional sentinel tuple when none supplied (the real tuple is produced by the
   // subject-inventory/policy-binding siblings; here it is explicitly unsealed).
   const tupleSha = tuple ?? sha(Buffer.from("PROVISIONAL_UNSEALED_TUPLE_NOT_FROZEN_CANDIDATE"));
@@ -631,7 +669,7 @@ export function buildResourceReport(opts = {}) {
     const rawPath = `raw/perf-synthetic-${rawSha}.json`;
     rawFiles.push({ path: rawPath, content: rawContent });
     const evidence_refs = [{ path: rawPath, sha256: rawSha, bytes: Buffer.byteLength(rawContent), kind: "stress_resource_sample" }];
-    const { row } = recomputeMetric({ metric_instance_id: inst.metric_instance_id, samples, warmups: warmupSamples.length, budget: inst.p95_budget, evidence_refs, statsOpts });
+    const { row } = recomputeMetric({ metric_instance_id: inst.metric_instance_id, samples, warmups: warmupSamples.length, budget: inst.p95_budget, evidence_refs, statsOpts: lockedStats });
     performance_metrics.push(row);
   }
 

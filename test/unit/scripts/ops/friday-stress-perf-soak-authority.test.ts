@@ -390,6 +390,94 @@ describe("perf-soak-authority (FIX 1) locked R7 statistics policy is NOT caller-
     }
   });
 
+  // --- TOCTOU recurrence (Advisor P0): the guard must not validate the CALLER object and
+  // then reuse it for the 96 recomputes. A getter/proxy that returns the locked values
+  // during validation and weakened values during the bootstrap reads, or an object mutated
+  // after validation, must NEVER yield a zero-width-CI all-passed report. ---
+  const NEVER_FALSE_GREEN = (built: any): void => {
+    // full-iteration locked estimator => non-degenerate CI widths, and byte-identical to default.
+    expect(built.report.performance_metrics.every((m: any) => m.relative_ci_width_percent > 0)).toBe(true);
+    expect(built.report.performance_metrics.some((m: any) => m.relative_ci_width_percent === 0)).toBe(false);
+    expect(built.report.performance_metrics).toEqual(EMITTED.report.performance_metrics);
+  };
+
+  it("RED-FIRST: an ENUMERABLE-GETTER statsOpts (locked on read 1, weakened after) can NEVER produce a zero-width-CI all-passed report", () => {
+    const reads: Record<string, number> = { seed: 0, iterations: 0, confidence: 0 };
+    const evil: any = {};
+    for (const [k, locked, weak] of [["seed", 20260711, 1], ["iterations", 10000, 1], ["confidence", 0.95, 0.01]] as Array<[string, number, number]>) {
+      Object.defineProperty(evil, k, { get() { reads[k] += 1; return reads[k] === 1 ? locked : weak; }, enumerable: true, configurable: true });
+    }
+    let built: any = null;
+    let threw = false;
+    let code: string | undefined;
+    try {
+      built = buildResourceReport({ statsOpts: evil });
+    } catch (e: any) {
+      threw = true;
+      code = e.code;
+    }
+    // EITHER it threw before emitting, OR it emitted a full-iteration locked report — never a false green.
+    if (threw) expect(code).toBe("LOCKED_STATS_POLICY_DRIFT");
+    else NEVER_FALSE_GREEN(built);
+    // each caller field was read at most ONCE (not 1 validate + 96 recompute = 97).
+    expect(reads.seed).toBeLessThanOrEqual(1);
+    expect(reads.iterations).toBeLessThanOrEqual(1);
+    expect(reads.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it("RED-FIRST: a PROXY statsOpts whose get-trap flips values after the first read can NEVER produce a false green", () => {
+    const reads: Record<string, number> = { seed: 0, iterations: 0, confidence: 0 };
+    const locked: Record<string, number> = { seed: 20260711, iterations: 10000, confidence: 0.95 };
+    const weak: Record<string, number> = { seed: 1, iterations: 1, confidence: 0.01 };
+    const evil = new Proxy(locked, {
+      get(target, prop: string | symbol) {
+        if (typeof prop === "string" && prop in reads) {
+          reads[prop] += 1;
+          return reads[prop] <= 1 ? locked[prop] : weak[prop];
+        }
+        return (target as any)[prop];
+      },
+      ownKeys() { return ["seed", "iterations", "confidence"]; },
+      getOwnPropertyDescriptor() { return { enumerable: true, configurable: true, value: 0 }; },
+    });
+    let built: any = null;
+    let threw = false;
+    let code: string | undefined;
+    try {
+      built = buildResourceReport({ statsOpts: evil as any });
+    } catch (e: any) {
+      threw = true;
+      code = e.code;
+    }
+    if (threw) expect(code).toBe("LOCKED_STATS_POLICY_DRIFT");
+    else NEVER_FALSE_GREEN(built);
+    expect(reads.seed).toBeLessThanOrEqual(1);
+    expect(reads.iterations).toBeLessThanOrEqual(1);
+    expect(reads.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it("RED-FIRST: buildResourceReport reads each caller statsOpts field EXACTLY ONCE (validate-then-discard; the 96 recomputes use the internal frozen snapshot)", () => {
+    const reads: Record<string, number> = { seed: 0, iterations: 0, confidence: 0 };
+    const counting: any = {};
+    for (const [k, v] of [["seed", 20260711], ["iterations", 10000], ["confidence", 0.95]] as Array<[string, number]>) {
+      Object.defineProperty(counting, k, { get() { reads[k] += 1; return v; }, enumerable: true, configurable: true });
+    }
+    const built = buildResourceReport({ statsOpts: counting });
+    // the invariant: the caller object is read at most once per field (not 1 + 96 = 97 times).
+    expect(reads).toEqual({ seed: 1, iterations: 1, confidence: 1 });
+    // and the emitted numbers come from the internal locked snapshot => identical to the default.
+    expect(built.report.performance_metrics).toEqual(EMITTED.report.performance_metrics);
+  });
+
+  it("INVARIANT: mutating a plain statsOpts to weakened values AFTER validation does not change the emitted report (recompute used the internal snapshot)", () => {
+    const o: any = { seed: 20260711, iterations: 10000, confidence: 0.95 };
+    const built = buildResourceReport({ statsOpts: o }); // validates + eagerly computes all 96 rows
+    o.seed = 1; // then weaken every field — the finished report must be unaffected.
+    o.iterations = 1;
+    o.confidence = 0.01;
+    NEVER_FALSE_GREEN(built);
+  });
+
   it("accepts statsOpts byte-for-byte equal to the locked policy (any key order) and emits the SAME numbers as the default", () => {
     // Only ONE fresh build here (the locked-statsOpts one under test); the default is the
     // already-built EMITTED report (buildResourceReport({})), reused to stay within timeout.
