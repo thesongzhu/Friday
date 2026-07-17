@@ -134,4 +134,46 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
       }
     }
   });
+
+  // ─── round-16: the ADDED provider SHAPES under a NON-sensitive key redact identically in the audit
+  //     sink and memory egress, RAW and Unicode-obfuscated — the SAME canonical detector backs both, so
+  //     parity holds automatically. RED before the shapes are added (both leak, but this asserts the
+  //     redaction convergence for the ADDED shapes specifically). ───
+  const seg = (...p: string[]): string => p.join(""); // pragma: allowlist secret
+  const SGPOOL = "ABCdefGHIjkl0123456789abcdefghijkLMNopqrstuvwxyz0123456789"; // pragma: allowlist secret
+  const ADDED_SHAPE_PAYLOAD = (): Record<string, unknown> => ({
+    // non-sensitive KEY NAMES (so the key-name nuke does NOT fire — the SHAPE detector must catch these)
+    tokenpreview: seg("ya29.", "a0AfB_by-DtestTokenValue0123456789ABCDEFxyz"), // pragma: allowlist secret
+    slackapp: seg("xapp-", "1-A0123ABCD-4567890123-abcdef0123456789abcdef"), // pragma: allowlist secret
+    gitlabref: seg("glpat-", "ABCdef0123456789ghijkLMNop"), // pragma: allowlist secret
+    mailer: seg("SG.", SGPOOL.slice(0, 22), ".", SGPOOL.slice(0, 43)), // pragma: allowlist secret
+    doref: seg("dop_v1_", "0123456789abcdef".repeat(4)), // pragma: allowlist secret
+    groqref: seg("gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx"), // pragma: allowlist secret
+    // Unicode-obfuscated (full-width xai-) under a non-sensitive key — SEC-uni leg must catch it in both.
+    grokref: seg("ｘａｉ－", "abcdefghijklmnop0123456789"), // pragma: allowlist secret
+    note: "just a note",
+  });
+
+  it("round-16 ADDED shapes (raw + Unicode) redact identically in the AUDIT sink and MEMORY redactDeep", async () => {
+    const auditDetails = await auditRedactedDetails(ADDED_SHAPE_PAYLOAD());
+    const memoryGuard = createFridayMemoryPiiGuard("redact");
+    const memoryValue = memoryGuard.redactDeep(ADDED_SHAPE_PAYLOAD()).value as Record<string, unknown>;
+    // Cross-sink equality — memory egress == audit sink for the ADDED shapes.
+    expect(memoryValue).toEqual(auditDetails);
+    // Every shape key is the marker; the benign note survives; no shape byte leaks.
+    const expected = ADDED_SHAPE_PAYLOAD();
+    for (const key of Object.keys(expected)) {
+      if (key === "note") {
+        expect(memoryValue[key]).toBe("just a note");
+      } else {
+        expect(memoryValue[key], key).toBe(M);
+      }
+    }
+    for (const sink of [auditDetails, memoryValue]) {
+      const json = JSON.stringify(sink);
+      for (const [key, v] of Object.entries(expected)) {
+        if (key !== "note") expect(json, key).not.toContain(v as string);
+      }
+    }
+  });
 });

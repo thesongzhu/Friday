@@ -258,3 +258,57 @@ describe("FridayMemoryPiiGuard — KEY-NAME NUKE PARITY with the audit sink (rou
     });
   });
 });
+
+// ─── SEC-EVENT-REDACTION-001 round-16: the round-16 ADDED provider shapes flow through the SAME value
+//     leg (`redactSecretAndPiiValueString` = SEC-uni ∪ SEC-raw ∪ PII), so a NEW shape under a
+//     NON-sensitive key is redacted on `redactDeep` in BOTH raw and Unicode-obfuscated form; the
+//     publishable `pk-` HYPHEN key (Finding 2) is preserved. RED before the shapes are added / before
+//     `pk` is dropped from the alternation. ───
+describe("FridayMemoryPiiGuard — round-16 ADDED provider shapes in the VALUE leg (redactDeep)", () => {
+  const guard = createFridayMemoryPiiGuard("redact");
+  const M16 = "[REDACTED_SECRET]";
+  const seg = (...p: string[]): string => p.join(""); // pragma: allowlist secret
+  const SGPOOL = "ABCdefGHIjkl0123456789abcdefghijkLMNopqrstuvwxyz0123456789"; // pragma: allowlist secret
+  const ADDED: Record<string, string> = {
+    ya29: seg("ya29.", "a0AfB_by-DtestTokenValue0123456789ABCDEFxyz"), // pragma: allowlist secret
+    xapp: seg("xapp-", "1-A0123ABCD-4567890123-abcdef0123456789abcdef"), // pragma: allowlist secret
+    glpat: seg("glpat-", "ABCdef0123456789ghijkLMNop"), // pragma: allowlist secret
+    sendgrid: seg("SG.", SGPOOL.slice(0, 22), ".", SGPOOL.slice(0, 43)), // pragma: allowlist secret
+    gocspx: seg("GOCSPX-", "abcdefghijklmnop_qrstuvwx"), // pragma: allowlist secret
+    square: seg("sq0atp-", "0123456789abcdefghijklABCDwxyz"), // pragma: allowlist secret
+    digitalocean: seg("dop_v1_", "0123456789abcdef".repeat(4)), // pragma: allowlist secret
+    groq: seg("gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx"), // pragma: allowlist secret
+    xai: seg("xai-", "abcdefghijklmnop0123456789"), // pragma: allowlist secret
+  };
+
+  it("redacts each ADDED shape as a bare VALUE under a NON-sensitive key (structured redactDeep)", () => {
+    const input: Record<string, string> = { note: "keep" };
+    for (const [k, v] of Object.entries(ADDED)) input[`nonsensitive_${k}`] = v;
+    const out = guard.redactDeep(structuredClone(input)).value as Record<string, string>;
+    expect(out.note).toBe("keep");
+    const json = JSON.stringify(out);
+    for (const [k, v] of Object.entries(ADDED)) {
+      expect(out[`nonsensitive_${k}`], k).toBe(M16);
+      expect(json, k).not.toContain(v);
+    }
+  });
+
+  it("redacts a Unicode-obfuscated ADDED shape (zero-width / full-width) via the SEC-uni value leg", () => {
+    // A zero-width splice after `glpat-` and a full-width `xai-` de-obfuscate to a real shape; the raw
+    // scan misses them, so this proves the value leg's SEC-uni pass covers the ADDED shapes too.
+    const zwGlpat = seg("glpat-", "​", "ABCdef0123456789ghijkLMNop"); // pragma: allowlist secret
+    const fwXai = seg("ｘａｉ－", "abcdefghijklmnop0123456789"); // full-width xai- // pragma: allowlist secret
+    const out = guard.redactDeep({ a: zwGlpat, b: fwXai }).value as { a: string; b: string };
+    expect(out.a).toBe(M16);
+    expect(out.b).toBe(M16);
+  });
+
+  it("NO-DEGRADE: a publishable pk- HYPHEN value under a non-sensitive key is byte-identical (Finding 2)", () => {
+    const input = {
+      publicKey: seg("pk-", "abcdefghijklmnopqrstuv0123456789"), // pragma: allowlist secret — publishable, preserved
+      note: "ok",
+    };
+    expect(guard.redactDeep(structuredClone(input)).value).toEqual(input);
+  });
+});
+

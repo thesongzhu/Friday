@@ -1,10 +1,14 @@
 import type { FridayMemoryItem, FridayMemorySearchResult } from "../../model/friday-memory.types.js";
 import type { FridayMemoryGuardOutputFilter } from "../model/friday-memory-guard.types.js";
 import { createFridayMemoryPiiGuard } from "./friday-memory-pii-guard.js";
-// SEC-EVENT-REDACTION-001 (round-14): the SAME canonical secret-shape detector the shared guard's
-// value/key legs compose — reused, NOT re-copied — so a secret-shaped TAG is dropped on egress exactly
-// as a PII-bearing tag is (a "[REDACTED_SECRET]" marker is not a valid constrained-charset tag).
+// SEC-EVENT-REDACTION-001 (round-14 / round-16): the SAME canonical secret-shape detector the shared
+// guard's value/key legs compose — reused, NOT re-copied — so a secret-shaped TAG is dropped on egress
+// exactly as a PII-bearing tag is (a "[REDACTED_SECRET]" marker is not a valid constrained-charset tag).
+// round-16: the tag-drop decision composes the SAME raw ∪ Unicode-de-obfuscated secret detection the
+// value leg (`redactSecretAndPiiValueString`) uses, so a secret hidden behind a zero-width splice /
+// full-width form / combining mark in a TAG is dropped too (it survived the raw-only check before).
 import { findSecretShapeSpans } from "../../../security/friday-secret-shape-redactor.js";
+import { buildUnicodeDetectionCopy } from "../../../security/friday-unicode-pii-normalizer.js";
 
 import {
   FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS,
@@ -32,10 +36,20 @@ function redactAndTruncate(value: string, maxChars: number): string {
 function redactMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
   return piiRedactor.redactDeep(metadata).value as Record<string, unknown>;
 }
+// A tag is a secret in RAW form, OR de-obfuscates to a secret through the shared Unicode detection copy
+// (NFKD → strip combining marks / Cf → fold Nd digits) — the SAME `buildUnicodeDetectionCopy` primitive
+// the value/key legs use. Running the canonical `findSecretShapeSpans` detector over BOTH forms mirrors
+// the value leg's raw ∪ Unicode secret composition, so a `s<U+200B>k-…` / full-width `ｓｋ－…` / combining
+// `sk-á…` secret TAG is caught. A pure-ASCII benign tag folds to itself (`changed === false`), so the
+// second leg is skipped and the decision is byte-identical to the raw-only check — no over-drop.
+function isSecretShapedTag(tag: string): boolean {
+  if (findSecretShapeSpans(tag).length > 0) return true;
+  const detection = buildUnicodeDetectionCopy(tag);
+  return detection.changed && findSecretShapeSpans(detection.normalized).length > 0;
+}
 function dropSensitiveTags(tags: string[]): string[] {
   return tags.filter(
-    (tag) =>
-      piiRedactor.scanAndTransform(tag).matches.length === 0 && findSecretShapeSpans(tag).length === 0,
+    (tag) => piiRedactor.scanAndTransform(tag).matches.length === 0 && !isSecretShapedTag(tag),
   );
 }
 

@@ -10,20 +10,38 @@
  *     distinctive substring, so it can ONLY be caught by its key;
  *   - generic `key=value` / `key: value` credential ASSIGNMENTS embedded in free text;
  *   - GitHub tokens (`ghp_` / `gho_` / `ghu_` / `ghs_` / `ghr_` and fine-grained `github_pat_`);
- *   - provider API keys (`sk-` / `sk-proj-` / `pk-` / `rk-` / `ak-`) — the `sk-` shape also covers
- *     Anthropic `sk-ant-…` (the `-` is inside the value class);
- *   - Google API keys (`AIza…`, the documented 39-char format);
+ *   - provider API keys (`sk-` / `sk-proj-` / `rk-` / `ak-` / xAI `xai-`) — the `sk-` shape also
+ *     covers Anthropic `sk-ant-…` (the `-` is inside the value class). The client-safe Stripe/Google
+ *     PUBLISHABLE `pk-` prefix is DELIBERATELY EXCLUDED (round-16): a publishable key is not a secret,
+ *     and Friday's own domain uses `pk-` for a satellite PUBLIC key — redacting it is data-loss;
+ *   - Google API keys (`AIza…`, the documented 39-char format) + Google OAuth access tokens (`ya29.…`)
+ *     + Google OAuth client secrets (`GOCSPX-…`);
  *   - npm access tokens (`npm_…`);
+ *   - additional provider credential SHAPES Friday itself recognizes (round-16 consolidated audit):
+ *     Groq (`gsk_…`), GitLab PAT (`glpat-…`), SendGrid (`SG.<22>.<43>`), Square (`sq0atp-…` / `sq0csp-…`),
+ *     DigitalOcean PAT (`dop_v1_<64-hex>`), Slack app-level tokens (`xapp-…`). Each has a distinctive,
+ *     low-false-positive prefix. Publishable / IDENTIFIER-only formats are NOT added (see the exclusion
+ *     note below);
  *   - Stripe UNDERSCORE-format SECRET keys (`sk_live_` / `sk_test_`) + RESTRICTED keys
  *     (`rk_live_` / `rk_test_`) + the webhook signing secret (`whsec_`) — the hyphenated `sk-` /
  *     `rk-` shapes above MISS the underscore forms Stripe actually issues. The PUBLISHABLE keys
  *     `pk_live_` / `pk_test_` are DELIBERATELY NOT matched: they are client-safe and not a secret;
  *   - AWS access-key ids (`AKIA…` and the STS/temporary variants);
- *   - Slack tokens (`xoxb-` / `xoxp-` / …);
+ *   - Slack tokens (`xoxb-` / `xoxp-` / … bot/user) AND app-level tokens (`xapp-…`);
  *   - JWTs (three base64url segments beginning `eyJ`);
  *   - PEM private-key blocks (RSA / EC / OPENSSH / PGP / generic);
  *   - Bearer / `Authorization: Bearer` credentials (scheme kept, token redacted).
  *
+ * DELIBERATELY EXCLUDED — not a secret, or an over-redactor with no bounded shape (round-16 audit):
+ *   - Stripe/Google PUBLISHABLE `pk-` / `pk_live_` / `pk_test_` — client-safe, not a secret;
+ *   - Twilio API Key SID `SK<32-hex>` — that is the IDENTIFIER (username), NOT the credential; the
+ *     Twilio secret / Auth Token is a SHAPELESS value caught by its KEY NAME (like the AWS secret key),
+ *     and a bare `SK`+32-hex would false-fire on benign 34-char hex strings;
+ *   - generic / unverified prefixes Friday's error-message display scrubber uses (`key-` / `sess-` /
+ *     `ssm-` / `aip-` / `whsk-`) — too generic (`key-<8+>` collides with benign `key-management…`) or of
+ *     unverified provider provenance; that aggressive display scrubber tolerates over-redaction, this
+ *     canonical persistence/egress detector must NOT;
+ *   - Square `EAAA…` — a 4-char base64 prefix with unacceptable false-positive risk (kept `sq0atp-`).
  * PII-by-value (email / phone / SSN / card) is DELIBERATELY out of scope here — that is the shared
  * `createFridayMemoryPiiGuard("redact").redactDeep` responsibility. This module is the secret
  * complement, kept as an independent string primitive so any sink can layer it OVER the PII guard.
@@ -173,9 +191,12 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
     pattern: /\b(?:gh[opsru]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
-  // Provider API keys: OpenAI `sk-` / `sk-proj-`, publishable `pk-`, `rk-`, `ak-`.
+  // Provider hyphen-prefixed API keys: OpenAI `sk-` / `sk-proj-`, `rk-`, `ak-`, xAI `xai-`. The
+  // client-safe PUBLISHABLE `pk-` prefix is DELIBERATELY ABSENT from the alternation (round-16): a
+  // Stripe/Google publishable key is not a secret, and Friday's own domain uses `pk-` for a satellite
+  // PUBLIC key (`publicKey: "pk-…"`), so redacting a `pk-` value is data-loss, not protection.
   {
-    pattern: /\b(?:sk|pk|rk|ak)-(?:proj-)?[A-Za-z0-9_-]{16,}\b/gu,
+    pattern: /\b(?:sk|rk|ak|xai)-(?:proj-)?[A-Za-z0-9_-]{16,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Stripe-style UNDERSCORE-format credentials the hyphenated `sk-` / `rk-` shape above MISSES:
@@ -201,15 +222,59 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
     pattern: /\bAIza[0-9A-Za-z_-]{35}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
+  // Google OAuth ACCESS token — `ya29.` + a long base64url-ish body (Friday's own provider-fallback
+  // scrubber recognizes this exact shape as key material; the literal `ya29.` prefix is highly
+  // distinctive). No trailing `\b` — the body legitimately ends in `.`/`-`/`_`; the greedy run grabs
+  // the whole token and the marker replaces it. A benign near-miss `ya29_notatoken` (underscore, not
+  // the required literal `.`) never matches.
+  {
+    pattern: /\bya29\.[A-Za-z0-9._-]{20,}/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  // Google OAuth CLIENT SECRET — `GOCSPX-` + a base64url body (distinctive prefix, low false positive).
+  {
+    pattern: /\bGOCSPX-[A-Za-z0-9_-]{20,}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  // GitLab personal access token — `glpat-` + 20+ base64url chars (distinctive prefix). A benign
+  // `glpat_docs` (underscore, not the required hyphen) never matches.
+  {
+    pattern: /\bglpat-[A-Za-z0-9_-]{20,}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  // SendGrid API key — the exact `SG.<22>.<43>` structure (two dot-separated base64url runs of fixed
+  // length). The structured length is what makes `SG.` specific enough to avoid a benign-text false fire.
+  {
+    pattern: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  // Square access token (`sq0atp-`) / OAuth client secret (`sq0csp-`) — distinctive `sq0` prefix. The
+  // newer `EAAA…` form is DELIBERATELY excluded (4-char base64 prefix, unacceptable false-positive risk).
+  {
+    pattern: /\bsq0(?:atp|csp)-[A-Za-z0-9_-]{22,60}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  // DigitalOcean personal access token — `dop_v1_` + exactly 64 hex (distinctive prefix + fixed length).
+  {
+    pattern: /\bdop_v1_[a-f0-9]{64}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  // Groq API key — `gsk_` + 40+ base62 chars (Friday's provider-catalog classifies `gsk_` as Groq with
+  // HIGH confidence; the body class excludes `_`, so a benign `gsk_` snake_case identifier never matches).
+  {
+    pattern: /\bgsk_[A-Za-z0-9]{40,}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
   // npm access token — `npm_` + 36 base62 chars. The body class excludes `_`, so a benign `npm_`
   // config identifier (`npm_config_cache`) never matches (it is short and contains `_`).
   {
     pattern: /\bnpm_[A-Za-z0-9]{36}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
-  // Slack tokens.
+  // Slack tokens: bot/user `xox[abprs]-` AND app-level `xapp-` (Socket Mode). Friday's own Slack setup
+  // recipe marks the `xapp-` app-level token `sensitive: true`; the `xapp-` prefix is distinctive.
   {
-    pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/gu,
+    pattern: /\b(?:xox[abprs]|xapp)-[A-Za-z0-9-]{10,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Generic credential ASSIGNMENT embedded in free text: `<cred-name>=<value>` / `<cred-name>: <value>`.

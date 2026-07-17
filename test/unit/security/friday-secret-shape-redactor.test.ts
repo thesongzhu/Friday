@@ -264,4 +264,90 @@ describe("friday-secret-shape-redactor", () => {
       expect(findSecretShapeSpans(`pub ${stripeShaped("pk_live")} ok`)).toEqual([]);
     });
   });
+
+  // ─── SEC-EVENT-REDACTION-001 round-16: consolidated provider-shape audit + the `pk-` HYPHEN
+  //     over-redaction fix. Each fixture is BUILT from parts (`seg(...)`) so no contiguous literal
+  //     credential appears in SOURCE (GitHub push protection); the bodies are obviously-fake sequential
+  //     strings. Findings 2 (pk- publishable removed) + 3 (ya29/xapp/glpat/SG/GOCSPX/sq0/dop/gsk/xai). ───
+  describe("round-16 consolidated provider audit + pk- hyphen fix", () => {
+    const seg = (...p: string[]): string => p.join(""); // pragma: allowlist secret
+    const SGPOOL = "ABCdefGHIjkl0123456789abcdefghijkLMNopqrstuvwxyz0123456789"; // pragma: allowlist secret
+    // Each ADDED shape as a bare value (Friday itself recognizes each as key material / sensitive).
+    const ADDED: Record<string, string> = {
+      "Google OAuth ya29.": seg("ya29.", "a0AfB_by-DtestTokenValue0123456789ABCDEFxyz"), // pragma: allowlist secret
+      "Slack app-level xapp-": seg("xapp-", "1-A0123ABCD-4567890123-abcdef0123456789abcdef"), // pragma: allowlist secret
+      "GitLab glpat-": seg("glpat-", "ABCdef0123456789ghijkLMNop"), // pragma: allowlist secret
+      "SendGrid SG.<22>.<43>": seg("SG.", SGPOOL.slice(0, 22), ".", SGPOOL.slice(0, 43)), // pragma: allowlist secret
+      "Google client-secret GOCSPX-": seg("GOCSPX-", "abcdefghijklmnop_qrstuvwx"), // pragma: allowlist secret
+      "Square sq0atp-": seg("sq0atp-", "0123456789abcdefghijklABCDwxyz"), // pragma: allowlist secret
+      "Square sq0csp-": seg("sq0csp-", "0123456789abcdefghijklABCDwxyz"), // pragma: allowlist secret
+      "DigitalOcean dop_v1_": seg("dop_v1_", "0123456789abcdef".repeat(4)), // pragma: allowlist secret
+      "Groq gsk_": seg("gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx"), // pragma: allowlist secret
+      "xAI xai-": seg("xai-", "abcdefghijklmnop0123456789"), // pragma: allowlist secret
+    };
+
+    it("redacts every ADDED provider shape whole (bare value) AND embedded in free text", () => {
+      for (const [name, secret] of Object.entries(ADDED)) {
+        expect(redactSecretShapesInString(secret), name).toBe(M);
+        expect(redactSecretShapesInString(`use ${secret} now`), name).toBe(`use ${M} now`);
+      }
+    });
+
+    it("reports each ADDED shape as a whole-value span (so the memory key/value legs + audit redact it too)", () => {
+      for (const [name, secret] of Object.entries(ADDED)) {
+        const input = `leak ${secret} here`;
+        const spans = findSecretShapeSpans(input);
+        expect(spans.length, name).toBeGreaterThanOrEqual(1);
+        expect(input.slice(spans[0]!.start, spans[0]!.end), name).toBe(secret);
+        expect(spans[0]!.replacement, name).toBe(M);
+      }
+    });
+
+    // FINDING 2 — NO-DEGRADE: the client-safe HYPHEN publishable `pk-` (Stripe/Google) and Friday's own
+    // satellite `publicKey: "pk-…"` are NOT secrets. Round-15 wrongly classified bare `pk-<16+>` as a
+    // credential → data-loss. RED before the alternation drops `pk`; GREEN after.
+    it("does NOT redact publishable pk- HYPHEN keys (client-safe; Friday satellite publicKey)", () => {
+      for (const pkVal of [
+        seg("pk-", "abcdefghijklmnopqrstuv0123456789"), // pragma: allowlist secret — 32-char body, would have matched round-15
+        seg("pk-", "abcdefghijklmnop"), // pragma: allowlist secret — 16-char body
+        seg("pk-", "abc123"), // short satellite publicKey form
+        "pk-1",
+      ]) {
+        expect(redactSecretShapesInString(pkVal), pkVal).toBe(pkVal);
+        expect(findSecretShapeSpans(pkVal), pkVal).toEqual([]);
+      }
+      // In context: a satellite record's publicKey survives byte-identical.
+      const rec = `{"publicKey":"${seg("pk-", "abcdefghijklmnopqrstuv0123456789")}"}`; // pragma: allowlist secret
+      expect(redactSecretShapesInString(rec)).toBe(rec);
+    });
+
+    // FINDING 3 — Twilio SK is the API Key SID (an IDENTIFIER / username), NOT the secret. The Twilio
+    // secret (Auth Token) is SHAPELESS → caught by its KEY NAME, never by a bare-`SK` shape. Redacting
+    // `SK`+32-hex would over-redact a public identifier and false-fire on benign 34-char hex. EXCLUDED.
+    it("does NOT redact Twilio API Key SID (SK+32-hex identifier) nor benign 32-hex / UUID near-misses", () => {
+      for (const benign of [
+        seg("SK", "0123456789abcdef0123456789abcdef"), // Twilio API Key SID (identifier, not secret) // pragma: allowlist secret
+        "9f8e7d6c5b4a3928170695f4e3d2c1b0", // bare 32-hex (git blob / md5) // pragma: allowlist secret
+        "550e8400-e29b-41d4-a716-446655440000", // a UUID
+        "ya29_notatoken", // ya29 near-miss (underscore, not the literal `.`)
+        "glpat_docs", // glpat near-miss (underscore, not the hyphen)
+        "GOCSPX_notasecret_underscore", // GOCSPX near-miss (underscore, not the hyphen)
+        "sq0abc-nothing", // sq0 near-miss (neither atp nor csp)
+        "sku-12345", // not sk-<16+>
+      ]) {
+        expect(redactSecretShapesInString(benign), benign).toBe(benign);
+        expect(findSecretShapeSpans(benign), benign).toEqual([]);
+      }
+    });
+
+    // SENSITIVITY: the ADDED patterns are load-bearing. The pairing "shape → marker" vs "near-miss →
+    // verbatim" IS the sensitivity boundary — removing any ADDED pattern makes its shape leak (RED),
+    // while the near-misses guarantee the pattern is not an over-redactor.
+    it("SENSITIVITY: each ADDED shape produces the marker (no silent pass-through)", () => {
+      for (const [name, secret] of Object.entries(ADDED)) {
+        expect(redactSecretShapesInString(secret), name).toContain(M);
+        expect(redactSecretShapesInString(secret), name).not.toContain(secret);
+      }
+    });
+  });
 });

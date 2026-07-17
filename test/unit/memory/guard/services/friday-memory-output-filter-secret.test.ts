@@ -172,3 +172,63 @@ describe("FridayMemoryOutputFilter — SECRET-shape value egress (round-14)", ()
     });
   });
 });
+
+// ─── SEC-EVENT-REDACTION-001 round-16 — FINDING 1: the TAG-drop decision is now Unicode-secret-aware.
+//     Before round-16 `dropSensitiveTags` ran the secret detector over the RAW tag ONLY, so a secret
+//     hidden behind a zero-width splice (`s<U+200B>k-…`), a full-width form (`ｓｋ－…`), or a combining
+//     mark (`sk-á…`) SURVIVED `filterItem.tags` / `filterSearchResult` VERBATIM (a real egress leak).
+//     Round-16 composes the SAME raw ∪ Unicode-de-obfuscated secret detection the value leg uses, so
+//     such a TAG is DROPPED; a benign tag stays byte-identical (tags are filtered, never rewritten).
+//     RED on 473053f1 (raw-only tag drop), GREEN after `isSecretShapedTag`. ───
+describe("FridayMemoryOutputFilter — FINDING 1: Unicode-obfuscated secret TAG drop (round-16)", () => {
+  const filter = createFridayMemoryOutputFilter();
+  const seg = (...p: string[]): string => p.join(""); // pragma: allowlist secret
+  // Unicode-obfuscated secret tags (de-obfuscate to `sk-…`); raw detection MISSES these.
+  const OBFUSCATED_SECRET_TAGS = [ZW_SK, FW_SK, CM_SK];
+  // round-16 ADDED shapes as tags (built from parts; raw shapes).
+  const ADDED_SECRET_TAGS = [
+    seg("ya29.", "a0AfB_by-DtestTokenValue0123456789ABCDEFxyz"), // pragma: allowlist secret
+    seg("xapp-", "1-A0123ABCD-4567890123-abcdef0123456789abcdef"), // pragma: allowlist secret
+    seg("glpat-", "ABCdef0123456789ghijkLMNop"), // pragma: allowlist secret
+    seg("gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx"), // pragma: allowlist secret
+  ];
+  const BENIGN_TAGS = ["ok", "fine", "café", "用户名", "run-42", seg("pk-", "abcdefghijklmnopqrstuv0123456789")]; // pragma: allowlist secret — last is a publishable pk-, must survive
+
+  it("DROPS Unicode-obfuscated secret tags (zero-width / full-width / combining) from filterItem.tags", () => {
+    const out = filter.filterItem(
+      makeItem({ tags: ["ok", ...OBFUSCATED_SECRET_TAGS, "fine"] }),
+    );
+    for (const t of OBFUSCATED_SECRET_TAGS) expect(out.tags, t).not.toContain(t);
+    // The benign tags survive byte-identical (filtered, never rewritten).
+    expect(out.tags).toEqual(["ok", "fine"]);
+  });
+
+  it("DROPS Unicode-obfuscated secret tags from filterSearchResult (nested item)", () => {
+    const result = makeResult(makeItem({ tags: ["keep", ...OBFUSCATED_SECRET_TAGS] }), "snippet");
+    const out = filter.filterSearchResult(result);
+    for (const t of OBFUSCATED_SECRET_TAGS) expect(out.item.tags, t).not.toContain(t);
+    expect(out.item.tags).toEqual(["keep"]);
+  });
+
+  it("DROPS round-16 ADDED provider shapes carried as tags", () => {
+    const out = filter.filterItem(makeItem({ tags: ["alpha", ...ADDED_SECRET_TAGS, "omega"] }));
+    for (const t of ADDED_SECRET_TAGS) expect(out.tags, t).not.toContain(t);
+    expect(out.tags).toEqual(["alpha", "omega"]);
+    expect(JSON.stringify(out.tags)).not.toContain("glpat-");
+  });
+
+  it("NO-DEGRADE: benign tags (incl. multilingual + publishable pk-) are preserved byte-identical", () => {
+    const out = filter.filterItem(makeItem({ tags: [...BENIGN_TAGS] }));
+    expect(out.tags).toEqual(BENIGN_TAGS);
+  });
+
+  it("SENSITIVITY: each obfuscated tag would leak under the pre-round-16 raw-only check", () => {
+    // The raw-only predicate the prior code used (findSecretShapeSpans over the RAW tag) MISSES every
+    // obfuscated tag — so without the Unicode leg they would NOT be dropped (RED). The filter DOES drop
+    // them (GREEN), proving the Unicode leg is load-bearing.
+    for (const t of OBFUSCATED_SECRET_TAGS) {
+      const kept = filter.filterItem(makeItem({ tags: [t] })).tags;
+      expect(kept, t).toEqual([]); // dropped by the round-16 Unicode-aware predicate
+    }
+  });
+});

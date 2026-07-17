@@ -564,7 +564,12 @@ export function createFridayMemoryRoutes(
             { httpStatus: 404 },
           );
         }
-        return { item };
+        // SEC-EVENT-REDACTION-001 (round-16): apply the SAME egress filter `memory.list` applies. This
+        // single-item public GET previously returned the stored item VERBATIM (content / metadata / tags),
+        // so a secret or PII in an item written before the store-time guard existed leaked here while the
+        // list route redacted it — a defense-in-depth gap. Routing through `outputFilter.filterItem`
+        // closes it (redacts content / metadata secret+PII, drops secret/PII-shaped tags).
+        return { item: outputFilter.filterItem(item) };
       },
     },
 
