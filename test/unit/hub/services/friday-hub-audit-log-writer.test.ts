@@ -255,6 +255,30 @@ describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 details redaction"
   const CORRELATION_ID_WHATSAPP = `channel:whatsapp:${CHAT_ID_WHATSAPP}:${MESSAGE_ID}`;
   const CORRELATION_ID_WHATSAPP_REDACTED = `channel:whatsapp:[PHONE_US]:${MESSAGE_ID}`;
 
+  // ── Finding 1: comprehensive secret coverage (field-name + generic assignment + github_pat_) ──
+  // github_pat_ fine-grained token — the prior bespoke `gh[pousr]_` list does NOT match it. // pragma: allowlist secret
+  const GITHUB_PAT = "github_pat_11ABCDEF0aBcDeFgHiJkL_0123456789abcdefghijklmnopqrstuvWXYZ0123abcd"; // pragma: allowlist secret
+  const GENERIC_CRED_VALUE = "genericcredential123abcXYZ"; // pragma: allowlist secret
+  // Opaque secret VALUES with NO distinctive shape — only catchable by their sensitive KEY name.
+  const PLAIN_PASSWORD = "hunter2plaintextpw"; // pragma: allowlist secret
+  const PLAIN_TOKEN = "opaqueplaintoken00"; // pragma: allowlist secret
+  const PLAIN_SECRET = "opaqueplainsecret0"; // pragma: allowlist secret
+  const PLAIN_ACCESS_TOKEN = "opaqueaccesstoken0"; // pragma: allowlist secret
+
+  // ── Finding 3: international E.164 channel identities (must be redacted WITHOUT collapsing benign ids) ──
+  const UK_PHONE = "+447911123456"; // Signal UK sourceNumber (E.164)
+  const FR_PHONE = "+33612345678"; // France
+  const DE_PHONE = "+4915112345678"; // Germany
+  const JP_PHONE = "+81312345678"; // Japan
+  const UK_FORMATTED = "+44 7911 123456"; // formatted with spaces
+  const UK_FULLWIDTH = "＋４４７９１１１２３４５６"; // full-width digits + full-width plus
+  const CORRELATION_ID_UK = `channel:signal:${UK_PHONE}:${MESSAGE_ID}`;
+  const CORRELATION_ID_UK_REDACTED = `channel:signal:[PHONE]:${MESSAGE_ID}`;
+  // Benign machine identifiers that MUST survive the international pass verbatim (no leading '+').
+  const BENIGN_EPOCH_MS = "1737049200000"; // 13-digit epoch ms
+  const BENIGN_LONG_NUMERIC_ID = "900123456789"; // 12-digit business id, no '+'
+  const BENIGN_SHA = "9f8e7d6c5b4a3928170695f4e3d2c1b0"; // benign build SHA fixture // pragma: allowlist secret
+
   function piiEntry(id: string): FridayAuditLogWrite {
     return {
       id,
@@ -478,5 +502,188 @@ describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 details redaction"
       expect(line).not.toContain(SK_SECRET);
       expect((record.details as Record<string, string>).chatId).toBe("[PHONE_US]");
     }
+  });
+
+  // ─── Finding 1: comprehensive secret coverage (bespoke partial list → full coverage) ───
+  it("RED→GREEN finding 1: redacts sensitive field-name values, generic key=value assignments, and github_pat_ from every at-rest sink", async () => {
+    const entry: FridayAuditLogWrite = {
+      id: "secret-cov-1",
+      ts: "2026-07-16T02:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-1",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-2",
+      details: {
+        // (a) sensitive field NAMES holding opaque, SHAPELESS values — only catchable by their key.
+        password: PLAIN_PASSWORD,
+        token: PLAIN_TOKEN,
+        secret: PLAIN_SECRET,
+        accessToken: PLAIN_ACCESS_TOKEN,
+        api_key: GENERIC_CRED_VALUE,
+        // (b) generic key=value credential assignment embedded in free text.
+        errorMessage: `startup failed: api_key=${GENERIC_CRED_VALUE} was rejected`,
+        // (c) github_pat_ fine-grained token inside a NON-secret-named field (the prior bespoke
+        //     `gh[pousr]_` list did not match `github_pat_`).
+        note: `deploy used ${GITHUB_PAT} to auth`,
+      },
+    };
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlRecord } = await writeAndReadBack(entry);
+
+    // Every secret canary is ABSENT from BOTH at-rest sink strings (raw SQLite + JSONL).
+    const forbidden = [PLAIN_PASSWORD, PLAIN_TOKEN, PLAIN_SECRET, PLAIN_ACCESS_TOKEN, GENERIC_CRED_VALUE, GITHUB_PAT];
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      for (const secret of forbidden) {
+        expect(sink).not.toContain(secret);
+      }
+    }
+
+    const details = sqliteDetails as Record<string, string>;
+    // Sensitive field-names → whole value nuked to the marker.
+    expect(details.password).toBe("[REDACTED_SECRET]");
+    expect(details.token).toBe("[REDACTED_SECRET]");
+    expect(details.secret).toBe("[REDACTED_SECRET]");
+    expect(details.accessToken).toBe("[REDACTED_SECRET]");
+    expect(details.api_key).toBe("[REDACTED_SECRET]");
+    // Generic assignment in free text → value redacted, credential label kept.
+    expect(details.errorMessage).toContain("api_key=[REDACTED_SECRET]");
+    expect(details.errorMessage).not.toContain(GENERIC_CRED_VALUE);
+    // github_pat_ inside a benign-named field → redacted, surrounding text preserved.
+    expect(details.note).toContain("[REDACTED_SECRET]");
+    expect(details.note).toContain("deploy used");
+    expect(details.note).not.toContain(GITHUB_PAT);
+
+    // Sink B (JSONL readback) agrees with sink A.
+    const jsonlDetails = jsonlRecord.details as Record<string, string>;
+    expect(jsonlDetails.password).toBe("[REDACTED_SECRET]");
+    expect(jsonlDetails.api_key).toBe("[REDACTED_SECRET]");
+    expect(jsonlDetails.note).not.toContain(GITHUB_PAT);
+  });
+
+  // ─── Finding 2: field-role handling is RECURSIVE / path-aware through nested objects + arrays ───
+  it("RED→GREEN finding 2: nested benign identifiers survive byte-identical while nested PII/secrets are removed", async () => {
+    const entry: FridayAuditLogWrite = {
+      id: "nested-role-1",
+      ts: "2026-07-16T03:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-1",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-3",
+      details: {
+        note: "outer",
+        nested: {
+          // Benign phone-SHAPED forensic id (national 10-digit, NO country code) NESTED one level
+          // deep. Top-level-only field-role deep-redacts this to [PHONE_US] and corrupts it.
+          requestId: BENIGN_PHONE_SHAPED_ID,
+          runId: RUN_ID,
+          // Nested PII + secret that MUST still be removed.
+          chatId: CHAT_ID_SIGNAL,
+          userEmail: EMAIL,
+          password: PLAIN_PASSWORD,
+          deeper: {
+            correlationId: CORRELATION_ID_SIGNAL,
+            apiKey: SK_SECRET,
+          },
+        },
+        // Array of objects: each element re-establishes its per-key roles.
+        events: [
+          { requestId: BENIGN_PHONE_SHAPED_ID, chatId: CHAT_ID_SIGNAL },
+          { spanId: "span-7", note2: `contact ${EMAIL}` },
+        ],
+        // Content array of scalars: a phone-shaped string here IS content → redacted.
+        freeNotes: [`ring ${CHAT_ID_SIGNAL}`, "all good"],
+      },
+    };
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine } = await writeAndReadBack(entry);
+    const details = sqliteDetails as Record<string, unknown>;
+    const nested = details.nested as Record<string, unknown>;
+    const deeper = nested.deeper as Record<string, unknown>;
+    const events = details.events as Array<Record<string, unknown>>;
+    const freeNotes = details.freeNotes as string[];
+
+    // Nested benign forensic ids preserved byte-identical (NOT collapsed to [PHONE_US]).
+    expect(nested.requestId).toBe(BENIGN_PHONE_SHAPED_ID);
+    expect(nested.requestId).not.toBe("[PHONE_US]");
+    expect(nested.runId).toBe(RUN_ID);
+    expect(events[0].requestId).toBe(BENIGN_PHONE_SHAPED_ID);
+    expect(events[1].spanId).toBe("span-7");
+    expect(sqliteDetailsJson).toContain(BENIGN_PHONE_SHAPED_ID);
+
+    // Nested PII / secrets removed at every depth.
+    expect(nested.chatId).toBe("[PHONE_US]");
+    expect(nested.userEmail).toBe("[EMAIL]");
+    expect(nested.password).toBe("[REDACTED_SECRET]");
+    expect(deeper.correlationId).toBe(CORRELATION_ID_SIGNAL_REDACTED); // forensic even when nested
+    expect(deeper.apiKey).toBe("[REDACTED_SECRET]");
+    expect(events[0].chatId).toBe("[PHONE_US]");
+    expect(events[1].note2).toContain("[EMAIL]");
+    // Content array element (scalar) is redacted; the benign sibling round-trips.
+    expect(freeNotes[0]).toBe("ring [PHONE_US]");
+    expect(freeNotes[1]).toBe("all good");
+
+    // No raw PII / secret leaked to either sink.
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink).not.toContain(EMAIL);
+      expect(sink).not.toContain("14155552671");
+      expect(sink).not.toContain(SK_SECRET);
+      expect(sink).not.toContain(PLAIN_PASSWORD);
+    }
+  });
+
+  // ─── Finding 3: international E.164 channel identities (US-only → international) ───
+  it("RED→GREEN finding 3: redacts international E.164 channel identities (multiple ccs, formatted, full-width) WITHOUT collapsing benign machine ids", async () => {
+    const entry: FridayAuditLogWrite = {
+      id: "intl-phone-1",
+      ts: "2026-07-16T04:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-signal",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-4",
+      details: {
+        channelKind: "signal",
+        chatId: UK_PHONE,
+        sessionKey: `channel:signal:${UK_PHONE}`,
+        // correlationId is forensic — the embedded international phone must STILL be stripped.
+        correlationId: CORRELATION_ID_UK,
+        senderId: FR_PHONE,
+        errorMessage: `failed to ${DE_PHONE} and ${JP_PHONE}; formatted ${UK_FORMATTED}; wide ${UK_FULLWIDTH}`,
+        // Benign machine identifiers (no leading '+') that MUST survive verbatim.
+        requestId: BENIGN_LONG_NUMERIC_ID,
+        epochMs: BENIGN_EPOCH_MS,
+        buildSha: BENIGN_SHA,
+      },
+    };
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine } = await writeAndReadBack(entry);
+    const details = sqliteDetails as Record<string, string>;
+
+    // Every international phone digit-string is ABSENT from both at-rest sinks.
+    const forbiddenIntl = ["447911123456", "33612345678", "4915112345678", "81312345678", UK_FULLWIDTH];
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      for (const digits of forbiddenIntl) {
+        expect(sink).not.toContain(digits);
+      }
+    }
+
+    // International phones → [PHONE]; the forensic correlationId keeps its routing prefix + msg tail.
+    expect(details.chatId).toBe("[PHONE]");
+    expect(details.sessionKey).toBe("channel:signal:[PHONE]");
+    expect(details.correlationId).toBe(CORRELATION_ID_UK_REDACTED);
+    expect(details.senderId).toBe("[PHONE]");
+    expect(details.errorMessage).not.toContain("4915112345678");
+    expect(details.errorMessage).toContain("[PHONE]");
+
+    // Benign machine identifiers survive byte-identical (no leading '+' → never matched).
+    expect(details.requestId).toBe(BENIGN_LONG_NUMERIC_ID);
+    expect(details.epochMs).toBe(BENIGN_EPOCH_MS);
+    expect(details.buildSha).toBe(BENIGN_SHA);
+    expect(sqliteDetailsJson).toContain(BENIGN_LONG_NUMERIC_ID);
+    expect(sqliteDetailsJson).toContain(BENIGN_EPOCH_MS);
   });
 });
