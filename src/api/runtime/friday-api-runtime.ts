@@ -3554,8 +3554,14 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       const streamId = `run:${runId}`;
       const afterSeq = query.afterSeq ?? 0;
       const limit = query.limit ?? 50;
+      // SEC-EVENT-REDACTION-001 / P0#2: owner-scope this realtime_events read to
+      // the canonical hub owner (defense-in-depth ON TOP of the resolveAuthorizedRun
+      // run-RBAC above — that gate is preserved). This is the last read of
+      // realtime_events; passing the owner keeps the v106 invariant true on EVERY
+      // read path — a NULL-owner (sentinel) / other-owner row is never returned.
+      const ownerId = resolveRealtimeOwnerId?.();
       const envelopes = deps.db.withReadConnection((db) =>
-        eventRepo.listAfterSeq(db, streamId, afterSeq, limit),
+        eventRepo.listAfterSeq(db, streamId, afterSeq, limit, ownerId),
       );
       const items: FridayRunTimelineEntry[] = envelopes.map((e) => {
         const p = e.payload as JsonObject;

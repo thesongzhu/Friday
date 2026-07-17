@@ -206,3 +206,66 @@ describe("realtime owner-binding — canonical-hub-owner gate (P0#2)", () => {
     }
   });
 });
+
+// The getRunTimeline read of realtime_events was the ONE path that omitted the
+// owner filter (LOW latent hazard: it could return NULL-owner sentinel + other-
+// owner rows, contradicting the v106 invariant). These tests target the exact read
+// primitive getRunTimeline now uses — `listAfterSeq(db, streamId, afterSeq, limit,
+// ownerId)` on a `run:<id>` stream — proving the un-scoped call (the pre-fix path)
+// leaks NULL/other-owner rows while the owner-scoped call (the fix) excludes them.
+describe("realtime owner-binding — getRunTimeline read primitive is owner-scoped (LOW backstop)", () => {
+  const RUN_STREAM = "run:run-xyz";
+
+  function appendRow(
+    db: FridaySqliteLayer,
+    eventId: string,
+    seq: number,
+    ownerResolver?: () => string | undefined,
+  ): void {
+    const repo = createFridayRealtimeEventRepository({ resolveOwnerId: ownerResolver });
+    db.withWriteTransaction((w) =>
+      repo.append(w, {
+        eventId,
+        streamId: RUN_STREAM,
+        seq,
+        event: "workflow.node.completed" as never,
+        payload: { nodeId: "n", attempt: 1 } as never,
+        emittedAt: NOW,
+        correlationId: undefined,
+        stateVersion: undefined,
+      }),
+    );
+  }
+
+  function seedMixedOwners(db: FridaySqliteLayer): void {
+    appendRow(db, "r-canon", 1, () => CANONICAL_OWNER);
+    appendRow(db, "r-other", 2, () => "admin-002");
+    appendRow(db, "r-null", 3, () => undefined); // NULL-owner sentinel
+  }
+
+  it("PRE-FIX un-scoped read (no ownerId) returns NULL-owner + other-owner rows — the latent hazard", () => {
+    const db = createTestDb();
+    try {
+      seedMixedOwners(db);
+      const repo = createFridayRealtimeEventRepository();
+      const all = db.withReadConnection((r) => repo.listAfterSeq(r, RUN_STREAM, 0, 50));
+      expect(all.map((e) => e.eventId).sort()).toEqual(["r-canon", "r-null", "r-other"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("FIX owner-scoped read (getRunTimeline passes the canonical owner) excludes NULL-owner + other-owner rows", () => {
+    const db = createTestDb();
+    try {
+      seedMixedOwners(db);
+      const repo = createFridayRealtimeEventRepository();
+      const scoped = db.withReadConnection((r) =>
+        repo.listAfterSeq(r, RUN_STREAM, 0, 50, CANONICAL_OWNER),
+      );
+      expect(scoped.map((e) => e.eventId)).toEqual(["r-canon"]);
+    } finally {
+      db.close();
+    }
+  });
+});
