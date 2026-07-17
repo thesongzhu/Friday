@@ -6,6 +6,7 @@ import {
   createFridayRetentionSettingsRoutes,
   createFridayRetentionPolicyAuditAppender,
   createFridayRetentionReceiptRecovery,
+  createFridayMultiTenantSecurityRoutes,
 } from "#api";
 import type {
   FridayAuthMiddlewareFactory,
@@ -58,6 +59,12 @@ const AGED = "2024-01-01T00:00:00.000Z";
 
 function owner(userId: string): never {
   return { userId, principalId: userId, role: "admin", scopes: ["hub.admin"] } as never;
+}
+
+// A canonical owner authenticated WITH a tenant namespace (the product's
+// multi-tenant audit projection queries by exact tenantId).
+function ownerWithTenant(userId: string, tenantId: string): never {
+  return { userId, principalId: userId, tenantId, role: "admin", scopes: ["hub.admin", "security.read"] } as never;
 }
 
 function makeCtx(
@@ -633,6 +640,116 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
       receiptRouteOf(routes).handler(makeCtx({ headers: {} })),
     ).rejects.toMatchObject({ httpStatus: 400 });
   });
+
+  // ── 14. P1 — recovery identity across key REUSE + journal expiry: the durable
+  //        (owner, key) binding is IMMUTABLE. Same key + same payload replays the
+  //        EXACT first receipt (idempotent); same key + DIFFERENT payload is a 409
+  //        conflict — the first committed receipt is NEVER shadowed. ─────────────
+  it("same key + same payload replays the FIRST receipt; same key + different payload → 409; first is never shadowed", async () => {
+    const routes = makeRoutes(realAppender());
+    const KEY = "reused-key-Z";
+
+    // First write with the key.
+    const first = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    expect(auditRows()).toHaveLength(1);
+
+    // A LATER write (simulating 48h later, past the 24h HTTP-journal expiry) with
+    // the SAME key + SAME payload → idempotent replay of the EXACT first receipt,
+    // NO second audit row.
+    const replay = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    expect(replay.receipt.receiptId).toBe(first.receipt.receiptId);
+    expect(replay.receipt.auditId).toBe(first.receipt.auditId);
+    expect(replay.receipt.evidence.after).toEqual(first.receipt.evidence.after);
+    expect(auditRows()).toHaveLength(1); // NOT a second write.
+
+    // A LATER write with the SAME key + DIFFERENT payload → 409 conflict, no write.
+    await expect(
+      putRouteOf(routes).handler(
+        makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 90 } } } }),
+      ),
+    ).rejects.toMatchObject({ httpStatus: 409 });
+    expect(auditRows()).toHaveLength(1);
+
+    // The FIRST committed receipt remains EXACTLY recoverable by its key — never
+    // shadowed by a "latest wins" second row.
+    const recovered = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(recovered.receipt).not.toBeNull();
+    expect(recovered.receipt!.receiptId).toBe(first.receipt.receiptId);
+    expect(recovered.receipt!.evidence.after.auditLogs).toEqual({ mode: "after_days", days: 30 });
+  });
+
+  // ── 15. P1 — product audit VISIBILITY through the REAL tenant-scoped audit route
+  //        after restart: the entry is bound to the canonical owner's tenant, so the
+  //        owner's `/v1/security/tenants/:tenantId/audit-log` query returns it; the
+  //        null tenant does NOT (exact-tenant binding). ──────────────────────────
+  it("retention audit is readable via the REAL tenant-scoped audit route after restart; wrong tenant sees zero", async () => {
+    const TENANT = "tenant-admin-001";
+    // Write under a canonical owner authenticated with the tenant namespace.
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({
+        principal: ownerWithTenant(CANON, TENANT),
+        body: { policy: { auditLogs: { mode: "after_days", days: 30 } } },
+      }),
+    );
+
+    // Simulate a RESTART: a fresh AuditLogger re-hydrates from the durable
+    // security_audit_log at construction (no in-memory carryover).
+    const restartedLogger = new AuditLogger({ persistence: createSqliteAuditPersistence(db) });
+
+    // Drive the REAL product audit route (`security.audit.list`) — same code path
+    // bootstrap wires (`deps.audit.list → queryAuditLog({ tenantId })`).
+    const securityRoutes = createFridayMultiTenantSecurityRoutes({
+      audit: {
+        list: (tenantId: string, query?: Record<string, unknown>) => ({
+          items: [...restartedLogger.queryAuditLog({ tenantId, ...(query ?? {}) } as never)],
+        }),
+      },
+    } as unknown as Parameters<typeof createFridayMultiTenantSecurityRoutes>[0]);
+    const auditListRoute = securityRoutes.find((r) => r.operationId === "security.audit.list")!;
+
+    // The canonical owner's tenant query returns the retention entry post-restart.
+    const viaTenant = (await auditListRoute.handler(
+      makeCtx({ principal: ownerWithTenant(CANON, TENANT), params: { tenantId: TENANT } }),
+    )) as { items: Array<{ action: string; tenantId: string | null }> };
+    const retentionEntries = viaTenant.items.filter((e) => e.action === "retention.policy.update");
+    expect(retentionEntries).toHaveLength(1);
+    expect(retentionEntries[0].tenantId).toBe(TENANT);
+
+    // The NULL tenant (the round-3 wrong binding) does NOT see it — proving the
+    // entry is bound to the owner's real tenant namespace, not null.
+    const viaNull = (await auditListRoute.handler(
+      makeCtx({ principal: ownerWithTenant(CANON, TENANT), params: { tenantId: null as unknown as string } }),
+    )) as { items: Array<{ action: string }> };
+    expect(viaNull.items.filter((e) => e.action === "retention.policy.update")).toHaveLength(0);
+  });
+
+  // ── 16. P2 — recovery key is HEADER-ONLY: a `?key=` query string is NOT honored
+  //        (so the sensitive key can never land in access logs / URLs). ──────────
+  it("recovery ignores ?key= query string; requires the Idempotency-Key header", async () => {
+    const routes = makeRoutes(realAppender());
+    const KEY = "header-only-key";
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+
+    // Key ONLY in the query string, NO header → 400 (query fallback removed).
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: {}, query: { key: KEY } })),
+    ).rejects.toMatchObject({ httpStatus: 400 });
+
+    // Key in the HEADER → recovers. (The key never appears in the URL/query.)
+    const rec = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, query: {} }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(rec.receipt).not.toBeNull();
+  });
 });
 
 // ── Real public-HTTP seam: owner-auth happy path + cross-principal denial ─────
@@ -758,6 +875,7 @@ describe("FridayHttpServer — RETENTION-R3d real-HTTP receipt + denial isolatio
       }),
       nowIso: () => NOW,
       idGenerator: () => `op-${String(++idc).padStart(4, "0")}`,
+      readReceiptByRecoveryKey: createFridayRetentionReceiptRecovery({ sqlite: db! }),
     })) {
       routes.register(route);
     }
@@ -812,5 +930,41 @@ describe("FridayHttpServer — RETENTION-R3d real-HTTP receipt + denial isolatio
     expect(
       (db!.writer.prepare("SELECT COUNT(*) c FROM friday_retention_settings").get() as { c: number }).c,
     ).toBe(0);
+  });
+
+  // P2 (real HTTP): the recovery key travels ONLY in the Idempotency-Key HEADER —
+  // it is never placed in the request URL/query, so it cannot reach access logs.
+  it("recovery over real HTTP is header-only; the key never appears in the request URL, and ?key= is not honored", async () => {
+    await startServer({ [OWNER_A.tokenId]: OWNER_A });
+    const KEY = "sensitive-recovery-key-42";
+    // Commit a receipt bound to the key (header on the PUT).
+    const putRes = await fetch(`${baseUrl}/v1/uix/retention-policy`, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${OWNER_A.tokenId}`,
+        "content-type": "application/json",
+        "idempotency-key": KEY,
+      },
+      body: JSON.stringify({ policy: { auditLogs: { mode: "after_days", days: 30 } } }),
+    });
+    expect(putRes.status).toBe(200);
+
+    // Recovery: key in the HEADER, URL carries NO key.
+    const recoverUrl = `${baseUrl}/v1/uix/retention-policy/receipt`;
+    expect(recoverUrl).not.toContain(KEY); // the sensitive key is never in the URL
+    const recRes = await fetch(recoverUrl, {
+      headers: { authorization: `Bearer ${OWNER_A.tokenId}`, "idempotency-key": KEY },
+    });
+    expect(recRes.status).toBe(200);
+    const recJson = (await recRes.json()) as { ok: true; data: { receipt: FridayRetentionPolicyUpdateReceipt | null } };
+    expect(recJson.data.receipt).not.toBeNull();
+    expect(recJson.data.receipt!.evidence.after.auditLogs).toEqual({ mode: "after_days", days: 30 });
+
+    // Putting the key ONLY in the query string (the removed fallback) → 400: the
+    // key in a URL is never honored, removing any incentive to log it there.
+    const queryRes = await fetch(`${recoverUrl}?key=${encodeURIComponent(KEY)}`, {
+      headers: { authorization: `Bearer ${OWNER_A.tokenId}` },
+    });
+    expect(queryRes.status).toBe(400);
   });
 });
