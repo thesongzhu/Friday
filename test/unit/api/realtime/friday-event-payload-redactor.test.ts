@@ -377,3 +377,194 @@ describe("redactEventPayload — on-wire via real bus + emitter", () => {
     expect(serialize(received[0].payload)).toContain("[EMAIL]");
   });
 });
+
+// ─── Field-role-aware identity preservation (re-audit findings #1 + #2) ───
+//
+// Drives the REAL execution-control emitter → event bus → durable event
+// repository → audit sink → replay/readback — the production chain the public
+// /v1/node-runner/execute seam invokes. Proves distinct PII-shaped identifiers
+// stay distinct (no collapse), benign string business ids round-trip unchanged,
+// and content-field PII is still redacted.
+
+describe("redactEventPayload — field-role-aware identity (re-audit)", () => {
+  const NOW = "2026-02-25T12:00:00.000Z";
+
+  function freshBus() {
+    let counter = 0;
+    return createFridayRealtimeEventBus({
+      idGenerator: () => `evt-${++counter}`,
+      nowIso: () => NOW,
+    });
+  }
+
+  it("does NOT collapse two distinct PII-shaped executionIds (finding #1: distinct streamId + audit resourceId)", () => {
+    const bus = freshBus();
+    const auditRecords: Array<Record<string, unknown>> = [];
+    const emitter = createExecutionControlEventEmitter({
+      eventBus: bus,
+      nowIso: () => NOW,
+      auditSink: (r) => auditRecords.push(r as unknown as Record<string, unknown>),
+    });
+
+    const a = emitter.emit("execution.node.failed", {
+      executionId: "alice@example.com",
+      runId: "run-a",
+      nodeId: "n-1",
+      attempt: 1,
+      errorCode: "E",
+      errorMessage: "reach carol@example.com",
+    });
+    const b = emitter.emit("execution.node.failed", {
+      executionId: "dave@example.com",
+      runId: "run-b",
+      nodeId: "n-1",
+      attempt: 1,
+      errorCode: "E",
+      errorMessage: "no pii here",
+    });
+
+    // Distinct identifiers stay distinct — no collapse to one execution:[EMAIL] stream.
+    expect(a.streamId).not.toBe(b.streamId);
+    expect(a.streamId).toBe("execution:alice@example.com");
+    expect(b.streamId).toBe("execution:dave@example.com");
+
+    // Audit resourceId (derived from the intact executionId) stays distinct.
+    expect(auditRecords[0].resourceId).not.toBe(auditRecords[1].resourceId);
+    expect(auditRecords[0].resourceId).toBe("alice@example.com");
+
+    // CONTENT-field PII (errorMessage) is still redacted on the wire.
+    const s = serialize(a.payload);
+    expect(s).not.toContain("carol@example.com");
+    expect(s).toContain("[EMAIL]");
+  });
+
+  it("round-trips ordinary numeric-string business identifiers unchanged through persistence + readback (finding #2)", () => {
+    const db = createTestDb();
+    try {
+      const repo = createFridayRealtimeEventRepository();
+      const payload = {
+        orderId: "2345678", // phone-shaped, benign business id
+        invoiceId: "4155550132", // 10-digit, phone-shaped, benign
+        executionId: "123456789", // 9-digit, SSN-shaped, benign
+        runId: "123-45-6789", // SSN-formatted, benign routing id
+        note: "processed", // content, non-PII
+      };
+      const envelope: FridayRealtimeEventEnvelope = {
+        eventId: "evt-roundtrip",
+        streamId: "execution:123456789",
+        seq: 1,
+        event: "execution.node.completed",
+        payload: payload as unknown as FridayRealtimeEventEnvelope["payload"],
+        emittedAt: NOW,
+        correlationId: undefined,
+        stateVersion: undefined,
+      };
+      db.withWriteTransaction((w) => repo.append(w, envelope));
+
+      const stored = db.withReadConnection(
+        (r) =>
+          r
+            .prepare("SELECT payload_json FROM realtime_events WHERE event_id = ?")
+            .get("evt-roundtrip") as { payload_json: string },
+      );
+      const readBack = db.withReadConnection((r) =>
+        repo.listByStream(r, "execution:123456789", 10),
+      );
+
+      expect(readBack[0].payload).toEqual(payload);
+      expect(stored.payload_json).toContain("2345678");
+      expect(stored.payload_json).toContain("4155550132");
+      expect(stored.payload_json).toContain("123456789");
+      expect(stored.payload_json).toContain("123-45-6789");
+      expect(stored.payload_json).not.toContain("[PHONE_US]");
+      expect(stored.payload_json).not.toContain("[SSN_US]");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("at-rest: intact identifiers coexist with redacted content PII (finding #1 + leak-fix together)", () => {
+    const db = createTestDb();
+    try {
+      const repo = createFridayRealtimeEventRepository();
+      const payload = {
+        executionId: "alice@example.com", // identifier → preserved (distinct)
+        runId: "4155550132", // identifier → preserved
+        detail: `email carol@example.com ssn ${SSN}`, // content → redacted
+      };
+      const envelope: FridayRealtimeEventEnvelope = {
+        eventId: "evt-coexist",
+        streamId: "execution:alice@example.com",
+        seq: 1,
+        event: "execution.node.failed",
+        payload: payload as unknown as FridayRealtimeEventEnvelope["payload"],
+        emittedAt: NOW,
+        correlationId: undefined,
+        stateVersion: undefined,
+      };
+      db.withWriteTransaction((w) => repo.append(w, envelope));
+
+      const stored = db.withReadConnection(
+        (r) =>
+          r
+            .prepare("SELECT payload_json FROM realtime_events WHERE event_id = ?")
+            .get("evt-coexist") as { payload_json: string },
+      );
+
+      // Identifiers intact (distinct-preserving).
+      expect(stored.payload_json).toContain("alice@example.com");
+      expect(stored.payload_json).toContain("4155550132");
+      // Content-field PII redacted (original leak fix intact).
+      expect(stored.payload_json).not.toContain("carol@example.com");
+      expect(stored.payload_json).not.toContain(SSN);
+      expect(stored.payload_json).toContain("[EMAIL]");
+      expect(stored.payload_json).toContain("[SSN_US]");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("stream identities are stable + distinct across durable persistence and readback (finding #1)", () => {
+    const db = createTestDb();
+    try {
+      const eventRepo = createFridayRealtimeEventRepository();
+      let counter = 0;
+      const bus = createFridayRealtimeEventBus({
+        idGenerator: () => `evt-${++counter}`,
+        nowIso: () => NOW,
+        db,
+        eventRepo,
+      });
+      const emitter = createExecutionControlEventEmitter({ eventBus: bus, nowIso: () => NOW });
+
+      const a = emitter.emit("execution.node.completed", {
+        executionId: "alice@example.com",
+        runId: "run-a",
+        nodeId: "n",
+        attempt: 1,
+        durationMs: 5,
+      });
+      const b = emitter.emit("execution.node.completed", {
+        executionId: "dave@example.com",
+        runId: "run-b",
+        nodeId: "n",
+        attempt: 1,
+        durationMs: 5,
+      });
+
+      expect(a.streamId).not.toBe(b.streamId);
+
+      const aStream = db.withReadConnection((r) => eventRepo.listByStream(r, a.streamId, 10));
+      const bStream = db.withReadConnection((r) => eventRepo.listByStream(r, b.streamId, 10));
+
+      // Each distinct identity persists to its OWN durable stream (no collapse).
+      expect(aStream).toHaveLength(1);
+      expect(bStream).toHaveLength(1);
+      // streamId is stable across persistence + readback.
+      expect(aStream[0].streamId).toBe(a.streamId);
+      expect(bStream[0].streamId).toBe(b.streamId);
+    } finally {
+      db.close();
+    }
+  });
+});
