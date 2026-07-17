@@ -60,6 +60,21 @@ export function createFridayRealtimeEventBus(
       const opaqueStreamId = deps.pseudonymizer
         ? deps.pseudonymizer.streamId(streamId)
         : streamId;
+      // SEC-REALTIME-EVENT-PII-BY-VALUE / round-7 F1: the envelope `correlationId` is
+      // an arbitrary caller-supplied identifier (e.g. `assistant-template:<templateId>`,
+      // a runId, or free text) that was previously copied VERBATIM into the persisted
+      // row (realtime_events.correlation_id) AND the delivered/WS envelope — a raw
+      // identifier leak that bypassed the sink. Pseudonymize it here with the SAME
+      // owner-scoped DETERMINISTIC key as the streamId id-part (`value`, not the
+      // topic-preserving `streamId`, since a correlationId has no authz-bearing prefix).
+      // Deterministic ⇒ the same raw correlationId maps to the same opaque, so
+      // correlation semantics survive while nothing raw reaches rest or the wire. When
+      // the pseudonymizer is fail-closed + inactive, `value()` THROWS (same fail-closed
+      // guarantee as streamId) — the publish is refused rather than degraded to raw.
+      const opaqueCorrelationId =
+        correlationId !== undefined && deps.pseudonymizer
+          ? deps.pseudonymizer.value(correlationId)
+          : correlationId;
       const pseudonymizedPayload = deps.pseudonymizer
         ? pseudonymizeEventIdentifiers(payload, (raw) => deps.pseudonymizer!.value(raw))
         : payload;
@@ -76,7 +91,7 @@ export function createFridayRealtimeEventBus(
             event,
             payload: redactedPayload,
             emittedAt: deps.nowIso(),
-            correlationId,
+            correlationId: opaqueCorrelationId,
           };
           deps.eventRepo!.append(db, env);
           return env;

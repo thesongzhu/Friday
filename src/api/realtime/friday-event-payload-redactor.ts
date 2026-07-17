@@ -51,6 +51,7 @@
  */
 
 import { createFridayMemoryPiiGuard } from "../../memory/guard/services/friday-memory-pii-guard.js";
+import { redactUnicodeResistantSecrets } from "./friday-realtime-secret-unicode-scan.js";
 
 // Shared production value-PII guard — constructed ONCE at module load. The factory
 // takes only an optional mode and has NO dependencies, so no DI/bootstrap wiring is
@@ -84,53 +85,21 @@ const SENSITIVE_KEYS = new Set([
 
 const REDACTED = "[REDACTED]";
 
-const SECRET_CONTENT_PATTERNS: Array<{
-  readonly pattern: RegExp;
-  readonly replacement: string | ((substring: string, ...args: string[]) => string);
-}> = [
-  {
-    pattern:
-      /-----BEGIN (?:PGP )?[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:PGP )?[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/gu,
-    replacement: REDACTED,
-  },
-  {
-    pattern: /\b(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/giu,
-    replacement: (_match, prefix: string) => `${prefix}${REDACTED}`,
-  },
-  {
-    pattern: /\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/giu,
-    replacement: (_match, prefix: string) => `${prefix}${REDACTED}`,
-  },
-  {
-    pattern: /\bsk-[A-Za-z0-9_-]{8,}\b/gu,
-    replacement: REDACTED,
-  },
-  {
-    pattern: /\b(?:gh[opsru]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{16,})\b/gu,
-    replacement: REDACTED,
-  },
-  {
-    pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu,
-    replacement: REDACTED,
-  },
-  {
-    pattern:
-      /(^|[^A-Za-z0-9])("?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret[_-]?access[_-]?key|password|secret|token)"?\s*[=:]\s*"?)[A-Za-z0-9._~+/=-]{8,}("?)/giu,
-    replacement: (_match, leading: string, prefix: string, suffix: string) =>
-      `${leading}${prefix}${REDACTED}${suffix}`,
-  },
-];
-
 function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEYS.has(key.toLowerCase().replace(/[-_]/g, "").toLowerCase());
 }
 
+/**
+ * Strip secret-shaped substrings (PEM / Bearer / sk- / gh_ / JWT / KEY=VALUE) from a
+ * string. Delegates to the round-7 F2 Unicode-obfuscation-resistant scan, which folds a
+ * NON-DESTRUCTIVE detection copy (NFKD → strip \p{M} → strip Cf/Default_Ignorable → fold
+ * \p{Nd}) and redacts only the ORIGINAL bytes of a matched span — so zero-width-split,
+ * combining, fullwidth, math-alphanumeric and precomposed-accented secrets are caught,
+ * while benign multilingual text round-trips byte-identical. Pure-ASCII input behaves
+ * exactly as the previous contiguous-ASCII pass.
+ */
 function redactString(value: string): string {
-  let redacted = value;
-  for (const { pattern, replacement } of SECRET_CONTENT_PATTERNS) {
-    redacted = redacted.replace(pattern, replacement as never);
-  }
-  return redacted;
+  return redactUnicodeResistantSecrets(value);
 }
 
 // ─── Identifier / routing field allowlist ───

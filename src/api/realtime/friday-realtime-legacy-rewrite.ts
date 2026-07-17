@@ -46,10 +46,55 @@ interface LegacyRealtimeRow {
   event_id: string;
   stream_id: string;
   payload_json: string;
+  correlation_id: string | null;
 }
 
 /** Default rewrite batch size (rows loaded per SELECT — bounds memory, not time). */
 const DEFAULT_REWRITE_BATCH_SIZE = 500;
+
+/**
+ * SEC-REALTIME-EVENT-PII-BY-VALUE / round-7 F3 — fail-closed placeholder for a legacy
+ * payload whose bytes CANNOT be safely transformed (unparseable JSON, or a transform /
+ * serialization that throws). Stamping `identifier_epoch` while preserving such bytes
+ * would brand raw sensitive content as "clean" and permanently skip the row. Replacing
+ * ALL bytes with this valid-JSON placeholder guarantees NO raw canary can remain under
+ * clean provenance, and it parses back to a non-null object so the read path
+ * (`rowToEnvelope` → `safeJsonParse(...)!`) never trips on a null payload.
+ */
+const MALFORMED_LEGACY_PAYLOAD_PLACEHOLDER_JSON = JSON.stringify({
+  _redacted: "[MALFORMED_LEGACY_PAYLOAD_REDACTED]",
+});
+
+/**
+ * Transform a single legacy payload for the rewrite. FAIL-CLOSED: on an unparseable
+ * payload — or any throw from the identifier pseudonymization / content redaction /
+ * serialization — return the safe placeholder so NO raw bytes survive. A valid payload
+ * (including a legitimate JSON `null`) is pseudonymized then content-redacted, mirroring
+ * the live sink's two-pass transform.
+ */
+function transformLegacyPayload(
+  payloadJson: string,
+  pseudonymizer: FridayRealtimePseudonymizer,
+): string {
+  try {
+    const parsed = safeJsonParse<unknown>(payloadJson);
+    // `safeJsonParse` returns `undefined` for BOTH empty input and a JSON PARSE FAILURE
+    // (malformed bytes). Either way the payload cannot be structurally transformed, so
+    // its raw bytes must NOT be carried forward under a stamped epoch — fail closed.
+    if (parsed === undefined) return MALFORMED_LEGACY_PAYLOAD_PLACEHOLDER_JSON;
+    const transformed = JSON.stringify(
+      redactEventPayload(
+        pseudonymizeEventIdentifiers(parsed, (raw) => pseudonymizer.value(raw)),
+      ),
+    );
+    // `JSON.stringify` yields `undefined` only for a top-level `undefined`/function/symbol,
+    // which `JSON.parse` can never produce — but guard anyway so a stamped row is always
+    // valid, byte-clean JSON.
+    return typeof transformed === "string" ? transformed : MALFORMED_LEGACY_PAYLOAD_PLACEHOLDER_JSON;
+  } catch {
+    return MALFORMED_LEGACY_PAYLOAD_PLACEHOLDER_JSON;
+  }
+}
 
 export interface RewriteLegacyRealtimeIdentifiersResult {
   scanned: number;
@@ -86,7 +131,7 @@ export function rewriteLegacyRealtimeIdentifiers(
       (conn) =>
         conn
           .prepare(
-            "SELECT event_id, stream_id, payload_json FROM realtime_events WHERE identifier_epoch IS NULL ORDER BY rowid ASC LIMIT ?",
+            "SELECT event_id, stream_id, payload_json, correlation_id FROM realtime_events WHERE identifier_epoch IS NULL ORDER BY rowid ASC LIMIT ?",
           )
           .all(batchSize) as LegacyRealtimeRow[],
     );
@@ -97,26 +142,25 @@ export function rewriteLegacyRealtimeIdentifiers(
       // Guard `identifier_epoch IS NULL` in the UPDATE too, so a row can only be
       // converted once even under an unexpected concurrent write (durable provenance).
       const update = conn.prepare(
-        "UPDATE realtime_events SET stream_id = ?, payload_json = ?, identifier_epoch = ? WHERE event_id = ? AND identifier_epoch IS NULL",
+        "UPDATE realtime_events SET stream_id = ?, payload_json = ?, correlation_id = ?, identifier_epoch = ? WHERE event_id = ? AND identifier_epoch IS NULL",
       );
       let count = 0;
       for (const row of batch) {
         const newStreamId = pseudonymizer.streamId(row.stream_id);
-        const parsed = safeJsonParse<unknown>(row.payload_json);
         // Mirror the live sink: pseudonymize identifier VALUES, THEN redact CONTENT
-        // PII/secrets. A payload that cannot be parsed keeps its bytes (nothing to
-        // structurally transform) but is still stamped so it is not re-scanned.
-        const newPayloadJson =
-          parsed === undefined || parsed === null
-            ? row.payload_json
-            : JSON.stringify(
-                redactEventPayload(
-                  pseudonymizeEventIdentifiers(parsed, (raw) => pseudonymizer.value(raw)),
-                ),
-              );
+        // PII/secrets. A payload whose bytes cannot be safely transformed FAILS CLOSED to
+        // a placeholder (round-7 F3) — never carried raw under a stamped epoch.
+        const newPayloadJson = transformLegacyPayload(row.payload_json, pseudonymizer);
+        // round-7 F1: the envelope correlationId was persisted RAW into
+        // `realtime_events.correlation_id` and bypassed the sink. Re-key legacy raw
+        // correlation ids with the SAME deterministic pseudonym key so nothing raw
+        // remains at rest and correlation semantics survive (same raw → same opaque).
+        const newCorrelationId =
+          row.correlation_id === null ? null : pseudonymizer.value(row.correlation_id);
         const info = update.run(
           newStreamId,
           newPayloadJson,
+          newCorrelationId,
           FRIDAY_REALTIME_PSEUDONYM_KEY_VERSION,
           row.event_id,
         );
