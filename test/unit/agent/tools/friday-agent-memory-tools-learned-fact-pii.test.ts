@@ -104,6 +104,31 @@ describe("FridayAgentMemoryTools memory_search — learned-fact PII egress", () 
     expect(learned.content).toContain("[CREDIT_CARD]");
   });
 
+  // SEC-EVENT-REDACTION-001 round-15: the agent-tool learned-fact search reuses the SAME canonical
+  // output filter, so a SHAPED secret in a learned-fact value (stringified into content) is redacted —
+  // including the round-15 Stripe underscore shape (`sk_live_`) that 14e4c4f4's `sk-` shape missed.
+  it("redacts a Stripe underscore-format sk_live_ secret in an appended learned-fact value (round-15 shape)", async () => {
+    const SK_LIVE = ["sk_live", "0123456789abcdefghijABCDwxyz"].join("_"); // built at runtime (push-protection) // pragma: allowlist secret
+    const [searchTool] = createFridayAgentMemoryTools({
+      memoryService: mockMemoryService([]),
+      listLearnedFacts: () => [{
+        key: "creds",
+        // BARE sk_live_ in a plain string (no `apiKey:`/`token:` assignment context) — caught ONLY by
+        // the round-15 underscore SHAPE, not the generic-assignment pattern. RED on 14e4c4f4.
+        value: `deploy used ${SK_LIVE} to auth`,
+        confidence: 0.9,
+        evidenceCount: 3,
+        lastConfirmedAt: NOW,
+      }],
+    });
+    const result = await searchTool!.execute({ query: "creds" }, signalWithPrincipal("user-1"));
+    const parsed = JSON.parse(result.content) as Array<{ content: string; metadata: { source: string } }>;
+    const learned = parsed.find((r) => r.metadata.source === "learned_fact")!;
+    expect(learned.content).toContain("[REDACTED_SECRET]");
+    expect(learned.content).not.toContain(SK_LIVE);
+    expect(result.content).not.toContain(SK_LIVE);
+  });
+
   it("leaves a learned fact with no PII unchanged (negative control)", async () => {
     const [searchTool] = createFridayAgentMemoryTools({
       memoryService: mockMemoryService([]),

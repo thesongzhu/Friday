@@ -60,6 +60,34 @@ describe("FridayAssetInventoryRoutes — learned-fact SECRET egress (round-14)",
     expect(JSON.stringify(res)).toContain("Authorization: Bearer");
   });
 
+  // Round-15: a SHAPELESS credential under a sensitive KEY NAME (+ Stripe underscore `sk_live_`)
+  // escaped this public route VERBATIM in details.value on 14e4c4f4. The key-name nuke closes it.
+  it("NUKES shapeless credentials + sk_live_ under sensitive KEY NAMES in details.value (round-15 parity)", async () => {
+    const PLAIN_PW = "hunter2plainword"; // pragma: allowlist secret
+    const OPAQUE_SECRET = "opaquevaluewithnoshape"; // pragma: allowlist secret
+    const SK_LIVE = ["sk_live", "0123456789abcdefghijABCDwxyz"].join("_"); // built at runtime (push-protection) // pragma: allowlist secret
+    const route = findRoute({
+      subjectInventory: emptyInventory,
+      listLearnedFacts: vi.fn(() => [{
+        key: "pref:creds",
+        value: { password: PLAIN_PW, secret: OPAQUE_SECRET, apiKey: SK_LIVE, note: "keep" },
+        confidence: 0.9,
+        evidenceCount: 3,
+        lastConfirmedAt: NOW,
+      }]),
+    });
+    const res = (await route.handler(makeCtx())) as {
+      items: Array<{ kind: string; details: { value: { password: string; secret: string; apiKey: string; note: string } } }>;
+    };
+    const learned = res.items.find((i) => i.kind === "learned_fact")!;
+    expect(learned.details.value.password).toBe(M);
+    expect(learned.details.value.secret).toBe(M);
+    expect(learned.details.value.apiKey).toBe(M);
+    expect(learned.details.value.note).toBe("keep");
+    const json = JSON.stringify(res);
+    for (const cred of [PLAIN_PW, OPAQUE_SECRET, SK_LIVE]) expect(json).not.toContain(cred);
+  });
+
   it("leaves a value with no secret/PII unchanged (negative control)", async () => {
     const route = findRoute({
       subjectInventory: emptyInventory,

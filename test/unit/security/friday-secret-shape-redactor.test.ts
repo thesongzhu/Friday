@@ -12,6 +12,12 @@ import {
 describe("friday-secret-shape-redactor", () => {
   const M = FRIDAY_DEFAULT_SECRET_MARKER;
 
+  // Stripe-shaped fixtures are BUILT from `<prefix>_<body>` at runtime so no contiguous literal Stripe
+  // key (`sk_live_…`) ever appears in SOURCE — GitHub push protection scans source text and does NOT
+  // honor the detect-secrets pragma. At runtime these produce the exact shapes the redactor must
+  // (`sk_live`/`sk_test`/`rk_live`/`rk_test`/`whsec`) or must NOT (`pk_live`/`pk_test`) catch.
+  const stripeShaped = (prefix: string): string => `${prefix}_0123456789abcdefghijABCDwxyz`; // pragma: allowlist secret
+
   describe("isSensitiveSecretFieldName", () => {
     it("matches credential field names across case / separator variants", () => {
       for (const key of [
@@ -106,6 +112,43 @@ describe("friday-secret-shape-redactor", () => {
     it("redacts a PEM private-key block", () => {
       const pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIBOwIBAAJBAKj34\n-----END RSA PRIVATE KEY-----"; // pragma: allowlist secret
       expect(redactSecretShapesInString(pem)).toBe(M);
+    });
+
+    // SEC-EVENT-REDACTION-001 (round-15): Stripe-style UNDERSCORE-format secrets the hyphenated `sk-`
+    // shape MISSES. RED on 14e4c4f4 (underscore form returned verbatim); GREEN once the underscore
+    // pattern is added. `sk_live_`/`sk_test_` (secret) + `rk_live_`/`rk_test_` (restricted) + `whsec_`
+    // (webhook signing secret) redact; the PUBLISHABLE `pk_live_`/`pk_test_` keys are NOT secrets and
+    // MUST survive byte-identical.
+    it("redacts Stripe underscore-format SECRET / RESTRICTED / webhook keys (sk_live_/sk_test_/rk_live_/rk_test_/whsec_)", () => {
+      for (const secret of ["sk_live", "sk_test", "rk_live", "rk_test", "whsec"].map(stripeShaped)) {
+        expect(redactSecretShapesInString(secret), secret.slice(0, 8)).toBe(M);
+        // Also caught as a BARE value embedded in free text.
+        expect(redactSecretShapesInString(`key ${secret} used`)).toBe(`key ${M} used`);
+      }
+    });
+
+    it("does NOT redact Stripe PUBLISHABLE keys (pk_live_/pk_test_ are client-safe, not secrets)", () => {
+      for (const publishable of ["pk_live", "pk_test"].map(stripeShaped)) {
+        expect(redactSecretShapesInString(publishable), publishable.slice(0, 8)).toBe(publishable);
+        expect(redactSecretShapesInString(`pub ${publishable} ok`)).toBe(`pub ${publishable} ok`);
+      }
+    });
+
+    // SEC-EVENT-REDACTION-001 (round-15): exhaustive real-world provider-format audit. Anthropic
+    // `sk-ant-` is covered by the `sk-` shape (the `-` is inside the value class); Google `AIza…` and
+    // npm `npm_…` are NEW shapes this round. RED on 14e4c4f4 for AIza/npm_ (returned verbatim); GREEN
+    // after. Benign `npm_config_cache` (short, has `_` in the body) must NOT match.
+    it("redacts Anthropic sk-ant-, Google AIza…, and npm npm_… (exhaustive provider audit)", () => {
+      for (const secret of [
+        "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", // pragma: allowlist secret
+        "AIzaSyD-abcdefghijklmnopqrstuvwxyz01234", // pragma: allowlist secret
+        "npm_abcdefghijklmnopqrstuvwxyz0123456789", // pragma: allowlist secret
+      ]) {
+        expect(redactSecretShapesInString(secret), secret.slice(0, 8)).toBe(M);
+        expect(redactSecretShapesInString(`use ${secret} now`)).toBe(`use ${M} now`);
+      }
+      // Benign npm_ config identifier is NOT a token (short, `_` inside the body) → untouched.
+      expect(redactSecretShapesInString("npm_config_cache is set")).toBe("npm_config_cache is set");
     });
 
     it("honors a custom marker", () => {
@@ -208,6 +251,17 @@ describe("friday-secret-shape-redactor", () => {
       for (const benign of ["delivery ok", "run-42", "channel:signal:route-in", "2015550123"]) {
         expect(findSecretShapeSpans(benign)).toEqual([]);
       }
+    });
+
+    // Round-15: the underscore-format Stripe secret is reported as a whole-value span (so the memory
+    // key/value legs that consume this SPAN entry point redact it too); the publishable pk_ key is not.
+    it("reports the underscore-format Stripe secret as a span and never the publishable pk_ key", () => {
+      const secret = stripeShaped("sk_live");
+      const input = `leak ${secret} here`;
+      const spans = findSecretShapeSpans(input);
+      expect(spans).toHaveLength(1);
+      expect(input.slice(spans[0].start, spans[0].end)).toBe(secret);
+      expect(findSecretShapeSpans(`pub ${stripeShaped("pk_live")} ok`)).toEqual([]);
     });
   });
 });

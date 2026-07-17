@@ -10,7 +10,14 @@
  *     distinctive substring, so it can ONLY be caught by its key;
  *   - generic `key=value` / `key: value` credential ASSIGNMENTS embedded in free text;
  *   - GitHub tokens (`ghp_` / `gho_` / `ghu_` / `ghs_` / `ghr_` and fine-grained `github_pat_`);
- *   - provider API keys (`sk-` / `sk-proj-` / `pk-` / `rk-` / `ak-`);
+ *   - provider API keys (`sk-` / `sk-proj-` / `pk-` / `rk-` / `ak-`) — the `sk-` shape also covers
+ *     Anthropic `sk-ant-…` (the `-` is inside the value class);
+ *   - Google API keys (`AIza…`, the documented 39-char format);
+ *   - npm access tokens (`npm_…`);
+ *   - Stripe UNDERSCORE-format SECRET keys (`sk_live_` / `sk_test_`) + RESTRICTED keys
+ *     (`rk_live_` / `rk_test_`) + the webhook signing secret (`whsec_`) — the hyphenated `sk-` /
+ *     `rk-` shapes above MISS the underscore forms Stripe actually issues. The PUBLISHABLE keys
+ *     `pk_live_` / `pk_test_` are DELIBERATELY NOT matched: they are client-safe and not a secret;
  *   - AWS access-key ids (`AKIA…` and the STS/temporary variants);
  *   - Slack tokens (`xoxb-` / `xoxp-` / …);
  *   - JWTs (three base64url segments beginning `eyJ`);
@@ -171,9 +178,33 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
     pattern: /\b(?:sk|pk|rk|ak)-(?:proj-)?[A-Za-z0-9_-]{16,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
-  // AWS access-key id (`AKIA…` long-term + STS/temporary variants).
+  // Stripe-style UNDERSCORE-format credentials the hyphenated `sk-` / `rk-` shape above MISSES:
+  // SECRET keys `sk_live_` / `sk_test_`, RESTRICTED keys `rk_live_` / `rk_test_`, and the webhook
+  // signing secret `whsec_`. The PUBLISHABLE keys `pk_live_` / `pk_test_` are DELIBERATELY excluded
+  // (client-safe, not a secret) — the `pk` prefix is absent from the alternation, so a publishable
+  // key never matches. (Stripe key bodies are base62 with no internal `_`, so the value run is
+  // `[A-Za-z0-9]{16,}`; the leading `(?:sk|rk)_(?:live|test)` / `whsec` cannot false-fire on benign
+  // snake_case identifiers.)
+  {
+    pattern: /\b(?:(?:sk|rk)_(?:live|test)|whsec)_[A-Za-z0-9]{16,}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  // AWS access-key id (`AKIA…` long-term + STS/temporary variants). NB: the AWS SECRET access key is
+  // a shapeless 40-char base64 with no prefix — it is caught by its KEY NAME (`secretAccessKey`,
+  // in the sensitive-field-name set), NOT a shape, so it is not (and must not be) a content pattern.
   {
     pattern: /\bA(?:KIA|SIA|GPA|IDA|ROA|IPA|NPA|NVA)[0-9A-Z]{16}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  // Google API key — `AIza` + 35 chars of `[0-9A-Za-z_-]` (documented 39-char format).
+  {
+    pattern: /\bAIza[0-9A-Za-z_-]{35}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  // npm access token — `npm_` + 36 base62 chars. The body class excludes `_`, so a benign `npm_`
+  // config identifier (`npm_config_cache`) never matches (it is short and contains `_`).
+  {
+    pattern: /\bnpm_[A-Za-z0-9]{36}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Slack tokens.

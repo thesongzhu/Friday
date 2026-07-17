@@ -46,6 +46,7 @@ import {
 import {
   findSecretShapeSpans,
   FRIDAY_DEFAULT_SECRET_MARKER,
+  isSensitiveSecretFieldName,
   redactSecretShapesInString,
 } from "../../../security/friday-secret-shape-redactor.js";
 
@@ -764,6 +765,27 @@ export function createFridayMemoryPiiGuard(
           const childFrames: ValueFrame[] = [];
           for (const [k, entry] of Object.entries(v as Record<string, unknown>)) {
             const finalKey = resolveFinalKey(out, redactKey(k));
+            // SEC-EVENT-REDACTION-001 (round-15): KEY-NAME NUKE PARITY with the 0600 audit sink.
+            // A value under a sensitive-secret KEY NAME (password / apiKey / api_key / token / secret /
+            // clientSecret / authorization / … — the SAME set, via the SAME shared predicate
+            // `isSensitiveSecretFieldName` the audit writer's `buildContentSkeleton` uses) is
+            // whole-value-nuked to the secret marker regardless of the value's SHAPE or TYPE, EXACTLY
+            // as the audit sink does. An opaque, SHAPELESS credential (a `password` value such as
+            // `hunter2plainword`, a `token` value such as `opaquevaluewithnoshape` — illustrative
+            // fakes) has no distinctive substring, so it is catchable ONLY
+            // by its key — before round-15 this leg ran only the shape+PII value scrubber, so such a
+            // credential escaped memory egress (the public uix / asset-inventory / `/memory` routes,
+            // the learned-fact output filter, and metadata) VERBATIM while the audit sink nuked it (the
+            // round-14 verification gap). This is a redact-mode MUTATION (tag/block never mutate a
+            // value — consistent with every other secret leg) and carries NO guard tag (secret
+            // redaction is not a PII tag). STRICT SUPERSET: it only ADDS redaction; a value under a
+            // NON-sensitive key is byte-identical to round-14. The sensitive-secret key set is DISJOINT
+            // from the audit writer's forensic-identifier allowlist (ids vs credentials), so this
+            // matches the audit sink's disposition for every sensitive-secret key with no divergence.
+            if (effectiveMode === "redact" && isSensitiveSecretFieldName(k)) {
+              defineOwn(out, finalKey, SECRET_MARKER); // whole value (scalar/object/array) replaced
+              continue; // no child frame — the subtree is dropped, exactly as the audit sink drops it
+            }
             defineOwn(out, finalKey, undefined);
             const childKeyedType = sensitiveTypeForKey(k);
             childFrames.push({

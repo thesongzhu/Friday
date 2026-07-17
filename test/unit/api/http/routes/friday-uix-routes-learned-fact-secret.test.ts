@@ -106,6 +106,36 @@ describe("FridayUixRoutes — learned-fact SECRET egress (round-14)", () => {
     expect(JSON.stringify(res)).not.toContain(CANARY);
   });
 
+  // Round-15: a SHAPELESS credential under a sensitive KEY NAME (password / apiKey / token) — plus a
+  // Stripe underscore-format `sk_live_` — escaped the real route VERBATIM on 14e4c4f4 (the value leg
+  // was shape+PII only; a shapeless value has no shape). The key-name nuke closes it. RED→GREEN.
+  it("uix.learnedfacts.list NUKES shapeless credentials + sk_live_ under sensitive KEY NAMES (round-15 key-name parity)", async () => {
+    const PLAIN_PW = "hunter2plainword"; // pragma: allowlist secret
+    const OPAQUE_TOKEN = "opaquevaluewithnoshape"; // pragma: allowlist secret
+    const SK_LIVE = ["sk_live", "0123456789abcdefghijABCDwxyz"].join("_"); // built at runtime (push-protection) // pragma: allowlist secret
+    const routes = createFridayUixRoutes({
+      service,
+      listLearnedFacts: vi.fn(() => [{
+        key: "pref:creds",
+        value: { password: PLAIN_PW, apiKey: SK_LIVE, nested: { token: OPAQUE_TOKEN }, note: "keep" },
+        confidence: 0.9,
+        evidenceCount: 3,
+        lastConfirmedAt: NOW,
+      }]),
+    });
+    const route = routes.find((r) => r.operationId === "uix.learnedfacts.list")!;
+    const res = (await route.handler(makeCtx())) as {
+      items: Array<{ value: { password: string; apiKey: string; nested: { token: string }; note: string } }>;
+    };
+    const v = res.items[0]!.value;
+    expect(v.password).toBe(M);
+    expect(v.apiKey).toBe(M);
+    expect(v.nested.token).toBe(M);
+    expect(v.note).toBe("keep"); // benign sibling under a non-sensitive key preserved
+    const json = JSON.stringify(res);
+    for (const cred of [PLAIN_PW, OPAQUE_TOKEN, SK_LIVE]) expect(json).not.toContain(cred);
+  });
+
   it("uix.learnedfacts.list leaves a benign value unchanged (negative control)", async () => {
     const routes = createFridayUixRoutes({
       service,

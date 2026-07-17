@@ -1091,21 +1091,40 @@ describe("FridayMemoryPiiGuard", () => {
   // and secret key collisions.
   describe("redactDeep SECRET-shape KEY-CONTENT — NO-DEGRADE", () => {
     const guard = createFridayMemoryPiiGuard("redact");
+    const SECRET = "[REDACTED_SECRET]";
 
-    it("preserves benign / near-miss / field-NAME KEYS byte-identical (no secret SHAPE → untouched, no tags)", () => {
+    it("preserves benign / near-miss KEYS byte-identical, but NUKES values under sensitive-secret KEY NAMES (round-15 key-name parity)", () => {
+      // SEC-EVENT-REDACTION-001 (round-15): a value under a sensitive-secret KEY NAME is
+      // whole-value-nuked to the marker EXACTLY as the 0600 audit sink does — even when the KEY string
+      // itself has no secret SHAPE (`apiKey`/`token`/`authorization` are field NAMES, not shapes). The
+      // KEY bytes survive (the name is not a shape); the VALUE is nuked. NON-sensitive / near-miss keys
+      // stay byte-identical (STRICT SUPERSET / NO-DEGRADE).
       const input = {
-        apiKey: "a", // sensitive field NAME, but NOT a secret SHAPE → key survives (only VALUE nuked elsewhere)
+        apiKey: "a", // sensitive field NAME → VALUE nuked (round-15); key name survives (no shape)
         token: "b",
         authorization: "c",
-        session_token_count: "d", // near-miss (no `=value`)
-        sk_underscore_not_dash: "e", // `sk_` not `sk-` → not an API-key shape
-        "café_naïve": "f", // benign multilingual, no secret shape
-        "user​name": "g", // zero-width in a benign word
-        "bearer_flag": "h", // `bearer` word, no ` <token>` after it
+        session_token_count: "d", // near-miss (`sessiontokencount` ∉ sensitive set) → value survives
+        sk_underscore_not_dash: "e", // `sk_` not `sk-`, not a sensitive name → value survives
+        "café_naïve": "f", // benign multilingual, no sensitive name/shape → value survives
+        "user​name": "g", // zero-width in a benign word → value survives
+        "bearer_flag": "h", // `bearerflag` ∉ sensitive set, no ` <token>` shape → value survives
       };
       const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
-      expect(value).toEqual(input); // every key + value byte-identical
+      expect(value).toEqual({
+        apiKey: SECRET,
+        token: SECRET,
+        authorization: SECRET,
+        session_token_count: "d",
+        sk_underscore_not_dash: "e",
+        "café_naïve": "f",
+        "user​name": "g",
+        "bearer_flag": "h",
+      });
       expect(tagsToAdd).toEqual([]); // secrets carry no guard tag; benign keys add none
+
+      // tag/block mode NEVER mutates the value — the key-name nuke is a redact-mode mutation.
+      const tagGuard = createFridayMemoryPiiGuard("tag");
+      expect(tagGuard.redactDeep(structuredClone(input)).value).toEqual(input); // byte-identical
     });
 
     it("preserves ALL-Nd pure-digit KEYS verbatim (a pure-digit key carries no secret SHAPE either)", () => {
@@ -1241,19 +1260,32 @@ describe("FridayMemoryPiiGuard", () => {
       expect(twice[twiceKey]).toBe("v");
     });
 
-    it("NO-DEGRADE: a full-width benign key that folds to a non-secret word survives BYTE-IDENTICAL (no false credential subspan)", () => {
-      // `bearer_flag` folds to a benign word (no ` <token>` after `Bearer`); a lone full-width
-      // `Authorization` (no `: Bearer <token>`) and a bare `api_key` field NAME (no `=value`
-      // assignment) are not secret SHAPES. All must round-trip unchanged (redactKey does not use the
-      // field-NAME value-nuke — that is a separate audit-writer path).
+    it("round-15 Unicode KEY-NAME parity: a full-width benign key survives, but a full-width SENSITIVE key name nukes its VALUE (key bytes preserved)", () => {
+      // `bearer_flag` folds to a benign word (`bearerflag` ∉ sensitive set) → value survives. A
+      // full-width `Authorization` and `api_key` are NOT secret SHAPES (so their KEY BYTES survive
+      // byte-identical via redactKey), but they ARE Unicode-obfuscated SENSITIVE field NAMES —
+      // `isSensitiveSecretFieldName` canonicalizes them (round-9) to `authorization` / `apikey`, so
+      // round-15 whole-value-nukes their VALUES to the marker, EXACTLY as the audit sink does (the
+      // {key}×{Unicode} cell). The KEYS are preserved; only the sensitive-key VALUES change.
       const input: Record<string, string> = {};
       input[fw("bearer_flag")] = "x";
       input[fw("Authorization")] = "y";
       input[fw("api_key")] = "z";
       const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
-      expect(value).toEqual(input);
-      expect(tagsToAdd).toEqual([]);
-      expect(Object.keys(value as Record<string, unknown>)).not.toContain(SECRET);
+      expect(value).toEqual({
+        [fw("bearer_flag")]: "x", // benign → value survives
+        [fw("Authorization")]: SECRET, // Unicode-obfuscated sensitive key → value nuked
+        [fw("api_key")]: SECRET,
+      });
+      // KEY BYTES are preserved byte-identical (the sensitive-NAME nuke touches only the VALUE).
+      expect(Object.keys(value as Record<string, unknown>)).toEqual([
+        fw("bearer_flag"), fw("Authorization"), fw("api_key"),
+      ]);
+      expect(tagsToAdd).toEqual([]); // secrets carry no guard tag
+
+      // tag mode never mutates the value (the nuke is a redact-mode mutation).
+      const tagGuard = createFridayMemoryPiiGuard("tag");
+      expect(tagGuard.redactDeep(structuredClone(input)).value).toEqual(input);
     });
 
     it("carry-over: a WHOLE-TOKEN obfuscated secret KEY (no benign prefix) still collapses to the bare marker", () => {

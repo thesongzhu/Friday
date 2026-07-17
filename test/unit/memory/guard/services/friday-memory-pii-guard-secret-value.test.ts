@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { createFridayMemoryPiiGuard } from "../../../../../src/memory/guard/services/friday-memory-pii-guard.js";
+import {
+  findSecretShapeSpans,
+  isSensitiveSecretFieldName,
+} from "../../../../../src/security/friday-secret-shape-redactor.js";
 
 // ─── SEC-EVENT-REDACTION-001 round-14: the ROOT fix. The shared guard's string-VALUE leg
 //     (`redactStringLeaf` inside `redactDeep`, and `scanAndTransform`) composed ONLY the PII
@@ -139,6 +143,117 @@ describe("FridayMemoryPiiGuard — SECRET-shape string VALUE leg (round-14)", ()
 
     it("idempotent — re-running over an already-redacted value is a no-op", () => {
       const once = guard.redactDeep({ a: SK, b: BEARER }).value;
+      expect(guard.redactDeep(once).value).toEqual(once);
+    });
+  });
+});
+
+// ─── SEC-EVENT-REDACTION-001 round-15: KEY-NAME NUKE PARITY with the 0600 audit sink. A value under a
+//     sensitive-secret KEY NAME (password / apiKey / token / secret / clientSecret / authorization / …)
+//     is whole-value-nuked to the marker regardless of shape — EXACTLY as the audit writer's
+//     `buildContentSkeleton` does (via the SAME shared predicate `isSensitiveSecretFieldName`). Before
+//     round-15, `redactDeep` computed `sensitiveTypeForKey` (numeric-PII typing) but NEVER called
+//     `isSensitiveSecretFieldName`, so a SHAPELESS credential under a sensitive key escaped memory
+//     egress VERBATIM while the audit sink redacted the same input (the round-14 verification gap).
+//     RED on 14e4c4f4 (shapeless value verbatim), GREEN once the object branch wires the key-name nuke. ───
+describe("FridayMemoryPiiGuard — KEY-NAME NUKE PARITY with the audit sink (round-15)", () => {
+  const guard = createFridayMemoryPiiGuard("redact");
+
+  // Opaque, SHAPELESS credentials — no distinctive substring, catchable ONLY by their key.
+  const PLAIN_PW = "hunter2plainword"; // pragma: allowlist secret
+  const OPAQUE_TOKEN = "opaquevaluewithnoshape"; // pragma: allowlist secret
+  const OPAQUE_SECRET = "justplainopaquesecret"; // pragma: allowlist secret
+  const OPAQUE_CLIENT_SECRET = "opaqueclientsecretval"; // pragma: allowlist secret
+  const OPAQUE_AUTHZ = "opaqueauthorizationvv"; // pragma: allowlist secret
+  // Stripe underscore-format secret used AS A VALUE under a sensitive key (also a shape-fix canary).
+  // Built at runtime so no literal `sk_live_…` appears in source (GitHub push protection).
+  const SK_LIVE = ["sk_live", "0123456789abcdefghijABCDwxyz"].join("_"); // pragma: allowlist secret
+
+  it("PROOF the values are SHAPELESS — the shape detector MISSES them (so ONLY the key-name nuke catches them)", () => {
+    for (const v of [PLAIN_PW, OPAQUE_TOKEN, OPAQUE_SECRET, OPAQUE_CLIENT_SECRET, OPAQUE_AUTHZ]) {
+      expect(findSecretShapeSpans(v), `${v} must be shapeless`).toEqual([]);
+    }
+    // The key names ARE classified sensitive by the shared predicate (SAME set as the audit writer).
+    for (const k of ["password", "apiKey", "api_key", "token", "secret", "clientSecret", "authorization"]) {
+      expect(isSensitiveSecretFieldName(k), k).toBe(true);
+    }
+  });
+
+  it("nukes a SHAPELESS credential VALUE under a sensitive KEY NAME to the marker (top / nested / array)", () => {
+    const { value } = guard.redactDeep({
+      password: PLAIN_PW,
+      apiKey: SK_LIVE,
+      token: OPAQUE_TOKEN,
+      nested: { secret: OPAQUE_SECRET, clientSecret: OPAQUE_CLIENT_SECRET, note: "keep me" },
+      list: [{ authorization: OPAQUE_AUTHZ }, { plain: "visible" }],
+      note: "public note",
+    });
+    const v = value as {
+      password: string; apiKey: string; token: string;
+      nested: { secret: string; clientSecret: string; note: string };
+      list: [{ authorization: string }, { plain: string }];
+      note: string;
+    };
+    expect(v.password).toBe(M);
+    expect(v.apiKey).toBe(M);
+    expect(v.token).toBe(M);
+    expect(v.nested.secret).toBe(M);
+    expect(v.nested.clientSecret).toBe(M);
+    expect(v.list[0].authorization).toBe(M);
+    // Benign siblings under NON-sensitive keys are byte-identical (NO-DEGRADE).
+    expect(v.nested.note).toBe("keep me");
+    expect(v.list[1].plain).toBe("visible");
+    expect(v.note).toBe("public note");
+    // No credential byte survives anywhere in the tree.
+    const json = JSON.stringify(v);
+    for (const cred of [PLAIN_PW, OPAQUE_TOKEN, OPAQUE_SECRET, OPAQUE_CLIENT_SECRET, OPAQUE_AUTHZ, SK_LIVE]) {
+      expect(json, cred).not.toContain(cred);
+    }
+  });
+
+  it("nukes the WHOLE value regardless of TYPE (object / array / number under a sensitive key)", () => {
+    const { value } = guard.redactDeep({
+      credentials: { user: "u", pass: PLAIN_PW }, // whole OBJECT nuked
+      secret: [1, 2, 3], // whole ARRAY nuked
+      token: 1234567890, // NUMBER nuked (sensitiveTypeForKey never typed `token`, so round-14 leaked it)
+    });
+    const v = value as Record<string, unknown>;
+    expect(v.credentials).toBe(M);
+    expect(v.secret).toBe(M);
+    expect(v.token).toBe(M);
+  });
+
+  describe("SENSITIVITY — the key-name nuke is load-bearing", () => {
+    it("a shapeless credential under a sensitive key is redacted ONLY by the key-name nuke (shape+PII miss it)", () => {
+      // Remove the key-name nuke (simulated by the pre-round-15 leg = shape+PII value scrubber only):
+      // the scanAndTransform value transform (which has NO key context) returns the value VERBATIM,
+      // proving the redaction comes from the KEY-NAME nuke in redactDeep, not the value scrubber.
+      expect(guard.scanAndTransform(PLAIN_PW).transformedContent).toBe(PLAIN_PW); // no shape/PII → verbatim
+      expect((guard.redactDeep({ password: PLAIN_PW }).value as { password: string }).password).toBe(M);
+    });
+  });
+
+  describe("NO-DEGRADE — strict superset", () => {
+    it("a benign value under a NON-sensitive key is byte-identical (incl. publishable pk_ key value)", () => {
+      const input = {
+        note: PLAIN_PW.length > 0 ? "just a note" : "",
+        tokenCount: 42, // near-miss key → not sensitive
+        publishableKey: ["pk_live", "0123456789abcdefghijABCDwxyz"].join("_"), // pk_ PUBLISHABLE → preserved // pragma: allowlist secret
+        color: "青",
+      };
+      expect(guard.redactDeep(structuredClone(input)).value).toEqual(input);
+    });
+
+    it("tag/block mode NEVER mutates a sensitive-key value (the nuke is a redact-mode mutation, no tag)", () => {
+      const tagGuard = createFridayMemoryPiiGuard("tag");
+      const input = { password: PLAIN_PW, token: OPAQUE_TOKEN };
+      const { value, tagsToAdd } = tagGuard.redactDeep(structuredClone(input));
+      expect(value).toEqual(input); // byte-identical
+      expect(tagsToAdd).toEqual([]); // secrets carry no guard tag
+    });
+
+    it("idempotent — re-running over the nuked result is a no-op", () => {
+      const once = guard.redactDeep({ password: PLAIN_PW, apiKey: SK_LIVE }).value;
       expect(guard.redactDeep(once).value).toEqual(once);
     });
   });
