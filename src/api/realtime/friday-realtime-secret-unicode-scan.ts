@@ -10,13 +10,15 @@
  * / mathematical-alphanumeric code points, and it survived RAW at rest and on the wire
  * (round-8 F2b: a fullwidth / zero-width / combining / precomposed-accent EMAIL leaked
  * VERBATIM, and a partial ASCII-fragment residual survived). This module closes that
- * bypass for BOTH classes WITHOUT over-redacting benign multilingual text, sharing ONE
- * non-destructive detection copy.
+ * bypass for BOTH classes WITHOUT over-redacting benign multilingual text. Detection runs
+ * over a NON-DESTRUCTIVE normalized copy built per code point, with TWO fold scopes (below)
+ * that share ALL structure — origin mapping, span merge, full-span redaction — and differ
+ * ONLY in which compatibility folds they apply.
  *
  * PROVEN, COMPLETE RECIPE (detection copy is non-destructive; storage is byte-identical
  * when nothing matches):
  *   1. NFKD compatibility DECOMPOSITION — folds math-alphanumeric / fullwidth / ligature
- *      / circled forms to their base letters AND decomposes precomposed accented chars
+ *      forms to their base LETTERS AND decomposes precomposed accented chars
  *      (é → e + ◌́). NFKC is deliberately NOT used: it does not decompose precomposed
  *      forms, a known canonical-equivalence bypass.
  *   2. strip combining marks (\p{M} — Mn/Mc/Me), so an accent used to split a token
@@ -26,6 +28,22 @@
  *   4. fold decimal digits (\p{Nd}) to ASCII BY VALUE (fullwidth/math digits are already
  *      folded by NFKD; this additionally covers scripts NFKD does not, e.g. Arabic-Indic).
  *
+ * THE TWO FOLD SCOPES:
+ *   • SECRET copy ({@link redactUnicodeResistantSecrets}) — the FULL recipe above, maximally
+ *     aggressive: an obfuscated secret has no benign-collision cost, so EVERY compatibility fold
+ *     (including No/Nl circled/superscript digits and compatibility whitespace) is applied.
+ *   • VALUE-PII copy ({@link redactUnicodeResistantPii}) — the SAME recipe, ALIGNED with the
+ *     shared guard's DELIBERATE `foldWidthForMatching` decisions so it never over-redacts benign
+ *     content the guard preserves. It PRESERVES from the compatibility fold exactly the source
+ *     code points whose NFKD would fabricate a matcher-significant ASCII char the guard never
+ *     produces: compatibility WHITESPACE (U+3000/U+00A0/U+2007/U+202F → ASCII space would let the
+ *     card regex's `[ -]` class bridge two number groups into a false Luhn card) and No/Nl
+ *     "digit-like" forms (circled ①, superscript ¹, parenthesized ⑴ → ASCII digits would
+ *     fabricate a false card/SSN). It STILL applies every fold the guard lacks that the leak-
+ *     closure needs (zero-width/combining/precomposed-accent strip + fullwidth/math LETTER folds)
+ *     and still folds cross-script \p{Nd} REAL digits (Arabic-Indic, …) — a strict Unicode-
+ *     resistant SUPERSET of the guard, never a divergence that corrupts benign data.
+ *
  * Secret / PII shapes are matched over the normalized copy; every matched span is mapped
  * back to the ORIGINAL code-unit range that produced it and only those original bytes are
  * redacted. Because each normalized code unit records the [start,end) of its SOURCE code
@@ -34,9 +52,9 @@
  * match — nothing raw survives and no ASCII pass can later fragment a partially-matched
  * span. {@link redactUnicodeResistantSecrets} covers the SECRET shapes (used for both the
  * content and identifier paths); {@link redactUnicodeResistantPii} covers the value-PII
- * shapes (content path only — identifiers keep their identity), reusing the SAME detection
- * copy and a caller-supplied matcher so the shared guard's email/phone/SSN/Luhn-gated-card
- * detection is the single source of truth (no divergent second detector).
+ * shapes (content path only — identifiers keep their identity), using a caller-supplied
+ * matcher so the shared guard's email/phone/SSN/Luhn-gated-card detection is the single
+ * source of truth (no divergent second detector).
  *
  * @module api/realtime
  */
@@ -201,11 +219,13 @@ function foldDigit(digit: string): string {
 }
 
 /**
- * Fold a SINGLE original code point to its detection form. Applying NFKD + mark/format
- * strip PER code point is equivalent to whole-string NFKD for our purpose (we strip ALL
- * combining marks, so canonical reordering — the only cross-character effect — is
- * irrelevant), and lets us map every output code unit back to exactly one source code
- * point. May return "" (dropped mark / zero-width) or several chars (a decomposition).
+ * Fold a SINGLE original code point to its SECRET detection form (maximally aggressive).
+ * Applying NFKD + mark/format strip PER code point is equivalent to whole-string NFKD for our
+ * purpose (we strip ALL combining marks, so canonical reordering — the only cross-character
+ * effect — is irrelevant), and lets us map every output code unit back to exactly one source
+ * code point. May return "" (dropped mark / zero-width) or several chars (a decomposition).
+ * Used for the SECRET copy: a secret shape has no benign-collision cost, so we fold the WIDEST
+ * compatibility set (including No/Nl circled/superscript digits and compatibility whitespace).
  */
 function foldCodePoint(codePoint: string): string {
   return codePoint
@@ -213,6 +233,45 @@ function foldCodePoint(codePoint: string): string {
     .replace(COMBINING_MARK_RE, "")
     .replace(IGNORABLE_RE, "")
     .replace(DECIMAL_DIGIT_RE, foldDigit);
+}
+
+// ─── VALUE-PII detection fold: aligned with the shared guard's deliberate width fold ───
+
+// Source code points the VALUE-PII copy PRESERVES from the NFKD compatibility fold, because
+// folding them would fabricate a matcher-significant ASCII char the shared guard's
+// `foldWidthForMatching` (friday-memory-pii-guard.ts) DELIBERATELY never produces, over-redacting
+// benign content the guard preserves byte-identical:
+//  - No/Nl "digit-like" numeric forms (circled ①, superscript ¹, subscript ₁, parenthesized ⑴,
+//    Roman Ⅴ, …): NFKD → ASCII digits/letters would fabricate a false Luhn card / SSN.
+//  - non-ASCII WHITESPACE (U+00A0/U+2007/U+202F/U+3000/…): NFKD → ASCII space would let the card
+//    regex's `[ -]` class bridge two distinct number groups into one false card.
+// Fullwidth DIGITS (\p{Nd}, U+FF10–FF19) and the fullwidth separators are NOT preserved — the
+// guard folds those too (foldWidthForMatching), so the F2b fullwidth card/SSN/phone closure holds.
+// ASCII whitespace is NOT preserved: it folds to itself and IS the guard's real `[ -]`/`\s`
+// separator, so a genuinely ASCII-separated card/phone stays detectable (parity with the guard).
+const PII_PRESERVED_NUMERIC_RE = /[\p{No}\p{Nl}]/u;
+const PII_PRESERVED_WHITESPACE_RE = /\p{White_Space}/u;
+
+/**
+ * Fold a SINGLE original code point to its VALUE-PII detection form. Identical to
+ * {@link foldCodePoint} EXCEPT it PRESERVES compatibility whitespace and No/Nl digit-like forms
+ * (see the preserve rationale above) so the value-PII copy matches the shared guard's deliberate
+ * `foldWidthForMatching` trade-off and never over-redacts benign content. Every fold the guard
+ * lacks that the leak-closure needs — zero-width/combining/precomposed-accent strip + fullwidth/
+ * math LETTER folds + cross-script \p{Nd} real-digit folds — is retained by delegating all other
+ * code points to {@link foldCodePoint}.
+ */
+function foldCodePointForPii(codePoint: string): string {
+  if (PII_PRESERVED_NUMERIC_RE.test(codePoint)) return codePoint;
+  // Preserve NON-ASCII whitespace (U+00A0/U+2007/U+202F/U+3000/...) so it is NOT folded to an
+  // ASCII space the card regex's [ -] class could bridge. ASCII whitespace is left to
+  // foldCodePoint (it folds to itself and IS a real [ -]/\s separator, so genuine
+  // ASCII-separated PII stays detectable - parity with the guard).
+  const cp = codePoint.codePointAt(0);
+  if (cp !== undefined && cp > 0x7f && PII_PRESERVED_WHITESPACE_RE.test(codePoint)) {
+    return codePoint;
+  }
+  return foldCodePoint(codePoint);
 }
 
 interface NormalizedView {
@@ -224,7 +283,10 @@ interface NormalizedView {
   readonly originEnd: readonly number[];
 }
 
-function buildNormalizedView(original: string): NormalizedView {
+function buildNormalizedView(
+  original: string,
+  foldOne: (codePoint: string) => string,
+): NormalizedView {
   let normalized = "";
   const originStart: number[] = [];
   const originEnd: number[] = [];
@@ -233,7 +295,7 @@ function buildNormalizedView(original: string): NormalizedView {
     const start = idx;
     const end = idx + codePoint.length; // 1 or 2 UTF-16 code units
     idx = end;
-    const folded = foldCodePoint(codePoint);
+    const folded = foldOne(codePoint);
     if (folded.length === 0) continue; // dropped (combining mark / zero-width / format)
     normalized += folded;
     for (let u = 0; u < folded.length; u += 1) {
@@ -275,7 +337,7 @@ function redactOriginalSpans(original: string, spans: Array<[number, number]>): 
  */
 export function redactUnicodeResistantSecrets(original: string): string {
   if (original.length === 0) return original;
-  const view = buildNormalizedView(original);
+  const view = buildNormalizedView(original, foldCodePoint);
   if (view.normalized.length === 0) return original;
 
   const spans: Array<[number, number]> = [];
@@ -320,24 +382,29 @@ export interface UnicodeResistantPiiMatch {
  * to the SAME zero-width / combining / fullwidth / mathematical / precomposed-vs-decomposed
  * obfuscation as {@link redactUnicodeResistantSecrets}. The caller supplies `detectMatches`
  * — the shared production PII detector (e.g. `guard.scanAndTransform(s).matches`) — which is
- * run over the NON-DESTRUCTIVE normalized detection copy, so the guard's email/phone/SSN/
- * Luhn+false-positive-gated card logic stays the single source of truth (no divergent
- * second detector, no benign-content over-redaction). Each match is mapped back to the
+ * run over the NON-DESTRUCTIVE VALUE-PII normalized detection copy, so the guard's email/phone/
+ * SSN/Luhn+false-positive-gated card logic stays the single source of truth (no divergent
+ * second detector, no benign-content over-redaction). That copy is ALIGNED with the shared
+ * guard's DELIBERATE `foldWidthForMatching` (see {@link foldCodePointForPii}): it preserves
+ * compatibility whitespace and No/Nl "digit-like" forms from the compatibility fold, so it never
+ * fabricates a bridged/circled card the guard would not. Each match is mapped back to the
  * ORIGINAL span that produced it and the FULL span is replaced with the guard's canonical
  * `[<TYPE>]` marker (e.g. `[EMAIL]`), so an obfuscation char inside a match is redacted with
  * it (no fragment residual). Overlapping original spans are merged (earliest label kept —
  * cosmetic; the whole span is redacted regardless), mirroring the shared guard's
  * `redactContent`. Returns the input BYTE-IDENTICAL when nothing matches — and, because the
- * normalized copy of a pure-ASCII / fullwidth-DIGIT string is length-aligned 1:1 with the
- * original, the result for those inputs is byte-identical to the shared guard's own output
- * (this pass is a strict Unicode-resistant SUPERSET, never a divergence).
+ * VALUE-PII copy folds NO digit/whitespace/separator the guard does not, its output equals the
+ * shared guard's own `redactContent`/`redactDeep` output for ALL content the guard handles
+ * (pure-ASCII, fullwidth-DIGIT, AND the compat-whitespace / No-digit cases), extended ONLY by
+ * the letter / zero-width / combining / precomposed obfuscation the guard misses — a strict
+ * Unicode-resistant SUPERSET, never a divergence that over-redacts benign data.
  */
 export function redactUnicodeResistantPii(
   original: string,
   detectMatches: (normalized: string) => readonly UnicodeResistantPiiMatch[],
 ): string {
   if (original.length === 0) return original;
-  const view = buildNormalizedView(original);
+  const view = buildNormalizedView(original, foldCodePointForPii);
   if (view.normalized.length === 0) return original;
 
   const matches = detectMatches(view.normalized);
