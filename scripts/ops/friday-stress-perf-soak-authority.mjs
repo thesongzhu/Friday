@@ -645,9 +645,45 @@ export function assertLockedStatisticsPolicy(statsOpts) {
   // snapshot + caller object are DISCARDED: the recompute uses LOCKED_STATS_INTERNAL_SNAPSHOT.
 }
 
+/**
+ * FIX 5 (P0 evidence-integrity / caller-controlled check-use, 3rd recurrence): materialize a
+ * caller-produced sample array ONCE, at the entry barrier, into a plain, deeply-FROZEN
+ * `number[]`. Each element is read EXACTLY ONCE (defeating enumerable getters / Proxies /
+ * two-stage accessors that return over-budget values during raw-evidence serialization and
+ * under-budget values during recompute, and defeating post-call mutation). Fails CLOSED on any
+ * unsupported shape: a non-array/array-like (`UNSUPPORTED_CALLER_STRUCTURE`), a sparse/holey
+ * array, or any element that is not a plain finite number (`RAW_SAMPLE_INVALID`). Every
+ * downstream stage (raw-evidence serialization, sha256 hashing, p95/bootstrap recompute, the
+ * per-metric row, the aggregate) then reads ONLY this frozen snapshot, so the persisted
+ * evidence and the verdict are bound to one immutable copy.
+ */
+export function materializeSampleArray(value, { field, metricId } = {}) {
+  if (!Array.isArray(value)) {
+    throw new Red("UNSUPPORTED_CALLER_STRUCTURE", { metric_instance_id: metricId, field, reason: "not_an_array" });
+  }
+  const n = value.length;
+  const out = new Array(n);
+  for (let i = 0; i < n; i += 1) {
+    if (!Object.prototype.hasOwnProperty.call(value, i)) {
+      throw new Red("RAW_SAMPLE_INVALID", { metric_instance_id: metricId, field, index: i, reason: "sparse_or_holey" });
+    }
+    const raw = value[i]; // the ONLY read of this element
+    // map through Number() for plain number/string; anything else (object/symbol/getter that
+    // does not yield a plain scalar) becomes NaN and is rejected below (fail closed).
+    const num = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+    if (!Number.isFinite(num)) {
+      throw new Red("RAW_SAMPLE_INVALID", { metric_instance_id: metricId, field, index: i, reason: "non_finite_or_non_number" });
+    }
+    out[i] = num;
+  }
+  return Object.freeze(out);
+}
+
 export function buildResourceReport(opts = {}) {
-  const tuple = opts.tuple ?? null;
-  if (tuple !== null && !(typeof tuple === "string" && /^[0-9a-f]{64}$/.test(tuple))) throw new Red("TUPLE_INVALID", { tuple });
+  // FIX 5 entry barrier: materialize `opts.tuple` with a SINGLE read + primitive coercion.
+  const rawTuple = opts.tuple; // one read of the caller value
+  const tuple = rawTuple === undefined || rawTuple === null ? null : String(rawTuple);
+  if (tuple !== null && !/^[0-9a-f]{64}$/.test(tuple)) throw new Red("TUPLE_INVALID", { tuple });
   // FIX 1 (P0 false-green + TOCTOU): the locked statistics policy is not caller-weakenable.
   // Validate any caller statsOpts via a one-shot plain-scalar snapshot, then DISCARD it — the
   // recompute below reads ONLY the internal frozen snapshot, so a getter/proxy/mutated object
@@ -660,10 +696,17 @@ export function buildResourceReport(opts = {}) {
   const tupleSha = tuple ?? sha(Buffer.from("PROVISIONAL_UNSEALED_TUPLE_NOT_FROZEN_CANDIDATE"));
   const instances = deriveLockedMetricInstances();
 
+  // FIX 5 entry barrier: the sample producer is called EXACTLY ONCE per metric and its result is
+  // materialized immediately into frozen internal number[] snapshots. Nothing below reads the
+  // caller's object again — raw-evidence serialization, hashing AND recompute all read the SAME
+  // frozen `samples`/`warmupSamples`, so persisted evidence and verdict can never diverge.
+  const sampleProducer = opts.samplesFor ?? syntheticSamplesFor;
   const rawFiles = [];
   const performance_metrics = [];
   for (const inst of instances) {
-    const { samples, warmupSamples } = (opts.samplesFor ?? syntheticSamplesFor)(inst.metric_instance_id, inst.p95_budget);
+    const produced = sampleProducer(inst.metric_instance_id, inst.p95_budget); // called ONCE per metric
+    const samples = materializeSampleArray(produced == null ? undefined : produced.samples, { field: "samples", metricId: inst.metric_instance_id });
+    const warmupSamples = materializeSampleArray(produced == null ? undefined : produced.warmupSamples, { field: "warmup_samples", metricId: inst.metric_instance_id });
     const rawContent = `${JSON.stringify({ synthetic_fixture: true, not_physical_device_evidence: true, metric_instance_id: inst.metric_instance_id, policy_profile_id: inst.policy_profile_id, scenario_id: inst.scenario_id, unit: inst.unit, p95_budget: inst.p95_budget, warmup_samples: warmupSamples, samples }, null, 2)}\n`;
     const rawSha = sha(Buffer.from(rawContent));
     const rawPath = `raw/perf-synthetic-${rawSha}.json`;

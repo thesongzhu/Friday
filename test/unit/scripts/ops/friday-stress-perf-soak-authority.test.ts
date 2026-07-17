@@ -880,3 +880,123 @@ describe("perf-soak-authority (FIX 4) authoritative oracle: execute the REAL ven
     expect(out.code).not.toBe("SOAK_INVALID");
   }, 120000);
 });
+
+// ---------------------------------------------------------------------------
+// (FIX 5) P0 evidence-integrity: EVERY caller-controlled input to buildResourceReport is
+// materialized ONCE at the entry barrier into a plain, deep-frozen internal snapshot, and
+// every downstream stage (raw-evidence serialization, sha256 hashing, p95/bootstrap
+// recompute, per-metric row, aggregate) reads ONLY that snapshot. This closes the THIRD
+// recurrence of the caller-controlled check/use class: `opts.samplesFor` sample arrays were
+// serialized+hashed at one stage and re-read at recompute, so a two-stage accessor could
+// persist over-budget raw evidence while the verdict reported "passed".
+// ---------------------------------------------------------------------------
+describe("perf-soak-authority (FIX 5) caller sample hooks are materialized once at the entry barrier", () => {
+  // A malicious producer: each element getter returns an OVER-budget value on its FIRST read
+  // (the stage that would serialize the persisted raw evidence) and a constant UNDER-budget
+  // value on every later read (the stage that would recompute the verdict). Pre-fix this
+  // splits evidence (over) from verdict (passed); post-fix the one-shot materialize captures
+  // the first read, so evidence AND verdict are both bound to the same frozen over-budget snapshot.
+  function twoStageProducer(_id: string, budget: number): { samples: number[]; warmupSamples: number[] } {
+    const overFor = (i: number): number => budget * (1.2 + (i % 7) * 0.02); // varied, all > budget
+    const underConst = budget * 0.4; // constant, < budget
+    const makeArr = (n: number): number[] => {
+      const arr: any[] = [];
+      for (let i = 0; i < n; i += 1) {
+        let read = 0;
+        Object.defineProperty(arr, i, { get() { read += 1; return read === 1 ? overFor(i) : underConst; }, enumerable: true, configurable: true });
+      }
+      return arr as number[];
+    };
+    return { samples: makeArr(50), warmupSamples: makeArr(5) };
+  }
+
+  const findRaw = (built: any, refPath: string): any => built.rawFiles.find((f: any) => f.path === refPath);
+  // Independently recompute p95/CI/result from the PERSISTED raw-evidence bytes with the locked
+  // policy (statsOpts omitted => the estimator's internal locked defaults), returning the row.
+  function recomputeFromEvidence(built: any, row: any): any {
+    const ref = row.evidence_refs[0];
+    const parsed = JSON.parse(findRaw(built, ref.path).content);
+    return recomputeMetric({ metric_instance_id: parsed.metric_instance_id, samples: parsed.samples, warmups: (parsed.warmup_samples || []).length, budget: parsed.p95_budget, evidence_refs: row.evidence_refs }).row;
+  }
+
+  let TWO_STAGE: any;
+  beforeAll(() => {
+    TWO_STAGE = buildResourceReport({ samplesFor: twoStageProducer });
+  }, 60000);
+
+  it("RED-FIRST (a): a two-stage producer whose persisted raw evidence is OVER budget can NEVER emit a 'passed' row (no evidence/verdict split, no zero-width false green)", () => {
+    // persisted raw evidence must be over budget (that is what serialization captured)...
+    for (const m of TWO_STAGE.report.performance_metrics) {
+      const parsed = JSON.parse(findRaw(TWO_STAGE, m.evidence_refs[0].path).content);
+      expect(parsed.samples.every((s: number) => s > parsed.p95_budget)).toBe(true);
+    }
+    // ...so NO row may be "passed", and none may pass via a degenerate zero-width CI.
+    expect(TWO_STAGE.report.performance_metrics.some((m: any) => m.result === "passed")).toBe(false);
+    expect(TWO_STAGE.report.performance_metrics.every((m: any) => m.result === "failed")).toBe(true);
+    expect(TWO_STAGE.report.performance_metrics.every((m: any) => m.relative_ci_width_percent > 0)).toBe(true);
+  });
+
+  it("RED-FIRST (d): recompute from the PERSISTED raw-evidence bytes EQUALS the emitted metric row for every metric (verdict is bound to the persisted evidence)", () => {
+    for (const row of TWO_STAGE.report.performance_metrics) {
+      expect(recomputeFromEvidence(TWO_STAGE, row)).toEqual(row);
+    }
+  });
+
+  it("(d) the same binding holds for the DEFAULT honest producer (persisted evidence recomputes to the emitted row)", () => {
+    for (const row of EMITTED.report.performance_metrics) {
+      expect(recomputeFromEvidence(EMITTED, row)).toEqual(row);
+    }
+  });
+
+  it("RED-FIRST (b): a getter/proxy sample array cannot yield an evidence/verdict split — persisted evidence and verdict agree", () => {
+    // For every metric: the result recomputed from the persisted bytes agrees with the emitted
+    // result (both derived from the one frozen snapshot). A split (evidence 'failed' vs verdict
+    // 'passed') is impossible.
+    for (const row of TWO_STAGE.report.performance_metrics) {
+      const fromEvidence = recomputeFromEvidence(TWO_STAGE, row);
+      expect(fromEvidence.result).toBe(row.result);
+      expect(fromEvidence.p95_ci_upper_pass).toBe(row.p95_ci_upper_pass);
+      expect(fromEvidence.relative_ci_width_percent).toBe(row.relative_ci_width_percent);
+    }
+  });
+
+  it("INVARIANT (c): mutating the caller's returned sample arrays AFTER the call does not change the emitted report", () => {
+    const held: number[][] = [];
+    const producer = (_id: string, budget: number): { samples: number[]; warmupSamples: number[] } => {
+      const samples = Array.from({ length: 50 }, () => budget * 0.4);
+      const warmupSamples = Array.from({ length: 5 }, () => budget * 0.4);
+      held.push(samples, warmupSamples);
+      return { samples, warmupSamples };
+    };
+    const built = buildResourceReport({ samplesFor: producer });
+    const before = JSON.stringify(built.report.performance_metrics);
+    for (const arr of held) arr.fill(Number.NaN); // corrupt every caller array post-hoc
+    expect(JSON.stringify(built.report.performance_metrics)).toBe(before); // report is bound to the frozen copy
+  });
+
+  it("RED-FIRST: fail CLOSED at the barrier on unsupported caller sample structures (non-array / sparse / non-finite / non-number getter)", () => {
+    const barrierCodes = ["UNSUPPORTED_CALLER_STRUCTURE", "RAW_SAMPLE_INVALID"];
+    const probe = (samplesFor: any): string | undefined => {
+      try {
+        buildResourceReport({ samplesFor });
+        return undefined;
+      } catch (e: any) {
+        return e.code;
+      }
+    };
+    // non-array samples
+    expect(probe(() => ({ samples: "not-an-array", warmupSamples: [1, 2, 3, 4, 5] }))).toBe("UNSUPPORTED_CALLER_STRUCTURE");
+    // sparse / holey array
+    const sparse: any[] = new Array(50);
+    sparse[0] = 1;
+    expect(barrierCodes).toContain(probe(() => ({ samples: sparse, warmupSamples: [1, 2, 3, 4, 5] })));
+    // non-finite element (Infinity)
+    const inf = Array.from({ length: 50 }, () => 1);
+    inf[3] = Number.POSITIVE_INFINITY;
+    expect(probe(() => ({ samples: inf, warmupSamples: [1, 2, 3, 4, 5] }))).toBe("RAW_SAMPLE_INVALID");
+    // getter that yields a non-number
+    const bad: any[] = [];
+    for (let i = 0; i < 50; i += 1) Object.defineProperty(bad, i, { get: () => "big", enumerable: true, configurable: true });
+    expect(probe(() => ({ samples: bad, warmupSamples: [1, 2, 3, 4, 5] }))).toBe("RAW_SAMPLE_INVALID");
+  });
+});
