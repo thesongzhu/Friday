@@ -58,9 +58,9 @@ export interface RewriteLegacyRealtimeIdentifiersResult {
 
 /**
  * Rewrite any legacy raw `realtime_events` rows into the opaque namespace using
- * `pseudonymizer`. No-op (returns zeros) when the pseudonymizer is inactive (no key
- * -> tests / unprovisioned), when there are no rows, or when every row is already
- * opaque -- so the steady state is a single cheap existence check per boot.
+ * `pseudonymizer`. Fast-returns zeros when the pseudonymizer is inactive (no key ->
+ * tests / unprovisioned). Otherwise scans all rows once (at hub boot) and rewrites
+ * only rows not already opaque, so the steady state rewrites nothing.
  */
 export function rewriteLegacyRealtimeIdentifiers(
   db: FridaySqliteLayer,
@@ -69,14 +69,12 @@ export function rewriteLegacyRealtimeIdentifiers(
   if (!pseudonymizer.active) return { scanned: 0, rewritten: 0 };
 
   return db.withWriteTransaction((conn) => {
-    // Cheap gate: is there ANY row not yet in the opaque namespace? (GLOB '*:o1_*'
-    // matches an opaque stream id; NOT LIKE would miss the no-colon case, so scan
-    // only when a legacy-shaped row exists.)
-    const pending = conn
-      .prepare("SELECT 1 FROM realtime_events WHERE stream_id NOT GLOB '*o[0-9]_*' LIMIT 1")
-      .get();
-    if (!pending) return { scanned: 0, rewritten: 0 };
-
+    // Always scan (no SQL pre-gate): a SQL GLOB/LIKE cannot express the anchored
+    // opaque id-part pattern (`o<ver>_<hex40>` after the topic prefix), so any cheap
+    // substring gate could theoretically skip a legacy row that still needs rewriting
+    // (e.g. a raw id that merely CONTAINS `o1_`). The per-row `streamIdIsAlreadyOpaque`
+    // check + keyed MAC remain the sole authority; scanning unconditionally guarantees
+    // soundness. The scan runs only at hub boot and rewrites nothing in steady state.
     const rows = conn
       .prepare("SELECT event_id, stream_id, payload_json FROM realtime_events")
       .all() as LegacyRealtimeRow[];

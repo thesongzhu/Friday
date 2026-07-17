@@ -2111,19 +2111,20 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const resolveRealtimeOwnerId = deps.learningUserId
     ? () => deps.learningUserId
     : undefined;
-  // SEC-EVENT-REDACTION-001 / FINDING 1: deterministic owner-scoped identifier
-  // pseudonymizer (HMAC(tokenSecret, ownerId ‖ value)). ONE instance is shared by
-  // the write path (persist opaque stream_id + payload id fields) and the read
-  // path (subscription-service resolves the client's raw streamId the same way), so
-  // they stay symmetric. Inactive no-op when owner/secret are absent (tests).
-  // SEC-EVENT-REDACTION-001 / P1-D: derive the pseudonymization key from the DURABLE
-  // encryption root (FRIDAY_MASTER_KEY via getStrictMasterKey), NOT the rotatable
-  // auth `tokenSecret` — so authorized token rotation cannot orphan durable realtime
-  // streams. HKDF-derived into a dedicated, domain-separated, versioned subkey. When
-  // the master key is unavailable (tests), the key is undefined and the pseudonymizer
-  // is an inactive no-op (legacy/test-safe); production provisions the master key, so
-  // it is active. This is the SAME key the v106 legacy-rewrite migration derives, so
-  // legacy + runtime + read all share one keyspace.
+  // SEC-EVENT-REDACTION-001 / FINDING 1 + P1-D: deterministic owner-scoped identifier
+  // pseudonymizer = HMAC-SHA256(pseudonymKey, DOMAIN_TAG + lenPrefix(ownerId) + value),
+  // where pseudonymKey is HKDF-SHA256-DERIVED from the DURABLE non-rotating encryption
+  // root (FRIDAY_MASTER_KEY via getStrictMasterKey) — a dedicated, domain-separated,
+  // VERSIONED subkey, NOT the rotatable auth `tokenSecret` — so authorized token
+  // rotation cannot orphan durable realtime streams. The ownerId is length-prefixed
+  // into the keyed MAC (unambiguous owner||value boundary). ONE instance is shared by
+  // the write path (the event-bus sink persists opaque stream_id + payload id fields)
+  // and the read path (the subscription-service resolves the client's raw streamId the
+  // same way), so they stay symmetric. When the master key is unavailable (tests) the
+  // derived key is undefined and the pseudonymizer is an inactive no-op
+  // (legacy/test-safe); production provisions the master key, so it is active. The
+  // runtime legacy-rewrite (P0-C) derives the SAME key, so legacy + runtime + read all
+  // share one keyspace.
   let realtimePseudonymKey: string | undefined;
   try {
     realtimePseudonymKey = deriveFridayRealtimePseudonymKey(getStrictMasterKey());
