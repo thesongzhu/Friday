@@ -1147,6 +1147,125 @@ describe("FridayMemoryPiiGuard", () => {
     });
   });
 
+  // ─── redactDeep — round-13 prefix-preserving credential-subspan for PREFIX-BEARING secret KEYS ───
+  //
+  // SEC-EVENT-REDACTION-001 round-13 (Advisor @d5c4f262). Round-12 sanitized a secret-shape KEY, but for
+  // a PREFIX-BEARING shape (`Authorization: Bearer <token>`, generic `key=<value>`) the round-12 Unicode
+  // path built the replacement from the NORMALIZED detection copy, so an OBFUSCATED benign prefix
+  // (full-width / combining / zero-width) was silently rewritten to ASCII in the STORED key — the
+  // credential was removed (good) but the benign forensic prefix + separator bytes were DEGRADED
+  // (byte-preservation + strict-superset violation). The fix reports ONLY the credential SUBSPAN and
+  // splices the marker into the ORIGINAL key at that subspan, so the ORIGINAL prefix / keyword /
+  // whitespace / separator bytes survive BYTE-FOR-BYTE. RED on d5c4f262 (stored full-width prefix →
+  // ASCII); GREEN after the subspan fix. Whole-token shapes (no benign prefix) are unaffected.
+  describe("redactDeep round-13 — obfuscated PREFIX-BEARING secret KEY preserves ORIGINAL prefix bytes [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+    const SECRET = "[REDACTED_SECRET]";
+    // ASCII → full-width: space → U+3000 (ideographic space); every other printable ASCII + 0xFEE0.
+    // NFKD folds each back to its ASCII form for DETECTION while the ORIGINAL bytes stay as stored.
+    const fw = (s: string): string =>
+      s.replace(/[\x20-\x7E]/g, (c) =>
+        c === " " ? "　" : String.fromCodePoint((c.codePointAt(0) as number) + 0xfee0),
+      );
+    const TOKEN = "abcdefghijklmnopqrstuvwx"; // pragma: allowlist secret
+
+    it("full-width `Authorization: Bearer` / `api_key=` / `secret=` / `password=` / `access_token=` KEY: credential nuked, ORIGINAL full-width prefix byte-identical", () => {
+      for (const asciiPrefix of [
+        "Authorization: Bearer ",
+        "api_key=",
+        "secret=",
+        "password=",
+        "access_token=",
+      ]) {
+        const fwPrefix = fw(asciiPrefix);
+        const key = fwPrefix + TOKEN;
+        const { value } = guard.redactDeep({ [key]: "keep" });
+        const out = value as Record<string, unknown>;
+        const outKey = Object.keys(out)[0];
+        expect(outKey, `${asciiPrefix}: credential absent`).not.toContain(TOKEN);
+        // ORIGINAL full-width prefix preserved byte-for-byte; ONLY the credential became the marker.
+        expect(outKey, `${asciiPrefix}: full-width prefix preserved`).toBe(fwPrefix + SECRET);
+        // And NOT rewritten to the ASCII prefix (the round-12 degrade this round fixes).
+        expect(outKey, `${asciiPrefix}: prefix NOT rewritten to ASCII`).not.toBe(asciiPrefix + SECRET);
+        expect(out[outKey], `${asciiPrefix}: value preserved`).toBe("keep");
+      }
+    });
+
+    it("combining-mark and zero-width obfuscated `Authorization: Bearer` KEY: credential nuked, ORIGINAL prefix (mark / ZWSP) byte-identical", () => {
+      const cmPrefix = "Authorization: Bearér "; // combining acute over the 2nd `e` of Bearer
+      const zwPrefix = "Authorization: Bea​rer "; // ZERO WIDTH SPACE spliced into the scheme
+      for (const prefix of [cmPrefix, zwPrefix]) {
+        const key = prefix + TOKEN;
+        const { value } = guard.redactDeep({ [key]: "v" });
+        const outKey = Object.keys(value as Record<string, unknown>)[0];
+        expect(outKey).toBe(prefix + SECRET); // ORIGINAL obfuscated prefix bytes preserved verbatim
+        expect(outKey).not.toContain(TOKEN);
+        expect(outKey).toContain(prefix); // the combining mark / ZWSP survives inside the prefix
+      }
+    });
+
+    it("obfuscated prefix-bearing secret KEY NESTED and IN ARRAYS preserves the ORIGINAL prefix at every position", () => {
+      const bearer = fw("Authorization: Bearer ") + TOKEN;
+      const assign = fw("api_key=") + "genericcredential123abc"; // pragma: allowlist secret
+      const { value } = guard.redactDeep({
+        outer: { [bearer]: "v1" },
+        list: [{ [assign]: "v2" }],
+        deep: { l2: { [bearer]: "v3" } },
+      });
+      const out = value as {
+        outer: Record<string, unknown>;
+        list: Array<Record<string, unknown>>;
+        deep: { l2: Record<string, unknown> };
+      };
+      const bearerKey = fw("Authorization: Bearer ") + SECRET;
+      const assignKey = fw("api_key=") + SECRET;
+      expect(Object.keys(out.outer)).toEqual([bearerKey]);
+      expect(out.outer[bearerKey]).toBe("v1");
+      expect(Object.keys(out.list[0])).toEqual([assignKey]);
+      expect(out.list[0][assignKey]).toBe("v2");
+      expect(Object.keys(out.deep.l2)).toEqual([bearerKey]);
+      expect(out.deep.l2[bearerKey]).toBe("v3");
+      const blob = JSON.stringify(out);
+      expect(blob).not.toContain(TOKEN);
+      expect(blob).not.toContain("genericcredential123abc"); // pragma: allowlist secret
+    });
+
+    it("IDEMPOTENT: re-redacting an already-redacted obfuscated prefix-bearing KEY is a no-op (no further prefix rewrite)", () => {
+      const key = fw("Authorization: Bearer ") + TOKEN;
+      const once = guard.redactDeep({ [key]: "v" }).value as Record<string, unknown>;
+      const onceKey = Object.keys(once)[0];
+      const twice = guard.redactDeep(structuredClone(once)).value as Record<string, unknown>;
+      const twiceKey = Object.keys(twice)[0];
+      expect(twiceKey).toBe(onceKey); // key byte-identical on the second pass
+      expect(twiceKey).toBe(fw("Authorization: Bearer ") + SECRET); // still the ORIGINAL full-width prefix
+      expect(twice[twiceKey]).toBe("v");
+    });
+
+    it("NO-DEGRADE: a full-width benign key that folds to a non-secret word survives BYTE-IDENTICAL (no false credential subspan)", () => {
+      // `bearer_flag` folds to a benign word (no ` <token>` after `Bearer`); a lone full-width
+      // `Authorization` (no `: Bearer <token>`) and a bare `api_key` field NAME (no `=value`
+      // assignment) are not secret SHAPES. All must round-trip unchanged (redactKey does not use the
+      // field-NAME value-nuke — that is a separate audit-writer path).
+      const input: Record<string, string> = {};
+      input[fw("bearer_flag")] = "x";
+      input[fw("Authorization")] = "y";
+      input[fw("api_key")] = "z";
+      const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual(input);
+      expect(tagsToAdd).toEqual([]);
+      expect(Object.keys(value as Record<string, unknown>)).not.toContain(SECRET);
+    });
+
+    it("carry-over: a WHOLE-TOKEN obfuscated secret KEY (no benign prefix) still collapses to the bare marker", () => {
+      // Round-12 behavior is preserved: a zero-width-spliced `sk-` key has no benign prefix, so the
+      // WHOLE key becomes the marker (subspan == whole match for whole-token shapes).
+      const zwSk = "sk-​abcdefghijklmnop0123456789"; // pragma: allowlist secret
+      const out = guard.redactDeep({ [zwSk]: "v" }).value as Record<string, unknown>;
+      expect(Object.keys(out)).toEqual([SECRET]);
+      expect(out[SECRET]).toBe("v");
+    });
+  });
+
   describe("redactDeep — idempotence & PII modes", () => {
     it("is idempotent over key-driven numeric redaction (second pass is a no-op)", () => {
       const guard = createFridayMemoryPiiGuard("redact");

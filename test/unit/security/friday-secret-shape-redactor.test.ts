@@ -132,9 +132,14 @@ describe("friday-secret-shape-redactor", () => {
     });
   });
 
-  // PRIV-UNICODE-REDACTION-001: the SPAN entry point consulted by the Unicode-normalizer
-  // de-obfuscation layer. Spans + replacement must reconstruct exactly what the in-place scrubber
-  // produces, so a match found on the normalized detection copy maps back and redacts the original.
+  // PRIV-UNICODE-REDACTION-001 (round-13): the SPAN entry point consulted by the Unicode-normalizer
+  // de-obfuscation layer, and the CANONICAL prefix-preserving credential-subspan detector #1618 will
+  // consume. Each match is reported as its sensitive CREDENTIAL [start,end) subspan + the MARKER (never
+  // a replacement reconstructed from a — possibly normalized — prefix capture). For a whole-value shape
+  // the subspan IS the whole match; for a PREFIX-BEARING shape the subspan is ONLY the credential AFTER
+  // the preserved scheme/label + separator, so splicing the marker there in an ORIGINAL string leaves
+  // the (possibly Unicode-obfuscated) prefix bytes byte-identical. Splicing reproduces the in-place
+  // scrubber output exactly, so the two paths stay byte-consistent.
   describe("findSecretShapeSpans", () => {
     it("reports a whole-value shape as a single span whose replacement is the marker", () => {
       const input = "leak: sk-abcdefghijklmnopqrstuv0123456789 here"; // pragma: allowlist secret
@@ -148,11 +153,55 @@ describe("friday-secret-shape-redactor", () => {
       expect(spliced).toBe(redactSecretShapesInString(input));
     });
 
-    it("keeps the scheme / label prefix in the replacement for Bearer and generic-assignment shapes", () => {
-      const bearer = findSecretShapeSpans("Bearer abcdefghijklmnopqrstuvwx"); // pragma: allowlist secret
-      expect(bearer[0].replacement).toBe(`Bearer ${M}`);
-      const assign = findSecretShapeSpans("api_key=genericcredential123abc"); // pragma: allowlist secret
-      expect(assign[0].replacement).toBe(`api_key=${M}`);
+    // Round-13: the span for a prefix-bearing shape covers ONLY the credential — the benign scheme /
+    // label + separator is NOT part of the span — and the replacement is the bare marker. This is what
+    // preserves the ORIGINAL prefix bytes when the span is mapped back from a normalized detection copy.
+    it("reports ONLY the credential subspan (not the prefix) for Bearer and generic-assignment shapes", () => {
+      const bearerInput = "Bearer abcdefghijklmnopqrstuvwx"; // pragma: allowlist secret
+      const bearer = findSecretShapeSpans(bearerInput);
+      expect(bearer).toHaveLength(1);
+      // Span excludes the "Bearer " scheme prefix — it is exactly the credential token.
+      expect(bearerInput.slice(bearer[0].start, bearer[0].end)).toBe("abcdefghijklmnopqrstuvwx"); // pragma: allowlist secret
+      expect(bearer[0].replacement).toBe(M);
+      // Splicing the marker at the subspan preserves the "Bearer " prefix and matches the scrubber.
+      const bearerSpliced =
+        bearerInput.slice(0, bearer[0].start) + bearer[0].replacement + bearerInput.slice(bearer[0].end);
+      expect(bearerSpliced).toBe(`Bearer ${M}`);
+      expect(bearerSpliced).toBe(redactSecretShapesInString(bearerInput));
+
+      // `Authorization: Bearer …` matches BOTH the Authorization-Bearer AND the bare-Bearer pattern,
+      // so two OVERLAPPING credential spans are reported (redactUnicodeObfuscated merges them); EVERY
+      // reported span is exactly the credential and excludes the header/scheme prefix.
+      const authInput = "Authorization: Bearer abcdefghijklmnopqrstuvwx"; // pragma: allowlist secret
+      const auth = findSecretShapeSpans(authInput);
+      expect(auth.length).toBeGreaterThanOrEqual(1);
+      for (const s of auth) {
+        expect(authInput.slice(s.start, s.end)).toBe("abcdefghijklmnopqrstuvwx"); // pragma: allowlist secret
+        expect(s.replacement).toBe(M);
+        expect(authInput.slice(0, s.start) + M + authInput.slice(s.end)).toBe(
+          `Authorization: Bearer ${M}`,
+        );
+      }
+
+      const assignInput = "api_key=genericcredential123abc"; // pragma: allowlist secret
+      const assign = findSecretShapeSpans(assignInput);
+      expect(assign).toHaveLength(1);
+      // Span excludes the "api_key=" label + separator — it is exactly the credential value.
+      expect(assignInput.slice(assign[0].start, assign[0].end)).toBe("genericcredential123abc"); // pragma: allowlist secret
+      expect(assign[0].replacement).toBe(M);
+      const assignSpliced =
+        assignInput.slice(0, assign[0].start) + assign[0].replacement + assignInput.slice(assign[0].end);
+      expect(assignSpliced).toBe(`api_key=${M}`);
+      expect(assignSpliced).toBe(redactSecretShapesInString(assignInput));
+
+      // A quoted assignment: the surrounding quotes are benign and must be OUTSIDE the credential span.
+      const quotedInput = 'config token: "supersecretvalue00"'; // pragma: allowlist secret
+      const quoted = findSecretShapeSpans(quotedInput);
+      expect(quoted).toHaveLength(1);
+      expect(quotedInput.slice(quoted[0].start, quoted[0].end)).toBe("supersecretvalue00"); // pragma: allowlist secret
+      expect(
+        quotedInput.slice(0, quoted[0].start) + M + quotedInput.slice(quoted[0].end),
+      ).toBe(`config token: "${M}"`);
     });
 
     it("returns no spans for benign text (no over-redaction)", () => {

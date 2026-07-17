@@ -2358,3 +2358,223 @@ describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 key-CONTENT SECRET
     expect(second.sqliteRow.resource_type).toBe("channel_signal");
   });
 });
+
+// ── SEC-EVENT-REDACTION-001 round-13 — PREFIX-PRESERVING credential-subspan for obfuscated PREFIX-BEARING secret KEYS ──
+//
+// Advisor @d5c4f262: round-12 sanitized a secret-shape KEY, but for a PREFIX-BEARING shape
+// (`Authorization: Bearer <token>`, generic `key=<value>`) the round-12 Unicode path built the
+// replacement from the NORMALIZED detection copy. So an OBFUSCATED benign prefix (full-width / combining
+// / zero-width) used AS AN OBJECT KEY was persisted in BOTH at-rest sinks as ASCII — the credential was
+// removed (good) but the benign forensic prefix + separator bytes were silently rewritten (a
+// byte-preservation + strict-superset degrade). The canonical detector now reports ONLY the credential
+// SUBSPAN and splices the marker into the ORIGINAL key, so the ORIGINAL prefix bytes survive
+// BYTE-FOR-BYTE. These drive the REAL `appendFridayAuditLog` and raw-read BOTH the SQLite
+// `audit_logs.details_json` column AND the `audit.jsonl` mirror: RED on d5c4f262 (stored full-width
+// prefix → ASCII), GREEN after the subspan fix. Canonical COLUMNS stay byte-identical, append-only.
+describe("FridayHubAuditLogWriter — SEC-EVENT-REDACTION-001 round-13 prefix-preserving credential subspan", () => {
+  const AUDIT_SCHEMA = `
+    CREATE TABLE audit_logs (
+      id TEXT PRIMARY KEY,
+      ts TEXT NOT NULL,
+      actor_type TEXT NOT NULL,
+      actor_id TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
+      request_id TEXT,
+      trace_id TEXT,
+      ip TEXT,
+      details_json TEXT
+    );
+  `;
+
+  let root: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "friday-audit-r13-"));
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  interface Ctx {
+    canonicalLogPath: string;
+    sqlitePath: string;
+  }
+  function newCtx(): Ctx {
+    const stateDir = fs.mkdtempSync(path.join(root, "state-"));
+    fs.mkdirSync(path.join(stateDir, ".friday"), { recursive: true });
+    const sqlitePath = path.join(stateDir, "friday.db");
+    const setupDb = new Database(sqlitePath);
+    setupDb.exec(AUDIT_SCHEMA);
+    setupDb.close();
+    return { canonicalLogPath: resolveFridayAuditLogPath(stateDir), sqlitePath };
+  }
+  async function readBack(ctx: Ctx, id: string): Promise<{
+    sqliteDetailsJson: string;
+    sqliteDetails: Record<string, unknown>;
+    sqliteRow: Record<string, unknown>;
+    jsonlLine: string;
+    jsonlDetails: Record<string, unknown>;
+  }> {
+    const verifyDb = new Database(ctx.sqlitePath, { readonly: true });
+    const sqliteRow = verifyDb
+      .prepare("SELECT id, ts, actor_type, action, resource_type, details_json FROM audit_logs WHERE id = ?")
+      .get(id) as Record<string, unknown>;
+    verifyDb.close();
+    const sqliteDetailsJson = (sqliteRow.details_json as string | null) ?? "";
+    const jsonlContent = fs.readFileSync(ctx.canonicalLogPath, "utf8");
+    const jsonlLine =
+      jsonlContent.trim().split("\n").filter(Boolean).find((line) => (JSON.parse(line) as { id?: string }).id === id) ?? "";
+    return {
+      sqliteDetailsJson,
+      sqliteDetails: sqliteDetailsJson ? (JSON.parse(sqliteDetailsJson) as Record<string, unknown>) : {},
+      sqliteRow,
+      jsonlLine,
+      jsonlDetails: (JSON.parse(jsonlLine) as { details?: Record<string, unknown> }).details ?? {},
+    };
+  }
+  function r13Entry(id: string, details: Record<string, unknown>): FridayAuditLogWrite {
+    return {
+      id,
+      ts: "2026-07-17T00:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-signal",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-r13",
+      result: "error",
+      errorCode: "CHANNEL_DELIVERY_FAILED",
+      details,
+    };
+  }
+
+  const SECRET = "[REDACTED_SECRET]";
+  const TOKEN = "abcdefghijklmnopqrstuvwx"; // pragma: allowlist secret
+  const ASSIGN_TOKEN = "genericcredential123abc"; // pragma: allowlist secret
+  // ASCII → full-width: space → U+3000; every other printable ASCII + 0xFEE0. NFKD folds it back for
+  // detection; the ORIGINAL bytes are what must be stored.
+  const fw = (s: string): string =>
+    s.replace(/[\x20-\x7E]/g, (c) =>
+      c === " " ? "　" : String.fromCodePoint((c.codePointAt(0) as number) + 0xfee0),
+    );
+
+  it("RED→GREEN: full-width / combining / zero-width PREFIX-BEARING secret KEYS keep the ORIGINAL prefix byte-for-byte in BOTH sinks (credential absent)", async () => {
+    const fwBearer = fw("Authorization: Bearer ") + TOKEN;
+    const fwAssign = fw("api_key=") + ASSIGN_TOKEN;
+    const cmBearer = "Authorization: Bearér " + TOKEN; // combining acute in the scheme
+    const zwBearer = "Authorization: Bea​rer " + TOKEN; // ZWSP in the scheme
+    const ctx = newCtx();
+    await appendFridayAuditLog(
+      ctx.canonicalLogPath,
+      r13Entry("r13-top", {
+        [fwBearer]: "v-fwb",
+        [fwAssign]: "v-fwa",
+        [cmBearer]: "v-cmb",
+        [zwBearer]: "v-zwb",
+      }),
+    );
+    const { sqliteDetails, jsonlDetails, sqliteDetailsJson, jsonlLine } = await readBack(ctx, "r13-top");
+
+    // No credential body (raw or de-obfuscated) survives in either raw sink; and the benign prefix was
+    // NOT rewritten to its ASCII form (the round-12 degrade signature).
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(TOKEN);
+      expect(sink).not.toContain(ASSIGN_TOKEN);
+      expect(sink).not.toContain(`Authorization: Bearer ${SECRET}`); // ASCII-prefix degrade must NOT appear
+      expect(sink).not.toContain(`api_key=${SECRET}`);
+    }
+    for (const parsed of [sqliteDetails, jsonlDetails]) {
+      const keys = Object.keys(parsed);
+      // Every ORIGINAL obfuscated prefix is present verbatim, with ONLY the credential replaced.
+      expect(keys).toContain(fw("Authorization: Bearer ") + SECRET);
+      expect(keys).toContain(fw("api_key=") + SECRET);
+      expect(keys).toContain("Authorization: Bearér " + SECRET);
+      expect(keys).toContain("Authorization: Bea​rer " + SECRET);
+      // Values preserved (lossless).
+      expect(Object.values(parsed).sort()).toEqual(["v-cmb", "v-fwa", "v-fwb", "v-zwb"].sort());
+    }
+  });
+
+  it("RED→GREEN: obfuscated prefix-bearing secret KEYS NESTED and IN ARRAYS keep the ORIGINAL prefix in BOTH sinks", async () => {
+    const fwBearer = fw("Authorization: Bearer ") + TOKEN;
+    const fwAssign = fw("secret=") + ASSIGN_TOKEN;
+    const ctx = newCtx();
+    await appendFridayAuditLog(
+      ctx.canonicalLogPath,
+      r13Entry("r13-nested", {
+        outer: { [fwBearer]: "v1" },
+        list: [{ [fwAssign]: "v2" }],
+        deep: { l2: { [fwBearer]: "v3" } },
+      }),
+    );
+    const { sqliteDetails, jsonlDetails, sqliteDetailsJson, jsonlLine } = await readBack(ctx, "r13-nested");
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink).not.toContain(TOKEN);
+      expect(sink).not.toContain(ASSIGN_TOKEN);
+    }
+    for (const parsed of [sqliteDetails, jsonlDetails]) {
+      const outer = parsed.outer as Record<string, unknown>;
+      const list = parsed.list as Array<Record<string, unknown>>;
+      const deep = parsed.deep as { l2: Record<string, unknown> };
+      expect(Object.keys(outer)).toEqual([fw("Authorization: Bearer ") + SECRET]);
+      expect(outer[fw("Authorization: Bearer ") + SECRET]).toBe("v1");
+      expect(Object.keys(list[0])).toEqual([fw("secret=") + SECRET]);
+      expect(Object.keys(deep.l2)).toEqual([fw("Authorization: Bearer ") + SECRET]);
+      expect(deep.l2[fw("Authorization: Bearer ") + SECRET]).toBe("v3");
+    }
+  });
+
+  it("RED→GREEN: an obfuscated prefix-bearing secret used AS A VALUE (content field) keeps its prefix in BOTH sinks", async () => {
+    // The content-leaf secret pass shares the SAME canonical detector, so a full-width Bearer VALUE is
+    // prefix-preserved too (the finding's sibling surface).
+    const fwBearerValue = fw("Authorization: Bearer ") + TOKEN;
+    const ctx = newCtx();
+    await appendFridayAuditLog(
+      ctx.canonicalLogPath,
+      r13Entry("r13-value", { errorMessage: `header was ${fwBearerValue} rejected` }),
+    );
+    const { sqliteDetails, jsonlDetails, sqliteDetailsJson, jsonlLine } = await readBack(ctx, "r13-value");
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink).not.toContain(TOKEN);
+    }
+    for (const parsed of [sqliteDetails, jsonlDetails]) {
+      const msg = parsed.errorMessage as string;
+      expect(msg).toContain(fw("Authorization: Bearer ") + SECRET); // ORIGINAL full-width prefix kept
+      expect(msg).not.toContain(TOKEN);
+      expect(msg).toContain("header was ");
+      expect(msg).toContain(" rejected");
+    }
+  });
+
+  it("NO-DEGRADE + append-only: benign full-width keys survive byte-identical, canonical columns byte-identical across writes", async () => {
+    const ctx = newCtx();
+    // Benign full-width keys that fold to NON-secret, NON-field-NAME words (no ` <token>` / `=value`
+    // secret SHAPE, and not a sensitive credential field NAME whose value the writer would nuke): key +
+    // value must round-trip byte-identical, no marker introduced.
+    const details: Record<string, unknown> = {};
+    details[fw("bearer_flag")] = "benign"; // `bearer` word, no ` <token>` → not a shape
+    details[fw("session_token_count")] = "3"; // `token` substring but not the `sessiontoken` field name
+    details[fw("delivery_status")] = "ok"; // wholly benign
+    await appendFridayAuditLog(ctx.canonicalLogPath, r13Entry("r13-benign-1", { ...details }));
+    await appendFridayAuditLog(ctx.canonicalLogPath, r13Entry("r13-benign-2", { ...details }));
+    const first = await readBack(ctx, "r13-benign-1");
+    const second = await readBack(ctx, "r13-benign-2");
+
+    for (const parsed of [first.sqliteDetails, first.jsonlDetails]) {
+      for (const [k, v] of Object.entries(details)) {
+        expect(parsed[k]).toBe(v); // key + value byte-identical (no over-redaction, no prefix rewrite)
+      }
+      expect(Object.keys(parsed)).not.toContain(SECRET);
+    }
+    // Append-only + canonical columns byte-identical.
+    const jsonlLineCount = fs.readFileSync(ctx.canonicalLogPath, "utf8").trim().split("\n").filter(Boolean).length;
+    expect(jsonlLineCount).toBe(2);
+    expect(first.sqliteRow.id).toBe("r13-benign-1");
+    expect(first.sqliteRow.action).toBe("channel.channel_delivery_failed");
+    expect(first.sqliteRow.ts).toBe("2026-07-17T00:00:00.000Z");
+    expect(second.sqliteRow.id).toBe("r13-benign-2");
+    expect(second.sqliteRow.resource_type).toBe("channel_signal");
+  });
+});

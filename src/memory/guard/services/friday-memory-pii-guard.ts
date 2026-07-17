@@ -242,14 +242,18 @@ function findKeyPiiSpans(normalized: string): UnicodeNormalizedSpan[] {
 }
 
 /**
- * SEC-EVENT-REDACTION-001 (round-12): secret-SHAPE spans in a KEY scan, via the SAME value-side
- * detector (`findSecretShapeSpans`) the audit writer uses for VALUES — NOT a divergent key-local
- * copy. Reported as `[start, end)` spans + the exact replacement (`[REDACTED_SECRET]` for a
- * whole-value shape; `scheme`/`label` + marker for the Bearer / generic-assignment shapes), so it
- * composes with `findKeyPiiSpans` over the Unicode detection copy inside `redactUnicodeObfuscated`.
- * Together `[findKeySecretSpans, findKeyPiiSpans]` are the unified structured-key sensitive-span
- * coverage (secret ∪ PII). Secret is listed FIRST so an overlap keeps the secret marker — mirroring
- * the writer's content-leaf precedence (secret ≻ PII).
+ * SEC-EVENT-REDACTION-001 (round-12; round-13 subspan): secret-SHAPE spans in a KEY scan, via the SAME
+ * value-side detector (`findSecretShapeSpans`) the audit writer uses for VALUES — NOT a divergent
+ * key-local copy. Each match is reported as its sensitive CREDENTIAL `[start, end)` subspan + the
+ * marker: for a whole-value shape (`sk-…`, a JWT, …) that is the whole match; for a PREFIX-BEARING
+ * shape (`Authorization: Bearer …`, `api_key=…`) it is ONLY the credential AFTER the preserved
+ * scheme / label + separator (round-13). So when `redactUnicodeObfuscated` maps the span back from the
+ * de-obfuscated detection copy into the ORIGINAL key, ONLY the credential becomes the marker and the
+ * ORIGINAL (possibly fullwidth / combining / zero-width) prefix + separator bytes survive BYTE-FOR-BYTE
+ * — no ASCII reconstruction of the benign prefix. It composes with `findKeyPiiSpans` over the Unicode
+ * detection copy inside `redactUnicodeObfuscated`. Together `[findKeySecretSpans, findKeyPiiSpans]` are
+ * the unified structured-key sensitive-span coverage (secret ∪ PII). Secret is listed FIRST so an
+ * overlap keeps the secret marker — mirroring the writer's content-leaf precedence (secret ≻ PII).
  */
 function findKeySecretSpans(scan: string): UnicodeNormalizedSpan[] {
   return findSecretShapeSpans(scan, KEY_SECRET_MARKER).map((s) => ({
@@ -491,8 +495,13 @@ export function createFridayMemoryPiiGuard(
       // the writer's content-leaf `secret ≻ PII`):
       //   (1) UNICODE PASS — `redactUnicodeObfuscated(key, [findKeySecretSpans, findKeyPiiSpans])` runs
       //       BOTH finders over the de-obfuscated detection copy, so an OBFUSCATED secret key
-      //       (`sk-<U+200B>…`, a full-width / combining-spliced credential) maps back and full-span
-      //       redacts exactly as an obfuscated PII key does.
+      //       (`sk-<U+200B>…`, a full-width / combining-spliced credential) maps back and redacts
+      //       exactly as an obfuscated PII key does. Round-13: `findKeySecretSpans` reports ONLY the
+      //       sensitive CREDENTIAL subspan, so for a PREFIX-BEARING secret key
+      //       (`Ａｕｔｈｏｒｉｚａｔｉｏｎ： Ｂｅａｒｅｒ <token>`, `ａｐｉ＿ｋｅｙ＝<token>`) the marker is spliced at the
+      //       credential ALONE and the ORIGINAL fullwidth / combining / zero-width prefix + separator
+      //       bytes survive BYTE-FOR-BYTE — the benign forensic prefix is NOT rewritten to ASCII
+      //       (PRIV-UNICODE-REDACTION-001 byte-preservation). Whole-value shapes still redact whole.
       //   (2) RAW residual — secret-shape redaction (`redactSecretShapesInString`) runs FIRST over the
       //       pass-(1) result, THEN the UNCHANGED round-11 PII residual (`findMatches` + `redactContent`)
       //       over that. For a PURE-ASCII secret key the detection copy is unchanged so pass (1) is
