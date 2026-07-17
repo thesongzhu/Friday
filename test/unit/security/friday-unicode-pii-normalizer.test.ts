@@ -111,6 +111,67 @@ describe("friday-unicode-pii-normalizer", () => {
       const mathWord = buildUnicodeDetectionCopy("\u{1D5DB}\u{1D5D8}\u{1D5DF}\u{1D5DF}\u{1D5E2}");
       expect(mathWord.normalized).toBe("HELLO"); // 𝗛𝗘𝗟𝗟𝗢 → HELLO (no PII shape)
     });
+
+    // ── Round-8: canonical DECOMPOSITION (NFKD) closes the canonical-equivalence bypass ──
+    //
+    // Round-7 applied NFKC per code point. NFKC PRESERVES precomposed accented letters (it does NOT
+    // decompose them: `ś` U+015B stays `ś`, a LETTER, not a combining mark), so stripping `\p{M}`
+    // did nothing and a PRECOMPOSED (NFC) accented base leaked (`śk-…` never folded to `sk-…`). NFKD
+    // (compatibility DECOMPOSITION) folds EVERY compatibility form NFKC folded AND decomposes a
+    // precomposed accented character to base + combining mark(s), so the mark strip then collapses
+    // BOTH the precomposed and the decomposed spelling to the base letter.
+    it("round-8: folds a PRECOMPOSED accented base letter to ASCII (NFKC bypass → NFKD closure)", () => {
+      // ś = U+015B, ONE precomposed code point. NFKC KEPT it (round-7 leak); NFKD → s + U+0301 → s.
+      expect(buildUnicodeDetectionCopy("śk-abc").normalized).toBe("sk-abc");
+      expect(buildUnicodeDetectionCopy("śk-abc").changed).toBe(true);
+      // Multi-mark precomposed Vietnamese ế (U+1EBF = e + circumflex + acute) → e.
+      expect(buildUnicodeDetectionCopy("ế").normalized).toBe("e");
+      // Precomposed accented letters whose base is used in secret prefixes / PII fold to their base
+      // letter (NFKC would have kept each verbatim).
+      const cases: Array<[string, string]> = [
+        ["é", "e"], // é
+        ["ñ", "n"], // ñ
+        ["ç", "c"], // ç
+        ["ü", "u"], // ü
+        ["š", "s"], // š
+        ["ģithub", "github"], // ģithub → github (precomposed g with cedilla)
+        ["víctim", "victim"], // víctim → victim (precomposed í)
+      ];
+      for (const [input, expected] of cases) {
+        expect(buildUnicodeDetectionCopy(input).normalized).toBe(expected);
+      }
+    });
+
+    it("round-8: canonical-equivalence INVARIANT — NFC and NFD of the SAME string yield an IDENTICAL detection copy", () => {
+      // The deepest guarantee: because the detection copy fully DECOMPOSES (NFKD) then strips every
+      // combining mark, two canonically-equivalent spellings (precomposed vs decomposed) can NEVER
+      // again produce different detection copies. RED on round-7 (NFKC kept the precomposed form, so
+      // the NFC and NFD copies diverged); GREEN on round-8.
+      const samples = [
+        "śk-abcdefghijklmnop0123456789", // ś-prefixed secret shape
+        "café résumé", // precomposed accents
+        "Xin chào thế giới", // Vietnamese
+        "víctim@example.com", // email local part
+        "ñoño façade Zürich Kraków", // precomposed Latin diacritics
+        "①②③ Ａcafé ﬁ Việt", // compatibility forms + accents mixed
+      ];
+      for (const s of samples) {
+        const nfc = buildUnicodeDetectionCopy(s.normalize("NFC")).normalized;
+        const nfd = buildUnicodeDetectionCopy(s.normalize("NFD")).normalized;
+        expect(nfd).toBe(nfc);
+      }
+    });
+
+    it("round-8: a precomposed accented code point maps block-atomically (base + stripped mark → one unit at the source index)", () => {
+      const input = "aśb"; // 'a' + ś (U+015B, 1 code unit) + 'b'
+      const copy = buildUnicodeDetectionCopy(input);
+      expect(copy.normalized).toBe("asb"); // ś → s (NFKD base kept, mark stripped)
+      // 'a'@0, ś@1 → 's' at 1 (its NFKD mark occupies no normalized slot), 'b'@2, sentinel@3.
+      expect(copy.originalIndex).toEqual([0, 1, 2, 3]);
+      for (let i = 1; i < copy.originalIndex.length; i += 1) {
+        expect(copy.originalIndex[i]).toBeGreaterThanOrEqual(copy.originalIndex[i - 1]);
+      }
+    });
   });
 
   describe("redactUnicodeObfuscated", () => {
@@ -167,6 +228,28 @@ describe("friday-unicode-pii-normalizer", () => {
       expect(redactUnicodeObfuscated("aﬁbc", [matchExact("ib")])).toBe("a[X]c");
       // Match the full expansion "fi" → the ligature is redacted, neighbors survive.
       expect(redactUnicodeObfuscated("aﬁbc", [matchExact("fi")])).toBe("a[X]bc");
+    });
+
+    // ── Round-8: a match on the NFKD base of a PRECOMPOSED accented code point redacts the WHOLE
+    //    source code point (its base + the stripped mark it decomposed to), neighbors byte-identical ──
+    it("redacts the whole precomposed accented source code point when a finder matches its NFKD base", () => {
+      const matchExact = (needle: string): UnicodeSpanFinder => (n) =>
+        n.includes(needle) ? [{ start: n.indexOf(needle), end: n.indexOf(needle) + needle.length, replacement: "[X]" }] : [];
+
+      // "aśb" → detection copy "asb"; matching "s" (the NFKD base of ś@1) redacts the whole ś.
+      expect(redactUnicodeObfuscated("aśb", [matchExact("s")])).toBe("a[X]b");
+
+      // A precomposed-prefixed secret shape: "śk-<body>" folds to "sk-<body>", matches, and the whole
+      // token (including the precomposed ś) is replaced — no ś residue, no body leak.
+      const body = "abcdefghijklmnop0123456789"; // pragma: allowlist secret
+      const skFinder: UnicodeSpanFinder = (n) => {
+        const m = /sk-[a-z0-9]{16,}/.exec(n);
+        return m ? [{ start: m.index, end: m.index + m[0].length, replacement: "[SECRET]" }] : [];
+      };
+      const out = redactUnicodeObfuscated(`key śk-${body} end`, [skFinder]);
+      expect(out).toBe("key [SECRET] end");
+      expect(out).not.toContain(body);
+      expect(out).not.toContain("ś");
     });
   });
 });

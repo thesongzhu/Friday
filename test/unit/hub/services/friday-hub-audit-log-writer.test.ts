@@ -1434,4 +1434,152 @@ describe("FridayHubAuditLogWriter — PRIV-UNICODE-REDACTION-001 details Unicode
       expect(sink).toContain(BENIGN_MATH_WORD);
     }
   });
+
+  // -- Round-8 blocking finding (PRIV-UNICODE-REDACTION-001): canonical-equivalence bypass --
+  //
+  // Round-7 folded the DETECTION COPY with NFKC, on the premise that a precomposed accented form
+  // "becomes base + mark". That premise is FALSE: NFKC PRESERVES precomposed accented letters --
+  // it does NOT decompose them. A precomposed s-with-acute (U+015B, ONE code point) stays a LETTER,
+  // not a \p{M} mark, so the combining-mark strip did nothing and a PRECOMPOSED (NFC) accented
+  // base leaked: the secret matcher never folded it to `sk-...`. An independent real-append probe
+  // proved the NFC-precomposed credential body persisted VERBATIM in BOTH the SQLite
+  // `audit_logs.details_json` column AND `audit.jsonl`. The class fix switches the fold from NFKC
+  // to NFKD (compatibility DECOMPOSITION): NFKD folds EVERY compatibility form NFKC folded AND
+  // decomposes a precomposed accented character to base + combining mark(s), so the mark strip
+  // then collapses BOTH the precomposed and the decomposed spelling to the SAME base. RED on
+  // 748ae6a0 for the PRECOMPOSED form; GREEN post-fix. Storage stays byte-identical (detection-copy
+  // only). All accented fixtures use explicit \u escapes so precomposed vs decomposed is unambiguous.
+  //
+  // Email uses a DOMAIN-side accent: the raw guard's ASCII email regex fails entirely on the
+  // accented domain (verified: 0 raw matches), so the Unicode residual is the sole PII pass and
+  // maps the whole email span (incl. the accent) back to the original -> a clean [EMAIL]. (A
+  // LOCAL-part accent is a DIFFERENT, pre-existing partial-match in the raw guard that is identical
+  // for both spellings and is NOT a canonical-equivalence bypass; it is out of this normalizer's
+  // scope.) SSN/card use combining marks: ASCII digits admit NO precomposed accented variant, so
+  // their canonical spelling IS the combining-mark form -- carried over from round-7 under NFKD.
+  const ACUTE = "\u0301"; // COMBINING ACUTE ACCENT (Mn)
+  const CEDILLA = "\u0327"; // COMBINING CEDILLA (Mn)
+
+  it("RED->GREEN round-8 (canonical-equivalence matrix): PRECOMPOSED-accented sk- / github_pat_ / email AND decomposed / combining twins are redacted in BOTH sinks", async () => {
+    const SK_BODY = "abcdefghijklmnop0123456789"; // pragma: allowlist secret
+    const GH_TAIL = "11ABCDEF0aBcDeFgHiJkL0123456789abcdefghij"; // pragma: allowlist secret
+
+    // sk- provider key - base `s`. NFKC KEPT the precomposed s-acute (round-7 leak); NFKD -> s+U+0301.
+    const SK_PRE = `\u015Bk-${SK_BODY}`; // U+015B (ONE precomposed code point) // pragma: allowlist secret
+    const SK_DEC = `s${ACUTE}k-${SK_BODY}`; // s + U+0301 decomposed twin // pragma: allowlist secret
+    // github_pat_ - base `g`. Precomposed g-cedilla (U+0123) vs g + U+0327 (combining cedilla).
+    const GH_PRE = `\u0123ithub_pat_${GH_TAIL}`; // U+0123 precomposed // pragma: allowlist secret
+    const GH_DEC = `g${CEDILLA}ithub_pat_${GH_TAIL}`; // g + U+0327 decomposed twin // pragma: allowlist secret
+    const GH_FOLDED = `github_pat_${GH_TAIL}`; // pragma: allowlist secret
+    // email - DOMAIN-side accent: precomposed e-acute (U+00E9) vs e + U+0301 -> victim@example.com.
+    const EMAIL_PRE = "victim@\u00E9xample.com";
+    const EMAIL_DEC = `victim@e${ACUTE}xample.com`;
+    const EMAIL_FOLDED = "victim@example.com";
+    // SSN / card - combining-mark obfuscation (digits have no precomposed accent); full-class carry-over.
+    const SSN_CB = `123-45-6${ACUTE}789`; // -> 123-45-6789 -> [SSN_US]
+    const CARD_CB = `411111111111${ACUTE}1111`; // -> 4111111111111111 -> [CREDIT_CARD] // pragma: allowlist secret
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-precomposed-matrix", {
+        skPre: SK_PRE, // content
+        skDec: SK_DEC, // content (decomposed twin - control; already covered by round-7)
+        ghPre: GH_PRE, // content
+        ghDec: GH_DEC, // content
+        emailPre: EMAIL_PRE, // content
+        emailDec: EMAIL_DEC, // content
+        ssn: SSN_CB, // content
+        card: CARD_CB, // content
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      // Neither the precomposed, decomposed, nor folded credential/PII body survives in either sink.
+      expect(sink).not.toContain(SK_BODY);
+      expect(sink).not.toContain(GH_TAIL);
+      expect(sink).not.toContain(GH_FOLDED);
+      expect(sink).not.toContain(EMAIL_PRE);
+      expect(sink).not.toContain(EMAIL_DEC);
+      expect(sink).not.toContain(EMAIL_FOLDED);
+      expect(sink).not.toContain("123-45-6789");
+      expect(sink).not.toContain("4111111111111111"); // pragma: allowlist secret
+      // No raw precomposed-prefixed token residue (the accented base is inside the redacted span).
+      expect(sink).not.toContain(SK_PRE);
+      expect(sink).not.toContain(GH_PRE);
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details.skPre).toBe("[REDACTED_SECRET]");
+      expect(details.skDec).toBe("[REDACTED_SECRET]");
+      expect(details.ghPre).toBe("[REDACTED_SECRET]");
+      expect(details.ghDec).toBe("[REDACTED_SECRET]");
+      expect(details.emailPre).toBe("[EMAIL]");
+      expect(details.emailDec).toBe("[EMAIL]");
+      // Canonical-equivalence: precomposed and decomposed spellings redact IDENTICALLY.
+      expect(details.skPre).toBe(details.skDec);
+      expect(details.ghPre).toBe(details.ghDec);
+      expect(details.emailPre).toBe(details.emailDec);
+      expect(details.ssn).toBe("[SSN_US]");
+      expect(details.card).toBe("[CREDIT_CARD]");
+    }
+  });
+
+  it("RED->GREEN round-8 (precomposed on FORENSIC keys): a precomposed-accented email/secret on a forensic-named key is redacted in BOTH sinks (gate de-obfuscates)", async () => {
+    // The #1618 forensic-leaf gate classifies over the de-obfuscated (NFKD) copy, so a precomposed
+    // accented EMAIL / SECRET on a forensic key is disqualified and routed to content redaction.
+    const EMAIL_PRE = "victim@\u00E9xample.com"; // precomposed domain accent -> victim@example.com
+    const SK_BODY = "abcdefghijklmnop0123456789"; // pragma: allowlist secret
+    const SK_PRE = `\u015Bk-${SK_BODY}`; // s-acute precomposed // pragma: allowlist secret
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-precomposed-forensic", {
+        correlationId: EMAIL_PRE, // forensic key -> precomposed email must be redacted
+        traceId: SK_PRE, // forensic key -> precomposed secret must be redacted
+        // NO-DEGRADE control: a benign-opaque forensic leaf survives verbatim.
+        requestId: "run-abc-123",
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(EMAIL_PRE);
+      expect(sink).not.toContain("victim@example.com");
+      expect(sink).not.toContain(SK_PRE);
+      expect(sink).not.toContain(SK_BODY);
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details.correlationId).toBe("[EMAIL]");
+      expect(details.traceId).toBe("[REDACTED_SECRET]");
+      expect(details.requestId).toBe("run-abc-123");
+    }
+  });
+
+  it("NO-DEGRADE round-8: benign PRECOMPOSED accented multilingual text survives BYTE-IDENTICAL in BOTH sinks", async () => {
+    // cafe resume / Vietnamese / Latin, all PRECOMPOSED (NFC, explicit \u escapes). NFKD is
+    // DETECTION-COPY only; benign precomposed prose folds to no PII/secret shape and is returned
+    // verbatim (storage byte-identical). Hunt for NFKD false-positive over-redaction below.
+    const CAFE_PRE = "caf\u00E9 r\u00E9sum\u00E9";
+    const VIET_PRE = "Xin ch\u00E0o th\u1EBF gi\u1EDBi";
+    const LATIN_PRE = "Z\u00FCrich Krak\u00F3w Malm\u00F6 pi\u00F1ata fa\u00E7ade S\u00E3o";
+    const ERR = "connection reset by peer";
+    const { sqliteDetails, jsonlDetails, sqliteDetailsJson, jsonlLine } = await writeAndReadBack(
+      unicodeEntry("unicode-benign-precomposed", {
+        cafe: CAFE_PRE,
+        viet: VIET_PRE,
+        latin: LATIN_PRE,
+        err: ERR,
+      }),
+    );
+
+    for (const readBack of [sqliteDetails, jsonlDetails]) {
+      expect(readBack.cafe).toBe(CAFE_PRE);
+      expect(readBack.viet).toBe(VIET_PRE);
+      expect(readBack.latin).toBe(LATIN_PRE);
+      expect(readBack.err).toBe(ERR);
+    }
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink).toContain(CAFE_PRE);
+      expect(sink).toContain(VIET_PRE);
+      expect(sink).toContain(LATIN_PRE);
+    }
+  });
 });

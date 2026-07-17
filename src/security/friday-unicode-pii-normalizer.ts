@@ -7,21 +7,29 @@
  * `ﬁ`, circled / parenthesized / superscript forms), by writing digits in a non-ASCII decimal
  * script (Arabic-Indic `+١٤١٥…`, Extended Arabic-Indic, Devanagari, …), by splicing an invisible
  * zero-width / format code point into a token (`sk-<U+200B>…`), or by splicing an ordinary
- * COMBINING MARK into it (`123-45-6<U+0301>789`, `sk-<U+0301>…`). This module builds a DETECTION
- * COPY of a string, per CODE POINT and in a principled order:
- *   (a) NFKC COMPATIBILITY FOLDING — each code point is NFKC-normalized so a compatibility form
+ * COMBINING MARK into it (`123-45-6<U+0301>789`, `sk-<U+0301>…`), or — the round-8 canonical-
+ * equivalence bypass — by writing the token in a PRECOMPOSED (NFC) accented form whose base is a
+ * secret-prefix / PII letter (`śk-…` where `ś` is the single code point U+015B). This module builds
+ * a DETECTION COPY of a string, per CODE POINT and in a principled order:
+ *   (a) NFKD COMPATIBILITY DECOMPOSITION — each code point is NFKD-normalized so a compatibility form
  *       collapses to its canonical ASCII / base equivalent (`𝗌𝗄` → `sk`, `Ａ` → `A`, `ﬁ` → `fi`,
- *       `①` → `1`, `²` → `2`, NBSP → space). NFKC is applied PER CODE POINT so a match maps back to
- *       exactly the ORIGINAL code point range (see the INDEX MAP note below);
+ *       `①` → `1`, `²` → `2`, NBSP → space) AND a PRECOMPOSED accented character is DECOMPOSED to its
+ *       base + combining mark(s) (`ś` U+015B → `s` + U+0301, `é` → `e` + U+0301, Vietnamese `ế` →
+ *       `e` + U+0302 + U+0301). NFKD is used, NOT NFKC: NFKC RE-COMPOSES base + mark back into the
+ *       precomposed LETTER (a non-mark), so the round-7 combining-mark strip below could not touch it
+ *       and a precomposed `śk-…` LEAKED (it never folded to `sk-…`). NFKD folds every compatibility
+ *       form NFKC did AND leaves the accent as a strippable combining mark. Applied PER CODE POINT so
+ *       a match maps back to exactly the ORIGINAL code point range (see the INDEX MAP note below);
  *   (b) COMBINING MARKS (General_Category Mn / Mc / Me — `\p{M}`) are STRIPPED, defeating the
- *       combining-mark obfuscation (`6<U+0301>` → `6`, `sk-<U+0301>` → `sk-`). Marks are stripped
- *       from the NFKC output, so a precomposed form that NFKC decomposes to base + mark keeps only
- *       the base;
+ *       combining-mark obfuscation (`6<U+0301>` → `6`, `sk-<U+0301>` → `sk-`). Because (a) fully
+ *       DECOMPOSES, the strip now collapses BOTH the precomposed spelling (`ś`) and the decomposed
+ *       spelling (`s` + U+0301) to the SAME base letter — the canonical-equivalence invariant that
+ *       closes the round-8 bypass;
  *   (c) zero-width + format + default-ignorable code points (U+200B/C/D ZW*, U+2060 WORD JOINER,
  *       U+FEFF BOM, the whole `\p{Cf}` category, variation selectors, U+034F CGJ, …) are STRIPPED;
  *   (d) every remaining Unicode decimal digit (General_Category = Nd — Arabic-Indic, Extended
  *       Arabic-Indic, Devanagari, …) is folded to its ASCII 0–9 by NUMERIC VALUE (so Luhn / SSN /
- *       area-code value gates stay correct). This runs AFTER NFKC because NFKC does NOT fold
+ *       area-code value gates stay correct). This runs AFTER NFKD because NFKD does NOT fold
  *       Arabic-Indic / most non-Latin Nd digits — the explicit value fold stays for those.
  * It also returns a parallel INDEX MAP from each detection-copy code unit back to its ORIGINAL
  * code-unit index. A caller runs its existing shape matchers over the detection copy, then maps
@@ -97,13 +105,13 @@ export interface UnicodeDetectionCopy {
    * `originalIndex[k]` = the ORIGINAL code-unit index that the normalized code unit at position `k`
    * came from, for `k` in `[0, normalized.length]`; `originalIndex[normalized.length] =
    * input.length` (sentinel). A digit fold contributes ONE normalized unit mapped to the digit's
-   * original start (astral digits included). A NFKC-identity pass-through code point maps each of its
+   * original start (astral digits included). A NFKD-identity pass-through code point maps each of its
    * own code units to its own original index. A stripped code point (combining mark / Cf /
    * default-ignorable) occupies NO normalized position, so its original index is skipped — that is
    * why a stripped char inside a matched span is redacted with the span while one outside survives.
    *
    * NON-DECREASING (weakly monotonic). It is STRICTLY increasing everywhere EXCEPT inside a single
-   * source code point's NFKC EXPANSION "block": when NFKC expands one source code point to SEVERAL
+   * source code point's NFKD EXPANSION "block": when NFKD expands one source code point to SEVERAL
    * output chars (`ﬁ` → `fi`, `½` → `1⁄2`), every one of those output units maps to that ONE source
    * code point's original start, so consecutive equal entries occur ONLY within one expansion.
    * `redactUnicodeObfuscated` treats each expansion block ATOMICALLY (it rounds a matched span's end
@@ -120,15 +128,15 @@ export interface UnicodeDetectionCopy {
  * indices (the coordinate system every JS regex `match.index` uses, `u` flag or not), so a match
  * span found on `normalized` maps back exactly.
  *
- * Per original code point, in the order (a) NFKC compatibility fold → (b) strip combining marks →
+ * Per original code point, in the order (a) NFKD compatibility fold → (b) strip combining marks →
  * (c) strip Cf / default-ignorable → (d) fold Nd digits to ASCII by value:
- *   - ASCII (`cp < 0x80`) is NFKC-stable, never a mark / Cf / non-ASCII digit → passed through
+ *   - ASCII (`cp < 0x80`) is NFKD-stable, never a mark / Cf / non-ASCII digit → passed through
  *     verbatim (one unit, mapped to its own index). This keeps a pure-ASCII input `changed=false`
  *     (fast path) and BYTE-IDENTICAL, so every existing ASCII redact/preserve decision is unchanged.
- *   - Otherwise the single code point is NFKC-normalized. If NFKC is the IDENTITY for it, the strip /
+ *   - Otherwise the single code point is NFKD-normalized. If NFKD is the IDENTITY for it, the strip /
  *     fold / pass-through decision is applied to the code point itself with the EXISTING per-code-unit
  *     mapping (astral pass-through keeps its two units at `i`, `i+1` — strictly increasing).
- *   - If NFKC EXPANDS or substitutes the code point, the OUTPUT string is processed char-by-char
+ *   - If NFKD EXPANDS or substitutes the code point, the OUTPUT string is processed char-by-char
  *     (each output char is itself stripped if a mark / Cf, folded if an Nd digit, else kept), and
  *     EVERY surviving output code unit maps back to the ONE source code point's original start `i`.
  *     A multi-char expansion therefore forms a block of equal original indices (see `originalIndex`).
@@ -138,7 +146,7 @@ export function buildUnicodeDetectionCopy(input: string): UnicodeDetectionCopy {
   const originalIndex: number[] = [];
   let changed = false;
 
-  // Append one surviving OUTPUT code point (drawn from a NFKC expansion of the source at `i`), mapping
+  // Append one surviving OUTPUT code point (drawn from a NFKD expansion of the source at `i`), mapping
   // every one of its code units back to the source start `i`. Strips marks / Cf; folds Nd digits.
   const emitExpansionCodePoint = (ocp: number, i: number): void => {
     const och = String.fromCodePoint(ocp);
@@ -158,7 +166,7 @@ export function buildUnicodeDetectionCopy(input: string): UnicodeDetectionCopy {
     const cp = input.codePointAt(i) as number;
     const unitLen = cp > 0xffff ? 2 : 1;
 
-    // (0) ASCII fast path — NFKC-stable, never a mark / Cf / non-ASCII digit.
+    // (0) ASCII fast path — NFKD-stable, never a mark / Cf / non-ASCII digit.
     if (cp < 0x80) {
       normalized += String.fromCharCode(cp);
       originalIndex.push(i);
@@ -167,10 +175,10 @@ export function buildUnicodeDetectionCopy(input: string): UnicodeDetectionCopy {
     }
 
     const single = String.fromCodePoint(cp);
-    const folded = single.normalize("NFKC");
+    const folded = single.normalize("NFKD");
 
     if (folded === single) {
-      // NFKC identity: apply strip / fold / pass-through to the code point itself, keeping the
+      // NFKD identity: apply strip / fold / pass-through to the code point itself, keeping the
       // existing per-code-unit mapping so astral pass-through stays strictly increasing (i, i+1).
       if (COMBINING_MARK_RE.test(single) || STRIP_CODE_POINT_RE.test(single)) {
         changed = true; // consumes original units, contributes nothing to normalized
@@ -191,7 +199,7 @@ export function buildUnicodeDetectionCopy(input: string): UnicodeDetectionCopy {
       continue;
     }
 
-    // NFKC changed this code point (a compatibility fold / substitution / expansion). Every surviving
+    // NFKD changed this code point (a compatibility fold / substitution / expansion). Every surviving
     // output code unit maps back to this source code point's original start `i` (block-atomic).
     changed = true;
     for (const outChar of folded) emitExpansionCodePoint(outChar.codePointAt(0) as number, i);
@@ -254,7 +262,7 @@ export function redactUnicodeObfuscated(
   }
 
   // Map each normalized segment to ORIGINAL coordinates. The START auto-rounds DOWN to its block
-  // start (every output unit of one source code point's NFKC expansion shares that source's original
+  // start (every output unit of one source code point's NFKD expansion shares that source's original
   // index). The END is rounded UP to the enclosing block boundary FIRST: if it lands mid-expansion
   // (`originalIndex[end] === originalIndex[end - 1]`, i.e. still inside one source code point's
   // expansion), advance it to the next block so the whole covering source code point is redacted —
