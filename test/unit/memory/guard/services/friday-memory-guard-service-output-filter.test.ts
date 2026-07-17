@@ -250,4 +250,47 @@ describe("FridayMemoryOutputFilter", () => {
       expect(Object.keys(filtered.metadata)).not.toContain("[CREDIT_CARD]");
     });
   });
+
+  // ─── memory-egress key-CONTENT SECRET (SEC-EVENT-REDACTION-001 round-12) ───
+  //
+  // The shared key-content sanitizer (`redactKey`) governs MEMORY egress too (this filter calls
+  // `redactDeep` on item.metadata and on learned-fact values). A metadata KEY STRING that is itself a
+  // SECRET (`sk-…`, `Authorization: Bearer …`, `api_key=…`) — ASCII or Unicode-obfuscated — persisted
+  // RAW on read-back before round-12; it is now redacted to `[REDACTED_SECRET]` (whole-value shapes) or
+  // keeps its forensic prefix (Bearer / generic assignment). VALUE preserved. NO-DEGRADE: sensitive
+  // field-NAME keys and benign near-miss keys round-trip byte-identical.
+  describe("key-CONTENT SECRET metadata KEY (egress redactDeep)", () => {
+    it("redacts an ASCII sk- secret metadata KEY STRING on filterItem (egress); value preserved", () => {
+      const secretKey = "sk-abcdefghijklmnopqrstuv0123456789"; // pragma: allowlist secret
+      const item = makeItem({ metadata: { [secretKey]: "note-value" } });
+      const filtered = filter.filterItem(item);
+      const meta = filtered.metadata as Record<string, unknown>;
+      expect(Object.keys(meta)).not.toContain(secretKey); // raw secret key gone
+      expect(Object.keys(meta)).toContain("[REDACTED_SECRET]");
+      expect(meta["[REDACTED_SECRET]"]).toBe("note-value"); // value preserved
+    });
+
+    it("redacts a zero-width-obfuscated sk- secret KEY + keeps the Bearer prefix on a learned-fact value (egress)", () => {
+      const zwSecretKey = "sk-​abcdefghijklmnop0123456789"; // U+200B after sk- // pragma: allowlist secret
+      const bearerKey = "Authorization: Bearer abcdefghijklmnopqrstuvwx"; // pragma: allowlist secret
+      const redacted = filter.redactLearnedFactValue({ [zwSecretKey]: 1, [bearerKey]: 2 }) as Record<string, unknown>;
+      expect(Object.keys(redacted)).not.toContain(zwSecretKey);
+      expect(Object.keys(redacted)).not.toContain(bearerKey);
+      expect(Object.keys(redacted)).toContain("[REDACTED_SECRET]");
+      expect(Object.keys(redacted)).toContain("Authorization: Bearer [REDACTED_SECRET]"); // pragma: allowlist secret
+      expect(JSON.stringify(redacted)).not.toContain("abcdefghijklmnop0123456789"); // pragma: allowlist secret
+      expect(JSON.stringify(redacted)).not.toContain("abcdefghijklmnopqrstuvwx"); // pragma: allowlist secret
+    });
+
+    it("NO-DEGRADE: benign near-miss metadata KEYS round-trip byte-identical (no secret SHAPE → untouched)", () => {
+      const metadata = {
+        "session_token_count": "a", // near-miss (no `=value`)
+        "sk_underscore_id": "b", // `sk_` not `sk-`
+        "café_naïve": "c",
+      };
+      const filtered = filter.filterItem(makeItem({ metadata: { ...metadata } }));
+      expect(filtered.metadata).toEqual(metadata); // byte-identical, no over-redaction
+      expect(Object.keys(filtered.metadata)).not.toContain("[REDACTED_SECRET]");
+    });
+  });
 });
