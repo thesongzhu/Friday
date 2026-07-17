@@ -1,12 +1,19 @@
 import { FridayDomainError } from "#errors";
-import type { CategoryRetention, FridayRetentionSettingsStore } from "#jobs";
+import type {
+  CategoryRetention,
+  FridayRetentionContentPolicy,
+  FridayRetentionSettingsStore,
+} from "#jobs";
 import { FRIDAY_MAX_AFTER_DAYS, FRIDAY_MIN_AFTER_DAYS, isValidAfterDays } from "#jobs";
+import type { FridaySqliteLayer } from "#state";
 import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridayDiskGrowthWarning } from "../../../learning/services/friday-disk-growth-evaluator.js";
 import {
   assertBoundPrincipalAuthorityForOperation,
   isUnauthenticatedPublicPrincipal,
 } from "../../../security/friday-owner-session-channel-capability.js";
+import { createSqliteAuditPersistence } from "../../../security/multi-tenant/persistence/friday-multi-tenant-sqlite-store.js";
+import type { JsonObject } from "../../../security/multi-tenant/model/friday-multi-tenant-security.types.js";
 
 /**
  * Owner-bound retention-Settings HTTP surface (RETENTION-R3a).
@@ -58,10 +65,85 @@ export interface FridayRetentionSettingsRoutesDeps {
    * DERIVED/observable and never persisted as canonical (DATA-RETENTION-001).
    */
   readDiskUsage?: () => FridayDiskGrowthWarning | null;
+  /**
+   * RETENTION-R3d: the write layer used to run the policy-apply AND the audit
+   * append inside ONE write transaction. MUST be the SAME `FridaySqliteLayer`
+   * instance (same writer connection) that backs both `store` and
+   * `appendPolicyAudit`, so the two writes NEST and commit/roll back atomically —
+   * an audit failure leaves the persisted policy byte-unchanged (no orphan write).
+   */
+  db: FridaySqliteLayer;
+  /**
+   * RETENTION-R3d: FAIL-CLOSED audit sink. Appends exactly ONE durable audit
+   * entry for a successful retention-policy mutation and returns its id. Called
+   * INSIDE the `db.withWriteTransaction` that applies the policy so both commit or
+   * both roll back. THROWS (never fails open) on any persistence failure: the
+   * throw aborts the enclosing transaction → the policy write rolls back → the PUT
+   * handler surfaces 503 and NO mutation is left un-audited. Build it with
+   * `createFridayRetentionPolicyAuditAppender` (closing over the SAME layer).
+   */
+  appendPolicyAudit: (entry: FridayRetentionPolicyAuditEntry) => string;
+  /**
+   * Injected clock (RETENTION-R3d: no inline `Date.now()`). Drives the receipt
+   * `runAt` and the deterministic correlation id. The audit-entry id is generated
+   * inside `appendPolicyAudit` (via its own injected id generator), so no id
+   * generator is needed on this handler surface.
+   */
+  nowIso: () => string;
+}
+
+/**
+ * RETENTION-R3d: the audit record for one retention-policy mutation. Captured
+ * INSIDE the write transaction (pre-commit), so it carries the authoritative
+ * before-state + the applied updates + the changed categories — the after-state
+ * is read authoritatively AFTER commit and lives on the returned receipt.
+ */
+export interface FridayRetentionPolicyAuditEntry {
+  /** Deterministic domain-prefixed correlation id binding audit ⇄ receipt. */
+  correlationId: string;
+  /** The RESOLVED canonical owner (never a caller-supplied id). */
+  ownerId: string;
+  /** ISO time the mutation was applied (injected clock). */
+  occurredAt: string;
+  /** Authoritative before-state read from the store (pre-apply). */
+  before: FridayRetentionContentPolicy;
+  /** The validated per-category updates that were applied. */
+  appliedUpdates: Record<string, CategoryRetention>;
+  /** Content categories whose EFFECTIVE policy changed (before ≠ after). */
+  changedCategories: string[];
+}
+
+/**
+ * RETENTION-R3d: the RECEIPT envelope returned by a successful PUT. Binds the
+ * correlation id, the durable audit entry id, the authoritative before + after
+ * states, and the changed categories. `deletedData` is always `false`: a settings
+ * write never deletes stored data rows (opt-out only removes an override row).
+ */
+export interface FridayRetentionPolicyUpdateReceipt {
+  receiptId: string;
+  correlationId: string;
+  /** The durable audit entry id this update is bound to. */
+  auditId: string;
+  status: "applied";
+  runAt: string;
+  /** The RESOLVED canonical owner (never a caller-supplied id). */
+  requestedBy: string;
+  rollbackClass: "reversible_local_settings";
+  evidence: {
+    before: FridayRetentionContentPolicy;
+    after: FridayRetentionContentPolicy;
+    changed: string[];
+    deletedData: false;
+  };
 }
 
 interface FridayRetentionPolicyResponse {
   policy: Record<string, CategoryRetention>;
+}
+
+interface FridayRetentionPolicyUpdateResponse {
+  policy: Record<string, CategoryRetention>;
+  receipt: FridayRetentionPolicyUpdateReceipt;
 }
 
 interface FridayRetentionDiskUsageResponse {
@@ -194,6 +276,90 @@ function parseCategoryRetention(category: string, raw: unknown): CategoryRetenti
   return { mode: "after_days", days };
 }
 
+/** True when two per-category retention values are effectively identical. */
+function retentionEquals(a: CategoryRetention, b: CategoryRetention): boolean {
+  if (a.mode !== b.mode) return false;
+  if (a.mode === "after_days" && b.mode === "after_days") return a.days === b.days;
+  return true;
+}
+
+/**
+ * RETENTION-R3d: the content categories whose EFFECTIVE policy differs between the
+ * authoritative before- and after-states. Derived from the two authoritative
+ * readbacks (never from the request), so the receipt reports what actually
+ * changed. Sorted for a stable receipt/audit payload.
+ */
+function computeChangedCategories(
+  before: FridayRetentionContentPolicy,
+  after: FridayRetentionContentPolicy,
+): string[] {
+  const categories = new Set<string>([...Object.keys(before), ...Object.keys(after)]);
+  const changed: string[] = [];
+  for (const category of categories) {
+    const b = (before as Record<string, CategoryRetention>)[category];
+    const a = (after as Record<string, CategoryRetention>)[category];
+    if (!b || !a || !retentionEquals(b, a)) {
+      changed.push(category);
+    }
+  }
+  return changed.sort();
+}
+
+/**
+ * RETENTION-R3d: build the FAIL-CLOSED retention-policy audit appender.
+ *
+ * It writes exactly ONE structured entry into the durable `security_audit_log`
+ * chain — REUSING `createSqliteAuditPersistence` (NOT a new audit store), keyed as
+ * resource `policy` / decision `allow` — and returns the entry id. It MUST close
+ * over the SAME `FridaySqliteLayer` the retention store writes through, so the
+ * INSERT NESTS inside the caller's write transaction (a SAVEPOINT on the one
+ * writer connection) and commits/rolls back atomically with the policy write.
+ *
+ * FAIL-CLOSED: any persistence failure is re-thrown as a typed 503 (mirrors the
+ * observability audit posture) so the enclosing transaction ABORTS and no policy
+ * mutation is ever left un-audited. The appender bypasses the in-memory
+ * `AuditLogger` map deliberately: only the SQLite write participates in the
+ * transaction, so a rollback cannot leave a phantom in-memory audit entry.
+ */
+export function createFridayRetentionPolicyAuditAppender(deps: {
+  sqlite: FridaySqliteLayer;
+  idGenerator: () => string;
+}): (entry: FridayRetentionPolicyAuditEntry) => string {
+  const persistence = createSqliteAuditPersistence(deps.sqlite);
+  return (entry) => {
+    const auditId = deps.idGenerator();
+    const metadata = {
+      correlationId: entry.correlationId,
+      changedCategories: entry.changedCategories,
+      deletedData: false,
+      before: entry.before,
+      appliedUpdates: entry.appliedUpdates,
+    } as unknown as JsonObject;
+    try {
+      persistence.saveAuditEntry({
+        id: auditId,
+        tenantId: null,
+        principalId: entry.ownerId,
+        action: "retention.policy.update",
+        resourceType: "policy",
+        resourceId: `retention-policy:${entry.ownerId}`,
+        decision: "allow",
+        reason: "canonical-owner retention policy update",
+        sessionId: entry.correlationId,
+        metadata,
+        createdAt: entry.occurredAt,
+      });
+    } catch (cause) {
+      throw new FridayDomainError(
+        "RETENTION_AUDIT_APPEND_FAILED",
+        "Retention audit append failed; refusing to complete the retention-policy update",
+        { httpStatus: 503, cause },
+      );
+    }
+    return auditId;
+  };
+}
+
 export function createFridayRetentionSettingsRoutes(
   deps: FridayRetentionSettingsRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -217,7 +383,10 @@ export function createFridayRetentionSettingsRoutes(
       method: "PUT",
       path: "/v1/uix/retention-policy",
       auth: { public: true },
-      async handler(ctx): Promise<FridayRetentionPolicyResponse> {
+      async handler(ctx): Promise<FridayRetentionPolicyUpdateResponse> {
+        // 1. AuthZ FIRST: canonical-owner binding. A non-canonical authenticated
+        //    admin (admin-002) is refused 403 here, BEFORE any before-readback,
+        //    audit, mutation, or receipt side effect.
         const ownerId = assertCanonicalRetentionOwner(
           ctx.principal ?? null,
           "retention.policy.update",
@@ -241,14 +410,15 @@ export function createFridayRetentionSettingsRoutes(
           );
         }
 
-        // Known content categories = the keys of the effective policy (all 7).
-        // Deriving them from the store keeps this handler decoupled from the
-        // category list while still rejecting unknown keys.
-        const known = new Set(
-          Object.keys(deps.store.readOwnerContentPolicy({ principalId: ownerId })),
-        );
+        // 2. Authoritative BEFORE-state: read from the STORE (never the request),
+        //    which also yields the known content categories (all 7) for unknown-key
+        //    rejection — keeping this handler decoupled from the category list.
+        const before = deps.store.readOwnerContentPolicy({ principalId: ownerId });
+        const known = new Set(Object.keys(before));
 
-        // Validate the WHOLE body FIRST (reject → 400, persist nothing), then apply.
+        // 3. Validate the WHOLE body FIRST (reject → 400, persist nothing / no
+        //    audit / no receipt), THEN apply. An invalid entry mid-batch throws
+        //    here, before the transaction opens.
         const updates: Record<string, CategoryRetention> = {};
         for (const [category, raw] of Object.entries(policyInput as Record<string, unknown>)) {
           if (!known.has(category)) {
@@ -261,9 +431,52 @@ export function createFridayRetentionSettingsRoutes(
           updates[category] = parseCategoryRetention(category, raw);
         }
 
-        return {
-          policy: deps.store.applyOwnerContentPolicy({ principalId: ownerId, updates }),
+        // 4. Deterministic correlation id + injected clock (no inline Date.now()).
+        //    The audit entry id is a separate injected id (PK uniqueness), so
+        //    identical-timestamp updates never collide.
+        const runAt = deps.nowIso();
+        const correlationId = `retention-policy-update:${ownerId}:${runAt}`;
+
+        // 5. ATOMIC apply + audit inside ONE write transaction. The store's own
+        //    write nests as a SAVEPOINT on the same writer connection; the audit
+        //    append nests likewise. If the audit append THROWS (fail-closed 503),
+        //    the whole transaction rolls back → the persisted policy is
+        //    byte-unchanged (equal to `before`) and NOTHING is committed. A
+        //    committed policy write that returns 503 is therefore impossible.
+        let auditId = "";
+        deps.db.withWriteTransaction(() => {
+          deps.store.applyOwnerContentPolicy({ principalId: ownerId, updates });
+          auditId = deps.appendPolicyAudit({
+            correlationId,
+            ownerId,
+            occurredAt: runAt,
+            before,
+            appliedUpdates: updates,
+            // `changed` at audit time is the requested set; the authoritative
+            // changed set (before ≠ after) is computed post-commit for the receipt.
+            changedCategories: Object.keys(updates).sort(),
+          });
+        });
+
+        // 6. Authoritative AFTER-state: re-read from the STORE post-commit (never
+        //    an echo of the input).
+        const after = deps.store.readOwnerContentPolicy({ principalId: ownerId });
+        const changed = computeChangedCategories(before, after);
+
+        // 7. RECEIPT envelope binding correlation id, durable audit id, and the
+        //    authoritative before + after. A settings write never deletes data.
+        const receipt: FridayRetentionPolicyUpdateReceipt = {
+          receiptId: `retention-receipt:${ownerId}:${runAt}`,
+          correlationId,
+          auditId,
+          status: "applied",
+          runAt,
+          requestedBy: ownerId,
+          rollbackClass: "reversible_local_settings",
+          evidence: { before, after, changed, deletedData: false },
         };
+
+        return { policy: after, receipt };
       },
     },
     {

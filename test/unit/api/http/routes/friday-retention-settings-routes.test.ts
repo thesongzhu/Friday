@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { createFridayRetentionSettingsRoutes } from "#api";
+import { createFridayRetentionSettingsRoutes, createFridayRetentionPolicyAuditAppender } from "#api";
 import type { FridayHttpContext } from "#api";
 import type { FridaySqliteLayer } from "#state";
 import {
@@ -74,7 +74,16 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
       idGenerator: () => `ret-${String(++idCounter).padStart(4, "0")}`,
       nowIso: () => NOW,
     });
-    routes = createFridayRetentionSettingsRoutes({ store, resolveCanonicalOwnerId: () => CANON });
+    routes = createFridayRetentionSettingsRoutes({
+      store,
+      resolveCanonicalOwnerId: () => CANON,
+      db,
+      appendPolicyAudit: createFridayRetentionPolicyAuditAppender({
+        sqlite: db,
+        idGenerator: () => `aud-${String(++idCounter).padStart(4, "0")}`,
+      }),
+      nowIso: () => NOW,
+    });
   });
 
   afterEach(() => {

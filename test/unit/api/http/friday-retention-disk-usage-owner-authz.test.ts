@@ -5,6 +5,7 @@ import {
   createFridayHttpRouteRegistry,
   createFridayHttpServer,
   createFridayRetentionSettingsRoutes,
+  createFridayRetentionPolicyAuditAppender,
   type FridayAuthMiddlewareFactory,
   type FridayHttpServer,
   type FridayRealtimeWsGateway,
@@ -180,6 +181,12 @@ describe("FridayHttpServer — /v1/uix/retention-policy/disk-usage canonical-own
       store,
       resolveCanonicalOwnerId,
       readDiskUsage: () => holder.get(),
+      db: db!,
+      appendPolicyAudit: createFridayRetentionPolicyAuditAppender({
+        sqlite: db!,
+        idGenerator: () => `aud-${String(++idc).padStart(4, "0")}`,
+      }),
+      nowIso: () => NOW,
     })) {
       routes.register(route);
     }

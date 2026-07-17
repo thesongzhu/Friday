@@ -112,6 +112,7 @@ import {
   createFridayDeterministicPipelineRuntime,
   createFridayMissionAutoDispatchDriver,
   createFridayReflexRoutes,
+  createFridayRetentionPolicyAuditAppender,
   createFridayRustHubSystemIntentService,
   getChannelPersona,
   hydrateChannelPersonaStore,
@@ -6742,6 +6743,14 @@ export async function createFridayHub(
     idGenerator,
     nowIso,
   });
+  // RETENTION-R3d: FAIL-CLOSED, transaction-participating audit appender for the
+  // owner-bound retention-Settings PUT. It closes over the SAME sqlite layer the
+  // store writes through, so the audit INSERT nests in the store's write
+  // transaction and commits/rolls back atomically (no un-audited policy write).
+  const retentionPolicyAuditAppender = createFridayRetentionPolicyAuditAppender({
+    sqlite: stateRuntime.sqlite,
+    idGenerator,
+  });
   const retentionPolicyLoader = createFridayRetentionPolicyLoader({
     db: stateRuntime.sqlite,
     repo: retentionSettingsRepository,
@@ -7498,6 +7507,13 @@ export async function createFridayHub(
       // RETENTION-R3b: owner-bound disk-usage readback source (report-only; the
       // ONLY read surface for the disk-growth reading — never on any public route).
       readDiskUsage: () => diskGrowthHolder.get(),
+      // RETENTION-R3d: audited + correlated + receipted PUT. `db` and
+      // `appendPolicyAudit` share the SAME writer connection so apply + audit are
+      // one atomic transaction; the injected clock/id keep the correlation id and
+      // audit entry deterministic and free of inline Date.now()/Math.random().
+      db: stateRuntime.sqlite,
+      appendPolicyAudit: retentionPolicyAuditAppender,
+      nowIso,
     },
     uix: {
       service: uixService,

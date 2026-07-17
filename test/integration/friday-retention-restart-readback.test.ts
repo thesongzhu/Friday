@@ -11,7 +11,10 @@ import {
 } from "#satellites";
 import { createFridayLearningEventLedger, createFridaySkillRunStore } from "#ledger";
 import { createFridaySetupBootstrapNonceRepository } from "#api";
-import { createFridayRetentionSettingsRoutes } from "#api";
+import {
+  createFridayRetentionSettingsRoutes,
+  createFridayRetentionPolicyAuditAppender,
+} from "#api";
 import type { FridayHttpContext } from "#api";
 import {
   createFridayRetentionJob,
@@ -66,6 +69,25 @@ function makeStore(layer: FridaySqliteLayer) {
   });
 }
 
+/**
+ * RETENTION-R3d: build the owner-bound routes for a given on-disk layer. `db` and
+ * the audit appender share the SAME layer so the PUT's apply + audit are one
+ * atomic transaction; the durable audit row lands in the same on-disk db.
+ */
+function makeRoutes(layer: FridaySqliteLayer) {
+  let idc = 0;
+  return createFridayRetentionSettingsRoutes({
+    store: makeStore(layer),
+    resolveCanonicalOwnerId: () => OWNER,
+    db: layer,
+    appendPolicyAudit: createFridayRetentionPolicyAuditAppender({
+      sqlite: layer,
+      idGenerator: () => `aud-${++idc}`,
+    }),
+    nowIso: () => NOW,
+  });
+}
+
 describe("RETENTION-R3a restart-readback (integration)", () => {
   let tmpDir: string;
   let dbPath: string;
@@ -82,7 +104,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
   it("policy written via PUT survives a store re-open and drives the reaper", () => {
     // ── Session 1: write via the PUT route, then close the store. ──
     const layer1 = openLayer(dbPath);
-    const routes1 = createFridayRetentionSettingsRoutes({ store: makeStore(layer1), resolveCanonicalOwnerId: () => OWNER });
+    const routes1 = makeRoutes(layer1);
     const put1 = routes1.find((r) => r.operationId === "uix.retention.policy.update")!;
     const get1 = routes1.find((r) => r.operationId === "uix.retention.policy.get")!;
 
@@ -109,7 +131,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
       // ── Session 2: re-open a FRESH store on the SAME on-disk db. ──
       const layer2 = openLayer(dbPath);
       try {
-        const routes2 = createFridayRetentionSettingsRoutes({ store: makeStore(layer2), resolveCanonicalOwnerId: () => OWNER });
+        const routes2 = makeRoutes(layer2);
         const get2 = routes2.find((r) => r.operationId === "uix.retention.policy.get")!;
 
         const after = (await get2.handler(makeCtx())) as { policy: Record<string, unknown> };
@@ -167,7 +189,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
 
     // ── Session 1: write the boundary window via the PUT route, then close. ──
     const layer1 = openLayer(dbPath);
-    const routes1 = createFridayRetentionSettingsRoutes({ store: makeStore(layer1), resolveCanonicalOwnerId: () => OWNER });
+    const routes1 = makeRoutes(layer1);
     const put1 = routes1.find((r) => r.operationId === "uix.retention.policy.update")!;
     const putResult = (await put1.handler(
       makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days: MAX } } } }),
@@ -178,7 +200,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
     // ── Session 2: re-open a FRESH store on the SAME on-disk db. ──
     const layer2 = openLayer(dbPath);
     try {
-      const routes2 = createFridayRetentionSettingsRoutes({ store: makeStore(layer2), resolveCanonicalOwnerId: () => OWNER });
+      const routes2 = makeRoutes(layer2);
       const get2 = routes2.find((r) => r.operationId === "uix.retention.policy.get")!;
       const after = (await get2.handler(makeCtx())) as { policy: Record<string, unknown> };
 
