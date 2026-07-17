@@ -36,14 +36,17 @@ function insertRow(
   streamId: string,
   seq: number,
   payload: Record<string, unknown>,
+  // Durable rewrite provenance (round-6 P1-3): NULL = legacy/pending; a number = the
+  // pseudonym key version the row is already opaque under (born-current sink write).
+  identifierEpoch: number | null = null,
 ): void {
   db.withWriteTransaction((conn) =>
     conn
       .prepare(
-        `INSERT INTO realtime_events (event_id, stream_id, seq, event, payload_json, emitted_at, correlation_id, state_version_json, created_at, owner_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO realtime_events (event_id, stream_id, seq, event, payload_json, emitted_at, correlation_id, state_version_json, created_at, owner_id, identifier_epoch)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(eventId, streamId, seq, "workflow.run.started", JSON.stringify(payload), NOW, null, null, NOW, OWNER),
+      .run(eventId, streamId, seq, "workflow.run.started", JSON.stringify(payload), NOW, null, null, NOW, OWNER, identifierEpoch),
   );
 }
 
@@ -68,7 +71,9 @@ describe("SEC-EVENT-REDACTION-001 P0-C legacy rewrite + continuity", () => {
       // Legacy raw row (seq 1) as it existed pre-upgrade, plus a NEW opaque row (seq 2)
       // on the SAME logical stream written post-upgrade by the pseudonymizing sink.
       insertRow(db, "evt-legacy", RAW_STREAM, 1, { runId: RAW_RUN_ID });
-      insertRow(db, "evt-new", p.streamId(RAW_STREAM), 2, { runId: p.value(RAW_RUN_ID) });
+      // Born-current sink write: opaque id-part AND stamped with the current pseudonym
+      // key version (durable provenance) — so the rewrite skips it by STATE, not shape.
+      insertRow(db, "evt-new", p.streamId(RAW_STREAM), 2, { runId: p.value(RAW_RUN_ID) }, 1);
 
       const result = rewriteLegacyRealtimeIdentifiers(db, p);
       expect(result.rewritten).toBe(1); // only the legacy row

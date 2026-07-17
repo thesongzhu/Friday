@@ -274,6 +274,12 @@ export async function createFridayApiTestEnv(
 
   const apiRuntime = createFridayApiRuntime({
     db,
+    // This harness provisions a master key but no canonical realtime owner
+    // (learningUserId), so the identifier pseudonymizer is inactive. Opt into the
+    // TEST-ONLY inactive (identity) path so workflow-run realtime publishes do not
+    // fail-closed (SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1); these API e2e
+    // tests assert route behavior, not realtime identifier opacity.
+    allowTestOnlyInactiveRealtimePseudonym: true,
     idGenerator,
     nowIso: () => NOW,
     tokenSecret: TOKEN_SECRET,

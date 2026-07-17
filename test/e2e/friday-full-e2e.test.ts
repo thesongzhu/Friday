@@ -13,10 +13,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as net from "node:net";
+import * as crypto from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
+import { resetMasterKeyCache } from "#providers";
 import { createFridayHttpServer } from "#api";
 import type { FridayHttpServer } from "#api";
 import {
@@ -112,7 +114,19 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
   let sessionKey: string;
   let forkSessionKey: string;
 
+  // SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1: this e2e drives real realtime
+  // publish/subscribe/pull; the sink is FAIL-CLOSED without a durable master key.
+  // Provision one so the default hub realtime plane is ACTIVE (the production path).
+  let savedMasterKey: string | undefined;
+  let savedMasterKeySource: string | undefined;
+
   beforeAll(async () => {
+    savedMasterKey = process.env.FRIDAY_MASTER_KEY;
+    savedMasterKeySource = process.env.FRIDAY_MASTER_KEY_SOURCE;
+    process.env.FRIDAY_MASTER_KEY = crypto.randomBytes(32).toString("hex");
+    delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    resetMasterKeyCache();
+
     // 1. Create temp state dir
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-full-e2e-"));
 
@@ -219,6 +233,11 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
     if (httpServer) await httpServer.close();
     if (hub) await hub.stop();
     if (stateDir) fs.rmSync(stateDir, { recursive: true, force: true });
+    if (savedMasterKey === undefined) delete process.env.FRIDAY_MASTER_KEY;
+    else process.env.FRIDAY_MASTER_KEY = savedMasterKey;
+    if (savedMasterKeySource === undefined) delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    else process.env.FRIDAY_MASTER_KEY_SOURCE = savedMasterKeySource;
+    resetMasterKeyCache();
     clearTimeout(closeTimeout);
   }, 15_000);
 

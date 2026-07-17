@@ -41,12 +41,19 @@
 
 import * as crypto from "node:crypto";
 
+import { FridayDomainError } from "#errors";
+
 /**
  * Current pseudonymization key version. The opaque form is `o<VERSION>_<hex>`; a
  * future dedicated-key rotation increments this and the read path can dual-read
  * across versions. (Key SOURCE lifecycle is tracked separately -- see the caller.)
+ *
+ * Exported as {@link FRIDAY_REALTIME_PSEUDONYM_KEY_VERSION} so the persistence sink
+ * and the durable legacy-rewrite provenance column (realtime_events.identifier_epoch)
+ * stamp the SAME version — a single source of truth for "opaque under key version N".
  */
 const KEY_VERSION = 1;
+export const FRIDAY_REALTIME_PSEUDONYM_KEY_VERSION = KEY_VERSION;
 const OPAQUE_PREFIX = `o${KEY_VERSION}_`;
 const OPAQUE_HASH_LEN = 40; // hex chars (160-bit HMAC-SHA256 prefix)
 /** Fixed domain-separation tag (never collides with real identifier content). */
@@ -112,6 +119,30 @@ export interface CreateFridayRealtimePseudonymizerDeps {
    * streams -- see the caller. Blank/undefined -> inactive.
    */
   key: string | undefined;
+  /**
+   * Behaviour when the pseudonymizer is INACTIVE (owner or key unresolvable):
+   *   - "identity" (DEFAULT): `value`/`streamId` are byte-identical no-ops. This is
+   *     the legacy/test-safe path for direct constructions that never persist raw
+   *     realtime identifiers to a durable sink.
+   *   - "fail-closed": `value`/`streamId` THROW a typed {@link FridayDomainError}
+   *     instead of returning a raw value. The PRODUCTION persistence sink uses this
+   *     so a missing durable key can NEVER cause raw identifiers to be written at
+   *     rest — it fails the publish rather than degrading to identity passthrough.
+   * The factory default stays "identity" for backward compatibility; the runtime
+   * sink opts into "fail-closed" explicitly (unreachable identity from default prod).
+   */
+  onInactive?: "identity" | "fail-closed";
+}
+
+/** Thrown when a fail-closed pseudonymizer is asked to transform a value while inactive. */
+function realtimePseudonymUnavailableError(): FridayDomainError {
+  return new FridayDomainError(
+    "VALIDATION_ERROR",
+    "Realtime identifier pseudonymization is unavailable (no durable master key / owner resolvable). " +
+      "Refusing to persist realtime events with raw identifiers (fail-closed). Provision FRIDAY_MASTER_KEY (hex), " +
+      "FRIDAY_MASTER_KEY_SOURCE=keychain, or an existing ~/.friday/master.key.",
+    { httpStatus: 503 },
+  );
 }
 
 /**
@@ -135,6 +166,7 @@ export function createFridayRealtimePseudonymizer(
   }
 
   const key = typeof deps.key === "string" && deps.key.length > 0 ? deps.key : null;
+  const failClosed = deps.onInactive === "fail-closed";
 
   return {
     get active() {
@@ -142,16 +174,21 @@ export function createFridayRealtimePseudonymizer(
     },
 
     value(rawValue) {
-      if (key === null) return rawValue;
-      const owner = resolveOwner();
-      if (owner === null) return rawValue;
+      const owner = key === null ? null : resolveOwner();
+      if (key === null || owner === null) {
+        // INACTIVE: fail closed (never leak raw to a durable sink) or identity no-op.
+        if (failClosed) throw realtimePseudonymUnavailableError();
+        return rawValue;
+      }
       return macIdentifier(rawValue, owner, key);
     },
 
     streamId(streamId) {
-      if (key === null) return streamId;
-      const owner = resolveOwner();
-      if (owner === null) return streamId;
+      const owner = key === null ? null : resolveOwner();
+      if (key === null || owner === null) {
+        if (failClosed) throw realtimePseudonymUnavailableError();
+        return streamId;
+      }
       const colon = streamId.indexOf(":");
       if (colon < 0) return macIdentifier(streamId, owner, key);
       const prefix = streamId.slice(0, colon + 1);

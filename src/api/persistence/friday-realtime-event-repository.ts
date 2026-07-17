@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { safeJsonParse } from "#utilities";
 import type { FridayRealtimeEventEnvelope, FridayRealtimeEventName } from "../model/friday-api-realtime.types.js";
 import { redactEventPayload } from "../realtime/friday-event-payload-redactor.js";
+import { FRIDAY_REALTIME_PSEUDONYM_KEY_VERSION } from "../realtime/friday-realtime-pseudonym.js";
 
 // ─── Row type ───
 
@@ -15,6 +16,12 @@ export interface FridayRealtimeEventRow {
   correlation_id: string | null;
   state_version_json: string | null;
   created_at: string;
+  /**
+   * Pseudonym key version this row's identifiers are opaque under (round-6 P1-3/P1-4
+   * durable rewrite provenance). Sink-written rows are born at the current version;
+   * NULL marks a legacy row pending the one-time boot rewrite.
+   */
+  identifier_epoch: number | null;
 }
 
 // ─── Repository ───
@@ -88,9 +95,13 @@ export function createFridayRealtimeEventRepository(
   return {
     append(db, envelope) {
       const redactedPayload = redactEventPayload(envelope.payload);
+      // Born-current: the sink writes opaque identifiers, so stamp the current
+      // pseudonym key version. This is a DURABLE fact that the boot legacy-rewrite
+      // reads (round-6 P1-3/P1-4) to skip rows that never need conversion — never a
+      // shape check over the value.
       db.prepare(
-        `INSERT INTO realtime_events (event_id, stream_id, seq, event, payload_json, emitted_at, correlation_id, state_version_json, created_at, owner_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO realtime_events (event_id, stream_id, seq, event, payload_json, emitted_at, correlation_id, state_version_json, created_at, owner_id, identifier_epoch)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         envelope.eventId,
         envelope.streamId,
@@ -102,6 +113,7 @@ export function createFridayRealtimeEventRepository(
         envelope.stateVersion ? JSON.stringify(envelope.stateVersion) : null,
         envelope.emittedAt,
         resolveOwnerIdOrNull(),
+        FRIDAY_REALTIME_PSEUDONYM_KEY_VERSION,
       );
     },
 

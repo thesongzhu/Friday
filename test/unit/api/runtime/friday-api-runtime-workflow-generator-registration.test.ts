@@ -52,6 +52,10 @@ function makeBaseDeps(): CreateFridayApiRuntimeDeps {
     idGenerator: () => "id-1",
     nowIso: () => NOW,
     providerService: makeMockProviderService(),
+    // TEST-ONLY: no durable master key in this unit context → allow the inactive
+    // (identity) realtime pseudonymizer so async workflow-run realtime publishes do
+    // not fail-closed (SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1).
+    allowTestOnlyInactiveRealtimePseudonym: true,
     tokenSecret: "test-secret",
     computeChecksum: (content: string) => `checksum-${content.length}`,
     resolveSkill: () => null,

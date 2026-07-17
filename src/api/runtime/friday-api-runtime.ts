@@ -10,6 +10,7 @@ import {
   createFridaySecretRepository,
   decryptSecretWithMigration,
   fridaySecretAadContext,
+  getProvisionedMasterKey,
   getStrictMasterKey,
 } from "#providers";
 import type { FridayEncryptedEnvelope, FridayProviderTenantContext } from "#providers";
@@ -2114,26 +2115,38 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // SEC-EVENT-REDACTION-001 / FINDING 1 + P1-D: deterministic owner-scoped identifier
   // pseudonymizer = HMAC-SHA256(pseudonymKey, DOMAIN_TAG + lenPrefix(ownerId) + value),
   // where pseudonymKey is HKDF-SHA256-DERIVED from the DURABLE non-rotating encryption
-  // root (FRIDAY_MASTER_KEY via getStrictMasterKey) — a dedicated, domain-separated,
-  // VERSIONED subkey, NOT the rotatable auth `tokenSecret` — so authorized token
-  // rotation cannot orphan durable realtime streams. The ownerId is length-prefixed
-  // into the keyed MAC (unambiguous owner||value boundary). ONE instance is shared by
-  // the write path (the event-bus sink persists opaque stream_id + payload id fields)
-  // and the read path (the subscription-service resolves the client's raw streamId the
-  // same way), so they stay symmetric. When the master key is unavailable (tests) the
-  // derived key is undefined and the pseudonymizer is an inactive no-op
-  // (legacy/test-safe); production provisions the master key, so it is active. The
-  // runtime legacy-rewrite (P0-C) derives the SAME key, so legacy + runtime + read all
-  // share one keyspace.
+  // root — a dedicated, domain-separated, VERSIONED subkey, NOT the rotatable auth
+  // `tokenSecret` — so authorized token rotation cannot orphan durable realtime
+  // streams. The ownerId is length-prefixed into the keyed MAC (unambiguous
+  // owner||value boundary). ONE instance is shared by the write path (the event-bus
+  // sink persists opaque stream_id + payload id fields) and the read path (the
+  // subscription-service resolves the client's raw streamId the same way), so they
+  // stay symmetric. The runtime legacy-rewrite derives the SAME key, so legacy +
+  // runtime + read all share one keyspace.
+  //
+  // SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1 (FAIL CLOSED): the durable key is
+  // resolved through the supported PROVISIONED sources — FRIDAY_MASTER_KEY (env),
+  // FRIDAY_MASTER_KEY_SOURCE=keychain, or an existing ~/.friday/master.key —
+  // (`getProvisionedMasterKey`, the no-generate durable resolver the multi-tenant
+  // secret manager also uses). We do NOT swallow a resolution failure into an inactive
+  // identity default: when no durable key exists the pseudonymizer is constructed
+  // FAIL-CLOSED, so the realtime sink THROWS rather than persisting raw identifiers at
+  // rest. The only path that tolerates an inactive (identity) pseudonymizer is an
+  // EXPLICIT test-only opt-in (`allowTestOnlyInactiveRealtimePseudonym`), never set on
+  // the production createFridayHub path — so identity passthrough is unreachable by
+  // default and production either persists opaque or refuses to persist.
   let realtimePseudonymKey: string | undefined;
   try {
-    realtimePseudonymKey = deriveFridayRealtimePseudonymKey(getStrictMasterKey());
+    realtimePseudonymKey = deriveFridayRealtimePseudonymKey(getProvisionedMasterKey());
   } catch {
+    // No durable key resolvable. Leave the key undefined; the pseudonymizer below is
+    // fail-closed (default), so the sink refuses raw persistence rather than degrading.
     realtimePseudonymKey = undefined;
   }
   const realtimePseudonymizer = createFridayRealtimePseudonymizer({
     resolveOwnerId: () => deps.learningUserId,
     key: realtimePseudonymKey,
+    onInactive: deps.allowTestOnlyInactiveRealtimePseudonym ? "identity" : "fail-closed",
   });
   const eventRepo = createFridayRealtimeEventRepository({
     resolveOwnerId: resolveRealtimeOwnerId,

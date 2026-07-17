@@ -634,6 +634,18 @@ export interface CreateFridayApiRuntimeDeps {
   learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
   /** Optional: default user id used for runtime-originated automation learning events. */
   learningUserId?: string;
+  /**
+   * TEST-ONLY escape hatch (SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1). When
+   * `true`, a realtime identifier pseudonymizer that cannot resolve a durable master
+   * key (or owner) runs as an INACTIVE identity no-op instead of FAILING CLOSED — so
+   * unit/integration constructions that never provision a master key and do not care
+   * about identifier opacity keep working. It is NEVER set on the production
+   * `createFridayHub` path: default (undefined) = fail-closed, i.e. the realtime sink
+   * REFUSES to persist raw identifiers when no durable key exists (never identity
+   * passthrough, never raw at rest). Identity behaviour is therefore unreachable from
+   * default `createFridayHub`.
+   */
+  allowTestOnlyInactiveRealtimePseudonym?: boolean;
   /** Optional: sub-agent registry for sub-agent tree endpoints. */
   subagentRegistry?: FridaySubagentRegistry;
   /** Optional: deterministic pipeline module services for global pipeline APIs. */

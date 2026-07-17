@@ -13,6 +13,7 @@ import {
 } from "#hub";
 import type { FridayHub } from "#hub";
 import { resolveStateDir } from "#state";
+import { resetMasterKeyCache } from "#providers";
 import { createFridayReflexCandidateRepository } from "../../../src/reflex/index.js";
 import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
 import {
@@ -204,6 +205,10 @@ describe("createFridayHub", () => {
   let managedSkillsDir: string | null = null;
   let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
   const originalSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+  // SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1: provision a durable master key so
+  // the default createFridayHub realtime sink is ACTIVE (fail-closed without a key).
+  let savedMasterKey: string | undefined;
+  let savedMasterKeySource: string | undefined;
 
   async function createIsolatedHub(
     overrides: Partial<Parameters<typeof createFridayHub>[0]> = {},
@@ -232,9 +237,19 @@ describe("createFridayHub", () => {
   beforeEach(() => {
     process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
     autoDetectEnvSnapshot = clearAutoDetectProviderEnv();
+    savedMasterKey = process.env.FRIDAY_MASTER_KEY;
+    savedMasterKeySource = process.env.FRIDAY_MASTER_KEY_SOURCE;
+    process.env.FRIDAY_MASTER_KEY = crypto.randomBytes(32).toString("hex");
+    delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    resetMasterKeyCache();
   });
 
   afterEach(async () => {
+    if (savedMasterKey === undefined) delete process.env.FRIDAY_MASTER_KEY;
+    else process.env.FRIDAY_MASTER_KEY = savedMasterKey;
+    if (savedMasterKeySource === undefined) delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    else process.env.FRIDAY_MASTER_KEY_SOURCE = savedMasterKeySource;
+    resetMasterKeyCache();
     if (originalSuppression === undefined) {
       delete process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
     } else {

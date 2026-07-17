@@ -2,7 +2,9 @@ import { computeFridayMigrationChecksum } from "./friday-migration.types.js";
 import type { FridaySqliteMigration } from "./friday-migration.types.js";
 
 /**
- * V106: owner-bind the realtime event log (SEC-EVENT-REDACTION-001 / P0#2).
+ * V106: owner-bind the realtime event log (SEC-EVENT-REDACTION-001 / P0#2) AND add
+ * a DURABLE per-row identifier-pseudonym provenance column
+ * (SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P1-3 + P1-4).
  *
  * `realtime_events` had NO owner/principal column, and the realtime read surfaces
  * (validateSubscriptions / isStreamAuthorized / pull / replay / WS delivery)
@@ -39,14 +41,35 @@ import type { FridaySqliteMigration } from "./friday-migration.types.js";
  * a frozen historical artifact, so the value is inlined rather than interpolated. On
  * a fresh install the table is empty, so the UPDATE affects 0 rows. Any row that
  * genuinely can't be attributed stays NULL and remains fail-closed (never returned).
+ *
+ * IDENTIFIER-PSEUDONYM PROVENANCE (round-6 P1-3 + P1-4): the one-time legacy rewrite
+ * previously trusted the opaque marker SHAPE (`o<ver>_<hex>`) to decide "already
+ * rewritten" — but shape is coincidental (a legacy RAW `run:o1_<40hex>` id would be
+ * wrongly skipped) and cannot establish provenance. `identifier_epoch` records the
+ * pseudonym KEY VERSION under which a row's identifiers are opaque:
+ *   - NULL   → legacy / pre-rewrite → its identifiers may be RAW → PENDING conversion.
+ *   - N (>0) → this row's identifiers are opaque under key version N (born-current via
+ *              the pseudonymizing sink, or already rewritten). A DURABLE STATE fact
+ *              set in the SAME transaction as the rewrite, NOT a regex over the value.
+ * The runtime sink stamps the current version on every new row; the boot rewrite
+ * converts rows WHERE `identifier_epoch IS NULL` in bounded batches and stamps the
+ * version as it goes, so the conversion is idempotent, crash-resumable and — once
+ * complete — costs a partial-index probe (below) rather than a full-table scan.
+ * Existing rows default to NULL (pending), which is correct: pre-upgrade rows carry
+ * raw identifiers and must be converted exactly once.
  */
 export const V106_REALTIME_EVENTS_OWNER_SQL = `
 ALTER TABLE realtime_events ADD COLUMN owner_id TEXT;
 
 UPDATE realtime_events SET owner_id = 'admin-001' WHERE owner_id IS NULL;
 
+ALTER TABLE realtime_events ADD COLUMN identifier_epoch INTEGER;
+
 CREATE INDEX IF NOT EXISTS idx_realtime_events_owner_stream_seq
   ON realtime_events(owner_id, stream_id, seq);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_events_pending_rewrite
+  ON realtime_events(identifier_epoch) WHERE identifier_epoch IS NULL;
 `;
 
 const V106_CHECKSUM = computeFridayMigrationChecksum(V106_REALTIME_EVENTS_OWNER_SQL);

@@ -15,6 +15,7 @@ import {
   sanitizeFridayChannelVisibleReply,
 } from "#hub";
 import type { FridayHub } from "#hub";
+import { resetMasterKeyCache } from "#providers";
 import { createFridaySessionService } from "#sessions";
 import type { FridaySessionService } from "#sessions";
 import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
@@ -162,6 +163,27 @@ async function withTestOnlySessionSeedService<T>(
     seedDb.close();
   }
 }
+
+// SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1: these tests drive real
+// createFridayHub workflow/channel runs that publish realtime events; the sink is
+// FAIL-CLOSED without a durable master key. Provision one file-wide so the default
+// hub realtime plane is ACTIVE (opaque + redacted, the production path).
+let ntSavedMasterKey: string | undefined;
+let ntSavedMasterKeySource: string | undefined;
+beforeEach(() => {
+  ntSavedMasterKey = process.env.FRIDAY_MASTER_KEY;
+  ntSavedMasterKeySource = process.env.FRIDAY_MASTER_KEY_SOURCE;
+  process.env.FRIDAY_MASTER_KEY = crypto.randomBytes(32).toString("hex");
+  delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+  resetMasterKeyCache();
+});
+afterEach(() => {
+  if (ntSavedMasterKey === undefined) delete process.env.FRIDAY_MASTER_KEY;
+  else process.env.FRIDAY_MASTER_KEY = ntSavedMasterKey;
+  if (ntSavedMasterKeySource === undefined) delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+  else process.env.FRIDAY_MASTER_KEY_SOURCE = ntSavedMasterKeySource;
+  resetMasterKeyCache();
+});
 
 describe("channel natural-trigger parent runtime resolver", () => {
   let stateDir: string | null = null;

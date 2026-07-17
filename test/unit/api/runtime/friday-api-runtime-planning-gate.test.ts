@@ -149,6 +149,10 @@ describe("FridayApiRuntime — planning gate session loop", () => {
 
     const runtime = createFridayApiRuntime({
       db,
+      // TEST-ONLY: no durable master key here → allow the inactive (identity) realtime
+      // pseudonymizer so runtime-published realtime events do not fail-closed
+      // (SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1).
+      allowTestOnlyInactiveRealtimePseudonym: true,
       idGenerator,
       nowIso: () => NOW,
       providerService: makeProviderService(),
@@ -306,6 +310,10 @@ describe("FridayApiRuntime — planning gate session loop", () => {
 
     const runtime = createFridayApiRuntime({
       db,
+      // TEST-ONLY: no durable master key here → allow the inactive (identity) realtime
+      // pseudonymizer so runtime-published realtime events do not fail-closed
+      // (SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1).
+      allowTestOnlyInactiveRealtimePseudonym: true,
       idGenerator,
       nowIso: () => NOW,
       providerService: makeProviderService(),
@@ -378,6 +386,10 @@ describe("FridayApiRuntime — planning gate session loop", () => {
 
     const runtime = createFridayApiRuntime({
       db,
+      // TEST-ONLY: no durable master key here → allow the inactive (identity) realtime
+      // pseudonymizer so runtime-published realtime events do not fail-closed
+      // (SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1).
+      allowTestOnlyInactiveRealtimePseudonym: true,
       idGenerator,
       nowIso: () => NOW,
       providerService: makeProviderService(),
@@ -445,6 +457,10 @@ describe("FridayApiRuntime — planning gate session loop", () => {
 
     const runtime = createFridayApiRuntime({
       db,
+      // TEST-ONLY: no durable master key here → allow the inactive (identity) realtime
+      // pseudonymizer so runtime-published realtime events do not fail-closed
+      // (SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1).
+      allowTestOnlyInactiveRealtimePseudonym: true,
       idGenerator,
       nowIso: () => NOW,
       providerService: makeProviderService(),

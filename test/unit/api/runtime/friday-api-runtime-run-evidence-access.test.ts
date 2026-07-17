@@ -57,6 +57,11 @@ function makeDeps(options: { allowTestOnlyWorkflowRunExecution?: boolean } = {
     idGenerator: createTestIdGenerator(),
     nowIso: () => NOW,
     providerService: makeProviderService(),
+    // No durable master key in this unit context: opt into the TEST-ONLY inactive
+    // (identity) realtime pseudonymizer so workflow-run realtime publishes do not
+    // fail-closed (SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1). This test asserts
+    // content-redaction of run projections, not identifier opacity.
+    allowTestOnlyInactiveRealtimePseudonym: true,
     tokenSecret: "unit-test-token-key", // pragma: allowlist secret
     computeChecksum: (content: string) => createHash("sha256").update(content).digest("hex"),
     resolveSkill: () => ({ id: "test-skill" }),
