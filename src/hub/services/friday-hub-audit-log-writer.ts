@@ -379,8 +379,21 @@ const AUDIT_FORENSIC_IDENTIFIER_SUFFIXES = [
   "sequencenumber", "idempotencykey", "messageid",
 ];
 
+/**
+ * True when `key` names a machine forensic identifier (allowlist or compound suffix). The KEY is
+ * FIRST canonicalized through the SAME shared Unicode detection primitive used for VALUES and for the
+ * sensitive-secret classifier (`buildUnicodeDetectionCopy`: NFKD → strip `\p{M}` → strip Cf /
+ * Default_Ignorable → fold `\p{Nd}`) BEFORE the existing ASCII normalization (strip every non-
+ * alphanumeric, lowercase). This keeps the field-name classification Unicode-consistent with
+ * `isSensitiveSecretFieldName` (PRIV-UNICODE-REDACTION-001 round-9) so a forensic key hidden behind a
+ * zero-width / combining / full-width / math-alnum / precomposed-accent obfuscation cannot slip the
+ * classification either way. NO-DEGRADE: a pure-ASCII key folds BYTE-IDENTICAL (fast path), so every
+ * existing ASCII decision is unchanged, and the canonical form only feeds the SAME exact/suffix match
+ * — matching is never broadened.
+ */
 function isForensicIdentifierKey(key: string): boolean {
-  const normalized = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  const canonical = buildUnicodeDetectionCopy(key).normalized;
+  const normalized = canonical.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
   if (normalized.length === 0) return false;
   if (AUDIT_FORENSIC_IDENTIFIER_KEYS.has(normalized)) return true;
   return AUDIT_FORENSIC_IDENTIFIER_SUFFIXES.some((suffix) => normalized.endsWith(suffix));

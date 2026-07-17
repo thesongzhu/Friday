@@ -32,6 +32,44 @@ describe("friday-secret-shape-redactor", () => {
         expect(isSensitiveSecretFieldName(key)).toBe(false);
       }
     });
+
+    // PRIV-UNICODE-REDACTION-001 round-9: a sensitive credential KEY hidden behind a Unicode
+    // obfuscation (zero-width / combining mark / full-width / mathematical-alphanumeric / precomposed
+    // accent) must still classify as sensitive, because a shapeless credential VALUE is catchable
+    // ONLY by its KEY. Before round-9 the classifier normalized ASCII hyphen/underscore/whitespace +
+    // lowercase ONLY, so an obfuscated KEY escaped classification. RED on 47c70192; GREEN once the
+    // classifier canonicalizes the KEY through the shared `buildUnicodeDetectionCopy` primitive (the
+    // SAME de-obfuscation used for values) BEFORE the existing ASCII normalization.
+    it("matches sensitive field names hidden behind Unicode obfuscation (zero-width / combining / full-width / math-alnum / precomposed)", () => {
+      for (const key of [
+        "api​Key", // ZWSP → apikey
+        "tóken", // combining acute over `o` → token
+        "ｓｅｃｒｅｔ", // full-width `ｓｅｃｒｅｔ` → secret
+        "\u{1D429}\u{1D41A}\u{1D42C}\u{1D42C}\u{1D430}\u{1D428}\u{1D42B}\u{1D41D}", // math-bold `𝐩𝐚𝐬𝐬𝐰𝐨𝐫𝐝` → password
+        "pásswörd", // precomposed á / ö → password
+        "acce‍ssToken", // ZWJ inside accessToken → accesstoken
+        "clientｓecret", // mixed full-width `ｓ` in clientSecret → clientsecret
+      ]) {
+        expect(isSensitiveSecretFieldName(key)).toBe(true);
+      }
+    });
+
+    // NO-DEGRADE: a benign multilingual key, or a near-miss that must NOT be mistaken for
+    // token/secret/key/password, stays NON-sensitive — the canonicalization only feeds the SAME
+    // exact-match set, it never broadens matching.
+    it("does NOT over-classify benign multilingual / near-miss keys after Unicode canonicalization", () => {
+      for (const key of [
+        "用户名", // CJK `用户名` (username)
+        "اسم", // Arabic `اسم` (name)
+        "café", // accented `café` → cafe (not in set)
+        "🔑icon", // 🔑icon — folds to `🔑icon`, not a credential token
+        "ｔｏｋｅｎｓ", // full-width `ｔｏｋｅｎｓ` → tokens (plural ≠ token)
+        "ｋｅｙ", // full-width `ｋｅｙ` → key (bare `key` intentionally NOT in the set)
+        "ｐａｓｓｗｏｒｄＨｉｎｔ", // full-width `ｐａｓｓｗｏｒｄＨｉｎｔ` → passwordhint (compound ≠ password)
+      ]) {
+        expect(isSensitiveSecretFieldName(key)).toBe(false);
+      }
+    });
   });
 
   describe("redactSecretShapesInString", () => {

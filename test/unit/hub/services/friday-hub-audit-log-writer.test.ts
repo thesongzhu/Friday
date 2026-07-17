@@ -1649,4 +1649,97 @@ describe("FridayHubAuditLogWriter — PRIV-UNICODE-REDACTION-001 details Unicode
       expect(details.requestId).toBe("run-abc-123");
     }
   });
+
+  // ── Round-9 (Unicode-obfuscated sensitive KEY names) ──
+  //
+  // Round-8b closed Unicode obfuscation on VALUES. But the FIELD-NAME classifier
+  // (`isSensitiveSecretFieldName`) still normalized ASCII hyphen/underscore/whitespace + lowercase
+  // ONLY, so a sensitive KEY hidden behind a zero-width / combining / full-width / math-alnum /
+  // precomposed-accent obfuscation ESCAPED classification. A shapeless credential VALUE (no secret
+  // SHAPE — no `sk-`/`ghp_`/JWT/PEM/Bearer/`key=value`) is catchable ONLY by its KEY, so it persisted
+  // VERBATIM in BOTH at-rest sinks. An independent real-`appendFridayAuditLog` probe confirmed
+  // `api<U+200B>Key`, `to<U+0301>ken`, full-width `ｓｅｃｒｅｔ` credential values survived. RED on
+  // 47c70192; GREEN once the key classifier canonicalizes the KEY through the SHARED
+  // `buildUnicodeDetectionCopy` primitive (NFKD → strip \p{M} → strip Cf/Default_Ignorable → fold Nd)
+  // BEFORE the existing ASCII normalization. The STORED key bytes stay ORIGINAL — only classification
+  // uses the normalized form.
+
+  // A shapeless opaque credential: no secret SHAPE, so it is catchable ONLY by its KEY.
+  const SHAPELESS_CRED = "Xk9mQ2vLpR7tZwA"; // pragma: allowlist secret
+  // Obfuscated sensitive KEY names (ASCII-fold canary in comment).
+  const ZW_API_KEY = "api​Key"; // ZWSP → apikey (obfuscated field NAME, not a secret) // pragma: allowlist secret
+  const COMBINING_TOKEN = "tóken"; // combining acute over `o` → token
+  const FULLWIDTH_SECRET = "ｓｅｃｒｅｔ"; // full-width → secret
+  const MATH_PASSWORD =
+    "\u{1D429}\u{1D41A}\u{1D42C}\u{1D42C}\u{1D430}\u{1D428}\u{1D42B}\u{1D41D}"; // math-bold 𝐩𝐚𝐬𝐬𝐰𝐨𝐫𝐝 → password
+  const PRECOMPOSED_PASSWORD = "pásswörd"; // precomposed á / ö → password (obfuscated field NAME, not a secret) // pragma: allowlist secret
+
+  it("RED→GREEN round-9: a shapeless credential under a Unicode-obfuscated sensitive KEY is nuked to the secret marker at top level, nested, AND inside arrays — in BOTH sinks (stored key bytes ORIGINAL)", async () => {
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-obfuscated-keys", {
+        [ZW_API_KEY]: SHAPELESS_CRED, // top level, ZWSP-obfuscated `apiKey`
+        nested: { [COMBINING_TOKEN]: SHAPELESS_CRED }, // one level down, combining-obfuscated `token`
+        list: [
+          { [FULLWIDTH_SECRET]: SHAPELESS_CRED }, // array element object, full-width `secret`
+          { [MATH_PASSWORD]: SHAPELESS_CRED }, // array element object, math-bold `password`
+        ],
+        deeper: { level2: { [PRECOMPOSED_PASSWORD]: SHAPELESS_CRED } }, // two levels down, precomposed `password`
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      // The shapeless credential VALUE never survives in either sink at any depth.
+      expect(sink).not.toContain(SHAPELESS_CRED);
+      // The ORIGINAL obfuscated KEY BYTES are preserved (only the VALUE is redacted, not the key).
+      expect(sink).toContain(ZW_API_KEY);
+      expect(sink).toContain(FULLWIDTH_SECRET);
+      expect(sink).toContain(PRECOMPOSED_PASSWORD);
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details[ZW_API_KEY]).toBe("[REDACTED_SECRET]");
+      expect((details.nested as Record<string, unknown>)[COMBINING_TOKEN]).toBe("[REDACTED_SECRET]");
+      const list = details.list as Array<Record<string, unknown>>;
+      expect(list[0][FULLWIDTH_SECRET]).toBe("[REDACTED_SECRET]");
+      expect(list[1][MATH_PASSWORD]).toBe("[REDACTED_SECRET]");
+      expect(
+        ((details.deeper as Record<string, unknown>).level2 as Record<string, unknown>)[
+          PRECOMPOSED_PASSWORD
+        ],
+      ).toBe("[REDACTED_SECRET]");
+      // The obfuscated key itself is preserved as an OWN key (byte-identical), never renamed.
+      expect(Object.prototype.hasOwnProperty.call(details, ZW_API_KEY)).toBe(true);
+    }
+  });
+
+  it("NO-DEGRADE round-9: benign multilingual / near-miss KEY names (CJK / Arabic / accented / emoji-adjacent / full-width plural / compound) keep keys AND values BYTE-IDENTICAL in BOTH sinks", async () => {
+    const benign = {
+      用户名: "alice", // CJK `用户名` (username)
+      اسم: "bob", // Arabic `اسم` (name)
+      café: "latte", // accented `café` → cafe, not a credential
+      "🔑icon": "star", // emoji-adjacent — folds to `🔑icon`, not a credential token
+      ｔｏｋｅｎｓ: "three", // full-width `ｔｏｋｅｎｓ` → tokens (plural ≠ token)
+      ｋｅｙ: "opaqueValue123", // full-width `ｋｅｙ` → key (bare `key` intentionally NOT sensitive)
+      ｐａｓｓｗｏｒｄＨｉｎｔ: "your first pet", // full-width `passwordHint` → passwordhint (compound ≠ password)
+    };
+    const { sqliteDetails, jsonlDetails, sqliteDetailsJson, jsonlLine } = await writeAndReadBack(
+      unicodeEntry("unicode-benign-keys", benign),
+    );
+
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      for (const [k, v] of Object.entries(benign)) {
+        // Key survives as an own key (not renamed / normalized) and its value is byte-identical.
+        expect(Object.prototype.hasOwnProperty.call(details, k)).toBe(true);
+        expect(details[k]).toBe(v);
+      }
+    }
+    // Raw sink bytes carry the ORIGINAL keys AND values, and never the secret marker.
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      for (const [k, v] of Object.entries(benign)) {
+        expect(sink).toContain(k);
+        expect(sink).toContain(v);
+      }
+      expect(sink).not.toContain("[REDACTED_SECRET]");
+    }
+  });
 });

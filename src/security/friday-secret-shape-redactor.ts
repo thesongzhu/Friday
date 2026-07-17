@@ -24,6 +24,8 @@
  * The marker is a parameter (default `[REDACTED_SECRET]`) so consumers keep their own convention.
  */
 
+import { buildUnicodeDetectionCopy } from "./friday-unicode-pii-normalizer.js";
+
 export const FRIDAY_DEFAULT_SECRET_MARKER = "[REDACTED_SECRET]";
 
 /**
@@ -44,10 +46,23 @@ const SENSITIVE_SECRET_FIELD_NAMES = new Set<string>([
 
 /**
  * True when `key` names a credential whose whole value should be replaced (shape-independent).
- * Normalization mirrors the realtime payload redactor (`toLowerCase` + strip `-` / `_` / space).
+ *
+ * A shapeless credential VALUE is catchable ONLY by its KEY, so an obfuscated KEY must not escape
+ * classification (PRIV-UNICODE-REDACTION-001 round-9). The key is FIRST canonicalized through the
+ * SAME shared Unicode detection primitive used for VALUES — `buildUnicodeDetectionCopy` (NFKD
+ * compatibility fold → strip `\p{M}` combining marks → strip Cf / Default_Ignorable → fold `\p{Nd}`
+ * digits to ASCII) — so a KEY hidden behind a zero-width splice (`api<U+200B>Key`), a combining mark
+ * (`to<U+0301>ken`), a full-width form (`ｓｅｃｒｅｔ`), a mathematical-alphanumeric (`𝐩𝐚𝐬𝐬𝐰𝐨𝐫𝐝`), or a
+ * PRECOMPOSED accent (`pásswörd`) de-obfuscates to its canonical spelling. THEN the existing ASCII
+ * normalization (strip `-` / `_` / whitespace, lowercase) runs on the canonical form. NO-DEGRADE:
+ * for a pure-ASCII key `buildUnicodeDetectionCopy` returns it BYTE-IDENTICAL (fast path), so every
+ * existing ASCII decision is unchanged; the canonical form only feeds the SAME exact-match set, so a
+ * benign multilingual key (CJK / Arabic / accented) or a near-miss (`tokens` / `key` / `passwordHint`)
+ * that does not fold to a listed token stays NON-sensitive — matching is never broadened.
  */
 export function isSensitiveSecretFieldName(key: string): boolean {
-  const normalized = key.replace(/[-_\s]/gu, "").toLowerCase();
+  const canonical = buildUnicodeDetectionCopy(key).normalized;
+  const normalized = canonical.replace(/[-_\s]/gu, "").toLowerCase();
   if (normalized.length === 0) return false;
   return SENSITIVE_SECRET_FIELD_NAMES.has(normalized);
 }
