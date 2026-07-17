@@ -922,6 +922,92 @@ export function writeBundle(outPath, built) {
   return { outPath: reportAbs, sidecarPath: sidecarAbs, rawCount: built.rawFiles.length };
 }
 
+// FIX 7 (P1 non-atomic publication): TRANSACTIONAL, incomplete-safe bundle publication mirrored
+// from the Advisor-APPROVED `publishBundleTransactionally` in friday-stress-authority-adapter.mjs
+// (#45, round-8). The prior path let writeBundle MUTATE raw evidence before proving the
+// report/sidecar destinations were publishable — an existing dir/sidecar left 101 raw files (+ a
+// report) as a publishable-looking PARTIAL set. Now the WHOLE bundle is staged in a fresh,
+// run-owned `.staging-<random>` sibling of the final out dir (same filesystem => the publish is a
+// single atomic `renameSync`), the destination is preflighted (fail-closed on any existing
+// artifact / symlink / special file, WITHOUT following symlinks — FIX 3), and ONLY a fully-staged
+// bundle is published atomically. On ANY failure (including an in-process-injected fault before,
+// during, or after the publish) ONLY run-owned staged/created files are removed and NO publishable
+// report, sidecar, raw dir, or partial evidence is left at the destination.
+//
+// `faultHook` is a TEST-ONLY in-process dependency-injection seam: main() NEVER passes it and
+// there is NO env/argv route that can set it, so the shipped CLI exposes ZERO filesystem-write
+// capability through it (an env-driven write hook was an Advisor HIGH on #45; this stays in-process).
+export function publishBundleTransactionally(outPath, built, { faultHook } = {}) {
+  const invoke = (phase, ctx) => {
+    if (typeof faultHook === "function") faultHook({ phase, ...ctx });
+  };
+  const resolvedOut = path.resolve(outPath);
+  const outDir = path.dirname(resolvedOut);
+  const reportName = path.basename(resolvedOut);
+  const sidecarName = `${reportName.replace(/\.json$/, "")}.SEAL_STATUS.json`;
+
+  // Anchor on realpath(parent-of-outDir) so ancestor symlinks (e.g. macOS /var) collapse ONCE,
+  // consistently, while a symlink AT outDir (or at any artifact) is refused below (no follow).
+  const parentDir = path.dirname(outDir);
+  fs.mkdirSync(parentDir, { recursive: true });
+  const realParent = fs.realpathSync(parentDir);
+  const target = path.join(realParent, path.basename(outDir)); // canonical final out dir
+
+  const lstatOrNull = (p) => {
+    try {
+      return fs.lstatSync(p);
+    } catch (error) {
+      if (error && error.code === "ENOENT") return null;
+      throw error;
+    }
+  };
+
+  // DESTINATION PREFLIGHT — before ANY staging/mutation. A symlink/special file at the out dir or
+  // at any of our artifacts is refused (SYMLINK_REJECTED, no follow); an already-present artifact
+  // or any other pre-existing content fails closed (OUT_DIR_EXISTS) so a partial/overwrite is impossible.
+  const dst = lstatOrNull(target);
+  if (dst) {
+    if (dst.isSymbolicLink()) throw new Red("SYMLINK_REJECTED", { path: target, reason: "out_dir_symlink" });
+    if (!dst.isDirectory()) throw new Red("OUT_DIR_NOT_A_DIRECTORY", { path: target });
+    for (const name of [reportName, sidecarName, "raw"]) {
+      const artifact = lstatOrNull(path.join(target, name));
+      if (artifact && artifact.isSymbolicLink()) throw new Red("SYMLINK_REJECTED", { path: path.join(target, name) });
+      if (artifact) throw new Red("OUT_DIR_EXISTS", { path: path.join(target, name), reason: "artifact_collision" });
+    }
+    const entries = fs.readdirSync(target);
+    if (entries.length > 0) throw new Red("OUT_DIR_EXISTS", { path: target, entry_sample: entries.slice(0, 10).sort() });
+  }
+
+  const staging = path.join(realParent, `.friday-perf-soak-staging-${crypto.randomBytes(12).toString("hex")}`);
+  let published = false;
+  try {
+    invoke("before_stage", { staging, target });
+    // stage the FULL bundle (report + sidecar + all raw files) into the fresh run-owned dir, via
+    // the FIX-3 hardened no-follow/exclusive writer, which also self-verifies every evidence ref.
+    writeBundle(path.join(staging, reportName), built);
+    invoke("after_stage", { staging, target });
+
+    // ATOMIC PUBLISH: replace an EMPTY pre-existing target (re-checked at the last moment for a
+    // race), else create it. A non-empty / symlink / non-dir target was already refused above.
+    const now = lstatOrNull(target);
+    if (now) {
+      if (now.isSymbolicLink() || !now.isDirectory()) throw new Red("SYMLINK_REJECTED", { path: target });
+      if (fs.readdirSync(target).length > 0) throw new Red("OUT_DIR_EXISTS", { path: target });
+      fs.rmdirSync(target); // empty dir -> remove so the rename atomically creates the target
+    }
+    fs.renameSync(staging, target);
+    published = true;
+    invoke("after_publish", { target }); // a post-commit fault triggers the rollback below.
+    return { outPath: path.join(target, reportName), sidecarPath: path.join(target, sidecarName), rawCount: built.rawFiles.length };
+  } catch (error) {
+    // FAIL-CLOSED cleanup: remove ONLY run-owned files — the staged bundle, and (if a post-commit
+    // fault fired) the just-published run-owned bundle. Leave NO consumable/partial evidence.
+    fs.rmSync(staging, { recursive: true, force: true });
+    if (published) fs.rmSync(target, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 // A malformed/unknown CLI invocation. Distinct from Red so it maps to a fail-fast USAGE
 // exit (2) BEFORE any evidence is produced, not the RED (exit 3) evidence-error path.
 export class UsageError extends Error {
@@ -953,6 +1039,12 @@ export function parseArgs(argv) {
       const value = argv[i + 1];
       if (value === undefined) throw new UsageError(`option ${tok} requires a value`);
       if (optionLike(value)) throw new UsageError(`option ${tok} requires a value but got option-like token '${value}'`);
+      // FINDING 1 (semantic preflight): an empty / whitespace-only value is NOT "unset" — an
+      // explicit --out '' must FAIL, never silently become a successful no-output run.
+      if (value.trim() === "") throw new UsageError(`option ${tok} requires a non-empty, non-whitespace value`);
+      // --tuple's full value domain (64 lowercase hex) is validated HERE, before any computation
+      // or write, so an invalid tuple fails at parse (exit 2) rather than mid-run (exit 3).
+      if (tok === "--tuple" && !/^[0-9a-f]{64}$/.test(value)) throw new UsageError("option --tuple requires a 64-hex-character value");
       args[tok.slice(2)] = value;
       i += 1; // consume the value token
     } else if (tok === "--strict") {
@@ -1000,7 +1092,7 @@ function main() {
     if (verdict.result !== "RED" || verdict.code !== "SOAK_INVALID") return fail("PROVISIONAL_REPORT_NOT_HONESTLY_GATED", { verdict });
 
     let outInfo = null;
-    if (args.out) outInfo = writeBundle(path.resolve(args.out), built);
+    if (args.out) outInfo = publishBundleTransactionally(path.resolve(args.out), built);
 
     console.log(
       JSON.stringify({

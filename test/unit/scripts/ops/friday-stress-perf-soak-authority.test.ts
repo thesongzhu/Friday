@@ -69,6 +69,7 @@ import {
   digestOf,
   parseArgs,
   UsageError,
+  publishBundleTransactionally,
   // eslint-disable-next-line import/extensions
 } from "../../../../scripts/ops/friday-stress-perf-soak-authority.mjs";
 import {
@@ -1095,4 +1096,176 @@ describe("perf-soak-authority (FIX 6) closed, fail-fast CLI grammar (no fail-ope
       expect(() => parseArgs(bad), `expected ${JSON.stringify(bad)} to throw`).toThrow(UsageError);
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// (FIX 7) P1 semantic fail-open (empty --out) + P1 non-atomic publication. Finding 1: an
+// empty/whitespace --out value was accepted and silently became a successful no-output run.
+// Finding 2: writeBundle mutated raw evidence BEFORE proving the report/sidecar destinations
+// were publishable, so an existing dir/sidecar left 101 raw files (+ a report) as a partial,
+// publishable-looking set. Fix: semantic preflight + transactional staging/atomic publish
+// (mirrored from #45's publishBundleTransactionally) — a malformed or unpublishable request
+// leaves ZERO evidence at the destination.
+// ---------------------------------------------------------------------------
+describe("perf-soak-authority (FIX 7) semantic --out preflight + transactional atomic publication", () => {
+  const cli7Dirs: string[] = [];
+  afterAll(() => {
+    for (const d of cli7Dirs) fs.rmSync(d, { recursive: true, force: true });
+  });
+  const freshDir = (prefix = "psa-cli7-"): string => {
+    const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+    cli7Dirs.push(d);
+    return d;
+  };
+  const runInDir = (args: string[]): { status: number | null; stderr: string; entries: string[]; dir: string } => {
+    const dir = freshDir();
+    const r = spawnSync(process.execPath, [GEN, ...args], { encoding: "utf8", cwd: dir, env: { ...process.env }, timeout: 120000 });
+    return { status: r.status, stderr: r.stderr, entries: fs.readdirSync(dir), dir };
+  };
+  const runOut = (out: string, extra: string[] = []): { status: number | null; stderr: string } => {
+    const r = spawnSync(process.execPath, [GEN, "--out", out, ...extra], { encoding: "utf8", timeout: 120000 });
+    return { status: r.status, stderr: r.stderr };
+  };
+  const noBundle = (dir: string, reportName = "FRIDAY_STRESS_RESOURCE_REPORT.json"): void => {
+    expect(fs.existsSync(path.join(dir, reportName)), "report must not exist").toBe(false);
+    expect(fs.existsSync(path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.SEAL_STATUS.json")), "sidecar must not exist").toBe(false);
+    expect(fs.existsSync(path.join(dir, "raw")), "raw dir must not exist").toBe(false);
+    // no run-owned staging leftover anywhere in the dir
+    expect(fs.readdirSync(dir).some((e) => e.startsWith(".friday-perf-soak-staging")), "no staging leftover").toBe(false);
+  };
+
+  // --- FINDING 1: empty / whitespace value domain (spawn; exit 2 USAGE; zero files) ---
+  it("RED-FIRST: empty --out '' exits 2 (USAGE) and writes ZERO files (not a silent no-output success)", () => {
+    const { status, stderr, entries } = runInDir(["--out", ""]);
+    expect(status, stderr).toBe(2);
+    expect(stderr).toMatch(/USAGE_ERROR/);
+    expect(entries).toHaveLength(0);
+  }, 120000);
+
+  it("RED-FIRST: whitespace-only --out '   ' exits 2 (USAGE) and writes ZERO files", () => {
+    const { status, entries } = runInDir(["--out", "   "]);
+    expect(status).toBe(2);
+    expect(entries).toHaveLength(0);
+  }, 120000);
+
+  it("RED-FIRST: empty/whitespace/invalid --tuple fails at parse (exit 2) before any write", () => {
+    expect(runInDir(["--tuple", ""]).status).toBe(2);
+    expect(runInDir(["--tuple", "   "]).status).toBe(2);
+    expect(runInDir(["--tuple", "not-64-hex"]).status).toBe(2);
+    expect(runInDir(["--tuple", "g".repeat(64)]).status).toBe(2); // non-hex chars
+    // and each wrote nothing
+    for (const args of [["--tuple", ""], ["--tuple", "not-64-hex"]]) expect(runInDir(args).entries).toHaveLength(0);
+  }, 120000);
+
+  // --- FINDING 2: non-atomic publication — destination collisions leave ZERO partial evidence ---
+  it("RED-FIRST: a pre-existing SIDECAR at the destination fails closed and leaves ZERO raw files and NO report (Finding 2's exact case)", () => {
+    const dir = freshDir();
+    fs.writeFileSync(path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.SEAL_STATUS.json"), "{}\n"); // planted sidecar
+    const out = path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.json");
+    const { status } = runOut(out);
+    expect(status).not.toBe(0);
+    // the pre-existing sidecar is the ONLY entry — NO raw dir, NO report were written.
+    expect(fs.readdirSync(dir).sort()).toEqual(["FRIDAY_STRESS_RESOURCE_REPORT.SEAL_STATUS.json"]);
+    expect(fs.existsSync(path.join(dir, "raw"))).toBe(false);
+    expect(fs.existsSync(out)).toBe(false);
+  }, 120000);
+
+  it("RED-FIRST: a pre-existing REPORT file at the destination fails closed and leaves NO raw dir / NO sidecar", () => {
+    const dir = freshDir();
+    const out = path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.json");
+    fs.writeFileSync(out, "pre-existing\n");
+    const { status } = runOut(out);
+    expect(status).not.toBe(0);
+    expect(fs.readdirSync(dir).sort()).toEqual(["FRIDAY_STRESS_RESOURCE_REPORT.json"]);
+    expect(fs.readFileSync(out, "utf8")).toBe("pre-existing\n"); // untouched
+    expect(fs.existsSync(path.join(dir, "raw"))).toBe(false);
+  }, 120000);
+
+  it("RED-FIRST: an existing DIRECTORY at the report target fails closed and writes no raw/sidecar", () => {
+    const dir = freshDir();
+    const out = path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.json");
+    fs.mkdirSync(out); // report path is a directory
+    const { status } = runOut(out);
+    expect(status).not.toBe(0);
+    expect(fs.readdirSync(dir).sort()).toEqual(["FRIDAY_STRESS_RESOURCE_REPORT.json"]);
+    expect(fs.readdirSync(out)).toHaveLength(0); // the dir stays empty, no evidence mixed in
+    expect(fs.existsSync(path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.SEAL_STATUS.json"))).toBe(false);
+  }, 120000);
+
+  it("RED-FIRST: a pre-existing raw/ directory (collision) fails closed — evidence is NOT mixed into it", () => {
+    const dir = freshDir();
+    fs.mkdirSync(path.join(dir, "raw"));
+    fs.writeFileSync(path.join(dir, "raw", "pre-existing.json"), "{}\n");
+    const out = path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.json");
+    const { status } = runOut(out);
+    expect(status).not.toBe(0);
+    expect(fs.readdirSync(path.join(dir, "raw")).sort()).toEqual(["pre-existing.json"]); // not mixed
+    expect(fs.existsSync(out)).toBe(false);
+  }, 120000);
+
+  // --- FIX-3 destination symlink still fail-closed with zero leak, through the publish preflight ---
+  it("a raw/ symlink at the destination is still rejected (SYMLINK_REJECTED) with zero leak", () => {
+    const dir = freshDir();
+    const sibling = freshDir();
+    fs.symlinkSync(sibling, path.join(dir, "raw"));
+    const out = path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.json");
+    const { status, stderr } = runOut(out);
+    expect(status).not.toBe(0);
+    expect(stderr).toMatch(/SYMLINK_REJECTED/);
+    expect(fs.readdirSync(sibling)).toHaveLength(0);
+  }, 120000);
+
+  // --- In-process transactional fault injection (DI) — fault before/during/after publish -> zero evidence ---
+  const faultCases: Array<[string, string]> = [
+    ["BEFORE staging", "before_stage"],
+    ["DURING publication (staged, pre-commit)", "after_stage"],
+    ["AFTER the atomic publish (post-commit rollback)", "after_publish"],
+  ];
+  for (const [label, phase] of faultCases) {
+    it(`transactional fault ${label} leaves ZERO publishable evidence and no run-owned leftover`, () => {
+      const parent = freshDir("psa-cli7-fault-");
+      const bundleDir = path.join(parent, "bundle"); // does not exist yet -> created by publish
+      const out = path.join(bundleDir, "FRIDAY_STRESS_RESOURCE_REPORT.json");
+      const built = buildResourceReport({});
+      let threw = false;
+      try {
+        publishBundleTransactionally(out, built, { faultHook: ({ phase: p }: { phase: string }) => { if (p === phase) throw new Error(`injected fault at ${phase}`); } });
+      } catch {
+        threw = true;
+      }
+      expect(threw, `fault at ${phase} must propagate`).toBe(true);
+      // destination bundle must NOT be publishable...
+      expect(fs.existsSync(out)).toBe(false);
+      expect(fs.existsSync(path.join(bundleDir, "FRIDAY_STRESS_RESOURCE_REPORT.SEAL_STATUS.json"))).toBe(false);
+      expect(fs.existsSync(path.join(bundleDir, "raw"))).toBe(false);
+      // ...and no run-owned staging leftover in the parent.
+      expect(fs.readdirSync(parent).some((e) => e.startsWith(".friday-perf-soak-staging"))).toBe(false);
+    });
+  }
+
+  // --- POSITIVE: a clean run into a fresh destination publishes the full bundle atomically ---
+  it("POSITIVE: a clean transactional publish writes the full bundle (report + sidecar + raw) and leaves no staging dir", () => {
+    const parent = freshDir("psa-cli7-ok-");
+    const bundleDir = path.join(parent, "bundle");
+    const out = path.join(bundleDir, "FRIDAY_STRESS_RESOURCE_REPORT.json");
+    const info = publishBundleTransactionally(out, buildResourceReport({}));
+    expect(fs.existsSync(path.join(bundleDir, "FRIDAY_STRESS_RESOURCE_REPORT.json"))).toBe(true);
+    expect(fs.existsSync(path.join(bundleDir, "FRIDAY_STRESS_RESOURCE_REPORT.SEAL_STATUS.json"))).toBe(true);
+    expect(fs.existsSync(path.join(bundleDir, "raw"))).toBe(true);
+    expect(info.rawCount).toBeGreaterThan(0);
+    expect(fs.readdirSync(parent).some((e) => e.startsWith(".friday-perf-soak-staging"))).toBe(false);
+  });
+
+  it("POSITIVE (spawn): a clean --out run into a fresh dir still exits 0 with the full bundle; --strict still exits 4", () => {
+    const dir = freshDir();
+    const out = path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.json");
+    const ok = runOut(out);
+    expect(ok.status, ok.stderr).toBe(0);
+    expect(fs.existsSync(out)).toBe(true);
+    expect(fs.existsSync(path.join(dir, "raw"))).toBe(true);
+    // --strict still fails closed (exit 4), unchanged.
+    const dir2 = freshDir();
+    const out2 = path.join(dir2, "FRIDAY_STRESS_RESOURCE_REPORT.json");
+    expect(runOut(out2, ["--strict"]).status).toBe(4);
+  }, 120000);
 });
