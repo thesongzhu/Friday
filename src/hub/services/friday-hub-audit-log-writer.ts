@@ -34,6 +34,7 @@ import {
 // the ORIGINAL span, and redacts just that span — catching PII / secrets that Unicode obfuscation
 // hides from the ASCII (+ full-width) matchers above, WITHOUT altering benign multilingual text.
 import {
+  buildUnicodeDetectionCopy,
   redactUnicodeObfuscated,
   type UnicodeNormalizedSpan,
 } from "../../security/friday-unicode-pii-normalizer.js";
@@ -403,13 +404,33 @@ const FORENSIC_LEAF_REDACT_PII_TYPES = new Set<string>(["email", "ssn_us", "cred
  * PRESERVED (cut out of the PII pass, then run through the identifier-leaf only). It is NOT benign —
  * and is instead routed to the CONTENT path for redaction — when it carries a secret SHAPE (opaque
  * credential assignment / token / key / JWT / PEM / Bearer) OR direct email / SSN / card PII by
- * value. The PII check reuses the shared guard's own detectors (via `redactDeep`'s emitted tags) so
- * it is byte-consistent with how the same value would be classified as content, and it excludes the
- * phone type by design (see `FORENSIC_LEAF_REDACT_PII_TYPES`).
+ * value. Both checks run over the shared Unicode DETECTION COPY (digits folded to ASCII by value,
+ * zero-width / format code points stripped), so an email / SSN / card obfuscated by a non-ASCII
+ * decimal script or a zero-width splice is de-obfuscated and disqualified rather than laundered onto
+ * a forensic key. The PII check reuses the shared guard's own detectors (via `redactDeep`'s emitted
+ * tags) so it is byte-consistent with how the same value would be classified as content — for a
+ * pure-ASCII value the detection copy is byte-identical, so ASCII decisions are unchanged. It
+ * excludes the phone type by design (see `FORENSIC_LEAF_REDACT_PII_TYPES`).
  */
 function isBenignOpaqueForensicScalar(value: string): boolean {
-  if (redactSecretShapesInString(value) !== value) return false;
-  const piiTags = auditPiiGuard.redactDeep(value).tagsToAdd;
+  // PRIV-UNICODE-REDACTION-001 (round-6): decide preserve-vs-redact over the shared Unicode DETECTION
+  // COPY, NOT the raw value. Both disqualification checks (secret shape + email/SSN/card PII tag) are
+  // ASCII-only, so a forensic-named leaf carrying an email / SSN / card hidden behind a non-ASCII
+  // decimal script (Arabic-Indic `١٢٣-٤٥-٦٧٨٩`) or a zero-width splice (`victim@examp<U+200B>le.com`)
+  // was misclassified BENIGN over the raw value, cut out of the content PII pass, and — because the
+  // identifier-leaf residual deliberately omits PII-by-value — laundered raw onto a forensic key,
+  // violating the `FORENSIC_LEAF_REDACT_PII_TYPES` invariant. Classifying over the de-obfuscated copy
+  // DISQUALIFIES it, so it is routed to the content path and redacted by `redactUnicodeContentLeaf`.
+  //
+  // Correctness: for a pure-ASCII value `buildUnicodeDetectionCopy` returns it UNCHANGED (fast path),
+  // so ASCII preserve/redact decisions are BYTE-IDENTICAL — an obfuscated value is classified exactly
+  // as its de-obfuscated ASCII equivalent would be. `phone_us` stays EXCLUDED from the disqualifying
+  // set, so a benign phone-SHAPED forensic id in a non-ASCII script (`٢٠١٥٥٥٠١٢٣` → `2015550123` →
+  // phone_us) folds to a non-disqualifying tag and is still PRESERVED verbatim (the #1618 field-role
+  // lesson, carried into Unicode — a benign phone-shaped id is never collapsed).
+  const detection = buildUnicodeDetectionCopy(value).normalized;
+  if (redactSecretShapesInString(detection) !== detection) return false;
+  const piiTags = auditPiiGuard.redactDeep(detection).tagsToAdd;
   for (const tag of piiTags) {
     const type = tag.slice(tag.lastIndexOf(".") + 1);
     if (FORENSIC_LEAF_REDACT_PII_TYPES.has(type)) return false;

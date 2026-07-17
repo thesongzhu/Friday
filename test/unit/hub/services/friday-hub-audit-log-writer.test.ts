@@ -1147,4 +1147,106 @@ describe("FridayHubAuditLogWriter — PRIV-UNICODE-REDACTION-001 details Unicode
       expect(sink).toContain(BENIGN_COMBINING);
     }
   });
+
+  // ── Round-6 blocking finding (Option A): the FORENSIC-LEAF preservation gate must decide over the
+  //    de-obfuscated DETECTION COPY, not the raw value ──
+  //
+  // An independent adversarial probe (real SQLite `audit_logs.details_json` + `audit.jsonl`) proved
+  // that a Unicode-obfuscated EMAIL / SSN / CREDIT-CARD placed on a FORENSIC-named key
+  // (`traceId` / `spanId` / `correlationId` / `requestId` / `messageId` / …) persisted VERBATIM in
+  // BOTH at-rest sinks. The identical ASCII values on the SAME forensic keys ARE redacted (advisor-4
+  // leaf test above), so the design intends redaction — only the Unicode form escaped, because
+  // `isBenignOpaqueForensicScalar` ran its email/SSN/card disqualification over the RAW value
+  // (ASCII-only: no digit fold, no zero-width strip) and the identifier-leaf residual deliberately
+  // omits PII-by-value (benign-phone protection). RED on b50a6067; GREEN once the gate de-obfuscates.
+  //
+  // Map to ANY Nd decimal-digit block by numeric value (separators kept verbatim) so the obfuscated
+  // fixtures are unambiguous about their code points.
+  function toNdDigits(ascii: string, zeroCp: number): string {
+    return ascii.replace(/[0-9]/g, (d) => String.fromCodePoint(zeroCp + Number(d)));
+  }
+
+  it("RED→GREEN round-6: an obfuscated email/SSN/card on a FORENSIC-named key is redacted in BOTH sinks (gate over the de-obfuscated copy)", async () => {
+    // The reviewer's exact table.
+    const AR_INDIC_SSN = toNdDigits("123-45-6789", 0x0660); // Arabic-Indic → 123-45-6789 → [SSN_US]
+    const AR_INDIC_CARD = toNdDigits("4111111111111111", 0x0660); // Arabic-Indic Luhn card → [CREDIT_CARD] // pragma: allowlist secret
+    const ZW_SPLIT_EMAIL = "victim@examp​le.com"; // U+200B in the domain → victim@example.com → [EMAIL]
+    const SSN_FOLDED = "123-45-6789";
+    const CARD_FOLDED = "4111111111111111"; // pragma: allowlist secret
+    const EMAIL_FOLDED = "victim@example.com";
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-forensic-pii", {
+        traceId: AR_INDIC_SSN, // forensic key, Arabic-Indic SSN
+        spanId: AR_INDIC_CARD, // forensic key, Arabic-Indic card
+        correlationId: ZW_SPLIT_EMAIL, // forensic key, zero-width-split email
+        // NO-DEGRADE controls in the SAME record: benign-opaque forensic leaves survive verbatim,
+        // and a benign phone-SHAPED forensic id (folds to phone_us, which does NOT disqualify).
+        requestId: "run-abc-123",
+        messageId: "wamid.XYZ",
+        nodeId: BENIGN_AR_FORENSIC_ID, // Arabic-Indic 2015550123 → phone_us → still preserved
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      // Neither the raw obfuscated form NOR the folded ASCII form may survive in either sink.
+      expect(sink).not.toContain(AR_INDIC_SSN);
+      expect(sink).not.toContain(AR_INDIC_CARD);
+      expect(sink).not.toContain(ZW_SPLIT_EMAIL);
+      expect(sink).not.toContain(SSN_FOLDED);
+      expect(sink).not.toContain(CARD_FOLDED);
+      expect(sink).not.toContain(EMAIL_FOLDED);
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details.traceId).toBe("[SSN_US]");
+      expect(details.spanId).toBe("[CREDIT_CARD]");
+      expect(details.correlationId).toBe("[EMAIL]");
+      // NO-DEGRADE: benign-opaque + phone-shaped forensic leaves preserved byte-identical.
+      expect(details.requestId).toBe("run-abc-123");
+      expect(details.messageId).toBe("wamid.XYZ");
+      expect(details.nodeId).toBe(BENIGN_AR_FORENSIC_ID);
+      expect(details.nodeId).not.toBe("[PHONE_US]");
+    }
+  });
+
+  it("RED→GREEN round-6: further obfuscation forms (Extended-Arabic / Devanagari / ZWNJ / WORD JOINER / BOM) of email/SSN/card on forensic keys are redacted in BOTH sinks", async () => {
+    const EXT_AR_SSN = toNdDigits("123-45-6789", 0x06f0); // Extended Arabic-Indic → [SSN_US]
+    const DEVANAGARI_CARD_F = toNdDigits("4111111111111111", 0x0966); // Devanagari → [CREDIT_CARD] // pragma: allowlist secret
+    const ZWNJ_SSN = "123-45-‌6789"; // U+200C ZERO WIDTH NON-JOINER → [SSN_US]
+    const WJ_CARD = "4111⁠1111⁠1111⁠1111"; // U+2060 WORD JOINER → [CREDIT_CARD] // pragma: allowlist secret
+    const BOM_EMAIL = "victim@exa﻿mple.com"; // U+FEFF ZERO WIDTH NO-BREAK SPACE / BOM → [EMAIL]
+    const SSN_FOLDED = "123-45-6789";
+    const CARD_FOLDED = "4111111111111111"; // pragma: allowlist secret
+    const EMAIL_FOLDED = "victim@example.com";
+
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await writeAndReadBack(
+      unicodeEntry("unicode-forensic-pii-forms", {
+        traceId: EXT_AR_SSN, // forensic
+        spanId: DEVANAGARI_CARD_F, // forensic
+        correlationId: BOM_EMAIL, // forensic
+        runId: ZWNJ_SSN, // forensic
+        nodeId: WJ_CARD, // forensic
+      }),
+    );
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(EXT_AR_SSN);
+      expect(sink).not.toContain(DEVANAGARI_CARD_F);
+      expect(sink).not.toContain(BOM_EMAIL);
+      expect(sink).not.toContain(ZWNJ_SSN);
+      expect(sink).not.toContain(WJ_CARD);
+      expect(sink).not.toContain(SSN_FOLDED);
+      expect(sink).not.toContain(CARD_FOLDED);
+      expect(sink).not.toContain(EMAIL_FOLDED);
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details.traceId).toBe("[SSN_US]");
+      expect(details.spanId).toBe("[CREDIT_CARD]");
+      expect(details.correlationId).toBe("[EMAIL]");
+      expect(details.runId).toBe("[SSN_US]");
+      expect(details.nodeId).toBe("[CREDIT_CARD]");
+    }
+  });
 });
