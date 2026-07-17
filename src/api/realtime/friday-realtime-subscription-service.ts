@@ -138,6 +138,17 @@ export interface CreateFridayRealtimeSubscriptionServiceDeps {
    */
   resolveCanonicalOwnerId?: () => string | null | undefined;
   /**
+   * SEC-EVENT-REDACTION-001 / FINDING 1 — symmetric identifier pseudonymization.
+   * The WRITE path persists opaque (pseudonymized) `stream_id`s; a client subscribes/
+   * pulls with a raw-constructed streamId (`run:${rawRunId}`), so this resolver
+   * pseudonymizes the client's streamId the SAME way before every topic-validation /
+   * authorization / cursor-check / store lookup — landing on the identical opaque
+   * value the write path stored (idempotent, so an already-opaque echo is a no-op).
+   * Clients keep constructing raw streamIds; nothing raw is persisted. OMITTED
+   * (legacy/test) → identity, so behavior is byte-identical to before.
+   */
+  pseudonymizeStreamId?: (streamId: string) => string;
+  /**
    * Test-oracle only: allows the legacy TypeScript realtime checkpoint-ack
    * mutation (`ackEvent`) in isolated test/validation harnesses. Default/live
    * runtime must leave this unset so the method fails closed for ALL ingress
@@ -181,6 +192,13 @@ export function createFridayRealtimeSubscriptionService(
     if (canonical === null) return false; // configured but unresolvable → fail-closed
     const identity = principal.userId ?? principal.principalId;
     return typeof identity === "string" && identity === canonical;
+  }
+
+  // Resolve a client-provided streamId to its opaque (pseudonymized) form so every
+  // read matches the opaque stream_id the write path persisted. Identity no-op when
+  // the pseudonymizer dep is absent (legacy/test). Idempotent (opaque → opaque).
+  function resolveStreamId(streamId: string): string {
+    return deps.pseudonymizeStreamId ? deps.pseudonymizeStreamId(streamId) : streamId;
   }
 
   // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
@@ -235,7 +253,16 @@ export function createFridayRealtimeSubscriptionService(
       }
 
       for (const sub of subscriptions) {
-        const requiredScopes = TOPIC_SCOPES[sub.topic];
+        // Resolve the client's raw-constructed streamId to its opaque form so the
+        // accepted subscription (stored in the WS connection) matches the opaque
+        // stream_id events are published under — the topic PREFIX is preserved, so
+        // topic-binding validation is unaffected.
+        const resolvedSub: FridayRealtimeSubscription = {
+          ...sub,
+          streamId: resolveStreamId(sub.streamId),
+        };
+
+        const requiredScopes = TOPIC_SCOPES[resolvedSub.topic];
         if (!requiredScopes) {
           rejected.push({
             subscriptionId: sub.subscriptionId,
@@ -255,7 +282,7 @@ export function createFridayRealtimeSubscriptionService(
         }
 
         // Validate topic → stream binding
-        if (!isStreamValidForTopic(sub.topic, sub.streamId)) {
+        if (!isStreamValidForTopic(resolvedSub.topic, resolvedSub.streamId)) {
           rejected.push({
             subscriptionId: sub.subscriptionId,
             code: "INVALID_STREAM_BINDING",
@@ -264,7 +291,7 @@ export function createFridayRealtimeSubscriptionService(
           continue;
         }
 
-        accepted.push(sub);
+        accepted.push(resolvedSub);
       }
 
       return { accepted, rejected };
@@ -275,17 +302,21 @@ export function createFridayRealtimeSubscriptionService(
       // for any realtime stream, even one they know the id of and hold scope for.
       if (!principalPassesOwnerGate(principal)) return false;
 
+      // Resolve the client's streamId to its opaque form (accepted subscriptions are
+      // stored opaque; the fallback prefix check is prefix-preserving either way).
+      const resolvedStreamId = resolveStreamId(streamId);
+
       // If we have accepted subscriptions, check if the stream is in them
       if (acceptedSubscriptions) {
         for (const sub of acceptedSubscriptions.values()) {
-          if (sub.streamId === streamId) return true;
+          if (sub.streamId === resolvedStreamId) return true;
         }
         return false;
       }
 
       // Fallback: derive topic from stream prefix and check scopes
       for (const [topic, prefixes] of Object.entries(TOPIC_STREAM_PREFIXES)) {
-        if (prefixes.some((prefix: string) => streamId.startsWith(prefix))) {
+        if (prefixes.some((prefix: string) => resolvedStreamId.startsWith(prefix))) {
           const requiredScopes = TOPIC_SCOPES[topic as FridayRealtimeTopic];
           if (requiredScopes && principalHasAnyScope(principal.scopes, requiredScopes)) {
             return true;
@@ -303,8 +334,10 @@ export function createFridayRealtimeSubscriptionService(
       const canonical = resolveCanonicalOwner();
       if (canonical === null) return []; // configured but unresolvable → fail-closed
       const ownerFilter = canonical === undefined ? undefined : canonical;
+      // Resolve to the opaque stream_id the write path persisted.
+      const resolvedStreamId = resolveStreamId(streamId);
       return deps.db.withReadConnection((db) =>
-        deps.eventRepo.listAfterSeq(db, streamId, afterSeq, limit, ownerFilter),
+        deps.eventRepo.listAfterSeq(db, resolvedStreamId, afterSeq, limit, ownerFilter),
       );
     },
 
@@ -336,11 +369,12 @@ export function createFridayRealtimeSubscriptionService(
     },
 
     generateCursor(streamId, seq, epoch) {
-      return computeCursorHmac(streamId, seq, epoch, cursorSecret);
+      // Cursors bind to the opaque stream_id so they verify symmetrically.
+      return computeCursorHmac(resolveStreamId(streamId), seq, epoch, cursorSecret);
     },
 
     verifyCursor(cursor, streamId, seq, epoch) {
-      return verifyCursorHmac(cursor, streamId, seq, epoch, cursorSecret);
+      return verifyCursorHmac(cursor, resolveStreamId(streamId), seq, epoch, cursorSecret);
     },
   };
 }

@@ -65,7 +65,8 @@ import { createFridayRealtimeEventBus } from "../realtime/friday-realtime-event-
 import { createFridayRealtimeEventRepository } from "../persistence/friday-realtime-event-repository.js";
 import { createFridayRealtimeCheckpointRepository } from "../persistence/friday-realtime-checkpoint-repository.js";
 import { createFridayRealtimeSubscriptionService } from "../realtime/friday-realtime-subscription-service.js";
-import { redactEventPayload } from "../realtime/friday-event-payload-redactor.js";
+import { pseudonymizeEventIdentifiers, redactEventPayload } from "../realtime/friday-event-payload-redactor.js";
+import { createFridayRealtimePseudonymizer } from "../realtime/friday-realtime-pseudonym.js";
 import { createFridayRealtimeWsGateway } from "../realtime/friday-realtime-ws-gateway.js";
 import { createFridayFleetDashboardService } from "../fleet/friday-fleet-dashboard-service.js";
 import { createFridayWorkflowConflictService } from "../conflicts/friday-workflow-conflict-service.js";
@@ -2110,6 +2111,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const resolveRealtimeOwnerId = deps.learningUserId
     ? () => deps.learningUserId
     : undefined;
+  // SEC-EVENT-REDACTION-001 / FINDING 1: deterministic owner-scoped identifier
+  // pseudonymizer (HMAC(tokenSecret, ownerId ‖ value)). ONE instance is shared by
+  // the write path (persist opaque stream_id + payload id fields) and the read
+  // path (subscription-service resolves the client's raw streamId the same way), so
+  // they stay symmetric. Inactive no-op when owner/secret are absent (tests).
+  const realtimePseudonymizer = createFridayRealtimePseudonymizer({
+    resolveOwnerId: () => deps.learningUserId,
+    secret: deps.tokenSecret,
+  });
   const eventRepo = createFridayRealtimeEventRepository({
     resolveOwnerId: resolveRealtimeOwnerId,
   });
@@ -2136,6 +2146,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     cursorSecret: deps.tokenSecret,
     // SEC-EVENT-REDACTION-001 / P0#2: gate realtime reads to the canonical owner.
     resolveCanonicalOwnerId: resolveRealtimeOwnerId,
+    // SEC-EVENT-REDACTION-001 / FINDING 1: resolve a client's raw-constructed
+    // streamId to the SAME opaque form the write path persisted (symmetric).
+    pseudonymizeStreamId: (streamId) => realtimePseudonymizer.streamId(streamId),
     // TS-runtime-retirement (method-level guard): same top-level flag the HTTP
     // realtime route + WS ack frame use, so ackEvent fail-closes by default in
     // live (all three sites fenced) and the legacy path is reachable only under
@@ -2161,14 +2174,25 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     payload: unknown,
   ): Promise<void> => {
     const normalizedPayload = asRecord(payload);
-    const redactedPayload = redactEventPayload(normalizedPayload);
-    const streamId = resolveWorkflowRealtimeStreamId(event, normalizedPayload);
-    if (!streamId) {
+    const rawStreamId = resolveWorkflowRealtimeStreamId(event, normalizedPayload);
+    if (!rawStreamId) {
       return;
     }
+    // SEC-EVENT-REDACTION-001 / FINDING 1: persist NO raw identifier bytes.
+    //  - stream_id: derive from raw, then pseudonymize the id-part (topic prefix
+    //    preserved). The read path pseudonymizes the client's raw streamId the SAME
+    //    way, so both land on the identical opaque value (symmetric, clients unchanged).
+    //  - payload id fields: pseudonymize before content redaction, so payload_json
+    //    (and any id derived from it downstream) carries the opaque pseudonym.
+    const opaqueStreamId = realtimePseudonymizer.streamId(rawStreamId);
+    const pseudonymizedPayload = pseudonymizeEventIdentifiers(
+      normalizedPayload,
+      (raw) => realtimePseudonymizer.value(raw),
+    );
+    const redactedPayload = redactEventPayload(pseudonymizedPayload);
 
     eventBus.publish(
-      streamId,
+      opaqueStreamId,
       event as never,
       redactedPayload as never,
     );
@@ -3551,7 +3575,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     },
     getRunTimeline: (runId, query, principal) => {
       resolveAuthorizedRun(runId, principal);
-      const streamId = `run:${runId}`;
+      // FINDING 1: resolve the raw-constructed `run:<rawRunId>` to the opaque
+      // stream_id the write path persisted (symmetric with the pull/WS paths).
+      const streamId = realtimePseudonymizer.streamId(`run:${runId}`);
       const afterSeq = query.afterSeq ?? 0;
       const limit = query.limit ?? 50;
       // SEC-EVENT-REDACTION-001 / P0#2: owner-scope this realtime_events read to
@@ -4522,7 +4548,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }
 
   const agentRepo = deps.agentRuntime ? createFridayAgentRunRepository() : undefined;
-  const agentRunEventRepo = deps.agentRuntime ? createFridayAgentRunEventRepository() : undefined;
+  const agentRunEventRepo = deps.agentRuntime
+    ? createFridayAgentRunEventRepository({
+        // FINDING 1: pseudonymize identifier VALUES in the agent-event payload so no
+        // raw sensitive bytes persist in friday_agent_run_events.payload_json.
+        pseudonymizeIdentifierValue: (raw) => realtimePseudonymizer.value(raw),
+      })
+    : undefined;
   const enrichAgentRun = <T extends ReturnType<NonNullable<typeof agentRepo>["getById"]> | ReturnType<NonNullable<typeof agentRepo>["list"]>[number] | null | undefined>(
     run: T,
   ): T => {

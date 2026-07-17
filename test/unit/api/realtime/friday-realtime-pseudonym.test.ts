@@ -7,7 +7,7 @@ import {
 import { pseudonymizeEventIdentifiers } from "../../../../src/api/realtime/friday-event-payload-redactor.js";
 
 const OWNER = "admin-001";
-const SECRET = "test-token-secret-0123456789";
+const SECRET = "test-token-secret-0123456789"; // pragma: allowlist secret
 
 function active() {
   return createFridayRealtimePseudonymizer({ resolveOwnerId: () => OWNER, secret: SECRET });

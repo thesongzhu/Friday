@@ -206,9 +206,18 @@ describe("API Runtime — Workflow Generator Registration", () => {
       /const publishWorkflowRealtimeEvent = async \([\s\S]*?\n  \};/u,
     )?.[0];
 
-    expect(publishWorkflowRealtimeEvent).toContain("redactEventPayload(normalizedPayload)");
+    // SEC-EVENT-REDACTION-001 / FINDING 1: identifier VALUES are pseudonymized and
+    // content is redacted BEFORE the publish sink, and the streamId is the opaque
+    // (pseudonymized) form — no raw identifier bytes reach realtime_events.
+    expect(publishWorkflowRealtimeEvent).toContain(
+      "pseudonymizeEventIdentifiers(\n      normalizedPayload,",
+    );
+    expect(publishWorkflowRealtimeEvent).toContain("redactEventPayload(pseudonymizedPayload)");
+    expect(publishWorkflowRealtimeEvent).toContain(
+      "realtimePseudonymizer.streamId(rawStreamId)",
+    );
     expect(publishWorkflowRealtimeEvent).toMatch(
-      /eventBus\.publish\(\s*streamId,\s*event as never,\s*redactedPayload as never,\s*\)/u,
+      /eventBus\.publish\(\s*opaqueStreamId,\s*event as never,\s*redactedPayload as never,\s*\)/u,
     );
   });
 });
