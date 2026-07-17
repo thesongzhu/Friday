@@ -332,3 +332,66 @@ function redactNode(
 export function redactEventPayload<T>(payload: T): T {
   return redactNode(payload, undefined, "content", new WeakMap<object, unknown>()) as T;
 }
+
+// ─── Identifier pseudonymization (SEC-EVENT-REDACTION-001 root fix) ───
+
+function pseudonymizeNode(
+  value: unknown,
+  role: FieldRole,
+  pseudonymize: (raw: string) => string,
+  seen: WeakMap<object, unknown>,
+): unknown {
+  if (value === null || value === undefined) return value;
+
+  if (typeof value !== "object") {
+    // Only STRING identifier scalars are pseudonymized (the sensitive-bytes vector);
+    // content and non-string leaves are left for the content-PII pass.
+    return role === "identifier" && typeof value === "string" ? pseudonymize(value) : value;
+  }
+
+  const container = value as object;
+  const existing = seen.get(container);
+  if (existing !== undefined) return existing; // cycle / shared ref → structural share
+
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    seen.set(container, out);
+    // An array is never a scalar routing identifier (mirrors the redactor's FIX 1):
+    // its elements are CONTENT even under an id-role key.
+    for (const item of value) {
+      out.push(pseudonymizeNode(item, "content", pseudonymize, seen));
+    }
+    return out;
+  }
+
+  const out: Record<string, unknown> = {};
+  seen.set(container, out);
+  for (const [key, childValue] of Object.entries(value as Record<string, unknown>)) {
+    const childRole: FieldRole = isIdentifierField(key) ? "identifier" : "content";
+    Object.defineProperty(out, key, {
+      value: pseudonymizeNode(childValue, childRole, pseudonymize, seen),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return out;
+}
+
+/**
+ * Replace every IDENTIFIER-field string value (the same fields
+ * {@link redactEventPayload} exempts from value-PII redaction) with its
+ * deterministic owner-scoped pseudonym, using the caller-supplied `pseudonymize`
+ * function. Applied at the event-forming sites BEFORE {@link redactEventPayload}, so
+ * the streamId/resourceId derived from the payload — and the persisted payload id
+ * fields — carry the OPAQUE pseudonym, never the raw value. Content fields are left
+ * for the content-PII pass. Cycle-safe and prototype-pollution-safe. Returns a new
+ * value — the original is never mutated. When `pseudonymize` is identity (inactive),
+ * the result is byte-identical to the input.
+ */
+export function pseudonymizeEventIdentifiers<T>(
+  payload: T,
+  pseudonymize: (raw: string) => string,
+): T {
+  return pseudonymizeNode(payload, "content", pseudonymize, new WeakMap<object, unknown>()) as T;
+}

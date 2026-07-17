@@ -26,9 +26,24 @@ import type { FridaySqliteMigration } from "./friday-migration.types.js";
  * defaults existing rows to NULL; the new index is `IF NOT EXISTS`. Nothing is
  * altered or removed. (SQLite has no `ADD COLUMN IF NOT EXISTS`; the migration
  * runner applies each version exactly once, so a plain `ADD COLUMN` is safe.)
+ *
+ * UPGRADE-BOUNDARY BACKFILL (SEC-EVENT-REDACTION-001 replay-gap fix): a hub that
+ * upgrades across this migration already has pre-upgrade realtime_events rows. Left
+ * NULL they would be invisible to the canonical-owner read path, so a reconnecting
+ * canonical owner would SILENTLY lose same-epoch history (no gap detection / resync).
+ * Friday is a single-canonical-owner hub, so those legacy rows all belong to the
+ * canonical owner — attribute them to it here so pre-upgrade events remain visible
+ * and no same-epoch sequence gap is introduced. The literal `admin-001` mirrors
+ * `learningDefaultUserId` in friday-hub-bootstrap.ts (the SAME canonical owner the
+ * runtime stamps on new rows and the retention path resolves); a migration's SQL is
+ * a frozen historical artifact, so the value is inlined rather than interpolated. On
+ * a fresh install the table is empty, so the UPDATE affects 0 rows. Any row that
+ * genuinely can't be attributed stays NULL and remains fail-closed (never returned).
  */
 export const V106_REALTIME_EVENTS_OWNER_SQL = `
 ALTER TABLE realtime_events ADD COLUMN owner_id TEXT;
+
+UPDATE realtime_events SET owner_id = 'admin-001' WHERE owner_id IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_realtime_events_owner_stream_seq
   ON realtime_events(owner_id, stream_id, seq);
