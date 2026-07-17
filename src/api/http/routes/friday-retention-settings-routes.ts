@@ -85,28 +85,42 @@ export interface FridayRetentionSettingsRoutesDeps {
   appendPolicyAudit: (entry: FridayRetentionPolicyAuditEntry) => string;
   /**
    * Injected clock (RETENTION-R3d: no inline `Date.now()`). Drives the receipt
-   * `runAt` and the deterministic correlation id. The audit-entry id is generated
-   * inside `appendPolicyAudit` (via its own injected id generator), so no id
-   * generator is needed on this handler surface.
+   * `runAt`. It is NOT the source of correlation/receipt UNIQUENESS — two writes
+   * by the same owner in the same millisecond must not collide, so uniqueness
+   * comes from `idGenerator` below, not the timestamp.
    */
   nowIso: () => string;
+  /**
+   * Injected collision-resistant id generator (RETENTION-R3d: no inline
+   * `Math.random()`/`crypto`). Produces a UNIQUE operation id per PUT that seeds
+   * BOTH the correlation id and the receipt id, so distinct same-owner/same-clock
+   * writes carry distinct traceability identities. Independent of the audit-entry
+   * id (which `appendPolicyAudit` generates from its own generator).
+   */
+  idGenerator: () => string;
 }
 
 /**
- * RETENTION-R3d: the audit record for one retention-policy mutation. Captured
- * INSIDE the write transaction (pre-commit), so it carries the authoritative
- * before-state + the applied updates + the changed categories — the after-state
- * is read authoritatively AFTER commit and lives on the returned receipt.
+ * RETENTION-R3d: the audit record for one retention-policy mutation. It carries
+ * ALL the durable receipt facts and is persisted INSIDE the write transaction, so
+ * a committed policy effect ALWAYS has its receipt durably recorded on the same
+ * committed audit row (no committed-but-unreceipted write). The after-state is the
+ * authoritative applied-but-not-yet-committed state captured in-txn — exactly what
+ * the commit persists — never a fallible post-commit read.
  */
 export interface FridayRetentionPolicyAuditEntry {
-  /** Deterministic domain-prefixed correlation id binding audit ⇄ receipt. */
+  /** UNIQUE (id-generator-seeded) correlation id binding audit ⇄ receipt. */
   correlationId: string;
+  /** UNIQUE (id-generator-seeded) receipt id — persisted for durable recovery. */
+  receiptId: string;
   /** The RESOLVED canonical owner (never a caller-supplied id). */
   ownerId: string;
   /** ISO time the mutation was applied (injected clock). */
   occurredAt: string;
   /** Authoritative before-state read from the store (pre-apply). */
   before: FridayRetentionContentPolicy;
+  /** Authoritative after-state captured IN-TXN (== what is committed). */
+  after: FridayRetentionContentPolicy;
   /** The validated per-category updates that were applied. */
   appliedUpdates: Record<string, CategoryRetention>;
   /** Content categories whose EFFECTIVE policy changed (before ≠ after). */
@@ -328,11 +342,18 @@ export function createFridayRetentionPolicyAuditAppender(deps: {
   const persistence = createSqliteAuditPersistence(deps.sqlite);
   return (entry) => {
     const auditId = deps.idGenerator();
+    // Persist the FULL receipt facts on the committed audit row so a committed
+    // policy effect is never left without a durably-recoverable receipt: the row
+    // `id` is the auditId, and this metadata carries receiptId + correlationId +
+    // before + after + changed + deletedData (everything needed to reconstruct the
+    // exact receipt from committed state).
     const metadata = {
+      receiptId: entry.receiptId,
       correlationId: entry.correlationId,
       changedCategories: entry.changedCategories,
       deletedData: false,
       before: entry.before,
+      after: entry.after,
       appliedUpdates: entry.appliedUpdates,
     } as unknown as JsonObject;
     try {
@@ -431,42 +452,58 @@ export function createFridayRetentionSettingsRoutes(
           updates[category] = parseCategoryRetention(category, raw);
         }
 
-        // 4. Deterministic correlation id + injected clock (no inline Date.now()).
-        //    The audit entry id is a separate injected id (PK uniqueness), so
-        //    identical-timestamp updates never collide.
+        // 4. UNIQUE operation identity (P0 #1 — traceability). Uniqueness comes
+        //    from the injected collision-resistant id generator, NOT the clock:
+        //    two same-owner writes in the SAME millisecond get DISTINCT correlation
+        //    AND receipt ids. The readable domain prefix is cosmetic; `operationId`
+        //    is what guarantees no collision. (The audit-row id is independently
+        //    unique, generated inside `appendPolicyAudit`.)
         const runAt = deps.nowIso();
-        const correlationId = `retention-policy-update:${ownerId}:${runAt}`;
+        const operationId = deps.idGenerator();
+        const correlationId = `retention-policy-update:${ownerId}:${operationId}`;
+        const receiptId = `retention-receipt:${ownerId}:${operationId}`;
 
-        // 5. ATOMIC apply + audit inside ONE write transaction. The store's own
-        //    write nests as a SAVEPOINT on the same writer connection; the audit
-        //    append nests likewise. If the audit append THROWS (fail-closed 503),
-        //    the whole transaction rolls back → the persisted policy is
-        //    byte-unchanged (equal to `before`) and NOTHING is committed. A
-        //    committed policy write that returns 503 is therefore impossible.
+        // 5. Authoritative AFTER-state captured IN-TXN, WITHOUT a fallible
+        //    post-commit read (P0 #2 — write-closure). The applied-but-not-yet-
+        //    committed effective policy is provably identical to what the commit
+        //    persists: `updates` is already validated, and the store applies each
+        //    entry cleanly (`permanent` clears the override → effective permanent;
+        //    `after_days` upserts that exact honored window), while the store's read
+        //    defaults every absent category to permanent. So `{...before,...updates}`
+        //    IS the authoritative committed state — derived, not re-read.
+        const after = { ...before, ...updates } as FridayRetentionContentPolicy;
+        const changed = computeChangedCategories(before, after);
+
+        // 6. ATOMIC apply + DURABLE-receipt capture + audit, all in ONE write
+        //    transaction. The store write nests as a SAVEPOINT on the same writer
+        //    connection; the audit append (which persists the FULL receipt facts
+        //    onto the committed audit row) nests likewise. If the audit append
+        //    THROWS (fail-closed 503) the whole transaction rolls back → policy
+        //    byte-unchanged, no audit row, no orphan. It is therefore impossible to
+        //    commit a policy effect without its receipt ALSO durably committed, and
+        //    impossible to return 503 with a committed write.
         let auditId = "";
         deps.db.withWriteTransaction(() => {
           deps.store.applyOwnerContentPolicy({ principalId: ownerId, updates });
           auditId = deps.appendPolicyAudit({
             correlationId,
+            receiptId,
             ownerId,
             occurredAt: runAt,
             before,
+            after,
             appliedUpdates: updates,
-            // `changed` at audit time is the requested set; the authoritative
-            // changed set (before ≠ after) is computed post-commit for the receipt.
-            changedCategories: Object.keys(updates).sort(),
+            changedCategories: changed,
           });
         });
 
-        // 6. Authoritative AFTER-state: re-read from the STORE post-commit (never
-        //    an echo of the input).
-        const after = deps.store.readOwnerContentPolicy({ principalId: ownerId });
-        const changed = computeChangedCategories(before, after);
-
-        // 7. RECEIPT envelope binding correlation id, durable audit id, and the
-        //    authoritative before + after. A settings write never deletes data.
+        // 7. The response is a PURE serialization of already-durable in-memory
+        //    facts — there is NO DB access after commit, so a caller can never
+        //    observe an error AFTER a committed effect. The same facts are durably
+        //    recoverable from the committed audit row (id = auditId; metadata holds
+        //    receiptId/correlationId/before/after/changed/deletedData).
         const receipt: FridayRetentionPolicyUpdateReceipt = {
-          receiptId: `retention-receipt:${ownerId}:${runAt}`,
+          receiptId,
           correlationId,
           auditId,
           status: "applied",

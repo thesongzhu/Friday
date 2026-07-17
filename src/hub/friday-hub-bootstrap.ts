@@ -7514,6 +7514,9 @@ export async function createFridayHub(
       db: stateRuntime.sqlite,
       appendPolicyAudit: retentionPolicyAuditAppender,
       nowIso,
+      // RETENTION-R3d (P0 #1): collision-resistant per-write id seeding the unique
+      // correlation + receipt identities (crypto.randomUUID — never clock-derived).
+      idGenerator,
     },
     uix: {
       service: uixService,

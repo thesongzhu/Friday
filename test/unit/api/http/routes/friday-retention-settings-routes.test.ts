@@ -83,6 +83,7 @@ describe("friday-retention-settings-routes (RETENTION-R3a)", () => {
         idGenerator: () => `aud-${String(++idCounter).padStart(4, "0")}`,
       }),
       nowIso: () => NOW,
+      idGenerator: () => `op-${String(++idCounter).padStart(4, "0")}`,
     });
   });
 

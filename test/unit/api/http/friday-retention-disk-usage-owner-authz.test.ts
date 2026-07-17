@@ -187,6 +187,7 @@ describe("FridayHttpServer — /v1/uix/retention-policy/disk-usage canonical-own
         idGenerator: () => `aud-${String(++idc).padStart(4, "0")}`,
       }),
       nowIso: () => NOW,
+      idGenerator: () => `op-${String(++idc).padStart(4, "0")}`,
     })) {
       routes.register(route);
     }

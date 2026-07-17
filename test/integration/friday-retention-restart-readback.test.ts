@@ -85,6 +85,7 @@ function makeRoutes(layer: FridaySqliteLayer) {
       idGenerator: () => `aud-${++idc}`,
     }),
     nowIso: () => NOW,
+    idGenerator: () => `op-${++idc}`,
   });
 }
 

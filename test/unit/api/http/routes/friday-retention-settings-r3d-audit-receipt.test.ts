@@ -120,6 +120,7 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
       db,
       appendPolicyAudit,
       nowIso: () => NOW,
+      idGenerator: () => `op-${String(++idCounter).padStart(4, "0")}`,
     });
   }
 
@@ -157,10 +158,11 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     // Policy applied + returned.
     expect(result.policy.auditLogs).toEqual({ mode: "after_days", days: 30 });
 
-    // Receipt is well-formed and bound.
+    // Receipt is well-formed and bound. Identities carry a readable domain prefix
+    // but their UNIQUENESS is id-generator-seeded (not clock-derived).
     const r = result.receipt;
-    expect(r.receiptId).toBe(`retention-receipt:${CANON}:${NOW}`);
-    expect(r.correlationId).toBe(`retention-policy-update:${CANON}:${NOW}`);
+    expect(r.receiptId).toMatch(new RegExp(`^retention-receipt:${CANON}:op-\\d+$`));
+    expect(r.correlationId).toMatch(new RegExp(`^retention-policy-update:${CANON}:op-\\d+$`));
     expect(r.auditId).toBeTruthy();
     expect(r.status).toBe("applied");
     expect(r.runAt).toBe(NOW);
@@ -173,7 +175,9 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     expect(r.evidence.changed).toEqual(["auditLogs"]);
     expect(r.evidence.deletedData).toBe(false);
 
-    // Exactly ONE durable audit row, bound to the same correlation id.
+    // Exactly ONE durable audit row carrying the FULL receipt facts (durable
+    // recovery: id == auditId; metadata holds receiptId/correlationId/before/
+    // after/changed/deletedData).
     const rows = auditRows();
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe(r.auditId);
@@ -183,13 +187,19 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     expect(rows[0].decision).toBe("allow");
     expect(rows[0].resource_id).toBe(`retention-policy:${CANON}`);
     const meta = JSON.parse(rows[0].metadata_json) as {
+      receiptId: string;
       correlationId: string;
       deletedData: boolean;
       changedCategories: string[];
+      before: Record<string, unknown>;
+      after: Record<string, unknown>;
     };
+    expect(meta.receiptId).toBe(r.receiptId);
     expect(meta.correlationId).toBe(r.correlationId);
     expect(meta.deletedData).toBe(false);
     expect(meta.changedCategories).toEqual(["auditLogs"]);
+    expect(meta.before).toEqual(r.evidence.before);
+    expect(meta.after).toEqual(r.evidence.after);
   });
 
   // ── 2. Audit throws (injected) → 503 AND zero mutation (re-GET == before) ───
@@ -358,6 +368,100 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
       (db.writer.prepare("SELECT COUNT(*) c FROM audit_logs").get() as { c: number }).c,
     ).toBe(1);
   });
+
+  // ── 8. P0 #1 — traceability: same-owner/same-clock writes get UNIQUE ids ─────
+  it("two same-owner PUTs under an IDENTICAL fixed clock → distinct correlationId, receiptId, auditId", async () => {
+    const routes = makeRoutes(realAppender());
+    const w1 = (await putRouteOf(routes).handler(
+      makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    const w2 = (await putRouteOf(routes).handler(
+      makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days: 60 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+
+    // BOTH writes ran under the exact same clock value — uniqueness must therefore
+    // come from the id generator, NOT the timestamp.
+    expect(w1.receipt.runAt).toBe(NOW);
+    expect(w2.receipt.runAt).toBe(NOW);
+
+    // Every traceability identity is pairwise DISTINCT across the two writes.
+    expect(w1.receipt.correlationId).not.toBe(w2.receipt.correlationId);
+    expect(w1.receipt.receiptId).not.toBe(w2.receipt.receiptId);
+    expect(w1.receipt.auditId).not.toBe(w2.receipt.auditId);
+
+    // All six identities are globally unique (no cross-field collision either).
+    expect(
+      new Set([
+        w1.receipt.correlationId,
+        w1.receipt.receiptId,
+        w1.receipt.auditId,
+        w2.receipt.correlationId,
+        w2.receipt.receiptId,
+        w2.receipt.auditId,
+      ]).size,
+    ).toBe(6);
+
+    // Two durable audit rows, one per write, with distinct ids.
+    const rows = auditRows();
+    expect(rows).toHaveLength(2);
+    expect(rows[0].id).not.toBe(rows[1].id);
+  });
+
+  // ── 9. P0 #2 — write-closure: an injected POST-COMMIT read failure must NEVER
+  //       leave a committed policy/audit effect without a durable receipt. The
+  //       fixed handler performs NO fallible read after commit, so the injected
+  //       failure never fires and the receipt is durably recoverable in-txn. ─────
+  it("injected post-commit read failure → committed effect ALWAYS has a durable, recoverable receipt (no orphan)", async () => {
+    let committed = false;
+    // db proxy: flips `committed` the moment the write transaction commits.
+    const dbProxy: FridaySqliteLayer = {
+      ...db,
+      withWriteTransaction<T>(fn: Parameters<FridaySqliteLayer["withWriteTransaction"]>[0]): T {
+        const out = db.withWriteTransaction(fn) as T;
+        committed = true;
+        return out;
+      },
+    };
+    // store proxy: any read AFTER commit throws (the Advisor's post-commit probe).
+    const storeProxy: FridayRetentionSettingsStore = {
+      readOwnerContentPolicy(input) {
+        if (committed) throw new Error("injected post-commit read failure");
+        return store.readOwnerContentPolicy(input);
+      },
+      applyOwnerContentPolicy(input) {
+        return store.applyOwnerContentPolicy(input);
+      },
+    };
+    const routes = createFridayRetentionSettingsRoutes({
+      store: storeProxy,
+      resolveCanonicalOwnerId: () => CANON,
+      db: dbProxy,
+      appendPolicyAudit: realAppender(),
+      nowIso: () => NOW,
+      idGenerator: () => `op-${String(++idCounter).padStart(4, "0")}`,
+    });
+
+    const result = (await putRouteOf(routes).handler(
+      makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+
+    // The transaction committed (policy + audit rows persisted)...
+    expect(policyRows(CANON)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+    const rows = auditRows();
+    expect(rows).toHaveLength(1);
+
+    // ...AND the full receipt is durably recoverable from the committed audit row:
+    // never "committed effect + error + no durable receipt".
+    const meta = JSON.parse(rows[0].metadata_json) as {
+      receiptId: string;
+      correlationId: string;
+      after: Record<string, unknown>;
+    };
+    expect(rows[0].id).toBe(result.receipt.auditId);
+    expect(meta.receiptId).toBe(result.receipt.receiptId);
+    expect(meta.correlationId).toBe(result.receipt.correlationId);
+    expect(meta.after).toEqual(result.receipt.evidence.after);
+  });
 });
 
 // ── Real public-HTTP seam: owner-auth happy path + cross-principal denial ─────
@@ -482,6 +586,7 @@ describe("FridayHttpServer — RETENTION-R3d real-HTTP receipt + denial isolatio
         idGenerator: () => `aud-${String(++idc).padStart(4, "0")}`,
       }),
       nowIso: () => NOW,
+      idGenerator: () => `op-${String(++idc).padStart(4, "0")}`,
     })) {
       routes.register(route);
     }
@@ -512,7 +617,8 @@ describe("FridayHttpServer — RETENTION-R3d real-HTTP receipt + denial isolatio
     };
     const { policy, receipt } = json.data;
     expect(policy.auditLogs).toEqual({ mode: "after_days", days: 30 });
-    expect(receipt.correlationId).toBe(`retention-policy-update:${CANON}:${NOW}`);
+    expect(receipt.correlationId).toMatch(new RegExp(`^retention-policy-update:${CANON}:op-\\d+$`));
+    expect(receipt.receiptId).toMatch(new RegExp(`^retention-receipt:${CANON}:op-\\d+$`));
     expect(receipt.requestedBy).toBe(CANON);
     expect(receipt.evidence.before.auditLogs).toEqual({ mode: "permanent" });
     expect(receipt.evidence.after.auditLogs).toEqual({ mode: "after_days", days: 30 });
