@@ -98,7 +98,10 @@ export function createFridayRealtimeEventBus(
         });
         streamSeqs.set(opaqueStreamId, envelope.seq);
       } else {
-        // Fallback: process-local counter (tests without DB)
+        // Fallback: process-local counter (tests without DB). The real Hub always takes
+        // the DB path, so this branch never fires in prod — but keep it CONSISTENT with the
+        // durable path: use the OPAQUE streamId, redacted payload AND the opaque
+        // correlationId (never the raw caller-supplied one), so no sink can differ by path.
         const seq = nextSeq(opaqueStreamId);
         envelope = {
           eventId: deps.idGenerator(),
@@ -107,7 +110,7 @@ export function createFridayRealtimeEventBus(
           event,
           payload: redactedPayload,
           emittedAt: deps.nowIso(),
-          correlationId,
+          correlationId: opaqueCorrelationId,
         };
         streamSeqs.set(opaqueStreamId, seq);
         if (deps.persistEvent) {

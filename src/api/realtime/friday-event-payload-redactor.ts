@@ -20,14 +20,19 @@
  *      hygiene, and parity with the previous redactor).
  *
  *   3. CONTENT fields (message, errorMessage, note, detail, output, reason, args,
- *      …): full value-PII redaction via the canonical shared production guard
- *      `createFridayMemoryPiiGuard("redact").redactDeep(...)` (the #1610 reuse
- *      principle) — email / US phone / US SSN / Luhn-gated card BY VALUE, full-width
- *      & CJK-adjacent PII, and typed number/bigint PII under the two-gate policy —
- *      LAYERED with the secret-shaped-string pass (Bearer / sk- / gh_ / JWT / PEM /
- *      KEY=VALUE assignments) that redactDeep does not cover. Secret pass runs
- *      first so a secret is masked before redactDeep could chew its digits into a
- *      false card/phone.
+ *      …): full value-PII + secret redaction, Unicode-obfuscation resistant. String
+ *      leaves run (a) the Unicode-resistant SECRET pass (Bearer / sk- / gh_ / JWT /
+ *      PEM / KEY=VALUE assignments), then (b) the Unicode-resistant value-PII pass —
+ *      email / US phone / US SSN / Luhn-gated card BY VALUE — which reuses the
+ *      canonical shared production guard's own detector (the #1610 reuse principle)
+ *      over a shared NFKD detection copy, so a fullwidth / zero-width-split / combining
+ *      / precomposed-accent email (or phone/SSN/card) is redacted FULL-SPAN before an
+ *      ASCII pass could fragment it — closing round-8 F2b; then (c) the shared
+ *      `redactDeep` safety net (ASCII + fullwidth-DIGIT value-PII and the typed
+ *      number/bigint two-gate policy). The secret pass runs first so a secret is masked
+ *      before its digits could be misread as a false card/phone. Steps (a)/(b) leave
+ *      benign multilingual/accented text byte-identical and pure-ASCII/fullwidth-DIGIT
+ *      input identical to the prior guard output (a strict Unicode-resistant superset).
  *
  * Why this shape (and not a blunt redactDeep over the whole payload): identifier /
  * routing fields are the SAME plane the event bus and audit log key on. Redacting
@@ -51,7 +56,10 @@
  */
 
 import { createFridayMemoryPiiGuard } from "../../memory/guard/services/friday-memory-pii-guard.js";
-import { redactUnicodeResistantSecrets } from "./friday-realtime-secret-unicode-scan.js";
+import {
+  redactUnicodeResistantPii,
+  redactUnicodeResistantSecrets,
+} from "./friday-realtime-secret-unicode-scan.js";
 
 // Shared production value-PII guard — constructed ONCE at module load. The factory
 // takes only an optional mode and has NO dependencies, so no DI/bootstrap wiring is
@@ -100,6 +108,33 @@ function isSensitiveKey(key: string): boolean {
  */
 function redactString(value: string): string {
   return redactUnicodeResistantSecrets(value);
+}
+
+/**
+ * Full CONTENT-field redaction for a string leaf, resistant to Unicode obfuscation for
+ * BOTH secrets AND value-PII (round-8 F2b). Order is load-bearing:
+ *   1. secret pass (Unicode-resistant) — masks a secret before its digits could be
+ *      misread as a card/phone;
+ *   2. value-PII pass (Unicode-resistant) — email / phone / SSN / Luhn-gated card, run
+ *      over the SAME NFKD detection copy using the shared guard's own detector, so a
+ *      fullwidth / zero-width-split / combining / precomposed-accent email (or phone/SSN/
+ *      card) is redacted FULL-SPAN with the guard's canonical `[<TYPE>]` marker BEFORE any
+ *      ASCII pass can fragment it (no partial-fragment residual);
+ *   3. shared `redactDeep` — an idempotent ASCII/fullwidth-DIGIT safety net (the markers
+ *      from steps 1–2 carry no PII shape, so it is a no-op on them) that also preserves the
+ *      established at-rest string policy.
+ * Pure-ASCII / fullwidth-DIGIT input round-trips byte-identically to the prior behavior:
+ * the value-PII pass reuses the guard's exact matcher and its normalized copy is length-
+ * aligned 1:1 for those inputs, so it produces the identical marker/extent — a strict
+ * Unicode-resistant superset, never a divergence. Benign multilingual text is untouched.
+ */
+function redactContentString(value: string): string {
+  const afterSecrets = redactUnicodeResistantSecrets(value);
+  const afterPii = redactUnicodeResistantPii(
+    afterSecrets,
+    (normalized) => piiValueGuard.scanAndTransform(normalized).matches,
+  );
+  return piiValueGuard.redactDeep(afterPii).value as string;
 }
 
 // ─── Identifier / routing field allowlist ───
@@ -198,15 +233,17 @@ function isIdentifierField(key: string): boolean {
 // ─── Scalar-leaf redaction policies ───
 
 /**
- * CONTENT scalar: strings get the secret-shape pass first (so a secret is masked
- * before redactDeep can misread its digits) then the shared value-PII redactor;
- * numbers/bigints get redactDeep's two-gate typed-PII policy WITH their key context
- * (redact only when the key names a PII type AND the value shape matches — benign
- * numeric ids preserved). Other scalars pass through unchanged.
+ * CONTENT scalar: strings go through {@link redactContentString} — the Unicode-resistant
+ * secret pass, then the Unicode-resistant value-PII pass (email / phone / SSN / card),
+ * then the shared `redactDeep` safety net — so obfuscated PII is redacted FULL-SPAN before
+ * any ASCII pass could fragment it, while pure-ASCII / fullwidth-DIGIT input round-trips
+ * byte-identically. Numbers/bigints get redactDeep's two-gate typed-PII policy WITH their
+ * key context (redact only when the key names a PII type AND the value shape matches —
+ * benign numeric ids preserved). Other scalars pass through unchanged.
  */
 function redactContentScalar(key: string, value: unknown): unknown {
   if (typeof value === "string") {
-    return piiValueGuard.redactDeep(redactString(value)).value;
+    return redactContentString(value);
   }
   if (typeof value === "number" || typeof value === "bigint") {
     // Wrap under the real key so redactDeep's two-gate sees the key context, then read

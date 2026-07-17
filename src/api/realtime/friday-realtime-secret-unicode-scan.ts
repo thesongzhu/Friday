@@ -1,12 +1,17 @@
 /**
- * SEC-REALTIME-EVENT-PII-BY-VALUE / round-7 F2 — Unicode-obfuscation-resistant SECRET
- * detection for the realtime / agent event-payload redactor.
+ * SEC-REALTIME-EVENT-PII-BY-VALUE / round-7 F2 + round-8 F2b — Unicode-obfuscation-
+ * resistant SECRET **and** value-PII detection for the realtime / agent event-payload
+ * redactor.
  *
  * The previous secret pass matched only CONTIGUOUS ASCII shapes (`\bsk-…`, `Bearer …`,
- * …). An attacker (or a mis-encoded upstream) could split a secret with a zero-width
- * space, a combining mark, or write it in fullwidth / mathematical-alphanumeric code
- * points, and it survived RAW at rest and on the wire. This module closes that bypass
- * WITHOUT over-redacting benign multilingual text.
+ * …), and content-field value-PII (email / phone / SSN / card) relied on the shared
+ * ASCII + fullwidth-DIGIT guard. An attacker (or a mis-encoded upstream) could split a
+ * secret OR an email with a zero-width space, a combining mark, or write it in fullwidth
+ * / mathematical-alphanumeric code points, and it survived RAW at rest and on the wire
+ * (round-8 F2b: a fullwidth / zero-width / combining / precomposed-accent EMAIL leaked
+ * VERBATIM, and a partial ASCII-fragment residual survived). This module closes that
+ * bypass for BOTH classes WITHOUT over-redacting benign multilingual text, sharing ONE
+ * non-destructive detection copy.
  *
  * PROVEN, COMPLETE RECIPE (detection copy is non-destructive; storage is byte-identical
  * when nothing matches):
@@ -21,12 +26,17 @@
  *   4. fold decimal digits (\p{Nd}) to ASCII BY VALUE (fullwidth/math digits are already
  *      folded by NFKD; this additionally covers scripts NFKD does not, e.g. Arabic-Indic).
  *
- * Secret shapes are matched over the normalized copy; every matched span is mapped back
- * to the ORIGINAL code-unit range that produced it and only those original bytes are
+ * Secret / PII shapes are matched over the normalized copy; every matched span is mapped
+ * back to the ORIGINAL code-unit range that produced it and only those original bytes are
  * redacted. Because each normalized code unit records the [start,end) of its SOURCE code
  * point, any obfuscation char that sits INSIDE a matched region (a zero-width split, a
- * combining mark) is inside the mapped original span and is redacted along with the
- * secret — nothing raw survives.
+ * combining mark) is inside the mapped original span and is redacted along with the whole
+ * match — nothing raw survives and no ASCII pass can later fragment a partially-matched
+ * span. {@link redactUnicodeResistantSecrets} covers the SECRET shapes (used for both the
+ * content and identifier paths); {@link redactUnicodeResistantPii} covers the value-PII
+ * shapes (content path only — identifiers keep their identity), reusing the SAME detection
+ * copy and a caller-supplied matcher so the shared guard's email/phone/SSN/Luhn-gated-card
+ * detection is the single source of truth (no divergent second detector).
  *
  * @module api/realtime
  */
@@ -288,4 +298,81 @@ export function redactUnicodeResistantSecrets(original: string): string {
   }
   if (spans.length === 0) return original;
   return redactOriginalSpans(original, spans);
+}
+
+// ─── Value-PII (email / phone / SSN / card) over the SAME detection copy ───
+
+/**
+ * A value-PII match reported over the NORMALIZED detection copy: `[start, end)` are
+ * NORMALIZED code-unit offsets and `type` is the shared guard's PII type label
+ * (`email` | `phone_us` | `ssn_us` | `credit_card`). Shape-compatible (structurally) with
+ * the shared guard's `FridayMemoryGuardPiiMatch` so a caller can pass its matches through
+ * unchanged.
+ */
+export interface UnicodeResistantPiiMatch {
+  readonly type: string;
+  readonly start: number;
+  readonly end: number;
+}
+
+/**
+ * Redact value-PII (email / US phone / US SSN / Luhn-gated card) from `original`, resistant
+ * to the SAME zero-width / combining / fullwidth / mathematical / precomposed-vs-decomposed
+ * obfuscation as {@link redactUnicodeResistantSecrets}. The caller supplies `detectMatches`
+ * — the shared production PII detector (e.g. `guard.scanAndTransform(s).matches`) — which is
+ * run over the NON-DESTRUCTIVE normalized detection copy, so the guard's email/phone/SSN/
+ * Luhn+false-positive-gated card logic stays the single source of truth (no divergent
+ * second detector, no benign-content over-redaction). Each match is mapped back to the
+ * ORIGINAL span that produced it and the FULL span is replaced with the guard's canonical
+ * `[<TYPE>]` marker (e.g. `[EMAIL]`), so an obfuscation char inside a match is redacted with
+ * it (no fragment residual). Overlapping original spans are merged (earliest label kept —
+ * cosmetic; the whole span is redacted regardless), mirroring the shared guard's
+ * `redactContent`. Returns the input BYTE-IDENTICAL when nothing matches — and, because the
+ * normalized copy of a pure-ASCII / fullwidth-DIGIT string is length-aligned 1:1 with the
+ * original, the result for those inputs is byte-identical to the shared guard's own output
+ * (this pass is a strict Unicode-resistant SUPERSET, never a divergence).
+ */
+export function redactUnicodeResistantPii(
+  original: string,
+  detectMatches: (normalized: string) => readonly UnicodeResistantPiiMatch[],
+): string {
+  if (original.length === 0) return original;
+  const view = buildNormalizedView(original);
+  if (view.normalized.length === 0) return original;
+
+  const matches = detectMatches(view.normalized);
+  if (matches.length === 0) return original;
+
+  // Map each NORMALIZED match to the ORIGINAL span that produced it, preserving its label.
+  const spans: Array<{ start: number; end: number; type: string }> = [];
+  for (const m of matches) {
+    if (m.end <= m.start) continue;
+    const oStart = view.originStart[m.start];
+    const oEnd = view.originEnd[m.end - 1];
+    if (oStart === undefined || oEnd === undefined || oEnd <= oStart) continue;
+    spans.push({ start: oStart, end: oEnd, type: m.type });
+  }
+  if (spans.length === 0) return original;
+
+  // Merge overlapping ORIGINAL spans (keep the earliest contributor's label — cosmetic,
+  // the whole span is redacted regardless), then splice END→START so earlier indices stay
+  // valid. Touching (adjacent) spans stay separate so distinct types keep distinct markers,
+  // matching the shared guard's redactContent.
+  spans.sort((a, b) => a.start - b.start || a.end - b.end);
+  const merged: Array<{ start: number; end: number; type: string }> = [];
+  for (const s of spans) {
+    const last = merged[merged.length - 1];
+    if (last && s.start < last.end) {
+      if (s.end > last.end) last.end = s.end;
+    } else {
+      merged.push({ start: s.start, end: s.end, type: s.type });
+    }
+  }
+
+  let result = original;
+  for (let i = merged.length - 1; i >= 0; i -= 1) {
+    const seg = merged[i];
+    result = result.slice(0, seg.start) + `[${seg.type.toUpperCase()}]` + result.slice(seg.end);
+  }
+  return result;
 }
