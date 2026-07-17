@@ -922,18 +922,66 @@ export function writeBundle(outPath, built) {
   return { outPath: reportAbs, sidecarPath: sidecarAbs, rawCount: built.rawFiles.length };
 }
 
-function parseArgs(argv) {
+// A malformed/unknown CLI invocation. Distinct from Red so it maps to a fail-fast USAGE
+// exit (2) BEFORE any evidence is produced, not the RED (exit 3) evidence-error path.
+export class UsageError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "UsageError";
+  }
+}
+
+export const CLI_USAGE = "usage: friday-stress-perf-soak-authority.mjs [--out <path>] [--tuple <64-hex>] [--strict]";
+
+/**
+ * FIX 6 (P1 fail-open CLI): a CLOSED, fail-fast argv grammar. Recognized options are EXACTLY
+ * `--out <value>`, `--tuple <value>` (each takes one NON-option-looking value), and `--strict`
+ * (boolean flag, no value). Everything else — unknown/misspelled option, missing value,
+ * option-looking value (e.g. swallowing `--strict`), duplicate option, or unexpected positional
+ * — throws `UsageError`. The WHOLE argv is validated up front so `main` can fail closed (no
+ * report, no sidecar, no raw dir, zero filesystem output) BEFORE calling buildResourceReport.
+ */
+export function parseArgs(argv) {
   const args = { out: null, tuple: null, strict: false };
+  const seen = new Set();
+  const optionLike = (t) => typeof t === "string" && t.startsWith("-");
   for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === "--out") args.out = argv[(i += 1)];
-    else if (argv[i] === "--tuple") args.tuple = argv[(i += 1)];
-    else if (argv[i] === "--strict") args.strict = true;
+    const tok = argv[i];
+    if (tok === "--out" || tok === "--tuple") {
+      if (seen.has(tok)) throw new UsageError(`duplicate option ${tok}`);
+      seen.add(tok);
+      const value = argv[i + 1];
+      if (value === undefined) throw new UsageError(`option ${tok} requires a value`);
+      if (optionLike(value)) throw new UsageError(`option ${tok} requires a value but got option-like token '${value}'`);
+      args[tok.slice(2)] = value;
+      i += 1; // consume the value token
+    } else if (tok === "--strict") {
+      if (seen.has(tok)) throw new UsageError(`duplicate option ${tok}`);
+      seen.add(tok);
+      args.strict = true;
+    } else if (optionLike(tok)) {
+      throw new UsageError(`unknown option ${tok}`);
+    } else {
+      throw new UsageError(`unexpected positional argument '${tok}'`);
+    }
   }
   return args;
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2));
+  // FIX 6: parse + validate the WHOLE argv up front and fail CLOSED (exit 2) BEFORE any
+  // buildResourceReport/writeBundle/write — a malformed invocation produces zero evidence.
+  let args;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch (error) {
+    if (error instanceof UsageError) {
+      console.error(JSON.stringify({ result: "RED", code: "USAGE_ERROR", detail: error.message }));
+      console.error(CLI_USAGE);
+      process.exit(2);
+    }
+    throw error;
+  }
   const fail = (code, detail = {}) => {
     console.error(JSON.stringify({ result: "RED", code, detail }));
     process.exit(3);

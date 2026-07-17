@@ -67,6 +67,8 @@ import {
   SOAK_NEED_HOURS,
   canonical,
   digestOf,
+  parseArgs,
+  UsageError,
   // eslint-disable-next-line import/extensions
 } from "../../../../scripts/ops/friday-stress-perf-soak-authority.mjs";
 import {
@@ -998,5 +1000,99 @@ describe("perf-soak-authority (FIX 5) caller sample hooks are materialized once 
     const bad: any[] = [];
     for (let i = 0; i < 50; i += 1) Object.defineProperty(bad, i, { get: () => "big", enumerable: true, configurable: true });
     expect(probe(() => ({ samples: bad, warmupSamples: [1, 2, 3, 4, 5] }))).toBe("RAW_SAMPLE_INVALID");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (FIX 6) P1 fail-open CLI parsing: the OLD parseArgs silently ignored unknown options and
+// swallowed a following option as the value of --out/--tuple. WORST: `--out --strict` treated
+// `--strict` as the output FILENAME -> suppressed strict mode, wrote the provisional report +
+// sidecar + raw/ files, and exited 0 (a false-green around the only fail-closed gate). The
+// closed grammar must FAIL FAST (exit 2) on any malformed control input BEFORE any evidence is
+// produced: no report, no sidecar, no raw dir, zero filesystem output.
+// ---------------------------------------------------------------------------
+describe("perf-soak-authority (FIX 6) closed, fail-fast CLI grammar (no fail-open, no evidence on malformed input)", () => {
+  const cli6Dirs: string[] = [];
+  afterAll(() => {
+    for (const d of cli6Dirs) fs.rmSync(d, { recursive: true, force: true });
+  });
+  const freshDir = (): string => {
+    const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "psa-cli6-")));
+    cli6Dirs.push(d);
+    return d;
+  };
+  // Spawn the REAL CLI with cwd = a fresh empty temp dir so any (erroneous) relative write lands
+  // there and can be detected. Returns the exit status, stderr, and the dir contents afterwards.
+  const runInDir = (args: string[]): { status: number | null; stderr: string; entries: string[]; dir: string } => {
+    const dir = freshDir();
+    const r = spawnSync(process.execPath, [GEN, ...args], { encoding: "utf8", cwd: dir, env: { ...process.env }, timeout: 120000 });
+    return { status: r.status, stderr: r.stderr, entries: fs.readdirSync(dir), dir };
+  };
+
+  // --- RED-FIRST negative matrix: each must exit 2 (USAGE) AND write ZERO files anywhere. ---
+  const NEGATIVE: Array<[string, string[]]> = [
+    ["unknown option --foo", ["--foo"]],
+    ["misspelled --strcit", ["--strcit"]],
+    ["bare --out (no value, end of argv)", ["--out"]],
+    ["bare --tuple (no value, end of argv)", ["--tuple"]],
+    ["--out --strict (option-like value must NOT be swallowed)", ["--out", "--strict"]],
+    ["--tuple --strict (option-like value must NOT be swallowed)", ["--tuple", "--strict"]],
+    ["duplicate --out a --out b", ["--out", "a.json", "--out", "b.json"]],
+    ["duplicate --strict --strict", ["--strict", "--strict"]],
+    ["unexpected positional foo", ["foo"]],
+    ["trailing positional after --out x extra", ["--out", "x.json", "extra"]],
+  ];
+  for (const [name, args] of NEGATIVE) {
+    it(`RED-FIRST: ${name} -> exit 2 (USAGE) and ZERO filesystem output`, () => {
+      const { status, stderr, entries, dir } = runInDir(args);
+      expect(status, `stderr=${stderr}`).toBe(2); // fail-fast usage exit (nonzero, distinct from 0/3/4)
+      expect(stderr).toMatch(/USAGE_ERROR/);
+      // zero evidence: no report, no sidecar, no raw dir — nothing written anywhere under cwd.
+      expect(entries, `wrote files into ${dir}: ${entries.join(", ")}`).toHaveLength(0);
+    }, 120000);
+  }
+
+  // --- POSITIVE regressions: valid invocations behave EXACTLY as before. ---
+  it("valid --out <path> writes the bundle and exits 0", () => {
+    const dir = freshDir();
+    const out = path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.json");
+    const r = spawnSync(process.execPath, [GEN, "--out", out], { encoding: "utf8", timeout: 120000 });
+    expect(r.status, r.stderr).toBe(0);
+    expect(fs.existsSync(out)).toBe(true);
+    expect(fs.existsSync(path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.SEAL_STATUS.json"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "raw"))).toBe(true);
+    expect(JSON.parse(r.stdout).independent_mirror_verdict).toMatchObject({ result: "RED", code: "SOAK_INVALID" });
+  }, 120000);
+
+  it("valid --tuple <64hex> --out <path> --strict writes the bundle then exits 4 (strict RED)", () => {
+    const dir = freshDir();
+    const out = path.join(dir, "FRIDAY_STRESS_RESOURCE_REPORT.json");
+    const tuple = "a".repeat(64);
+    const r = spawnSync(process.execPath, [GEN, "--tuple", tuple, "--out", out, "--strict"], { encoding: "utf8", timeout: 120000 });
+    expect(r.status).toBe(4); // strict still fails closed
+    expect(fs.existsSync(out)).toBe(true);
+  }, 120000);
+
+  it("--strict with no --out exits 4 and writes nothing", () => {
+    const { status, entries } = runInDir(["--strict"]);
+    expect(status).toBe(4);
+    expect(entries).toHaveLength(0);
+  }, 120000);
+
+  it("no args exits 0 with the PROVISIONAL_UNSEALED banner and writes nothing", () => {
+    const { status, stderr, entries } = runInDir([]);
+    expect(status).toBe(0);
+    expect(stderr).toContain("PROVISIONAL_UNSEALED");
+    expect(entries).toHaveLength(0);
+  }, 120000);
+
+  // --- fast in-process grammar unit checks (no spawn) ---
+  it("parseArgs: closed grammar accepts only the exact option set; malformed throws UsageError", () => {
+    expect(parseArgs([])).toEqual({ out: null, tuple: null, strict: false });
+    expect(parseArgs(["--out", "x.json"])).toEqual({ out: "x.json", tuple: null, strict: false });
+    expect(parseArgs(["--tuple", "b".repeat(64), "--strict"])).toEqual({ out: null, tuple: "b".repeat(64), strict: true });
+    for (const bad of [["--foo"], ["--strcit"], ["--out"], ["--tuple"], ["--out", "--strict"], ["--tuple", "--strict"], ["--out", "a", "--out", "b"], ["--strict", "--strict"], ["foo"], ["--out", "x", "extra"]]) {
+      expect(() => parseArgs(bad), `expected ${JSON.stringify(bad)} to throw`).toThrow(UsageError);
+    }
   });
 });
