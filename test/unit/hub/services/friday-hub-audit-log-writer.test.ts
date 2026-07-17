@@ -1933,3 +1933,218 @@ describe("FridayHubAuditLogWriter — PRIV-UNICODE-REDACTION-001 numeric PII und
     expect(first.sqliteRow.ts).toBe("2026-07-17T00:00:00.000Z");
   });
 });
+
+// ── PRIV-UNICODE-REDACTION-001 round-11 — Unicode-obfuscated key-CONTENT PII (the KEY STRING is PII) ──
+//
+// The OTHER key leg. Round-10 (above) closed key-NAME→type CLASSIFICATION (a numeric VALUE under an
+// obfuscated `phone`/`ssn`/`card` key). This closes key-CONTENT PII: an email / SSN / card written AS
+// AN OBJECT KEY and Unicode-obfuscated (zero-width, combining, Arabic-Indic, full-width, precomposed,
+// NFKD-math, BOM/ZWNJ/WJ) persisted BYTE-FOR-BYTE in BOTH `audit_logs.details_json` and `audit.jsonl`
+// because the shared guard's `redactKey` scanned only the raw ASCII (+ full-width-digit) matcher. The
+// guard's key-CONTENT redactor is now Unicode-aware (`redactUnicodeObfuscated` over the shared detection
+// copy → map span back → redact original), and the writer delegates ALL key redaction to it (Pass 2
+// `redactDeep`), so no divergent sink-local key pass exists. These drive the REAL `appendFridayAuditLog`
+// and raw-read BOTH at-rest sinks. RED on f013bc5f; GREEN after the guard fix.
+describe("FridayHubAuditLogWriter — PRIV-UNICODE-REDACTION-001 key-CONTENT PII (obfuscated KEY STRING)", () => {
+  const AUDIT_SCHEMA = `
+    CREATE TABLE audit_logs (
+      id TEXT PRIMARY KEY,
+      ts TEXT NOT NULL,
+      actor_type TEXT NOT NULL,
+      actor_id TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
+      request_id TEXT,
+      trace_id TEXT,
+      ip TEXT,
+      details_json TEXT
+    );
+  `;
+
+  let root: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "friday-audit-keycontent-"));
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  interface Ctx {
+    stateDir: string;
+    canonicalLogPath: string;
+    sqlitePath: string;
+  }
+  function newCtx(): Ctx {
+    const stateDir = fs.mkdtempSync(path.join(root, "state-"));
+    fs.mkdirSync(path.join(stateDir, ".friday"), { recursive: true });
+    const sqlitePath = path.join(stateDir, "friday.db");
+    const setupDb = new Database(sqlitePath);
+    setupDb.exec(AUDIT_SCHEMA);
+    setupDb.close();
+    return { stateDir, canonicalLogPath: resolveFridayAuditLogPath(stateDir), sqlitePath };
+  }
+  async function readBack(ctx: Ctx, id: string): Promise<{
+    sqliteDetailsJson: string;
+    sqliteDetails: Record<string, unknown>;
+    sqliteRow: Record<string, unknown>;
+    jsonlLine: string;
+    jsonlDetails: Record<string, unknown>;
+  }> {
+    const verifyDb = new Database(ctx.sqlitePath, { readonly: true });
+    const sqliteRow = verifyDb
+      .prepare("SELECT id, ts, actor_type, actor_id, action, resource_type, resource_id, trace_id, details_json FROM audit_logs WHERE id = ?")
+      .get(id) as Record<string, unknown>;
+    verifyDb.close();
+    const sqliteDetailsJson = (sqliteRow.details_json as string | null) ?? "";
+    const jsonlContent = fs.readFileSync(ctx.canonicalLogPath, "utf8");
+    const jsonlLine =
+      jsonlContent.trim().split("\n").filter(Boolean).find((line) => (JSON.parse(line) as { id?: string }).id === id) ?? "";
+    return {
+      sqliteDetailsJson,
+      sqliteDetails: sqliteDetailsJson ? (JSON.parse(sqliteDetailsJson) as Record<string, unknown>) : {},
+      sqliteRow,
+      jsonlLine,
+      jsonlDetails: (JSON.parse(jsonlLine) as { details?: Record<string, unknown> }).details ?? {},
+    };
+  }
+  // Map ASCII digits of a template to any Nd decimal block by numeric value (separators kept verbatim).
+  const toNd = (ascii: string, zeroCp: number): string =>
+    ascii.replace(/[0-9]/g, (d) => String.fromCodePoint(zeroCp + Number(d)));
+
+  function keyEntry(id: string, details: Record<string, unknown>): FridayAuditLogWrite {
+    return {
+      id,
+      ts: "2026-07-17T00:00:00.000Z",
+      actorType: "service",
+      actorId: "svc-signal",
+      action: "channel.channel_delivery_failed",
+      resourceType: "channel_signal",
+      resourceId: "msg-kc",
+      result: "error",
+      errorCode: "CHANNEL_DELIVERY_FAILED",
+      details,
+    };
+  }
+
+  // ── Obfuscated PII KEY STRINGS (ASCII-fold in the comment) ──
+  const ZW_EMAIL_KEY = "victim@examp​le.com"; // U+200B in the domain → victim@example.com → [EMAIL]
+  const CM_EMAIL_KEY = "víctim@example.com"; // U+0301 combining acute on `i` (local part)
+  const FW_EMAIL_KEY = "ｖｉｃｔｉｍ@example.com"; // full-width local letters
+  const MATH_EMAIL_KEY = "\u{1D5CB}\u{1D5C2}\u{1D5BC}\u{1D5CD}\u{1D5C2}\u{1D5C6}@example.com"; // math sans `victim`
+  const AR_SSN_KEY = toNd("123-45-6789", 0x0660); // Arabic-Indic SSN
+  const ZW_CARD_KEY = "4111​1111​1111​1111"; // U+200B-spliced Luhn card // pragma: allowlist secret
+  const EMAIL_FOLDED = "victim@example.com";
+  const SSN_FOLDED = "123-45-6789";
+  const CARD_FOLDED = "4111111111111111"; // pragma: allowlist secret
+
+  it("RED→GREEN: an obfuscated email/SSN/card KEY STRING is redacted to its marker in BOTH sinks (raw + de-obfuscated absent; value preserved)", async () => {
+    const ctx = newCtx();
+    await appendFridayAuditLog(
+      ctx.canonicalLogPath,
+      keyEntry("kc-top", {
+        [ZW_EMAIL_KEY]: "hello", // zero-width email KEY
+        [AR_SSN_KEY]: 7, // Arabic-Indic SSN KEY (numeric value preserved)
+        [ZW_CARD_KEY]: "x", // zero-width card KEY
+      }),
+    );
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await readBack(ctx, "kc-top");
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      // Neither the raw obfuscated KEY bytes NOR their de-obfuscated forms survive in either sink.
+      expect(sink).not.toContain(ZW_EMAIL_KEY);
+      expect(sink).not.toContain(AR_SSN_KEY);
+      expect(sink).not.toContain(ZW_CARD_KEY);
+      expect(sink).not.toContain(EMAIL_FOLDED);
+      expect(sink).not.toContain(SSN_FOLDED);
+      expect(sink).not.toContain(CARD_FOLDED);
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect(details["[EMAIL]"]).toBe("hello"); // key redacted to marker; value preserved
+      expect(details["[SSN_US]"]).toBe(7);
+      expect(details["[CREDIT_CARD]"]).toBe("x");
+      expect(Object.keys(details)).not.toContain(ZW_EMAIL_KEY);
+    }
+  });
+
+  it("RED→GREEN: obfuscated PII KEY STRINGS NESTED and IN ARRAYS (object keys at every position) are redacted in BOTH sinks", async () => {
+    const ctx = newCtx();
+    await appendFridayAuditLog(
+      ctx.canonicalLogPath,
+      keyEntry("kc-nested", {
+        outer: { [CM_EMAIL_KEY]: "v1" }, // nested object, combining-mark email key
+        list: [{ [FW_EMAIL_KEY]: "v2" }, { [AR_SSN_KEY]: 9 }], // objects INSIDE an array
+        deep: { l2: { [MATH_EMAIL_KEY]: "v3" } }, // math-alnum email key, deeper
+      }),
+    );
+    const { sqliteDetailsJson, sqliteDetails, jsonlLine, jsonlDetails } = await readBack(ctx, "kc-nested");
+
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink.length).toBeGreaterThan(0);
+      expect(sink).not.toContain(EMAIL_FOLDED);
+      expect(sink).not.toContain(SSN_FOLDED);
+      // No raw obfuscated key bytes in either sink.
+      for (const k of [CM_EMAIL_KEY, FW_EMAIL_KEY, MATH_EMAIL_KEY, AR_SSN_KEY]) {
+        expect(sink).not.toContain(k);
+      }
+    }
+    for (const details of [sqliteDetails, jsonlDetails]) {
+      expect((details.outer as Record<string, unknown>)["[EMAIL]"]).toBe("v1");
+      expect((details.list as Array<Record<string, unknown>>)[0]["[EMAIL]"]).toBe("v2");
+      expect((details.list as Array<Record<string, unknown>>)[1]["[SSN_US]"]).toBe(9);
+      expect((details.deep as { l2: Record<string, unknown> }).l2["[EMAIL]"]).toBe("v3");
+    }
+  });
+
+  it("NO-DEGRADE: benign multilingual KEYS + ALL-Nd pure-digit KEYS survive BYTE-IDENTICAL in BOTH sinks", async () => {
+    const ctx = newCtx();
+    const details: Record<string, unknown> = {
+      "café_naïve": "a", // precomposed accents, no PII shape
+      "订单号_ключ": "b", // CJK + Cyrillic benign key
+      "user​name": "c", // zero-width in a benign word
+      "4111111111111111": "ascii-id", // ASCII all-digit business id (exempt) // pragma: allowlist secret
+      "４１１１１１１１１１１１１１１１": "fw-id", // full-width all-digit id (all-Nd exempt) // pragma: allowlist secret
+    };
+    await appendFridayAuditLog(ctx.canonicalLogPath, keyEntry("kc-benign", { ...details }));
+    const { sqliteDetails, jsonlDetails, sqliteDetailsJson, jsonlLine } = await readBack(ctx, "kc-benign");
+
+    for (const parsed of [sqliteDetails, jsonlDetails]) {
+      for (const [k, v] of Object.entries(details)) {
+        expect(parsed[k]).toBe(v); // key + value byte-identical, no over-redaction
+      }
+      expect(Object.keys(parsed)).not.toContain("[CREDIT_CARD]"); // all-Nd key NOT folded to a card
+      expect(Object.keys(parsed)).not.toContain("[EMAIL]");
+    }
+    // The benign multilingual key bytes are present verbatim in the raw sink strings too.
+    for (const sink of [sqliteDetailsJson, jsonlLine]) {
+      expect(sink).toContain("café_naïve");
+      expect(sink).toContain("４１１１１１１１１１１１１１１１"); // pragma: allowlist secret
+    }
+  });
+
+  it("NO-DEGRADE: two DISTINCT obfuscated email KEYS collapsing to [EMAIL] keep BOTH values in BOTH sinks; canonical columns + append-only intact", async () => {
+    const ctx = newCtx();
+    const k1 = "a@examp​le.com"; // zero-width
+    const k2 = "b@exámple.com"; // combining mark on domain
+    await appendFridayAuditLog(ctx.canonicalLogPath, keyEntry("kc-collide-1", { [k1]: 1, [k2]: 2 }));
+    await appendFridayAuditLog(ctx.canonicalLogPath, keyEntry("kc-collide-2", { [k1]: 1, [k2]: 2 })); // append-only proof
+    const first = await readBack(ctx, "kc-collide-1");
+    const second = await readBack(ctx, "kc-collide-2");
+
+    for (const parsed of [first.sqliteDetails, first.jsonlDetails]) {
+      expect(Object.keys(parsed)).not.toContain(k1);
+      expect(Object.keys(parsed)).not.toContain(k2);
+      expect(Object.values(parsed).sort()).toEqual([1, 2]); // BOTH values survive (lossless)
+      expect(Object.keys(parsed).every((k) => k.startsWith("[EMAIL]"))).toBe(true);
+    }
+    // Append-only + canonical columns byte-identical across the two writes.
+    const jsonlLineCount = fs.readFileSync(ctx.canonicalLogPath, "utf8").trim().split("\n").filter(Boolean).length;
+    expect(jsonlLineCount).toBe(2);
+    expect(first.sqliteRow.id).toBe("kc-collide-1");
+    expect(first.sqliteRow.action).toBe("channel.channel_delivery_failed");
+    expect(first.sqliteRow.ts).toBe("2026-07-17T00:00:00.000Z");
+    expect(second.sqliteRow.id).toBe("kc-collide-2");
+    expect(second.sqliteRow.resource_type).toBe("channel_signal");
+  });
+});

@@ -211,4 +211,43 @@ describe("FridayMemoryOutputFilter", () => {
       expect(filtered.metadata).toEqual(metadata);
     });
   });
+
+  // ─── memory-egress key-CONTENT PII (PRIV-UNICODE-REDACTION-001 round-11) ───
+  //
+  // The guard's key-CONTENT redactor (`redactKey`) governs MEMORY egress too (this filter calls
+  // `redactDeep` on item.metadata). A metadata KEY STRING that is itself PII, Unicode-obfuscated so
+  // the raw ASCII (+ full-width-digit) matcher missed it (a zero-width-split email / Arabic-Indic SSN
+  // used AS A KEY), persisted RAW on read-back before round-11; it is now redacted to its marker. The
+  // VALUE is preserved. NO-DEGRADE: benign multilingual keys + ALL-Nd business-id keys round-trip
+  // byte-identical (a strict superset, zero benign divergence).
+  describe("Unicode-obfuscated key-CONTENT PII metadata KEY (egress redactDeep)", () => {
+    it("redacts a zero-width-split EMAIL metadata KEY STRING on filterItem (egress); value preserved", () => {
+      const emailKey = "victim@examp​le.com"; // U+200B in domain
+      const item = makeItem({ metadata: { [emailKey]: "note-value" } });
+      const filtered = filter.filterItem(item);
+      const meta = filtered.metadata as Record<string, unknown>;
+      expect(Object.keys(meta)).not.toContain(emailKey); // raw obfuscated key gone
+      expect(Object.keys(meta)).toContain("[EMAIL]");
+      expect(meta["[EMAIL]"]).toBe("note-value"); // value preserved
+    });
+
+    it("redacts an Arabic-Indic SSN metadata KEY STRING on a learned-fact value (egress)", () => {
+      const ssnKey = "١٢٣-٤٥-٦٧٨٩"; // Arabic-Indic 123-45-6789
+      const redacted = filter.redactLearnedFactValue({ [ssnKey]: 5 }) as Record<string, unknown>;
+      expect(Object.keys(redacted)).not.toContain(ssnKey);
+      expect(Object.keys(redacted)).toContain("[SSN_US]");
+      expect(redacted["[SSN_US]"]).toBe(5);
+    });
+
+    it("NO-DEGRADE: benign multilingual + ALL-Nd pure-digit metadata KEYS round-trip byte-identical", () => {
+      const metadata = {
+        "café_naïve": "a", // precomposed accents, no PII shape
+        "user​name": "b", // zero-width in a benign word
+        "４１１１１１１１１１１１１１１１": "fw-id", // full-width all-digit business id (all-Nd exempt)
+      };
+      const filtered = filter.filterItem(makeItem({ metadata: { ...metadata } }));
+      expect(filtered.metadata).toEqual(metadata); // no over-redaction, byte-identical
+      expect(Object.keys(filtered.metadata)).not.toContain("[CREDIT_CARD]");
+    });
+  });
 });

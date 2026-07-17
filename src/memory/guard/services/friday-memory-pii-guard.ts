@@ -15,14 +15,25 @@ import {
   FRIDAY_MEMORY_GUARD_US_SSN_REGEX,
 } from "../friday-memory-guard.constants.js";
 
-// PRIV-UNICODE-REDACTION-001 (round-10): the SAME shared Unicode DETECTION primitive the audit
-// writer's field-name classifiers use (NFKD → strip `\p{M}` → strip Cf / Default_Ignorable → fold
-// `\p{Nd}`). Imported to Unicode-canonicalize the KEY as an ADDITIVE second pass in the guard's
-// key-NAME classifier so a PII-context key hidden behind zero-width / combining / full-width /
-// precomposed obfuscation is classified identically to its de-obfuscated ASCII form (see the
-// strict-superset union in `sensitiveTypeForKey`). No import cycle: `friday-unicode-pii-normalizer.ts`
-// is a dependency-free LEAF module (imports nothing), so the guard importing it introduces no cycle.
-import { buildUnicodeDetectionCopy } from "../../../security/friday-unicode-pii-normalizer.js";
+// PRIV-UNICODE-REDACTION-001: the SAME shared Unicode DETECTION primitive the audit writer's
+// field-name classifiers use (NFKD → strip `\p{M}` → strip Cf / Default_Ignorable → fold `\p{Nd}`).
+//   - round-10: `buildUnicodeDetectionCopy` Unicode-canonicalizes the KEY as an ADDITIVE second pass
+//     in the guard's key-NAME classifier so a PII-context key hidden behind zero-width / combining /
+//     full-width / precomposed obfuscation is classified identically to its de-obfuscated ASCII form
+//     (the strict-superset union in `sensitiveTypeForKey`).
+//   - round-11: `redactUnicodeObfuscated` + the shared span-mapper make the key-CONTENT PII REDACTOR
+//     (`redactKey`) Unicode-aware — the OTHER key leg, where the KEY STRING ITSELF is PII
+//     (`victim@examp<U+200B>le.com`, Arabic-Indic `١٢٣-٤٥-٦٧٨٩`, a combining-spliced card USED AS AN
+//     OBJECT KEY). It runs the SAME PII detectors over the detection copy, maps each matched span
+//     back to the ORIGINAL key span, and redacts only that span — the SAME primitive the audit writer
+//     uses for VALUE content, so no divergent sink-local copy exists.
+// No import cycle: `friday-unicode-pii-normalizer.ts` is a dependency-free LEAF module (imports
+// nothing), so the guard importing it introduces no cycle.
+import {
+  buildUnicodeDetectionCopy,
+  redactUnicodeObfuscated,
+  type UnicodeNormalizedSpan,
+} from "../../../security/friday-unicode-pii-normalizer.js";
 
 interface PiiPattern {
   type: FridayMemoryGuardPiiType;
@@ -194,6 +205,23 @@ function redactContent(content: string, matches: FridayMemoryGuardPiiMatch[]): s
     result = result.substring(0, s.start) + redacted + result.substring(s.end);
   }
   return result;
+}
+
+/**
+ * Report every PII match in `normalized` as a `[start, end)` span plus the SAME placeholder
+ * `redactContent` would splice for it (`[EMAIL]` / `[SSN_US]` / `[CREDIT_CARD]` / `[PHONE_US]`), so
+ * span-based Unicode redaction is byte-consistent with the in-place ASCII redactor. This is the SPAN
+ * entry point `redactKey`'s Unicode pass hands to the shared `redactUnicodeObfuscated`: the matcher
+ * runs over the de-obfuscated DETECTION COPY, and each span is mapped back to the ORIGINAL key and
+ * redacted there. Reusing `findMatches` keeps the credit-card Luhn + false-positive gates identical
+ * to how the guard classifies the same shape as a VALUE — no divergent copy of the detectors.
+ */
+function findKeyPiiSpans(normalized: string): UnicodeNormalizedSpan[] {
+  return findMatches(normalized).map((m) => ({
+    start: m.start,
+    end: m.end,
+    replacement: `[${m.type.toUpperCase()}]`,
+  }));
 }
 
 /**
@@ -390,14 +418,65 @@ export function createFridayMemoryPiiGuard(
       // (dashes/spaces/letters, e.g. "４１１１-…" or "ssn:123-45-6789") contains a non-`Nd` char, so
       // it fails the exemption and STILL redacts. This is purely the key-preservation exemption —
       // it does NOT weaken the value path (a full-width card VALUE is redacted as before).
+      //
+      // PRIV-UNICODE-REDACTION-001 (round-11): the key-CONTENT PII redaction is now UNICODE-AWARE.
+      // The pre-round-11 pass ran ONLY `findMatches` (ASCII + full-width digit fold), so a KEY STRING
+      // that is itself PII hidden by a zero-width splice (`victim@examp<U+200B>le.com`), a non-ASCII
+      // decimal script (Arabic-Indic `١٢٣-٤٥-٦٧٨٩`), a combining-mark splice, or a precomposed accent
+      // persisted BYTE-FOR-BYTE in both audit sinks and in memory egress. This is an ADDITIVE UNION of
+      // two passes — the SAME strict-superset discipline the audit writer's content pre-pass uses:
+      //   (1) UNICODE PASS FIRST — `redactUnicodeObfuscated(key, [findKeyPiiSpans])` runs the guard's
+      //       OWN PII detectors over the shared de-obfuscated DETECTION COPY (NFKD → strip `\p{M}` →
+      //       strip Cf / Default_Ignorable → fold `\p{Nd}`), maps each matched span back to the
+      //       ORIGINAL key span, and redacts the FULL original span. Running FULL-SPAN de-obfuscated
+      //       redaction FIRST forecloses the local-part-accent FRAGMENTATION the raw ASCII matcher
+      //       would produce (`víctim@…` → raw matches only the ASCII tail; NFC ≡ NFD here). It is a
+      //       NO-OP on a key whose detection copy is unchanged (pure ASCII → `changed=false`
+      //       short-circuit) or where no detector matches (benign multilingual key), so a benign key
+      //       is returned verbatim.
+      //   (2) RAW residual pass — `findMatches` over the pass-(1) result + `redactContent`. This
+      //       REPRODUCES the EXACT pre-round-11 redaction for a pure-ASCII PII key (pass (1) short-
+      //       circuits on it) AND rescues any legacy raw match a fold could have merged away
+      //       (`123-45-6789<combining>0`: the raw `\b`-bounded SSN still redacts) — so NEW ⊇ OLD,
+      //       byte-identical on every key the old pass caught and on every benign key.
+      // TAGS are collected from BOTH passes (union) so an obfuscated PII key still contributes its
+      // `pii.*` tag in tag/block mode, which never mutates the key. The ALL-`Nd` exemption runs FIRST
+      // and unchanged, so a pure-decimal key (any script) is preserved before either pass. KEY
+      // COLLISION is handled OUTSIDE this function by `resolveFinalKey` (two keys redacting to the
+      // same marker are disambiguated so both VALUES survive) — unchanged; the markers this returns
+      // (`[EMAIL]` / `[SSN_US]` / `[CREDIT_CARD]` / `[PHONE_US]`) are byte-identical to `redactContent`,
+      // so collision detection keys on the same token.
       const redactKey = (key: string): string => {
         if (/^\p{Nd}+$/u.test(key)) return key;
-        const matches = findMatches(key);
-        if (matches.length === 0) return key;
-        for (const m of matches) {
+
+        // Tag union: raw-key matches ∪ detection-copy matches. Collected in ALL modes (tag/block
+        // return the key unchanged but still surface the tag).
+        const rawMatches = findMatches(key);
+        for (const m of rawMatches) {
           tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${m.type}`);
         }
-        return effectiveMode === "redact" ? redactContent(key, matches) : key;
+        const detection = buildUnicodeDetectionCopy(key);
+        if (detection.changed) {
+          for (const m of findMatches(detection.normalized)) {
+            tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${m.type}`);
+          }
+        }
+        // Benign key (no PII in either view): byte-identical fast path, no tags — matches the
+        // pre-round-11 `matches.length === 0` early return for pure ASCII and adds nothing for
+        // benign multilingual keys.
+        if (rawMatches.length === 0 && !detection.changed) return key;
+
+        if (effectiveMode !== "redact") return key; // tag/block: never mutate the key
+
+        // Pass (1) Unicode-aware full-span redaction (skipped when the copy is unchanged — pure ASCII);
+        // pass (2) raw residual reproduces/rescues the legacy ASCII redaction.
+        const unicodeRedacted = detection.changed
+          ? redactUnicodeObfuscated(key, [findKeyPiiSpans])
+          : key;
+        const rawResidual = findMatches(unicodeRedacted);
+        return rawResidual.length > 0
+          ? redactContent(unicodeRedacted, rawResidual)
+          : unicodeRedacted;
       };
 
       // Write `val` under `key` as an OWN DATA property rather than `out[key] = val`: a
