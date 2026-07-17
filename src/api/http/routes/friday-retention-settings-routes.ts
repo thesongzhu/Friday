@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import { FridayDomainError } from "#errors";
 import type {
@@ -111,7 +112,7 @@ export interface FridayRetentionSettingsRoutesDeps {
    */
   readReceiptByRecoveryKey?: (input: {
     ownerId: string;
-    recoveryKey: string;
+    recoveryKeyHash: string;
   }) => FridayRetentionPolicyUpdateReceipt | null;
   /**
    * Injected clock (RETENTION-R3d: no inline `Date.now()`). Drives the receipt
@@ -156,12 +157,13 @@ export interface FridayRetentionPolicyAuditEntry {
   /** Content categories whose EFFECTIVE policy changed (before ≠ after). */
   changedCategories: string[];
   /**
-   * RETENTION-R3d (P0 — recovery): the CLIENT-KNOWN idempotency/operation key
-   * (from the request `Idempotency-Key` header), persisted so the committed
-   * receipt is retrievable via the owner-bound recovery seam. Absent when the
-   * client supplied no key (the write is still fully audited + receipted).
+   * RETENTION-R3d (P1 — raw-key minimization): the NON-REVERSIBLE hash of the
+   * client-known idempotency/operation key (`sha256`; see `hashRecoveryKey`). The
+   * RAW key is NEVER persisted — recovery hashes the presented `Idempotency-Key`
+   * and matches by this hash, preserving exact-replay + 409-conflict semantics
+   * without leaving the key at rest. Absent when the client supplied no key.
    */
-  recoveryKey?: string;
+  recoveryKeyHash?: string;
   /**
    * RETENTION-R3d (P1 — recovery collision): digest of the request payload,
    * persisted so a (owner, recoveryKey) binding is IMMUTABLE across HTTP-journal
@@ -415,7 +417,7 @@ export function createFridayRetentionPolicyAuditAppender(deps: {
       before: entry.before,
       after: entry.after,
       appliedUpdates: entry.appliedUpdates,
-      ...(entry.recoveryKey ? { recoveryKey: entry.recoveryKey } : {}),
+      ...(entry.recoveryKeyHash ? { recoveryKeyHash: entry.recoveryKeyHash } : {}),
       ...(entry.payloadDigest ? { payloadDigest: entry.payloadDigest } : {}),
     } as unknown as JsonObject;
     const securityEntry: FridaySecurityAuditEntry = {
@@ -455,6 +457,18 @@ interface RetentionAuditRow {
   metadata_json: string;
 }
 
+/**
+ * RETENTION-R3d (P1 — raw-key minimization): non-reversible hash of a recovery
+ * key. `sha256` is deliberately KEYLESS: it must be STABLE across restarts so a
+ * receipt bound before a restart is still recoverable after one (a confirmed
+ * invariant); keying on a rotate-able/possibly-ephemeral server key would break
+ * that. It is non-reversible and never stores the raw key; exact-replay + conflict
+ * detection compare hashes. (Idempotency keys are high-entropy in practice.)
+ */
+export function hashRecoveryKey(recoveryKey: string): string {
+  return createHash("sha256").update(recoveryKey).digest("hex");
+}
+
 /** The durable recovery binding: the reconstructed receipt + its payload digest. */
 interface RetentionReceiptBinding {
   receipt: FridayRetentionPolicyUpdateReceipt;
@@ -462,17 +476,18 @@ interface RetentionReceiptBinding {
 }
 
 /**
- * RETENTION-R3d (P0/P1 — recovery): read the OLDEST durable (owner, recoveryKey)
- * binding on a supplied connection and reconstruct its EXACT receipt + payload
- * digest. Reading the OLDEST (`created_at ASC`) — combined with the write-path
- * conflict/idempotency guard — makes the binding IMMUTABLE: a same-key/different-
- * payload write is rejected before it can shadow the first, so the FIRST committed
- * receipt for a key is always the one returned (never "latest wins"). Owner scoping
- * is enforced in the query (a different principal's rows are never matched).
+ * RETENTION-R3d (P0/P1 — recovery): read the OLDEST durable (owner,
+ * recoveryKeyHash) binding on a supplied connection and reconstruct its EXACT
+ * receipt + payload digest. The lookup matches the NON-REVERSIBLE hash (the raw
+ * key is never stored). Reading the OLDEST (`created_at ASC`) — combined with the
+ * write-path conflict/idempotency guard — makes the binding IMMUTABLE: a
+ * same-key/different-payload write is rejected before it can shadow the first, so
+ * the FIRST committed receipt for a key is always returned (never "latest wins").
+ * Owner scoping is enforced in the query (a different principal's rows never match).
  */
 function readRetentionReceiptBinding(
   db: Database.Database,
-  input: { ownerId: string; recoveryKey: string },
+  input: { ownerId: string; recoveryKeyHash: string },
 ): RetentionReceiptBinding | null {
   const row = db
     .prepare(
@@ -480,11 +495,11 @@ function readRetentionReceiptBinding(
          FROM security_audit_log
         WHERE principal_id = ?
           AND action = 'retention.policy.update'
-          AND json_extract(metadata_json, '$.recoveryKey') = ?
+          AND json_extract(metadata_json, '$.recoveryKeyHash') = ?
         ORDER BY created_at ASC
         LIMIT 1`,
     )
-    .get(input.ownerId, input.recoveryKey) as RetentionAuditRow | undefined;
+    .get(input.ownerId, input.recoveryKeyHash) as RetentionAuditRow | undefined;
   if (!row) return null;
   let meta: {
     receiptId?: string;
@@ -531,7 +546,7 @@ function readRetentionReceiptBinding(
  */
 export function createFridayRetentionReceiptRecovery(deps: {
   sqlite: FridaySqliteLayer;
-}): (input: { ownerId: string; recoveryKey: string }) => FridayRetentionPolicyUpdateReceipt | null {
+}): (input: { ownerId: string; recoveryKeyHash: string }) => FridayRetentionPolicyUpdateReceipt | null {
   return (input) =>
     deps.sqlite.withReadConnection((db) => readRetentionReceiptBinding(db, input)?.receipt ?? null);
 }
@@ -617,9 +632,12 @@ export function createFridayRetentionSettingsRoutes(
         const receiptId = `retention-receipt:${ownerId}:${operationId}`;
         // The CLIENT-KNOWN recovery key comes ONLY from the Idempotency-Key HEADER
         // (P2 — never a query string, so the key can never reach access logs/URL).
-        const recoveryKey = readIdempotencyKeyHeader(
+        // P1: only its NON-REVERSIBLE hash is ever persisted / matched — the raw
+        // key is never written to `security_audit_log`.
+        const rawRecoveryKey = readIdempotencyKeyHeader(
           ctx.headers as Record<string, string | undefined> | undefined,
         );
+        const recoveryKeyHash = rawRecoveryKey ? hashRecoveryKey(rawRecoveryKey) : undefined;
         // Immutable-binding payload digest (P1 — recovery collision). Digests the
         // NORMALIZED applied updates so same-key/same-payload replays match and
         // same-key/different-payload writes are detected as conflicts.
@@ -644,8 +662,8 @@ export function createFridayRetentionSettingsRoutes(
           | { kind: "applied"; before: FridayRetentionContentPolicy; after: FridayRetentionContentPolicy; changed: string[]; auditEntry: FridaySecurityAuditEntry }
           | { kind: "idempotent"; receipt: FridayRetentionPolicyUpdateReceipt };
         deps.db.withWriteTransaction((conn) => {
-          if (recoveryKey) {
-            const existing = readRetentionReceiptBinding(conn, { ownerId, recoveryKey });
+          if (recoveryKeyHash) {
+            const existing = readRetentionReceiptBinding(conn, { ownerId, recoveryKeyHash });
             if (existing) {
               if (existing.payloadDigest === payloadDigest) {
                 // True idempotency: replay the EXACT first committed receipt.
@@ -675,7 +693,7 @@ export function createFridayRetentionSettingsRoutes(
             changedCategories: changed,
             ownerTenantId,
             payloadDigest,
-            ...(recoveryKey ? { recoveryKey } : {}),
+            ...(recoveryKeyHash ? { recoveryKeyHash } : {}),
           });
           outcome = { kind: "applied", before, after, changed, auditEntry };
         });
@@ -728,18 +746,20 @@ export function createFridayRetentionSettingsRoutes(
           "retention.policy.read",
           deps.resolveCanonicalOwnerId,
         );
-        const recoveryKey = readIdempotencyKeyHeader(
+        const rawRecoveryKey = readIdempotencyKeyHeader(
           ctx.headers as Record<string, string | undefined> | undefined,
         );
-        if (!recoveryKey) {
+        if (!rawRecoveryKey) {
           throw new FridayDomainError(
             "RETENTION_RECOVERY_KEY_REQUIRED",
             "An Idempotency-Key header is required to recover a retention-policy receipt.",
             { httpStatus: 400 },
           );
         }
+        // Hash the presented key and match by hash — the raw key is never stored.
+        const recoveryKeyHash = hashRecoveryKey(rawRecoveryKey);
         const receipt = deps.readReceiptByRecoveryKey
-          ? deps.readReceiptByRecoveryKey({ ownerId, recoveryKey })
+          ? deps.readReceiptByRecoveryKey({ ownerId, recoveryKeyHash })
           : null;
         return { receipt };
       },

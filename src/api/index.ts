@@ -250,6 +250,7 @@ export {
   createFridayRetentionSettingsRoutes,
   createFridayRetentionPolicyAuditAppender,
   createFridayRetentionReceiptRecovery,
+  hashRecoveryKey,
 } from "./http/routes/friday-retention-settings-routes.js";
 export type {
   FridayRetentionSettingsRoutesDeps,

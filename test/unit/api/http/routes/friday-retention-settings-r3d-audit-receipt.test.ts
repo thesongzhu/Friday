@@ -7,6 +7,7 @@ import {
   createFridayRetentionPolicyAuditAppender,
   createFridayRetentionReceiptRecovery,
   createFridayMultiTenantSecurityRoutes,
+  hashRecoveryKey,
 } from "#api";
 import type {
   FridayAuthMiddlewareFactory,
@@ -750,6 +751,38 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
     expect(rec.receipt).not.toBeNull();
   });
+
+  // ── 17. P1(a) — raw-key MINIMIZATION: the RAW recovery key is NEVER persisted;
+  //        only its non-reversible sha256 hash is stored, and recovery + conflict
+  //        detection still work by hashing the presented key. ───────────────────
+  it("the RAW recovery key is never at rest; only its sha256 hash is stored, and recovery still matches", async () => {
+    const routes = makeRoutes(realAppender());
+    const KEY = "raw-secret-recovery-key-xyz";
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+
+    const rows = auditRows();
+    expect(rows).toHaveLength(1);
+    // The RAW key appears NOWHERE in the persisted row.
+    expect(rows[0].metadata_json).not.toContain(KEY);
+    const meta = JSON.parse(rows[0].metadata_json) as { recoveryKey?: unknown; recoveryKeyHash?: string };
+    expect(meta.recoveryKey).toBeUndefined(); // no raw-key field at all
+    expect(meta.recoveryKeyHash).toBe(hashRecoveryKey(KEY)); // only the non-reversible hash
+
+    // Recovery still matches by hashing the presented key (exact-replay preserved).
+    const rec = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(rec.receipt).not.toBeNull();
+
+    // Same key + different payload still 409 (conflict detection works on the hash).
+    await expect(
+      putRouteOf(routes).handler(
+        makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 90 } } } }),
+      ),
+    ).rejects.toMatchObject({ httpStatus: 409 });
+  });
 });
 
 // ── Real public-HTTP seam: owner-auth happy path + cross-principal denial ─────
@@ -863,7 +896,10 @@ describe("FridayHttpServer — RETENTION-R3d real-HTTP receipt + denial isolatio
     }
   });
 
-  function startServer(tokens: Record<string, StubPrincipal>) {
+  function startServer(
+    tokens: Record<string, StubPrincipal>,
+    logOpts?: { logRequests?: boolean; logger?: (line: string) => void },
+  ) {
     const routes = createFridayHttpRouteRegistry();
     for (const route of createFridayRetentionSettingsRoutes({
       store,
@@ -885,6 +921,7 @@ describe("FridayHttpServer — RETENTION-R3d real-HTTP receipt + denial isolatio
       middleware: makeBearerStubMiddleware(tokens),
       port,
       host: "127.0.0.1",
+      ...(logOpts ?? {}),
     });
     return server.listen();
   }
@@ -966,5 +1003,32 @@ describe("FridayHttpServer — RETENTION-R3d real-HTTP receipt + denial isolatio
       headers: { authorization: `Bearer ${OWNER_A.tokenId}` },
     });
     expect(queryRes.status).toBe(400);
+  });
+
+  // P2 (real HTTP + access-log capture): a `?key=…` (real, encoded, and
+  // multi-param) is rejected AND the sensitive key NEVER appears in ANY emitted
+  // access-log line — including for the rejected/unknown-route requests.
+  it("the recovery key never reaches the access log via query string (real, %3F-encoded, multi-param)", async () => {
+    const logs: string[] = [];
+    await startServer({ [OWNER_A.tokenId]: OWNER_A }, { logRequests: true, logger: (l) => logs.push(l) });
+    const SECRET = "advisor-secret-recovery-key"; // pragma: allowlist secret (test fixture, not a real secret)
+    const auth = { authorization: `Bearer ${OWNER_A.tokenId}` };
+
+    // (1) real query string → 400 (fallback removed).
+    const r1 = await fetch(`${baseUrl}/v1/uix/retention-policy/receipt?key=${SECRET}`, { headers: auth });
+    expect(r1.status).toBe(400);
+    // (2) multiple params.
+    await fetch(`${baseUrl}/v1/uix/retention-policy/receipt?key=${SECRET}&x=1`, { headers: auth });
+    // (3) percent-encoded `?`/`=` (unknown-route path; the finish-logger still runs).
+    await fetch(`${baseUrl}/v1/uix/retention-policy/receipt%3Fkey%3D${SECRET}`, { headers: auth });
+
+    // Let the response `finish` events fire the access-log sink.
+    await new Promise((r) => setTimeout(r, 60));
+
+    // Logging was actually ON, and the secret is in NONE of the emitted lines.
+    expect(logs.length).toBeGreaterThan(0);
+    for (const line of logs) {
+      expect(line).not.toContain(SECRET);
+    }
   });
 });
