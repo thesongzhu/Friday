@@ -57,6 +57,21 @@ function filterItemImpl(item: FridayMemoryItem): FridayMemoryItem {
   return {
     ...item,
     content: redactAndTruncate(item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
+    // `source` is a FREE-FORM persisted string (accepted verbatim through `FridayMemoryStoreInput`
+    // and the HTTP memory-store body), so a legacy/older-writer row can carry PII or a credential
+    // VALUE inside it. The read-back filter redacted content/metadata/tags/snippet but PRESERVED
+    // `source`, leaving it an unfiltered sensitive-data egress channel across the agent trust
+    // boundary (memory_search serializes `r.item.source` verbatim) AND the HTTP memory routes
+    // (memory.get/list/replay all return `filterItem(item).source`). Route it through the SAME
+    // canonical PII + secret-VALUE transform as `content` (`redactAndTruncate` → the Unicode-aware
+    // `scanAndTransform` → `redactSecretAndPiiValueString`): email/phone/SSN/card + raw AND
+    // Unicode-obfuscated secret shapes (hf_/sk-/Bearer/…) become their canonical markers. That
+    // transform is a PROVABLE STRICT SUPERSET — a `source` with no sensitive subspan folds through
+    // every pass unchanged, so a benign identifier (`session:abc123`, `user`, `channel:telegram`,
+    // `import:2026`, a UUID, `preference`) is returned BYTE-IDENTICAL. The boundary policy's reserved
+    // `learned_fact` source (matched exactly downstream to surface the learning-boundary metadata) is
+    // likewise benign, so it round-trips verbatim and the reservation stays intact.
+    source: redactAndTruncate(item.source, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
     metadata: redactMetadata(item.metadata),
     tags: dropSensitiveTags(item.tags),
   };

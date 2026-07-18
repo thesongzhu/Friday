@@ -68,8 +68,28 @@ const PK_PUBLISHABLE = "pk" + "-" + "live" + "ABCDEFGH1234567890XYZ";
 interface MappedResult {
   content: string;
   score: number;
-  metadata: { id: string; namespace: string; tags: string[]; source: string; createdAt: string };
+  metadata: {
+    id: string;
+    namespace: string;
+    tags: string[];
+    source: string;
+    createdAt: string;
+    trustLevel?: unknown;
+  };
 }
+
+// Benign `source` identifiers that must round-trip BYTE-FOR-BYTE through the egress filter (no
+// sensitive subspan → the redactor is a no-op). Spans the shapes seen in production: `session:*`,
+// bare `user`, `channel:*`, a UUID, `preference`, and an `import:*` tag. `agent` and `learned_fact`
+// (the reserved boundary-policy source) are covered by the learned-fact retention test below.
+const BENIGN_SOURCES = [
+  "session:abc123",
+  "user",
+  "channel:telegram",
+  "550e8400-e29b-41d4-a716-446655440000",
+  "preference",
+  "import:2026",
+] as const;
 
 function signalWithPrincipal(principalId: string, sessionKey = "agent:run:run-1"): AbortSignal {
   return attachFridayAgentToolExecutionContext(new AbortController().signal, {
@@ -364,5 +384,170 @@ describe("memory_search — direct search/list leg raw CREDENTIAL egress redacti
     // The credential row that survived the limit is still redacted.
     expect(parsed[1]!.content).toContain("[REDACTED_SECRET]");
     expect(result.content).not.toContain(HF_KEY);
+  });
+});
+
+// ─── SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001 round-2 (the Advisor HIGH) ────────────────────────
+// `FridayMemoryItem.source` is a FREE-FORM persisted string accepted verbatim through
+// `FridayMemoryStoreInput` and the HTTP memory-store body. The round-1 fix closed the
+// content/metadata/tags/snippet differential, but the shared output filter still PRESERVED
+// `source`, and `memory_search` serializes `r.item.source` verbatim — so a legacy/older-writer row
+// that stored PII or a credential VALUE inside `source` (only) leaked RAW to the agent. Round-2
+// routes `source` through the SAME canonical PII + secret-VALUE transform as `content`, INSIDE the
+// shared `filterItemImpl`, so BOTH agent-tool legs (direct search + session-lexical list) and the
+// HTTP memory routes inherit it. These tests place the sensitive value ONLY in `source`: RED on the
+// pre-fix tree (raw `source` leaks on BOTH legs), GREEN after. Benign source identifiers and the
+// reserved `learned_fact` boundary source are asserted byte-preserved (no over-redaction).
+// ───────────────────────────────────────────────────────────────────────────────────────────
+describe("memory_search — stored-row SOURCE raw egress redaction (round-2)", () => {
+  it("redacts PII + credentials that live ONLY in `source` on the DIRECT search leg", async () => {
+    const legacy = makeItem({
+      id: "legacy-source-1",
+      content: "benign note about the weather",
+      source: `imported from ${EMAIL} using ${HF_KEY} and ${SK_KEY}`,
+      tags: ["weather"],
+    });
+    const [searchTool] = createFridayAgentMemoryTools({
+      memoryService: mockMemoryService({ search: [makeResult(legacy, 0.9)] }),
+    });
+
+    const result = await searchTool!.execute({ query: "weather" }, signalWithPrincipal("user-1"));
+    expect(result.isError).toBeUndefined();
+    const parsed = parse(result.content);
+    const stored = parsed.find((r) => r.metadata.id === "legacy-source-1")!;
+
+    // `source` value: PII → canonical marker, credential shapes → `[REDACTED_SECRET]`.
+    expect(stored.metadata.source).toContain("[EMAIL]");
+    expect(stored.metadata.source).toContain("[REDACTED_SECRET]");
+    // No raw sensitive byte anywhere in the serialized tool output.
+    expect(result.content).not.toContain(EMAIL);
+    expect(result.content).not.toContain(HF_KEY);
+    expect(result.content).not.toContain(SK_KEY);
+    // The benign CONTENT (no sensitive data) is byte-identical — the source fix is surgical.
+    expect(stored.content).toBe("benign note about the weather");
+  });
+
+  it("redacts a zero-width-obfuscated credential that lives ONLY in `source` on the DIRECT search leg", async () => {
+    const legacy = makeItem({
+      id: "legacy-source-zw",
+      content: "benign status update",
+      source: `origin ${HF_KEY_ZW} end`,
+      tags: ["status"],
+    });
+    const [searchTool] = createFridayAgentMemoryTools({
+      memoryService: mockMemoryService({ search: [makeResult(legacy, 0.9)] }),
+    });
+
+    const result = await searchTool!.execute({ query: "status" }, signalWithPrincipal("user-1"));
+    expect(result.isError).toBeUndefined();
+    const parsed = parse(result.content);
+    const stored = parsed.find((r) => r.metadata.id === "legacy-source-zw")!;
+
+    // The Unicode-obfuscated credential in `source` is de-obfuscated and redacted, NOT leaked.
+    expect(stored.metadata.source).toContain("[REDACTED_SECRET]");
+    // The contiguous body run that leaks pre-fix is gone (survives neither raw nor de-obfuscated).
+    expect(result.content).not.toContain(HF_ZW_LEAK_PROBE);
+  });
+
+  it("redacts PII + credentials that live ONLY in `source` on the session lexical-fallback LIST leg", async () => {
+    const legacy = makeItem({
+      id: "legacy-source-list",
+      content: "profile summary",
+      source: `synced ${EMAIL} token ${HF_KEY}`,
+      tags: ["profile"],
+    });
+    const [searchTool] = createFridayAgentMemoryTools({
+      // search returns nothing → the row can only reach the agent via the LIST-backed
+      // session lexical fallback (buildSessionLexicalCandidates → memoryService.list).
+      memoryService: mockMemoryService({ search: [], list: [legacy] }),
+      resolveSessionMemoryNamespace: async () => "sess-abc",
+    });
+
+    const result = await searchTool!.execute(
+      { query: "profile" },
+      signalWithPrincipal("user-1", "sess-123"),
+    );
+    expect(result.isError).toBeUndefined();
+    const parsed = parse(result.content);
+    const stored = parsed.find((r) => r.metadata.id === "legacy-source-list");
+    // The list-leg row MUST reach the agent (proves this leg egresses) AND be redacted.
+    expect(stored, "list-leg row should be present in tool output").toBeDefined();
+    expect(stored!.metadata.source).toContain("[EMAIL]");
+    expect(stored!.metadata.source).toContain("[REDACTED_SECRET]");
+    expect(result.content).not.toContain(EMAIL);
+    expect(result.content).not.toContain(HF_KEY);
+  });
+
+  it("redacts a zero-width-obfuscated credential ONLY in `source` on the LIST leg", async () => {
+    const legacy = makeItem({
+      id: "legacy-source-list-zw",
+      content: "profile origin",
+      source: `origin ${HF_KEY_ZW} done`,
+      tags: ["profile"],
+    });
+    const [searchTool] = createFridayAgentMemoryTools({
+      memoryService: mockMemoryService({ search: [], list: [legacy] }),
+      resolveSessionMemoryNamespace: async () => "sess-abc",
+    });
+
+    const result = await searchTool!.execute(
+      { query: "profile" },
+      signalWithPrincipal("user-1", "sess-123"),
+    );
+    expect(result.isError).toBeUndefined();
+    const parsed = parse(result.content);
+    const stored = parsed.find((r) => r.metadata.id === "legacy-source-list-zw");
+    expect(stored, "list-leg row should be present in tool output").toBeDefined();
+    expect(stored!.metadata.source).toContain("[REDACTED_SECRET]");
+    expect(result.content).not.toContain(HF_ZW_LEAK_PROBE);
+  });
+
+  it("preserves benign `source` identifiers byte-for-byte (no over-redaction)", async () => {
+    const items = BENIGN_SOURCES.map((src, i) =>
+      makeItem({ id: `benign-src-${i}`, content: `status item ${i}`, source: src }),
+    );
+    const [searchTool] = createFridayAgentMemoryTools({
+      // Distinct scores → deterministic; distinct content → no dedup collision.
+      memoryService: mockMemoryService({
+        search: items.map((item, i) => makeResult(item, 0.9 - i * 0.01)),
+      }),
+    });
+
+    const result = await searchTool!.execute(
+      { query: "status", limit: 50 },
+      signalWithPrincipal("user-1"),
+    );
+    expect(result.isError).toBeUndefined();
+    const parsed = parse(result.content);
+
+    for (let i = 0; i < BENIGN_SOURCES.length; i += 1) {
+      const row = parsed.find((r) => r.metadata.id === `benign-src-${i}`);
+      expect(row, `benign source row ${i} should be present`).toBeDefined();
+      // A `source` with no sensitive subspan is returned BYTE-IDENTICAL.
+      expect(row!.metadata.source).toBe(BENIGN_SOURCES[i]);
+    }
+  });
+
+  it("retains the reserved `learned_fact` source (byte-identical) and its boundary metadata", async () => {
+    const [searchTool] = createFridayAgentMemoryTools({
+      memoryService: mockMemoryService({ search: [] }),
+      listLearnedFacts: () => [{
+        key: "codename",
+        value: "the user's codename is Orchid",
+        confidence: 0.9,
+        evidenceCount: 3,
+        lastConfirmedAt: NOW,
+      }],
+    });
+
+    const result = await searchTool!.execute({ query: "codename" }, signalWithPrincipal("user-1"));
+    expect(result.isError).toBeUndefined();
+    const parsed = parse(result.content);
+
+    // The boundary-policy reserved source `learned_fact` survives the source-redaction pass verbatim,
+    // so the exact-match gate that surfaces the learning-boundary metadata still fires.
+    const learned = parsed.find((r) => r.metadata.source === "learned_fact");
+    expect(learned, "learned_fact row must be present with byte-identical source").toBeDefined();
+    expect(learned!.metadata.trustLevel).toBe("confidence_scored_learning");
   });
 });
