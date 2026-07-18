@@ -249,6 +249,22 @@ export interface FridayRetentionJobResult {
    * locked (DATA-RETENTION-001) design fork.
    */
   quarantinedIntegrityReceipts: number;
+  /**
+   * RETENTION-R3d (clock-regression-safe reaper): recovery-receipt rows that are
+   * FUTURE-dated relative to the sweep's `now` but whose authentic-audit ANCHOR
+   * carries the SAME `created_at` — a genuine CLOCK-SKEWED pair (e.g. a receipt
+   * written before a BACKWARD wall-clock jump / NTP correction). These are NOT
+   * corrupt: they are PRESERVED (never quarantine-deleted) and surfaced here as a
+   * clock anomaly, then expired normally once they are DEMONSTRABLY older than the
+   * retention cutoff (`deleteExpiredBefore`, `created_at < cutoff`). Replacing the
+   * old blind `created_at > now ⇒ quarantine` rule with this anchor-comparison model
+   * closes a DATA-RETENTION-001 over-fail-close that DESTROYED legitimate data on a
+   * clock rollback. GOVERNED by the SAME `auditLogs` category as the other receipt
+   * counters: 0 while auditLogs is PERMANENT (the finite sweep never runs). Only a
+   * ONE-SIDED future corruption (anchor `created_at` MISMATCHES) is quarantined; an
+   * ABSENT anchor is preserved (fail-closed — the read path refuses to serve it).
+   */
+  clockAnomalyRetentionReceipts: number;
   deletedAgentRuns: number;
   deletedLlmUsageRecords: number;
   deletedErrorIncidents: number;

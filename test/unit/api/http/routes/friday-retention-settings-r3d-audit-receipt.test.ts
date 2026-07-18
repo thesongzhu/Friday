@@ -58,6 +58,10 @@ import { createTestDb } from "../../../satellites/_helpers/create-test-db.helper
 const NOW = "2026-07-16T10:00:00.000Z";
 const CANON = "admin-001";
 const AGED = "2024-01-01T00:00:00.000Z";
+// A wall-clock instant AFTER NOW — used to write a receipt+anchor that is then swept
+// by a reaper running at NOW (a BACKWARD wall-clock jump / NTP correction). The
+// receipt's created_at is "future" relative to the rolled-back now, yet legitimate.
+const FUTURE = "2026-07-18T10:00:00.000Z";
 
 // ── Handler-level helpers (real store, real/injected audit, direct db reads) ──
 
@@ -1008,10 +1012,14 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     const seedAnchor = (rec: FridayRetentionReceiptRecord): void => {
       db.writer
         .prepare(
+          // The anchor must carry the FULL canonical semantic envelope (the whole-row
+          // invariant now cross-checks action/resource_type/resource_id/decision/
+          // session_id/reason), so this fixture uses the canonical reason (not a
+          // placeholder) to isolate OWNER-SCOPING, not the envelope.
           `INSERT INTO security_audit_log
              (id, tenant_id, principal_id, action, resource_type, resource_id,
               decision, reason, session_id, metadata_json, created_at)
-           VALUES (?, ?, ?, 'retention.policy.update', 'policy', ?, 'allow', 'seed', ?, ?, ?)`,
+           VALUES (?, ?, ?, 'retention.policy.update', 'policy', ?, 'allow', 'canonical-owner retention policy update', ?, ?, ?)`,
         )
         .run(
           rec.auditId,
@@ -2015,8 +2023,11 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
   //     SERVED through recovery with the wrong timestamp; it now fails closed.
   //   Fix #2 (REAP path): a FUTURE-dated canonical `created_at` passes the v108 GLOB +
   //     round-trip yet sorts after any cutoff, so a finite sweep never reaped it. The
-  //     quarantine now also removes rows with `created_at > nowIso` (a receipt cannot
-  //     be created after the sweep's now).
+  //     quarantine handles it via an ANCHOR-COMPARISON model (see round-11 below):
+  //     future + anchor MISMATCH → quarantine; future + anchor MATCHES (legit clock
+  //     skew) → PRESERVE + flag. NB: the blind `created_at > nowIso ⇒ delete` rule
+  //     this once used was itself an over-fail-close (a BACKWARD clock destroyed legit
+  //     data) — closed in round-11; the test below is now the anchor-MISMATCH case.
   // ══════════════════════════════════════════════════════════════════════════
 
   // Fix #1 — RED-first: tamper ONLY the receipt's created_at (anchor untouched).
@@ -2062,13 +2073,16 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     }
   });
 
-  // Fix #2 — RED-first: a FUTURE-dated canonical created_at survives on pre-fix HEAD;
-  // after the fix it is quarantined, while a legit NOW-dated row in the SAME sweep
-  // survives (created_at == now is NOT future → no over-fail-close).
-  it("(round-10c Fix#2) a FUTURE-dated canonical created_at (9999-12-31…) under FINITE 30d → reaper QUARANTINE-deletes it; a NOW-dated row in the same sweep survives", async () => {
+  // Fix #2 — ONE-SIDED future corruption (anchor MISMATCH): only the receipt's
+  // created_at is tampered to a far-future canonical value; its anchor's created_at is
+  // UNCHANGED (AGED) → the two DISAGREE → this is corruption, not clock skew →
+  // quarantine. Contrast with round-11a (future + anchor AGREES → PRESERVE): together
+  // they prove the decision is ANCHOR-BASED, not blind `> now`. A legit NOW-dated row
+  // in the same sweep survives (no over-fail-close).
+  it("(round-10c Fix#2) a FUTURE-dated receipt whose anchor DISAGREES (one-sided corruption) under FINITE 30d → reaper QUARANTINE-deletes it; a NOW-dated row survives", async () => {
     const KEY_FUTURE = "round10c-future-key";
     const KEY_NOW = "round10c-now-key";
-    const agedRoutes = makeRoutesAt(AGED);
+    const agedRoutes = makeRoutesAt(AGED); // receipt + anchor both stamped AGED
     await putRouteOf(agedRoutes).handler(
       makeCtx({ headers: { "idempotency-key": KEY_FUTURE }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
     );
@@ -2076,8 +2090,8 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     await putRouteOf(nowRoutes).handler(
       makeCtx({ headers: { "idempotency-key": KEY_NOW }, body: { policy: { agentRuns: { mode: "after_days", days: 60 } } } }),
     );
-    // The v108 CHECK ACCEPTS a far-future canonical value (it is a valid ISO shape) →
-    // a plain UPDATE succeeds; the crux of the survival gap.
+    // Tamper ONLY the receipt's created_at to a far-future canonical value (the v108
+    // CHECK accepts it — valid ISO shape). The anchor stays at AGED → they DISAGREE.
     expect(() =>
       db.writer
         .prepare("UPDATE retention_recovery_receipts SET created_at = '9999-12-31T23:59:59.000Z' WHERE recovery_key_hash = ?")
@@ -2085,16 +2099,236 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     ).not.toThrow();
 
     const result = reaperForOwner().run(NOW);
-    // Fix #2: the future row is quarantined. On pre-fix HEAD it survived
-    // (deletedRetentionReceipts=0, quarantinedIntegrityReceipts=0) — it passes the
-    // GLOB + round-trip, so the strict check alone did not catch it.
+    // Future + anchor MISMATCH → quarantined (NOT preserved). It is corruption, not
+    // clock skew, so clockAnomalyRetentionReceipts stays 0.
     expect(result.quarantinedIntegrityReceipts).toBe(1);
+    expect(result.clockAnomalyRetentionReceipts).toBe(0);
     expect(result.deletedRetentionReceipts).toBe(0);
-    // The legit NOW-dated receipt is NEVER quarantined (== now, not > now) and is not
-    // aged → it survives (no over-fail-close).
+    // The legit NOW-dated receipt is NEVER quarantined (== now, not > now) → survives.
     const survivors = receiptRows();
     expect(survivors).toHaveLength(1);
     expect(survivors[0].created_at).toBe(NOW);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RETENTION-R3d ROUND-11 — clock-regression-safe reaper (anchor-comparison, NOT a
+  // blind `> now`) + full audit-anchor SEMANTIC-ENVELOPE invariant. Two BLOCKED P1s:
+  //
+  //   P1 #1 (temporal over-fail-close): the old quarantine deleted ANY row with
+  //     `created_at > nowIso`. A receipt written at a real instant, then a BACKWARD
+  //     wall-clock jump (NTP correction / rolled-back restart), makes that instant
+  //     "future" → the row was DELETED = legitimate user data destroyed by a clock
+  //     rollback (DATA-RETENTION-001 / U9 violation). Fix: for a future-relative row,
+  //     compare against the audit anchor's own created_at — MATCH ⇒ PRESERVE + flag
+  //     (clockAnomalyRetentionReceipts); MISMATCH ⇒ quarantine; ABSENT ⇒ preserve.
+  //   P1 #2 (anchor semantic gap): the anchor cross-check omitted the audit record's
+  //     SEMANTIC ENVELOPE, so `audit_id` could point at an anchor whose action was
+  //     retargeted (e.g. `unrelated.action`) and the receipt was STILL served. Fix:
+  //     the cross-check now also asserts action/resource_type/resource_id/decision/
+  //     session_id/reason against the canonical write-path values.
+  //
+  // RED on HEAD 2c97932f (backward clock deletes the legit row; retargeted anchors are
+  // served), GREEN here. Envelope constants empirically confirmed against a real
+  // single- AND multi-tenant PUT.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ── P1 #1 — clock-regression PRESERVATION (the core RED) ──────────────────────
+  it("(round-11a) backward wall-clock jump: a valid receipt whose anchor AGREES on created_at is PRESERVED + flagged (clockAnomaly=1), never quarantined; recovery still returns it", async () => {
+    const KEY = "round11a-clockskew-key";
+    // Write the receipt+anchor at FUTURE (both stamped from the SAME runAt=FUTURE).
+    const futureRoutes = makeRoutesAt(FUTURE);
+    const put = (await putRouteOf(futureRoutes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    expect(receiptRows()).toHaveLength(1);
+    expect(receiptRows()[0].created_at).toBe(FUTURE);
+
+    // The reaper runs at NOW (< FUTURE): a BACKWARD wall-clock jump. The row is now
+    // "future" relative to now, but the anchor carries the SAME created_at.
+    const result = reaperForOwner().run(NOW);
+
+    // PRESERVED (not destroyed) + surfaced as a clock anomaly. On HEAD the blind
+    // `> now` rule quarantine-DELETES it (quarantined=1, row gone, no clockAnomaly).
+    expect(result.deletedRetentionReceipts).toBe(0);
+    expect(result.quarantinedIntegrityReceipts).toBe(0);
+    expect(result.clockAnomalyRetentionReceipts).toBe(1);
+    expect(receiptRows()).toHaveLength(1);
+    expect(receiptRows()[0].created_at).toBe(FUTURE);
+
+    // The legit clock-skewed receipt is still recoverable (anchor created_at agrees).
+    const rec = (await receiptRouteOf(futureRoutes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(rec.receipt?.receiptId).toBe(put.receipt.receiptId);
+    expect(rec.receipt?.runAt).toBe(FUTURE);
+  });
+
+  // Same preservation, but the recovery happens through a FRESH repo/recovery over the
+  // SAME DB (a simulated process restart) — the flag/preserve decision is durable.
+  it("(round-11a) clock-skew preservation SURVIVES a simulated restart: fresh recovery over the same DB still returns the preserved receipt", async () => {
+    const KEY = "round11a-restart-key";
+    const put = (await putRouteOf(makeRoutesAt(FUTURE)).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+
+    const result = reaperForOwner().run(NOW);
+    expect(result.clockAnomalyRetentionReceipts).toBe(1);
+    expect(receiptRows()).toHaveLength(1);
+
+    // Simulate a restart: brand-new route/recovery instances over the SAME db handle.
+    const freshRoutes = makeRoutesAt(FUTURE);
+    const rec = (await receiptRouteOf(freshRoutes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(rec.receipt?.receiptId).toBe(put.receipt.receiptId);
+  });
+
+  // Fail-closed on uncertainty: a future-relative row whose anchor is ABSENT is
+  // PRESERVED (never deleted), and is NOT flagged as a clock anomaly (unconfirmed).
+  it("(round-11a) a FUTURE-dated row whose anchor is ABSENT is PRESERVED (fail-closed), not quarantined and not counted as a clock anomaly", async () => {
+    const KEY = "round11a-anchorabsent-key";
+    const routes = makeRoutesAt(FUTURE);
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    // Repoint the receipt at a non-existent anchor → future + anchor ABSENT.
+    db.writer
+      .prepare("UPDATE retention_recovery_receipts SET audit_id = 'aud-missing' WHERE recovery_key_hash = ?")
+      .run(hashRecoveryKey(KEY));
+
+    const result = reaperForOwner().run(NOW);
+    expect(result.deletedRetentionReceipts).toBe(0);
+    expect(result.quarantinedIntegrityReceipts).toBe(0);
+    expect(result.clockAnomalyRetentionReceipts).toBe(0); // absent anchor → not confirmed skew
+    expect(receiptRows()).toHaveLength(1); // preserved (uncertain data never deleted)
+    // ...but never served — the read path fails closed on the absent anchor.
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } })),
+    ).rejects.toMatchObject({ ...INTEGRITY, details: { reason: "anchor_absent" } });
+  });
+
+  // ── P1 #2 — anchor SEMANTIC-ENVELOPE per-column negative matrix ────────────────
+  const anchorEnvelopeMutations: Array<[string, string, string, string]> = [
+    ["action", "action", "unrelated.action", "anchor_mismatch:action"],
+    ["resource_type", "resource_type", "session", "anchor_mismatch:resource_type"],
+    ["resource_id", "resource_id", "retention-policy:someone-else", "anchor_mismatch:resource_id"],
+    ["decision", "decision", "deny", "anchor_mismatch:decision"],
+    ["session_id", "session_id", "retention-policy-update:admin-001:op-OTHER", "anchor_mismatch:session_id"],
+    ["reason", "reason", "tampered audit reason", "anchor_mismatch:reason"],
+  ];
+  it.each(anchorEnvelopeMutations)(
+    "(round-11 envelope) anchor column [%s] retargeted → recovery 500 %s; authoritative policy unchanged; counts stay 1 (RED on HEAD: served)",
+    async (_label, column, value, reason) => {
+      await seedCoherentThenCorruptField(
+        `env-${column}`,
+        (h) =>
+          db.writer
+            .prepare(
+              `UPDATE security_audit_log SET ${column} = ?
+                 WHERE id = (SELECT audit_id FROM retention_recovery_receipts WHERE recovery_key_hash = ?)`,
+            )
+            .run(value, h),
+        reason,
+      );
+    },
+  );
+
+  // ── P1 #2 — GREEN over-fail-close (CATASTROPHIC control): a normal write recovers
+  //    clean through the FULL envelope, single AND multi-tenant; the stored anchor
+  //    columns equal the canonical constants (empirical guard, in-suite).
+  it("(round-11 envelope green) normal single + multi-tenant write recovers CLEAN through the full envelope; stored anchor columns == canonical constants", async () => {
+    for (const [label, principal] of [
+      ["single", owner(CANON)],
+      ["multi", ownerWithTenant(CANON, "admin-001")],
+    ] as const) {
+      const KEY = `round11-envelope-clean-${label}`;
+      const routes = makeRoutes(realAppender());
+      const put = (await putRouteOf(routes).handler(
+        makeCtx({ principal, headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+      )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+      // Recovery passes the full anchor envelope (no over-fail-close).
+      const rec = (await receiptRouteOf(routes).handler(
+        makeCtx({ principal, headers: { "idempotency-key": KEY } }),
+      )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+      expect(rec.receipt?.receiptId).toBe(put.receipt.receiptId);
+      // The stored anchor columns are EXACTLY the canonical constants the check asserts.
+      const anchor = db.writer
+        .prepare(
+          "SELECT action, resource_type, resource_id, decision, session_id, reason FROM security_audit_log WHERE id = ?",
+        )
+        .get(put.receipt.auditId) as AuditRow;
+      expect(anchor.action).toBe("retention.policy.update");
+      expect(anchor.resource_type).toBe("policy");
+      expect(anchor.resource_id).toBe(`retention-policy:${CANON}`);
+      expect(anchor.decision).toBe("allow");
+      expect(anchor.session_id).toBe(put.receipt.correlationId);
+      expect(anchor.reason).toBe("canonical-owner retention policy update");
+    }
+  });
+
+  // ── Cutoff boundary: exactly-at / just-inside / just-outside behave correctly ──
+  it("(round-11 boundary) canonical rows at exactly-cutoff / just-outside SURVIVE; just-inside is date-expired; none quarantined", async () => {
+    // cutoff = NOW − 30d = 2026-06-16T10:00:00.000Z (deleteExpiredBefore: created_at < cutoff).
+    const AT_CUTOFF = "2026-06-16T10:00:00.000Z"; // == cutoff → NOT < cutoff → survives
+    const INSIDE = "2026-06-16T09:59:59.999Z"; // < cutoff → date-expired
+    const OUTSIDE = "2026-06-16T10:00:00.001Z"; // > cutoff → survives
+    for (const [key, iso] of [
+      ["b-at", AT_CUTOFF],
+      ["b-in", INSIDE],
+      ["b-out", OUTSIDE],
+    ] as const) {
+      await putRouteOf(makeRoutesAt(iso)).handler(
+        makeCtx({ headers: { "idempotency-key": key }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+      );
+    }
+    expect(receiptRows()).toHaveLength(3);
+
+    const result = reaperForOwner().run(NOW);
+    expect(result.deletedRetentionReceipts).toBe(1); // only INSIDE
+    expect(result.quarantinedIntegrityReceipts).toBe(0);
+    expect(result.clockAnomalyRetentionReceipts).toBe(0);
+    const survivors = receiptRows().map((r) => r.created_at).sort();
+    expect(survivors).toEqual([AT_CUTOFF, OUTSIDE].sort());
+  });
+
+  // ── Forward clock: a FORWARD jump does not over-delete beyond `< cutoff` and never
+  //    quarantines a canonical past row. ──
+  it("(round-11 forward-clock) a forward wall-clock jump date-expires only rows < the (later) cutoff; a row between cutoff and now survives; nothing quarantined", async () => {
+    const FWD = "2027-07-16T10:00:00.000Z"; // a year forward → cutoff = 2027-06-16T10:00:00.000Z
+    const BETWEEN = "2027-07-01T00:00:00.000Z"; // > cutoff and < FWD → survives
+    // R1 between cutoff and FWD (survives); R2 at NOW (< cutoff → expired).
+    await putRouteOf(makeRoutesAt(BETWEEN)).handler(
+      makeCtx({ headers: { "idempotency-key": "fwd-between" }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    await putRouteOf(makeRoutesAt(NOW)).handler(
+      makeCtx({ headers: { "idempotency-key": "fwd-now" }, body: { policy: { agentRuns: { mode: "after_days", days: 60 } } } }),
+    );
+    expect(receiptRows()).toHaveLength(2);
+
+    const result = reaperForOwner().run(FWD);
+    expect(result.deletedRetentionReceipts).toBe(1); // only the NOW row (< cutoff)
+    expect(result.quarantinedIntegrityReceipts).toBe(0); // canonical past rows never quarantined
+    expect(result.clockAnomalyRetentionReceipts).toBe(0);
+    const survivors = receiptRows();
+    expect(survivors).toHaveLength(1);
+    expect(survivors[0].created_at).toBe(BETWEEN);
+  });
+
+  // ── GREEN over-fail-close: default-permanent ⇒ deleted 0, quarantined 0, clockAnomaly 0
+  //    even for a future-dated row (the finite sweep never runs; nothing is touched). ──
+  it("(round-11 green) default-permanent (auditLogs permanent) ⇒ deleted 0, quarantined 0, clockAnomaly 0 even with a future-dated row present", async () => {
+    const KEY = "round11-permanent-future";
+    // auditLogs stays PERMANENT (learningEvents opted finite) → receipt store untouched.
+    await putRouteOf(makeRoutesAt(FUTURE)).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { learningEvents: { mode: "after_days", days: 30 } } } }),
+    );
+    expect(receiptRows()).toHaveLength(1);
+
+    const result = reaperForOwner().run(NOW);
+    expect(result.deletedRetentionReceipts).toBe(0);
+    expect(result.quarantinedIntegrityReceipts).toBe(0);
+    expect(result.clockAnomalyRetentionReceipts).toBe(0);
+    expect(receiptRows()).toHaveLength(1); // preserved under default-permanent
   });
 });
 

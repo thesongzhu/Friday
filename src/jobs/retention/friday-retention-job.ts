@@ -127,6 +127,7 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
         deletedAuditLogs: 0,
         deletedRetentionReceipts: 0,
         quarantinedIntegrityReceipts: 0,
+        clockAnomalyRetentionReceipts: 0,
         deletedAgentRuns: 0,
         deletedLlmUsageRecords: 0,
         deletedErrorIncidents: 0,
@@ -218,15 +219,25 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
         result.deletedAuditLogs = 0;
         result.deletedRetentionReceipts = 0;
         result.quarantinedIntegrityReceipts = 0;
+        result.clockAnomalyRetentionReceipts = 0;
       } else {
-        const swept = deps.db.withWriteTransaction((db) => ({
-          logs: db.prepare("DELETE FROM audit_logs WHERE ts < ?").run(auditCutoff).changes,
-          receipts: receiptRepo.deleteExpiredBefore(db, auditCutoff),
-          quarantined: receiptRepo.quarantineNonCanonicalCreatedAt(db, nowIso),
-        }));
+        const swept = deps.db.withWriteTransaction((db) => {
+          const logs = db.prepare("DELETE FROM audit_logs WHERE ts < ?").run(auditCutoff).changes;
+          const receipts = receiptRepo.deleteExpiredBefore(db, auditCutoff);
+          // Clock-regression-safe quarantine: DELETES un-datable / one-sided-corrupt
+          // rows and PRESERVES-and-flags genuine clock-skewed rows (anchor agrees).
+          const quarantine = receiptRepo.quarantineNonCanonicalCreatedAt(db, nowIso);
+          return {
+            logs,
+            receipts,
+            quarantined: quarantine.quarantined,
+            clockAnomaly: quarantine.clockAnomalyPreserved,
+          };
+        });
         result.deletedAuditLogs = swept.logs;
         result.deletedRetentionReceipts = swept.receipts;
         result.quarantinedIntegrityReceipts = swept.quarantined;
+        result.clockAnomalyRetentionReceipts = swept.clockAnomaly;
       }
 
       // CONTENT category (canonical): default-permanent, fail-closed.

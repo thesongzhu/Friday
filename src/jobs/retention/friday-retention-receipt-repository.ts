@@ -114,12 +114,19 @@ export function isCanonicalReceiptCreatedAt(value: unknown): value is string {
  *                        (INTERNAL to the receipt only — a legitimately STALE receipt
  *                        still decodes; never compared to the current policy).
  *   - ANCHOR cross-check (cross-store): the content-minimized `security_audit_log`
- *                        anchor row `id == audit_id` MUST exist and satisfy
- *                        metadata.receiptId == receipt_id, metadata.correlationId ==
- *                        correlation_id, metadata.payloadDigest == payload_digest,
- *                        principal_id == principal_id, tenant_id == tenant_id.
- *                        Absent/mismatch → fail closed (a one-sided linkage
- *                        corruption is never served as a valid correlated receipt).
+ *                        anchor row `id == audit_id` MUST exist and satisfy the
+ *                        LINKAGE (metadata.receiptId == receipt_id,
+ *                        metadata.correlationId == correlation_id,
+ *                        metadata.payloadDigest == payload_digest, principal_id ==
+ *                        principal_id, tenant_id == tenant_id, created_at ==
+ *                        created_at) AND the SEMANTIC ENVELOPE (action ==
+ *                        "retention.policy.update", resource_type == "policy",
+ *                        resource_id == "retention-policy:"+principal_id, decision ==
+ *                        "allow", session_id == correlation_id, reason ==
+ *                        "canonical-owner retention policy update"). Absent/mismatch →
+ *                        fail closed (a one-sided linkage corruption, or an anchor
+ *                        retargeted so it no longer records the claimed policy update,
+ *                        is never served as a valid correlated receipt).
  */
 export const FRIDAY_RETENTION_RECEIPT_ROW_INVARIANT =
   "receipt_id/principal_id/tenant_id/correlation_id/audit_id/recovery_key_hash/" +
@@ -170,6 +177,18 @@ export interface FridayRetentionReceiptRecord {
   readonly createdAt: string;
 }
 
+/**
+ * Outcome of ONE `quarantineNonCanonicalCreatedAt` pass — separates the rows
+ * DELETED as un-datable/one-sided-corrupt (`quarantined`) from the CLOCK-SKEWED
+ * rows PRESERVED-and-flagged (`clockAnomalyPreserved`, anchor `created_at` agrees).
+ */
+export interface FridayRetentionReceiptQuarantineResult {
+  /** Rows quarantine-DELETED this pass (non-canonical, or future + anchor mismatch). */
+  readonly quarantined: number;
+  /** Future-dated rows PRESERVED because the audit anchor carries the SAME created_at. */
+  readonly clockAnomalyPreserved: number;
+}
+
 export interface FridayRetentionReceiptRepository {
   /**
    * Persist ONE receipt on a CALLER-SUPPLIED write connection (no transaction of
@@ -210,27 +229,39 @@ export interface FridayRetentionReceiptRepository {
    */
   deleteExpiredBefore(db: Database.Database, cutoffIso: string): number;
   /**
-   * RETENTION reaper seam (auditLogs category) — QUARANTINE the un-datable. Delete
-   * every receipt row whose persisted `created_at` is NOT a STRICT canonical instant
-   * (`isCanonicalReceiptCreatedAt` round-trip). Such a row cannot be reliably dated,
-   * so a `created_at < cutoff` compare would let it SILENTLY SURVIVE a finite
-   * retention window (DATA-RETENTION-001 truthfulness break). This covers BOTH
-   * coarse-bad values that fail the shape GLOB (e.g. `"zzzz"`, a non-`Z` offset) AND
-   * shaped-but-IMPOSSIBLE calendar values the coarse GLOB accepts (month 13-19, day
-   * 32-39, hour 24-29, Feb-30, …) — the GLOB is a shape mask with no calendar
-   * semantics, so the strict round-trip is the authoritative "non-canonical" gate.
-   * A real `toISOString()` row ALWAYS round-trips → never quarantined (no
-   * over-fail-close). ALSO quarantines a canonical-but-FUTURE-dated row
-   * (`created_at > nowIso`, the sweep's current time): a receipt cannot legitimately
-   * be created after the sweep's now (same-process clock, written earlier), so a
-   * future timestamp is un-datable-as-a-past-instant and — passing the GLOB +
-   * round-trip yet sorting after any cutoff — would otherwise SURVIVE a finite
-   * window. Called ONLY inside the finite auditLogs sweep (default-permanent ⇒ never
-   * called ⇒ 0), so the un-datable row is retained (never served) until the owner
-   * opts in. Returns the number of rows quarantine-deleted. Does NOT abort the sweep
-   * — one corrupt row must not block reaping valid rows.
+   * RETENTION reaper seam (auditLogs category) — QUARANTINE the un-datable,
+   * CLOCK-REGRESSION-SAFE. Delete every receipt row whose persisted `created_at` is
+   * NOT a STRICT canonical instant (`isCanonicalReceiptCreatedAt` round-trip). Such
+   * a row cannot be reliably dated, so a `created_at < cutoff` compare would let it
+   * SILENTLY SURVIVE a finite retention window (DATA-RETENTION-001 truthfulness
+   * break). This covers BOTH coarse-bad values that fail the shape GLOB (e.g.
+   * `"zzzz"`, a non-`Z` offset) AND shaped-but-IMPOSSIBLE calendar values the coarse
+   * GLOB accepts (month 13-19, day 32-39, hour 24-29, Feb-30, …) — the GLOB is a
+   * shape mask with no calendar semantics, so the strict round-trip is the
+   * authoritative "non-canonical" gate. A real `toISOString()` row ALWAYS
+   * round-trips → never quarantined on shape (no over-fail-close).
+   *
+   * FUTURE-dated rows use an ANCHOR-COMPARISON model (NOT the old blind
+   * `created_at > nowIso ⇒ delete`, which DESTROYED legitimate data on a BACKWARD
+   * wall-clock jump / NTP correction — a receipt written at a real instant that is
+   * now "future" relative to a rolled-back `now`). For a canonical FUTURE-relative
+   * row (`created_at > nowIso`) the audit anchor's own `created_at` is consulted:
+   *   - anchor `created_at` === row `created_at` → a genuine CLOCK-SKEWED pair →
+   *     PRESERVE it and count it in `clockAnomalyPreserved` (it is only ever deleted
+   *     later, by `deleteExpiredBefore`, once it is DEMONSTRABLY older than cutoff);
+   *   - anchor `created_at` MISMATCHES → one-sided timestamp corruption → quarantine;
+   *   - anchor ABSENT → PRESERVE (fail-closed: never delete uncertain data; the read
+   *     path already refuses to serve it as `anchor_absent`).
+   * Base retention deletion stays `deleteExpiredBefore` (`created_at < cutoff`),
+   * itself clock-regression-safe (a backward clock makes the cutoff EARLIER ⇒
+   * deletes FEWER, never more). Called ONLY inside the finite auditLogs sweep
+   * (default-permanent ⇒ never called ⇒ {0,0}). Does NOT abort the sweep — one
+   * corrupt row must not block reaping valid rows.
    */
-  quarantineNonCanonicalCreatedAt(db: Database.Database, nowIso: string): number;
+  quarantineNonCanonicalCreatedAt(
+    db: Database.Database,
+    nowIso: string,
+  ): FridayRetentionReceiptQuarantineResult;
   /**
    * DATA-DELETE-ALL-001 seam: purge ALL of one owner's receipts (so a Delete-All
    * compresses this governed store rather than leaving an untracked data island).
@@ -279,9 +310,32 @@ interface RetentionReceiptAnchorRow {
   id: string;
   principal_id: string | null;
   tenant_id: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  decision: string;
+  reason: string | null;
+  session_id: string | null;
   metadata_json: string;
   created_at: string;
 }
+
+/**
+ * The CANONICAL retention-policy audit SEMANTIC ENVELOPE — the exact
+ * `security_audit_log` field values the write-path appender
+ * (`createFridayRetentionPolicyAuditAppender`) stamps for EVERY retention-policy
+ * update. Empirically verified byte-for-byte against a real single- AND
+ * multi-tenant PUT (stored columns `action` / `resource_type` / `resource_id` /
+ * `decision` / `reason` / `session_id`). The anchor cross-check asserts these so a
+ * raw-DB `action` retarget (e.g. to `unrelated.action`) can no longer point a
+ * live receipt at an anchor that does NOT record the claimed policy update. These
+ * MUST stay in lock-step with the appender's literals; the green over-fail-close
+ * control (a normal single+multi-tenant write recovers clean) guards against drift.
+ */
+const RETENTION_AUDIT_ANCHOR_ACTION = "retention.policy.update";
+const RETENTION_AUDIT_ANCHOR_RESOURCE_TYPE = "policy";
+const RETENTION_AUDIT_ANCHOR_DECISION = "allow";
+const RETENTION_AUDIT_ANCHOR_REASON = "canonical-owner retention policy update";
 
 /**
  * CROSS-STORE anchor cross-check (RETENTION-R3d whole-row invariant, required
@@ -296,11 +350,22 @@ interface RetentionReceiptAnchorRow {
  * An ABSENT anchor (tampered `audit_id`) or ANY field mismatch (a one-sided
  * `correlation_id` / linkage corruption) fails CLOSED — such a receipt is never
  * served as a valid correlated receipt.
+ *
+ * SEMANTIC ENVELOPE (P1 — the anchor must still RECORD the claimed update): beyond
+ * the linkage metadata + owner/tenant + `created_at`, the cross-check now also
+ * verifies the anchor's own audit fields — `action`, `resource_type`, `resource_id`,
+ * `decision`, `session_id`, `reason` — against the canonical write-path values. A
+ * raw-DB retarget of any of these (e.g. `action` → `unrelated.action`) previously
+ * still served the receipt: `audit_id` could point at an anchor that no longer
+ * records a retention-policy update. Each mismatch fails closed with
+ * `anchor_mismatch:<column>` (`action` / `resource_type` / `resource_id` /
+ * `decision` / `session_id` / `reason`).
  */
 function assertReceiptAnchor(row: RetentionReceiptRow, db: Database.Database): void {
   const anchor = db
     .prepare(
-      `SELECT id, principal_id, tenant_id, metadata_json, created_at
+      `SELECT id, principal_id, tenant_id, action, resource_type, resource_id,
+              decision, reason, session_id, metadata_json, created_at
          FROM security_audit_log
         WHERE id = ?`,
     )
@@ -336,6 +401,17 @@ function assertReceiptAnchor(row: RetentionReceiptRow, db: Database.Database): v
     // tamper to a DIFFERENT canonical value is served with the wrong timestamp unless
     // cross-checked here.
     ["createdAt", anchor.created_at === row.created_at],
+    // SEMANTIC ENVELOPE (P1): the anchor must still RECORD the claimed retention-
+    // policy update. These use the STORED COLUMN names as the mismatch reason
+    // (`anchor_mismatch:action`, …). They are APPENDED after the linkage checks so a
+    // repointed-to-a-different-anchor tamper still surfaces the linkage reason
+    // (`anchor_mismatch:receiptId`) first, not a coincidental envelope mismatch.
+    ["action", anchor.action === RETENTION_AUDIT_ANCHOR_ACTION],
+    ["resource_type", anchor.resource_type === RETENTION_AUDIT_ANCHOR_RESOURCE_TYPE],
+    ["resource_id", anchor.resource_id === `retention-policy:${row.principal_id}`],
+    ["decision", anchor.decision === RETENTION_AUDIT_ANCHOR_DECISION],
+    ["session_id", anchor.session_id === row.correlation_id],
+    ["reason", anchor.reason === RETENTION_AUDIT_ANCHOR_REASON],
   ];
   for (const [field, ok] of checks) {
     if (!ok) {
@@ -638,49 +714,69 @@ export function createFridayRetentionReceiptRepository(): FridayRetentionReceipt
     },
 
     quarantineNonCanonicalCreatedAt(db, nowIso) {
-      // Delete rows whose `created_at` cannot be trusted as a PAST canonical instant —
-      // retaining them under a finite window would break DATA-RETENTION truthfulness.
-      // Called ONLY inside the finite auditLogs sweep.
+      // Delete rows whose `created_at` cannot be trusted as a canonical instant —
+      // retaining them under a finite window would break DATA-RETENTION truthfulness —
+      // WITHOUT destroying legitimate clock-skewed data. Called ONLY inside the finite
+      // auditLogs sweep.
       //
       // (1) Fast path: coarse-bad values that fail the shape GLOB (`"zzzz"`, empty, a
-      //     non-`Z` offset) are deleted set-based in SQL.
+      //     non-`Z` offset) are deleted set-based in SQL. These are un-datable → quarantine.
       let removed = db
         .prepare(
           `DELETE FROM retention_recovery_receipts
             WHERE created_at NOT GLOB ?`,
         )
         .run(FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB).changes;
-      // (2) Shaped rows — re-check with the STRICT gate. Quarantine a shaped row when:
-      //     (a) it is NOT a canonical round-trip instant (the GLOB is a shape mask
-      //         with no calendar semantics, so it accepts impossible values like
-      //         month 13-19, day 32-39, hour 24-29, Feb-30), OR
-      //     (b) it is FUTURE-dated (`created_at > nowIso`): a receipt cannot be
-      //         created after the sweep's now, and a future canonical value passes the
-      //         GLOB + round-trip yet sorts after any cutoff → it would evade a finite
-      //         window. A legit receipt's `created_at` is always ≤ the reaper's now
-      //         (same-process clock, written earlier) → NEVER future → no
-      //         over-fail-close. Lexicographic compare is correct for canonical ISO.
-      //     The receipt store is small (one row per policy-update-per-key), so this
-      //     scan is bounded.
+      // (2) Shaped rows — re-check with the STRICT gate + the clock-regression-safe
+      //     anchor comparison for future-dated rows. The receipt store is small (one
+      //     row per policy-update-per-key), so this scan is bounded. Also pull `audit_id`
+      //     so a future row can be compared against its anchor without a second query.
       const shaped = db
         .prepare(
-          `SELECT receipt_id, created_at
+          `SELECT receipt_id, audit_id, created_at
              FROM retention_recovery_receipts
             WHERE created_at GLOB ?`,
         )
         .all(FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB) as Array<{
         receipt_id: string;
+        audit_id: string;
         created_at: string;
       }>;
       const deleteById = db.prepare(
         `DELETE FROM retention_recovery_receipts WHERE receipt_id = ?`,
       );
+      const anchorCreatedAt = db.prepare(
+        `SELECT created_at FROM security_audit_log WHERE id = ?`,
+      );
+      let clockAnomalyPreserved = 0;
       for (const row of shaped) {
-        if (!isCanonicalReceiptCreatedAt(row.created_at) || row.created_at > nowIso) {
+        // (a) Shape-passing but NOT a canonical round-trip instant (impossible calendar
+        //     values like month 13-19, day 32-39, Feb-30) → un-datable → quarantine.
+        if (!isCanonicalReceiptCreatedAt(row.created_at)) {
           removed += deleteById.run(row.receipt_id).changes;
+          continue;
         }
+        // (b) Canonical and NOT future-relative → a normal past instant; leave it to
+        //     `deleteExpiredBefore` (`created_at < cutoff`). NEVER quarantined here.
+        if (row.created_at <= nowIso) continue;
+        // (c) Canonical and FUTURE-relative (`created_at > nowIso`) → clock-regression-
+        //     safe anchor comparison. A backward wall-clock jump can make a legit
+        //     receipt's `created_at` look "future"; if its authentic-audit anchor
+        //     carries the SAME `created_at`, it is a genuine clock-skewed row → PRESERVE
+        //     + flag (never destroy legit data on a clock rollback). A one-sided
+        //     corruption (anchor `created_at` differs) → quarantine. An ABSENT anchor is
+        //     uncertain → PRESERVE (fail-closed; the read path refuses to serve it).
+        const anchor = anchorCreatedAt.get(row.audit_id) as
+          | { created_at: string }
+          | undefined;
+        if (!anchor) continue; // absent anchor → preserve (do not delete uncertain data)
+        if (anchor.created_at === row.created_at) {
+          clockAnomalyPreserved += 1; // legit clock-skew → preserved + flagged
+          continue;
+        }
+        removed += deleteById.run(row.receipt_id).changes; // one-sided corruption
       }
-      return removed;
+      return { quarantined: removed, clockAnomalyPreserved };
     },
 
     deleteAllForOwner(db, input) {
