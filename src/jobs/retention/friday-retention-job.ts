@@ -222,7 +222,7 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
         const swept = deps.db.withWriteTransaction((db) => ({
           logs: db.prepare("DELETE FROM audit_logs WHERE ts < ?").run(auditCutoff).changes,
           receipts: receiptRepo.deleteExpiredBefore(db, auditCutoff),
-          quarantined: receiptRepo.quarantineNonCanonicalCreatedAt(db),
+          quarantined: receiptRepo.quarantineNonCanonicalCreatedAt(db, nowIso),
         }));
         result.deletedAuditLogs = swept.logs;
         result.deletedRetentionReceipts = swept.receipts;

@@ -2003,6 +2003,99 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     expect(survivors).toHaveLength(1);
     expect(survivors[0].created_at).toBe(NOW);
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RETENTION-R3d ROUND-10c — anchor TIMESTAMP cross-check (required_action #3
+  // closure) + FUTURE-dated reaper quarantine.
+  //
+  //   Fix #1 (READ path): the anchor cross-check now also verifies the anchor's own
+  //     `created_at` == the receipt's `created_at` (both stamped from the SAME
+  //     write-path `runAt` — byte-equal on a legit write, empirically verified). A
+  //     raw-DB `created_at` tamper to a DIFFERENT canonical value was previously
+  //     SERVED through recovery with the wrong timestamp; it now fails closed.
+  //   Fix #2 (REAP path): a FUTURE-dated canonical `created_at` passes the v108 GLOB +
+  //     round-trip yet sorts after any cutoff, so a finite sweep never reaped it. The
+  //     quarantine now also removes rows with `created_at > nowIso` (a receipt cannot
+  //     be created after the sweep's now).
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // Fix #1 — RED-first: tamper ONLY the receipt's created_at (anchor untouched).
+  it("(round-10c Fix#1) receipt created_at tampered to a DIFFERENT canonical value (anchor unchanged) → recovery 500 anchor_mismatch:createdAt (was served with the wrong date pre-fix)", async () => {
+    const KEY = "round10c-createdat-tamper-key";
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    // Both receipt + anchor were stamped from NOW. Tamper ONLY the receipt's
+    // created_at to a DIFFERENT canonical value — the v108 CHECK accepts it (canonical),
+    // and the scalar `isCanonicalReceiptCreatedAt` gate passes → only the anchor
+    // cross-check can catch it.
+    expect(() =>
+      db.writer
+        .prepare("UPDATE retention_recovery_receipts SET created_at = '2026-01-01T00:00:00.000Z' WHERE recovery_key_hash = ?")
+        .run(hashRecoveryKey(KEY)),
+    ).not.toThrow();
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } })),
+    ).rejects.toMatchObject({ ...INTEGRITY, details: { reason: "anchor_mismatch:createdAt" } });
+  });
+
+  // Fix #1 — GREEN over-fail-close: a NORMAL write recovers clean through the anchor
+  // created_at cross-check (single-tenant AND multi-tenant), returning the AUTHENTIC
+  // timestamp. This is the catastrophic-risk control — a false mismatch here would
+  // 500 every recovery/replay.
+  it("(round-10c Fix#1 green) a normal write recovers CLEAN through the anchor created_at cross-check (single + multi-tenant); authentic runAt returned", async () => {
+    for (const [label, principal] of [
+      ["single", owner(CANON)],
+      ["multi", ownerWithTenant(CANON, "admin-001")],
+    ] as const) {
+      const KEY = `round10c-clean-${label}`;
+      const routes = makeRoutes(realAppender());
+      const put = (await putRouteOf(routes).handler(
+        makeCtx({ principal, headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+      )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+      const rec = (await receiptRouteOf(routes).handler(
+        makeCtx({ principal, headers: { "idempotency-key": KEY } }),
+      )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+      expect(rec.receipt?.receiptId).toBe(put.receipt.receiptId);
+      expect(rec.receipt?.runAt).toBe(NOW); // authentic (untampered) timestamp
+    }
+  });
+
+  // Fix #2 — RED-first: a FUTURE-dated canonical created_at survives on pre-fix HEAD;
+  // after the fix it is quarantined, while a legit NOW-dated row in the SAME sweep
+  // survives (created_at == now is NOT future → no over-fail-close).
+  it("(round-10c Fix#2) a FUTURE-dated canonical created_at (9999-12-31…) under FINITE 30d → reaper QUARANTINE-deletes it; a NOW-dated row in the same sweep survives", async () => {
+    const KEY_FUTURE = "round10c-future-key";
+    const KEY_NOW = "round10c-now-key";
+    const agedRoutes = makeRoutesAt(AGED);
+    await putRouteOf(agedRoutes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY_FUTURE }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    const nowRoutes = makeRoutes(realAppender()); // clock = NOW
+    await putRouteOf(nowRoutes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY_NOW }, body: { policy: { agentRuns: { mode: "after_days", days: 60 } } } }),
+    );
+    // The v108 CHECK ACCEPTS a far-future canonical value (it is a valid ISO shape) →
+    // a plain UPDATE succeeds; the crux of the survival gap.
+    expect(() =>
+      db.writer
+        .prepare("UPDATE retention_recovery_receipts SET created_at = '9999-12-31T23:59:59.000Z' WHERE recovery_key_hash = ?")
+        .run(hashRecoveryKey(KEY_FUTURE)),
+    ).not.toThrow();
+
+    const result = reaperForOwner().run(NOW);
+    // Fix #2: the future row is quarantined. On pre-fix HEAD it survived
+    // (deletedRetentionReceipts=0, quarantinedIntegrityReceipts=0) — it passes the
+    // GLOB + round-trip, so the strict check alone did not catch it.
+    expect(result.quarantinedIntegrityReceipts).toBe(1);
+    expect(result.deletedRetentionReceipts).toBe(0);
+    // The legit NOW-dated receipt is NEVER quarantined (== now, not > now) and is not
+    // aged → it survives (no over-fail-close).
+    const survivors = receiptRows();
+    expect(survivors).toHaveLength(1);
+    expect(survivors[0].created_at).toBe(NOW);
+  });
 });
 
 // ── ROUND-9 P1-B (pure unit): isValidCategoryRetention rejects unknown properties ─

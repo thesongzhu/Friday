@@ -220,12 +220,17 @@ export interface FridayRetentionReceiptRepository {
    * 32-39, hour 24-29, Feb-30, …) — the GLOB is a shape mask with no calendar
    * semantics, so the strict round-trip is the authoritative "non-canonical" gate.
    * A real `toISOString()` row ALWAYS round-trips → never quarantined (no
-   * over-fail-close). Called ONLY inside the finite auditLogs sweep
-   * (default-permanent ⇒ never called ⇒ 0), so the un-datable row is retained (never
-   * served) until the owner opts in. Returns the number of rows quarantine-deleted.
-   * Does NOT abort the sweep — one corrupt row must not block reaping valid rows.
+   * over-fail-close). ALSO quarantines a canonical-but-FUTURE-dated row
+   * (`created_at > nowIso`, the sweep's current time): a receipt cannot legitimately
+   * be created after the sweep's now (same-process clock, written earlier), so a
+   * future timestamp is un-datable-as-a-past-instant and — passing the GLOB +
+   * round-trip yet sorting after any cutoff — would otherwise SURVIVE a finite
+   * window. Called ONLY inside the finite auditLogs sweep (default-permanent ⇒ never
+   * called ⇒ 0), so the un-datable row is retained (never served) until the owner
+   * opts in. Returns the number of rows quarantine-deleted. Does NOT abort the sweep
+   * — one corrupt row must not block reaping valid rows.
    */
-  quarantineNonCanonicalCreatedAt(db: Database.Database): number;
+  quarantineNonCanonicalCreatedAt(db: Database.Database, nowIso: string): number;
   /**
    * DATA-DELETE-ALL-001 seam: purge ALL of one owner's receipts (so a Delete-All
    * compresses this governed store rather than leaving an untracked data island).
@@ -275,6 +280,7 @@ interface RetentionReceiptAnchorRow {
   principal_id: string | null;
   tenant_id: string | null;
   metadata_json: string;
+  created_at: string;
 }
 
 /**
@@ -294,7 +300,7 @@ interface RetentionReceiptAnchorRow {
 function assertReceiptAnchor(row: RetentionReceiptRow, db: Database.Database): void {
   const anchor = db
     .prepare(
-      `SELECT id, principal_id, tenant_id, metadata_json
+      `SELECT id, principal_id, tenant_id, metadata_json, created_at
          FROM security_audit_log
         WHERE id = ?`,
     )
@@ -324,6 +330,12 @@ function assertReceiptAnchor(row: RetentionReceiptRow, db: Database.Database): v
     ["payloadDigest", metadata.payloadDigest === row.payload_digest],
     ["principalId", (anchor.principal_id ?? null) === row.principal_id],
     ["tenantId", (anchor.tenant_id ?? null) === (row.tenant_id ?? null)],
+    // TIMESTAMP linkage (required_action #3): the anchor's own `created_at` and the
+    // receipt's `created_at` are both stamped from the SAME write-path `runAt`
+    // (byte-equal on a legit write — empirically verified), so a raw-DB `created_at`
+    // tamper to a DIFFERENT canonical value is served with the wrong timestamp unless
+    // cross-checked here.
+    ["createdAt", anchor.created_at === row.created_at],
   ];
   for (const [field, ok] of checks) {
     if (!ok) {
@@ -625,10 +637,10 @@ export function createFridayRetentionReceiptRepository(): FridayRetentionReceipt
         .run(cutoffIso, FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB).changes;
     },
 
-    quarantineNonCanonicalCreatedAt(db) {
-      // Delete rows whose `created_at` is not a STRICT canonical instant — they
-      // cannot be reliably dated, so retaining them under a finite window would break
-      // DATA-RETENTION truthfulness. Called ONLY inside the finite auditLogs sweep.
+    quarantineNonCanonicalCreatedAt(db, nowIso) {
+      // Delete rows whose `created_at` cannot be trusted as a PAST canonical instant —
+      // retaining them under a finite window would break DATA-RETENTION truthfulness.
+      // Called ONLY inside the finite auditLogs sweep.
       //
       // (1) Fast path: coarse-bad values that fail the shape GLOB (`"zzzz"`, empty, a
       //     non-`Z` offset) are deleted set-based in SQL.
@@ -638,12 +650,18 @@ export function createFridayRetentionReceiptRepository(): FridayRetentionReceipt
             WHERE created_at NOT GLOB ?`,
         )
         .run(FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB).changes;
-      // (2) Shaped-but-IMPOSSIBLE values the GLOB accepts (month 13-19, day 32-39,
-      //     hour 24-29, Feb-30, …). GLOB is a shape mask with no calendar/alternation
-      //     semantics, so re-check the shaped rows with the STRICT round-trip gate and
-      //     quarantine those that do not round-trip. A real `toISOString()` row ALWAYS
-      //     round-trips → never touched here (no over-fail-close). The receipt store is
-      //     small (one row per policy-update-per-key), so this scan is bounded.
+      // (2) Shaped rows — re-check with the STRICT gate. Quarantine a shaped row when:
+      //     (a) it is NOT a canonical round-trip instant (the GLOB is a shape mask
+      //         with no calendar semantics, so it accepts impossible values like
+      //         month 13-19, day 32-39, hour 24-29, Feb-30), OR
+      //     (b) it is FUTURE-dated (`created_at > nowIso`): a receipt cannot be
+      //         created after the sweep's now, and a future canonical value passes the
+      //         GLOB + round-trip yet sorts after any cutoff → it would evade a finite
+      //         window. A legit receipt's `created_at` is always ≤ the reaper's now
+      //         (same-process clock, written earlier) → NEVER future → no
+      //         over-fail-close. Lexicographic compare is correct for canonical ISO.
+      //     The receipt store is small (one row per policy-update-per-key), so this
+      //     scan is bounded.
       const shaped = db
         .prepare(
           `SELECT receipt_id, created_at
@@ -658,7 +676,7 @@ export function createFridayRetentionReceiptRepository(): FridayRetentionReceipt
         `DELETE FROM retention_recovery_receipts WHERE receipt_id = ?`,
       );
       for (const row of shaped) {
-        if (!isCanonicalReceiptCreatedAt(row.created_at)) {
+        if (!isCanonicalReceiptCreatedAt(row.created_at) || row.created_at > nowIso) {
           removed += deleteById.run(row.receipt_id).changes;
         }
       }
