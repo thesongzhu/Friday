@@ -315,6 +315,30 @@ describe("FridayMemoryOutputFilter — SEC-SECRET-GLUED-PREFIX-001 glued distinc
     expect(out.content).toBe(seg("ref key", "hf_docs"));
   });
 
+  // SEC-SECRET-GLUED-PREFIX-001 P1: GitHub classic `ghp_`/`ghr_` and AWS `AKIA` were SPLIT out of their
+  // alternations and de-`\b`'d (they are provably NOT benign word/ULID/acronym fragments), so a real
+  // credential GLUED after a word char is now caught in every output-filter leg. RED on 7021926c (glued
+  // token survives content + metadata + kept as a tag); GREEN after.
+  it("redacts GLUED ghp_/ghr_/AKIA credentials in content / metadata / tags (P1 split), benign lead preserved", () => {
+    const GHP = seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"); // pragma: allowlist secret — 36 base62
+    const AKIA = seg("AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
+    for (const [glueWord, body] of [["key", GHP], ["aws", AKIA]] as const) {
+      const glued = seg(glueWord, body);
+      // content leg — only the credential subspan is masked, the glued benign word survives.
+      const c = filter.filterItem(makeItem({ content: seg("token ", glued, " now") }));
+      expect(c.content).toBe(`token ${glueWord}${M} now`);
+      expect(c.content).not.toContain(body);
+      // metadata value leg under a non-sensitive key.
+      const m = filter.filterItem(makeItem({ metadata: { ref: glued, note: "keep" } }));
+      expect((m.metadata as { ref: string; note: string }).ref).toBe(`${glueWord}${M}`);
+      expect((m.metadata as { note: string }).note).toBe("keep");
+      // tag leg — the glued-credential tag is dropped, benign tags preserved.
+      const t = filter.filterItem(makeItem({ tags: ["ok", glued, "fine"] }));
+      expect(JSON.stringify(t.tags)).not.toContain(body);
+      expect(t.tags).toEqual(["ok", "fine"]);
+    }
+  });
+
   // NO-DEGRADE (round-2): benign snake_case words ending in `ghs`/etc before `_` MUST survive through
   // EVERY output-filter leg — the github-classic base62 body breaks at the `_`. The first-round
   // `[A-Za-z0-9_]` body corrupted these (`walkthroughs_completed_counter` → `walkthrou[REDACTED_SECRET]`).

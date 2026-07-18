@@ -218,11 +218,17 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
   const GSK_GLUED = seg("x", "gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx"); // pragma: allowlist secret
   const GLPAT_GLUED = seg("id", "glpat-", "ABCdef0123456789ghijkLMNop"); // pragma: allowlist secret
   const HF_GLUED = seg("key", "hf_", HF_BODY); // pragma: allowlist secret
+  // SEC-SECRET-GLUED-PREFIX-001 P1: GitHub classic `ghp_` and AWS `AKIA` were SPLIT out and de-`\b`'d, so
+  // a glued real credential must be caught identically in the AUDIT sink (persisted JSONL) and memory egress.
+  const GHP_GLUED = seg("key", "ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"); // pragma: allowlist secret — 36 base62
+  const AKIA_GLUED = seg("aws", "AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
   const GLUED_PAYLOAD = (): Record<string, unknown> => ({
     // non-sensitive KEY NAMES so the key-name nuke does NOT fire — the glued SHAPE must be caught.
     hfref: HF_GLUED,
     gskref: GSK_GLUED,
     glref: GLPAT_GLUED,
+    ghpref: GHP_GLUED,
+    akiaref: AKIA_GLUED,
     note: "just a note",
     // NO-DEGRADE: benign words ending in `ghs`/etc before `_` MUST survive in BOTH sinks — the
     // github-classic branch keeps `\b`, so a `<-ghs word>_<contiguous base62 run>` is not over-matched.
@@ -242,10 +248,12 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     const memoryValue = memoryGuard.redactDeep(GLUED_PAYLOAD()).value as Record<string, unknown>;
     // Cross-sink equality — memory egress == audit sink for the glued credentials.
     expect(memoryValue).toEqual(auditDetails);
-    // The credential subspan is masked, the benign glued leading char (`key`/`x`/`id`) survives.
+    // The credential subspan is masked, the benign glued leading char (`key`/`x`/`id`/`aws`) survives.
     expect(memoryValue.hfref).toBe(`key${M}`);
     expect(memoryValue.gskref).toBe(`x${M}`);
     expect(memoryValue.glref).toBe(`id${M}`);
+    expect(memoryValue.ghpref).toBe(`key${M}`); // P1: glued GitHub classic ghp_ now caught in both sinks
+    expect(memoryValue.akiaref).toBe(`aws${M}`); // P1: glued AWS AKIA now caught in both sinks
     expect(memoryValue.note).toBe("just a note");
     // Benign `…ghs_<run>` identifiers survive byte-identical in BOTH sinks (no over-redaction), including
     // a CONTIGUOUS base62 run that only the leading `\b` closes.
@@ -258,7 +266,7 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     // No credential body survives in either sink's serialization.
     for (const sink of [auditDetails, memoryValue]) {
       const json = JSON.stringify(sink);
-      for (const cred of [HF_GLUED.slice(3), GSK_GLUED.slice(1), GLPAT_GLUED.slice(2)]) {
+      for (const cred of [HF_GLUED.slice(3), GSK_GLUED.slice(1), GLPAT_GLUED.slice(2), GHP_GLUED.slice(3), AKIA_GLUED.slice(3)]) {
         expect(json, cred).not.toContain(cred);
       }
     }

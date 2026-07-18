@@ -434,10 +434,16 @@ describe("friday-secret-shape-redactor", () => {
       ["SendGrid SG.<22>.<43>", SG_SECRET], // pragma: allowlist secret
       ["Square sq0atp-", seg("sq0atp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
       ["Square sq0csp-", seg("sq0csp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
-      // NB: GitHub classic `gh[opsru]_` / `github_pat_` and AWS `AKIA…` are NOT here — their prefixes are
-      // English-word / base32 fragments (`-ghs`, "github", `ASIA`/`AIDA`), so they KEEP `\b` (glued case is
-      // an accepted gap); see KEPT. The 9 shapes above are non-word-fragment vendor prefixes with a body
-      // that excludes `_`/`-` (or an ultra-distinctive prefix), so they safely stay de-`\b`'d.
+      // GitHub classic {ghp,ghr} and AWS {AKIA} were SPLIT out of their alternations and de-`\b`'d
+      // (SEC-SECRET-GLUED-PREFIX-001 P1 fix): `ghp`/`ghr` have ZERO dict word-endings; `AKIA` has `I`
+      // (not ULID-constructible), only obscure lowercase word-endings (aphakia/leucoplakia — never
+      // all-caps 20+ runs), and no common all-caps acronym → all three are provably NOT benign fragments,
+      // so a glued `keyghp_<36>` / `keyghr_<…>` / `keyAKIA<16>` real credential is now CAUGHT. The
+      // AMBIGUOUS members {gho,ghs,ghu,github_pat_} and {ASIA,AGPA,AIDA,AROA,AIPA,ANPA,ANVA} KEEP `\b`
+      // (word-ending / ULID / acronym fragments) — see KEPT.
+      ["GitHub classic ghp_ (0 word-endings)", seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")], // pragma: allowlist secret — 36 base62
+      ["GitHub classic ghr_ (0 word-endings)", seg("ghr_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")], // pragma: allowlist secret — 36 base62
+      ["AWS AKIA (not ULID/word/acronym)", seg("AKIA", "IOSFODNN7EXAMPLE")], // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
       ["Slack xoxb-", seg("xoxb-", "EXAMPLENOTAREALSLACKTOKEN")], // pragma: allowlist secret
     ];
 
@@ -484,11 +490,13 @@ describe("friday-secret-shape-redactor", () => {
       ["xai- (…xai)", seg("xai-", "abcdefghijklmnop0123456789"), seg("proxai-", "abcdefghijklmnop0123456789")], // pragma: allowlist secret
       ["Stripe sk_live_ (desk_/risk_)", seg("sk", "_live_", "0123456789abcdefABCD"), seg("desk", "_live_", "0123456789abcdefABCD")], // pragma: allowlist secret
       ["github_pat_ (natural phrase)", seg("github_pat_", "11ABCDE0aBcDeFgHiJkL0"), seg("my", "github_pat_", "reference0token0id00")], // pragma: allowlist secret
-      // GitHub classic — `-ghs`/`-gho`/… are word-endings (walkthroughs), so a glued form is NOT caught.
-      ["GitHub classic ghp_ (…ghs word-ending)", seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"), seg("walkthroughs_", "completedThisWeekX")], // pragma: allowlist secret
-      // AWS AKIA — `ASIA`/`AIDA` are English words + base32-constructible, body is all-caps/digit (ULID
-      // alphabet), so a glued form (a 26-char ULID `012345AGPA…`) is NOT caught; standalone still is.
-      ["AWS AKIA (ASIA/AIDA word-fragment)", seg("AKIA", "IOSFODNN7EXAMPLE"), "012345AGPABCDEFGHJKMNPQRST"], // pragma: allowlist secret — glued-benign is a ULID
+      // GitHub classic AMBIGUOUS {gho,ghs,ghu} — word-endings (sor-GHO / walkthrou-GHS / Ra-GHU), so a
+      // glued form is NOT caught; standalone still is. (ghp/ghr were de-`\b`'d — see DEBOUNDED.)
+      ["GitHub classic gho_ (…gho/ghs word-ending)", seg("gho_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"), seg("walkthroughs_", "completedThisWeekX")], // pragma: allowlist secret
+      // AWS AMBIGUOUS {ASIA,AGPA,…} — ASIA is an English word + AGPA is ULID-constructible; the body is
+      // all-caps/digit (ULID alphabet), so a glued form (a 26-char ULID `012345AGPA…`) is NOT caught;
+      // standalone still is. (AKIA was de-`\b`'d — see DEBOUNDED.)
+      ["AWS AMBIGUOUS ASIA/AGPA (word/ULID fragment)", seg("ASIA", "JEXAMPLE01234XYZ"), "012345AGPABCDEFGHJKMNPQRST"], // pragma: allowlist secret — glued-benign is a ULID
       ["Slack xapp- (maxapp-)", seg("xapp-", "1-A0123ABCD-4567890123"), "maxapp-config-value-here"], // pragma: allowlist secret
       ["Google AIza (openAIza…)", seg("AIza", "SyDabcdefghijklmnopqrstuvwxyz012345"), seg("open", "AIza", "SyDabcdefghijklmnopqrstuvwxyz012345")], // pragma: allowlist secret
       ["Google ya29. (maya29.field)", seg("ya29.", "a0AfBbyDtestTokenValue0123456789ABCDEF"), "maya29.profile_image_url_field_v2"], // pragma: allowlist secret
@@ -526,6 +534,11 @@ describe("friday-secret-shape-redactor", () => {
       "AUSTRALASIAWIDEDEPLOYMENT01", // pragma: allowlist secret — all-caps constant, ASIA glued after `L`
       "EURASIAREGIONCODE0123456789", // pragma: allowlist secret — all-caps, ASIA glued after `R`
       "PROJECTAIDABUILDPIPELINE42X", // pragma: allowlist secret — all-caps, AIDA glued after `T`
+      // Negative controls for the KEPT-`\b` AWS members whose fragment is NOT ULID nor a common word but
+      // IS inside a common all-caps acronym / place name (criterion (c)) — these MUST survive:
+      "AIPACPOLICYCONFERENCE2024ABC", // pragma: allowlist secret — AIPA is a prefix of the all-caps org AIPAC
+      "AOTEAROANEWZEALANDGOVT01ABCD", // pragma: allowlist secret — AROA is inside the place name AOTEAROA
+      "OPENCANVASRENDERINGCONTEXT2D", // pragma: allowlist secret — ANVA is inside CANVAS (also ULID-constructible)
       "9f8e7d6c5b4a3928170695f4e3d2c1b0", // pragma: allowlist secret — 32-hex id / git blob
       "/var/log/hf_service/npm_cache/output.log", // file path with hf_/npm_ short segments
       "GOCSPX_notasecret_underscore", // GOCSPX_ (underscore, not the required hyphen)
@@ -545,6 +558,10 @@ describe("friday-secret-shape-redactor", () => {
       "troughs_index",
       "sighs_and_weighs_and_doughs", // multiple ghs-ending words
       "metric name walkthroughs_started_and_completed today", // free-text sentence
+      // Negative controls for the KEPT-`\b` github members gho/ghu (word-endings sor-GHO / Ra-GHU): a
+      // lowercase `<word>_<16+ contiguous base62>` MUST survive (would over-redact if these were de-`\b`'d).
+      "sorgho_yieldPerHectare2024xx", // gho_ + 21 contiguous base62 — only the leading `\b` closes this
+      "raghu_authTokenReferenceValueV2", // ghu_ + contiguous base62 run
     ];
 
     it("NO-DEGRADE: the benign-identifier corpus is returned byte-identical (zero over-redaction)", () => {
@@ -554,47 +571,71 @@ describe("friday-secret-shape-redactor", () => {
       }
     });
 
-    // GitHub-classic sensitivity boundary (round-3): the classic prefixes are common English
-    // WORD-FRAGMENTS (`-ghs` ends walkthroughs/coughs/highs; "github" is a word), so — unlike the 10
-    // other de-`\b`'d shapes — the classic branch KEEPS `\b`. A benign `<-ghs word>_<contiguous base62
-    // run>` is UNCHANGED (the boundary blocks it, even for a contiguous run that a base62 body alone did
-    // not close). A DELIMITED / standalone / labeled classic token IS still caught (the common case); a
-    // classic token glued DIRECTLY after a word char is an ACCEPTED, documented gap (like sk-/AIza/ya29.).
-    it("GitHub-classic: benign `…ghs_<run>` survives; DELIMITED/standalone token redacts; GLUED is an accepted gap", () => {
-      // Benign — the leading `\b` blocks the match; UNCHANGED even for a CONTIGUOUS 17+ base62 run.
+    // GitHub-classic sensitivity boundary (SEC-SECRET-GLUED-PREFIX-001 P1 split): the classic alternation
+    // is SPLIT by prefix. {ghp,ghr} have ZERO dict word-endings → de-`\b`'d (a glued token is now CAUGHT);
+    // {gho,ghs,ghu} are word-endings (sor-GHO / walkthrou-GHS / Ra-GHU) and `github_pat_` contains
+    // "github" → KEEP `\b` (a glued token stays an ACCEPTED gap). Benign `<-ghs word>_<contiguous base62
+    // run>` is UNCHANGED for the KEPT members even for a contiguous run a base62 body alone did not close;
+    // a DELIMITED / standalone / labeled classic token IS still caught for EVERY prefix.
+    it("GitHub-classic split: ghp/ghr GLUED redacts (P1); benign `…ghs_<run>` survives; gho/ghs/ghu GLUED is an accepted gap", () => {
+      // Benign — the KEPT `\b` blocks the match; UNCHANGED even for a CONTIGUOUS 17+ base62 run.
       expect(redactSecretShapesInString("walkthroughs_completed_counter")).toBe("walkthroughs_completed_counter");
       expect(redactSecretShapesInString("walkthroughs_completedThisWeek")).toBe("walkthroughs_completedThisWeek"); // 17 contiguous base62
       expect(redactSecretShapesInString("coughs_e3b0c44298fc1c14")).toBe("coughs_e3b0c44298fc1c14"); // hash suffix
       expect(redactSecretShapesInString("highs_thresholdValueConfig1")).toBe("highs_thresholdValueConfig1");
-      const TOK = seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"); // pragma: allowlist secret — 36 base62
-      // DELIMITED / standalone / labeled classic token IS still caught (whitespace, `=`, bare value).
-      expect(redactSecretShapesInString(TOK)).toBe(M);
-      expect(redactSecretShapesInString(`token ${TOK} used`)).toBe(`token ${M} used`);
-      expect(redactSecretShapesInString(`apikey=${TOK}`)).toBe(`apikey=${M}`);
-      // GLUED directly after a word char is an ACCEPTED gap for these word-fragment prefixes.
-      expect(redactSecretShapesInString(seg("key", TOK))).toBe(seg("key", TOK));
-      expect(findSecretShapeSpans(seg("key", TOK))).toEqual([]);
+      const B62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; // 36 base62
+      // DE-`\b`'d {ghp,ghr}: DELIMITED still caught AND a GLUED token is now REDACTED (P1 canary), the
+      // benign leading char preserved byte-for-byte; the span is exactly the credential.
+      for (const p of ["ghp_", "ghr_"]) {
+        const TOK = seg(p, B62); // pragma: allowlist secret
+        expect(redactSecretShapesInString(TOK), `${p} standalone`).toBe(M);
+        expect(redactSecretShapesInString(`token ${TOK} used`), `${p} delimited`).toBe(`token ${M} used`);
+        expect(redactSecretShapesInString(seg("key", TOK)), `${p} GLUED`).toBe(`key${M}`); // P1: now caught
+        const spans = findSecretShapeSpans(seg("key", TOK));
+        expect(spans.length, `${p} glued span`).toBe(1);
+        expect(seg("key", TOK).slice(spans[0]!.start, spans[0]!.end), `${p} glued span body`).toBe(TOK);
+      }
+      // KEPT-`\b` {gho,ghs,ghu}: DELIMITED / standalone still caught, but a GLUED token stays an ACCEPTED
+      // gap (these prefixes are benign word-endings, so de-`\b` would over-redact `sorgho_…`/`…ghs_…`).
+      for (const p of ["gho_", "ghs_", "ghu_"]) {
+        const TOK = seg(p, B62); // pragma: allowlist secret
+        expect(redactSecretShapesInString(TOK), `${p} standalone`).toBe(M);
+        expect(redactSecretShapesInString(`apikey=${TOK}`), `${p} labeled`).toBe(`apikey=${M}`);
+        expect(redactSecretShapesInString(seg("key", TOK)), `${p} GLUED gap`).toBe(seg("key", TOK));
+        expect(findSecretShapeSpans(seg("key", TOK)), `${p} glued span`).toEqual([]);
+      }
     });
 
-    // AWS AKIA sensitivity boundary (round-4): the alternation embeds English-word / base32-constructible
-    // fragments (`ASIA`/`AIDA`/`AGPA`) and its body is `[0-9A-Z]{16}` (the ULID / all-caps-constant
-    // alphabet), so — like classic-github — the AKIA branch KEEPS `\b`. A benign all-caps / ULID / base32
-    // id where the fragment is GLUED after a word char is UNCHANGED. A DELIMITED / standalone / labeled
-    // AWS key IS still caught (the common case — AWS keys are ~always delimited in env/config); a key
-    // glued directly after a word char (`xAKIA<16>`) is an ACCEPTED, documented gap.
-    it("AWS AKIA: benign glued ULID/all-caps survives; DELIMITED/standalone key redacts; GLUED is an accepted gap", () => {
-      // Benign all-caps / ULID with a fragment GLUED after a word char → UNCHANGED (the `\b` blocks it).
+    // AWS sensitivity boundary (SEC-SECRET-GLUED-PREFIX-001 P1 split): the AWS alternation is SPLIT by
+    // prefix. `AKIA` (has `I` → not ULID; only obscure lowercase word-endings; no common all-caps acronym)
+    // is de-`\b`'d → a glued `keyAKIA<16>` is now CAUGHT (P1 canary). The AMBIGUOUS members
+    // {ASIA,AGPA,AIDA,AROA,AIPA,ANPA,ANVA} — word-endings (Eur-ASIA), ULID-constructible (AGPA/ANPA/ANVA),
+    // or acronym fragments (AIDA, AIPA→AIPAC, AROA→AOTEAROA) — KEEP `\b`, so a benign all-caps / ULID id
+    // where the fragment is GLUED after a word char is UNCHANGED. A DELIMITED / standalone / labeled AWS
+    // key IS still caught for EVERY prefix (the common case — AWS keys are ~always delimited in env/config).
+    it("AWS split: AKIA GLUED redacts (P1); benign glued ULID/all-caps survives; ASIA/AGPA/AIDA/… GLUED is an accepted gap", () => {
+      const B16 = "JEXAMPLE01234XYZ"; // 16 [0-9A-Z]
+      // Benign all-caps / ULID with an AMBIGUOUS fragment GLUED after a word char → UNCHANGED (the `\b` blocks it).
       expect(redactSecretShapesInString("012345AGPABCDEFGHJKMNPQRST")).toBe("012345AGPABCDEFGHJKMNPQRST"); // pragma: allowlist secret — benign ULID (AKIA-family scanner false positive)
       expect(redactSecretShapesInString("AUSTRALASIAWIDEDEPLOYMENT01")).toBe("AUSTRALASIAWIDEDEPLOYMENT01"); // pragma: allowlist secret — benign all-caps constant
       expect(redactSecretShapesInString("PROJECTAIDABUILDPIPELINE42X")).toBe("PROJECTAIDABUILDPIPELINE42X"); // pragma: allowlist secret — benign all-caps constant
+      // DE-`\b`'d AKIA: DELIMITED still caught AND a GLUED key is now REDACTED (P1 canary); leading char preserved.
       const KEY = seg("AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
-      // DELIMITED / standalone / labeled AWS key IS still caught (whitespace, `=`, bare value).
       expect(redactSecretShapesInString(KEY)).toBe(M);
       expect(redactSecretShapesInString(`token ${KEY} used`)).toBe(`token ${M} used`);
       expect(redactSecretShapesInString(`apikey=${KEY}`)).toBe(`apikey=${M}`);
-      // GLUED directly after a word char is an ACCEPTED gap for this word-fragment prefix.
-      expect(redactSecretShapesInString(seg("x", KEY))).toBe(seg("x", KEY));
-      expect(findSecretShapeSpans(seg("x", KEY))).toEqual([]);
+      expect(redactSecretShapesInString(seg("key", KEY))).toBe(`key${M}`); // P1: glued now caught
+      const spans = findSecretShapeSpans(seg("key", KEY));
+      expect(spans.length).toBe(1);
+      expect(seg("key", KEY).slice(spans[0]!.start, spans[0]!.end)).toBe(KEY);
+      // KEPT-`\b` AMBIGUOUS members: DELIMITED / standalone still caught, but a GLUED key stays an ACCEPTED gap.
+      for (const p of ["ASIA", "AGPA", "AIDA", "AROA", "AIPA", "ANPA", "ANVA"]) {
+        const K = seg(p, B16); // pragma: allowlist secret
+        expect(redactSecretShapesInString(K), `${p} standalone`).toBe(M);
+        expect(redactSecretShapesInString(`apikey=${K}`), `${p} labeled`).toBe(`apikey=${M}`);
+        expect(redactSecretShapesInString(seg("x", K)), `${p} GLUED gap`).toBe(seg("x", K));
+        expect(findSecretShapeSpans(seg("x", K)), `${p} glued span`).toEqual([]);
+      }
     });
   });
 });

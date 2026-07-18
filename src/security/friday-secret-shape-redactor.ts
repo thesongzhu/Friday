@@ -192,22 +192,42 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   },
   // GitHub tokens: classic `gh?_` prefixes AND fine-grained `github_pat_`.
   //
-  // GLUED-PREFIX (SEC-SECRET-GLUED-PREFIX-001): the GitHub branch KEEPS its leading `\b` — UNLIKE the 10
-  // other de-`\b`'d shapes, the classic prefixes are common ENGLISH WORD-FRAGMENTS: `ghs` ends
-  // walkthrou-GHS, breakthrou-GHS, cou-GHS, hi-GHS, lau-GHS, rou-GHS, wei-GHS, plou-GHS, borou-GHS; and
-  // `github_pat_` contains the word "github". So dropping the boundary would over-redact benign
-  // `<word-ending-in-ghs>_<16+ CONTIGUOUS base62 run>` content this SHARED egress detector processes —
-  // even with a base62 body: `walkthroughs_completedThisWeek` → `ghs_completedThisWeek` (17 base62) or
-  // `coughs_e3b0c44298fc1c14` (a content-hash suffix) would be corrupted. Because the collision surface
-  // is a word FRAGMENT (not a distinctive token prefix), `\b` is REQUIRED. Effect: a DELIMITED /
-  // standalone / labeled classic token (`ghp_<base62>`, `token: ghp_…`, `apikey=ghp_…`) is STILL caught
-  // (the common case); only a classic token glued DIRECTLY after a word char (`keyghp_…`) is an
-  // ACCEPTED, documented gap — exactly like the kept-`\b` `sk-`/`AIza`/`ya29.`/`eyJ`/`xapp-` prefixes.
-  // The classic body is still BASE62 (`[A-Za-z0-9]`, real-token shape) so a standalone `ghs_a_b_c`
-  // snake_case identifier breaks at the first `_`; the `github_pat_` branch keeps its `_`-inclusive body
-  // (a fine-grained PAT's body legitimately has `_`).
+  // GLUED-PREFIX (SEC-SECRET-GLUED-PREFIX-001): the classic set {gho,ghp,ghr,ghs,ghu} is SPLIT by prefix,
+  // and the leading `\b` is DROPPED ONLY on the members that are PROVABLY not a benign word / identifier
+  // fragment — so a real token glued DIRECTLY after a word char (`keyghp_…`, the Advisor P1 case) is
+  // caught, WITHOUT re-introducing the demonstrated benign over-redaction. The classic body is MIXED-CASE
+  // base62 with a `_` separator, so the collision surface is a LOWERCASE snake_case identifier ending in
+  // the member (`<word>_<16+ contiguous base62>`) — even an obscure lowercase word matters here (UNLIKE
+  // the uppercase-only AWS body below). Classification (grep /usr/share/dict/words for word-endings):
+  //   • ghp — 0 dict word-endings, not a benign fragment → UNAMBIGUOUS → `\b` DROPPED (a glued
+  //     `keyghp_<36>` classic PAT is now caught; this is the Advisor P1 canary).
+  //   • ghr — 0 dict word-endings, not a benign fragment → UNAMBIGUOUS → `\b` DROPPED (a glued
+  //     `keyghr_<…>` refresh token is now caught).
+  //   • ghs — a PLURAL word-ending (walkthrou-GHS, cou-GHS, breakthrou-GHS, hi-GHS, lau-GHS, si-GHS,
+  //     trou-GHS, …) → AMBIGUOUS → `\b` KEPT (else `walkthroughs_completedThisWeek` — a CONTIGUOUS 17
+  //     base62 run — over-redacts to `walkthrou[REDACTED]`).
+  //   • gho — dict word-endings (sor-GHO, a millet; San-GHO, a language) → a lowercase
+  //     `sorgho_<field16>` would over-redact → AMBIGUOUS → `\b` KEPT.
+  //   • ghu — dict word-ending (Ra-GHU, a common given name) → `raghu_<field16>` would over-redact →
+  //     AMBIGUOUS → `\b` KEPT.
+  //   • github_pat_ — contains the natural word "github" → AMBIGUOUS → `\b` KEPT.
+  // Effect for the KEPT members {gho,ghs,ghu,github_pat_}: a DELIMITED / standalone / labeled classic
+  // token (`gho_<base62>`, `token: ghu_…`, `apikey=ghs_…`) is STILL caught by the assignment/whitespace
+  // paths (the common case); only a token glued DIRECTLY after a word char stays an ACCEPTED gap for
+  // THOSE word-fragment prefixes (like `sk-`/`AIza`/`ya29.`/`eyJ`). For the DROPPED members {ghp,ghr} a
+  // glued token is now REDACTED at exactly the credential subspan (the benign leading char survives
+  // byte-for-byte). Bodies stay BASE62 (`[A-Za-z0-9]`) so a snake_case identifier breaks at the first `_`
+  // (open-ended `{16,}` — never tightened to an exact length, so a longer real token cannot slip the
+  // trailing `\b`); the `github_pat_` branch keeps its `_`-inclusive body (a fine-grained PAT legitimately
+  // has `_` in its body).
   {
-    pattern: /\b(?:gh[opsru]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/gu,
+    // UNAMBIGUOUS classic prefixes — leading `\b` DROPPED so a glued `<word>ghp_<36>` / `<word>ghr_<…>` is caught.
+    pattern: /gh[pr]_[A-Za-z0-9]{16,}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  {
+    // AMBIGUOUS classic prefixes (word-fragment endings gho/ghs/ghu) + fine-grained `github_pat_` — leading `\b` KEPT.
+    pattern: /\b(?:gh[osu]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Provider hyphen-prefixed API keys: OpenAI `sk-` / `sk-proj-`, `rk-`, `ak-`, xAI `xai-`. The
@@ -241,20 +261,40 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   // AWS access-key id (`AKIA…` long-term + STS/temporary variants). NB: the AWS SECRET access key is
   // a shapeless 40-char base64 with no prefix — it is caught by its KEY NAME (`secretAccessKey`,
   // in the sensitive-field-name set), NOT a shape, so it is not (and must not be) a content pattern.
-  // GLUED-PREFIX: leading `\b` KEPT deliberately (UNLIKE the base62 vendor prefixes). The `A(?:KIA|SIA|…)`
-  // alternation embeds ENGLISH-WORD / base32-constructible fragments — `ASIA` (Asia / Eurasia /
-  // Australasia), `AIDA`, and `AGPA`/`ANPA`/`ANVA` (constructible from Crockford base32) — AND its body is
-  // `[0-9A-Z]{16}`, i.e. UPPERCASE + DIGIT, exactly the alphabet of an all-caps constant or a ULID. So
-  // de-`\b` over-redacts benign all-caps / ULID / base32 identifiers this SHARED egress detector
-  // processes: e.g. a 26-char ULID `012345AGPA…` → `012345[REDACTED]`, an all-caps `…ASIA…WIDE…` constant
-  // → `AUSTRAL[REDACTED]`, a base32 OTP `ASIA…`. (The earlier "…ASIA…-`_`-separated cannot
-  // span it" reasoning was WRONG — it only considered `_`-separated forms and missed all-caps-contiguous
-  // / ULID / base32.) Same word-fragment class we keep `\b` on for classic-github (`-ghs`), `xapp` (app),
-  // `sk-`, `AIza` (AI), `ya29`. Effect: standalone / delimited / labeled AWS keys (`AKIA<16>`,
-  // `token AKIA…`, `apikey=AKIA…` — AWS keys are ~always delimited in env/config) are STILL caught; only
-  // a key glued DIRECTLY after a word char (`xAKIA<16>`) is an ACCEPTED, documented gap.
+  //
+  // GLUED-PREFIX (SEC-SECRET-GLUED-PREFIX-001): the AWS family is SPLIT by prefix and the leading `\b` is
+  // DROPPED ONLY on `AKIA`. The AWS body is `[0-9A-Z]{16}` — UPPERCASE + DIGIT, i.e. the alphabet of an
+  // all-caps constant / ULID / base32 blob — so (UNLIKE the mixed-case github body above) a member
+  // over-redacts ONLY when it sits inside an ALL-CAPS 20+ contiguous run; a lowercase prose word never
+  // collides. A member is de-`\b`'d ONLY if it fails ALL of: (a) a COMMON word-ending that forms all-caps
+  // runs, (b) ULID-constructible (Crockford base32 = 0-9 A-Z minus I,L,O,U — a member of only Crockford
+  // chars can sit mid-ULID), and (c) a common all-caps ACRONYM / fragment:
+  //   • AKIA — has `I` → NOT ULID-constructible; only OBSCURE lowercase word-endings (aph-AKIA,
+  //     leucopl-AKIA, Lat-AKIA — medical / geographic, never written as ALL-CAPS 20+ runs); no common
+  //     all-caps acronym source → fails (a),(b),(c) → UNAMBIGUOUS → `\b` DROPPED (a glued `keyAKIA<16>`
+  //     is now caught; this is the Advisor P1 canary).
+  //   • ASIA — has `I` (not ULID) BUT a COMMON word-ending (Eur-ASIA, Austral-ASIA, aph-ASIA) written
+  //     all-caps in region constants (…ASIA…, AUSTRALASIA…, EURASIA…) → fails (a),(c) → AMBIGUOUS → `\b` KEPT.
+  //   • AGPA / ANPA / ANVA — Crockford-only (no I/L/O/U) → ULID-CONSTRUCTIBLE (sit mid-ULID, e.g.
+  //     `012345AGPA…`); ANVA is also inside C-ANVA-S → fails (b) → AMBIGUOUS → `\b` KEPT.
+  //   • AIDA — has `I` (not ULID) BUT a common all-caps ACRONYM (the AIDA marketing model, PROJECT-AIDA,
+  //     the opera) → fails (c) → AMBIGUOUS → `\b` KEPT.
+  //   • AROA — has `O` (not ULID) BUT the place name AOTE-AROA (all-caps-able in NZ constants) → fails
+  //     (a),(c) → AMBIGUOUS → `\b` KEPT.
+  //   • AIPA — has `I` (not ULID) BUT a prefix of the common all-caps acronym / org AIPA-C
+  //     (`AIPACPOLICYCONFERENCE…`) → fails (c) → AMBIGUOUS → `\b` KEPT.
+  // Effect: a DELIMITED / standalone / labeled AWS key of ANY prefix is STILL caught (the common case —
+  // AWS keys are ~always delimited in env/config); a glued `keyAKIA<16>` is now REDACTED at exactly the
+  // credential subspan, while a glued benign all-caps / ULID carrying an AMBIGUOUS fragment
+  // (`012345AGPA…`, `…ASIA…WIDE…`, `PROJECTAIDA…`) is UNCHANGED (`AKIA` never appears in those blobs).
   {
-    pattern: /\bA(?:KIA|SIA|GPA|IDA|ROA|IPA|NPA|NVA)[0-9A-Z]{16}\b/gu,
+    // UNAMBIGUOUS — leading `\b` DROPPED so a glued `<word>AKIA<16>` is caught.
+    pattern: /AKIA[0-9A-Z]{16}\b/gu,
+    sensitiveSpan: wholeMatchSpan,
+  },
+  {
+    // AMBIGUOUS (word-ending / ULID-constructible / acronym fragments) — leading `\b` KEPT.
+    pattern: /\bA(?:SIA|GPA|IDA|ROA|IPA|NPA|NVA)[0-9A-Z]{16}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Google API key — `AIza` + 35 chars of `[0-9A-Za-z_-]` (documented 39-char format).

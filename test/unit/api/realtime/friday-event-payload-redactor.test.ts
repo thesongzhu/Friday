@@ -166,11 +166,15 @@ describe("redactEventPayload — secret shapes (no regression)", () => {
     const HF = seg("hf_", "AbCdEfGhIjKlMnOpQrStUvWxYz01234567"); // pragma: allowlist secret — 34 base62
     const GSK = seg("gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx"); // pragma: allowlist secret — 42 base62
     const GLPAT = seg("glpat-", "ABCdef0123456789ghijkLMNop"); // pragma: allowlist secret
+    // SEC-SECRET-GLUED-PREFIX-001 P1: GitHub classic `ghp_` and AWS `AKIA` were SPLIT out and de-`\b`'d —
+    // a real credential glued after a word char (`keyghp_<36>`, `keyAKIA<16>`) must now be caught on-wire.
+    const GHP = seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"); // pragma: allowlist secret — 36 base62
+    const AKIA = seg("AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
     const out = redactEventPayload({
-      log: seg("deploy key", HF, " and x", GSK, " and id", GLPAT, " done"),
+      log: seg("deploy key", HF, " and x", GSK, " and id", GLPAT, " and gh", GHP, " and aws", AKIA, " done"),
     });
     const s = serialize(out);
-    for (const cred of [HF, GSK, GLPAT]) expect(s, cred).not.toContain(cred);
+    for (const cred of [HF, GSK, GLPAT, GHP, AKIA]) expect(s, cred).not.toContain(cred);
     expect(s).toContain("[REDACTED]");
     // Benign surrounding + glued leading chars survive (only the credential subspan is masked).
     expect(s).toContain("deploy key");
