@@ -2513,6 +2513,295 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     }
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // RETENTION-R3d ROUND-13 — RAW-BYTES CANONICAL JSON (P1 — JSON DUPLICATE-MEMBER
+  // representation attack / raw-byte content island). Fresh Advisor audit (NO-LOOP)
+  // BLOCKED HEAD: `assertReceiptAnchor` validated the anchor's `metadata_json` via
+  // `Object.keys(JSON.parse(...))` + field equality, but `JSON.parse` silently keeps
+  // only the LAST value of a duplicated member name. So a metadata blob
+  //   {"receiptId":"<ATTACKER>","correlationId":"c","payloadDigest":"p","receiptId":"<CORRECT>"}
+  // PARSES to exactly {receiptId:"<CORRECT>",correlationId:"c",payloadDigest:"p"} —
+  // `Object.keys` reports the 3 expected keys, every linkage equality passes, and the
+  // receipt was SERVED — while the raw permanent `security_audit_log` bytes still carry
+  // "<ATTACKER>" in the DISCARDED first `receiptId` member = a permanent content/secret
+  // retention island the parsed view cannot see. The fix validates the RAW BYTES are
+  // CANONICAL (`JSON.stringify(JSON.parse(s)) === s`) at EVERY read-back JSON blob (the
+  // permanent anchor `metadata_json` AND the four receipt JSON columns), rejecting in
+  // one check: duplicate member names, escaped-equivalent member names, and extra
+  // whitespace. Legit blobs are written by `JSON.stringify` → round-trip → PASS (no
+  // over-fail-close; the catastrophic guard green below proves single + multi-tenant).
+  // RED on HEAD 9be0139f (duplicate-key anchor SERVED), GREEN here.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // A raw recovery-key VALUE that must NEVER egress once stuffed into a DISCARDED
+  // duplicate member of a permanent-anchor / receipt-column JSON blob.
+  const NONCANONICAL_LEAK_SECRET = "raw-dup-member-secret-should-never-serve"; // pragma: allowlist secret (test fixture)
+
+  // Read the CURRENT (canonical) anchor `metadata_json` for the receipt bound to `h`.
+  function currentAnchorMetadataJson(h: string): string {
+    return (
+      db.writer
+        .prepare(
+          `SELECT metadata_json FROM security_audit_log
+             WHERE id = (SELECT audit_id FROM retention_recovery_receipts WHERE recovery_key_hash = ?)`,
+        )
+        .get(h) as { metadata_json: string }
+    ).metadata_json;
+  }
+  // Splice a DUPLICATE member (attacker value as raw JSON) at the FRONT of an object
+  // blob `{"k":V,...}` → `{"<key>":<attackerRaw>,"k":V,...}`. JSON.parse keeps the LAST
+  // value, so the parsed object is UNCHANGED (all shape/linkage/coherence still pass) —
+  // only the RAW bytes carry the attacker island. `<key>` MUST already be a member of
+  // the blob for the collapse-to-last to occur.
+  function dupMemberFirst(objectJson: string, key: string, attackerRaw: string): string {
+    return `{${JSON.stringify(key)}:${attackerRaw},${objectJson.slice(1)}`;
+  }
+  // Splice a DUPLICATE member at the END → `{...,"<key>":<attackerRaw>}`. JSON.parse
+  // keeps the LAST value, so the PARSED value is now the ATTACKER's (wrong) — it must
+  // still fail closed (noncanonical fires before the parsed-value linkage/coherence).
+  function dupMemberLast(objectJson: string, key: string, attackerRaw: string): string {
+    return `${objectJson.slice(0, -1)},${JSON.stringify(key)}:${attackerRaw}}`;
+  }
+  // Raw SQL set of one receipt JSON column (bypasses JSON.stringify, which would dedup).
+  function setReceiptColumnRaw(h: string, column: string, rawJson: string): void {
+    db.writer
+      .prepare(`UPDATE retention_recovery_receipts SET ${column} = ? WHERE recovery_key_hash = ?`)
+      .run(rawJson, h);
+  }
+
+  // ── (A) ANCHOR metadata_json representation matrix — each mutation keeps the PARSED
+  //    object valid+linked (or, for attacker-last, wrong) yet the RAW bytes are
+  //    non-canonical → recovery 500 anchor_metadata_noncanonical; authoritative policy
+  //    + counts stay put (via seedCoherentThenCorruptField). RED on HEAD 9be0139f. ──
+  const anchorNoncanonicalMutations: Array<[string, (h: string) => void]> = [
+    [
+      "duplicate receiptId, attacker-FIRST (parsed value stays CORRECT)",
+      (h) =>
+        setAnchorMetadataRaw(
+          h,
+          dupMemberFirst(currentAnchorMetadataJson(h), "receiptId", JSON.stringify(NONCANONICAL_LEAK_SECRET)),
+        ),
+    ],
+    [
+      "duplicate receiptId, attacker-LAST (JSON.parse keeps the wrong last value)",
+      (h) =>
+        setAnchorMetadataRaw(
+          h,
+          dupMemberLast(currentAnchorMetadataJson(h), "receiptId", JSON.stringify("retention-receipt:admin-001:op-GARBAGE")),
+        ),
+    ],
+    [
+      "escaped-equivalent member name (\\u0072eceiptId)",
+      (h) => setAnchorMetadataRaw(h, currentAnchorMetadataJson(h).replace('"receiptId"', '"\\u0072eceiptId"')),
+    ],
+    [
+      "extra whitespace / newlines (pretty-printed)",
+      (h) => setAnchorMetadataRaw(h, JSON.stringify(JSON.parse(currentAnchorMetadataJson(h)), null, 2)),
+    ],
+  ];
+  it.each(anchorNoncanonicalMutations)(
+    "(round-13 anchor-canonical) [%s] → recovery 500 anchor_metadata_noncanonical; authoritative policy unchanged; counts stay 1 (RED on HEAD 9be0139f: duplicate-key anchor SERVED)",
+    async (label, corrupt) => {
+      await seedCoherentThenCorruptField(
+        `anchor-noncanon-${label.replace(/[^a-zA-Z]/g, "")}`,
+        corrupt,
+        "anchor_metadata_noncanonical",
+      );
+    },
+  );
+
+  // ── (A2) ANCHOR secret-island: a raw secret hidden in a DISCARDED duplicate member
+  //    of the PERMANENT anchor is NEVER served, and the secret VALUE never egresses. ──
+  it("(round-13 anchor-canonical) a secret hidden in a DISCARDED duplicate `receiptId` member of the permanent anchor is NEVER served — recovery 500s and the secret VALUE never appears in the error", async () => {
+    const KEY = "round13-anchor-dup-island";
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    const h = hashRecoveryKey(KEY);
+    // Stuff the secret into a DISCARDED attacker-FIRST duplicate `receiptId` member. The
+    // parsed object still yields the CORRECT 3 keys/values (Object.keys + linkage pass),
+    // so on HEAD 9be0139f this SERVED while the permanent bytes retained the secret.
+    setAnchorMetadataRaw(h, dupMemberFirst(currentAnchorMetadataJson(h), "receiptId", JSON.stringify(NONCANONICAL_LEAK_SECRET)));
+    // The permanent anchor really did carry the stuffed secret at rest (the island).
+    expect(auditRows()[0].metadata_json).toContain(NONCANONICAL_LEAK_SECRET);
+    // Parsed-object view is BLIND to it (the 3 keys + values are exactly correct).
+    const parsed = JSON.parse(auditRows()[0].metadata_json) as Record<string, unknown>;
+    expect(Object.keys(parsed).sort()).toEqual(["correlationId", "payloadDigest", "receiptId"]);
+    expect(parsed.receiptId).toBe(receiptRows()[0].receipt_id); // last-wins == correct
+
+    let caught: unknown;
+    try {
+      await receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } }));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect(caught).toMatchObject({ ...INTEGRITY, details: { reason: "anchor_metadata_noncanonical" } });
+    // The raw secret VALUE never surfaces in the fail-closed error (message or details).
+    const e = caught as { message: string; details?: Record<string, unknown> };
+    expect(e.message).not.toContain(NONCANONICAL_LEAK_SECRET);
+    expect(JSON.stringify(e.details ?? {})).not.toContain(NONCANONICAL_LEAK_SECRET);
+    // Authoritative policy + durable counts untouched by the failed decode.
+    expect(policyRows(CANON)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+    expect(receiptRows()).toHaveLength(1);
+    expect(auditRows()).toHaveLength(1);
+  });
+
+  // ── (B) RECEIPT JSON COLUMN representation matrix — a served receipt must not carry
+  //    a hidden duplicate-member / escaped-name / whitespace island in ANY of the four
+  //    JSON columns. Each mutation keeps the PARSED value valid+coherent yet the raw
+  //    bytes are non-canonical → recovery 500 receipt_json_noncanonical:<column>. On
+  //    HEAD 9be0139f these were SERVED (shape+coherence pass; the raw view is unseen). ──
+  const receiptColumnNoncanonicalMutations: Array<[string, string, (h: string) => void]> = [
+    [
+      "before_json duplicate `auditLogs` member, attacker-FIRST",
+      "receipt_json_noncanonical:before_json",
+      (h) =>
+        setReceiptColumnRaw(
+          h,
+          "before_json",
+          dupMemberFirst(receiptRows()[0].before_json, "auditLogs", JSON.stringify(NONCANONICAL_LEAK_SECRET)),
+        ),
+    ],
+    [
+      "after_json duplicate `auditLogs` member, attacker-FIRST",
+      "receipt_json_noncanonical:after_json",
+      (h) =>
+        setReceiptColumnRaw(
+          h,
+          "after_json",
+          dupMemberFirst(receiptRows()[0].after_json, "auditLogs", JSON.stringify(NONCANONICAL_LEAK_SECRET)),
+        ),
+    ],
+    [
+      "applied_updates_json duplicate `auditLogs` member, attacker-FIRST",
+      "receipt_json_noncanonical:applied_updates_json",
+      (h) =>
+        setReceiptColumnRaw(
+          h,
+          "applied_updates_json",
+          dupMemberFirst(receiptRows()[0].applied_updates_json, "auditLogs", JSON.stringify(NONCANONICAL_LEAK_SECRET)),
+        ),
+    ],
+    [
+      "applied_updates_json duplicate `auditLogs` member, attacker-LAST (parse keeps wrong last value)",
+      "receipt_json_noncanonical:applied_updates_json",
+      (h) =>
+        setReceiptColumnRaw(
+          h,
+          "applied_updates_json",
+          // A valid CategoryRetention as the last (kept) value keeps the parsed object
+          // individually valid; the raw bytes are still non-canonical (dup member).
+          dupMemberLast(receiptRows()[0].applied_updates_json, "auditLogs", JSON.stringify({ mode: "permanent" })),
+        ),
+    ],
+    [
+      "changed_categories_json extra whitespace / newlines (array — no dup members)",
+      "receipt_json_noncanonical:changed_categories_json",
+      (h) =>
+        setReceiptColumnRaw(
+          h,
+          "changed_categories_json",
+          JSON.stringify(JSON.parse(receiptRows()[0].changed_categories_json), null, 2),
+        ),
+    ],
+    [
+      "before_json escaped-equivalent member name (\\u0061uditLogs)",
+      "receipt_json_noncanonical:before_json",
+      (h) => setReceiptColumnRaw(h, "before_json", receiptRows()[0].before_json.replace('"auditLogs"', '"\\u0061uditLogs"')),
+    ],
+  ];
+  it.each(receiptColumnNoncanonicalMutations)(
+    "(round-13 receipt-canonical) [%s] → recovery 500 %s; authoritative policy unchanged; counts stay 1 (RED on HEAD 9be0139f: SERVED)",
+    async (label, reason, corrupt) => {
+      await seedCoherentThenCorruptField(`rc-noncanon-${label.replace(/[^a-zA-Z]/g, "")}`, corrupt, reason);
+    },
+  );
+
+  // ── (B2) RECEIPT secret-island: a secret hidden in a DISCARDED duplicate member of a
+  //    served receipt column is NEVER egressed (recovery fails closed). ──
+  it("(round-13 receipt-canonical) a secret hidden in a DISCARDED duplicate `before_json` member is NEVER served — recovery 500s and the secret VALUE never egresses", async () => {
+    const KEY = "round13-receipt-dup-island";
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    const h = hashRecoveryKey(KEY);
+    // Discarded attacker-FIRST duplicate `auditLogs` member carrying the secret; the
+    // kept (last) value keeps the parsed policy valid + coherent → SERVED on HEAD.
+    setReceiptColumnRaw(h, "before_json", dupMemberFirst(receiptRows()[0].before_json, "auditLogs", JSON.stringify(NONCANONICAL_LEAK_SECRET)));
+    expect(receiptRows()[0].before_json).toContain(NONCANONICAL_LEAK_SECRET); // the island at rest
+
+    let resolved: unknown;
+    let caught: unknown;
+    try {
+      resolved = await receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } }));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect(caught).toMatchObject({ ...INTEGRITY, details: { reason: "receipt_json_noncanonical:before_json" } });
+    // Nothing served, and the secret VALUE never egresses (served payload or error).
+    expect(JSON.stringify(resolved ?? "")).not.toContain(NONCANONICAL_LEAK_SECRET);
+    const e = caught as { message: string; details?: Record<string, unknown> };
+    expect(e.message).not.toContain(NONCANONICAL_LEAK_SECRET);
+    expect(JSON.stringify(e.details ?? {})).not.toContain(NONCANONICAL_LEAK_SECRET);
+    expect(policyRows(CANON)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+    expect(receiptRows()).toHaveLength(1);
+    expect(auditRows()).toHaveLength(1);
+  });
+
+  // ── (C) an UNDECODABLE column stays `undecodable_json` (the canonical helper defers
+  //    to the existing decode guard on unparseable input — no reason-drift). ──
+  it("(round-13 receipt-canonical) an UNDECODABLE receipt column still fails closed as undecodable_json (canonical check does not swallow/relabel it)", async () => {
+    await seedCoherentThenCorruptField(
+      "round13-undecodable",
+      (h) => setReceiptColumnRaw(h, "after_json", "{not-valid-json"),
+      "undecodable_json",
+    );
+  });
+
+  // ── (D) GREEN over-fail-close (CATASTROPHIC guard): a normal single + multi-tenant
+  //    two-category write (before/after/changed/applied all carry content) recovers
+  //    CLEAN through EVERY new canonical check — a false positive would 500 every
+  //    recovery/replay. Also asserts every stored blob round-trips (stringify(parse)===s). ──
+  it("(round-13 canonical green) normal single + multi-tenant write recovers CLEAN through the raw-bytes canonical checks (all 5 blobs round-trip)", async () => {
+    for (const [label, principal] of [
+      ["single", owner(CANON)],
+      ["multi", ownerWithTenant(CANON, "admin-001")],
+    ] as const) {
+      const KEY = `round13-canonical-clean-${label}`;
+      const routes = makeRoutes(realAppender());
+      const put = (await putRouteOf(routes).handler(
+        makeCtx({
+          principal,
+          headers: { "idempotency-key": KEY },
+          body: { policy: { auditLogs: { mode: "after_days", days: 30 }, agentRuns: { mode: "after_days", days: 60 } } },
+        }),
+      )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+      // Every stored read-back JSON blob is canonical (writer uses JSON.stringify).
+      const anchorMeta = db.writer
+        .prepare("SELECT metadata_json FROM security_audit_log WHERE id = ?")
+        .get(put.receipt.auditId) as { metadata_json: string };
+      const rc = receiptRows()[0];
+      for (const raw of [
+        anchorMeta.metadata_json,
+        rc.before_json,
+        rc.after_json,
+        rc.changed_categories_json,
+        rc.applied_updates_json,
+      ]) {
+        expect(JSON.stringify(JSON.parse(raw))).toBe(raw);
+      }
+      // Recovery passes every canonical check (no over-fail-close).
+      const rec = (await receiptRouteOf(routes).handler(
+        makeCtx({ principal, headers: { "idempotency-key": KEY } }),
+      )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+      expect(rec.receipt?.receiptId).toBe(put.receipt.receiptId);
+    }
+  });
+
   // ── Cutoff boundary: exactly-at / just-inside / just-outside behave correctly ──
   it("(round-11 boundary) canonical rows at exactly-cutoff / just-outside SURVIVE; just-inside is date-expired; none quarantined", async () => {
     // cutoff = NOW − 30d = 2026-06-16T10:00:00.000Z (deleteExpiredBefore: created_at < cutoff).

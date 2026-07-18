@@ -82,6 +82,61 @@ export function isCanonicalReceiptCreatedAt(value: unknown): value is string {
 }
 
 /**
+ * RAW-BYTES CANONICAL-JSON gate (RETENTION-R3d — JSON representation-attack class).
+ * A stored JSON blob `s` is CANONICAL iff `JSON.stringify(JSON.parse(s)) === s`.
+ *
+ * WHY the parsed view is not enough: `JSON.parse` silently collapses a DUPLICATE
+ * member name to its LAST value, so a parsed-object validator (`Object.keys`, field
+ * equality, shape/coherence) is BLIND to attacker content hidden in a DISCARDED
+ * earlier duplicate member — the raw stored bytes still carry it. In the append-only,
+ * default-PERMANENT `security_audit_log` anchor that is a permanent content/secret
+ * RETENTION ISLAND the parsed checks can never see (e.g. `metadata_json =
+ * {"receiptId":"<secret>",...,"receiptId":"<correct>"}` parses to exactly the correct
+ * 3-key object, passes the exact-key + linkage checks, and was SERVED — while the raw
+ * bytes retain "<secret>" indefinitely).
+ *
+ * The canonical-bytes invariant REJECTS, in ONE check, the whole representation class
+ * the parsed view cannot see: DUPLICATE member names (parse dedups → re-stringify is
+ * shorter ≠ s), EXTRA whitespace / newlines (`JSON.stringify` emits none ≠ s), and
+ * ESCAPED-EQUIVALENT member names (`receiptId` → parse → `receiptId` →
+ * re-stringify unescaped ≠ s). Every LEGIT blob is written by `JSON.stringify`, so it
+ * round-trips to itself and PASSES — empirically verified byte-for-byte against a real
+ * single- AND multi-tenant PUT for the anchor `metadata_json` and all four receipt
+ * JSON columns (`before_json`/`after_json`/`changed_categories_json`/
+ * `applied_updates_json`) → NO over-fail-close.
+ *
+ * The reported message + `details` carry ONLY the reason + linkage ids — NEVER the raw
+ * bytes — so a stuffed-secret duplicate value never egresses through the fail-closed
+ * error. If `raw` is NOT decodable JSON at all (`JSON.parse` throws), this RETURNS
+ * without throwing: an undecodable column is not a "non-canonical" fault — the caller's
+ * own decode path reports it (`undecodable_json` for a receipt column; the anchor's
+ * object-guard already surfaced `anchor_metadata_unreadable` before this runs).
+ */
+function assertCanonicalJsonBytes(
+  raw: string,
+  ctx: { reason: string; receiptId: string; auditId?: string },
+): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return; // undecodable → not a canonicality fault; the caller's decode path reports it
+  }
+  if (JSON.stringify(parsed) !== raw) {
+    throw new FridayRetentionReceiptIntegrityError(
+      `Persisted retention recovery receipt '${ctx.receiptId}' has a non-canonical stored JSON blob (raw-byte duplicate-member / escaped-name / whitespace representation attack).`,
+      {
+        details: {
+          receiptId: ctx.receiptId,
+          reason: ctx.reason,
+          ...(ctx.auditId !== undefined ? { auditId: ctx.auditId } : {}),
+        },
+      },
+    );
+  }
+}
+
+/**
  * FRIDAY_RETENTION_RECEIPT_ROW_INVARIANT — the ONE canonical whole-row invariant
  * for a persisted `retention_recovery_receipts` row (RETENTION-R3d). It is enforced
  * by the SINGLE validator `assertReceiptRowIntegrity` at EVERY seam (write / insert,
@@ -437,6 +492,28 @@ function assertReceiptAnchor(row: RetentionReceiptRow, db: Database.Database): v
       { cause, details: { receiptId: row.receipt_id, reason: "anchor_metadata_unreadable", auditId: row.audit_id } },
     );
   }
+  // ── RAW-BYTES CANONICAL metadata (P1 — JSON duplicate-member content island) ────
+  // `JSON.parse` above keeps only the LAST value of a duplicated member name, so the
+  // parsed-object exact-key/linkage checks below are BLIND to attacker content stashed
+  // in a DISCARDED earlier duplicate member (e.g. a first `"receiptId":"<secret>"`
+  // shadowed by a correct trailing `"receiptId":"<real>"` — `Object.keys` still reports
+  // exactly the 3 allowed keys and every equality passes, yet the raw bytes retain the
+  // secret). Because `security_audit_log` is PERMANENT (no reaper / `deleteAllForOwner`
+  // deletes it), those raw bytes are a permanent content/secret retention island the
+  // parsed view cannot see. Require the RAW `metadata_json` to be CANONICAL
+  // (`JSON.stringify(JSON.parse(s)) === s`) — this rejects, in one check, duplicate
+  // member names AND escaped-equivalent member names AND extra whitespace. It runs
+  // AFTER the object-guard (an array/string/number metadata stays
+  // `anchor_metadata_unreadable`) and BEFORE the exact-key/linkage checks (so a
+  // duplicate-member tamper surfaces the precise `anchor_metadata_noncanonical`, not a
+  // coincidental linkage mismatch). This is IN ADDITION to — not a replacement for —
+  // the exact-key/shape/linkage checks: the bytes must be canonical AND the parsed
+  // fields must be exactly the 3 correct keys.
+  assertCanonicalJsonBytes(anchor.metadata_json, {
+    reason: "anchor_metadata_noncanonical",
+    receiptId: row.receipt_id,
+    auditId: row.audit_id,
+  });
   // ── EXACT-SHAPE anchor metadata (P1 — content-retention-island fix) ────────────
   // The PERMANENT anchor row (`security_audit_log`) is EXCLUDED from the finite
   // receipt reaper AND from `deleteAllForOwner`, so ANY key that survives here
@@ -628,6 +705,30 @@ export function assertReceiptRowIntegrity(
   row: RetentionReceiptRow,
   opts: { expectedOwnerId: string; db: Database.Database },
 ): FridayRetentionReceiptRecord {
+  // ── RAW-BYTES CANONICAL columns (P1 — JSON duplicate-member content island) ─────
+  // BEFORE the parsed-object shape/coherence validation below, require each stored
+  // receipt JSON column to be CANONICAL (`JSON.stringify(JSON.parse(s)) === s`). The
+  // parse below keeps only the LAST value of a duplicated member, so a served receipt
+  // could otherwise carry hidden attacker content in a DISCARDED duplicate member (or
+  // an escaped-equivalent member name / extra whitespace) that the shape + coherence
+  // checks never see. Closing the representation class at EVERY read-back JSON seam
+  // (not only the permanent anchor) is required so no served receipt ever carries a
+  // hidden duplicate-key content island. An UNDECODABLE column is left to the
+  // `undecodable_json` guard below — `assertCanonicalJsonBytes` returns without throwing
+  // on unparseable input, so this does not change the undecodable posture.
+  const canonicalColumns: Array<readonly [string, string]> = [
+    ["before_json", row.before_json],
+    ["after_json", row.after_json],
+    ["changed_categories_json", row.changed_categories_json],
+    ["applied_updates_json", row.applied_updates_json],
+  ];
+  for (const [column, raw] of canonicalColumns) {
+    assertCanonicalJsonBytes(raw, {
+      reason: `receipt_json_noncanonical:${column}`,
+      receiptId: row.receipt_id,
+    });
+  }
+
   let before: unknown;
   let after: unknown;
   let changedCategories: unknown;
