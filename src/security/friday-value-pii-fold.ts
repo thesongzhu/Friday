@@ -75,6 +75,22 @@
  * U+FF20 → `@`, `＿` U+FF3F → `_`, `％` U+FF05 → `%` — is NOT neutralized and KEEPS folding, so a
  * full-width / obfuscated EMAIL still de-obfuscates and redacts to `[EMAIL]` full-span (leak coverage).
  *
+ * FABRICATED JOINING-DIGIT NEUTRALIZATION (round-9; whole-class NO-DEGRADE, SYMMETRIC to the bridge rule
+ * above — see {@link foldFabricatesJoiningDigit}). The bridge rule stops a fabricated matcher SEPARATOR;
+ * its mirror image is a fabricated matcher DIGIT. NFKD also decomposes NON-`\p{Nd}`, non-No/Nl
+ * compatibility symbols into strings that CONTRIBUTE an ASCII DIGIT: ~80 CJK compatibility symbols —
+ * enclosed months ㋀–㋋ (U+32C0–32CB → "1月".."12月"), telegraph hours ㍘–㍰ (U+3358–3370 → "0点".."24点"),
+ * date days ㏠–㏾ (U+33E0–33FE → "1日".."31日"), squared unit symbols ㎟/㎠/㎡/… (→ "mm2" / "cm2" / "m2") —
+ * fold to strings whose LEADING ASCII DIGITS JOIN an adjacent benign digit run to complete a card / SSN /
+ * phone shape (SSN & phone have no Luhn gate, so a single joined digit suffices). Accepting such a
+ * fabricated digit corrupts benign CJK date / time / measurement content into a false `[CREDIT_CARD]` /
+ * `[SSN_US]` / `[PHONE_US]`. The fold NEUTRALIZES the whole class by a GENERAL rule (not an enumerated
+ * list): the fold may put an ASCII DIGIT in the detection copy ONLY when the SOURCE code point IS a
+ * Unicode decimal digit (`\p{Nd}`); any non-`\p{Nd}` source whose fold would emit an ASCII digit is
+ * PRESERVED unchanged, so its decomposition digits cannot JOIN / EXTEND an adjacent run. RETAINED: real
+ * `\p{Nd}` folding is untouched — fullwidth U+FF10–FF19 and cross-script Arabic-Indic / Devanagari / …
+ * real digits STILL fold, so a full-width / cross-script digit card / ssn / phone still redacts full-span.
+ *
  * FOLLOW-UP (further consolidation): the cleanest end state is a fold-policy parameter on the
  * canonical `buildUnicodeDetectionCopy` so this adapter collapses into the normalizer itself. Kept as
  * a distinct leaf here so it neither degrades benign fidelity nor entangles the normalizer's default
@@ -256,6 +272,52 @@ function foldFabricatesDigitGroupSeparator(codePoint: string, folded: string): b
   return false;
 }
 
+// ─── Fabricated JOINING-DIGIT neutralization (NO-DEGRADE, whole class — symmetric to the bridge rule) ─
+//
+// The FALSE POSITIVE this neutralization prevents is a FABRICATED JOINING DIGIT: an ASCII digit the card
+// / ssn / phone matchers consume as PART OF a digit group, so a BENIGN digit run ADJACENT to a
+// decomposing compatibility symbol gets EXTENDED into `[CREDIT_CARD]` / `[SSN_US]` / `[PHONE_US]`. Full
+// NFKD decomposes ~80 CJK compatibility symbols — enclosed months ㋀–㋋ (U+32C0–32CB → "1月".."12月"),
+// telegraph hours ㍘–㍰ (U+3358–3370 → "0点".."24点"), date days ㏠–㏾ (U+33E0–33FE → "1日".."31日") and
+// squared unit symbols ㎟/㎠/㎡/… (→ "mm2" / "cm2" / "m2" / …) — into strings whose LEADING ASCII DIGITS
+// JOIN an adjacent benign run to complete a card / SSN / phone shape (SSN & phone have NO Luhn gate, so
+// even a single joined digit suffices; a card needs Luhn but a crafted run reaches it). NONE of these
+// sources IS a Unicode decimal digit, so the shared guard's `foldWidthForMatching` never turns them into
+// a matcher digit — accepting the fabricated digit CORRUPTS benign CJK date / time / measurement content
+// on read-back into a false marker.
+//
+// PRINCIPLE (symmetric to {@link foldFabricatesDigitGroupSeparator}): the fold may put an ASCII DIGIT
+// (0x30–0x39) into the detection copy ONLY when the SOURCE code point IS a Unicode decimal digit
+// (`\p{Nd}`). Any NON-`\p{Nd}` source whose NFKD / compat fold would EMIT an ASCII digit is PRESERVED
+// unchanged, so in the copy it stays a single non-digit character that can neither JOIN nor EXTEND an
+// adjacent group. A GENERAL rule over the whole class, not an enumerated list.
+//   • RETAINED: real `\p{Nd}` digits STILL fold to ASCII — fullwidth U+FF10–FF19 (the F2b fullwidth
+//     card/ssn/phone closure), mathematical digits, and cross-script Arabic-Indic / Devanagari / … real
+//     digits all remain full-span-redactable (their SOURCE is `\p{Nd}`, so this rule exempts them).
+//   • No/Nl "digit-like" forms (circled ① / superscript ¹ / parenthesized ⑴ / Roman Ⅴ) are ALREADY
+//     preserved earlier in `foldCodePointForPii` and never reach here, so they never emit a joining digit.
+const DECIMAL_DIGIT_SOURCE_RE = /\p{Nd}/u;
+
+/**
+ * True when folding `codePoint` would CONTRIBUTE an ASCII DIGIT (0x30–0x39) that the source code point
+ * is NOT legitimately entitled to produce (its General_Category is not `\p{Nd}`) — a FABRICATED joining
+ * digit that lets the card / ssn / phone matcher JOIN / EXTEND a BENIGN adjacent digit run into a false
+ * `[CREDIT_CARD]` / `[SSN_US]` / `[PHONE_US]`. Exempt: a source that IS a Unicode decimal digit
+ * (`\p{Nd}`) — ASCII, fullwidth U+FF10–FF19, mathematical, or cross-script Arabic-Indic / Devanagari / …
+ * — whose fold to an ASCII digit is LEGITIMATE real-digit PII coverage and MUST be kept. Symmetric to
+ * {@link foldFabricatesDigitGroupSeparator}: a matcher-significant char (there a digit-group-bridge
+ * separator, here a digit) may only enter the detection copy from a source that legitimately produces it.
+ * A GENERAL rule over the whole class (~80 CJK compatibility symbols today), not an enumerated list.
+ */
+function foldFabricatesJoiningDigit(codePoint: string, folded: string): boolean {
+  if (DECIMAL_DIGIT_SOURCE_RE.test(codePoint)) return false; // source IS \p{Nd} — legit real-digit fold
+  for (const ch of folded) {
+    const u = ch.codePointAt(0);
+    if (u !== undefined && u >= 0x30 && u <= 0x39) return true; // fabricated ASCII digit
+  }
+  return false;
+}
+
 /**
  * Fold a SINGLE original code point to its VALUE-PII detection form. Identical to
  * {@link foldCodePoint} EXCEPT it PRESERVES compatibility whitespace and No/Nl digit-like forms so
@@ -286,6 +348,17 @@ function foldCodePointForPii(codePoint: string): string {
   // ONLY: the EMAIL-only anchors `@` / `_` / `%` are NOT bridges (round-8), so a fold that yields one
   // (`＠` U+FF20 → `@`) KEEPS folding and a full-width / obfuscated EMAIL still de-obfuscates to [EMAIL].
   if (foldFabricatesDigitGroupSeparator(codePoint, folded)) return codePoint;
+  // NO-DEGRADE (fabricated JOINING-DIGIT neutralization — SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001 round-9,
+  // symmetric to the digit-group-bridge rule above). Full NFKD decomposes a source that is NOT itself a
+  // decimal digit (~80 CJK compatibility symbols: months ㋀–㋋, hours ㍘–㍰, days ㏠–㏾, unit symbols
+  // ㎟/㎡/…) into a string whose LEADING ASCII DIGITS would JOIN an adjacent benign run and complete a
+  // card / SSN / phone shape (SSN & phone have no Luhn gate, so a single joined digit suffices). The
+  // shared guard never folds these to a matcher digit, so accepting one corrupts benign CJK date / time
+  // / measurement content into a false [CREDIT_CARD]/[SSN_US]/[PHONE_US]. PRESERVE the source instead: a
+  // fold may emit an ASCII digit ONLY from a genuine `\p{Nd}` source (ASCII / fullwidth FF10-19 / cross-
+  // script real digits still fold, so a full-width or Arabic-Indic digit card/ssn/phone still redacts
+  // full-span). See {@link foldFabricatesJoiningDigit}.
+  if (foldFabricatesJoiningDigit(codePoint, folded)) return codePoint;
   return folded;
 }
 
