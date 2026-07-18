@@ -10,6 +10,7 @@ import {
   createFridaySecretRepository,
   decryptSecretWithMigration,
   fridaySecretAadContext,
+  getProvisionedMasterKey,
   getStrictMasterKey,
 } from "#providers";
 import type { FridayEncryptedEnvelope, FridayProviderTenantContext } from "#providers";
@@ -65,7 +66,8 @@ import { createFridayRealtimeEventBus } from "../realtime/friday-realtime-event-
 import { createFridayRealtimeEventRepository } from "../persistence/friday-realtime-event-repository.js";
 import { createFridayRealtimeCheckpointRepository } from "../persistence/friday-realtime-checkpoint-repository.js";
 import { createFridayRealtimeSubscriptionService } from "../realtime/friday-realtime-subscription-service.js";
-import { redactEventPayload } from "../realtime/friday-event-payload-redactor.js";
+import { createFridayRealtimePseudonymizer, deriveFridayRealtimePseudonymKey } from "../realtime/friday-realtime-pseudonym.js";
+import { rewriteLegacyRealtimeIdentifiers } from "../realtime/friday-realtime-legacy-rewrite.js";
 import { createFridayRealtimeWsGateway } from "../realtime/friday-realtime-ws-gateway.js";
 import { createFridayFleetDashboardService } from "../fleet/friday-fleet-dashboard-service.js";
 import { createFridayWorkflowConflictService } from "../conflicts/friday-workflow-conflict-service.js";
@@ -2100,7 +2102,60 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   });
 
   // Realtime
-  const eventRepo = createFridayRealtimeEventRepository();
+  // SEC-EVENT-REDACTION-001 / P0#2: bind the realtime event log to the canonical
+  // hub owner (learningUserId = admin-001 — the SAME single owner the retention
+  // path resolves). When present the repo stamps `owner_id` on persist and the
+  // subscription service gates subscribe/authorize/pull to that owner (a
+  // non-canonical principal is denied even with matching topic scope + a known
+  // stream id). When absent (test construction) the pre-existing topic-scope authz
+  // is unchanged.
+  const resolveRealtimeOwnerId = deps.learningUserId
+    ? () => deps.learningUserId
+    : undefined;
+  // SEC-EVENT-REDACTION-001 / FINDING 1 + P1-D: deterministic owner-scoped identifier
+  // pseudonymizer = HMAC-SHA256(pseudonymKey, DOMAIN_TAG + lenPrefix(ownerId) + value),
+  // where pseudonymKey is HKDF-SHA256-DERIVED from the DURABLE non-rotating encryption
+  // root — a dedicated, domain-separated, VERSIONED subkey, NOT the rotatable auth
+  // `tokenSecret` — so authorized token rotation cannot orphan durable realtime
+  // streams. The ownerId is length-prefixed into the keyed MAC (unambiguous
+  // owner||value boundary). ONE instance is shared by the write path (the event-bus
+  // sink persists opaque stream_id + payload id fields) and the read path (the
+  // subscription-service resolves the client's raw streamId the same way), so they
+  // stay symmetric. The runtime legacy-rewrite derives the SAME key, so legacy +
+  // runtime + read all share one keyspace.
+  //
+  // SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1 (FAIL CLOSED): the durable key is
+  // resolved through the supported PROVISIONED sources — FRIDAY_MASTER_KEY (env),
+  // FRIDAY_MASTER_KEY_SOURCE=keychain, or an existing ~/.friday/master.key —
+  // (`getProvisionedMasterKey`, the no-generate durable resolver the multi-tenant
+  // secret manager also uses). We do NOT swallow a resolution failure into an inactive
+  // identity default: when no durable key exists the pseudonymizer is constructed
+  // FAIL-CLOSED, so the realtime sink THROWS rather than persisting raw identifiers at
+  // rest. The only path that tolerates an inactive (identity) pseudonymizer is an
+  // EXPLICIT test-only opt-in (`allowTestOnlyInactiveRealtimePseudonym`), never set on
+  // the production createFridayHub path — so identity passthrough is unreachable by
+  // default and production either persists opaque or refuses to persist.
+  let realtimePseudonymKey: string | undefined;
+  try {
+    realtimePseudonymKey = deriveFridayRealtimePseudonymKey(getProvisionedMasterKey());
+  } catch {
+    // No durable key resolvable. Leave the key undefined; the pseudonymizer below is
+    // fail-closed (default), so the sink refuses raw persistence rather than degrading.
+    realtimePseudonymKey = undefined;
+  }
+  const realtimePseudonymizer = createFridayRealtimePseudonymizer({
+    resolveOwnerId: () => deps.learningUserId,
+    key: realtimePseudonymKey,
+    onInactive: deps.allowTestOnlyInactiveRealtimePseudonym ? "identity" : "fail-closed",
+  });
+  const eventRepo = createFridayRealtimeEventRepository({
+    resolveOwnerId: resolveRealtimeOwnerId,
+  });
+  // SEC-EVENT-REDACTION-001 / P0-C: one-time upgrade rewrite of any legacy raw
+  // realtime_events rows into the opaque namespace (seq-preserving), so pre-upgrade
+  // history stays readable via the new opaque read path and no raw legacy PII remains
+  // at rest. Idempotent + no-op on fresh installs / when the pseudonymizer is inactive.
+  rewriteLegacyRealtimeIdentifiers(deps.db, realtimePseudonymizer);
   const checkpointRepo = createFridayRealtimeCheckpointRepository();
 
   const eventBus = createFridayRealtimeEventBus({
@@ -2113,6 +2168,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     },
     db: deps.db,
     eventRepo,
+    // SEC-EVENT-REDACTION-001 / P0-A: enforce identifier pseudonymization at the
+    // event-bus sink so NO producer (incl. the Hub's direct eventBus.publish) bypasses.
+    pseudonymizer: realtimePseudonymizer,
   });
 
   const subscriptions = createFridayRealtimeSubscriptionService({
@@ -2122,6 +2180,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
     currentEpoch: CURRENT_EPOCH,
     cursorSecret: deps.tokenSecret,
+    // SEC-EVENT-REDACTION-001 / P0#2: gate realtime reads to the canonical owner.
+    resolveCanonicalOwnerId: resolveRealtimeOwnerId,
+    // SEC-EVENT-REDACTION-001 / FINDING 1: resolve a client's raw-constructed
+    // streamId to the SAME opaque form the write path persisted (symmetric).
+    pseudonymizeStreamId: (streamId) => realtimePseudonymizer.streamId(streamId),
     // TS-runtime-retirement (method-level guard): same top-level flag the HTTP
     // realtime route + WS ack frame use, so ackEvent fail-closes by default in
     // live (all three sites fenced) and the legacy path is reachable only under
@@ -2147,16 +2210,18 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     payload: unknown,
   ): Promise<void> => {
     const normalizedPayload = asRecord(payload);
-    const redactedPayload = redactEventPayload(normalizedPayload);
     const streamId = resolveWorkflowRealtimeStreamId(event, normalizedPayload);
     if (!streamId) {
       return;
     }
-
+    // SEC-EVENT-REDACTION-001 / P0-A: publish the RAW streamId + payload. Identifier
+    // pseudonymization + content redaction are enforced at the event-bus SINK
+    // (createFridayRealtimeEventBus.publish), so EVERY producer -- this fallback AND
+    // the Hub's direct eventBus.publish -- is covered and cannot bypass it.
     eventBus.publish(
       streamId,
       event as never,
-      redactedPayload as never,
+      normalizedPayload as never,
     );
   };
 
@@ -3537,11 +3602,19 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     },
     getRunTimeline: (runId, query, principal) => {
       resolveAuthorizedRun(runId, principal);
-      const streamId = `run:${runId}`;
+      // FINDING 1: resolve the raw-constructed `run:<rawRunId>` to the opaque
+      // stream_id the write path persisted (symmetric with the pull/WS paths).
+      const streamId = realtimePseudonymizer.streamId(`run:${runId}`);
       const afterSeq = query.afterSeq ?? 0;
       const limit = query.limit ?? 50;
+      // SEC-EVENT-REDACTION-001 / P0#2: owner-scope this realtime_events read to
+      // the canonical hub owner (defense-in-depth ON TOP of the resolveAuthorizedRun
+      // run-RBAC above — that gate is preserved). This is the last read of
+      // realtime_events; passing the owner keeps the v106 invariant true on EVERY
+      // read path — a NULL-owner (sentinel) / other-owner row is never returned.
+      const ownerId = resolveRealtimeOwnerId?.();
       const envelopes = deps.db.withReadConnection((db) =>
-        eventRepo.listAfterSeq(db, streamId, afterSeq, limit),
+        eventRepo.listAfterSeq(db, streamId, afterSeq, limit, ownerId),
       );
       const items: FridayRunTimelineEntry[] = envelopes.map((e) => {
         const p = e.payload as JsonObject;
@@ -4502,7 +4575,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }
 
   const agentRepo = deps.agentRuntime ? createFridayAgentRunRepository() : undefined;
-  const agentRunEventRepo = deps.agentRuntime ? createFridayAgentRunEventRepository() : undefined;
+  const agentRunEventRepo = deps.agentRuntime
+    ? createFridayAgentRunEventRepository({
+        // FINDING 1: pseudonymize identifier VALUES in the agent-event payload so no
+        // raw sensitive bytes persist in friday_agent_run_events.payload_json.
+        pseudonymizeIdentifierValue: (raw) => realtimePseudonymizer.value(raw),
+      })
+    : undefined;
   const enrichAgentRun = <T extends ReturnType<NonNullable<typeof agentRepo>["getById"]> | ReturnType<NonNullable<typeof agentRepo>["list"]>[number] | null | undefined>(
     run: T,
   ): T => {

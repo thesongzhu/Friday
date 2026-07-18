@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { safeJsonParse } from "#utilities";
-import { redactEventPayload } from "../../api/realtime/friday-event-payload-redactor.js";
+import { pseudonymizeEventIdentifiers, redactEventPayload } from "../../api/realtime/friday-event-payload-redactor.js";
 
 // ─── Run event record ───
 
@@ -63,10 +63,28 @@ export interface FridayAgentRunEventRepository {
 
 // ─── Factory ───
 
-export function createFridayAgentRunEventRepository(): FridayAgentRunEventRepository {
+export interface CreateFridayAgentRunEventRepositoryDeps {
+  /**
+   * SEC-EVENT-REDACTION-001 / FINDING 1 — pseudonymize identifier VALUES carried in
+   * the agent-event payload (executionId etc.) before persistence, so no raw
+   * sensitive bytes land in `friday_agent_run_events.payload_json`. Deterministic +
+   * owner-scoped (the realtime pseudonymizer). Identity/omitted → legacy raw
+   * behavior (test-safe). NOTE: the `run_id` COLUMN is intentionally left raw — it
+   * is a foreign key to `friday_agent_runs(id)` and the list query key, so it cannot
+   * be pseudonymized here; that is the agent forming-site's concern (out of scope).
+   */
+  pseudonymizeIdentifierValue?: (rawValue: string) => string;
+}
+
+export function createFridayAgentRunEventRepository(
+  deps: CreateFridayAgentRunEventRepositoryDeps = {},
+): FridayAgentRunEventRepository {
   return {
     append(db, input) {
-      const redactedPayload = redactEventPayload(input.payload);
+      const pseudonymized = deps.pseudonymizeIdentifierValue
+        ? pseudonymizeEventIdentifiers(input.payload, deps.pseudonymizeIdentifierValue)
+        : input.payload;
+      const redactedPayload = redactEventPayload(pseudonymized);
       db.prepare(
         `INSERT INTO friday_agent_run_events
           (event_id, run_id, seq, event_name, payload_json, emitted_at, created_at)

@@ -8,7 +8,7 @@ import type {
   FridayEventBusListener,
   FridayRealtimeEventBus,
 } from "./friday-realtime-event-bus.types.js";
-import { redactEventPayload } from "./friday-event-payload-redactor.js";
+import { pseudonymizeEventIdentifiers, redactEventPayload } from "./friday-event-payload-redactor.js";
 
 export function createFridayRealtimeEventBus(
   deps: CreateFridayRealtimeEventBusDeps,
@@ -53,38 +53,66 @@ export function createFridayRealtimeEventBus(
       correlationId?: string,
     ): FridayRealtimeEventEnvelope<TEvent> {
       let envelope: FridayRealtimeEventEnvelope<TEvent>;
-      const redactedPayload = redactEventPayload(payload);
+      // SEC-EVENT-REDACTION-001 / P0-A: pseudonymize at THIS sink (the unavoidable
+      // boundary for every producer) BEFORE building the envelope, so the SAME
+      // opaque envelope is used for both persistence and in-memory (WS) delivery --
+      // no producer, including the Hub's direct eventBus.publish, can bypass it.
+      const opaqueStreamId = deps.pseudonymizer
+        ? deps.pseudonymizer.streamId(streamId)
+        : streamId;
+      // SEC-REALTIME-EVENT-PII-BY-VALUE / round-7 F1: the envelope `correlationId` is
+      // an arbitrary caller-supplied identifier (e.g. `assistant-template:<templateId>`,
+      // a runId, or free text) that was previously copied VERBATIM into the persisted
+      // row (realtime_events.correlation_id) AND the delivered/WS envelope — a raw
+      // identifier leak that bypassed the sink. Pseudonymize it here with the SAME
+      // owner-scoped DETERMINISTIC key as the streamId id-part (`value`, not the
+      // topic-preserving `streamId`, since a correlationId has no authz-bearing prefix).
+      // Deterministic ⇒ the same raw correlationId maps to the same opaque, so
+      // correlation semantics survive while nothing raw reaches rest or the wire. When
+      // the pseudonymizer is fail-closed + inactive, `value()` THROWS (same fail-closed
+      // guarantee as streamId) — the publish is refused rather than degraded to raw.
+      const opaqueCorrelationId =
+        correlationId !== undefined && deps.pseudonymizer
+          ? deps.pseudonymizer.value(correlationId)
+          : correlationId;
+      const pseudonymizedPayload = deps.pseudonymizer
+        ? pseudonymizeEventIdentifiers(payload, (raw) => deps.pseudonymizer!.value(raw))
+        : payload;
+      const redactedPayload = redactEventPayload(pseudonymizedPayload);
 
       if (deps.db && deps.eventRepo) {
         // Durable path: allocate seq + persist in ONE atomic transaction
         envelope = deps.db.withWriteTransaction((db) => {
-          const seq = deps.eventRepo!.getNextSeq(db, streamId);
+          const seq = deps.eventRepo!.getNextSeq(db, opaqueStreamId);
           const env: FridayRealtimeEventEnvelope<TEvent> = {
             eventId: deps.idGenerator(),
-            streamId,
+            streamId: opaqueStreamId,
             seq,
             event,
             payload: redactedPayload,
             emittedAt: deps.nowIso(),
-            correlationId,
+            correlationId: opaqueCorrelationId,
           };
           deps.eventRepo!.append(db, env);
           return env;
         });
-        streamSeqs.set(streamId, envelope.seq);
+        streamSeqs.set(opaqueStreamId, envelope.seq);
       } else {
-        // Fallback: process-local counter (tests without DB)
-        const seq = nextSeq(streamId);
+        // Fallback: process-local counter (tests without DB). The real Hub always takes
+        // the DB path, so this branch never fires in prod — but keep it CONSISTENT with the
+        // durable path: use the OPAQUE streamId, redacted payload AND the opaque
+        // correlationId (never the raw caller-supplied one), so no sink can differ by path.
+        const seq = nextSeq(opaqueStreamId);
         envelope = {
           eventId: deps.idGenerator(),
-          streamId,
+          streamId: opaqueStreamId,
           seq,
           event,
           payload: redactedPayload,
           emittedAt: deps.nowIso(),
-          correlationId,
+          correlationId: opaqueCorrelationId,
         };
-        streamSeqs.set(streamId, seq);
+        streamSeqs.set(opaqueStreamId, seq);
         if (deps.persistEvent) {
           deps.persistEvent(envelope);
         }

@@ -127,6 +127,28 @@ export interface CreateFridayRealtimeSubscriptionServiceDeps {
   currentEpoch: number;
   cursorSecret?: string;
   /**
+   * SEC-EVENT-REDACTION-001 / P0#2 — canonical-hub-owner binding for the realtime
+   * read plane. Realtime events are owned by the single canonical hub owner. When
+   * this resolver is PROVIDED (production wiring), subscribe / authorize / pull are
+   * gated to that owner: a non-canonical principal is DENIED even with matching
+   * topic scope and a known stream id, and pulls are owner-scoped at the repo. If
+   * it resolves to nullish/blank the gate FAILS CLOSED (denies). When it is OMITTED
+   * (legacy/test construction) the pre-existing topic-scope authz is unchanged — so
+   * this is additive and never weakens today's behavior. Production MUST provide it.
+   */
+  resolveCanonicalOwnerId?: () => string | null | undefined;
+  /**
+   * SEC-EVENT-REDACTION-001 / FINDING 1 — symmetric identifier pseudonymization.
+   * The WRITE path persists opaque (pseudonymized) `stream_id`s; a client subscribes/
+   * pulls with a raw-constructed streamId (`run:${rawRunId}`), so this resolver
+   * pseudonymizes the client's streamId the SAME way before every topic-validation /
+   * authorization / cursor-check / store lookup — landing on the identical opaque
+   * value the write path stored (idempotent, so an already-opaque echo is a no-op).
+   * Clients keep constructing raw streamIds; nothing raw is persisted. OMITTED
+   * (legacy/test) → identity, so behavior is byte-identical to before.
+   */
+  pseudonymizeStreamId?: (streamId: string) => string;
+  /**
    * Test-oracle only: allows the legacy TypeScript realtime checkpoint-ack
    * mutation (`ackEvent`) in isolated test/validation harnesses. Default/live
    * runtime must leave this unset so the method fails closed for ALL ingress
@@ -145,6 +167,39 @@ export function createFridayRealtimeSubscriptionService(
   deps: CreateFridayRealtimeSubscriptionServiceDeps,
 ): FridayRealtimeSubscriptionService {
   const cursorSecret = deps.cursorSecret ?? crypto.randomBytes(16).toString("hex");
+
+  // ─── SEC-EVENT-REDACTION-001 / P0#2: canonical-hub-owner gate ───
+  // Resolve the canonical owner (fail-closed on throw/blank). Returns `undefined`
+  // ONLY when the resolver dep is not configured (legacy/test) — meaning the gate
+  // is inactive and the pre-existing topic-scope authz applies unchanged.
+  function resolveCanonicalOwner(): string | null | undefined {
+    if (!deps.resolveCanonicalOwnerId) return undefined;
+    let owner: string | null | undefined;
+    try {
+      owner = deps.resolveCanonicalOwnerId();
+    } catch {
+      owner = null;
+    }
+    return typeof owner === "string" && owner.trim().length > 0 ? owner : null;
+  }
+
+  // True when the principal is authorized under the owner gate: allowed if the gate
+  // is inactive (undefined), else the principal's identity MUST equal the canonical
+  // owner. A configured-but-unresolvable owner (null) fails CLOSED.
+  function principalPassesOwnerGate(principal: FridayAuthPrincipal): boolean {
+    const canonical = resolveCanonicalOwner();
+    if (canonical === undefined) return true; // gate not configured → legacy behavior
+    if (canonical === null) return false; // configured but unresolvable → fail-closed
+    const identity = principal.userId ?? principal.principalId;
+    return typeof identity === "string" && identity === canonical;
+  }
+
+  // Resolve a client-provided streamId to its opaque (pseudonymized) form so every
+  // read matches the opaque stream_id the write path persisted. Identity no-op when
+  // the pseudonymizer dep is absent (legacy/test). Idempotent (opaque → opaque).
+  function resolveStreamId(streamId: string): string {
+    return deps.pseudonymizeStreamId ? deps.pseudonymizeStreamId(streamId) : streamId;
+  }
 
   // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
   // Defense-in-depth (orphan off-route leak audit, 2026-06-10): the realtime
@@ -183,8 +238,31 @@ export function createFridayRealtimeSubscriptionService(
       const accepted: FridayRealtimeSubscription[] = [];
       const rejected: Array<{ subscriptionId: string; code: string; message: string }> = [];
 
+      // Canonical-owner gate: a non-canonical principal is denied ALL subscriptions
+      // (even with matching topic scope) — cross-principal isolation of the owner's
+      // realtime streams.
+      if (!principalPassesOwnerGate(principal)) {
+        return {
+          accepted,
+          rejected: subscriptions.map((sub) => ({
+            subscriptionId: sub.subscriptionId,
+            code: "NOT_CANONICAL_OWNER",
+            message: "Realtime streams are readable only by the canonical hub owner.",
+          })),
+        };
+      }
+
       for (const sub of subscriptions) {
-        const requiredScopes = TOPIC_SCOPES[sub.topic];
+        // Resolve the client's raw-constructed streamId to its opaque form so the
+        // accepted subscription (stored in the WS connection) matches the opaque
+        // stream_id events are published under — the topic PREFIX is preserved, so
+        // topic-binding validation is unaffected.
+        const resolvedSub: FridayRealtimeSubscription = {
+          ...sub,
+          streamId: resolveStreamId(sub.streamId),
+        };
+
+        const requiredScopes = TOPIC_SCOPES[resolvedSub.topic];
         if (!requiredScopes) {
           rejected.push({
             subscriptionId: sub.subscriptionId,
@@ -204,7 +282,7 @@ export function createFridayRealtimeSubscriptionService(
         }
 
         // Validate topic → stream binding
-        if (!isStreamValidForTopic(sub.topic, sub.streamId)) {
+        if (!isStreamValidForTopic(resolvedSub.topic, resolvedSub.streamId)) {
           rejected.push({
             subscriptionId: sub.subscriptionId,
             code: "INVALID_STREAM_BINDING",
@@ -213,24 +291,32 @@ export function createFridayRealtimeSubscriptionService(
           continue;
         }
 
-        accepted.push(sub);
+        accepted.push(resolvedSub);
       }
 
       return { accepted, rejected };
     },
 
     isStreamAuthorized(principal, streamId, acceptedSubscriptions) {
+      // Canonical-owner gate first: a non-canonical principal is never authorized
+      // for any realtime stream, even one they know the id of and hold scope for.
+      if (!principalPassesOwnerGate(principal)) return false;
+
+      // Resolve the client's streamId to its opaque form (accepted subscriptions are
+      // stored opaque; the fallback prefix check is prefix-preserving either way).
+      const resolvedStreamId = resolveStreamId(streamId);
+
       // If we have accepted subscriptions, check if the stream is in them
       if (acceptedSubscriptions) {
         for (const sub of acceptedSubscriptions.values()) {
-          if (sub.streamId === streamId) return true;
+          if (sub.streamId === resolvedStreamId) return true;
         }
         return false;
       }
 
       // Fallback: derive topic from stream prefix and check scopes
       for (const [topic, prefixes] of Object.entries(TOPIC_STREAM_PREFIXES)) {
-        if (prefixes.some((prefix: string) => streamId.startsWith(prefix))) {
+        if (prefixes.some((prefix: string) => resolvedStreamId.startsWith(prefix))) {
           const requiredScopes = TOPIC_SCOPES[topic as FridayRealtimeTopic];
           if (requiredScopes && principalHasAnyScope(principal.scopes, requiredScopes)) {
             return true;
@@ -241,8 +327,17 @@ export function createFridayRealtimeSubscriptionService(
     },
 
     pullEvents(streamId, afterSeq, limit) {
+      // Defense-in-depth: when the owner gate is configured, scope the read to the
+      // canonical owner's rows at the repo (excludes NULL-owner sentinel + any other
+      // owner). Only the canonical owner reaches here (isStreamAuthorized gates the
+      // route/WS callers first), so filtering by that owner is exactly the reader.
+      const canonical = resolveCanonicalOwner();
+      if (canonical === null) return []; // configured but unresolvable → fail-closed
+      const ownerFilter = canonical === undefined ? undefined : canonical;
+      // Resolve to the opaque stream_id the write path persisted.
+      const resolvedStreamId = resolveStreamId(streamId);
       return deps.db.withReadConnection((db) =>
-        deps.eventRepo.listAfterSeq(db, streamId, afterSeq, limit),
+        deps.eventRepo.listAfterSeq(db, resolvedStreamId, afterSeq, limit, ownerFilter),
       );
     },
 
@@ -274,11 +369,12 @@ export function createFridayRealtimeSubscriptionService(
     },
 
     generateCursor(streamId, seq, epoch) {
-      return computeCursorHmac(streamId, seq, epoch, cursorSecret);
+      // Cursors bind to the opaque stream_id so they verify symmetrically.
+      return computeCursorHmac(resolveStreamId(streamId), seq, epoch, cursorSecret);
     },
 
     verifyCursor(cursor, streamId, seq, epoch) {
-      return verifyCursorHmac(cursor, streamId, seq, epoch, cursorSecret);
+      return verifyCursorHmac(cursor, resolveStreamId(streamId), seq, epoch, cursorSecret);
     },
   };
 }

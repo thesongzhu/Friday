@@ -1,8 +1,10 @@
 import { beforeEach, describe, it, expect, afterEach } from "vitest";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import Database from "better-sqlite3";
+import { resetMasterKeyCache } from "#providers";
 import { createFridayHub } from "#hub";
 import type { FridayHub } from "#hub";
 import {
@@ -177,6 +179,12 @@ describe("FridayHub Bootstrap Integration", () => {
   const hubs: FridayHub[] = [];
   let lastStateDir: string | null = null;
   let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
+  // SEC-REALTIME-EVENT-PII-BY-VALUE / round-6 P0-1: this integration test drives real
+  // workflow runs that publish realtime events; the sink is now FAIL-CLOSED without a
+  // durable master key. Provision a real key so the default createFridayHub realtime
+  // plane is ACTIVE (opaque + redacted) — the faithful production path.
+  let savedMasterKey: string | undefined;
+  let savedMasterKeySource: string | undefined;
 
   function makeTmpDir(): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-hub-test-"));
@@ -388,6 +396,11 @@ describe("FridayHub Bootstrap Integration", () => {
 
   beforeEach(() => {
     autoDetectEnvSnapshot = clearAutoDetectProviderEnv();
+    savedMasterKey = process.env.FRIDAY_MASTER_KEY;
+    savedMasterKeySource = process.env.FRIDAY_MASTER_KEY_SOURCE;
+    process.env.FRIDAY_MASTER_KEY = crypto.randomBytes(32).toString("hex");
+    delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    resetMasterKeyCache();
   });
 
   afterEach(async () => {
@@ -413,6 +426,11 @@ describe("FridayHub Bootstrap Integration", () => {
       restoreAutoDetectProviderEnv(autoDetectEnvSnapshot);
       autoDetectEnvSnapshot = null;
     }
+    if (savedMasterKey === undefined) delete process.env.FRIDAY_MASTER_KEY;
+    else process.env.FRIDAY_MASTER_KEY = savedMasterKey;
+    if (savedMasterKeySource === undefined) delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    else process.env.FRIDAY_MASTER_KEY_SOURCE = savedMasterKeySource;
+    resetMasterKeyCache();
   });
 
   // ─── Wires all services ───
