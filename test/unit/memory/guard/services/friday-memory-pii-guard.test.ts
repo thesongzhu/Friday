@@ -633,6 +633,671 @@ describe("FridayMemoryPiiGuard", () => {
     });
   });
 
+  // ─── redactDeep — Unicode-obfuscated KEY canonicalization (PRIV-UNICODE-REDACTION-001 round-10) ───
+  //
+  // A bare number/bigint PII value has NO string shape; it relies ENTIRELY on its object KEY naming a
+  // PII field (sensitiveTypeForKey → SENSITIVE_KEY_PHRASE_TO_TYPE) to be redacted. The key-NAME
+  // classifier derives tokens by ASCII camelCase/lowercase splitting, so a PII-context key hidden
+  // behind a zero-width splice, a combining mark, a full-width form, or a precomposed accent never
+  // folded to `phone`/`ssn`/`card` — and the numeric value under it LEAKED RAW (RED on 5ec445ed). The
+  // guard now Unicode-canonicalizes the key (buildUnicodeDetectionCopy: NFKD → strip \p{M} → strip
+  // Cf/Default_Ignorable → fold \p{Nd}) BEFORE token derivation, so the obfuscated key classifies
+  // identically to its de-obfuscated ASCII form and the EXISTING key+value gates redact the value.
+  // Original obfuscated KEY BYTES are preserved (only the classification input is normalized).
+  describe("redactDeep Unicode-obfuscated KEY canonicalization — REDACTED [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+    // ASCII canary in the name; the constant carries the obfuscation.
+    const ZW_PHONE_KEY = "ph​one"; // U+200B zero-width space between `ph` and `one`
+    const CM_PHONE_KEY = "phóne"; // U+0301 combining acute over `o`
+    const FW_PHONE_KEY = "ｐｈｏｎｅ"; // full-width latin `phone`
+    const NF_PHONE_KEY = "phóne"; // precomposed ó (single NFC code point U+00F3)
+    const ZWJ_SSN_KEY = "ss‍n"; // U+200D zero-width joiner
+    const FW_SSN_KEY = "ｓｓｎ"; // full-width `ssn`
+    const FW_CARD_KEY = "ｃａｒｄ"; // full-width `card`
+    const CM_MOBILE_KEY = "mobíle"; // combining acute → `mobile`
+    const PHONE_NUM = 14155552671; // 11-digit country-code numeric form → [PHONE_US]
+    const PHONE_NATIONAL = 5552345678; // 10-digit national → [PHONE_US]
+    const SSN_NUM = 123456789;
+    const CARD_BIGINT = 4111111111111111n; // pragma: allowlist secret
+
+    it("redacts a numeric phone under each obfuscated `phone` key form (ZW / combining / full-width / precomposed); key bytes preserved", () => {
+      for (const key of [ZW_PHONE_KEY, CM_PHONE_KEY, FW_PHONE_KEY, NF_PHONE_KEY]) {
+        const { value, tagsToAdd } = guard.redactDeep({ [key]: PHONE_NUM });
+        const out = value as Record<string, unknown>;
+        expect(out[key]).toBe("[PHONE_US]");
+        expect(Object.keys(out)).toEqual([key]); // ORIGINAL obfuscated key bytes preserved exactly
+        expect(tagsToAdd).toContain("pii.phone_us");
+      }
+    });
+
+    it("redacts a numeric SSN under a ZWJ-spliced `ssn` key and a full-width `ssn` key", () => {
+      for (const key of [ZWJ_SSN_KEY, FW_SSN_KEY]) {
+        const { value, tagsToAdd } = guard.redactDeep({ [key]: SSN_NUM });
+        const out = value as Record<string, unknown>;
+        expect(out[key]).toBe("[SSN_US]");
+        expect(Object.keys(out)).toEqual([key]);
+        expect(tagsToAdd).toContain("pii.ssn_us");
+      }
+    });
+
+    it("redacts a bigint card under a full-width `card` key", () => {
+      const { value, tagsToAdd } = guard.redactDeep({ [FW_CARD_KEY]: CARD_BIGINT });
+      const out = value as Record<string, unknown>;
+      expect(out[FW_CARD_KEY]).toBe("[CREDIT_CARD]");
+      expect(Object.keys(out)).toEqual([FW_CARD_KEY]);
+      expect(tagsToAdd).toContain("pii.credit_card");
+    });
+
+    it("redacts number AND bigint PII under obfuscated keys NESTED and IN ARRAYS", () => {
+      const { value } = guard.redactDeep({
+        outer: { [FW_PHONE_KEY]: PHONE_NATIONAL }, // nested object, obfuscated key
+        [ZW_PHONE_KEY]: [PHONE_NUM, PHONE_NUM], // array threaded from an obfuscated sensitive key
+        deep: { level2: { [CM_MOBILE_KEY]: 5552345678n } }, // deep bigint under obfuscated mobile key
+        cards: { [FW_CARD_KEY]: [CARD_BIGINT, CARD_BIGINT] }, // array of bigint cards under obf key
+      });
+      const out = value as {
+        outer: Record<string, unknown>;
+        deep: { level2: Record<string, unknown> };
+        cards: Record<string, unknown>;
+      } & Record<string, unknown>;
+      expect(out.outer[FW_PHONE_KEY]).toBe("[PHONE_US]");
+      expect(out[ZW_PHONE_KEY]).toEqual(["[PHONE_US]", "[PHONE_US]"]);
+      expect(out.deep.level2[CM_MOBILE_KEY]).toBe("[PHONE_US]");
+      expect(out.cards[FW_CARD_KEY]).toEqual(["[CREDIT_CARD]", "[CREDIT_CARD]"]);
+    });
+
+    it("redacts under an obfuscated compound/camelCase key (full-width `mobilePhone`, NFKD preserves case for the split)", () => {
+      const key = "ｍｏｂｉｌｅＰｈｏｎｅ"; // full-width `mobilePhone` → NFKD → `mobilePhone` → split → phone
+      const { value } = guard.redactDeep({ [key]: PHONE_NATIONAL });
+      expect((value as Record<string, unknown>)[key]).toBe("[PHONE_US]");
+    });
+
+    it("STRICT SUPERSET: a complete PII token isolated by a foldable non-ASCII letter still redacts (no regression)", () => {
+      // The RAW `.split(/[^a-z]+/)` treats the trailing accented letter as a token SEPARATOR that
+      // ISOLATES the complete PII token (`ssné`→`ssn`, `telé`→`tel`, `cardé`→`card`) — a match the
+      // guard made BEFORE round-10. Canonicalizing the key FIRST would fold `é`→`e` and MERGE it
+      // (`ssn`→`ssne`), dropping the match — a superset VIOLATION. The additive union keeps the RAW
+      // pass first, so every legacy match survives. (Regression guard: RED if canonicalization ever
+      // replaces the raw pass instead of augmenting it.)
+      const { value } = guard.redactDeep({
+        ssné: 123456789,
+        telé: 5552345678,
+        cardé: 4111111111111111n, // pragma: allowlist secret
+      });
+      const out = value as Record<string, unknown>;
+      expect(out.ssné).toBe("[SSN_US]");
+      expect(out.telé).toBe("[PHONE_US]");
+      expect(out.cardé).toBe("[CREDIT_CARD]");
+    });
+  });
+
+  // NO-DEGRADE: the centralized key canonicalization is a strict SUPERSET — it catches obfuscated PII
+  // keys with ZERO benign divergence. The value gate is untouched, so a benign number under a benign
+  // (or coincidental) key is never newly over-redacted, and ASCII keys fold BYTE-IDENTICAL (fast path).
+  describe("redactDeep Unicode-obfuscated KEY canonicalization — NO-DEGRADE (benign near-miss preserved)", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("preserves a benign number under a key that FOLDS CLOSE to but ≠ a PII key (byte-identical)", () => {
+      const input = {
+        "iph​one": 14155552671, // ZW-spliced → `iphone` (one token) ≠ `phone`
+        "café": 14155552671, // precomposed é → `cafe` ≠ any PII key
+        "ｔｅｌｅｍｅｔｒｙ": 14155552671, // full-width → `telemetry` ≠ `tel`
+        phone_count: 14155552671, // `phone count` — `count` is the final token, not a PII field
+        "discárd": 14155552671, // combining mark → `discard` ≠ `card`
+      };
+      const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual(input); // no over-redaction; every key + value byte-identical
+      expect(tagsToAdd).toEqual([]);
+    });
+
+    it("preserves a benign numeric under an obfuscated sensitive-SOUNDING key whose value is not type-shaped (value gate intact)", () => {
+      // full-width `gift_card`/`head_phone` fold to card/phone key-types, but 3/42 are not card/phone
+      // shaped, so the VALUE gate preserves them — the same guarantee as the ASCII case.
+      const input = { "ｇｉｆｔ_ｃａｒｄ": 3, "ｈｅａｄ_ｐｈｏｎｅ": 42 };
+      const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual(input);
+      expect(tagsToAdd).toEqual([]);
+    });
+
+    it("ASCII keys → byte-identical decisions (fast path unchanged: ascii PII redacts, benign preserved)", () => {
+      const input = { phone: 5552345678, order_id: 4111111111111111n, gift_card: 3, note: "clean" }; // pragma: allowlist secret
+      const { value } = guard.redactDeep(structuredClone(input));
+      const out = value as Record<string, unknown>;
+      expect(out.phone).toBe("[PHONE_US]"); // ASCII sensitive key still redacts
+      expect(out.order_id).toBe(4111111111111111n); // benign bigint id preserved
+      expect(out.gift_card).toBe(3); // value gate preserves
+      expect(out.note).toBe("clean");
+    });
+  });
+
+  // ─── redactDeep — Unicode-obfuscated key-CONTENT PII redaction (PRIV-UNICODE-REDACTION-001 round-11) ───
+  //
+  // The OTHER key leg from round-10. Round-10 made the key-NAME→type CLASSIFICATION Unicode-aware (a
+  // numeric VALUE under an obfuscated `phone`/`ssn`/`card` key). This closes key-CONTENT PII: the KEY
+  // STRING ITSELF is PII — an email / SSN / card written AS AN OBJECT KEY and obfuscated so the raw
+  // ASCII (+ full-width-digit) matcher misses it. Before round-11, `redactKey` ran ONLY `findMatches`,
+  // so an obfuscated PII KEY persisted BYTE-FOR-BYTE (RED). It now runs the SAME PII detectors over the
+  // shared de-obfuscated detection copy (`redactUnicodeObfuscated`), maps each span back to the ORIGINAL
+  // key, and redacts it — additively over the retained legacy raw pass, with the ALL-Nd exemption and
+  // key-collision preservation intact. The value is untouched; only the key is redacted.
+  //
+  // Helper: map ASCII digits of a template to any Nd decimal block by numeric value (separators kept).
+  const toNd = (ascii: string, zeroCp: number): string =>
+    ascii.replace(/[0-9]/g, (d) => String.fromCodePoint(zeroCp + Number(d)));
+
+  describe("redactDeep Unicode-obfuscated key-CONTENT PII — REDACTED [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    // Obfuscated EMAIL key forms (ASCII-fold `victim@example.com`); each carries the obfuscation.
+    const ZW_EMAIL_KEY = "victim@examp​le.com"; // U+200B zero-width space in the domain
+    const ZWNJ_EMAIL_KEY = "victim@examp‌le.com"; // U+200C zero-width non-joiner
+    const WJ_EMAIL_KEY = "victim@examp⁠le.com"; // U+2060 word joiner
+    const BOM_EMAIL_KEY = "victim@exa﻿mple.com"; // U+FEFF BOM / ZW no-break space
+    const CM_EMAIL_KEY = "víctim@example.com"; // U+0301 combining acute on `i`
+    const NF_EMAIL_KEY = "víctim@example.com"; // precomposed í (single NFC code point U+00ED)
+    const FW_EMAIL_KEY = "ｖｉｃｔｉｍ@example.com"; // full-width `victim` letters
+    const MATH_EMAIL_KEY = "\u{1D5CB}\u{1D5C2}\u{1D5BC}\u{1D5CD}\u{1D5C2}\u{1D5C6}@example.com"; // math sans-serif `victim`
+    const EMAIL_FOLDED = "victim@example.com";
+
+    it("redacts an email KEY STRING under every obfuscation family (ZW / ZWNJ / WJ / BOM / combining / precomposed / full-width / math-alnum); value preserved", () => {
+      for (const key of [
+        ZW_EMAIL_KEY, ZWNJ_EMAIL_KEY, WJ_EMAIL_KEY, BOM_EMAIL_KEY,
+        CM_EMAIL_KEY, NF_EMAIL_KEY, FW_EMAIL_KEY, MATH_EMAIL_KEY,
+      ]) {
+        const { value, tagsToAdd } = guard.redactDeep({ [key]: "hello" });
+        const out = value as Record<string, unknown>;
+        expect(Object.keys(out)).toEqual(["[EMAIL]"]); // key redacted whole-span
+        expect(Object.keys(out)).not.toContain(key); // raw obfuscated key absent
+        expect(Object.keys(out).join("")).not.toContain(EMAIL_FOLDED); // de-obfuscated form absent
+        expect(out["[EMAIL]"]).toBe("hello"); // value preserved
+        expect(tagsToAdd).toContain("pii.email");
+      }
+    });
+
+    it("redacts an SSN KEY STRING under Arabic-Indic / Extended-Arabic / Devanagari / zero-width / combining families", () => {
+      const AR_SSN = toNd("123-45-6789", 0x0660); // Arabic-Indic
+      const EXT_AR_SSN = toNd("123-45-6789", 0x06f0); // Extended Arabic-Indic
+      const DEV_SSN = toNd("123-45-6789", 0x0966); // Devanagari
+      const ZW_SSN = "123-45-​6789"; // zero-width space
+      const CM_SSN = "123-45-6́789"; // combining acute
+      for (const key of [AR_SSN, EXT_AR_SSN, DEV_SSN, ZW_SSN, CM_SSN]) {
+        const { value, tagsToAdd } = guard.redactDeep({ [key]: 1 });
+        const out = value as Record<string, unknown>;
+        expect(Object.keys(out)).toContain("[SSN_US]");
+        expect(Object.keys(out)).not.toContain(key);
+        expect(Object.keys(out).join("")).not.toContain("123-45-6789");
+        expect(out["[SSN_US]"]).toBe(1); // value preserved
+        expect(tagsToAdd).toContain("pii.ssn_us");
+      }
+    });
+
+    it("redacts a Luhn card KEY STRING under Arabic-Indic / full-width-with-separators / combining / zero-width families", () => {
+      const AR_CARD = toNd("4111-1111-1111-1111", 0x0660); // Arabic-Indic w/ ASCII separators // pragma: allowlist secret
+      const FW_CARD = "４１１１-１１１１-１１１１-１１１１"; // full-width digits + ASCII hyphens (NOT all-Nd) // pragma: allowlist secret
+      const CM_CARD = "4́111 1111 1111 1111"; // combining acute after first digit // pragma: allowlist secret
+      const ZW_CARD = "4111​1111​1111​1111"; // zero-width spaces // pragma: allowlist secret
+      for (const key of [AR_CARD, FW_CARD, CM_CARD, ZW_CARD]) {
+        const { value, tagsToAdd } = guard.redactDeep({ [key]: "x" });
+        const out = value as Record<string, unknown>;
+        expect(Object.keys(out)).toContain("[CREDIT_CARD]");
+        expect(Object.keys(out)).not.toContain(key);
+        expect(Object.keys(out).join("")).not.toContain("4111111111111111"); // pragma: allowlist secret
+        expect(out["[CREDIT_CARD]"]).toBe("x");
+        expect(tagsToAdd).toContain("pii.credit_card");
+      }
+    });
+
+    it("redacts obfuscated PII KEY STRINGS NESTED and IN ARRAYS (object keys at every position)", () => {
+      const { value } = guard.redactDeep({
+        outer: { [ZW_EMAIL_KEY]: "v1" }, // nested object, obfuscated email key
+        list: [{ [CM_EMAIL_KEY]: "v2" }, { [toNd("123-45-6789", 0x0660)]: 2 }], // objects INSIDE an array
+        deep: { l2: { [FW_EMAIL_KEY]: "v3" } }, // deeper nesting
+      });
+      const out = value as {
+        outer: Record<string, unknown>;
+        list: Array<Record<string, unknown>>;
+        deep: { l2: Record<string, unknown> };
+      };
+      expect(Object.keys(out.outer)).toEqual(["[EMAIL]"]);
+      expect(out.outer["[EMAIL]"]).toBe("v1");
+      expect(Object.keys(out.list[0])).toEqual(["[EMAIL]"]);
+      expect(out.list[0]["[EMAIL]"]).toBe("v2");
+      expect(Object.keys(out.list[1])).toEqual(["[SSN_US]"]);
+      expect(out.list[1]["[SSN_US]"]).toBe(2);
+      expect(Object.keys(out.deep.l2)).toEqual(["[EMAIL]"]);
+      expect(out.deep.l2["[EMAIL]"]).toBe("v3");
+    });
+
+    it("redacts ONLY the PII span of a compound obfuscated KEY, keeping surrounding text", () => {
+      // `contact:` prefix + a zero-width-spliced email → prefix survives, email span redacted.
+      const key = "contact:victim@examp​le.com";
+      const { value } = guard.redactDeep({ [key]: "keep" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toEqual(["contact:[EMAIL]"]);
+      expect(out["contact:[EMAIL]"]).toBe("keep");
+    });
+
+    // COVERAGE-SENSITIVITY NEGATIVE (Advisor requirement). For EACH required Unicode family, prove the
+    // coverage is LOAD-BEARING and complete two ways in ONE assertion pair:
+    //   (a) the RAW ASCII (+ full-width-digit) matcher `scanAndTransform` — the exact detection the
+    //       pre-round-11 `redactKey` used — finds NOTHING on the obfuscated key (so redaction cannot be
+    //       an accident of the raw matcher);
+    //   (b) the full `redactDeep` key path DOES redact it (so the Unicode normalization is what catches
+    //       it). If ANY family were dropped from the shared normalizer (zero-width / combining /
+    //       Arabic-Indic / full-width-letter / precomposed / NFKD-math) — or if Unicode key
+    //       normalization were disabled entirely — that family's row fails (b) and this test turns RED.
+    it("COVERAGE-SENSITIVITY: each Unicode family is load-bearing — raw matcher MISSES it, Unicode key path CATCHES it", () => {
+      // Obfuscations chosen so the raw ASCII (+ full-width-digit) matcher finds NOTHING (not even a
+      // fragment): the combining / precomposed marks sit in the DOMAIN (breaking the `\.TLD`), and the
+      // full-width / math letters sit in the local part (no ASCII char immediately before `@`).
+      const rawMissThenRedactedFamilies: Array<{ family: string; key: string; marker: string }> = [
+        { family: "zero-width (U+200B)", key: ZW_EMAIL_KEY, marker: "[EMAIL]" },
+        { family: "combining-mark (U+0301)", key: "victim@exa\u0301mple.com", marker: "[EMAIL]" },
+        { family: "Arabic-Indic (U+0660)", key: toNd("123-45-6789", 0x0660), marker: "[SSN_US]" },
+        { family: "Extended-Arabic (U+06F0)", key: toNd("123-45-6789", 0x06f0), marker: "[SSN_US]" },
+        { family: "Devanagari (U+0966)", key: toNd("123-45-6789", 0x0966), marker: "[SSN_US]" },
+        { family: "full-width letters (U+FF__)", key: FW_EMAIL_KEY, marker: "[EMAIL]" },
+        { family: "precomposed NFC (U+00E1)", key: "victim@ex\u00e1mple.com", marker: "[EMAIL]" },
+        { family: "NFKD math-alnum (U+1D5__)", key: MATH_EMAIL_KEY, marker: "[EMAIL]" },
+      ];
+      for (const { family, key, marker } of rawMissThenRedactedFamilies) {
+        // (a) The raw ASCII (+ full-width-digit) matcher misses the obfuscated key entirely — so
+        //     the redaction below is NOT an accident of the legacy matcher; it is the Unicode layer.
+        expect(guard.scanAndTransform(key).matches, `raw matcher must MISS ${family}`).toHaveLength(0);
+        // (b) The Unicode-aware key path redacts it. Omitting this family from the normalizer → RED here.
+        const { value } = guard.redactDeep({ [key]: "v" });
+        expect(Object.keys(value as Record<string, unknown>), `Unicode key path must CATCH ${family}`).toContain(marker);
+      }
+    });
+  });
+
+  // NO-DEGRADE for round-11 key-CONTENT redaction: benign keys, all-Nd keys, and key collisions.
+  describe("redactDeep Unicode-obfuscated key-CONTENT PII — NO-DEGRADE", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+
+    it("preserves benign multilingual / near-miss KEYS byte-identical (no PII shape → untouched, no tags)", () => {
+      const input = {
+        "café_naïve": "a", // precomposed accents, no PII shape
+        "日本語_ключ": "b", // CJK + Cyrillic
+        "user​name": "c", // zero-width in a benign word
+        "ｕｓｅｒＩＤ": "d", // full-width `userID` (folds to a benign word, no PII)
+        "victim@example": "e", // near-miss email (no TLD) → not an email shape
+        "family \u{1F468}‍\u{1F469}‍\u{1F467} dinner": "f", // ZWJ emoji key
+      };
+      const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual(input); // every key + value byte-identical
+      expect(tagsToAdd).toEqual([]);
+    });
+
+    it("preserves ALL-Nd pure-digit KEYS (any script) verbatim — the business-id exemption is retained", () => {
+      const input: Record<string, string> = {};
+      input["4111111111111111"] = "ascii"; // pragma: allowlist secret
+      input["４１１１１１１１１１１１１１１１"] = "fullwidth"; // all full-width digits // pragma: allowlist secret
+      input[toNd("4111111111111111", 0x0660)] = "arabic"; // all Arabic-Indic digits // pragma: allowlist secret
+      input[toNd("123456789", 0x0966)] = "devanagari"; // all Devanagari digits
+      const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual(input); // NOT folded into [CREDIT_CARD]/[SSN_US]; byte-identical
+      expect(tagsToAdd).toEqual([]);
+      expect(Object.keys(value as Record<string, unknown>)).not.toContain("[CREDIT_CARD]");
+    });
+
+    it("KEY COLLISION: two DISTINCT obfuscated email keys collapsing to [EMAIL] keep BOTH values (disambiguated)", () => {
+      const k1 = "a@examp​le.com"; // zero-width
+      const k2 = "b@exámple.com"; // combining mark
+      const { value } = guard.redactDeep({ [k1]: 1, [k2]: 2 });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).not.toContain(k1);
+      expect(Object.keys(out)).not.toContain(k2);
+      expect(Object.values(out).sort()).toEqual([1, 2]); // both values survive (lossless)
+      expect(Object.keys(out).every((k) => k.startsWith("[EMAIL]"))).toBe(true);
+    });
+
+    it("tag mode: an obfuscated PII KEY surfaces its pii.* tag but is NOT mutated", () => {
+      const tagGuard = createFridayMemoryPiiGuard("tag");
+      const { value, tagsToAdd } = tagGuard.redactDeep({ [`victim@examp​le.com`]: "x" });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).toContain("victim@examp​le.com"); // key bytes UNCHANGED in tag mode
+      expect(tagsToAdd).toContain("pii.email"); // but the tag is surfaced
+    });
+  });
+
+  // ─── redactDeep — SECRET-shape KEY-CONTENT redaction (SEC-EVENT-REDACTION-001 round-12) ───
+  //
+  // Object-key CONTENT is now sanitized for PII (round-11) AND for SECRET shapes. The Advisor ruled a
+  // SECRET-shape string used AS AN OBJECT KEY (`sk-proj-…`, JWT, `api_key=…`, `Authorization: Bearer …`)
+  // must be sanitized too — the raw-sink oracle does not exempt JSON keys. Before round-12 `redactKey`
+  // ran ONLY the PII detectors, so a secret KEY persisted verbatim in both audit sinks + memory egress.
+  // The guard now composes the SAME value-side secret-shape detector (findSecretShapeSpans /
+  // redactSecretShapesInString) alongside the PII one, over BOTH the raw key and the Unicode detection
+  // copy — the ONE shared key-content choke point. The value is untouched; only the key is redacted.
+  describe("redactDeep SECRET-shape KEY-CONTENT — REDACTED [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+    const SECRET = "[REDACTED_SECRET]";
+
+    // ASCII secret KEY families (each string is a fake credential used AS AN OBJECT KEY).
+    const SK_KEY = "sk-abcdefghijklmnopqrstuv0123456789"; // pragma: allowlist secret
+    const SK_PROJ_KEY = "sk-proj-abcdefghijklmnop0123456789ABCDEF"; // pragma: allowlist secret
+    const JWT_KEY =
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"; // pragma: allowlist secret
+    const PEM_KEY =
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIBOwIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA PRIVATE KEY-----"; // pragma: allowlist secret
+    const BEARER_KEY = "Authorization: Bearer abcdefghijklmnopqrstuvwx"; // pragma: allowlist secret
+    const GENERIC_KEY = "api_key=genericcredential123abcXYZ"; // pragma: allowlist secret
+    const GH_PAT_KEY = "github_pat_11ABCDEF0aBcDeFgHiJkL_0123456789abcdefghij"; // pragma: allowlist secret
+
+    it("redacts an ASCII secret KEY STRING to its marker for every family; value preserved, credential absent", () => {
+      // family → [key, canary substring that must NOT survive, expected key marker]
+      const families: Array<[string, string, string, string]> = [
+        ["sk-", SK_KEY, "abcdefghijklmnopqrstuv0123456789", SECRET], // pragma: allowlist secret
+        ["sk-proj-", SK_PROJ_KEY, "abcdefghijklmnop0123456789ABCDEF", SECRET], // pragma: allowlist secret
+        ["jwt", JWT_KEY, "eyJhbGciOiJIUzI1NiJ9", SECRET],
+        ["pem", PEM_KEY, "MIIBOwIBAAJBAKj", SECRET],
+        // Bearer / generic-assignment keep their forensic scheme/label; only the credential is nuked.
+        ["bearer", BEARER_KEY, "abcdefghijklmnopqrstuvwx", `Authorization: Bearer ${SECRET}`], // pragma: allowlist secret
+        ["generic api_key=", GENERIC_KEY, "genericcredential123abcXYZ", `api_key=${SECRET}`], // pragma: allowlist secret
+        ["github_pat_", GH_PAT_KEY, "github_pat_11ABCDEF0aBcDeFgHiJkL", SECRET], // pragma: allowlist secret
+      ];
+      for (const [family, key, canary, expectedKey] of families) {
+        const { value } = guard.redactDeep({ [key]: "keep" });
+        const out = value as Record<string, unknown>;
+        expect(Object.keys(out), `${family}: key redacted`).toEqual([expectedKey]);
+        expect(Object.keys(out), `${family}: raw key absent`).not.toContain(key);
+        expect(JSON.stringify(out), `${family}: credential absent`).not.toContain(canary);
+        expect(out[expectedKey], `${family}: value preserved`).toBe("keep");
+      }
+    });
+
+    it("redacts secret KEY STRINGS obfuscated by zero-width / ZWJ / full-width / combining families", () => {
+      // ASCII canary in the comment; the constant carries the obfuscation.
+      const ZW_SK_KEY = "sk-​abcdefghijklmnop0123456789"; // U+200B after sk- // pragma: allowlist secret
+      const ZWJ_GH_KEY = "github_pat_‍11ABCDEF0aBcDeFgHiJkL0123456789abcdefghij"; // U+200D // pragma: allowlist secret
+      const FW_SK_KEY = "ｓｋ－ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐ0123456789abcd"; // full-width sk- + letters // pragma: allowlist secret
+      const CM_SK_KEY = "sk-ábcdefghijklmnop0123456789"; // combining acute on first value char // pragma: allowlist secret
+      for (const [key, canary] of [
+        [ZW_SK_KEY, "abcdefghijklmnop0123456789"], // pragma: allowlist secret
+        [ZWJ_GH_KEY, "11ABCDEF0aBcDeFgHiJkL0123456789abcdefghij"], // pragma: allowlist secret
+        [FW_SK_KEY, "abcd"], // pragma: allowlist secret
+        [CM_SK_KEY, "bcdefghijklmnop0123456789"], // pragma: allowlist secret
+      ] as Array<[string, string]>) {
+        const { value } = guard.redactDeep({ [key]: "v" });
+        const out = value as Record<string, unknown>;
+        expect(Object.keys(out)).toEqual([SECRET]);
+        expect(Object.keys(out)).not.toContain(key); // raw obfuscated bytes absent
+        expect(JSON.stringify(out)).not.toContain(canary); // de-obfuscated credential absent
+        expect(out[SECRET]).toBe("v");
+      }
+    });
+
+    it("redacts secret KEY STRINGS NESTED and IN ARRAYS (object keys at every position), value preserved", () => {
+      const { value } = guard.redactDeep({
+        outer: { [SK_KEY]: "v1" }, // nested object
+        list: [{ [JWT_KEY]: "v2" }, { [GENERIC_KEY]: "v3" }], // objects INSIDE an array
+        deep: { l2: { [BEARER_KEY]: "v4" } }, // deeper nesting
+      });
+      const out = value as {
+        outer: Record<string, unknown>;
+        list: Array<Record<string, unknown>>;
+        deep: { l2: Record<string, unknown> };
+      };
+      expect(Object.keys(out.outer)).toEqual([SECRET]);
+      expect(out.outer[SECRET]).toBe("v1");
+      expect(Object.keys(out.list[0])).toEqual([SECRET]);
+      expect(out.list[0][SECRET]).toBe("v2");
+      expect(Object.keys(out.list[1])).toEqual([`api_key=${SECRET}`]); // pragma: allowlist secret
+      expect(Object.keys(out.deep.l2)).toEqual([`Authorization: Bearer ${SECRET}`]); // pragma: allowlist secret
+      // No credential bytes survive anywhere in the tree.
+      const blob = JSON.stringify(out);
+      for (const canary of [
+        "abcdefghijklmnopqrstuv0123456789", // pragma: allowlist secret
+        "eyJhbGciOiJIUzI1NiJ9", "genericcredential123abcXYZ", "abcdefghijklmnopqrstuvwx", // pragma: allowlist secret
+      ]) {
+        expect(blob).not.toContain(canary);
+      }
+    });
+
+    // SENSITIVITY NEGATIVE (mirrors the round-11 PII one): prove the secret KEY sanitization is
+    // LOAD-BEARING. For each family: (a) the RAW PII matcher `scanAndTransform` — the EXACT detection
+    // the pre-round-12 `redactKey` used for the raw path — finds NOTHING on the secret key (so the
+    // redaction cannot be an accident of the PII matcher), and (b) `redactDeep` DOES redact it to the
+    // secret marker. If the secret composition were removed from `redactKey` (PII-only, as before
+    // round-12), every row fails (b) and this test turns RED.
+    it("SENSITIVITY: each secret family is load-bearing — PII matcher MISSES it, secret key path CATCHES it", () => {
+      const secretOnlyKeys: Array<[string, string]> = [
+        ["sk-", SK_KEY],
+        ["sk-proj-", SK_PROJ_KEY],
+        ["jwt", JWT_KEY],
+        ["pem", PEM_KEY],
+        ["bearer", BEARER_KEY],
+        ["generic api_key=", GENERIC_KEY],
+        ["github_pat_", GH_PAT_KEY],
+      ];
+      for (const [family, key] of secretOnlyKeys) {
+        // (a) The PII matcher (pre-round-12 raw detection) MISSES the secret key entirely.
+        expect(
+          guard.scanAndTransform(key).matches,
+          `PII matcher must MISS secret ${family}`,
+        ).toHaveLength(0);
+        // (b) The secret key path redacts it — omitting the secret composition → RED here.
+        const { value } = guard.redactDeep({ [key]: "v" });
+        expect(
+          JSON.stringify(Object.keys(value as Record<string, unknown>)),
+          `secret key path must CATCH ${family}`,
+        ).toContain("[REDACTED_SECRET]");
+      }
+    });
+  });
+
+  // NO-DEGRADE for round-12 secret KEY redaction: benign near-miss keys, field-NAME keys, all-Nd keys,
+  // and secret key collisions.
+  describe("redactDeep SECRET-shape KEY-CONTENT — NO-DEGRADE", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+    const SECRET = "[REDACTED_SECRET]";
+
+    it("preserves benign / near-miss KEYS byte-identical, but NUKES values under sensitive-secret KEY NAMES (round-15 key-name parity)", () => {
+      // SEC-EVENT-REDACTION-001 (round-15): a value under a sensitive-secret KEY NAME is
+      // whole-value-nuked to the marker EXACTLY as the 0600 audit sink does — even when the KEY string
+      // itself has no secret SHAPE (`apiKey`/`token`/`authorization` are field NAMES, not shapes). The
+      // KEY bytes survive (the name is not a shape); the VALUE is nuked. NON-sensitive / near-miss keys
+      // stay byte-identical (STRICT SUPERSET / NO-DEGRADE).
+      const input = {
+        apiKey: "a", // sensitive field NAME → VALUE nuked (round-15); key name survives (no shape)
+        token: "b",
+        authorization: "c",
+        session_token_count: "d", // near-miss (`sessiontokencount` ∉ sensitive set) → value survives
+        sk_underscore_not_dash: "e", // `sk_` not `sk-`, not a sensitive name → value survives
+        "café_naïve": "f", // benign multilingual, no sensitive name/shape → value survives
+        "user​name": "g", // zero-width in a benign word → value survives
+        "bearer_flag": "h", // `bearerflag` ∉ sensitive set, no ` <token>` shape → value survives
+      };
+      const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual({
+        apiKey: SECRET,
+        token: SECRET,
+        authorization: SECRET,
+        session_token_count: "d",
+        sk_underscore_not_dash: "e",
+        "café_naïve": "f",
+        "user​name": "g",
+        "bearer_flag": "h",
+      });
+      expect(tagsToAdd).toEqual([]); // secrets carry no guard tag; benign keys add none
+
+      // tag/block mode NEVER mutates the value — the key-name nuke is a redact-mode mutation.
+      const tagGuard = createFridayMemoryPiiGuard("tag");
+      expect(tagGuard.redactDeep(structuredClone(input)).value).toEqual(input); // byte-identical
+    });
+
+    it("preserves ALL-Nd pure-digit KEYS verbatim (a pure-digit key carries no secret SHAPE either)", () => {
+      const input: Record<string, string> = {};
+      input["4111111111111111"] = "ascii"; // pragma: allowlist secret
+      input["1234567890123456789"] = "long-id";
+      const { value } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual(input);
+      expect(Object.keys(value as Record<string, unknown>)).not.toContain("[REDACTED_SECRET]");
+    });
+
+    it("KEY COLLISION: two DISTINCT secret keys collapsing to [REDACTED_SECRET] keep BOTH values (disambiguated, lossless)", () => {
+      const k1 = "sk-aaaaaaaaaaaaaaaaaaaa0123456789"; // pragma: allowlist secret
+      const k2 = "sk-bbbbbbbbbbbbbbbbbbbb0123456789"; // pragma: allowlist secret
+      const { value } = guard.redactDeep({ [k1]: 1, [k2]: 2 });
+      const out = value as Record<string, unknown>;
+      expect(Object.keys(out)).not.toContain(k1);
+      expect(Object.keys(out)).not.toContain(k2);
+      expect(Object.values(out).sort()).toEqual([1, 2]); // both values survive
+      expect(Object.keys(out).every((k) => k.startsWith("[REDACTED_SECRET]"))).toBe(true);
+    });
+
+    it("STRICT SUPERSET: a key that is BOTH secret-shaped and carries PII is fully redacted (secret wins); a pure-PII key is unchanged from round-11", () => {
+      // A generic-assignment secret whose value is SSN-shaped → secret precedence redacts the whole value.
+      const both = guard.redactDeep({ "token=123-45-6789": "x" }).value as Record<string, unknown>;
+      expect(Object.keys(both)).toEqual(["token=[REDACTED_SECRET]"]);
+      expect(JSON.stringify(both)).not.toContain("123-45-6789");
+      // A pure-PII key (no secret shape) still redacts to its PII marker exactly as round-11 (superset).
+      const pii = guard.redactDeep({ "user@example.com": "y" }).value as Record<string, unknown>;
+      expect(Object.keys(pii)).toEqual(["[EMAIL]"]);
+    });
+
+    it("tag mode: a secret KEY is NOT mutated and surfaces no tag (consistent with the value-secret path)", () => {
+      const tagGuard = createFridayMemoryPiiGuard("tag");
+      const key = "sk-abcdefghijklmnopqrstuv0123456789"; // pragma: allowlist secret
+      const { value, tagsToAdd } = tagGuard.redactDeep({ [key]: "x" });
+      expect(Object.keys(value as Record<string, unknown>)).toContain(key); // key bytes UNCHANGED
+      expect(tagsToAdd).toEqual([]); // no secret tag
+    });
+  });
+
+  // ─── redactDeep — round-13 prefix-preserving credential-subspan for PREFIX-BEARING secret KEYS ───
+  //
+  // SEC-EVENT-REDACTION-001 round-13 (Advisor @d5c4f262). Round-12 sanitized a secret-shape KEY, but for
+  // a PREFIX-BEARING shape (`Authorization: Bearer <token>`, generic `key=<value>`) the round-12 Unicode
+  // path built the replacement from the NORMALIZED detection copy, so an OBFUSCATED benign prefix
+  // (full-width / combining / zero-width) was silently rewritten to ASCII in the STORED key — the
+  // credential was removed (good) but the benign forensic prefix + separator bytes were DEGRADED
+  // (byte-preservation + strict-superset violation). The fix reports ONLY the credential SUBSPAN and
+  // splices the marker into the ORIGINAL key at that subspan, so the ORIGINAL prefix / keyword /
+  // whitespace / separator bytes survive BYTE-FOR-BYTE. RED on d5c4f262 (stored full-width prefix →
+  // ASCII); GREEN after the subspan fix. Whole-token shapes (no benign prefix) are unaffected.
+  describe("redactDeep round-13 — obfuscated PREFIX-BEARING secret KEY preserves ORIGINAL prefix bytes [red-first]", () => {
+    const guard = createFridayMemoryPiiGuard("redact");
+    const SECRET = "[REDACTED_SECRET]";
+    // ASCII → full-width: space → U+3000 (ideographic space); every other printable ASCII + 0xFEE0.
+    // NFKD folds each back to its ASCII form for DETECTION while the ORIGINAL bytes stay as stored.
+    const fw = (s: string): string =>
+      s.replace(/[\x20-\x7E]/g, (c) =>
+        c === " " ? "　" : String.fromCodePoint((c.codePointAt(0) as number) + 0xfee0),
+      );
+    const TOKEN = "abcdefghijklmnopqrstuvwx"; // pragma: allowlist secret
+
+    it("full-width `Authorization: Bearer` / `api_key=` / `secret=` / `password=` / `access_token=` KEY: credential nuked, ORIGINAL full-width prefix byte-identical", () => {
+      for (const asciiPrefix of [
+        "Authorization: Bearer ",
+        "api_key=",
+        "secret=",
+        "password=",
+        "access_token=",
+      ]) {
+        const fwPrefix = fw(asciiPrefix);
+        const key = fwPrefix + TOKEN;
+        const { value } = guard.redactDeep({ [key]: "keep" });
+        const out = value as Record<string, unknown>;
+        const outKey = Object.keys(out)[0];
+        expect(outKey, `${asciiPrefix}: credential absent`).not.toContain(TOKEN);
+        // ORIGINAL full-width prefix preserved byte-for-byte; ONLY the credential became the marker.
+        expect(outKey, `${asciiPrefix}: full-width prefix preserved`).toBe(fwPrefix + SECRET);
+        // And NOT rewritten to the ASCII prefix (the round-12 degrade this round fixes).
+        expect(outKey, `${asciiPrefix}: prefix NOT rewritten to ASCII`).not.toBe(asciiPrefix + SECRET);
+        expect(out[outKey], `${asciiPrefix}: value preserved`).toBe("keep");
+      }
+    });
+
+    it("combining-mark and zero-width obfuscated `Authorization: Bearer` KEY: credential nuked, ORIGINAL prefix (mark / ZWSP) byte-identical", () => {
+      const cmPrefix = "Authorization: Bearér "; // combining acute over the 2nd `e` of Bearer
+      const zwPrefix = "Authorization: Bea​rer "; // ZERO WIDTH SPACE spliced into the scheme
+      for (const prefix of [cmPrefix, zwPrefix]) {
+        const key = prefix + TOKEN;
+        const { value } = guard.redactDeep({ [key]: "v" });
+        const outKey = Object.keys(value as Record<string, unknown>)[0];
+        expect(outKey).toBe(prefix + SECRET); // ORIGINAL obfuscated prefix bytes preserved verbatim
+        expect(outKey).not.toContain(TOKEN);
+        expect(outKey).toContain(prefix); // the combining mark / ZWSP survives inside the prefix
+      }
+    });
+
+    it("obfuscated prefix-bearing secret KEY NESTED and IN ARRAYS preserves the ORIGINAL prefix at every position", () => {
+      const bearer = fw("Authorization: Bearer ") + TOKEN;
+      const assign = fw("api_key=") + "genericcredential123abc"; // pragma: allowlist secret
+      const { value } = guard.redactDeep({
+        outer: { [bearer]: "v1" },
+        list: [{ [assign]: "v2" }],
+        deep: { l2: { [bearer]: "v3" } },
+      });
+      const out = value as {
+        outer: Record<string, unknown>;
+        list: Array<Record<string, unknown>>;
+        deep: { l2: Record<string, unknown> };
+      };
+      const bearerKey = fw("Authorization: Bearer ") + SECRET;
+      const assignKey = fw("api_key=") + SECRET;
+      expect(Object.keys(out.outer)).toEqual([bearerKey]);
+      expect(out.outer[bearerKey]).toBe("v1");
+      expect(Object.keys(out.list[0])).toEqual([assignKey]);
+      expect(out.list[0][assignKey]).toBe("v2");
+      expect(Object.keys(out.deep.l2)).toEqual([bearerKey]);
+      expect(out.deep.l2[bearerKey]).toBe("v3");
+      const blob = JSON.stringify(out);
+      expect(blob).not.toContain(TOKEN);
+      expect(blob).not.toContain("genericcredential123abc"); // pragma: allowlist secret
+    });
+
+    it("IDEMPOTENT: re-redacting an already-redacted obfuscated prefix-bearing KEY is a no-op (no further prefix rewrite)", () => {
+      const key = fw("Authorization: Bearer ") + TOKEN;
+      const once = guard.redactDeep({ [key]: "v" }).value as Record<string, unknown>;
+      const onceKey = Object.keys(once)[0];
+      const twice = guard.redactDeep(structuredClone(once)).value as Record<string, unknown>;
+      const twiceKey = Object.keys(twice)[0];
+      expect(twiceKey).toBe(onceKey); // key byte-identical on the second pass
+      expect(twiceKey).toBe(fw("Authorization: Bearer ") + SECRET); // still the ORIGINAL full-width prefix
+      expect(twice[twiceKey]).toBe("v");
+    });
+
+    it("round-15 Unicode KEY-NAME parity: a full-width benign key survives, but a full-width SENSITIVE key name nukes its VALUE (key bytes preserved)", () => {
+      // `bearer_flag` folds to a benign word (`bearerflag` ∉ sensitive set) → value survives. A
+      // full-width `Authorization` and `api_key` are NOT secret SHAPES (so their KEY BYTES survive
+      // byte-identical via redactKey), but they ARE Unicode-obfuscated SENSITIVE field NAMES —
+      // `isSensitiveSecretFieldName` canonicalizes them (round-9) to `authorization` / `apikey`, so
+      // round-15 whole-value-nukes their VALUES to the marker, EXACTLY as the audit sink does (the
+      // {key}×{Unicode} cell). The KEYS are preserved; only the sensitive-key VALUES change.
+      const input: Record<string, string> = {};
+      input[fw("bearer_flag")] = "x";
+      input[fw("Authorization")] = "y";
+      input[fw("api_key")] = "z";
+      const { value, tagsToAdd } = guard.redactDeep(structuredClone(input));
+      expect(value).toEqual({
+        [fw("bearer_flag")]: "x", // benign → value survives
+        [fw("Authorization")]: SECRET, // Unicode-obfuscated sensitive key → value nuked
+        [fw("api_key")]: SECRET,
+      });
+      // KEY BYTES are preserved byte-identical (the sensitive-NAME nuke touches only the VALUE).
+      expect(Object.keys(value as Record<string, unknown>)).toEqual([
+        fw("bearer_flag"), fw("Authorization"), fw("api_key"),
+      ]);
+      expect(tagsToAdd).toEqual([]); // secrets carry no guard tag
+
+      // tag mode never mutates the value (the nuke is a redact-mode mutation).
+      const tagGuard = createFridayMemoryPiiGuard("tag");
+      expect(tagGuard.redactDeep(structuredClone(input)).value).toEqual(input);
+    });
+
+    it("carry-over: a WHOLE-TOKEN obfuscated secret KEY (no benign prefix) still collapses to the bare marker", () => {
+      // Round-12 behavior is preserved: a zero-width-spliced `sk-` key has no benign prefix, so the
+      // WHOLE key becomes the marker (subspan == whole match for whole-token shapes).
+      const zwSk = "sk-​abcdefghijklmnop0123456789"; // pragma: allowlist secret
+      const out = guard.redactDeep({ [zwSk]: "v" }).value as Record<string, unknown>;
+      expect(Object.keys(out)).toEqual([SECRET]);
+      expect(out[SECRET]).toBe("v");
+    });
+  });
+
   describe("redactDeep — idempotence & PII modes", () => {
     it("is idempotent over key-driven numeric redaction (second pass is a no-op)", () => {
       const guard = createFridayMemoryPiiGuard("redact");

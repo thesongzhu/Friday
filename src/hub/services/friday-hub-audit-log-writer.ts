@@ -17,6 +17,27 @@ import {
   resolveFridayAuditLogPath as resolveSecurityAuditLogPath,
 } from "../../security/friday-audit-log.js";
 import type { FridayAuditRecord, FridayAuditLogWriterOptions as SecurityWriterOptions } from "../../security/friday-audit-log.js";
+// SEC-EVENT-REDACTION-001: reuse the shared production PII guard read-only. It is NOT modified.
+import { createFridayMemoryPiiGuard } from "../../memory/guard/services/friday-memory-pii-guard.js";
+// SEC-EVENT-REDACTION-001: shared, comprehensive secret-shape scrubber (field-name + generic
+// assignment + github_pat_/ghp_ + sk-/JWT/PEM/Bearer + AWS/Slack). Independent string primitive,
+// layered OVER the PII guard.
+import {
+  findSecretShapeSpans,
+  FRIDAY_DEFAULT_SECRET_MARKER,
+  isSensitiveSecretFieldName,
+  redactSecretShapesInString,
+} from "../../security/friday-secret-shape-redactor.js";
+// PRIV-UNICODE-REDACTION-001: shared, additive, non-destructive Unicode-aware detection layer. It
+// folds Unicode decimal digits (Arabic-Indic / Extended Arabic-Indic / Devanagari / full-width / …)
+// to ASCII and strips zero-width + format code points on a DETECTION COPY only, maps matches back to
+// the ORIGINAL span, and redacts just that span — catching PII / secrets that Unicode obfuscation
+// hides from the ASCII (+ full-width) matchers above, WITHOUT altering benign multilingual text.
+import {
+  buildUnicodeDetectionCopy,
+  redactUnicodeObfuscated,
+  type UnicodeNormalizedSpan,
+} from "../../security/friday-unicode-pii-normalizer.js";
 import type { FridayAuditLogWrite } from "./friday-hub-memory-state.types.js";
 
 // ─── Types (legacy compatibility re-export) ───
@@ -37,10 +58,687 @@ export function resolveFridayAuditLogPath(stateDir: string): string {
   return resolveSecurityAuditLogPath(stateDir);
 }
 
+// ─── Details redaction (SEC-EVENT-REDACTION-001) ───
+//
+// The caller-supplied `details` payload is arbitrary and has been persisted RAW into both the
+// SQLite `audit_logs.details_json` column and the `audit.jsonl` mirror. Live inflow (hub
+// `logChannelIssue`) spreads `chatId` — the user's phone for WhatsApp/Signal — plus a free-text
+// `errorMessage` and arbitrary caller fields. This module redacts PII-by-value and secret shapes
+// from the `details` CONTENT before it reaches either sink. It NEVER touches the canonical audit
+// columns (id / ts / actor / action / resource / request/trace ids / result), which live OUTSIDE
+// `details` on the record and are copied through `toAuditRecord` verbatim.
+
+/**
+ * Shared production PII guard, reused read-only. `redactDeep` redacts PII-by-value
+ * (email / US phone incl. full-width / SSN / Luhn-gated credit card) across a deep value and
+ * returns `{ value, tagsToAdd }` — we unwrap `.value`. The shared guard does NOT cover secret
+ * shapes, so the shared `redactSecretShapesInString` scrubber is layered on top (see the content /
+ * identifier leaf passes).
+ */
+const auditPiiGuard = createFridayMemoryPiiGuard("redact");
+
+const AUDIT_SECRET_MARKER = FRIDAY_DEFAULT_SECRET_MARKER;
+
+/** Marker for an international (non-US) E.164 channel-identity phone (see `redactInternationalChannelPhone`). */
+const AUDIT_INTL_PHONE_MARKER = "[PHONE]";
+
+/**
+ * Residual country-code US phone completion, layered on both content and preserved-identifier
+ * strings. The shared guard's US-phone detector matches the bare 10-digit and separator forms but
+ * NOT the `+1XXXXXXXXXX` / `1XXXXXXXXXX` country-code forms — which is exactly how the live channel
+ * `chatId` arrives (Signal `sourceNumber` is E.164 `+1…`; WhatsApp `msg.from` is bare `1…`).
+ * Without this, the headline chatId phone would survive redaction. The pattern REQUIRES the leading
+ * `1` country code and is digit-run-bounded (`(?<![\w+])` … `(?!\d)`) so it never fires on a benign
+ * national-format id, an epoch timestamp, or a longer numeric id.
+ */
+const AUDIT_RESIDUAL_US_PHONE =
+  /(?<![\w+])\+?1[-.\s]?\(?[2-9]\d{2}\)?[-.\s]?[2-9]\d{2}[-.\s]?\d{4}(?!\d)/g;
+
+function redactResidualUsPhone(input: string): string {
+  return input.replace(AUDIT_RESIDUAL_US_PHONE, "[PHONE_US]");
+}
+
+// International-channel-phone pass (SEC-EVENT-REDACTION-001 finding 3). Context-scoped to the AUDIT
+// redactor — NOT a change to the shared US-only `friday-memory-pii-guard.ts` (which is used by
+// memory / learned-fact / typed-PII, where a blanket international rule would over-redact benign
+// international-looking numbers). Channel identities arrive as E.164 `+<cc><number>` (Signal
+// `sourceNumber`, WhatsApp non-US `from`), so a UK `+447911123456` embedded in `chatId` /
+// `sessionKey` / `correlationId` would otherwise persist CLEAR. Three discriminators keep this from
+// collapsing benign machine identifiers OR signed monetary amounts (reviewer finding F-2):
+//   1. a MANDATORY leading `+` / full-width `＋` — a benign numeric id, epoch, or SHA never carries one;
+//   2. a candidate that contains a DECIMAL POINT or thousands grouping (`+100000.00`, `+1,000,000`) is
+//      a monetary amount, never a channel phone → rejected outright;
+//   3. the digit count must be a PLAUSIBLE international channel phone: 11–15 digits (1–3-digit
+//      country code + national number). A short `+`-number (`+12345678`, `+1000000000`) is a signed
+//      amount / id, not a channel identity, and is left intact.
+// ASCII and full-width digits / separators are both recognized; the fold is used only to COUNT digits.
+const AUDIT_INTL_PHONE_CANDIDATE =
+  /(?<![0-9０-９A-Za-z+＋])[+＋][1-9１-９][0-9０-９()\-.,\s　（）－．，]{6,18}/gu;
+const AUDIT_INTL_PHONE_TRAILING_SEP = /[()\-.,\s　（）－．，]+$/u;
+// A decimal point / comma INSIDE the core marks a monetary amount (or grouped number), not a phone.
+const AUDIT_INTL_PHONE_AMOUNT_SEP = /[.,．，]/u;
+
+function foldedDigitCount(candidate: string): number {
+  let count = 0;
+  for (const ch of candidate) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if ((cp >= 0x30 && cp <= 0x39) || (cp >= 0xff10 && cp <= 0xff19)) count += 1;
+  }
+  return count;
+}
+
+function redactInternationalChannelPhone(input: string): string {
+  return input.replace(AUDIT_INTL_PHONE_CANDIDATE, (match) => {
+    // The greedy separator class may capture trailing separators/punctuation; strip them so we
+    // never eat following benign text and count digits on the phone core only. Trailing sentence
+    // punctuation (`.`, `,`) is stripped here BEFORE the amount check, so it does not mask a phone.
+    const core = match.replace(AUDIT_INTL_PHONE_TRAILING_SEP, "");
+    if (AUDIT_INTL_PHONE_AMOUNT_SEP.test(core)) return match; // decimal / grouped amount → leave intact
+    const digits = foldedDigitCount(core);
+    if (digits < 11 || digits > 15) return match; // not a channel-phone-length number → leave intact
+    return `${AUDIT_INTL_PHONE_MARKER}${match.slice(core.length)}`;
+  });
+}
+
+/**
+ * Preserved-identifier leaf pass: secret shapes + phone stripping, WITHOUT the PII-by-value guard.
+ *
+ * Forensic identifier fields are preserved (they skip `redactDeep`) so distinct correlation / trace
+ * / run ids stay distinct and a benign national-format numeric id is never collapsed. But the LIVE
+ * channel caller builds `correlationId` / `channelCorrelationId` / (channel) `idempotencyKey` as
+ * `channel:<kind>:<chatId>:<msg.id>`, where `chatId` IS the user's phone (Signal E.164 `+1…`/`+44…`,
+ * WhatsApp bare `1…`). Without a phone pass those ids would persist the phone CLEAR — the same phone
+ * redacted in the `chatId` / `sessionKey` content of the SAME record (the #1618 over-exemption
+ * class). US + international passes strip exactly the phone segment while the `channel:<kind>:`
+ * routing prefix and message-id tail survive; the US pass needs a leading `1` and the intl pass a
+ * leading `+`, so a benign national-format id (`2015550123`), opaque id (`run-…`/`wamid.…`/UUID),
+ * epoch, or SHA is left intact — distinct ids are not collapsed or corrupted.
+ */
+function redactIdentifierLeaf(input: string): string {
+  return redactUnicodeIdentifierLeaf(
+    redactInternationalChannelPhone(redactResidualUsPhone(redactSecretShapesInString(input))),
+  );
+}
+
+/** Secret shapes + US + international channel phone — applied to CONTENT strings (after `redactDeep`). */
+function redactContentLeaf(input: string): string {
+  return redactUnicodeContentLeaf(
+    redactInternationalChannelPhone(redactResidualUsPhone(redactSecretShapesInString(input))),
+  );
+}
+
+// ─── Unicode-obfuscation residual pass (PRIV-UNICODE-REDACTION-001) ───
+//
+// The ASCII (+ full-width) matchers above miss PII / secrets hidden by a non-ASCII decimal script
+// (Arabic-Indic `+١٤١٥…`, Devanagari, …) or by zero-width / format code points spliced into a token
+// (`sk-<U+200B>…`). These SPAN FINDERS run the SAME matchers over the shared Unicode DETECTION COPY
+// (digits folded to ASCII by value, zero-width / format / default-ignorable stripped); each reported
+// [start,end) span is mapped back to the ORIGINAL span by `redactUnicodeObfuscated` and only that
+// original span is redacted, so benign multilingual text stays byte-identical. The finder ORDER is
+// PRECEDENCE (secret ≻ US phone ≻ intl phone ≻ PII-by-value), so a `+`-E.164 stays `[PHONE]` rather
+// than `[CREDIT_CARD]` — mirroring the ASCII phone-before-card ordering.
+
+/** Residual leading-country-code US phone spans over the (folded) detection copy. */
+function findResidualUsPhoneSpans(normalized: string): UnicodeNormalizedSpan[] {
+  const regex = new RegExp(AUDIT_RESIDUAL_US_PHONE.source, AUDIT_RESIDUAL_US_PHONE.flags);
+  const spans: UnicodeNormalizedSpan[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(normalized)) !== null) {
+    spans.push({ start: match.index, end: match.index + match[0].length, replacement: "[PHONE_US]" });
+  }
+  return spans;
+}
+
+/**
+ * International E.164 channel-phone spans over the (folded) detection copy — the SAME candidate
+ * regex + amount/decimal reject + 11–15-digit gate + trailing-separator trim as
+ * `redactInternationalChannelPhone`, reported as spans instead of an in-place replacement.
+ */
+function findIntlChannelPhoneSpans(normalized: string): UnicodeNormalizedSpan[] {
+  const regex = new RegExp(AUDIT_INTL_PHONE_CANDIDATE.source, AUDIT_INTL_PHONE_CANDIDATE.flags);
+  const spans: UnicodeNormalizedSpan[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(normalized)) !== null) {
+    const core = match[0].replace(AUDIT_INTL_PHONE_TRAILING_SEP, "");
+    if (AUDIT_INTL_PHONE_AMOUNT_SEP.test(core)) continue; // decimal / grouped amount → not a phone
+    const digits = foldedDigitCount(core);
+    if (digits < 11 || digits > 15) continue; // not a channel-phone-length number
+    spans.push({ start: match.index, end: match.index + core.length, replacement: AUDIT_INTL_PHONE_MARKER });
+  }
+  return spans;
+}
+
+/**
+ * PII-by-value spans (email / phone_us / ssn_us / Luhn-gated credit_card) over the (folded)
+ * detection copy, via the shared guard's own detectors — so Unicode-obfuscated PII is classified
+ * byte-consistently with how the guard would classify the ASCII form. Used for CONTENT strings ONLY;
+ * the identifier-leaf variant deliberately omits it so a benign phone-SHAPED forensic id (e.g. an
+ * Arabic-digit `requestId` folding to `2015550123`) is NOT collapsed — the #1618 field-role lesson,
+ * carried into Unicode.
+ */
+function findPiiValueSpans(normalized: string): UnicodeNormalizedSpan[] {
+  return auditPiiGuard.scanAndTransform(normalized).matches.map((m) => ({
+    start: m.start,
+    end: m.end,
+    replacement: `[${m.type.toUpperCase()}]`,
+  }));
+}
+
+/** CONTENT-string Unicode residual: secret ≻ US phone ≻ intl phone ≻ PII-by-value. */
+function redactUnicodeContentLeaf(input: string): string {
+  return redactUnicodeObfuscated(input, [
+    findSecretShapeSpans,
+    findResidualUsPhoneSpans,
+    findIntlChannelPhoneSpans,
+    findPiiValueSpans,
+  ]);
+}
+
+/**
+ * IDENTIFIER-leaf Unicode residual: secret + channel phones ONLY (NO PII-by-value), so a benign
+ * phone-shaped forensic identifier written in a non-ASCII digit script survives while a phone
+ * embedded in a channel-derived id (`channel:<kind>:<+١٤١٥…>:…`) is still stripped.
+ */
+function redactUnicodeIdentifierLeaf(input: string): string {
+  return redactUnicodeObfuscated(input, [
+    findSecretShapeSpans,
+    findResidualUsPhoneSpans,
+    findIntlChannelPhoneSpans,
+  ]);
+}
+
+/**
+ * Deeply map every string leaf of `value` through `fn`, preserving structure, key order,
+ * numbers, booleans, null and `Date` instances. Iterative + cycle-aware (a back-edge to a node
+ * still on the DFS path becomes a structural share) so arbitrarily deep or self-referential
+ * input neither overflows the call stack nor loops forever. Objects are rebuilt via own
+ * data-property definition so a JSON-originated `__proto__` key cannot poison the prototype.
+ *
+ * `fn` may return a non-string (e.g. the finalize pass restores a forensic placeholder string with
+ * its original object/array subtree); the returned value replaces the string leaf verbatim and is
+ * NOT re-walked, so a fully-processed replacement subtree is spliced in as-is.
+ */
+function mapStringsDeep(value: unknown, fn: (s: string) => unknown): unknown {
+  type ValueFrame = { v: unknown; assign: (r: unknown) => void };
+  type ExitFrame = { exit: object };
+  const root: { out: unknown } = { out: undefined };
+  const onPath = new WeakMap<object, unknown>();
+  const stack: Array<ValueFrame | ExitFrame> = [{ v: value, assign: (r) => { root.out = r; } }];
+
+  while (stack.length > 0) {
+    const frame = stack.pop() as ValueFrame | ExitFrame;
+    if ("exit" in frame) {
+      onPath.delete(frame.exit);
+      continue;
+    }
+    const { v, assign } = frame;
+
+    if (typeof v === "string") {
+      assign(fn(v));
+      continue;
+    }
+    if (v instanceof Date) {
+      assign(v);
+      continue;
+    }
+    if (Array.isArray(v)) {
+      if (onPath.has(v)) {
+        assign(onPath.get(v));
+        continue;
+      }
+      const out: unknown[] = new Array(v.length);
+      onPath.set(v, out);
+      assign(out);
+      stack.push({ exit: v });
+      for (let i = v.length - 1; i >= 0; i -= 1) {
+        const idx = i;
+        stack.push({ v: v[idx], assign: (r) => { out[idx] = r; } });
+      }
+      continue;
+    }
+    if (v && typeof v === "object") {
+      if (onPath.has(v)) {
+        assign(onPath.get(v));
+        continue;
+      }
+      const out: Record<string, unknown> = {};
+      onPath.set(v, out);
+      assign(out);
+      stack.push({ exit: v });
+      const objectEntries = Object.entries(v as Record<string, unknown>);
+      for (let i = objectEntries.length - 1; i >= 0; i -= 1) {
+        const key = objectEntries[i][0];
+        const child = objectEntries[i][1];
+        stack.push({
+          v: child,
+          assign: (r) => {
+            Object.defineProperty(out, key, {
+              value: r,
+              enumerable: true,
+              writable: true,
+              configurable: true,
+            });
+          },
+        });
+      }
+      continue;
+    }
+
+    assign(v); // number / bigint / boolean / null / undefined / symbol / function
+  }
+
+  return root.out;
+}
+
+/**
+ * Curated forensic-identifier allowlist (normalized to compact lowercase). A value under one of
+ * these keys is preserved ONLY when it is a validated benign-opaque identifier LEAF (see
+ * `isPreservableForensicLeaf` — Advisor round-4): such a leaf skips the `redactDeep` PII-by-value
+ * pass and only the identifier-leaf pass runs on it (secret shapes + residual leading-country-code
+ * E.164 phone; see `redactIdentifierLeaf`) — so distinct correlation / trace / run / request /
+ * resource identifiers stay distinct and a benign national-format numeric id is never corrupted by a
+ * false-positive PII match, while a phone embedded in a channel-derived id (`channel:<kind>:<phone>:…`)
+ * is still stripped. This is the #1618 field-role lesson: a blunt deep-redact over a whole payload
+ * collapses distinct identifiers and corrupts benign business ids.
+ *
+ * The forensic key is NOT a subtree exemption: a forensic key over an OBJECT / ARRAY is RECURSED
+ * (its descendants get the full sensitive-key + PII-by-value + secret classification), and a forensic
+ * key over a scalar that is itself email / SSN / card by value or a secret shape is REDACTED — a
+ * forensic-named key never launders raw PII (Advisor round-4 blocking finding).
+ *
+ * The allowlist holds ONLY machine-generated correlation / trace / run / request / sequence ids —
+ * values that are never user PII but CAN coincidentally match a PII shape (e.g. a phone-shaped
+ * numeric id), which is precisely the false-positive corruption this allowlist prevents.
+ *
+ * Fields that are DERIVED from a user identifier are DELIBERATELY absent, because preserving them
+ * would leak the very PII we redact elsewhere:
+ *   - `chatId` / `senderId` — a channel chatId is a routing id that is ALSO the user's phone for
+ *     WhatsApp/Signal;
+ *   - `sessionKey` / `sessionId` — a channel session key is built as `channel:<kind>:<chatId>`
+ *     (normalized, NOT hashed), so it embeds the phone.
+ * These are treated as CONTENT: their non-PII routing prefix survives (`channel:signal:` stays)
+ * while the embedded phone is redacted, keeping the fix consistent with the `chatId` redaction.
+ * Any preserved identifier that still legitimately embeds PII is a disclosed owner-scoped residual
+ * (the audit sinks are owner-scoped, 0600-permissioned).
+ */
+const AUDIT_FORENSIC_IDENTIFIER_KEYS = new Set<string>([
+  "id", "requestid", "correlationid", "channelcorrelationid", "runid", "parentrunid",
+  "traceid", "spanid", "messageid", "nodeid", "toolcallid",
+  "grantid", "skillid", "workflowid", "workflowversionid", "routeid", "resourceid",
+  "entityid", "eventid", "jobid", "taskid", "threadid", "sequence", "sequencenumber",
+  "idempotencykey", "canonicalactiondigest", "plandigest", "revision",
+]);
+
+/**
+ * Compound suffixes that unambiguously denote a machine identifier (never user PII), so prefixed
+ * variants (e.g. `parentCorrelationId`, `originalRequestId`) are also preserved. Bare `id` is
+ * intentionally NOT a suffix — it would swallow `chatId` / `senderId`, which carry PII.
+ */
+const AUDIT_FORENSIC_IDENTIFIER_SUFFIXES = [
+  "correlationid", "requestid", "runid", "traceid", "spanid", "toolcallid",
+  "sequencenumber", "idempotencykey", "messageid",
+];
+
+/**
+ * True when `key` names a machine forensic identifier (allowlist or compound suffix). The KEY is
+ * FIRST canonicalized through the SAME shared Unicode detection primitive used for VALUES and for the
+ * sensitive-secret classifier (`buildUnicodeDetectionCopy`: NFKD → strip `\p{M}` → strip Cf /
+ * Default_Ignorable → fold `\p{Nd}`) BEFORE the existing ASCII normalization (strip every non-
+ * alphanumeric, lowercase). This keeps the field-name classification Unicode-consistent with
+ * `isSensitiveSecretFieldName` (PRIV-UNICODE-REDACTION-001 round-9) so a forensic key hidden behind a
+ * zero-width / combining / full-width / math-alnum / precomposed-accent obfuscation cannot slip the
+ * classification either way. NO-DEGRADE: a pure-ASCII key folds BYTE-IDENTICAL (fast path), so every
+ * existing ASCII decision is unchanged, and the canonical form only feeds the SAME exact/suffix match
+ * — matching is never broadened.
+ */
+function isForensicIdentifierKey(key: string): boolean {
+  const canonical = buildUnicodeDetectionCopy(key).normalized;
+  const normalized = canonical.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  if (normalized.length === 0) return false;
+  if (AUDIT_FORENSIC_IDENTIFIER_KEYS.has(normalized)) return true;
+  return AUDIT_FORENSIC_IDENTIFIER_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
+}
+
+/**
+ * PII types (by value) that DISQUALIFY a forensic-named scalar leaf from identifier preservation.
+ * A forensic key preserves a value only when it is a validated BENIGN OPAQUE identifier; a scalar
+ * that is genuinely email / SSN / credit-card by value is user PII and MUST be redacted (Advisor
+ * round-4: "do NOT preserve raw PII just because the key is forensic-named"). `phone_us` is
+ * DELIBERATELY EXCLUDED: a phone-SHAPED value is routinely a benign machine id (a false-positive we
+ * must not corrupt — the #1618 lesson: `requestId:"2015550123"` stays verbatim), and an embedded
+ * CHANNEL phone (`channel:<kind>:<+1…>:<msgid>`) is stripped by `redactIdentifierLeaf`'s
+ * leading-country-code passes while the routing prefix + id structure survive. So a phone shape
+ * never disqualifies a forensic identifier — only email / SSN / card do.
+ */
+const FORENSIC_LEAF_REDACT_PII_TYPES = new Set<string>(["email", "ssn_us", "credit_card"]);
+
+/**
+ * True when a forensic-named SCALAR STRING is a validated BENIGN OPAQUE identifier that may be
+ * PRESERVED (cut out of the PII pass, then run through the identifier-leaf only). It is NOT benign —
+ * and is instead routed to the CONTENT path for redaction — when it carries a secret SHAPE (opaque
+ * credential assignment / token / key / JWT / PEM / Bearer) OR direct email / SSN / card PII by
+ * value. Both checks run over the shared Unicode DETECTION COPY (digits folded to ASCII by value,
+ * zero-width / format code points stripped), so an email / SSN / card obfuscated by a non-ASCII
+ * decimal script or a zero-width splice is de-obfuscated and disqualified rather than laundered onto
+ * a forensic key. The PII check reuses the shared guard's own detectors (via `redactDeep`'s emitted
+ * tags) so it is byte-consistent with how the same value would be classified as content — for a
+ * pure-ASCII value the detection copy is byte-identical, so ASCII decisions are unchanged. It
+ * excludes the phone type by design (see `FORENSIC_LEAF_REDACT_PII_TYPES`).
+ */
+function isBenignOpaqueForensicScalar(value: string): boolean {
+  // PRIV-UNICODE-REDACTION-001 (round-6): decide preserve-vs-redact over the shared Unicode DETECTION
+  // COPY, NOT the raw value. Both disqualification checks (secret shape + email/SSN/card PII tag) are
+  // ASCII-only, so a forensic-named leaf carrying an email / SSN / card hidden behind a non-ASCII
+  // decimal script (Arabic-Indic `١٢٣-٤٥-٦٧٨٩`) or a zero-width splice (`victim@examp<U+200B>le.com`)
+  // was misclassified BENIGN over the raw value, cut out of the content PII pass, and — because the
+  // identifier-leaf residual deliberately omits PII-by-value — laundered raw onto a forensic key,
+  // violating the `FORENSIC_LEAF_REDACT_PII_TYPES` invariant. Classifying over the de-obfuscated copy
+  // DISQUALIFIES it, so it is routed to the content path and redacted by `redactUnicodeContentLeaf`.
+  //
+  // Correctness: for a pure-ASCII value `buildUnicodeDetectionCopy` returns it UNCHANGED (fast path),
+  // so ASCII preserve/redact decisions are BYTE-IDENTICAL — an obfuscated value is classified exactly
+  // as its de-obfuscated ASCII equivalent would be. `phone_us` stays EXCLUDED from the disqualifying
+  // set, so a benign phone-SHAPED forensic id in a non-ASCII script (`٢٠١٥٥٥٠١٢٣` → `2015550123` →
+  // phone_us) folds to a non-disqualifying tag and is still PRESERVED verbatim (the #1618 field-role
+  // lesson, carried into Unicode — a benign phone-shaped id is never collapsed).
+  const detection = buildUnicodeDetectionCopy(value).normalized;
+  if (redactSecretShapesInString(detection) !== detection) return false;
+  const piiTags = auditPiiGuard.redactDeep(detection).tagsToAdd;
+  for (const tag of piiTags) {
+    const type = tag.slice(tag.lastIndexOf(".") + 1);
+    if (FORENSIC_LEAF_REDACT_PII_TYPES.has(type)) return false;
+  }
+  return true;
+}
+
+/**
+ * Leaf-and-type-aware forensic gate (Advisor round-4 blocking-finding fix). A forensic-named key
+ * PRESERVES its value ONLY when this returns true; otherwise the value is routed to the normal
+ * CONTENT path (descended + PII/secret-redacted). The forensic exemption is therefore "preserve a
+ * validated benign-opaque identifier LEAF", NEVER "exempt an arbitrary subtree" and NEVER "preserve
+ * a PII/secret value":
+ *   - OBJECT / ARRAY  → NOT preservable. Routed to content so its descendants get the FULL
+ *     sensitive-key + PII-by-value + secret classification; nested forensic-keyed benign leaves are
+ *     re-preserved one level down by their own key.
+ *   - non-string scalar (number / bigint / boolean / null) and genuine `Date` → preservable: it can
+ *     never be email / SSN / card by value here (the shared guard only redacts a numeric under a
+ *     SENSITIVE key, which a forensic key is not).
+ *   - scalar STRING  → preservable ONLY when validated benign-opaque (no email / SSN / card, no
+ *     secret shape); a PII/secret scalar is routed to content and redacted.
+ */
+function isPreservableForensicLeaf(value: unknown): boolean {
+  if (value !== null && typeof value === "object" && !(value instanceof Date)) return false;
+  if (typeof value !== "string") return true;
+  return isBenignOpaqueForensicScalar(value);
+}
+
+/**
+ * OUT-OF-BAND marker for a cut-out benign-opaque forensic identifier LEAF (reviewer finding F-1;
+ * Advisor round-4 narrowed the cut from a whole subtree to a validated leaf). Restoration keys on
+ * OBJECT IDENTITY (`instanceof`), NEVER on a string value — so NO untrusted content value can ever
+ * be mistaken for a marker (a prior in-band NUL-delimited string sentinel could be forged verbatim
+ * by a caller `details` value, corrupting the record). It extends `Date` because a `Date` is the
+ * ONLY value the shared guard's `redactDeep` (and `mapStringsDeep`) passes through BY REFERENCE, so
+ * the marker survives the PII pass with its identity — and its captured `original` — intact. The
+ * wrapped `original` is only ever a scalar leaf (a validated benign-opaque string, or a number /
+ * boolean / null / Date), never an arbitrary subtree.
+ */
+class AuditForensicRef extends Date {
+  readonly original: unknown;
+  constructor(original: unknown) {
+    super(0);
+    this.original = original;
+  }
+}
+
+/** Content phone pre-pass (US then international), applied to CONTENT strings BEFORE `redactDeep`. */
+function redactContentChannelPhones(input: string): string {
+  return redactInternationalChannelPhone(redactResidualUsPhone(input));
+}
+
+/**
+ * CONTENT pre-pass (Pass 1), applied to every CONTENT string leaf BEFORE the ASCII PII guard
+ * (`redactDeep`, Pass 2) sees it. Two layers:
+ *   1. the ASCII/full-width channel-phone pre-pass (US then international) — a `+`-E.164 becomes
+ *      `[PHONE]` before Pass 2's CARD detector, so it is never mislabeled `+[CREDIT_CARD]` (F-3);
+ *   2. the shared Unicode-aware content leaf on the ORIGINAL value.
+ *
+ * Layer 2 closes a pass-ordering residual (round-8 follow-up): Pass 2's ASCII detectors run on the
+ * RAW value, and when an obfuscating (non-ASCII) code point sits where a VALID ASCII sub-shape
+ * remains — most sharply an accent / zero-width in an email LOCAL-PART (`víctim@example.com` →
+ * matches the still-valid `ctim@example.com` and leaves the accented prefix) — Pass 2 FRAGMENTS the
+ * value, redacting only the ASCII tail; Pass 3's full-span Unicode redaction then can no longer
+ * apply, so the accented prefix persisted (and NFC vs NFD left DIFFERENT residual bytes — a
+ * canonical-equivalence inconsistency). Running the Unicode leaf on the ORIGINAL value HERE maps the
+ * WHOLE detected span (email / secret / PII-by-value over the de-obfuscated detection copy) back to
+ * the original and redacts it cleanly BEFORE Pass 2 can fragment it — NFC ≡ NFD, no fragment.
+ *
+ * NO-DEGRADE — this is strictly additive: `redactUnicodeObfuscated` is a NO-OP on a value whose
+ * detection copy is unchanged (pure ASCII → `changed=false`, short-circuit returns the input) and on
+ * any value where no finder matches (benign accented / multilingual / ZWJ-emoji text). So a
+ * pure-ASCII content string is byte-identical to today's phone-only pre-pass, ASCII PII stays with
+ * Pass 2's KEY-CONTEXT-aware detection, and benign Unicode text is returned verbatim. Only an
+ * actually-obfuscated PII/secret is touched, and only ever redacted MORE completely (full original
+ * span vs a fragment) — never less. Forensic-identifier leaves are cut to an `AuditForensicRef`
+ * BEFORE this runs, so their benign-phone-shaped-id preservation is unaffected.
+ */
+function redactContentPrePass(input: string): string {
+  return redactUnicodeContentLeaf(redactContentChannelPhones(input));
+}
+
+/**
+ * Build the CONTENT SKELETON for `redactAuditDetails` Pass 1 — RECURSIVE / path-aware field-role
+ * classification applied at EVERY object level (finding 2). Iterative + cycle-aware (a back-edge to
+ * a node still on the DFS path becomes a structural share, so deep/cyclic input neither overflows
+ * the stack nor loops). At each object key:
+ *   - forensic identifier key holding a PRESERVABLE LEAF (validated benign-opaque scalar, or a
+ *     number / boolean / null / Date; see `isPreservableForensicLeaf`) → the LEAF is CUT: replaced
+ *     by an `AuditForensicRef` wrapper (out-of-band identity), so the PII guard never sees (and never
+ *     corrupts) a benign identifier such as `requestId = "2015550123"`. A forensic key over an
+ *     OBJECT / ARRAY, or over a scalar that is itself email / SSN / card / secret, is NOT cut — it
+ *     falls through to the content path so its descendants are fully classified (Advisor round-4:
+ *     the exemption is a benign-opaque LEAF, never a subtree, never a PII/secret value);
+ *   - sensitive-secret key     → the whole value is nuked to the secret marker (an opaque
+ *     credential has no shape and is only catchable by its key);
+ *   - content key              → cloned through and descended, so `redactDeep` redacts its PII.
+ * CONTENT string leaves get the CONTENT PRE-PASS HERE (`redactContentPrePass`): the phone pre-pass
+ * (F-3) — a Luhn-valid 13–16-digit `+`-E.164 phone becomes `[PHONE]` BEFORE `redactDeep`'s CARD
+ * detector runs in Pass 2, so it is never mislabeled `+[CREDIT_CARD]` — PLUS the Unicode-aware content
+ * leaf on the ORIGINAL value, so an obfuscated email/secret/PII is redacted on its FULL span before
+ * Pass 2's ASCII guard can FRAGMENT it (the local-part-accent residual; NFC ≡ NFD). The Unicode leaf
+ * is a NO-OP on pure ASCII / benign text, so ASCII PII stays with Pass 2's key-context detection.
+ * Array elements inherit their container's content role; an OBJECT element
+ * re-establishes per-key roles. Keys are reserved in FORWARD `Object.entries` order and written as
+ * own data properties, so enumeration order is byte-identical to the input and a JSON `__proto__`
+ * key cannot pollute.
+ */
+function buildContentSkeleton(root: unknown): unknown {
+  type ValueFrame = { v: unknown; assign: (r: unknown) => void };
+  type ExitFrame = { exit: object };
+  const outRef: { value: unknown } = { value: undefined };
+  const onPath = new WeakMap<object, unknown>();
+  const stack: Array<ValueFrame | ExitFrame> = [{ v: root, assign: (r) => { outRef.value = r; } }];
+
+  const defineOwn = (target: Record<string, unknown>, key: string, val: unknown): void => {
+    Object.defineProperty(target, key, { value: val, enumerable: true, writable: true, configurable: true });
+  };
+
+  while (stack.length > 0) {
+    const frame = stack.pop() as ValueFrame | ExitFrame;
+    if ("exit" in frame) {
+      onPath.delete(frame.exit);
+      continue;
+    }
+    const { v, assign } = frame;
+
+    if (Array.isArray(v)) {
+      if (onPath.has(v)) { assign(onPath.get(v)); continue; }
+      const arr: unknown[] = new Array(v.length);
+      onPath.set(v, arr);
+      assign(arr);
+      stack.push({ exit: v });
+      for (let i = v.length - 1; i >= 0; i -= 1) {
+        const idx = i;
+        stack.push({ v: v[idx], assign: (r) => { arr[idx] = r; } });
+      }
+      continue;
+    }
+
+    if (v && typeof v === "object" && !(v instanceof Date)) {
+      if (onPath.has(v)) { assign(onPath.get(v)); continue; }
+      const obj: Record<string, unknown> = {};
+      onPath.set(v, obj);
+      assign(obj);
+      stack.push({ exit: v });
+      const childFrames: ValueFrame[] = [];
+      for (const [key, child] of Object.entries(v as Record<string, unknown>)) {
+        if (isForensicIdentifierKey(key) && isPreservableForensicLeaf(child)) {
+          // LEAF-and-type-aware forensic preservation: cut ONLY a validated benign-opaque
+          // identifier LEAF out of the PII pass — never an arbitrary subtree, never a PII/secret
+          // value. A forensic key over an object/array or a PII/secret scalar falls through to the
+          // content path below, so its descendants get the full PII-by-value + secret classification.
+          defineOwn(obj, key, new AuditForensicRef(child)); // cut point — restored by identity in Pass 3
+        } else if (isSensitiveSecretFieldName(key)) {
+          defineOwn(obj, key, AUDIT_SECRET_MARKER); // nuke the whole value regardless of shape
+        } else {
+          defineOwn(obj, key, undefined); // reserve slot in forward order; filled by its frame
+          childFrames.push({ v: child, assign: (r) => { defineOwn(obj, key, r); } });
+        }
+      }
+      for (let i = childFrames.length - 1; i >= 0; i -= 1) {
+        stack.push(childFrames[i]);
+      }
+      continue;
+    }
+
+    // Scalar leaf. Only genuine CONTENT scalars reach here (forensic subtrees are cut, secret values
+    // nuked). Content strings get the CONTENT PRE-PASS BEFORE `redactDeep` sees them: the phone
+    // pre-pass (F-3) PLUS the Unicode-aware content leaf on the ORIGINAL value, so an obfuscated
+    // email/secret/PII is redacted on its FULL span before Pass 2's ASCII guard can FRAGMENT it (the
+    // local-part-accent residual). The Unicode leaf is a no-op on pure ASCII / benign text (NO-DEGRADE).
+    assign(typeof v === "string" ? redactContentPrePass(v) : v);
+  }
+
+  return outRef.value;
+}
+
+/**
+ * Pass 3 — finalize the redacted skeleton. Iterative + cycle-aware. For each node:
+ *   - `AuditForensicRef`  → restore the cut-out benign-opaque identifier leaf, run through the
+ *     identifier-leaf. Keyed on OBJECT IDENTITY, so a content value can NEVER be mistaken for a
+ *     marker (F-1 fix);
+ *   - genuine `Date`      → preserved (type + value);
+ *   - string leaf         → content-leaf (secret shapes + US/intl phone);
+ *   - array / object      → rebuilt, keys reserved in FORWARD order (order + `__proto__` safety).
+ */
+function finalizeRedactedSkeleton(root: unknown): unknown {
+  type ValueFrame = { v: unknown; assign: (r: unknown) => void };
+  type ExitFrame = { exit: object };
+  const outRef: { value: unknown } = { value: undefined };
+  const onPath = new WeakMap<object, unknown>();
+  const stack: Array<ValueFrame | ExitFrame> = [{ v: root, assign: (r) => { outRef.value = r; } }];
+
+  const defineOwn = (target: Record<string, unknown>, key: string, val: unknown): void => {
+    Object.defineProperty(target, key, { value: val, enumerable: true, writable: true, configurable: true });
+  };
+
+  while (stack.length > 0) {
+    const frame = stack.pop() as ValueFrame | ExitFrame;
+    if ("exit" in frame) {
+      onPath.delete(frame.exit);
+      continue;
+    }
+    const { v, assign } = frame;
+
+    if (typeof v === "string") {
+      assign(redactContentLeaf(v));
+      continue;
+    }
+    if (v instanceof AuditForensicRef) {
+      assign(mapStringsDeep(v.original, redactIdentifierLeaf));
+      continue;
+    }
+    if (v instanceof Date) {
+      assign(v); // genuine caller Date — preserve
+      continue;
+    }
+    if (Array.isArray(v)) {
+      if (onPath.has(v)) { assign(onPath.get(v)); continue; }
+      const arr: unknown[] = new Array(v.length);
+      onPath.set(v, arr);
+      assign(arr);
+      stack.push({ exit: v });
+      for (let i = v.length - 1; i >= 0; i -= 1) {
+        const idx = i;
+        stack.push({ v: v[idx], assign: (r) => { arr[idx] = r; } });
+      }
+      continue;
+    }
+    if (v && typeof v === "object") {
+      if (onPath.has(v)) { assign(onPath.get(v)); continue; }
+      const obj: Record<string, unknown> = {};
+      onPath.set(v, obj);
+      assign(obj);
+      stack.push({ exit: v });
+      const objectEntries = Object.entries(v as Record<string, unknown>);
+      for (const [key] of objectEntries) defineOwn(obj, key, undefined); // reserve forward order
+      for (let i = objectEntries.length - 1; i >= 0; i -= 1) {
+        const key = objectEntries[i][0];
+        const child = objectEntries[i][1];
+        stack.push({ v: child, assign: (r) => { defineOwn(obj, key, r); } });
+      }
+      continue;
+    }
+
+    assign(v); // number / bigint / boolean / null / undefined
+  }
+
+  return outRef.value;
+}
+
+/**
+ * Redact the caller `details` payload before persistence. RECURSIVE, field-role aware at EVERY
+ * nesting level (SEC-EVENT-REDACTION-001):
+ *   - forensic identifier fields (allowlist, any depth) holding a benign-opaque LEAF → PRESERVED as
+ *     identifiers (cut out of the PII guard, identifier-leaf only), so distinct ids stay distinct and
+ *     a nested benign phone-shaped id is never corrupted to `[PHONE_US]`. A forensic key over an
+ *     object/array is RECURSED and a forensic scalar that is PII/secret by value is REDACTED — the
+ *     exemption is a benign-opaque LEAF, never a subtree exemption (Advisor round-4 blocking finding);
+ *   - sensitive-secret field NAMES (any depth)          → whole value nuked to the secret marker;
+ *   - every other CONTENT field                         → content pre-pass (phone pre-pass + Unicode
+ *     leaf on the ORIGINAL value so obfuscated PII/secrets are redacted full-span before Pass 2 can
+ *     fragment them), then PII-by-value redaction via `redactDeep`, then the content-leaf.
+ *
+ * The whole content skeleton is handed to `redactDeep` in ONE call, so the guard's FULL capability
+ * (numeric key-context, array threading, key-collision handling, hardened cycle-aware traversal)
+ * applies to all content with zero degrade while the out-of-band `AuditForensicRef` markers survive
+ * it by reference. A benign payload round-trips byte-identically (structure + key order preserved).
+ */
+function redactAuditDetails(details: Record<string, unknown>): Record<string, unknown> {
+  // Pass 1 — structural cut walk: benign-opaque forensic LEAVES → AuditForensicRef; secret values →
+  // marker; forensic objects/arrays + PII/secret forensic scalars descend as content; content
+  // strings → content pre-pass (phone pre-pass so `+`-E.164 never reaches the card detector, PLUS the
+  // Unicode leaf on the ORIGINAL value so an obfuscated PII/secret is redacted full-span before Pass 2
+  // can fragment it — the local-part-accent residual; no-op on ASCII/benign, so NO-DEGRADE).
+  const skeleton = buildContentSkeleton(details);
+
+  // Pass 2 — PII-by-value redaction over the whole content skeleton via the shared guard. The
+  // out-of-band markers (Date subclass) and the secret marker survive unchanged.
+  const redactedSkeleton = auditPiiGuard.redactDeep(skeleton).value;
+
+  // Pass 3 — finalize: restore each forensic marker (by identity) with its original subtree run
+  // through the identifier-leaf; apply the content-leaf to every remaining content string.
+  return finalizeRedactedSkeleton(redactedSkeleton) as Record<string, unknown>;
+}
+
 // ─── Adapter ───
 
 /**
  * Convert a legacy `FridayAuditLogWrite` entry to the enriched `FridayAuditRecord`.
+ *
+ * SEC-EVENT-REDACTION-001: the caller `details` content is redacted (PII-by-value + secret
+ * shapes) here — the single choke point feeding BOTH the SQLite `details_json` column and the
+ * `audit.jsonl` mirror. Canonical columns are copied through verbatim.
  */
 function toAuditRecord(entry: FridayAuditLogWrite): FridayAuditRecord {
   return buildFridayAuditRecordBase({
@@ -53,7 +751,7 @@ function toAuditRecord(entry: FridayAuditLogWrite): FridayAuditRecord {
     resourceId: entry.resourceId,
     requestId: entry.requestId,
     traceId: entry.traceId,
-    details: entry.details,
+    details: entry.details === undefined ? undefined : redactAuditDetails(entry.details),
     result: entry.result,
     errorCode: entry.errorCode,
     errorMessage: entry.errorMessage,

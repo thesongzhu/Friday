@@ -466,11 +466,39 @@ describe("FridayMemoryRoutes", () => {
 
   // ─── Get handler ───
 
-  it("get handler returns item", async () => {
+  it("get handler returns the item through the egress output filter (benign item unchanged in value)", async () => {
     const route = findRoute("memory.get");
     const ctx = makeCtx({ params: { id: "item-1" } });
     const result = await route.handler(ctx) as { item: FridayMemoryItem };
-    expect(result.item).toBe(mockItem);
+    // Value-identical for a benign item, but a NEW object — memory.get now applies `filterItem`
+    // (round-16 leak fix) exactly as `memory.list` does, so it is no longer the raw stored reference.
+    expect(result.item).toEqual(mockItem);
+  });
+
+  // SEC-EVENT-REDACTION-001 round-16: the public single-item GET `memory.get` previously returned the
+  // stored item VERBATIM — a secret / PII / secret-shaped tag in an item written before the store-time
+  // guard leaked here while `memory.list` redacted the SAME item (a defense-in-depth gap). It now routes
+  // through the SAME `outputFilter.filterItem`. RED on 473053f1 (`return { item }`), GREEN after.
+  it("get handler REDACTS a secret in content, a PII metadata value, and DROPS a secret tag", async () => {
+    const seg = (...p: string[]): string => p.join(""); // pragma: allowlist secret
+    const secret = seg("sk-", "abcdefghijklmnopqrstuv0123456789"); // pragma: allowlist secret
+    const leaky: FridayMemoryItem = {
+      ...mockItem,
+      content: `deploy used ${secret} to auth`,
+      tags: ["keep", secret],
+      metadata: { email: "alice@example.com", note: "ok" },
+    };
+    vi.mocked(memoryService.get).mockResolvedValue(leaky);
+    const route = findRoute("memory.get");
+    const result = await route.handler(makeCtx({ params: { id: "item-1" } })) as { item: FridayMemoryItem };
+    expect(result.item.content).toContain("[REDACTED_SECRET]");
+    expect(result.item.content).not.toContain(secret);
+    expect(result.item.tags).toEqual(["keep"]); // secret-shaped tag dropped
+    expect((result.item.metadata as { email: string; note: string }).email).toBe("[EMAIL]");
+    expect((result.item.metadata as { email: string; note: string }).note).toBe("ok");
+    const json = JSON.stringify(result.item);
+    expect(json).not.toContain(secret);
+    expect(json).not.toContain("alice@example.com");
   });
 
   it("get handler throws 404 when not found", async () => {

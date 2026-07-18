@@ -401,7 +401,15 @@ export function createFridayMemoryRoutes(
             if (replayHash && replayHash !== payloadHash) {
               throwIdempotencyConflict(idempotencyKey, "memory.items.create");
             }
-            return { item: replay };
+            // SEC-EVENT-REDACTION-001 (round-18): route the idempotency-REPLAY early return through the
+            // SAME canonical egress filter `memory.get` / `memory.list` apply (round-16). `findStoreReplay`
+            // returns the RAW persisted row directly from the repository — bypassing the guard service's
+            // read-time `filterItem` — so a secret / PII persisted before the store-time guard existed (or
+            // by an older writer) leaked VERBATIM on retry. Only the returned ITEM body is filtered: the
+            // conflict check above still reads the RAW `replay.metadata` payloadHash, and `filterItem`
+            // preserves the benign idempotency envelope (`metadata.apiRequest`) byte-for-byte, so conflict
+            // behaviour and idempotency semantics are unchanged.
+            return { item: outputFilter.filterItem(replay) };
           }
           const metadata =
             body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
@@ -472,7 +480,15 @@ export function createFridayMemoryRoutes(
             if (replayHash && replayHash !== payloadHash) {
               throwIdempotencyConflict(idempotencyKey, "memory.items.create");
             }
-            return { item: replay };
+            // SEC-EVENT-REDACTION-001 (round-18): route the idempotency-REPLAY early return through the
+            // SAME canonical egress filter `memory.get` / `memory.list` apply (round-16). `findStoreReplay`
+            // returns the RAW persisted row directly from the repository — bypassing the guard service's
+            // read-time `filterItem` — so a secret / PII persisted before the store-time guard existed (or
+            // by an older writer) leaked VERBATIM on retry. Only the returned ITEM body is filtered: the
+            // conflict check above still reads the RAW `replay.metadata` payloadHash, and `filterItem`
+            // preserves the benign idempotency envelope (`metadata.apiRequest`) byte-for-byte, so conflict
+            // behaviour and idempotency semantics are unchanged.
+            return { item: outputFilter.filterItem(replay) };
           }
           const metadata =
             body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
@@ -564,7 +580,12 @@ export function createFridayMemoryRoutes(
             { httpStatus: 404 },
           );
         }
-        return { item };
+        // SEC-EVENT-REDACTION-001 (round-16): apply the SAME egress filter `memory.list` applies. This
+        // single-item public GET previously returned the stored item VERBATIM (content / metadata / tags),
+        // so a secret or PII in an item written before the store-time guard existed leaked here while the
+        // list route redacted it — a defense-in-depth gap. Routing through `outputFilter.filterItem`
+        // closes it (redacts content / metadata secret+PII, drops secret/PII-shaped tags).
+        return { item: outputFilter.filterItem(item) };
       },
     },
 

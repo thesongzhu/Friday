@@ -540,8 +540,8 @@ export function createFridayMemoryGuardService(
         const allPiiTags = [
           ...new Set([...piiResult.tagsToAdd, ...metadataRedaction.tagsToAdd, ...tagPiiTypeTags]),
         ];
-        // PII_MODE is compile-time "tag" by default, but test the variable as a runtime
-        // string to support re-configuration without code changes.
+        // PII_MODE is compile-time "redact" by default (see FRIDAY_MEMORY_GUARD_PII_MODE), but test
+        // the variable as a runtime string to support re-configuration without code changes.
         if (piiPresent && (FRIDAY_MEMORY_GUARD_PII_MODE as string) === "block") {
           throw new FridayDomainError(
             FRIDAY_MEMORY_GUARD_ERROR_CODES.PII_BLOCKED,
