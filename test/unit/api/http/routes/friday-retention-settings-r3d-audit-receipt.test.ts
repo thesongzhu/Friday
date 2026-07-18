@@ -2233,6 +2233,69 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     },
   );
 
+  // ── P1 #2 — ROUND-10 anchor LINKAGE columns (matrix completeness): explicit
+  //    negatives for the three anchor-checked fields NOT in the envelope matrix —
+  //    anchor.principal_id, anchor.metadata.correlationId, anchor.metadata.payloadDigest
+  //    — so the per-anchor-column matrix literally covers EVERY column
+  //    `assertReceiptAnchor` checks. Tamper ONLY the one anchor field on the
+  //    `security_audit_log` row (receipt intact) → recovery fails closed with the
+  //    exact `anchor_mismatch:<label>` (labels per the checks array: principalId /
+  //    correlationId / payloadDigest). (The remaining anchor columns are covered
+  //    elsewhere: receiptId → round-10 Probe-2; tenantId → the scalar matrix;
+  //    createdAt → round-10c Fix#1.)
+  function tamperAnchorMetadata(
+    recoveryKeyHash: string,
+    mutate: (metadata: Record<string, unknown>) => void,
+  ): void {
+    const anchor = db.writer
+      .prepare(
+        `SELECT id, metadata_json FROM security_audit_log
+           WHERE id = (SELECT audit_id FROM retention_recovery_receipts WHERE recovery_key_hash = ?)`,
+      )
+      .get(recoveryKeyHash) as { id: string; metadata_json: string };
+    const metadata = JSON.parse(anchor.metadata_json) as Record<string, unknown>;
+    mutate(metadata);
+    db.writer
+      .prepare("UPDATE security_audit_log SET metadata_json = ? WHERE id = ?")
+      .run(JSON.stringify(metadata), anchor.id);
+  }
+  const anchorLinkageMutations: Array<[string, string, (h: string) => void]> = [
+    [
+      "principal_id → a different owner",
+      "anchor_mismatch:principalId",
+      (h) =>
+        db.writer
+          .prepare(
+            `UPDATE security_audit_log SET principal_id = 'someone-else'
+               WHERE id = (SELECT audit_id FROM retention_recovery_receipts WHERE recovery_key_hash = ?)`,
+          )
+          .run(h),
+    ],
+    [
+      "metadata.correlationId → a different valid correlation",
+      "anchor_mismatch:correlationId",
+      (h) =>
+        tamperAnchorMetadata(h, (m) => {
+          m.correlationId = `retention-policy-update:${CANON}:op-TAMPERED`;
+        }),
+    ],
+    [
+      "metadata.payloadDigest → a different 64-hex",
+      "anchor_mismatch:payloadDigest",
+      (h) =>
+        tamperAnchorMetadata(h, (m) => {
+          // A real, well-shaped digest that DIFFERS from the receipt's (auditLogs→30).
+          m.payloadDigest = hashIdempotencyPayload({ auditLogs: { mode: "after_days", days: 31 } });
+        }),
+    ],
+  ];
+  it.each(anchorLinkageMutations)(
+    "(round-11 anchor-linkage) anchor column [%s] tampered → recovery 500 %s; authoritative policy unchanged; counts stay 1",
+    async (_label, reason, corrupt) => {
+      await seedCoherentThenCorruptField(`link-${reason.replace(/[^a-zA-Z]/g, "")}`, corrupt, reason);
+    },
+  );
+
   // ── P1 #2 — GREEN over-fail-close (CATASTROPHIC control): a normal write recovers
   //    clean through the FULL envelope, single AND multi-tenant; the stored anchor
   //    columns equal the canonical constants (empirical guard, in-suite).
