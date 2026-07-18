@@ -232,6 +232,23 @@ export interface FridayRetentionJobResult {
    * only once the owner opts auditLogs into a finite `after_days` window.
    */
   deletedRetentionReceipts: number;
+  /**
+   * RETENTION-R3d (whole-row receipt invariant): recovery-receipt rows QUARANTINE-
+   * deleted this pass because their persisted `created_at` is NON-CANONICAL (fails
+   * the canonical-ISO shape gate `FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB`, e.g.
+   * `"zzzz"`). Such a row cannot be reliably dated, so a lexicographic
+   * `created_at < cutoff` compare would let it SILENTLY SURVIVE a finite-retention
+   * sweep (a DATA-RETENTION-001 truthfulness break — "a successful zero-deletion
+   * sweep silently surviving a finite retention policy"). Its content category is
+   * opted into deletion, so the finite sweep DELETES it and surfaces this typed
+   * integrity incident instead of a silent zero. GOVERNED by the SAME `auditLogs`
+   * category as `deletedRetentionReceipts`: 0 while auditLogs is PERMANENT
+   * (default-permanent + fail-closed is preserved — an un-datable row is retained,
+   * never served, until the owner opts into a finite window). This is the
+   * Advisor-authorized "documented safe quarantine strategy" for the ONE operator-
+   * locked (DATA-RETENTION-001) design fork.
+   */
+  quarantinedIntegrityReceipts: number;
   deletedAgentRuns: number;
   deletedLlmUsageRecords: number;
   deletedErrorIncidents: number;

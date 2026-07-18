@@ -126,6 +126,7 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
         deletedSkillRuns: 0,
         deletedAuditLogs: 0,
         deletedRetentionReceipts: 0,
+        quarantinedIntegrityReceipts: 0,
         deletedAgentRuns: 0,
         deletedLlmUsageRecords: 0,
         deletedErrorIncidents: 0,
@@ -197,18 +198,35 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
       // a finite-retention advance (the U9/DATA-RETENTION-001 violation this fixes).
       // Both deletions run under the SAME cutoff, in ONE transaction, so they stay
       // consistent; default-permanent + fail-closed (auditCutoff === null ⇒ delete
-      // nothing) is preserved for BOTH.
+      // nothing, quarantine nothing) is preserved for BOTH.
+      //
+      // WHOLE-ROW INVARIANT (RETENTION-R3d) — DOCUMENTED SAFE QUARANTINE: a receipt
+      // whose persisted `created_at` is NON-CANONICAL cannot be dated, so the
+      // lexicographic `created_at < cutoff` compare would let it SILENTLY SURVIVE
+      // this finite window (a DATA-RETENTION-001 truthfulness break — "a successful
+      // zero-deletion sweep silently surviving a finite retention policy"). Its
+      // content category is opted into deletion, so the finite sweep QUARANTINE-
+      // deletes exactly those un-datable rows and surfaces a TYPED integrity incident
+      // (`quarantinedIntegrityReceipts`) so the sweep is never a silent zero-deletion
+      // success. It does NOT abort the sweep — one corrupt row must not block reaping
+      // valid rows. This is the ONE operator-locked (DATA-RETENTION-001) design fork,
+      // implemented as the Advisor-authorized "documented safe quarantine strategy";
+      // under default-permanent (auditCutoff === null) the un-datable row is RETAINED
+      // (never served — the read path fails closed on it) until the owner opts in.
       const auditCutoff = resolveCutoff(nowIso, policy.auditLogs);
       if (auditCutoff === null) {
         result.deletedAuditLogs = 0;
         result.deletedRetentionReceipts = 0;
+        result.quarantinedIntegrityReceipts = 0;
       } else {
         const swept = deps.db.withWriteTransaction((db) => ({
           logs: db.prepare("DELETE FROM audit_logs WHERE ts < ?").run(auditCutoff).changes,
           receipts: receiptRepo.deleteExpiredBefore(db, auditCutoff),
+          quarantined: receiptRepo.quarantineNonCanonicalCreatedAt(db),
         }));
         result.deletedAuditLogs = swept.logs;
         result.deletedRetentionReceipts = swept.receipts;
+        result.quarantinedIntegrityReceipts = swept.quarantined;
       }
 
       // CONTENT category (canonical): default-permanent, fail-closed.

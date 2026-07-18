@@ -44,6 +44,89 @@ export class FridayRetentionReceiptIntegrityError extends FridayDomainError {
 }
 
 /**
+ * CANONICAL `created_at` SHAPE gate (SQL GLOB) — the STORAGE-boundary (v108 CHECK)
+ * and REAPER-quarantine approximation of a canonical ISO-8601 UTC instant
+ * `YYYY-MM-DDTHH:MM:SS.sssZ`. SQLite has no date type, so this is a shape mask with
+ * tightened component ranges (month `[0-1]`, day `[0-3]`, hour `[0-2]`, min/sec
+ * `[0-5]`) that accepts EVERY real `Date#toISOString()` yet rejects `"zzzz"`, the
+ * empty string, a non-`Z` offset, AND the impossible `9999-99-99T99:99:99.999Z`.
+ *
+ * ONE source of truth: the v108 migration INLINES this exact literal (a migration
+ * is a frozen artifact and must not interpolate a mutable constant) and a guard
+ * test asserts agreement; the reaper's finite-sweep quarantine consumes THIS
+ * constant, so the storage bound and the reap bound can never silently diverge.
+ * NB: this is a SHAPE approximation only — the read/serve path additionally
+ * enforces the EXACT instant via `isCanonicalReceiptCreatedAt` (round-trip).
+ */
+export const FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB =
+  "[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9].[0-9][0-9][0-9]Z";
+
+/** Exact canonical-instant regex: `YYYY-MM-DDTHH:MM:SS.sssZ` (millis + literal Z). */
+const CANONICAL_ISO_INSTANT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/** Non-reversible sha256 digest / key hash shape: exactly 64 lowercase hex chars. */
+const SHA256_LOWER_HEX_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * STRICT canonical-instant gate for a persisted `created_at` (read/serve path).
+ * Accepts EXACTLY what `new Date().toISOString()` emits and REJECTS anything that
+ * does not round-trip: `"zzzz"`, empty/non-string, a non-`Z` offset, and any
+ * far-past/far-future value that does not `new Date(s).toISOString() === s`. This
+ * is the exact instant gate the GLOB only approximates.
+ */
+export function isCanonicalReceiptCreatedAt(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0) return false;
+  if (!CANONICAL_ISO_INSTANT_RE.test(value)) return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+/**
+ * FRIDAY_RETENTION_RECEIPT_ROW_INVARIANT — the ONE canonical whole-row invariant
+ * for a persisted `retention_recovery_receipts` row (RETENTION-R3d). It is enforced
+ * by the SINGLE validator `assertReceiptRowIntegrity` at EVERY seam (write / insert,
+ * read / decode, idempotent-replay, recovery, restart-readback) with ZERO drift; the
+ * reaper boundary enforces the SAME canonical `created_at` shape via the shared
+ * `FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB`. Any violation throws a typed
+ * `FridayRetentionReceiptIntegrityError` (code `RETENTION_RECEIPT_INTEGRITY_FAILURE`,
+ * HTTP 500) with a DISTINCT `reason` per column/invariant. `null` from
+ * `findOldestByRecoveryKey` is reserved EXCLUSIVELY for a genuinely ABSENT row (no
+ * SQL match) — a matching-but-corrupt row NEVER decodes to null.
+ *
+ * EVERY persisted column + EVERY cross-column / cross-store invariant:
+ *   - receipt_id       — non-empty; shape `retention-receipt:<principalId>:<opId>`
+ *                        (prefix + principal segment == principal_id + non-empty opId).
+ *   - principal_id     — non-empty; == the owner the row was looked up under.
+ *   - tenant_id        — null OR a non-empty string.
+ *   - correlation_id   — non-empty; shape `retention-policy-update:<principalId>:<opId>`
+ *                        (prefix + principal segment == principal_id) AND its opId ==
+ *                        the receipt_id opId (one-write linkage — catches a one-sided
+ *                        correlation_id tamper even without the anchor).
+ *   - audit_id         — non-empty string.
+ *   - recovery_key_hash— null OR 64-char lowercase hex (sha256).
+ *   - payload_digest   — 64-char lowercase hex AND == hashIdempotencyPayload(appliedUpdates)
+ *                        (round-9 digest coherence).
+ *   - created_at       — STRICT canonical ISO-8601 UTC instant that round-trips
+ *                        (`isCanonicalReceiptCreatedAt`).
+ *   - before/after/changedCategories/appliedUpdates — exact-shape + cross-field
+ *                        coherence: after == overlay(before, appliedUpdates),
+ *                        changedCategories == authoritative sorted diff, digest match
+ *                        (INTERNAL to the receipt only — a legitimately STALE receipt
+ *                        still decodes; never compared to the current policy).
+ *   - ANCHOR cross-check (cross-store): the content-minimized `security_audit_log`
+ *                        anchor row `id == audit_id` MUST exist and satisfy
+ *                        metadata.receiptId == receipt_id, metadata.correlationId ==
+ *                        correlation_id, metadata.payloadDigest == payload_digest,
+ *                        principal_id == principal_id, tenant_id == tenant_id.
+ *                        Absent/mismatch → fail closed (a one-sided linkage
+ *                        corruption is never served as a valid correlated receipt).
+ */
+export const FRIDAY_RETENTION_RECEIPT_ROW_INVARIANT =
+  "receipt_id/principal_id/tenant_id/correlation_id/audit_id/recovery_key_hash/" +
+  "payload_digest/created_at + before/after/changedCategories/appliedUpdates coherence " +
+  "+ security_audit_log anchor cross-check — one validator, every seam, zero drift";
+
+/**
  * Owner-scoped persistence for retention-policy RECOVERY RECEIPTS (RETENTION-R3d).
  *
  * The dedicated, GOVERNED home for the FULL recovery-receipt facts (before/after
@@ -118,8 +201,26 @@ export interface FridayRetentionReceiptRepository {
    * RETENTION reaper seam (auditLogs category): delete receipts committed strictly
    * before an ISO cutoff. Called ONLY when the owner opted auditLogs into a finite
    * window (default-permanent otherwise). Returns the number of rows deleted.
+   *
+   * WHOLE-ROW INVARIANT: the compare is guarded by the canonical `created_at` shape
+   * (`FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB`) so ONLY reliably-datable rows are
+   * expired by the lexicographic `created_at < cutoff` compare; a non-canonical
+   * `created_at` (which sorts AFTER any ISO cutoff) is NOT silently retained here —
+   * it is handled by `quarantineNonCanonicalCreatedAt` in the SAME finite sweep.
    */
   deleteExpiredBefore(db: Database.Database, cutoffIso: string): number;
+  /**
+   * RETENTION reaper seam (auditLogs category) — QUARANTINE the un-datable. Delete
+   * receipt rows whose persisted `created_at` FAILS the canonical shape gate
+   * (`FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB`, e.g. `"zzzz"`). Such a row cannot be
+   * dated, so a `created_at < cutoff` compare would let it SILENTLY SURVIVE a finite
+   * retention window (DATA-RETENTION-001 truthfulness break). Called ONLY inside the
+   * finite auditLogs sweep (default-permanent ⇒ never called ⇒ 0), so the un-datable
+   * row is retained (never served) until the owner opts into deletion. Returns the
+   * number of rows quarantine-deleted. Does NOT abort the sweep — one corrupt row
+   * must not block reaping valid rows.
+   */
+  quarantineNonCanonicalCreatedAt(db: Database.Database): number;
   /**
    * DATA-DELETE-ALL-001 seam: purge ALL of one owner's receipts (so a Delete-All
    * compresses this governed store rather than leaving an untracked data island).
@@ -163,31 +264,176 @@ function isValidAppliedUpdates(value: unknown): value is Record<string, Category
   return true;
 }
 
+/** The content-minimized `security_audit_log` anchor row read for the cross-check. */
+interface RetentionReceiptAnchorRow {
+  id: string;
+  principal_id: string | null;
+  tenant_id: string | null;
+  metadata_json: string;
+}
+
 /**
- * Decode + STRICTLY validate a MATCHING receipt row (RETENTION-R3d round-8).
- *
- * This is only ever called with a row the SQL query already MATCHED by
- * (`principal_id`, `recovery_key_hash`), so a malformed/invalid payload here is a
- * STORAGE-INTEGRITY failure on a REAL binding — NOT an absent one. It therefore
- * FAILS CLOSED with a typed `FridayRetentionReceiptIntegrityError` (never returns
- * null): undecodable JSON AND schema-valid-but-semantically-invalid shapes both
- * throw. Every decoded field is validated — `before`/`after` are full content
- * policies (exactly the seven categories, each a valid `CategoryRetention`),
- * `changedCategories` is an array of canonical category names, and `appliedUpdates`
- * is a `{category → CategoryRetention}` map.
- *
- * RETENTION-R3d round-9 (P1 fail-open fix): AFTER the per-field shapes pass, the
- * fields are additionally CROSS-FIELD-validated for mutual coherence — `after` must
- * equal overlay(`before`, `appliedUpdates`), `changedCategories` must be the
- * authoritative sorted diff, and `payloadDigest` must equal the canonical recompute
- * over `appliedUpdates` — recomputed with the SAME write-path functions (zero drift).
- * This closes the fail-OPEN where a per-field-valid but tampered receipt (e.g. only
- * `after_json` swapped 30→90) decoded fine, so a same-key replay / recovery served
- * the tampered after-state. Coherence is INTERNAL to the receipt only (a legitimately
- * STALE receipt still decodes); a corrupted binding can never be mistaken for an
- * unused key (which would re-execute a PUT) or silently recovered.
+ * CROSS-STORE anchor cross-check (RETENTION-R3d whole-row invariant, required
+ * action #3). Before a receipt is REPLAYED or RECOVERED (served to the owner), it
+ * is cross-checked against its content-minimized `security_audit_log` anchor — the
+ * row the audit appender wrote in the SAME transaction with `id == audit_id`,
+ * `principalId`, `tenantId`, and `metadata = {receiptId, correlationId,
+ * payloadDigest}`. The anchor is the AUTHORITATIVE linkage: it is append-only /
+ * default-permanent (no reaper or Delete-All path deletes `security_audit_log`), so
+ * it strictly OUTLIVES the reap-able receipt — a LIVE receipt therefore ALWAYS has a
+ * live anchor and this check NEVER over-fail-closes on a legitimately-reaped anchor.
+ * An ABSENT anchor (tampered `audit_id`) or ANY field mismatch (a one-sided
+ * `correlation_id` / linkage corruption) fails CLOSED — such a receipt is never
+ * served as a valid correlated receipt.
  */
-function decodeReceiptRow(row: RetentionReceiptRow): FridayRetentionReceiptRecord {
+function assertReceiptAnchor(row: RetentionReceiptRow, db: Database.Database): void {
+  const anchor = db
+    .prepare(
+      `SELECT id, principal_id, tenant_id, metadata_json
+         FROM security_audit_log
+        WHERE id = ?`,
+    )
+    .get(row.audit_id) as RetentionReceiptAnchorRow | undefined;
+  if (!anchor) {
+    throw new FridayRetentionReceiptIntegrityError(
+      `Persisted retention recovery receipt '${row.receipt_id}' has no authentic-audit anchor (audit_id='${row.audit_id}').`,
+      { details: { receiptId: row.receipt_id, reason: "anchor_absent", auditId: row.audit_id } },
+    );
+  }
+  let metadata: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(anchor.metadata_json) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("anchor metadata is not a JSON object");
+    }
+    metadata = parsed as Record<string, unknown>;
+  } catch (cause) {
+    throw new FridayRetentionReceiptIntegrityError(
+      `Persisted retention recovery receipt '${row.receipt_id}' has an unreadable audit-anchor metadata.`,
+      { cause, details: { receiptId: row.receipt_id, reason: "anchor_metadata_unreadable", auditId: row.audit_id } },
+    );
+  }
+  const checks: Array<readonly [string, boolean]> = [
+    ["receiptId", metadata.receiptId === row.receipt_id],
+    ["correlationId", metadata.correlationId === row.correlation_id],
+    ["payloadDigest", metadata.payloadDigest === row.payload_digest],
+    ["principalId", (anchor.principal_id ?? null) === row.principal_id],
+    ["tenantId", (anchor.tenant_id ?? null) === (row.tenant_id ?? null)],
+  ];
+  for (const [field, ok] of checks) {
+    if (!ok) {
+      throw new FridayRetentionReceiptIntegrityError(
+        `Persisted retention recovery receipt '${row.receipt_id}' diverges from its audit anchor on '${field}'.`,
+        { details: { receiptId: row.receipt_id, reason: `anchor_mismatch:${field}`, auditId: row.audit_id } },
+      );
+    }
+  }
+}
+
+/**
+ * WHOLE-ROW INVARIANT — the SCALAR columns + cross-column linkage (RETENTION-R3d).
+ * Extracted from `assertReceiptRowIntegrity` (single caller) so the one validator
+ * stays cohesive without a monolithic complexity. Each violation throws a typed
+ * `FridayRetentionReceiptIntegrityError` with a DISTINCT `reason`.
+ */
+function assertReceiptScalarColumns(row: RetentionReceiptRow, expectedOwnerId: string): void {
+  const fail = (reason: string, detail: string, extra?: Record<string, unknown>): never => {
+    throw new FridayRetentionReceiptIntegrityError(
+      `Persisted retention recovery receipt '${row.receipt_id}' violates the row invariant: ${detail}.`,
+      { details: { receiptId: row.receipt_id, reason, ...(extra ?? {}) } },
+    );
+  };
+
+  // principal_id — non-empty AND exactly the owner the row was looked up under.
+  if (typeof row.principal_id !== "string" || row.principal_id.length === 0) {
+    fail("invalid_principal_id", "'principal_id' is empty");
+  }
+  if (row.principal_id !== expectedOwnerId) {
+    fail("owner_mismatch", "'principal_id' is not the owner the row was looked up under", {
+      expectedOwnerId,
+    });
+  }
+
+  // receipt_id — shape `retention-receipt:<principalId>:<opId>` (non-empty opId).
+  const receiptPrefix = `retention-receipt:${row.principal_id}:`;
+  if (
+    typeof row.receipt_id !== "string" ||
+    !row.receipt_id.startsWith(receiptPrefix) ||
+    row.receipt_id.length <= receiptPrefix.length
+  ) {
+    fail("invalid_receipt_id", "'receipt_id' does not match retention-receipt:<owner>:<op>");
+  }
+  const receiptOpId = row.receipt_id.slice(receiptPrefix.length);
+
+  // correlation_id — shape `retention-policy-update:<principalId>:<opId>` AND its
+  // opId == the receipt_id opId (single-write linkage: a one-sided correlation_id
+  // tamper is caught HERE even before the anchor cross-check).
+  const correlationPrefix = `retention-policy-update:${row.principal_id}:`;
+  if (
+    typeof row.correlation_id !== "string" ||
+    !row.correlation_id.startsWith(correlationPrefix) ||
+    row.correlation_id.length <= correlationPrefix.length
+  ) {
+    fail("invalid_correlation_id", "'correlation_id' does not match retention-policy-update:<owner>:<op>");
+  }
+  const correlationOpId = row.correlation_id.slice(correlationPrefix.length);
+  if (correlationOpId !== receiptOpId) {
+    fail("linkage_operation_mismatch", "'correlation_id' operation id does not match 'receipt_id'");
+  }
+
+  // tenant_id — null OR a non-empty string.
+  if (row.tenant_id !== null && (typeof row.tenant_id !== "string" || row.tenant_id.length === 0)) {
+    fail("invalid_tenant_id", "'tenant_id' is neither null nor a non-empty string");
+  }
+
+  // audit_id — non-empty string (the anchor linkage key).
+  if (typeof row.audit_id !== "string" || row.audit_id.length === 0) {
+    fail("invalid_audit_id", "'audit_id' is empty");
+  }
+
+  // recovery_key_hash — null OR 64-char lowercase hex (sha256).
+  if (row.recovery_key_hash !== null && !SHA256_LOWER_HEX_RE.test(row.recovery_key_hash)) {
+    fail("invalid_recovery_key_hash", "'recovery_key_hash' is neither null nor a 64-char lowercase hex");
+  }
+
+  // payload_digest — 64-char lowercase hex (its VALUE coherence was gated above).
+  if (typeof row.payload_digest !== "string" || !SHA256_LOWER_HEX_RE.test(row.payload_digest)) {
+    fail("invalid_payload_digest", "'payload_digest' is not a 64-char lowercase hex");
+  }
+
+  // created_at — STRICT canonical ISO-8601 UTC instant that round-trips (rejects the
+  // `"zzzz"` retention-evasion the reaper's lexicographic compare could not sort).
+  if (!isCanonicalReceiptCreatedAt(row.created_at)) {
+    fail("invalid_created_at", "'created_at' is not a canonical round-trippable ISO-8601 UTC instant");
+  }
+}
+
+/**
+ * assertReceiptRowIntegrity — the ONE canonical WHOLE-ROW validator
+ * (RETENTION-R3d). It is the SAME validator used at every seam: write (`insert`),
+ * read / decode (`findOldestByRecoveryKey`), idempotent-replay, recovery, and
+ * restart-readback (the reaper enforces the same `created_at` shape via the shared
+ * GLOB). It replaces the earlier reactive field-by-field additions with a single
+ * enforcement of `FRIDAY_RETENTION_RECEIPT_ROW_INVARIANT` — see that constant for
+ * the complete per-column + cross-column + cross-store rule set.
+ *
+ * It is only ever called with a REAL binding (the SQL matched, or the write is
+ * about to persist it), so ANY violation is a STORAGE-INTEGRITY failure — NOT an
+ * absent one. It therefore FAILS CLOSED with a typed
+ * `FridayRetentionReceiptIntegrityError` (never returns null) and a DISTINCT
+ * `reason` per column/invariant. `null` from `findOldestByRecoveryKey` is reserved
+ * EXCLUSIVELY for a genuinely ABSENT row.
+ *
+ * Ordering is deliberate: JSON decode → per-field shape → cross-field coherence →
+ * scalar columns → cross-store anchor. Coherence is INTERNAL to the receipt only (a
+ * legitimately STALE receipt still decodes); the anchor cross-check runs LAST so a
+ * value tamper surfaces its precise coherence reason (e.g. `digest_mismatch`) rather
+ * than a generic anchor mismatch.
+ */
+export function assertReceiptRowIntegrity(
+  row: RetentionReceiptRow,
+  opts: { expectedOwnerId: string; db: Database.Database },
+): FridayRetentionReceiptRecord {
   let before: unknown;
   let after: unknown;
   let changedCategories: unknown;
@@ -276,6 +522,14 @@ function decodeReceiptRow(row: RetentionReceiptRow): FridayRetentionReceiptRecor
     );
   }
 
+  // ── WHOLE-ROW INVARIANT: scalar columns + cross-column linkage, then the
+  //    cross-store anchor. Every SCALAR column (previously returned unvalidated) is
+  //    now checked; this closes the scalar-column fail-opens (a non-canonical
+  //    `created_at` that evaded the reaper's string compare, and a one-sided
+  //    `correlation_id`/`audit_id` linkage corruption served as a valid receipt).
+  assertReceiptScalarColumns(row, opts.expectedOwnerId);
+  assertReceiptAnchor(row, opts.db);
+
   return {
     receiptId: row.receipt_id,
     ownerId: row.principal_id,
@@ -295,17 +549,7 @@ function decodeReceiptRow(row: RetentionReceiptRow): FridayRetentionReceiptRecor
 export function createFridayRetentionReceiptRepository(): FridayRetentionReceiptRepository {
   return {
     insert(db, record) {
-      db.prepare(
-        `INSERT INTO retention_recovery_receipts (
-           receipt_id, principal_id, tenant_id, correlation_id, audit_id,
-           recovery_key_hash, payload_digest, before_json, after_json,
-           changed_categories_json, applied_updates_json, created_at
-         ) VALUES (
-           @receipt_id, @principal_id, @tenant_id, @correlation_id, @audit_id,
-           @recovery_key_hash, @payload_digest, @before_json, @after_json,
-           @changed_categories_json, @applied_updates_json, @created_at
-         )`,
-      ).run({
+      const row: RetentionReceiptRow = {
         receipt_id: record.receiptId,
         principal_id: record.ownerId,
         tenant_id: record.ownerTenantId ?? null,
@@ -318,7 +562,24 @@ export function createFridayRetentionReceiptRepository(): FridayRetentionReceipt
         changed_categories_json: JSON.stringify(record.changedCategories),
         applied_updates_json: JSON.stringify(record.appliedUpdates),
         created_at: record.createdAt,
-      });
+      };
+      // WHOLE-ROW INVARIANT at the WRITE seam (SAME validator as read/decode, zero
+      // drift). The audit anchor is written earlier in this SAME transaction, so the
+      // cross-store anchor check sees it and proves the receipt⇄anchor coupling at
+      // write time; a receipt that would violate the invariant (or has no anchor)
+      // throws INSIDE the txn → the whole PUT rolls back (no partial rows).
+      assertReceiptRowIntegrity(row, { expectedOwnerId: record.ownerId, db });
+      db.prepare(
+        `INSERT INTO retention_recovery_receipts (
+           receipt_id, principal_id, tenant_id, correlation_id, audit_id,
+           recovery_key_hash, payload_digest, before_json, after_json,
+           changed_categories_json, applied_updates_json, created_at
+         ) VALUES (
+           @receipt_id, @principal_id, @tenant_id, @correlation_id, @audit_id,
+           @recovery_key_hash, @payload_digest, @before_json, @after_json,
+           @changed_categories_json, @applied_updates_json, @created_at
+         )`,
+      ).run(row);
     },
 
     findOldestByRecoveryKey(db, input) {
@@ -335,16 +596,40 @@ export function createFridayRetentionReceiptRepository(): FridayRetentionReceipt
         )
         .get(input.ownerId, input.recoveryKeyHash) as RetentionReceiptRow | undefined;
       // NO matching row → genuinely absent → null (the ONLY null case). A MATCHING
-      // row that is malformed/invalid throws a typed integrity error (fail-closed),
-      // never null — so the PUT idempotency guard cannot re-execute on a corrupt
-      // binding and recovery cannot silently return null.
-      return row ? decodeReceiptRow(row) : null;
+      // row that violates the WHOLE-ROW INVARIANT throws a typed integrity error
+      // (fail-closed), never null — so the PUT idempotency guard cannot re-execute on
+      // a corrupt binding and recovery cannot silently return null. `expectedOwnerId`
+      // is the owner the row was looked up under (the invariant re-asserts the match);
+      // `db` lets the validator cross-check the receipt against its audit anchor.
+      return row
+        ? assertReceiptRowIntegrity(row, { expectedOwnerId: input.ownerId, db })
+        : null;
     },
 
     deleteExpiredBefore(db, cutoffIso) {
+      // Expire only reliably-datable rows: a CANONICAL `created_at` (shared GLOB)
+      // strictly before the cutoff. A non-canonical `created_at` (which would sort
+      // AFTER any ISO cutoff and silently survive) is NOT reached here — the finite
+      // sweep quarantines it via `quarantineNonCanonicalCreatedAt`.
       return db
-        .prepare(`DELETE FROM retention_recovery_receipts WHERE created_at < ?`)
-        .run(cutoffIso).changes;
+        .prepare(
+          `DELETE FROM retention_recovery_receipts
+            WHERE created_at < ?
+              AND created_at GLOB ?`,
+        )
+        .run(cutoffIso, FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB).changes;
+    },
+
+    quarantineNonCanonicalCreatedAt(db) {
+      // Delete rows whose `created_at` FAILS the canonical shape gate — they cannot
+      // be dated, so retaining them under a finite window would break DATA-RETENTION
+      // truthfulness. Called ONLY inside the finite auditLogs sweep.
+      return db
+        .prepare(
+          `DELETE FROM retention_recovery_receipts
+            WHERE created_at NOT GLOB ?`,
+        )
+        .run(FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB).changes;
     },
 
     deleteAllForOwner(db, input) {

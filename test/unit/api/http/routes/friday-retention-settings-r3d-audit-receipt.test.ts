@@ -965,18 +965,19 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
   it("(c) receipt-store lookup is owner-scoped — a shared recovery-key hash never crosses principals", () => {
     const repo = createFridayRetentionReceiptRepository();
     const sharedHash = hashRecoveryKey("shared-key-across-owners");
-    const base = (ownerId: string, receiptId: string): FridayRetentionReceiptRecord => ({
-      receiptId,
+    // WHOLE-ROW INVARIANT: ids carry the canonical write-path shape and each receipt
+    // has a matching content-minimized `security_audit_log` anchor (the invariant now
+    // cross-checks every inserted/decoded receipt against its anchor). The fixtures are
+    // otherwise fully coherent so the test isolates OWNER-SCOPING, not integrity.
+    const digest = hashIdempotencyPayload({ auditLogs: { mode: "after_days", days: 30 } });
+    const base = (ownerId: string, opId: string): FridayRetentionReceiptRecord => ({
+      receiptId: `retention-receipt:${ownerId}:${opId}`,
       ownerId,
       ownerTenantId: ownerId,
-      correlationId: `corr:${receiptId}`,
-      auditId: `aud:${receiptId}`,
+      correlationId: `retention-policy-update:${ownerId}:${opId}`,
+      auditId: `aud-${opId}`,
       recoveryKeyHash: sharedHash,
-      // round-9: the decode path now CROSS-FIELD-validates digest coherence, so this
-      // fixture uses the REAL canonical digest of its appliedUpdates (not a
-      // placeholder) — the receipt is fully coherent and the test isolates
-      // owner-scoping, not digest integrity.
-      payloadDigest: hashIdempotencyPayload({ auditLogs: { mode: "after_days", days: 30 } }),
+      payloadDigest: digest,
       // Full 7-category content policies — exactly what the store always emits (the
       // decode path strict-validates completeness, so a receipt's before/after must
       // carry every canonical category).
@@ -1002,9 +1003,37 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
       appliedUpdates: { auditLogs: { mode: "after_days", days: 30 } },
       createdAt: NOW,
     });
+    // Seed each receipt's authentic-audit anchor FIRST (content-minimized: linkage +
+    // digest only), so the whole-row invariant's cross-store check passes on insert.
+    const seedAnchor = (rec: FridayRetentionReceiptRecord): void => {
+      db.writer
+        .prepare(
+          `INSERT INTO security_audit_log
+             (id, tenant_id, principal_id, action, resource_type, resource_id,
+              decision, reason, session_id, metadata_json, created_at)
+           VALUES (?, ?, ?, 'retention.policy.update', 'policy', ?, 'allow', 'seed', ?, ?, ?)`,
+        )
+        .run(
+          rec.auditId,
+          rec.ownerTenantId,
+          rec.ownerId,
+          `retention-policy:${rec.ownerId}`,
+          rec.correlationId,
+          JSON.stringify({
+            receiptId: rec.receiptId,
+            correlationId: rec.correlationId,
+            payloadDigest: rec.payloadDigest,
+          }),
+          rec.createdAt,
+        );
+    };
+    const recA = base(CANON, "op-a");
+    const recB = base("admin-002", "op-b");
+    seedAnchor(recA);
+    seedAnchor(recB);
     db.withWriteTransaction((conn) => {
-      repo.insert(conn, base(CANON, "receipt-owner-a"));
-      repo.insert(conn, base("admin-002", "receipt-owner-b"));
+      repo.insert(conn, recA);
+      repo.insert(conn, recB);
     });
 
     const a = db.withReadConnection((conn) =>
@@ -1013,9 +1042,9 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     const b = db.withReadConnection((conn) =>
       repo.findOldestByRecoveryKey(conn, { ownerId: "admin-002", recoveryKeyHash: sharedHash }),
     );
-    expect(a?.receiptId).toBe("receipt-owner-a");
+    expect(a?.receiptId).toBe(recA.receiptId);
     expect(a?.ownerId).toBe(CANON);
-    expect(b?.receiptId).toBe("receipt-owner-b");
+    expect(b?.receiptId).toBe(recB.receiptId);
     expect(b?.ownerId).toBe("admin-002");
   });
 
@@ -1564,6 +1593,342 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     )) as { receipt: FridayRetentionPolicyUpdateReceipt };
     expect(put.receipt.status).toBe("applied");
     expect(receiptRows()).toHaveLength(1);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RETENTION-R3d ROUND-10 — ONE canonical WHOLE-ROW invariant (P1 fail-OPEN fix).
+  //
+  // Finding (fresh Advisor audit, NO-LOOP): round-9 validated the JSON columns +
+  // digest coherence but returned the SCALAR columns (receipt_id, principal_id,
+  // tenant_id, correlation_id, audit_id, recovery_key_hash, created_at) UNVALIDATED
+  // and never cross-checked the row against its authentic-audit anchor. Two confirmed
+  // fail-opens:
+  //   Probe-1 (timestamp → retention EVASION): a receipt with `created_at="zzzz"`
+  //     sorts AFTER any ISO cutoff, so the finite auditLogs sweep returned
+  //     deletedRetentionReceipts=0 and the row SURVIVED the window the user opted
+  //     into (DATA-RETENTION-001 truthfulness break).
+  //   Probe-2 (linkage corruption SERVED): a one-sided `correlation_id`/`audit_id`
+  //     tamper decoded unvalidated and was served as a valid correlated receipt.
+  //
+  // The fix: ONE canonical validator (`assertReceiptRowIntegrity`) enforces the
+  // whole-row invariant at write + read/decode; the reaper enforces the SAME
+  // canonical `created_at` shape (shared GLOB) at storage (v108 CHECK) and reap; the
+  // finite sweep QUARANTINE-deletes un-datable rows and surfaces a typed incident;
+  // and every served receipt is cross-checked against its `security_audit_log`
+  // anchor. RED on base 55553fc8, GREEN here.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // Inject a NON-canonical created_at, bypassing the v108 storage CHECK via
+  // `ignore_check_constraints` — simulating a row that entered before the guard
+  // existed (a v107-era upgrade) or via a raw sqlite-file edit that bypasses
+  // engine-enforced constraints. On base (no v108) the PRAGMA is a harmless no-op.
+  function forceCreatedAt(recoveryKeyHash: string, value: string): void {
+    db.writer.pragma("ignore_check_constraints = ON");
+    try {
+      db.writer
+        .prepare("UPDATE retention_recovery_receipts SET created_at = ? WHERE recovery_key_hash = ?")
+        .run(value, recoveryKeyHash);
+    } finally {
+      db.writer.pragma("ignore_check_constraints = OFF");
+    }
+  }
+
+  // ── PROBE-1: timestamp → retention evasion, closed at the REAPER (quarantine) ──
+  it("(round-10 Probe-1) created_at='zzzz' under FINITE 30d auditLogs → reaper QUARANTINE-deletes it + surfaces the incident counter; it does NOT survive", async () => {
+    const KEY = "probe1-zzzz-key";
+    const routes = makeRoutesAt(AGED);
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    expect(receiptRows()).toHaveLength(1);
+    // Tamper: 'zzzz' sorts AFTER any ISO cutoff → a string-compare sweep would retain it.
+    forceCreatedAt(hashRecoveryKey(KEY), "zzzz");
+    expect(receiptRows()[0].created_at).toBe("zzzz");
+
+    const result = reaperForOwner().run(NOW);
+
+    // HEAD: the un-datable row is QUARANTINED (typed incident counter) and gone. On
+    // base 55553fc8 quarantinedIntegrityReceipts is undefined and the row survives.
+    expect(result.quarantinedIntegrityReceipts).toBe(1);
+    expect(result.deletedRetentionReceipts).toBe(0); // it was quarantined, not date-expired
+    expect(receiptRows()).toHaveLength(0);
+  });
+
+  // A canonical AGED receipt (normal-expired) ALONGSIDE a 'zzzz' receipt (quarantined)
+  // in the SAME finite sweep — the quarantine never blocks reaping valid rows.
+  it("(round-10 Probe-1) mixed sweep: a datable aged row is date-expired AND a 'zzzz' row is quarantined — both gone, neither blocks the other", async () => {
+    const KEY_OK = "probe1-mixed-ok"; // canonical aged → normal expiry
+    const KEY_BAD = "probe1-mixed-bad"; // 'zzzz' → quarantine
+    const routes = makeRoutesAt(AGED);
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY_OK }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY_BAD }, body: { policy: { agentRuns: { mode: "after_days", days: 60 } } } }),
+    );
+    expect(receiptRows()).toHaveLength(2);
+    forceCreatedAt(hashRecoveryKey(KEY_BAD), "zzzz");
+
+    const result = reaperForOwner().run(NOW);
+    expect(result.deletedRetentionReceipts).toBe(1); // the canonical aged row
+    expect(result.quarantinedIntegrityReceipts).toBe(1); // the 'zzzz' row
+    expect(receiptRows()).toHaveLength(0);
+  });
+
+  // ── STORAGE boundary: the v108 CHECK blocks a direct-DB created_at tamper ──────
+  it("(round-10 storage) the v108 CHECK rejects a direct-DB created_at tamper at the storage boundary (engine-enforced on UPDATE)", async () => {
+    const KEY = "storage-check-key";
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    // A plain UPDATE to a non-canonical value is REJECTED by the CHECK (base: no v108,
+    // so this does NOT throw — a RED-on-base discriminator for the storage boundary).
+    expect(() =>
+      db.writer
+        .prepare("UPDATE retention_recovery_receipts SET created_at = 'zzzz' WHERE recovery_key_hash = ?")
+        .run(hashRecoveryKey(KEY)),
+    ).toThrow(/CHECK/i);
+    // The tamper never landed — the row is still canonical.
+    expect(receiptRows()[0].created_at).toBe(NOW);
+  });
+
+  // ── PROBE-2: one-sided linkage corruption is never SERVED (anchor cross-check) ─
+  it("(round-10 Probe-2/audit) a tampered audit_id (no such anchor) → recovery 500 anchor_absent; never served", async () => {
+    const KEY = "probe2-audit-absent-key";
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    db.writer
+      .prepare("UPDATE retention_recovery_receipts SET audit_id = 'aud-does-not-exist' WHERE recovery_key_hash = ?")
+      .run(hashRecoveryKey(KEY));
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } })),
+    ).rejects.toMatchObject({ ...INTEGRITY, details: { reason: "anchor_absent" } });
+  });
+
+  it("(round-10 Probe-2/audit) audit_id repointed to a DIFFERENT live anchor → recovery 500 anchor_mismatch:receiptId", async () => {
+    const routes = makeRoutes(realAppender());
+    const KEY1 = "probe2-mismatch-1";
+    const KEY2 = "probe2-mismatch-2";
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY1 }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    const w2 = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY2 }, body: { policy: { agentRuns: { mode: "after_days", days: 60 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    // Repoint receipt-1's audit_id at receipt-2's anchor: the anchor EXISTS but its
+    // metadata.receiptId is receipt-2's, so the cross-store check fails closed.
+    db.writer
+      .prepare("UPDATE retention_recovery_receipts SET audit_id = ? WHERE recovery_key_hash = ?")
+      .run(w2.receipt.auditId, hashRecoveryKey(KEY1));
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY1 } })),
+    ).rejects.toMatchObject({ ...INTEGRITY, details: { reason: "anchor_mismatch:receiptId" } });
+  });
+
+  // ── TABLE-DRIVEN mutation matrix: EVERY scalar column mutated at the recovery
+  //    seam → typed 500 fail-closed, policy byte-unchanged, counts stay 1. Reuses
+  //    `seedCoherentThenCorruptField` (seeds auditLogs→30, corrupts one column,
+  //    recovers, asserts the exact reason + authoritative state untouched). Each
+  //    case is RED on base 55553fc8 (which served the tampered scalar) and GREEN here.
+  const scalarColumnMutations: Array<[string, (h: string) => void, string]> = [
+    [
+      "receipt_id empty",
+      (h) => db.writer.prepare("UPDATE retention_recovery_receipts SET receipt_id = '' WHERE recovery_key_hash = ?").run(h),
+      "invalid_receipt_id",
+    ],
+    [
+      "receipt_id wrong prefix",
+      (h) => db.writer.prepare("UPDATE retention_recovery_receipts SET receipt_id = ? WHERE recovery_key_hash = ?").run(`bogus:${CANON}:op-1`, h),
+      "invalid_receipt_id",
+    ],
+    [
+      "receipt_id wrong principal segment",
+      (h) => db.writer.prepare("UPDATE retention_recovery_receipts SET receipt_id = ? WHERE recovery_key_hash = ?").run("retention-receipt:someone-else:op-1", h),
+      "invalid_receipt_id",
+    ],
+    [
+      "correlation_id wrong prefix",
+      (h) => db.writer.prepare("UPDATE retention_recovery_receipts SET correlation_id = 'corr:x' WHERE recovery_key_hash = ?").run(h),
+      "invalid_correlation_id",
+    ],
+    [
+      "correlation_id operation id diverges from receipt_id",
+      (h) => db.writer.prepare("UPDATE retention_recovery_receipts SET correlation_id = ? WHERE recovery_key_hash = ?").run(`retention-policy-update:${CANON}:op-OTHER`, h),
+      "linkage_operation_mismatch",
+    ],
+    [
+      "tenant_id empty string (neither null nor non-empty)",
+      (h) => db.writer.prepare("UPDATE retention_recovery_receipts SET tenant_id = '' WHERE recovery_key_hash = ?").run(h),
+      "invalid_tenant_id",
+    ],
+    [
+      "tenant_id diverges from the anchor",
+      (h) => db.writer.prepare("UPDATE retention_recovery_receipts SET tenant_id = 'other-tenant' WHERE recovery_key_hash = ?").run(h),
+      "anchor_mismatch:tenantId",
+    ],
+    [
+      "audit_id empty",
+      (h) => db.writer.prepare("UPDATE retention_recovery_receipts SET audit_id = '' WHERE recovery_key_hash = ?").run(h),
+      "invalid_audit_id",
+    ],
+    [
+      "created_at 'zzzz' (non-canonical, served-path)",
+      (h) => forceCreatedAt(h, "zzzz"),
+      "invalid_created_at",
+    ],
+    [
+      "created_at impossible 9999-99-99 (shape-passing junk)",
+      (h) => forceCreatedAt(h, "9999-99-99T99:99:99.999Z"),
+      "invalid_created_at",
+    ],
+    [
+      "created_at non-Z offset (does not round-trip)",
+      (h) => forceCreatedAt(h, "2026-07-16T10:00:00.000+00:00"),
+      "invalid_created_at",
+    ],
+  ];
+  it.each(scalarColumnMutations)(
+    "(round-10 matrix) scalar column [%s] mutated → recovery 500 fail-closed; authoritative policy unchanged; counts stay 1",
+    async (label, corrupt, reason) => {
+      await seedCoherentThenCorruptField(`matrix-${label}`, corrupt, reason);
+    },
+  );
+
+  // recovery_key_hash — the recovery lookup matches by this exact value, so a route
+  // seam cannot exercise a non-hex hash (it hashes the header). Prove it directly at
+  // the repository: a seeded (non-hex-hash) row with a matching anchor fails closed
+  // on lookup by that same value — never returns a corrupt binding as valid.
+  it("(round-10 matrix) recovery_key_hash non-hex → repository decode 500 invalid_recovery_key_hash (never served)", () => {
+    const repo = createFridayRetentionReceiptRepository();
+    const BAD_HASH = "not-a-64-char-lowercase-hex-value"; // pragma: allowlist secret (test fixture)
+    const opId = "op-badhash";
+    const receiptId = `retention-receipt:${CANON}:${opId}`;
+    const correlationId = `retention-policy-update:${CANON}:${opId}`;
+    const auditId = `aud-${opId}`;
+    const digest = hashIdempotencyPayload({ auditLogs: { mode: "after_days", days: 30 } });
+    // Seed the matching anchor so ONLY the recovery_key_hash is out of shape.
+    db.writer
+      .prepare(
+        `INSERT INTO security_audit_log
+           (id, tenant_id, principal_id, action, resource_type, resource_id,
+            decision, reason, session_id, metadata_json, created_at)
+         VALUES (?, NULL, ?, 'retention.policy.update', 'policy', ?, 'allow', 'seed', ?, ?, ?)`,
+      )
+      .run(
+        auditId,
+        CANON,
+        `retention-policy:${CANON}`,
+        correlationId,
+        JSON.stringify({ receiptId, correlationId, payloadDigest: digest }),
+        NOW,
+      );
+    // Insert the row DIRECTLY (bypassing the validating repo.insert) with a non-hex
+    // recovery_key_hash — the exact value the lookup will match on.
+    const fullPolicy = {
+      learningEvents: { mode: "permanent" },
+      heartbeats: { mode: "permanent" },
+      skillRunTerminal: { mode: "permanent" },
+      auditLogs: { mode: "permanent" },
+      agentRuns: { mode: "permanent" },
+      llmUsageRecords: { mode: "permanent" },
+      errorIncidents: { mode: "permanent" },
+    };
+    const afterPolicy = { ...fullPolicy, auditLogs: { mode: "after_days", days: 30 } };
+    db.writer
+      .prepare(
+        `INSERT INTO retention_recovery_receipts
+           (receipt_id, principal_id, tenant_id, correlation_id, audit_id,
+            recovery_key_hash, payload_digest, before_json, after_json,
+            changed_categories_json, applied_updates_json, created_at)
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        receiptId,
+        CANON,
+        correlationId,
+        auditId,
+        BAD_HASH,
+        digest,
+        JSON.stringify(fullPolicy),
+        JSON.stringify(afterPolicy),
+        JSON.stringify(["auditLogs"]),
+        JSON.stringify({ auditLogs: { mode: "after_days", days: 30 } }),
+        NOW,
+      );
+    expect(() =>
+      db.withReadConnection((conn) =>
+        repo.findOldestByRecoveryKey(conn, { ownerId: CANON, recoveryKeyHash: BAD_HASH }),
+      ),
+    ).toThrow(
+      expect.objectContaining({ code: "RETENTION_RECEIPT_INTEGRITY_FAILURE", details: expect.objectContaining({ reason: "invalid_recovery_key_hash" }) }),
+    );
+  });
+
+  // ── GREEN over-fail-close controls (load-bearing) ─────────────────────────────
+
+  it("(round-10 green) a normal write's receipt cross-checks CLEAN against its live anchor (no over-fail-close)", async () => {
+    const KEY = "round10-clean-key";
+    const routes = makeRoutes(realAppender());
+    const put = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    const rec = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(rec.receipt?.receiptId).toBe(put.receipt.receiptId);
+    // The anchor the cross-check validated against is the live audit row.
+    expect(auditRows()).toHaveLength(1);
+    expect(auditRows()[0].id).toBe(put.receipt.auditId);
+  });
+
+  it("(round-10 green) OVER-FAIL-CLOSE COUPLING: a finite sweep removes the RECEIPT and LEAVES its permanent anchor (anchor outlives receipt); recovery is then null (absence), never an anchor 500", async () => {
+    const KEY = "round10-couple-key";
+    const routes = makeRoutesAt(AGED);
+    const put = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    expect(receiptRows()).toHaveLength(1);
+    expect(auditRows()).toHaveLength(1);
+
+    const result = reaperForOwner().run(NOW);
+    expect(result.deletedRetentionReceipts).toBe(1); // datable → normal expiry
+    expect(result.quarantinedIntegrityReceipts).toBe(0); // nothing un-datable
+    expect(receiptRows()).toHaveLength(0); // receipt gone
+    // The content-minimized anchor is permanent (no reaper/Delete-All deletes
+    // security_audit_log) — so a LIVE receipt ALWAYS had a live anchor; the sweep
+    // never produces a live-receipt-without-anchor state.
+    expect(auditRows()).toHaveLength(1);
+    expect(auditRows()[0].id).toBe(put.receipt.auditId);
+
+    // Recovery after the sweep → null (GENUINE absence), NOT an anchor-driven 500.
+    const rec = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: unknown };
+    expect(rec.receipt).toBeNull();
+  });
+
+  it("(round-10 green) default-permanent sweep deletes 0 AND quarantines 0 even for a non-canonical row (fail-closed default-permanent preserved; un-datable row RETAINED, never served)", async () => {
+    const KEY = "round10-permanent-key";
+    const routes = makeRoutesAt(AGED);
+    // auditLogs stays PERMANENT (learningEvents opted finite) → the receipt store is
+    // governed by auditLogs only, so nothing is swept/quarantined.
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { learningEvents: { mode: "after_days", days: 30 } } } }),
+    );
+    forceCreatedAt(hashRecoveryKey(KEY), "zzzz");
+
+    const result = reaperForOwner().run(NOW);
+    expect(result.deletedRetentionReceipts).toBe(0);
+    expect(result.quarantinedIntegrityReceipts).toBe(0);
+    expect(receiptRows()).toHaveLength(1); // un-datable row is retained under permanent
+    // ...but it can never be SERVED: the read path fails closed on the non-canonical
+    // created_at (invalid_created_at).
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } })),
+    ).rejects.toMatchObject({ ...INTEGRITY, details: { reason: "invalid_created_at" } });
   });
 });
 

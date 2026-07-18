@@ -40,6 +40,10 @@ export type {
 export {
   createFridayRetentionReceiptRepository,
   FridayRetentionReceiptIntegrityError,
+  assertReceiptRowIntegrity,
+  isCanonicalReceiptCreatedAt,
+  FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB,
+  FRIDAY_RETENTION_RECEIPT_ROW_INVARIANT,
 } from "./retention/friday-retention-receipt-repository.js";
 export type {
   FridayRetentionReceiptRepository,
