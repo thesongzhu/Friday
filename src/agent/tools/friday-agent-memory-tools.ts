@@ -54,13 +54,18 @@ export interface CreateFridayAgentMemoryToolsDeps {
 
 // ─── Namespace scoping ───
 
-// Learned facts are appended to memory_search results AFTER being written verbatim (they
-// bypass the write-time PII guard). memory_search egresses across a TRUST BOUNDARY to the
-// agent, so the learned-fact result is routed through the SAME production PII output filter
-// (#1607) before it reaches the tool caller — redacting content/metadata/tags/snippet. This
-// applies ONLY to learned facts; stored results come from `memoryService` unchanged (out of
-// scope for this fix).
-const memoryLearnedFactOutputFilter = createFridayMemoryOutputFilter();
+// memory_search egresses across a TRUST BOUNDARY to the agent. EVERY result serialized to the
+// tool caller is routed through the SAME production PII output filter (#1607) — redacting
+// content/metadata/tags/snippet — regardless of which leg produced it:
+//   • learned facts (appended verbatim after bypassing the write-time PII guard), AND
+//   • stored rows from the DIRECT `memoryService.search`/`.list` legs, which return RAW
+//     persisted rows. A legacy row written BEFORE the write-time guard existed can carry PII
+//     in its content/tags; without this egress filter it reached the agent unredacted while
+//     the sibling `forContext` (guarded) and learned-fact legs were ALREADY filtered
+//     (SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001). The filter runs at the SERIALIZATION boundary
+//     only — AFTER all ranking/dedup, which operate on the RAW rows — so ranking, ordering,
+//     limits, and every internal (non-egress) use of the raw rows are byte-for-byte unchanged.
+const memoryEgressOutputFilter = createFridayMemoryOutputFilter();
 
 const AGENT_MEMORY_BASE_NAMESPACE = "agent";
 const USER_FACING_MEMORY_NAMESPACES = new Set(["default", "user", "preference"]);
@@ -768,10 +773,20 @@ function createMemorySearchTool(
         const learnedResults = principalId && deps.listLearnedFacts && shouldIncludeLearnedFacts(explicitNamespace)
           ? deps.listLearnedFacts({ userId: principalId, limit })
             .filter((fact) => matchesLearnedFactQuery(fact, query))
-            // Egress PII filter across the agent trust boundary (learned facts only).
-            .map((fact) => memoryLearnedFactOutputFilter.filterSearchResult(toLearnedFactSearchResult(fact, query)))
+            // Egress PII filter across the agent trust boundary (learned-fact leg).
+            .map((fact) => memoryEgressOutputFilter.filterSearchResult(toLearnedFactSearchResult(fact, query)))
           : [];
-        const combined = [...dedupedResults, ...learnedResults]
+        // EGRESS FILTER for the DIRECT `memoryService.search`/`.list` legs. `dedupedResults`
+        // holds the raw scoped/legacy/lexical rows plus the already-guarded `forContext` rows,
+        // AFTER all scoring/dedup (which ran on the RAW content — unchanged). Route each through
+        // the SAME production output filter the sibling legs use so a legacy pre-guard row's PII
+        // is redacted before it is serialized to the agent. `filterSearchResult` preserves
+        // `score`, so the sort/slice below select the SAME items in the SAME order; re-filtering
+        // the already-guarded `forContext` rows is idempotent.
+        const egressFilteredDedupedResults = dedupedResults.map((result) =>
+          memoryEgressOutputFilter.filterSearchResult(result),
+        );
+        const combined = [...egressFilteredDedupedResults, ...learnedResults]
           .sort((a, b) => b.score - a.score)
           .slice(0, limit);
 
