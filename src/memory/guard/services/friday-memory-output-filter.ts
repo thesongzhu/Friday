@@ -66,10 +66,13 @@ function redactAndTruncate(value: string, maxChars: number): string {
 
 // Strip PII + secrets from metadata + tags on read-back (defense in depth: items stored before
 // metadata/tag sensitive-value handling existed must not leak when returned). Metadata values are
-// free-form, so PII AND secret shapes are redacted in place by the shared `redactDeep` (its round-14
-// string-VALUE leg now composes the canonical secret detector with PII); a tag whose content is PII
-// OR a secret shape is dropped (a "[EMAIL]" / "[REDACTED_SECRET]" marker would not be a valid tag),
-// mirroring the store path's drop-and-surface handling.
+// free-form, so PII AND secret shapes are redacted in place by the shared `redactDeep` — whose
+// string-VALUE leg composes the canonical secret detector with PII AND (round-5, Defect 1) the shared
+// Unicode-resistant PII preserving fold, so a zero-width / combining / fullwidth-letter / precomposed
+// email·phone·SSN·card in a NESTED metadata value is now redacted too (it previously escaped verbatim).
+// A tag whose content is PII (raw ∪ Unicode-obfuscated, round-5 Defect 2) OR a secret shape is dropped
+// (a "[EMAIL]" / "[REDACTED_SECRET]" marker would not be a valid tag), mirroring the store path's
+// drop-and-surface handling.
 function redactMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
   return piiRedactor.redactDeep(metadata).value as Record<string, unknown>;
 }
@@ -84,10 +87,28 @@ function isSecretShapedTag(tag: string): boolean {
   const detection = buildUnicodeDetectionCopy(tag);
   return detection.changed && findSecretShapeSpans(detection.normalized).length > 0;
 }
-function dropSensitiveTags(tags: string[]): string[] {
-  return tags.filter(
-    (tag) => piiRedactor.scanAndTransform(tag).matches.length === 0 && !isSecretShapedTag(tag),
+// SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001 (round-5, Defect 2 — canonical root): a tag is PII-bearing when
+// the COMPLETE raw ∪ Unicode-obfuscated PII detection — the SAME preserving fold + guard detector the
+// free-form VALUE leg (`redactFreeFormValue`) uses — would redact ANY span of it. Running
+// `redactUnicodeResistantPii` and checking whether it CHANGED the tag covers BOTH raw/fullwidth-digit PII
+// (the fold is a no-op there → the guard's own `findMatches` still matches, so this is a STRICT SUPERSET
+// of the pre-round-5 `scanAndTransform(tag).matches` check) AND Unicode-obfuscated PII (zero-width /
+// combining / fullwidth-LETTER / precomposed email·phone·SSN·card) — which the raw-only check missed, so
+// an obfuscated-PII tag survived egress VERBATIM. A benign multilingual tag and a U+3000 / No·Nl
+// non-bridge tag fold to no match → returned byte-identical → NOT dropped (no over-drop).
+function tagHasPii(tag: string): boolean {
+  return (
+    redactUnicodeResistantPii(
+      tag,
+      (normalized) => piiRedactor.scanAndTransform(normalized).matches,
+    ) !== tag
   );
+}
+// A PII-bearing OR secret-shaped tag (raw ∪ Unicode-obfuscated, for both) is DROPPED — never rewritten
+// to a marker (a "[EMAIL]" / "[REDACTED_SECRET]" token is not a valid constrained-charset tag), mirroring
+// the store path's drop-and-surface handling. Benign tags (including multilingual + non-bridge) survive.
+function dropSensitiveTags(tags: string[]): string[] {
+  return tags.filter((tag) => !tagHasPii(tag) && !isSecretShapedTag(tag));
 }
 
 function filterItemImpl(item: FridayMemoryItem): FridayMemoryItem {

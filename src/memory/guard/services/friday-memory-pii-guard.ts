@@ -50,6 +50,20 @@ import {
   redactSecretShapesInString,
 } from "../../../security/friday-secret-shape-redactor.js";
 
+// SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001 (round-5, Defect 1 — canonical root): the SHARED
+// value-PII PRESERVING fold. `redactSecretAndPiiValueString` deliberately keeps PII on `findMatches`
+// (ASCII + fullwidth-digit fold) and does NOT run PII over the aggressive NFKD detection copy, to avoid
+// the U+3000 / No·Nl over-redaction — the documented E1 exception, which left Unicode-obfuscated
+// PII-by-VALUE (zero-width / combining / fullwidth-letter / precomposed email·phone·SSN·card) uncovered
+// in the deep string leg. This fold closes E1 for the deep path WITHOUT reintroducing that
+// over-redaction: it de-obfuscates value-PII over a copy that PRESERVES compat-whitespace (U+3000 /
+// U+00A0) and No·Nl digit-likes, so nested `metadata` values and learned-fact values inherit
+// Unicode-resistant PII coverage while a benign U+3000-separated fullwidth-digit run and benign
+// multilingual text still round-trip BYTE-IDENTICAL. It is the SAME fold the memory egress filter's
+// `redactFreeFormValue` and the realtime event redactor compose — reused, not re-copied. No import
+// cycle: `friday-value-pii-fold.ts` is a dependency-free `src/security/` leaf.
+import { redactUnicodeResistantPii } from "../../../security/friday-value-pii-fold.js";
+
 /**
  * Marker spliced for a secret-shape match in a KEY or a string VALUE — byte-identical to the audit
  * writer's `AUDIT_SECRET_MARKER`, so the key leg, the value leg (`redactStringLeaf`/`scanAndTransform`),
@@ -557,16 +571,36 @@ export function createFridayMemoryPiiGuard(
       // tag/block mode never mutates the value. In REDACT mode the value is scrubbed by the ONE
       // canonical secret ∪ PII value transform (`redactSecretAndPiiValueString`) so a secret-shape
       // string VALUE (raw or Unicode-obfuscated) is redacted exactly as `redactKey` redacts a secret
-      // KEY — closing SEC-EVENT-REDACTION-001's memory-egress leak. On a PII-only / benign /
-      // pure-ASCII value that transform is byte-identical to the pre-round-14
-      // `redactContent(s, findMatches(s))` (or to returning `s` unchanged when there is no PII), so
-      // this is a STRICT SUPERSET.
+      // KEY, THEN the shared Unicode-resistant PII preserving fold (`redactUnicodeResistantPii`).
+      //
+      // SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001 (round-5, Defect 1 — CANONICAL ROOT): the second fold is
+      // NEW. `redactSecretAndPiiValueString` covers raw PII ∪ raw/Unicode SECRET but, per its own header,
+      // deliberately did NOT cover Unicode-obfuscated PII-by-VALUE (the E1 exception — running PII over
+      // the aggressive NFKD copy would over-redact U+3000-bridged fullwidth digits). So a zero-width /
+      // combining / fullwidth-letter / precomposed email·phone·SSN·card carried in a NESTED `metadata`
+      // value or a learned-fact value escaped every `redactDeep` consumer VERBATIM. Composing the
+      // PRESERVING fold here — the SAME fold the egress filter's `redactFreeFormValue` and the realtime
+      // redactor use — closes E1 for the deep path WITHOUT the over-redaction: the fold preserves U+3000
+      // / U+00A0 / No·Nl digit-likes, so a benign U+3000-separated fullwidth-digit run and benign
+      // multilingual text still round-trip BYTE-IDENTICAL, while a real obfuscated PII span is redacted
+      // FULL-SPAN to the guard's canonical `[<TYPE>]` marker. On a PII-only / benign / pure-ASCII value
+      // this remains a STRICT SUPERSET of the pre-round-14 `redactContent(s, findMatches(s))`: the fold
+      // finds nothing new (no divergence, no benign regression). The tag/block modes never mutate.
+      //
+      // NO-DEGRADE for the OTHER `redactDeep` consumers (this is a SHARED guard): the audit writer
+      // (`friday-hub-audit-log-writer.ts`) already de-obfuscates content Unicode-PII in its Pass-1
+      // `redactUnicodeContentLeaf` (the aggressive copy) BEFORE handing the skeleton to `redactDeep`, and
+      // the realtime redactor (`friday-event-payload-redactor.ts`) already runs `redactUnicodeResistantPii`
+      // in `redactContentString` BEFORE `redactDeep` — so for both sinks this second fold runs over an
+      // already-redacted string and is an idempotent no-op (a strict subset of what they already did).
       const redactStringLeaf = (s: string): string => {
         const matches = findMatches(s);
         for (const m of matches) {
           tagSet.add(`${FRIDAY_MEMORY_GUARD_PII_TAG_PREFIX}.${m.type}`);
         }
-        return effectiveMode === "redact" ? redactSecretAndPiiValueString(s) : s;
+        if (effectiveMode !== "redact") return s;
+        const afterSecretsAndRawPii = redactSecretAndPiiValueString(s);
+        return redactUnicodeResistantPii(afterSecretsAndRawPii, findMatches);
       };
 
       // Redact PII carried in an object KEY. String key CONTENT that is itself recognizable PII
