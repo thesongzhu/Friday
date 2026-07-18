@@ -385,16 +385,18 @@ describe("friday-secret-shape-redactor", () => {
       expect(spans[0]!.replacement).toBe(M);
     });
 
-    // NO-DEGRADE: the body class excludes `_` and requires a leading word boundary + 34+ chars, so a
-    // benign `hf_`-prefixed snake_case identifier, a short form, a bare 34-char hash (no prefix), and a
-    // mid-word `…hf_…` all survive byte-identical with NO span (not an over-redactor).
-    it("does NOT redact benign hf_ near-misses (hf_docs / short / underscore body / bare hash / mid-word)", () => {
+    // NO-DEGRADE: the body class excludes `_` and requires 34+ contiguous base62 chars, so a benign
+    // `hf_`-prefixed snake_case identifier, a short form, and a bare 34-char hash (no prefix) all survive
+    // byte-identical with NO span (not an over-redactor). NOTE: a `hf_` GLUED to a preceding word char
+    // followed by a real 34+ high-entropy body (`shf_<34>`) is NO LONGER a benign near-miss — it is a
+    // leaked-credential evasion the glued-prefix fix (SEC-SECRET-GLUED-PREFIX-001) now catches; that case
+    // moved to the glued-prefix describe block below.
+    it("does NOT redact benign hf_ near-misses (hf_docs / short / underscore body / bare hash)", () => {
       for (const benign of [
         "hf_docs", // short (4 body chars)
         "hf_", // prefix only
         "hf_config_value_thing", // underscore-separated identifier, no 34-char base62 run
         "AbCdEfGhIjKlMnOpQrStUvWxYz01234567", // pragma: allowlist secret — bare 34-char hash, NO hf_ prefix
-        seg("shf_", HF_BODY), // pragma: allowlist secret — no word boundary before `hf` (embedded in a longer token)
       ]) {
         expect(redactSecretShapesInString(benign), benign).toBe(benign);
         expect(findSecretShapeSpans(benign), benign).toEqual([]);
@@ -404,6 +406,123 @@ describe("friday-secret-shape-redactor", () => {
     it("SENSITIVITY: the hf_ shape produces the marker (no silent pass-through)", () => {
       expect(redactSecretShapesInString(HF)).toContain(M);
       expect(redactSecretShapesInString(HF)).not.toContain(HF);
+    });
+  });
+
+  // ─── SEC-SECRET-GLUED-PREFIX-001: the canonical detector missed a distinctive-prefix credential
+  //     GLUED directly after an ASCII word char (`keyhf_<34>`): the leading `\b` on the whole-match
+  //     prefix patterns requires a NON-word boundary before the prefix, so `<wordchar>hf_<body>` has no
+  //     boundary and survived — reaching the audit-read, realtime on-wire, and memory read-back sinks.
+  //     The fix DROPS the leading `\b` on the HIGH-ENTROPY distinctive-prefix whole-match patterns only.
+  //     RED on bf6968f9 (glued forms return verbatim, 0 spans); GREEN after. Fixtures are BUILT from
+  //     parts (`seg`) so no contiguous literal credential appears in SOURCE (GitHub push protection). ───
+  describe("SEC-SECRET-GLUED-PREFIX-001 glued distinctive-prefix credential (leading \\b evasion)", () => {
+    const seg = (...p: string[]): string => p.join(""); // pragma: allowlist secret
+    const SGPOOL = "ABCdefGHIjkl0123456789abcdefghijkLMNopqrstuvwxyz0123456789"; // pragma: allowlist secret
+    const SG_SECRET = seg("SG.", SGPOOL.slice(0, 22), ".", SGPOOL.slice(0, 43)); // pragma: allowlist secret
+
+    // Patterns whose leading `\b` was DROPPED — each is a high-signal literal prefix + LONG high-entropy
+    // body (body excludes separators OR the prefix is astronomically distinctive), so allowing a glued
+    // prefix cannot over-match a plausible benign identifier. [name, whole-secret].
+    const DEBOUNDED: Array<[string, string]> = [
+      ["HuggingFace hf_", seg("hf_", "AbCdEfGhIjKlMnOpQrStUvWxYz01234567")], // pragma: allowlist secret — 34 base62
+      ["Groq gsk_", seg("gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx")], // pragma: allowlist secret — 42 base62
+      ["npm npm_", seg("npm_", "abcdefghijklmnopqrstuvwxyz0123456789")], // pragma: allowlist secret — 36 base62
+      ["DigitalOcean dop_v1_", seg("dop_v1_", "0123456789abcdef".repeat(4))], // pragma: allowlist secret — 64 hex
+      ["Google GOCSPX-", seg("GOCSPX-", "abcdefghijklmnop_qrstuvwx")], // pragma: allowlist secret
+      ["GitLab glpat-", seg("glpat-", "ABCdef0123456789ghijkLMNop")], // pragma: allowlist secret
+      ["SendGrid SG.<22>.<43>", SG_SECRET], // pragma: allowlist secret
+      ["Square sq0atp-", seg("sq0atp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
+      ["Square sq0csp-", seg("sq0csp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
+      ["GitHub ghp_", seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")], // pragma: allowlist secret — 36 body
+      ["GitHub gho_", seg("gho_", "ABCDEF0123456789GHIJKL")], // pragma: allowlist secret — 22 body
+      ["AWS AKIA", seg("AKIA", "IOSFODNN7EXAMPLE")], // pragma: allowlist secret — 16 [0-9A-Z]
+      ["Slack xoxb-", seg("xoxb-", "EXAMPLENOTAREALSLACKTOKEN")], // pragma: allowlist secret
+    ];
+
+    it("RED→GREEN: a glued (word-char-prefixed) credential is redacted, benign prefix char preserved", () => {
+      for (const [name, secret] of DEBOUNDED) {
+        // Standalone still redacts (no regression on the existing whole-value behavior).
+        expect(redactSecretShapesInString(secret), `${name} standalone`).toBe(M);
+        // GLUED after a single word char, and after a multi-char word — only the credential is redacted.
+        expect(redactSecretShapesInString(seg("X", secret)), `${name} X-glued`).toBe(`X${M}`);
+        expect(redactSecretShapesInString(seg("key", secret)), `${name} key-glued`).toBe(`key${M}`);
+      }
+    });
+
+    it("reports the glued credential as a span that EXCLUDES the benign leading char (byte-preserving)", () => {
+      for (const [name, secret] of DEBOUNDED) {
+        const input = seg("key", secret);
+        const spans = findSecretShapeSpans(input);
+        expect(spans.length, name).toBe(1);
+        // The span is exactly the credential (prefix+body) — the leading `key` is outside it.
+        expect(input.slice(spans[0]!.start, spans[0]!.end), name).toBe(secret);
+        expect(spans[0]!.replacement, name).toBe(M);
+        // Splicing reproduces the in-place scrubber output (path parity, no off-by-one).
+        const spliced = input.slice(0, spans[0]!.start) + spans[0]!.replacement + input.slice(spans[0]!.end);
+        expect(spliced, name).toBe(redactSecretShapesInString(input));
+        expect(spliced, name).toBe(`key${M}`);
+      }
+    });
+
+    it("still redacts through the EXISTING delimited paths (whitespace / quote / = / : / leading zero-width)", () => {
+      const [, HFV] = DEBOUNDED[0]!; // hf_ secret
+      expect(redactSecretShapesInString(`leak ${HFV} here`)).toBe(`leak ${M} here`);
+      expect(redactSecretShapesInString(`"${HFV}"`)).toBe(`"${M}"`);
+      expect(redactSecretShapesInString(`x=${HFV}`)).toBe(`x=${M}`);
+      expect(redactSecretShapesInString(`ref: ${HFV}`)).toBe(`ref: ${M}`);
+      expect(redactSecretShapesInString(`​${HFV}`)).toBe(`​${M}`); // leading zero-width
+    });
+
+    // KEPT the leading `\b` — the prefix is SHORT / low-signal and glues into a common word (or `AI`/`app`
+    // fragment), so a glued form would over-redact a benign identifier. Each: standalone STILL redacts,
+    // but the glued/word-embedded benign form is UNCHANGED. [name, standalone-secret, glued-BENIGN].
+    const KEPT: Array<[string, string, string]> = [
+      ["sk- (desk-/risk-/task-)", seg("sk-", "abcdefghijklmnopqrstuv0123456789"), "desk-management-framework-v2extras"], // pragma: allowlist secret
+      ["xai- (…xai)", seg("xai-", "abcdefghijklmnop0123456789"), seg("proxai-", "abcdefghijklmnop0123456789")], // pragma: allowlist secret
+      ["Stripe sk_live_ (desk_/risk_)", seg("sk", "_live_", "0123456789abcdefABCD"), seg("desk", "_live_", "0123456789abcdefABCD")], // pragma: allowlist secret
+      ["github_pat_ (natural phrase)", seg("github_pat_", "11ABCDE0aBcDeFgHiJkL0"), seg("my", "github_pat_", "reference0token0id00")], // pragma: allowlist secret
+      ["Slack xapp- (maxapp-)", seg("xapp-", "1-A0123ABCD-4567890123"), "maxapp-config-value-here"], // pragma: allowlist secret
+      ["Google AIza (openAIza…)", seg("AIza", "SyDabcdefghijklmnopqrstuvwxyz012345"), seg("open", "AIza", "SyDabcdefghijklmnopqrstuvwxyz012345")], // pragma: allowlist secret
+      ["Google ya29. (maya29.field)", seg("ya29.", "a0AfBbyDtestTokenValue0123456789ABCDEF"), "maya29.profile_image_url_field_v2"], // pragma: allowlist secret
+    ];
+
+    it("NO-DEGRADE: KEPT-boundary short/low-signal prefixes still redact standalone but NOT when glued into a word", () => {
+      for (const [name, standalone, gluedBenign] of KEPT) {
+        expect(redactSecretShapesInString(standalone), `${name} standalone`).toBe(M);
+        expect(redactSecretShapesInString(gluedBenign), `${name} glued-benign`).toBe(gluedBenign);
+        expect(findSecretShapeSpans(gluedBenign), `${name} glued-benign span`).toEqual([]);
+      }
+    });
+
+    // NO-DEGRADE benign-identifier corpus — MUST be returned byte-identical (zero redaction). These are
+    // the ordinary identifiers/blobs the shared detector protects: short/low-entropy bodies after a
+    // distinctive prefix, UUIDs, base64 blobs (incl. a `_`/`-`-bearing base64url one), snake_case ids,
+    // `AKIA` as a plain word, hex ids, file paths, and hyphen/underscore near-misses.
+    const BENIGN_CORPUS = [
+      "myhf_variable", // hf_ + short body
+      "staging_key",
+      seg("gsk_", "count"), // gsk_count (short body)
+      "sq0_index", // sq0 not followed by atp-/csp-
+      "npm_config", // npm_ + short body with `_`
+      "npm_config_cache is set",
+      "550e8400-e29b-41d4-a716-446655440000", // a UUID
+      "abc123def456ghi789jkl012mno345pqr678stuv", // pure lowercase-alnum blob — no prefix reachable
+      "aGVsbG8_d29ybGQ-dGhpc19pc19iZW5pZ24", // pragma: allowlist secret — base64url blob w/ `_` and `-`, not a secret shape
+      "user_session_reference_identifier_v2", // snake_case id
+      "AKIA is the aws access-key id prefix", // AKIA as a plain word (no 16-char body)
+      "9f8e7d6c5b4a3928170695f4e3d2c1b0", // pragma: allowlist secret — 32-hex id / git blob
+      "/var/log/hf_service/npm_cache/output.log", // file path with hf_/npm_ short segments
+      "GOCSPX_notasecret_underscore", // GOCSPX_ (underscore, not the required hyphen)
+      "glpat_docs", // glpat_ (underscore, not the hyphen)
+      "sq0abc-nothing", // sq0 near-miss (neither atp nor csp)
+    ];
+
+    it("NO-DEGRADE: the benign-identifier corpus is returned byte-identical (zero over-redaction)", () => {
+      for (const benign of BENIGN_CORPUS) {
+        expect(redactSecretShapesInString(benign), benign).toBe(benign);
+        expect(findSecretShapeSpans(benign), benign).toEqual([]);
+      }
     });
   });
 });

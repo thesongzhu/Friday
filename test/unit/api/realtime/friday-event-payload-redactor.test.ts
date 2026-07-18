@@ -157,6 +157,26 @@ describe("redactEventPayload — secret shapes (no regression)", () => {
     expect(s).toContain("[REDACTED]");
   });
 
+  // SEC-SECRET-GLUED-PREFIX-001: a distinctive-prefix credential GLUED directly to a preceding word
+  // char (`keyhf_<34>`) had no word boundary before the prefix, so the canonical detector's leading
+  // `\b` skipped it and it egressed on-wire to agents/channels. Built from parts (`seg`) so no literal
+  // token appears in SOURCE. RED on bf6968f9 (credential survives in the payload), GREEN after.
+  it("redacts a distinctive-prefix credential GLUED after a word char (glued-prefix evasion, on-wire)", () => {
+    const seg = (...p: string[]) => p.join(""); // pragma: allowlist secret
+    const HF = seg("hf_", "AbCdEfGhIjKlMnOpQrStUvWxYz01234567"); // pragma: allowlist secret — 34 base62
+    const GSK = seg("gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx"); // pragma: allowlist secret — 42 base62
+    const GLPAT = seg("glpat-", "ABCdef0123456789ghijkLMNop"); // pragma: allowlist secret
+    const out = redactEventPayload({
+      log: seg("deploy key", HF, " and x", GSK, " and id", GLPAT, " done"),
+    });
+    const s = serialize(out);
+    for (const cred of [HF, GSK, GLPAT]) expect(s, cred).not.toContain(cred);
+    expect(s).toContain("[REDACTED]");
+    // Benign surrounding + glued leading chars survive (only the credential subspan is masked).
+    expect(s).toContain("deploy key");
+    expect(s).toContain("done");
+  });
+
   it("masks values under legacy sensitive keys", () => {
     const out = redactEventPayload({
       password: "hunter2-a5", // pragma: allowlist secret

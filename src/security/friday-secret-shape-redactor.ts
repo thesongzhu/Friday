@@ -182,19 +182,36 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
     sensitiveSpan: (m) => credentialAfterPrefix(m, m[1]),
   },
   // JWT — three base64url segments, the first beginning `eyJ` (`{"…`).
+  // GLUED-PREFIX: leading `\b` KEPT deliberately. `eyJ` is not a delimiter-prefix — it is the base64url
+  // of `{"` and thus part of the token BODY (base64url includes `_`/`-`), so dropping the boundary would
+  // let `eyJ` match mid-base64-blob and newly over-redact benign base64 (a case the no-degrade corpus
+  // guards). The boundary stays; a JWT glued after a word char is out of this fix's enumerated scope.
   {
     pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // GitHub tokens: classic `gh?_` prefixes AND fine-grained `github_pat_`.
+  //
+  // GLUED-PREFIX (SEC-SECRET-GLUED-PREFIX-001): the classic `gh[opsru]_` branch drops its leading `\b`
+  // so a token glued to a preceding word char (`keyghp_<16+>`) is still caught — no benign identifier
+  // segment ends in `ghp`/`gho`/`ghs`/`ghr`/`ghu` immediately before `_` (there is no such English /
+  // snake_case fragment), so allowing a glued prefix cannot over-match. The `github_pat_` branch KEEPS
+  // its leading `\b` (moved onto the branch): `github_pat` is a NATURAL English phrase ("github personal
+  // access token"), so a benign flat identifier `stored_github_pat_reference_token` + a `[A-Za-z0-9_]`
+  // body (which INCLUDES `_`) could plausibly appear in config/source — the boundary keeps it protected.
   {
-    pattern: /\b(?:gh[opsru]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/gu,
+    pattern: /(?:gh[opsru]_[A-Za-z0-9_]{16,}|\bgithub_pat_[A-Za-z0-9_]{16,})\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Provider hyphen-prefixed API keys: OpenAI `sk-` / `sk-proj-`, `rk-`, `ak-`, xAI `xai-`. The
   // client-safe PUBLISHABLE `pk-` prefix is DELIBERATELY ABSENT from the alternation (round-16): a
   // Stripe/Google publishable key is not a secret, and Friday's own domain uses `pk-` for a satellite
   // PUBLIC key (`publicKey: "pk-…"`), so redacting a `pk-` value is data-loss, not protection.
+  // GLUED-PREFIX: leading `\b` KEPT deliberately. `sk`/`rk`/`ak` are SHORT (2-char) prefixes that glue
+  // into extremely common words ending in them — `desk-`, `risk-`, `task-`, `disk-`, `mask-`, `work-`,
+  // `mark-`, `fork-`, `network-`, `break-`, `speak-`, `leak-` — and the `-`-inclusive body would then
+  // over-redact a benign kebab identifier (`desk-management-framework-v2` → `sk-management-framework-v2`).
+  // The boundary is REQUIRED here; this is the canonical "short/low-signal prefix" exclusion.
   {
     pattern: /\b(?:sk|rk|ak|xai)-(?:proj-)?[A-Za-z0-9_-]{16,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
@@ -206,6 +223,10 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   // key never matches. (Stripe key bodies are base62 with no internal `_`, so the value run is
   // `[A-Za-z0-9]{16,}`; the leading `(?:sk|rk)_(?:live|test)` / `whsec` cannot false-fire on benign
   // snake_case identifiers.)
+  // GLUED-PREFIX: leading `\b` KEPT deliberately. The `sk_`/`rk_` prefixes glue into the SAME common
+  // words as the hyphen form (`desk_live_…`, `risk_test_…`, `task_live_…`), so — like `sk-`/`rk-` — the
+  // boundary is retained; catching a glued Stripe underscore-key is not worth the benign-`sk_`/`rk_`
+  // over-redaction risk. (The distinctive `whsec_` shares this pattern and inherits the kept boundary.)
   {
     pattern: /\b(?:(?:sk|rk)_(?:live|test)|whsec)_[A-Za-z0-9]{16,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
@@ -213,11 +234,18 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   // AWS access-key id (`AKIA…` long-term + STS/temporary variants). NB: the AWS SECRET access key is
   // a shapeless 40-char base64 with no prefix — it is caught by its KEY NAME (`secretAccessKey`,
   // in the sensitive-field-name set), NOT a shape, so it is not (and must not be) a content pattern.
+  // GLUED-PREFIX: leading `\b` dropped (see hf_ note). The `A(?:KIA|SIA|…)` prefix + 16 CONTIGUOUS
+  // `[0-9A-Z]` (uppercase/digit only — a `_`, `-`, or lowercase char breaks the body) is the gate: a
+  // benign snake_case constant like `REGION_ASIA_PACIFIC_1` cannot span it (the `_` after `ASIA` ends
+  // the body at 0 chars), so allowing a glued prefix (`xAKIA<16>`) does not over-match plausible ids.
   {
-    pattern: /\bA(?:KIA|SIA|GPA|IDA|ROA|IPA|NPA|NVA)[0-9A-Z]{16}\b/gu,
+    pattern: /A(?:KIA|SIA|GPA|IDA|ROA|IPA|NPA|NVA)[0-9A-Z]{16}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Google API key — `AIza` + 35 chars of `[0-9A-Za-z_-]` (documented 39-char format).
+  // GLUED-PREFIX: leading `\b` KEPT deliberately. `AIza` begins with `AI`, a ubiquitous fragment in an
+  // AI-domain codebase (`openAI…`, `vertexAI…`), so a glued form (`openAIza<35>`) is a plausible-enough
+  // benign collision that the NO-DEGRADE hard bar favors the boundary over catching a (rare) glued key.
   {
     pattern: /\bAIza[0-9A-Za-z_-]{35}\b/gu,
     sensitiveSpan: wholeMatchSpan,
@@ -227,42 +255,53 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   // distinctive). No trailing `\b` — the body legitimately ends in `.`/`-`/`_`; the greedy run grabs
   // the whole token and the marker replaces it. A benign near-miss `ya29_notatoken` (underscore, not
   // the required literal `.`) never matches.
+  // GLUED-PREFIX: leading `\b` KEPT deliberately. A username-style identifier ending in `ya29`
+  // (`maya29`, `sonya29`, `priya29`) followed by `.<field>` would collide (`maya29.profile_image_url`
+  // → `ya29.profile_image_url`), so the boundary is retained over catching a (rare) glued access token.
   {
     pattern: /\bya29\.[A-Za-z0-9._-]{20,}/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Google OAuth CLIENT SECRET — `GOCSPX-` + a base64url body (distinctive prefix, low false positive).
+  // GLUED-PREFIX: leading `\b` dropped — `GOCSPX-` is an all-caps, non-word prefix (no benign glue).
   {
-    pattern: /\bGOCSPX-[A-Za-z0-9_-]{20,}\b/gu,
+    pattern: /GOCSPX-[A-Za-z0-9_-]{20,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // GitLab personal access token — `glpat-` + 20+ base64url chars (distinctive prefix). A benign
   // `glpat_docs` (underscore, not the required hyphen) never matches.
+  // GLUED-PREFIX: leading `\b` dropped — no benign identifier segment ends in `glpat` before a `-`.
   {
-    pattern: /\bglpat-[A-Za-z0-9_-]{20,}\b/gu,
+    pattern: /glpat-[A-Za-z0-9_-]{20,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // SendGrid API key — the exact `SG.<22>.<43>` structure (two dot-separated base64url runs of fixed
   // length). The structured length is what makes `SG.` specific enough to avoid a benign-text false fire.
+  // GLUED-PREFIX: leading `\b` dropped — the rigid `SG.<exactly-22>.<exactly-43>` shape is what gates
+  // it, so a glued `imgSG.<22>.<43>` cannot arise from a plausible benign identifier.
   {
-    pattern: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b/gu,
+    pattern: /SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Square access token (`sq0atp-`) / OAuth client secret (`sq0csp-`) — distinctive `sq0` prefix. The
   // newer `EAAA…` form is DELIBERATELY excluded (4-char base64 prefix, unacceptable false-positive risk).
+  // GLUED-PREFIX: leading `\b` dropped — `sq0atp-`/`sq0csp-` are not benign identifier fragments.
   {
-    pattern: /\bsq0(?:atp|csp)-[A-Za-z0-9_-]{22,60}\b/gu,
+    pattern: /sq0(?:atp|csp)-[A-Za-z0-9_-]{22,60}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // DigitalOcean personal access token — `dop_v1_` + exactly 64 hex (distinctive prefix + fixed length).
+  // GLUED-PREFIX: leading `\b` dropped — `dop_v1_` + EXACTLY 64 lowercase-hex is astronomically specific.
   {
-    pattern: /\bdop_v1_[a-f0-9]{64}\b/gu,
+    pattern: /dop_v1_[a-f0-9]{64}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Groq API key — `gsk_` + 40+ base62 chars (Friday's provider-catalog classifies `gsk_` as Groq with
   // HIGH confidence; the body class excludes `_`, so a benign `gsk_` snake_case identifier never matches).
+  // GLUED-PREFIX: leading `\b` dropped — see the hf_ note. Body `[A-Za-z0-9]{40,}` EXCLUDES `_`/`-`,
+  // so a snake_case run cannot span it and `gsk` is not a benign fragment; a glued `xgsk_<40>` is caught.
   {
-    pattern: /\bgsk_[A-Za-z0-9]{40,}\b/gu,
+    pattern: /gsk_[A-Za-z0-9]{40,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // HuggingFace user access token — `hf_` + 34+ base62 chars (Friday's provider-catalog classifies `hf_`
@@ -272,20 +311,35 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   // open-ended (NOT exact `{34}`) so a longer fine-grained token cannot slip the trailing `\b` and leak,
   // mirroring the `gsk_`/`glpat-` open-ended convention. The body class excludes `_`, so a benign short
   // `hf_docs` / `hf_` / `hf_config_value` snake_case identifier never matches (distinctive, low false-positive).
+  //
+  // GLUED-PREFIX (SEC-SECRET-GLUED-PREFIX-001): the leading `\b` is DROPPED so a credential glued to a
+  // preceding ASCII word char (`keyhf_<34>`) — which has NO word boundary before `hf` — is still caught.
+  // This is safe ONLY because the body is long + high-entropy: `[A-Za-z0-9]{34,}` EXCLUDES `_` and `-`,
+  // so it cannot span a snake_case / kebab identifier boundary, and no benign identifier is realistically
+  // going to contain the literal `hf_` followed by 34+ contiguous base62 chars. The trailing `\b` (and
+  // the whole-match span) are UNCHANGED, so the redacted span is exactly `hf_<body>` and the benign
+  // leading char (`key`) survives byte-for-byte. Same reasoning applies to every de-`\b`'d shape below/above.
   {
-    pattern: /\bhf_[A-Za-z0-9]{34,}\b/gu,
+    pattern: /hf_[A-Za-z0-9]{34,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // npm access token — `npm_` + 36 base62 chars. The body class excludes `_`, so a benign `npm_`
   // config identifier (`npm_config_cache`) never matches (it is short and contains `_`).
+  // GLUED-PREFIX: leading `\b` dropped — body `[A-Za-z0-9]{36}` excludes `_`, `npm` is not a benign
+  // fragment ending a word before `_`, so a glued `xnpm_<36>` is caught without over-matching.
   {
-    pattern: /\bnpm_[A-Za-z0-9]{36}\b/gu,
+    pattern: /npm_[A-Za-z0-9]{36}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Slack tokens: bot/user `xox[abprs]-` AND app-level `xapp-` (Socket Mode). Friday's own Slack setup
   // recipe marks the `xapp-` app-level token `sensitive: true`; the `xapp-` prefix is distinctive.
+  //
+  // GLUED-PREFIX: the leading `\b` is DROPPED for the `xox[abprs]-` bot/user branch only (`xoxb`/`xoxp`/…
+  // are not benign identifier fragments, so a glued `zxoxb-<10+>` is caught). The `xapp-` branch KEEPS its
+  // leading `\b` (moved onto the branch): `app` is a ubiquitous fragment and `xapp` glues into plausible
+  // benign identifiers (`maxapp-…`, `linuxapp-…`), which a `-`-inclusive body would then over-redact.
   {
-    pattern: /\b(?:xox[abprs]|xapp)-[A-Za-z0-9-]{10,}\b/gu,
+    pattern: /(?:xox[abprs]|\bxapp)-[A-Za-z0-9-]{10,}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Generic credential ASSIGNMENT embedded in free text: `<cred-name>=<value>` / `<cred-name>: <value>`.

@@ -271,3 +271,47 @@ describe("FridayMemoryOutputFilter — round-17 HuggingFace hf_ shape (content +
     expect(out.content).toBe("hf_docs reference");
   });
 });
+
+// ─── SEC-SECRET-GLUED-PREFIX-001: a distinctive-prefix credential GLUED directly to a preceding ASCII
+//     word char (`keyhf_<34>`) had no word boundary before the prefix, so the canonical detector's
+//     leading `\b` skipped it and it survived memory read-back to agents through EVERY output-filter leg
+//     (content scanAndTransform / metadata redactDeep / tag drop). RED on bf6968f9 (glued token verbatim
+//     in content + metadata, kept as a tag); GREEN after the leading `\b` is dropped on the high-entropy
+//     distinctive-prefix patterns. Built from parts so no contiguous literal token appears in SOURCE. ───
+describe("FridayMemoryOutputFilter — SEC-SECRET-GLUED-PREFIX-001 glued distinctive-prefix credential", () => {
+  const filter = createFridayMemoryOutputFilter();
+  const seg = (...p: string[]): string => p.join(""); // pragma: allowlist secret
+  const HF_BODY = "AbCdEfGhIjKlMnOpQrStUvWxYz01234567"; // pragma: allowlist secret — 34 base62
+  const HF = seg("hf_", HF_BODY); // pragma: allowlist secret
+  const GLUED = seg("key", HF); // pragma: allowlist secret — hf_ glued after the word `key`
+
+  it("redacts a GLUED hf_ token in item.content (scanAndTransform leg), leaving the benign leading `key`", () => {
+    const out = filter.filterItem(makeItem({ content: seg("auth used ", GLUED, " today") }));
+    expect(out.content).toContain(M);
+    expect(out.content).not.toContain(HF);
+    expect(out.content).not.toContain(HF_BODY);
+    // Only the credential subspan is masked — the glued `key` and surrounding text survive.
+    expect(out.content).toBe(`auth used key${M} today`);
+  });
+
+  it("redacts a GLUED hf_ token carried in item.metadata VALUES (redactDeep leg) under a non-sensitive key", () => {
+    const out = filter.filterItem(makeItem({ metadata: { tokenPreview: GLUED, note: "keep" } }));
+    const md = out.metadata as { tokenPreview: string; note: string };
+    expect(md.tokenPreview).toBe(`key${M}`);
+    expect(md.note).toBe("keep");
+    expect(JSON.stringify(md)).not.toContain(HF_BODY);
+  });
+
+  it("DROPS a GLUED hf_-shaped tag, preserving benign tags byte-identical", () => {
+    const out = filter.filterItem(makeItem({ tags: ["ok", GLUED, "fine"] }));
+    expect(JSON.stringify(out.tags)).not.toContain(HF_BODY);
+    expect(out.tags).toEqual(["ok", "fine"]);
+  });
+
+  it("NO-DEGRADE: a word-embedded near-miss with a SHORT body is not a token (survives)", () => {
+    // `keyhf_` + a short body has no 34-char high-entropy run, so it is NOT a credential — untouched.
+    const out = filter.filterItem(makeItem({ tags: [seg("key", "hf_docs")], content: seg("ref key", "hf_docs") }));
+    expect(out.tags).toEqual([seg("key", "hf_docs")]);
+    expect(out.content).toBe(seg("ref key", "hf_docs"));
+  });
+});

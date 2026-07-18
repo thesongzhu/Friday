@@ -207,4 +207,42 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
       expect(json).not.toContain(HF_RAW);
     }
   });
+
+  // ─── SEC-SECRET-GLUED-PREFIX-001: a distinctive-prefix credential GLUED directly to a preceding word
+  //     char (`keyhf_<34>`) under a NON-sensitive key had no word boundary before the prefix, so the
+  //     canonical detector's leading `\b` skipped it and it egressed VERBATIM through BOTH the audit sink
+  //     and memory read-back. The fix drops the leading `\b` on the high-entropy distinctive-prefix
+  //     patterns, so the SAME canonical detector catches the glued credential in both sinks (parity holds
+  //     automatically). Only the credential subspan is masked — the glued benign leading char survives.
+  //     RED on bf6968f9 (both sinks return the glued token verbatim); GREEN after. ───
+  const GSK_GLUED = seg("x", "gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx"); // pragma: allowlist secret
+  const GLPAT_GLUED = seg("id", "glpat-", "ABCdef0123456789ghijkLMNop"); // pragma: allowlist secret
+  const HF_GLUED = seg("key", "hf_", HF_BODY); // pragma: allowlist secret
+  const GLUED_PAYLOAD = (): Record<string, unknown> => ({
+    // non-sensitive KEY NAMES so the key-name nuke does NOT fire — the glued SHAPE must be caught.
+    hfref: HF_GLUED,
+    gskref: GSK_GLUED,
+    glref: GLPAT_GLUED,
+    note: "just a note",
+  });
+
+  it("glued distinctive-prefix credentials redact identically in the AUDIT sink and MEMORY redactDeep", async () => {
+    const auditDetails = await auditRedactedDetails(GLUED_PAYLOAD());
+    const memoryGuard = createFridayMemoryPiiGuard("redact");
+    const memoryValue = memoryGuard.redactDeep(GLUED_PAYLOAD()).value as Record<string, unknown>;
+    // Cross-sink equality — memory egress == audit sink for the glued credentials.
+    expect(memoryValue).toEqual(auditDetails);
+    // The credential subspan is masked, the benign glued leading char (`key`/`x`/`id`) survives.
+    expect(memoryValue.hfref).toBe(`key${M}`);
+    expect(memoryValue.gskref).toBe(`x${M}`);
+    expect(memoryValue.glref).toBe(`id${M}`);
+    expect(memoryValue.note).toBe("just a note");
+    // No credential body survives in either sink's serialization.
+    for (const sink of [auditDetails, memoryValue]) {
+      const json = JSON.stringify(sink);
+      for (const cred of [HF_GLUED.slice(3), GSK_GLUED.slice(1), GLPAT_GLUED.slice(2)]) {
+        expect(json, cred).not.toContain(cred);
+      }
+    }
+  });
 });
