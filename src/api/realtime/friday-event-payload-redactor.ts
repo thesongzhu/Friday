@@ -55,11 +55,16 @@
  * @module api/realtime
  */
 
-import { createFridayMemoryPiiGuard } from "../../memory/guard/services/friday-memory-pii-guard.js";
 import {
-  redactUnicodeResistantPii,
-  redactUnicodeResistantSecrets,
-} from "./friday-realtime-secret-unicode-scan.js";
+  findSecretShapeSpans,
+  redactSecretShapesInString,
+} from "../../security/friday-secret-shape-redactor.js";
+import {
+  buildUnicodeDetectionCopy,
+  redactUnicodeObfuscated,
+} from "../../security/friday-unicode-pii-normalizer.js";
+import { createFridayMemoryPiiGuard } from "../../memory/guard/services/friday-memory-pii-guard.js";
+import { redactUnicodeResistantPii } from "./friday-realtime-value-pii-fold.js";
 
 // Shared production value-PII guard — constructed ONCE at module load. The factory
 // takes only an optional mode and has NO dependencies, so no DI/bootstrap wiring is
@@ -98,28 +103,43 @@ function isSensitiveKey(key: string): boolean {
 }
 
 /**
- * Strip secret-shaped substrings (PEM / Bearer / sk- / gh_ / JWT / KEY=VALUE) from a
- * string. Delegates to the round-7 F2 Unicode-obfuscation-resistant scan, which folds a
- * NON-DESTRUCTIVE detection copy (NFKD → strip \p{M} → strip Cf/Default_Ignorable → fold
- * \p{Nd}) and redacts only the ORIGINAL bytes of a matched span — so zero-width-split,
- * combining, fullwidth, math-alphanumeric and precomposed-accented secrets are caught,
- * while benign multilingual text round-trips byte-identical. Pure-ASCII input behaves
- * exactly as the previous contiguous-ASCII pass.
+ * Strip secret-shaped substrings (PEM / Bearer / sk- / gh_ / JWT / KEY=VALUE / …) from a string,
+ * resistant to zero-width / combining / fullwidth / math-alphanumeric / precomposed-accent Unicode
+ * obfuscation. Delegates to the CANONICAL shared secret detector — `findSecretShapeSpans` /
+ * `redactSecretShapesInString` (`src/security/friday-secret-shape-redactor.ts`) — layered over the
+ * canonical `redactUnicodeObfuscated` / `buildUnicodeDetectionCopy` de-obfuscation primitive
+ * (`src/security/friday-unicode-pii-normalizer.ts`), EXACTLY as the memory-egress + audit sinks do
+ * (no divergent realtime-local detector). Two passes mirror those sinks:
+ *   1. Unicode pass — when the detection copy actually folds (obfuscated input), run
+ *      `findSecretShapeSpans` over the de-obfuscated copy; each match is mapped back to the ORIGINAL
+ *      bytes (credential subspan only — a Bearer scheme / assignment label + separator + quoting is
+ *      preserved BYTE-FOR-BYTE) and spliced. Skipped (no-op) on pure-ASCII input.
+ *   2. Raw residual — `redactSecretShapesInString` catches a pure-ASCII (or any un-obfuscated)
+ *      secret the Unicode pass skipped. Both passes use the realtime `[REDACTED]` marker (a
+ *      documented parameter of the shared detector), so behavior is byte-consistent with the prior
+ *      pass and benign multilingual text round-trips byte-identical.
  */
 function redactString(value: string): string {
-  return redactUnicodeResistantSecrets(value);
+  const detection = buildUnicodeDetectionCopy(value);
+  const afterUnicode = detection.changed
+    ? redactUnicodeObfuscated(value, [(normalized) => findSecretShapeSpans(normalized, REDACTED)])
+    : value;
+  return redactSecretShapesInString(afterUnicode, REDACTED);
 }
 
 /**
  * Full CONTENT-field redaction for a string leaf, resistant to Unicode obfuscation for
  * BOTH secrets AND value-PII (round-8 F2b). Order is load-bearing:
- *   1. secret pass (Unicode-resistant) — masks a secret before its digits could be
- *      misread as a card/phone;
- *   2. value-PII pass (Unicode-resistant) — email / phone / SSN / Luhn-gated card, run
- *      over the SAME NFKD detection copy using the shared guard's own detector, so a
- *      fullwidth / zero-width-split / combining / precomposed-accent email (or phone/SSN/
- *      card) is redacted FULL-SPAN with the guard's canonical `[<TYPE>]` marker BEFORE any
- *      ASCII pass can fragment it (no partial-fragment residual);
+ *   1. secret pass (Unicode-resistant) — the CANONICAL shared secret detector
+ *      (`findSecretShapeSpans` / `redactSecretShapesInString` via `redactString`) masks a secret
+ *      before its digits could be misread as a card/phone;
+ *   2. value-PII pass (Unicode-resistant) — email / phone / SSN / Luhn-gated card, run over the
+ *      value-PII detection copy using the shared guard's own detector, so a fullwidth / zero-width-
+ *      split / combining / precomposed-accent email (or phone/SSN/card) is redacted FULL-SPAN with
+ *      the guard's canonical `[<TYPE>]` marker BEFORE any ASCII pass can fragment it (no partial-
+ *      fragment residual). The copy is ALIGNED with the guard's deliberate width fold
+ *      (`friday-realtime-value-pii-fold.ts`) so it never over-redacts compat-whitespace-bridged
+ *      fullwidth digits or decorative No/Nl digit runs (round-9 F2b-ND-1);
  *   3. shared `redactDeep` — an idempotent ASCII/fullwidth-DIGIT safety net (the markers
  *      from steps 1–2 carry no PII shape, so it is a no-op on them) that also preserves the
  *      established at-rest string policy.
@@ -129,7 +149,7 @@ function redactString(value: string): string {
  * Unicode-resistant superset, never a divergence. Benign multilingual text is untouched.
  */
 function redactContentString(value: string): string {
-  const afterSecrets = redactUnicodeResistantSecrets(value);
+  const afterSecrets = redactString(value);
   const afterPii = redactUnicodeResistantPii(
     afterSecrets,
     (normalized) => piiValueGuard.scanAndTransform(normalized).matches,
