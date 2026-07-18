@@ -52,6 +52,24 @@ export function isValidAfterDays(value: unknown): value is number {
   );
 }
 
+/**
+ * STRICT structural validator for ONE `CategoryRetention` value read back from an
+ * untrusted / persisted source (RETENTION-R3d round-8). Accepts EXACTLY
+ * `{mode:"permanent"}` or `{mode:"after_days",days:N}` with N inside the canonical
+ * honored `[FRIDAY_MIN_AFTER_DAYS, FRIDAY_MAX_AFTER_DAYS]` window (via
+ * `isValidAfterDays`). Rejects a non-object / null / array, an unknown `mode`, a
+ * missing/non-integer/NaN/Infinity `days`, and any OUT-OF-RANGE window — so a
+ * decode path fails CLOSED on a schema-valid-but-semantically-invalid value (e.g. a
+ * reaper-unhonored day count), not merely on undecodable JSON.
+ */
+export function isValidCategoryRetention(value: unknown): value is CategoryRetention {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const mode = (value as { mode?: unknown }).mode;
+  if (mode === "permanent") return true;
+  if (mode !== "after_days") return false;
+  return isValidAfterDays((value as { days?: unknown }).days);
+}
+
 export interface FridayRetentionPolicy {
   // ── CONTENT categories (canonical + derived-content) ──────────────────────
   // Default PERMANENT. Auto-deletion is opt-in per category via `after_days`;
@@ -137,6 +155,47 @@ export type FridayRetentionContentPolicy = Record<
   FridayRetentionContentCategory,
   CategoryRetention
 >;
+
+/** The canonical content-category name set (for O(1) membership checks). */
+const FRIDAY_RETENTION_CONTENT_CATEGORY_SET: ReadonlySet<string> = new Set(
+  FRIDAY_RETENTION_CONTENT_CATEGORIES,
+);
+
+/**
+ * STRICT validator that a value is EXACTLY one of the seven canonical content
+ * category NAMES (RETENTION-R3d round-8). Used by decode paths to reject an
+ * unknown / malformed category name in a persisted receipt's `changedCategories`
+ * or `appliedUpdates` keys.
+ */
+export function isFridayRetentionContentCategory(
+  value: unknown,
+): value is FridayRetentionContentCategory {
+  return typeof value === "string" && FRIDAY_RETENTION_CONTENT_CATEGORY_SET.has(value);
+}
+
+/**
+ * STRICT validator for a full `FridayRetentionContentPolicy` read back from an
+ * untrusted / persisted source (RETENTION-R3d round-8). Requires a plain object
+ * carrying EXACTLY the seven canonical content categories (no missing, no unknown
+ * key), each mapped to a valid `CategoryRetention` (via `isValidCategoryRetention`).
+ * This is the shape the store always produces (`allPermanentPolicy` seeds all seven),
+ * so anything else — a truncated policy, an extra/renamed key, or an out-of-domain
+ * per-category value — is a STORAGE-INTEGRITY failure and must fail CLOSED, never be
+ * surfaced as a partially-decoded policy.
+ */
+export function isValidFridayRetentionContentPolicy(
+  value: unknown,
+): value is FridayRetentionContentPolicy {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  // EXACTLY the seven canonical categories: no unknown key, no missing key.
+  if (Object.keys(record).length !== FRIDAY_RETENTION_CONTENT_CATEGORIES.length) return false;
+  for (const category of FRIDAY_RETENTION_CONTENT_CATEGORIES) {
+    if (!Object.prototype.hasOwnProperty.call(record, category)) return false;
+    if (!isValidCategoryRetention(record[category])) return false;
+  }
+  return true;
+}
 
 /**
  * Max setup-bootstrap nonce rows deleted PER class (expired-unconsumed /

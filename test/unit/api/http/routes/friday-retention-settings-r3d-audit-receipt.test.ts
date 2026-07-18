@@ -971,8 +971,27 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
       auditId: `aud:${receiptId}`,
       recoveryKeyHash: sharedHash,
       payloadDigest: "digest",
-      before: { auditLogs: { mode: "permanent" } } as never,
-      after: { auditLogs: { mode: "after_days", days: 30 } } as never,
+      // Full 7-category content policies — exactly what the store always emits (the
+      // decode path strict-validates completeness, so a receipt's before/after must
+      // carry every canonical category).
+      before: {
+        learningEvents: { mode: "permanent" },
+        heartbeats: { mode: "permanent" },
+        skillRunTerminal: { mode: "permanent" },
+        auditLogs: { mode: "permanent" },
+        agentRuns: { mode: "permanent" },
+        llmUsageRecords: { mode: "permanent" },
+        errorIncidents: { mode: "permanent" },
+      } as never,
+      after: {
+        learningEvents: { mode: "permanent" },
+        heartbeats: { mode: "permanent" },
+        skillRunTerminal: { mode: "permanent" },
+        auditLogs: { mode: "after_days", days: 30 },
+        agentRuns: { mode: "permanent" },
+        llmUsageRecords: { mode: "permanent" },
+        errorIncidents: { mode: "permanent" },
+      } as never,
       changedCategories: ["auditLogs"],
       appliedUpdates: { auditLogs: { mode: "after_days", days: 30 } },
       createdAt: NOW,
@@ -1037,6 +1056,196 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     // The applied window (42) lives ONLY in the GOVERNED store, never the anchor —
     // the anchor's `after` is absent, so a retention advance cannot orphan content.
     expect(JSON.parse(receiptRows()[0].after_json).auditLogs).toEqual({ mode: "after_days", days: 42 });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RETENTION-R3d ROUND-8 — receipt-INTEGRITY fail-closed (P1 fail-OPEN fix).
+  //
+  // Finding (Advisor, reproduced by an adversarial real-SQLite probe): a MATCHING
+  // but MALFORMED persisted receipt decoded to `null`, so the PUT idempotency guard
+  // read a corrupt binding as an UNUSED key and RE-EXECUTED a same-key/DIFFERENT-
+  // payload mutation (auditLogs 30→90, receipt & audit counts 1→2) — a fail-OPEN
+  // that also broke same-key immutability. The fix: a matching-but-corrupt receipt
+  // raises a TYPED integrity error (fail-CLOSED); `null` is reserved EXCLUSIVELY for
+  // a genuinely ABSENT / expired binding.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // The typed fail-closed signature the guard + recovery must surface on corruption.
+  const INTEGRITY = { httpStatus: 500, code: "RETENTION_RECEIPT_INTEGRITY_FAILURE" };
+
+  // Seed ONE valid receipt bound to KEY (auditLogs→30), corrupt its stored row (owner
+  // + recovery-key binding preserved), then replay the SAME key with a DIFFERENT
+  // payload (90). Post-fix this MUST fail closed with a typed integrity error, leaving
+  // the persisted policy BYTE-UNCHANGED and receipt + audit counts at 1.
+  async function seedCorruptThenReplayDifferent(
+    KEY: string,
+    corrupt: (recoveryKeyHash: string) => void,
+  ): Promise<void> {
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    expect(receiptRows()).toHaveLength(1);
+    expect(auditRows()).toHaveLength(1);
+    const policyBefore = policyRows(CANON);
+    expect(policyBefore).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+
+    corrupt(hashRecoveryKey(KEY));
+
+    await expect(
+      putRouteOf(routes).handler(
+        makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 90 } } } }),
+      ),
+    ).rejects.toMatchObject(INTEGRITY);
+
+    // Fail-CLOSED: policy byte-unchanged (still 30, never 90); NO second receipt/audit.
+    expect(policyRows(CANON)).toEqual(policyBefore);
+    const get = (await getRouteOf(routes).handler(makeCtx())) as { policy: Record<string, unknown> };
+    expect(get.policy.auditLogs).toEqual({ mode: "after_days", days: 30 });
+    expect(receiptRows()).toHaveLength(1);
+    expect(auditRows()).toHaveLength(1);
+  }
+
+  // (a) MALFORMED JSON on a matching receipt → typed integrity error; byte-unchanged.
+  it("(round-8 a) matching MALFORMED receipt (undecodable before_json) + same key/DIFFERENT payload → typed integrity error (fail-closed), policy byte-unchanged, counts stay 1", async () => {
+    await seedCorruptThenReplayDifferent("corrupt-json-key", (hash) =>
+      db.writer
+        .prepare("UPDATE retention_recovery_receipts SET before_json = ? WHERE recovery_key_hash = ?")
+        .run("{not-valid-json", hash),
+    );
+  });
+
+  // (b) STRUCTURALLY-INVALID JSON (valid JSON, bad shape) → same fail-closed posture.
+  const structuralCorruptions: Array<[string, (recoveryKeyHash: string) => void]> = [
+    [
+      "changedCategories is not an array",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET changed_categories_json = ? WHERE recovery_key_hash = ?")
+          .run(JSON.stringify({ not: "an-array" }), h),
+    ],
+    [
+      "changedCategories has an unknown category name",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET changed_categories_json = ? WHERE recovery_key_hash = ?")
+          .run(JSON.stringify(["notARealCategory"]), h),
+    ],
+    [
+      "appliedUpdates has an unknown category key",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET applied_updates_json = ? WHERE recovery_key_hash = ?")
+          .run(JSON.stringify({ notARealCategory: { mode: "permanent" } }), h),
+    ],
+    [
+      "appliedUpdates has an out-of-range CategoryRetention (reaper-unhonored)",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET applied_updates_json = ? WHERE recovery_key_hash = ?")
+          .run(JSON.stringify({ auditLogs: { mode: "after_days", days: 1_000_000_000 } }), h),
+    ],
+    [
+      "appliedUpdates has a bad mode",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET applied_updates_json = ? WHERE recovery_key_hash = ?")
+          .run(JSON.stringify({ auditLogs: { mode: "forever" } }), h),
+    ],
+  ];
+  it.each(structuralCorruptions)(
+    "(round-8 b) structurally-invalid receipt [%s] + same key/different payload → fail-closed integrity error; policy byte-unchanged; counts stay 1",
+    async (_label, corrupt) => {
+      await seedCorruptThenReplayDifferent("struct-invalid-key", corrupt);
+    },
+  );
+
+  // (b-policy) schema-valid JSON policy but semantically invalid: an out-of-range
+  // per-category value, and a TRUNCATED policy (missing a canonical category).
+  it("(round-8 b-policy) 'before' is a schema-valid policy with an out-of-range per-category value → fail-closed; counts stay 1", async () => {
+    await seedCorruptThenReplayDifferent("before-out-of-range-key", (hash) => {
+      // Start from the committed (valid) 7-category policy, tamper ONE category to an
+      // out-of-domain window → valid JSON, invalid CategoryRetention.
+      const policy = JSON.parse(receiptRows()[0].after_json) as Record<string, unknown>;
+      policy.auditLogs = { mode: "after_days", days: 1_000_000_000 };
+      db.writer
+        .prepare("UPDATE retention_recovery_receipts SET before_json = ? WHERE recovery_key_hash = ?")
+        .run(JSON.stringify(policy), hash);
+    });
+  });
+  it("(round-8 b-policy) 'after' is a TRUNCATED policy (missing a canonical category) → fail-closed; counts stay 1", async () => {
+    await seedCorruptThenReplayDifferent("after-truncated-key", (hash) => {
+      const policy = JSON.parse(receiptRows()[0].after_json) as Record<string, unknown>;
+      delete policy.errorIncidents; // now 6 of 7 canonical categories → not exactly seven
+      db.writer
+        .prepare("UPDATE retention_recovery_receipts SET after_json = ? WHERE recovery_key_hash = ?")
+        .run(JSON.stringify(policy), hash);
+    });
+  });
+
+  // (c) RECOVERY on a corrupt matching binding → typed integrity error, not null/success.
+  it("(round-8 c) recovery on a corrupt MATCHING binding → typed integrity error (fail-closed), never a silent null", async () => {
+    const KEY = "recover-corrupt-key";
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    // Corrupt the matching receipt (undecodable applied_updates_json) — binding kept.
+    db.writer
+      .prepare("UPDATE retention_recovery_receipts SET applied_updates_json = ? WHERE recovery_key_hash = ?")
+      .run("{bad", hashRecoveryKey(KEY));
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } })),
+    ).rejects.toMatchObject(INTEGRITY);
+  });
+
+  // (d) A GENUINELY-absent key still returns null → recovery null AND a fresh PUT
+  //     proceeds normally (do NOT over-fail-close valid new writes).
+  it("(round-8 d) a GENUINELY-absent key → recovery null AND a fresh PUT applies normally (no over-fail-close)", async () => {
+    const routes = makeRoutes(realAppender());
+    const miss = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": "never-used-key" } }),
+    )) as { receipt: unknown };
+    expect(miss.receipt).toBeNull(); // genuine absence → null, NOT an integrity error
+
+    const put = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": "fresh-unused-key" }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    expect(put.receipt.status).toBe("applied");
+    expect(policyRows(CANON)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+    expect(receiptRows()).toHaveLength(1);
+    expect(auditRows()).toHaveLength(1);
+  });
+
+  // (e) A GENUINELY-expired receipt (deleted by finite auditLogs retention) → null →
+  //     a same-key PUT proceeds (expiry is REAL absence, not corruption).
+  it("(round-8 e) a GENUINELY-expired receipt (reaped) → recovery null AND a same-key PUT proceeds (expiry is real absence)", async () => {
+    const KEY = "expired-then-reused-key";
+    // Commit an AGED receipt under a finite auditLogs window, then reap it.
+    const agedRoutes = makeRoutesAt(AGED);
+    await putRouteOf(agedRoutes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    expect(receiptRows()).toHaveLength(1);
+    const reaped = reaperForOwner().run(NOW);
+    expect(reaped.deletedRetentionReceipts).toBe(1);
+    expect(receiptRows()).toHaveLength(0);
+
+    // Recovery returns null (the row is truly gone) — NOT an integrity error.
+    const rec = (await receiptRouteOf(agedRoutes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: unknown };
+    expect(rec.receipt).toBeNull();
+
+    // A same-key PUT with a DIFFERENT payload now PROCEEDS: the prior binding was
+    // legitimately deleted (genuine absence), so this is a valid new write.
+    const nowRoutes = makeRoutes(realAppender());
+    const put = (await putRouteOf(nowRoutes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 90 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    expect(put.receipt.status).toBe("applied");
+    expect(put.receipt.evidence.after.auditLogs).toEqual({ mode: "after_days", days: 90 });
+    expect(receiptRows()).toHaveLength(1);
   });
 });
 

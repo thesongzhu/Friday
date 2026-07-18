@@ -1,6 +1,35 @@
 import type Database from "better-sqlite3";
+import { FridayDomainError } from "#errors";
 
 import type { CategoryRetention, FridayRetentionContentPolicy } from "./friday-retention.types.js";
+import {
+  isFridayRetentionContentCategory,
+  isValidCategoryRetention,
+  isValidFridayRetentionContentPolicy,
+} from "./friday-retention.types.js";
+
+/**
+ * RETENTION-R3d round-8 (P1 fail-open fix): a TYPED storage-integrity failure for a
+ * receipt row that MATCHES an owner + recovery-key-hash lookup but is malformed /
+ * structurally-invalid. It exists so the PUT idempotency guard (and the recovery
+ * seam) can DISTINGUISH a corrupt-but-matching binding from a genuinely ABSENT one:
+ * a corrupt match must NEVER be decoded to `null` (which the guard reads as "key
+ * unused" and re-executes the mutation — a fail-OPEN that also breaks same-key
+ * immutability). Raised inside the write transaction, it aborts the txn (policy
+ * byte-unchanged, no second receipt/audit row); on the recovery read it surfaces as
+ * a fail-closed 500 rather than a silent null. HTTP 500-class: a corrupt persisted
+ * receipt is a server-side data-integrity fault, not a client error.
+ */
+export class FridayRetentionReceiptIntegrityError extends FridayDomainError {
+  override readonly name = "FridayRetentionReceiptIntegrityError";
+  constructor(message: string, options?: { cause?: unknown; details?: Record<string, unknown> }) {
+    super("RETENTION_RECEIPT_INTEGRITY_FAILURE", message, {
+      httpStatus: 500,
+      cause: options?.cause,
+      details: options?.details,
+    });
+  }
+}
 
 /**
  * Owner-scoped persistence for retention-policy RECOVERY RECEIPTS (RETENTION-R3d).
@@ -57,8 +86,17 @@ export interface FridayRetentionReceiptRepository {
   /**
    * Read the OLDEST owner-scoped receipt bound to `recoveryKeyHash`
    * (`created_at ASC`), so the FIRST committed receipt for a key is immutable
-   * (never "latest wins"). Owner scoping is enforced in the query. Returns null
-   * when no receipt is bound to that (owner, key) or the stored row is malformed.
+   * (never "latest wins"). Owner scoping is enforced in the query.
+   *
+   * Returns `null` EXCLUSIVELY for a genuinely ABSENT binding — no row matches
+   * that (owner, key) at all (including after the auditLogs-category reaper has
+   * EXPIRED and deleted the row: expiry → truly absent → null is correct). If a
+   * row MATCHES but its persisted JSON is malformed or structurally invalid, this
+   * FAILS CLOSED with a typed `FridayRetentionReceiptIntegrityError` — it does NOT
+   * return null (RETENTION-R3d round-8 P1). A `null` from a corrupt-but-matching
+   * row would let the PUT idempotency guard treat the key as unused and re-execute
+   * the mutation (fail-open) — so a corrupt match is an integrity fault, never
+   * "absent".
    */
   findOldestByRecoveryKey(
     db: Database.Database,
@@ -93,22 +131,80 @@ interface RetentionReceiptRow {
   created_at: string;
 }
 
-function rowToRecord(row: RetentionReceiptRow): FridayRetentionReceiptRecord | null {
-  let before: FridayRetentionContentPolicy;
-  let after: FridayRetentionContentPolicy;
-  let changedCategories: string[];
-  let appliedUpdates: Record<string, CategoryRetention>;
-  try {
-    before = JSON.parse(row.before_json) as FridayRetentionContentPolicy;
-    after = JSON.parse(row.after_json) as FridayRetentionContentPolicy;
-    changedCategories = JSON.parse(row.changed_categories_json) as string[];
-    appliedUpdates = JSON.parse(row.applied_updates_json) as Record<string, CategoryRetention>;
-  } catch {
-    // A corrupt stored receipt is treated as unrecoverable (fail closed) rather
-    // than surfacing a partially-decoded receipt.
-    return null;
+/** Strict validator: `changedCategories` is an array of canonical category names. */
+function isValidChangedCategories(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((c) => isFridayRetentionContentCategory(c));
+}
+
+/**
+ * Strict validator: `appliedUpdates` is a plain object whose EVERY key is a
+ * canonical content category and EVERY value a valid `CategoryRetention`. An empty
+ * object is valid (a no-op / permanent-only update). Rejects arrays, unknown
+ * category keys, and out-of-domain per-category values.
+ */
+function isValidAppliedUpdates(value: unknown): value is Record<string, CategoryRetention> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  for (const [category, retention] of Object.entries(value as Record<string, unknown>)) {
+    if (!isFridayRetentionContentCategory(category)) return false;
+    if (!isValidCategoryRetention(retention)) return false;
   }
-  if (!before || !after) return null;
+  return true;
+}
+
+/**
+ * Decode + STRICTLY validate a MATCHING receipt row (RETENTION-R3d round-8).
+ *
+ * This is only ever called with a row the SQL query already MATCHED by
+ * (`principal_id`, `recovery_key_hash`), so a malformed/invalid payload here is a
+ * STORAGE-INTEGRITY failure on a REAL binding — NOT an absent one. It therefore
+ * FAILS CLOSED with a typed `FridayRetentionReceiptIntegrityError` (never returns
+ * null): undecodable JSON AND schema-valid-but-semantically-invalid shapes both
+ * throw. Every decoded field is validated — `before`/`after` are full content
+ * policies (exactly the seven categories, each a valid `CategoryRetention`),
+ * `changedCategories` is an array of canonical category names, and `appliedUpdates`
+ * is a `{category → CategoryRetention}` map — so a corrupted binding can never be
+ * mistaken for an unused key (which would re-execute a PUT) or silently recovered.
+ */
+function decodeReceiptRow(row: RetentionReceiptRow): FridayRetentionReceiptRecord {
+  let before: unknown;
+  let after: unknown;
+  let changedCategories: unknown;
+  let appliedUpdates: unknown;
+  try {
+    before = JSON.parse(row.before_json);
+    after = JSON.parse(row.after_json);
+    changedCategories = JSON.parse(row.changed_categories_json);
+    appliedUpdates = JSON.parse(row.applied_updates_json);
+  } catch (cause) {
+    throw new FridayRetentionReceiptIntegrityError(
+      `Persisted retention recovery receipt '${row.receipt_id}' is corrupt: a stored JSON column is undecodable.`,
+      { cause, details: { receiptId: row.receipt_id, reason: "undecodable_json" } },
+    );
+  }
+  if (!isValidFridayRetentionContentPolicy(before)) {
+    throw new FridayRetentionReceiptIntegrityError(
+      `Persisted retention recovery receipt '${row.receipt_id}' is corrupt: 'before' is not a valid content policy.`,
+      { details: { receiptId: row.receipt_id, reason: "invalid_before" } },
+    );
+  }
+  if (!isValidFridayRetentionContentPolicy(after)) {
+    throw new FridayRetentionReceiptIntegrityError(
+      `Persisted retention recovery receipt '${row.receipt_id}' is corrupt: 'after' is not a valid content policy.`,
+      { details: { receiptId: row.receipt_id, reason: "invalid_after" } },
+    );
+  }
+  if (!isValidChangedCategories(changedCategories)) {
+    throw new FridayRetentionReceiptIntegrityError(
+      `Persisted retention recovery receipt '${row.receipt_id}' is corrupt: 'changedCategories' is not an array of valid category names.`,
+      { details: { receiptId: row.receipt_id, reason: "invalid_changed_categories" } },
+    );
+  }
+  if (!isValidAppliedUpdates(appliedUpdates)) {
+    throw new FridayRetentionReceiptIntegrityError(
+      `Persisted retention recovery receipt '${row.receipt_id}' is corrupt: 'appliedUpdates' is not a valid category→retention map.`,
+      { details: { receiptId: row.receipt_id, reason: "invalid_applied_updates" } },
+    );
+  }
   return {
     receiptId: row.receipt_id,
     ownerId: row.principal_id,
@@ -167,7 +263,11 @@ export function createFridayRetentionReceiptRepository(): FridayRetentionReceipt
             LIMIT 1`,
         )
         .get(input.ownerId, input.recoveryKeyHash) as RetentionReceiptRow | undefined;
-      return row ? rowToRecord(row) : null;
+      // NO matching row → genuinely absent → null (the ONLY null case). A MATCHING
+      // row that is malformed/invalid throws a typed integrity error (fail-closed),
+      // never null — so the PUT idempotency guard cannot re-execute on a corrupt
+      // binding and recovery cannot silently return null.
+      return row ? decodeReceiptRow(row) : null;
     },
 
     deleteExpiredBefore(db, cutoffIso) {
