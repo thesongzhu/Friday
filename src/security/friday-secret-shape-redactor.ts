@@ -193,14 +193,19 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   // GitHub tokens: classic `gh?_` prefixes AND fine-grained `github_pat_`.
   //
   // GLUED-PREFIX (SEC-SECRET-GLUED-PREFIX-001): the classic `gh[opsru]_` branch drops its leading `\b`
-  // so a token glued to a preceding word char (`keyghp_<16+>`) is still caught — no benign identifier
-  // segment ends in `ghp`/`gho`/`ghs`/`ghr`/`ghu` immediately before `_` (there is no such English /
-  // snake_case fragment), so allowing a glued prefix cannot over-match. The `github_pat_` branch KEEPS
-  // its leading `\b` (moved onto the branch): `github_pat` is a NATURAL English phrase ("github personal
-  // access token"), so a benign flat identifier `stored_github_pat_reference_token` + a `[A-Za-z0-9_]`
-  // body (which INCLUDES `_`) could plausibly appear in config/source — the boundary keeps it protected.
+  // so a token glued to a preceding word char (`keyghp_<36 base62>`) is still caught. Its body is
+  // BASE62 (`[A-Za-z0-9]`, NO `_`) — the shape real classic GitHub tokens actually have — and THAT is
+  // what makes dropping the boundary safe: like `hf_`/`gsk_`/`npm_`, a `_`-EXCLUDING body cannot span a
+  // snake_case tail, so a benign word ending in `ghs`/`gho`/`ghp`/`ghr`/`ghu` before `_` (e.g.
+  // `walkthroughs_completed_counter`, `breakthroughs_this_quarter`, `coughs_detected_v2`) breaks the
+  // body at the first `_` (`ghs_completed` → 9 base62 chars < 16 → no match) and stays byte-identical.
+  // (The prior `[A-Za-z0-9_]{16,}` body INCLUDED `_` and DID over-redact those benign identifiers — a
+  // real NO-DEGRADE regression, now fixed.) The `github_pat_` branch KEEPS its leading `\b` (moved onto
+  // the branch) AND its `_`-inclusive body: `github_pat` is a NATURAL English phrase ("github personal
+  // access token") and a flat identifier `stored_github_pat_reference_token` could plausibly appear in
+  // config/source, so the boundary keeps it protected (a fine-grained PAT's body legitimately has `_`).
   {
-    pattern: /(?:gh[opsru]_[A-Za-z0-9_]{16,}|\bgithub_pat_[A-Za-z0-9_]{16,})\b/gu,
+    pattern: /(?:gh[opsru]_[A-Za-z0-9]{16,}|\bgithub_pat_[A-Za-z0-9_]{16,})\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Provider hyphen-prefixed API keys: OpenAI `sk-` / `sk-proj-`, `rk-`, `ak-`, xAI `xai-`. The

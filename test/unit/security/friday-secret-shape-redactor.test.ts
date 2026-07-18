@@ -516,6 +516,17 @@ describe("friday-secret-shape-redactor", () => {
       "GOCSPX_notasecret_underscore", // GOCSPX_ (underscore, not the required hyphen)
       "glpat_docs", // glpat_ (underscore, not the hyphen)
       "sq0abc-nothing", // sq0 near-miss (neither atp nor csp)
+      // GitHub-classic NO-DEGRADE (round-2): benign snake_case words ENDING in ghs/gho/ghp/ghr/ghu
+      // before `_`. The classic branch body is BASE62 (excludes `_`), so the snake_case `_` breaks the
+      // body below 16 chars → no match. (These were CORRUPTED by the first-round `[A-Za-z0-9_]` body.)
+      "walkthroughs_completed_counter",
+      "breakthroughs_this_quarter_list",
+      "highs_and_lows_threshold_value",
+      "coughs_detected_in_recording_v2",
+      "laughs_per_minute_counter",
+      "troughs_index",
+      "sighs_and_weighs_and_doughs", // multiple ghs-ending words
+      "metric name walkthroughs_started_and_completed today", // free-text sentence
     ];
 
     it("NO-DEGRADE: the benign-identifier corpus is returned byte-identical (zero over-redaction)", () => {
@@ -523,6 +534,21 @@ describe("friday-secret-shape-redactor", () => {
         expect(redactSecretShapesInString(benign), benign).toBe(benign);
         expect(findSecretShapeSpans(benign), benign).toEqual([]);
       }
+    });
+
+    // GitHub-classic sensitivity boundary (round-2 regression fix): a benign snake_case word ending in
+    // `ghs`/etc before `_` is UNCHANGED (base62 body breaks at the `_`), while a REAL glued classic token
+    // (`ghs_` + a contiguous 36-base62 body, no `_`) IS redacted. RED on the first-round `[A-Za-z0-9_]`
+    // body corrupted the benign form; GREEN after the base62 body.
+    it("GitHub-classic: benign `…ghs_<snake_case>` survives BUT a glued real classic token IS redacted", () => {
+      // Benign snake_case — the `_` after `ghs` breaks the base62 body (9 chars < 16) → unchanged.
+      expect(redactSecretShapesInString("walkthroughs_completed_counter")).toBe("walkthroughs_completed_counter");
+      expect(redactSecretShapesInString("coughs_detected today")).toBe("coughs_detected today");
+      // Real glued classic token — `ghs_` + 36 contiguous base62 (no `_`) → the credential is redacted,
+      // the benign leading `x`/word survives (green control that the de-`\b` still catches real tokens).
+      const REAL = seg("ghs_", "ABCdef0123456789ghijkLMNopqrstuvWXYZ12"); // pragma: allowlist secret — 38 base62, no `_`
+      expect(redactSecretShapesInString(seg("x", REAL))).toBe(`x${M}`);
+      expect(redactSecretShapesInString(seg("key", REAL))).toBe(`key${M}`);
     });
   });
 });

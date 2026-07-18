@@ -224,6 +224,11 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     gskref: GSK_GLUED,
     glref: GLPAT_GLUED,
     note: "just a note",
+    // NO-DEGRADE (round-2): benign snake_case words ending in `ghs`/etc before `_` MUST survive in BOTH
+    // sinks (the github-classic base62 body breaks at the `_`) — the first-round `_`-body corrupted these.
+    walk: "walkthroughs_completed_counter",
+    breakt: "breakthroughs_this_quarter_list",
+    cough: "coughs_detected_in_recording_v2",
   });
 
   it("glued distinctive-prefix credentials redact identically in the AUDIT sink and MEMORY redactDeep", async () => {
@@ -237,6 +242,10 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     expect(memoryValue.gskref).toBe(`x${M}`);
     expect(memoryValue.glref).toBe(`id${M}`);
     expect(memoryValue.note).toBe("just a note");
+    // Benign `…ghs_<snake_case>` identifiers survive byte-identical in BOTH sinks (no over-redaction).
+    expect(memoryValue.walk).toBe("walkthroughs_completed_counter");
+    expect(memoryValue.breakt).toBe("breakthroughs_this_quarter_list");
+    expect(memoryValue.cough).toBe("coughs_detected_in_recording_v2");
     // No credential body survives in either sink's serialization.
     for (const sink of [auditDetails, memoryValue]) {
       const json = JSON.stringify(sink);

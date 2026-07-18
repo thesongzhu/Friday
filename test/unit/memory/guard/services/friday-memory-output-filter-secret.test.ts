@@ -314,4 +314,22 @@ describe("FridayMemoryOutputFilter — SEC-SECRET-GLUED-PREFIX-001 glued distinc
     expect(out.tags).toEqual([seg("key", "hf_docs")]);
     expect(out.content).toBe(seg("ref key", "hf_docs"));
   });
+
+  // NO-DEGRADE (round-2): benign snake_case words ending in `ghs`/etc before `_` MUST survive through
+  // EVERY output-filter leg — the github-classic base62 body breaks at the `_`. The first-round
+  // `[A-Za-z0-9_]` body corrupted these (`walkthroughs_completed_counter` → `walkthrou[REDACTED_SECRET]`).
+  it("NO-DEGRADE: benign `…ghs_<snake_case>` identifiers survive content / metadata / tags byte-identical", () => {
+    const benign = ["walkthroughs_completed_counter", "breakthroughs_this_quarter_list", "coughs_detected_in_recording_v2", "laughs_per_minute_counter"];
+    const out = filter.filterItem(makeItem({
+      content: "metric name walkthroughs_started_and_completed today",
+      metadata: { walk: benign[0], breakt: benign[1], note: "keep" },
+      tags: [...benign],
+    }));
+    expect(out.content).toBe("metric name walkthroughs_started_and_completed today");
+    const md = out.metadata as { walk: string; breakt: string; note: string };
+    expect(md.walk).toBe(benign[0]);
+    expect(md.breakt).toBe(benign[1]);
+    expect(md.note).toBe("keep");
+    expect(out.tags).toEqual(benign); // no tag dropped, none rewritten
+  });
 });

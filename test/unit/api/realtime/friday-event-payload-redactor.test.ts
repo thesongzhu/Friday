@@ -221,6 +221,22 @@ describe("redactEventPayload — no over-redaction (NO DEGRADE)", () => {
     expect(out).toEqual(payload);
   });
 
+  // NO-DEGRADE (SEC-SECRET-GLUED-PREFIX-001 round-2): benign snake_case words ending in `ghs`/etc before
+  // `_` must NOT be over-redacted on-wire — the github-classic base62 body breaks at the `_`. The
+  // first-round `[A-Za-z0-9_]` body corrupted these (`walkthroughs_completed_counter` → `walkthrou[REDACTED]`).
+  it("preserves benign `…ghs_<snake_case>` identifiers (github-classic base62 body, no over-redaction)", () => {
+    const payload = {
+      walk: "walkthroughs_completed_counter",
+      breakt: "breakthroughs_this_quarter_list",
+      cough: "coughs_detected_in_recording_v2",
+      laugh: "laughs_per_minute_counter",
+      note: "metric name walkthroughs_started_and_completed today",
+    };
+    const out = redactEventPayload(payload);
+    expect(out).toEqual(payload);
+    expect(serialize(out)).not.toContain("[REDACTED]");
+  });
+
   it("preserves a pure-digit object key (business id, \\p{Nd} exemption)", () => {
     const out = redactEventPayload({ "1234567890123456": "ok" }); // pragma: allowlist secret
     expect(Object.keys(out)).toContain("1234567890123456");
