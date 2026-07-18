@@ -100,83 +100,71 @@
  */
 
 // ─── Cross-script decimal-digit fold (real \p{Nd} blocks NFKD does not fold to ASCII) ───
+//
+// COMPLETENESS (SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001 round-10 — Advisor P0 cross-script LEAK).
+// A prior revision folded cross-script `\p{Nd}` digits via a HAND-MAINTAINED list of block bases.
+// That list DRIFTED behind the supported runtime's Unicode version (16.0), OMITTING ten whole Nd blocks
+// the runtime recognizes — the DIGIT-ZERO code points U+10D40, U+116D0, U+116DA (the second block of a
+// merged run), U+11BF0, U+11F50, U+16130 (Garay), U+16AC0, U+16D70, U+1E4F0 (Nag Mundari) and U+1E5F1
+// (Ol Onal). Digits in those blocks NFKD does NOT fold, so they stayed non-ASCII and EVADED the ASCII
+// card/ssn/phone matchers — a Visa-shaped card written in Garay digits was emitted VERBATIM, a
+// cross-script PII leak contradicting the uniform cross-script redaction.
+//
+// The fold is now RUNTIME-DERIVED so it is AUTOMATICALLY COMPLETE for the supported runtime's Unicode
+// version and CANNOT drift: at first use (memoized once) we scan the runtime's own `\p{Nd}` set and map
+// EVERY decimal digit to its ASCII value 0–9. Because a `\p{Nd}` block is exactly ten contiguous code
+// points laid out DIGIT ZERO..DIGIT NINE by Numeric_Value, we scan the set for contiguous decimal RUNS
+// and, within each run, assign value = (codePoint − runStart) mod 10. Deriving by run (not by "a base is
+// an Nd whose predecessor is not Nd") is REQUIRED for correctness because a few runs concatenate two or
+// more blocks with NO gap — e.g. the runtime exposes U+116D0–116E3 as ONE 20-code-point run (two Kirat-
+// Rai-family 0–9 blocks) and U+1D7CE–1D7FF as one 50-code-point run (five mathematical 0–9 blocks); the
+// predecessor-gap heuristic would mis-assign the second block digits values 10..19 and LEAK them. NFKD
+// still runs FIRST in {@link foldCodePoint}, so ASCII / fullwidth / mathematical digits are already ASCII
+// (fast path) before this map is consulted, and the map is only built when a genuine cross-script digit
+// that NFKD does NOT fold actually appears.
+
+const ND_SET_RE = /\p{Nd}/u;
 
 /**
- * Base code point ("DIGIT ZERO") of each Unicode decimal-digit block whose digits NFKD does NOT
- * already fold to ASCII. Value = codePoint − base (the ten digits of every Nd block are contiguous).
- * ASCII / fullwidth / mathematical digits are omitted — NFKD folds those to ASCII before this pass
- * runs; leaving an unknown Nd untouched is safe (it simply will not match the ASCII PII classes).
+ * Lazily-built, memoized COMPLETE map from every runtime `\p{Nd}` code point to its ASCII digit 0–9.
+ * Built once on first cross-script fold (the full scan is ~one pass over the Unicode space, memoized).
  */
-const ND_BLOCK_BASES: readonly number[] = [
-  0x0660, // Arabic-Indic
-  0x06f0, // Extended Arabic-Indic
-  0x07c0, // NKo
-  0x0966, // Devanagari
-  0x09e6, // Bengali
-  0x0a66, // Gurmukhi
-  0x0ae6, // Gujarati
-  0x0b66, // Oriya
-  0x0be6, // Tamil
-  0x0c66, // Telugu
-  0x0ce6, // Kannada
-  0x0d66, // Malayalam
-  0x0de6, // Sinhala Lith
-  0x0e50, // Thai
-  0x0ed0, // Lao
-  0x0f20, // Tibetan
-  0x1040, // Myanmar
-  0x1090, // Myanmar Shan
-  0x17e0, // Khmer
-  0x1810, // Mongolian
-  0x1946, // Limbu
-  0x19d0, // New Tai Lue
-  0x1a80, // Tai Tham Hora
-  0x1a90, // Tai Tham Tham
-  0x1b50, // Balinese
-  0x1bb0, // Sundanese
-  0x1c40, // Lepcha
-  0x1c50, // Ol Chiki
-  0xa620, // Vai
-  0xa8d0, // Saurashtra
-  0xa900, // Kayah Li
-  0xa9d0, // Javanese
-  0xa9f0, // Myanmar Tai Laing
-  0xaa50, // Cham
-  0xabf0, // Meetei Mayek
-  0x104a0, // Osmanya
-  0x10d30, // Hanifi Rohingya
-  0x11066, // Brahmi
-  0x110f0, // Sora Sompeng
-  0x11136, // Chakma
-  0x111d0, // Sharada
-  0x112f0, // Khudawadi
-  0x11450, // Newa
-  0x114d0, // Tirhuta
-  0x11650, // Modi
-  0x116c0, // Takri
-  0x11730, // Ahom
-  0x118e0, // Warang Citi
-  0x11950, // Dives Akuru
-  0x11c50, // Bhaiksuki
-  0x11d50, // Masaram Gondi
-  0x11da0, // Gunjala Gondi
-  0x16a60, // Mro
-  0x16b50, // Pahawh Hmong
-  0x1e140, // Nyiakeng Puachue Hmong
-  0x1e2f0, // Wancho
-  0x1e950, // Adlam
-];
+let ndDigitMapCache: Map<number, string> | null = null;
 
+function ndDigitMap(): Map<number, string> {
+  if (ndDigitMapCache !== null) return ndDigitMapCache;
+  const map = new Map<number, string>();
+  let cp = 0;
+  while (cp <= 0x10ffff) {
+    if (ND_SET_RE.test(String.fromCodePoint(cp))) {
+      // Start of a contiguous decimal RUN (one or more concatenated ten-digit blocks). The digit
+      // value repeats 0..9 every ten code points, so (cp − runStart) mod 10 is the value for the whole
+      // run regardless of how many blocks it concatenates.
+      const runStart = cp;
+      while (cp <= 0x10ffff && ND_SET_RE.test(String.fromCodePoint(cp))) {
+        map.set(cp, String.fromCharCode(0x30 + ((cp - runStart) % 10)));
+        cp += 1;
+      }
+    } else {
+      cp += 1;
+    }
+  }
+  ndDigitMapCache = map;
+  return map;
+}
+
+/**
+ * Fold ONE Unicode decimal digit (`\p{Nd}`) to its ASCII value 0–9. Only ever invoked on a `\p{Nd}`
+ * match (see {@link DECIMAL_DIGIT_RE}), so the runtime-derived map is COMPLETE for every code point that
+ * can reach here. ASCII digits short-circuit before the map (so pure-ASCII content never triggers the
+ * one-time scan). The `?? digit` is defensive only — an Nd the runtime scan somehow missed is left
+ * unchanged, which is safe (it simply will not match the ASCII PII classes).
+ */
 function foldDigit(digit: string): string {
   const cp = digit.codePointAt(0);
   if (cp === undefined) return digit;
-  if (cp >= 0x30 && cp <= 0x39) return digit; // already ASCII
-  for (const base of ND_BLOCK_BASES) {
-    if (cp >= base && cp <= base + 9) {
-      return String.fromCharCode(0x30 + (cp - base));
-    }
-  }
-  return digit; // unknown Nd block — safe to leave (never matches ASCII PII classes)
+  if (cp >= 0x30 && cp <= 0x39) return digit; // already ASCII (fast path — no map build)
+  return ndDigitMap().get(cp) ?? digit;
 }
 
 // ─── Per-code-point compatibility folds ───
