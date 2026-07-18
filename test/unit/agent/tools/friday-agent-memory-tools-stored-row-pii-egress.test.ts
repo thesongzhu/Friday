@@ -551,3 +551,61 @@ describe("memory_search — stored-row SOURCE raw egress redaction (round-2)", (
     expect(learned!.metadata.trustLevel).toBe("confidence_scored_learning");
   });
 });
+
+// ─── SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001 round-3 (field-enumeration follow-up: NAMESPACE) ──
+// An independent field-enumeration lens found that `filterItemImpl` spread `{...item}` and only
+// overrode content/source/metadata/tags — so the remaining FREE-FORM string fields (`key`,
+// `namespace`, `expiresAt`) still egressed RAW. `namespace` egresses to the agent as
+// `metadata.namespace` in the memory_search serialization (`r.item.namespace`, projected AFTER the
+// egress filter runs). Round-3 redacts `namespace` inside the shared `filterItemImpl` with the SAME
+// canonical PII + secret-VALUE transform, so a legacy pre-guard row whose `namespace` (only) carries
+// a credential/PII is redacted before the agent sees it. RED on the pre-fix tree (raw namespace in
+// `metadata.namespace`), GREEN after. A benign namespace is asserted byte-preserved (addressability
+// unaffected). ───────────────────────────────────────────────────────────────────────────────────
+describe("memory_search — stored-row NAMESPACE raw egress redaction (round-3)", () => {
+  it("redacts a credential that lives ONLY in `namespace` on the memory_search metadata path", async () => {
+    // A legacy pre-guard row whose ONLY sensitive datum is its namespace value.
+    const legacy = makeItem({
+      id: "legacy-ns-secret",
+      namespace: `legacy-${HF_KEY}`,
+      content: "benign status update",
+      source: "agent",
+      tags: ["status"],
+    });
+    const [searchTool] = createFridayAgentMemoryTools({
+      memoryService: mockMemoryService({ search: [makeResult(legacy, 0.9)] }),
+    });
+
+    const result = await searchTool!.execute({ query: "status" }, signalWithPrincipal("user-1"));
+    expect(result.isError).toBeUndefined();
+    const parsed = parse(result.content);
+    const stored = parsed.find((r) => r.metadata.id === "legacy-ns-secret")!;
+
+    // `metadata.namespace` (= filtered `item.namespace`) has the credential redacted, NOT leaked.
+    expect(stored.metadata.namespace).toContain("[REDACTED_SECRET]");
+    // No raw credential VALUE anywhere in the serialized tool output.
+    expect(result.content).not.toContain(HF_KEY);
+    // The benign content is untouched — the namespace fix is surgical.
+    expect(stored.content).toBe("benign status update");
+  });
+
+  it("byte-preserves a benign `namespace` on the memory_search metadata path (addressability intact)", async () => {
+    const benign = makeItem({
+      id: "benign-ns",
+      namespace: "user-facts",
+      content: "status note",
+      source: "agent",
+    });
+    const [searchTool] = createFridayAgentMemoryTools({
+      memoryService: mockMemoryService({ search: [makeResult(benign, 0.9)] }),
+    });
+
+    const result = await searchTool!.execute({ query: "status" }, signalWithPrincipal("user-1"));
+    expect(result.isError).toBeUndefined();
+    const parsed = parse(result.content);
+    const stored = parsed.find((r) => r.metadata.id === "benign-ns")!;
+
+    // A namespace with no sensitive subspan is returned BYTE-IDENTICAL (no over-redaction).
+    expect(stored.metadata.namespace).toBe("user-facts");
+  });
+});
