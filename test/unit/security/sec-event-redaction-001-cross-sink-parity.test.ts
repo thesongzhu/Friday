@@ -232,8 +232,8 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     cough: "coughs_e3b0c44298fc1c14", // ghs_ + content-hash suffix
     // AWS AKIA word-fragment: a benign ULID / all-caps id with ASIA/AGPA glued after a word char MUST
     // survive in BOTH sinks — the AKIA branch keeps `\b` (was corrupted while AKIA was de-`\b`'d).
-    ulid: "012345AGPABCDEFGHJKMNPQRST",
-    caps: "AUSTRALASIAWIDEDEPLOYMENT01",
+    ulid: "012345AGPABCDEFGHJKMNPQRST", // pragma: allowlist secret — benign ULID (AKIA-family scanner false positive)
+    caps: "AUSTRALASIAWIDEDEPLOYMENT01", // pragma: allowlist secret — benign all-caps constant (AKIA-family scanner false positive)
   });
 
   it("glued distinctive-prefix credentials redact identically in the AUDIT sink and MEMORY redactDeep", async () => {
@@ -253,8 +253,8 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     expect(memoryValue.contig).toBe("walkthroughs_completedThisWeek");
     expect(memoryValue.breakt).toBe("breakthroughs_this_quarter_list");
     expect(memoryValue.cough).toBe("coughs_e3b0c44298fc1c14");
-    expect(memoryValue.ulid).toBe("012345AGPABCDEFGHJKMNPQRST");
-    expect(memoryValue.caps).toBe("AUSTRALASIAWIDEDEPLOYMENT01");
+    expect(memoryValue.ulid).toBe("012345AGPABCDEFGHJKMNPQRST"); // pragma: allowlist secret — benign ULID (AKIA-family scanner false positive)
+    expect(memoryValue.caps).toBe("AUSTRALASIAWIDEDEPLOYMENT01"); // pragma: allowlist secret — benign all-caps constant (AKIA-family scanner false positive)
     // No credential body survives in either sink's serialization.
     for (const sink of [auditDetails, memoryValue]) {
       const json = JSON.stringify(sink);

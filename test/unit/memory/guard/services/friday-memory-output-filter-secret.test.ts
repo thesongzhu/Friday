@@ -321,7 +321,7 @@ describe("FridayMemoryOutputFilter — SEC-SECRET-GLUED-PREFIX-001 glued distinc
   it("NO-DEGRADE: benign `…ghs_<snake_case>` identifiers survive content / metadata / tags byte-identical", () => {
     const benign = ["walkthroughs_completed_counter", "walkthroughs_completedThisWeek", "coughs_e3b0c44298fc1c14", "breakthroughs_this_quarter_list", "laughs_per_minute_counter",
       // AWS AKIA word-fragment: benign ULID / all-caps id with ASIA/AGPA glued after a word char.
-      "012345AGPABCDEFGHJKMNPQRST", "AUSTRALASIAWIDEDEPLOYMENT01"];
+      "012345AGPABCDEFGHJKMNPQRST", "AUSTRALASIAWIDEDEPLOYMENT01"]; // pragma: allowlist secret — benign ULID/all-caps (AKIA-family scanner false positives)
     const out = filter.filterItem(makeItem({
       content: "metric name walkthroughs_started_and_completed today",
       metadata: { walk: benign[0], breakt: benign[1], note: "keep" },

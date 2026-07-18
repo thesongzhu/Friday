@@ -246,8 +246,8 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   // Australasia), `AIDA`, and `AGPA`/`ANPA`/`ANVA` (constructible from Crockford base32) — AND its body is
   // `[0-9A-Z]{16}`, i.e. UPPERCASE + DIGIT, exactly the alphabet of an all-caps constant or a ULID. So
   // de-`\b` over-redacts benign all-caps / ULID / base32 identifiers this SHARED egress detector
-  // processes: a 26-char ULID `012345AGPABCDEFGHJKMNPQRST` → `012345[REDACTED]`, `AUSTRALASIAWIDE…` →
-  // `AUSTRAL[REDACTED]`, a base32 OTP `ASIAMFRGGZDFMZTWQ2LK`. (The earlier "REGION_ASIA_PACIFIC_1 cannot
+  // processes: e.g. a 26-char ULID `012345AGPA…` → `012345[REDACTED]`, an all-caps `…ASIA…WIDE…` constant
+  // → `AUSTRAL[REDACTED]`, a base32 OTP `ASIA…`. (The earlier "…ASIA…-`_`-separated cannot
   // span it" reasoning was WRONG — it only considered `_`-separated forms and missed all-caps-contiguous
   // / ULID / base32.) Same word-fragment class we keep `\b` on for classic-github (`-ghs`), `xapp` (app),
   // `sk-`, `AIza` (AI), `ya29`. Effect: standalone / delimited / labeled AWS keys (`AKIA<16>`,

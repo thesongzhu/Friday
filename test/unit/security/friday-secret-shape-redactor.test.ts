@@ -514,7 +514,7 @@ describe("friday-secret-shape-redactor", () => {
       "npm_config", // npm_ + short body with `_`
       "npm_config_cache is set",
       "550e8400-e29b-41d4-a716-446655440000", // a UUID
-      "abc123def456ghi789jkl012mno345pqr678stuv", // pure lowercase-alnum blob — no prefix reachable
+      "abc123def456ghi789jkl012mno345pqr678stuv", // pragma: allowlist secret — pure lowercase-alnum blob, no prefix reachable
       "aGVsbG8_d29ybGQ-dGhpc19pc19iZW5pZ24", // pragma: allowlist secret — base64url blob w/ `_` and `-`, not a secret shape
       "user_session_reference_identifier_v2", // snake_case id
       "AKIA is the aws access-key id prefix", // AKIA as a plain word (no 16-char body)
@@ -522,10 +522,10 @@ describe("friday-secret-shape-redactor", () => {
       // after a word char — the AKIA branch keeps `\b`, so these are UNCHANGED (they were CORRUPTED while
       // AKIA was de-`\b`'d). (A DELIMITED `"ASIA<16>"` — quote boundary — is caught by BASE too, so it is
       // NOT a benign-unchanged case; only the GLUED forms are the fix's concern.)
-      "012345AGPABCDEFGHJKMNPQRST", // 26-char Crockford-base32 ULID (AGPA glued after digit `5`)
-      "AUSTRALASIAWIDEDEPLOYMENT01", // all-caps constant, ASIA glued after `L`
-      "EURASIAREGIONCODE0123456789", // all-caps, ASIA glued after `R`
-      "PROJECTAIDABUILDPIPELINE42X", // all-caps, AIDA glued after `T`
+      "012345AGPABCDEFGHJKMNPQRST", // pragma: allowlist secret — 26-char Crockford-base32 ULID (AGPA glued after digit `5`)
+      "AUSTRALASIAWIDEDEPLOYMENT01", // pragma: allowlist secret — all-caps constant, ASIA glued after `L`
+      "EURASIAREGIONCODE0123456789", // pragma: allowlist secret — all-caps, ASIA glued after `R`
+      "PROJECTAIDABUILDPIPELINE42X", // pragma: allowlist secret — all-caps, AIDA glued after `T`
       "9f8e7d6c5b4a3928170695f4e3d2c1b0", // pragma: allowlist secret — 32-hex id / git blob
       "/var/log/hf_service/npm_cache/output.log", // file path with hf_/npm_ short segments
       "GOCSPX_notasecret_underscore", // GOCSPX_ (underscore, not the required hyphen)
@@ -584,9 +584,9 @@ describe("friday-secret-shape-redactor", () => {
     // glued directly after a word char (`xAKIA<16>`) is an ACCEPTED, documented gap.
     it("AWS AKIA: benign glued ULID/all-caps survives; DELIMITED/standalone key redacts; GLUED is an accepted gap", () => {
       // Benign all-caps / ULID with a fragment GLUED after a word char → UNCHANGED (the `\b` blocks it).
-      expect(redactSecretShapesInString("012345AGPABCDEFGHJKMNPQRST")).toBe("012345AGPABCDEFGHJKMNPQRST"); // ULID
-      expect(redactSecretShapesInString("AUSTRALASIAWIDEDEPLOYMENT01")).toBe("AUSTRALASIAWIDEDEPLOYMENT01");
-      expect(redactSecretShapesInString("PROJECTAIDABUILDPIPELINE42X")).toBe("PROJECTAIDABUILDPIPELINE42X");
+      expect(redactSecretShapesInString("012345AGPABCDEFGHJKMNPQRST")).toBe("012345AGPABCDEFGHJKMNPQRST"); // pragma: allowlist secret — benign ULID (AKIA-family scanner false positive)
+      expect(redactSecretShapesInString("AUSTRALASIAWIDEDEPLOYMENT01")).toBe("AUSTRALASIAWIDEDEPLOYMENT01"); // pragma: allowlist secret — benign all-caps constant
+      expect(redactSecretShapesInString("PROJECTAIDABUILDPIPELINE42X")).toBe("PROJECTAIDABUILDPIPELINE42X"); // pragma: allowlist secret — benign all-caps constant
       const KEY = seg("AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
       // DELIMITED / standalone / labeled AWS key IS still caught (whitespace, `=`, bare value).
       expect(redactSecretShapesInString(KEY)).toBe(M);
