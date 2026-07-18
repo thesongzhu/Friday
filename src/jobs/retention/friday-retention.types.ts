@@ -154,6 +154,13 @@ export interface FridayRetentionJobResult {
   deletedLearningEvents: number;
   deletedSkillRuns: number;
   deletedAuditLogs: number;
+  /**
+   * RETENTION-R3d: recovery-receipt rows (`retention_recovery_receipts`) expired
+   * this pass. GOVERNED by the SAME `auditLogs` content-retention category as
+   * `deletedAuditLogs`: default-permanent (0 while auditLogs is permanent), and >0
+   * only once the owner opts auditLogs into a finite `after_days` window.
+   */
+  deletedRetentionReceipts: number;
   deletedAgentRuns: number;
   deletedLlmUsageRecords: number;
   deletedErrorIncidents: number;

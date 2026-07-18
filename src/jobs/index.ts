@@ -33,6 +33,13 @@ export type {
   CreateFridayRetentionPolicyLoaderDeps,
 } from "./retention/friday-retention-policy-loader.js";
 
+// ─── Governed recovery-receipt store (RETENTION-R3d) ───
+export { createFridayRetentionReceiptRepository } from "./retention/friday-retention-receipt-repository.js";
+export type {
+  FridayRetentionReceiptRepository,
+  FridayRetentionReceiptRecord,
+} from "./retention/friday-retention-receipt-repository.js";
+
 export type {
   FridayLearningMetricsJobResult,
 } from "./learning/friday-learning-metrics.types.js";

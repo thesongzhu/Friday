@@ -25,10 +25,11 @@ import type { FridaySecurityAuditEntry } from "../../../../../src/security/multi
 import {
   createFridayRetentionJob,
   createFridayRetentionPolicyLoader,
+  createFridayRetentionReceiptRepository,
   createFridayRetentionSettingsRepository,
   createFridayRetentionSettingsStore,
 } from "#jobs";
-import type { FridayRetentionSettingsStore } from "#jobs";
+import type { FridayRetentionReceiptRecord, FridayRetentionSettingsStore } from "#jobs";
 import {
   createFridaySatellitePairingRequestRepository,
   createFridaySatelliteHeartbeatRepository,
@@ -96,6 +97,22 @@ interface AuditRow {
   created_at: string;
 }
 
+// RETENTION-R3d round-7: the dedicated, retention-GOVERNED receipt store row shape.
+interface ReceiptStoreRow {
+  receipt_id: string;
+  principal_id: string;
+  tenant_id: string | null;
+  correlation_id: string;
+  audit_id: string;
+  recovery_key_hash: string | null;
+  payload_digest: string | null;
+  before_json: string;
+  after_json: string;
+  changed_categories_json: string;
+  applied_updates_json: string;
+  created_at: string;
+}
+
 describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, handler seam)", () => {
   let db: FridaySqliteLayer;
   let store: FridayRetentionSettingsStore;
@@ -112,6 +129,14 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
         "SELECT content_category, after_days FROM friday_retention_settings WHERE principal_id = ? ORDER BY content_category",
       )
       .all(principalId) as Array<{ content_category: string; after_days: number }>;
+  }
+  // RETENTION-R3d round-7: the full receipt facts now live in the dedicated,
+  // retention-GOVERNED store — NOT in `security_audit_log` (only a content-free
+  // linkage/digest anchor stays there).
+  function receiptRows(): ReceiptStoreRow[] {
+    return db.writer
+      .prepare("SELECT * FROM retention_recovery_receipts ORDER BY created_at, receipt_id")
+      .all() as ReceiptStoreRow[];
   }
 
   function makeStore(): FridayRetentionSettingsStore {
@@ -198,9 +223,9 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     expect(r.evidence.changed).toEqual(["auditLogs"]);
     expect(r.evidence.deletedData).toBe(false);
 
-    // Exactly ONE durable audit row carrying the FULL receipt facts (durable
-    // recovery: id == auditId; metadata holds receiptId/correlationId/before/
-    // after/changed/deletedData).
+    // Exactly ONE durable, CONTENT-MINIMIZED audit anchor (durable recovery:
+    // id == auditId; metadata holds ONLY the linkage receiptId/correlationId +
+    // payloadDigest — NEVER the before/after recovery payload).
     const rows = auditRows();
     expect(rows).toHaveLength(1);
     expect(rows[0].id).toBe(r.auditId);
@@ -209,20 +234,28 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     expect(rows[0].resource_type).toBe("policy");
     expect(rows[0].decision).toBe("allow");
     expect(rows[0].resource_id).toBe(`retention-policy:${CANON}`);
-    const meta = JSON.parse(rows[0].metadata_json) as {
-      receiptId: string;
-      correlationId: string;
-      deletedData: boolean;
-      changedCategories: string[];
-      before: Record<string, unknown>;
-      after: Record<string, unknown>;
-    };
+    const meta = JSON.parse(rows[0].metadata_json) as Record<string, unknown>;
     expect(meta.receiptId).toBe(r.receiptId);
     expect(meta.correlationId).toBe(r.correlationId);
-    expect(meta.deletedData).toBe(false);
-    expect(meta.changedCategories).toEqual(["auditLogs"]);
-    expect(meta.before).toEqual(r.evidence.before);
-    expect(meta.after).toEqual(r.evidence.after);
+    expect(typeof meta.payloadDigest).toBe("string");
+    // AUDIT-AUTHENTIC-ANCHOR-001: the anchor is content-free — the full recovery
+    // payload is NOT embedded in `security_audit_log`.
+    expect(meta.before).toBeUndefined();
+    expect(meta.after).toBeUndefined();
+    expect(meta.appliedUpdates).toBeUndefined();
+    expect(meta.changedCategories).toBeUndefined();
+
+    // The FULL receipt facts live in the dedicated, retention-GOVERNED store — ONE
+    // owner-scoped row linked back to the audit anchor by audit_id.
+    const receipts = receiptRows();
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].receipt_id).toBe(r.receiptId);
+    expect(receipts[0].principal_id).toBe(CANON);
+    expect(receipts[0].correlation_id).toBe(r.correlationId);
+    expect(receipts[0].audit_id).toBe(r.auditId);
+    expect(JSON.parse(receipts[0].before_json)).toEqual(r.evidence.before);
+    expect(JSON.parse(receipts[0].after_json)).toEqual(r.evidence.after);
+    expect(JSON.parse(receipts[0].changed_categories_json)).toEqual(["auditLogs"]);
   });
 
   // ── 2. Audit throws (injected) → 503 AND zero mutation (re-GET == before) ───
@@ -253,6 +286,7 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     expect(after.policy).toEqual(before.policy); // re-GET == before, byte-identical
     expect(JSON.stringify(after.policy)).toBe(JSON.stringify(before.policy));
     expect(auditRows()).toHaveLength(0); // no un-audited mutation, no orphan audit
+    expect(receiptRows()).toHaveLength(0); // no orphan receipt either (all-or-nothing)
   });
 
   // ── 3. Audit throws via REAL persistence failure → same fail-closed rollback ─
@@ -478,17 +512,20 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     const rows = auditRows();
     expect(rows).toHaveLength(1);
 
-    // ...AND the full receipt is durably recoverable from the committed audit row:
-    // never "committed effect + error + no durable receipt".
+    // ...AND the full receipt is durably recoverable from the committed GOVERNED
+    // receipt store (linked to the content-minimized anchor): never "committed
+    // effect + error + no durable receipt".
     const meta = JSON.parse(rows[0].metadata_json) as {
       receiptId: string;
       correlationId: string;
-      after: Record<string, unknown>;
     };
     expect(rows[0].id).toBe(result.receipt.auditId);
     expect(meta.receiptId).toBe(result.receipt.receiptId);
     expect(meta.correlationId).toBe(result.receipt.correlationId);
-    expect(meta.after).toEqual(result.receipt.evidence.after);
+    const receipts = receiptRows();
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].audit_id).toBe(result.receipt.auditId);
+    expect(JSON.parse(receipts[0].after_json)).toEqual(result.receipt.evidence.after);
   });
 
   // ── 10. P0 — CONCURRENT authoritative readback: a DISJOINT-category write that
@@ -536,9 +573,12 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
       { content_category: "auditLogs", after_days: 30 },
       { content_category: "learningEvents", after_days: 90 },
     ]);
-    // The committed audit row carries the same authoritative after.
-    const meta = JSON.parse(auditRows()[0].metadata_json) as { after: Record<string, unknown> };
-    expect(meta.after).toEqual(result.receipt.evidence.after);
+    // The committed GOVERNED receipt row carries the same authoritative after
+    // (the content-minimized audit anchor no longer embeds it).
+    const receipts = receiptRows();
+    expect(receipts).toHaveLength(1);
+    expect(JSON.parse(receipts[0].after_json)).toEqual(result.receipt.evidence.after);
+    expect(JSON.parse(auditRows()[0].metadata_json).after).toBeUndefined();
   });
 
   // ── 11. P0 — concurrent SAME-category commit before this txn → the authoritative
@@ -764,11 +804,22 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
 
     const rows = auditRows();
     expect(rows).toHaveLength(1);
-    // The RAW key appears NOWHERE in the persisted row.
+    // The RAW key appears NOWHERE in the persisted anchor, AND the content-minimized
+    // anchor carries neither the raw key NOR its hash (both live in the store).
     expect(rows[0].metadata_json).not.toContain(KEY);
-    const meta = JSON.parse(rows[0].metadata_json) as { recoveryKey?: unknown; recoveryKeyHash?: string };
+    const meta = JSON.parse(rows[0].metadata_json) as {
+      recoveryKey?: unknown;
+      recoveryKeyHash?: unknown;
+    };
     expect(meta.recoveryKey).toBeUndefined(); // no raw-key field at all
-    expect(meta.recoveryKeyHash).toBe(hashRecoveryKey(KEY)); // only the non-reversible hash
+    expect(meta.recoveryKeyHash).toBeUndefined(); // hash is NOT in the audit anchor
+
+    // The GOVERNED receipt store holds ONLY the non-reversible sha256 hash — never
+    // the raw key (neither the hash column nor any serialized column contains it).
+    const receipts = receiptRows();
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].recovery_key_hash).toBe(hashRecoveryKey(KEY));
+    expect(JSON.stringify(receipts[0])).not.toContain(KEY);
 
     // Recovery still matches by hashing the presented key (exact-replay preserved).
     const rec = (await receiptRouteOf(routes).handler(
@@ -782,6 +833,210 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
         makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 90 } } } }),
       ),
     ).rejects.toMatchObject({ httpStatus: 409 });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RETENTION-R3d ROUND-7 — governed receipt store: RED-FIRST negative controls.
+  //
+  // The finding (Advisor, reproduced by a production probe): the FULL recovery
+  // receipt lived in `security_audit_log.metadata_json`; the auditLogs retention
+  // job deletes only `audit_logs` rows, so an aged receipt SURVIVED a 2-year
+  // advance — the user's auditLogs deletion policy was silently NOT honored for the
+  // receipt (an operator-locked U9/DATA-RETENTION-001 violation). The fix moves the
+  // receipt into the dedicated, retention-GOVERNED `retention_recovery_receipts`
+  // store and expires it under the SAME auditLogs category.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // Build routes with an explicit clock so a receipt can be committed with an AGED
+  // created_at (older than a future reaper cutoff), plus an optional persistReceipt
+  // override for fault injection.
+  function makeRoutesAt(
+    clockIso: string,
+    opts: { persistReceipt?: (db: never, record: FridayRetentionReceiptRecord) => void } = {},
+  ) {
+    return createFridayRetentionSettingsRoutes({
+      store,
+      resolveCanonicalOwnerId: () => CANON,
+      db,
+      appendPolicyAudit: createFridayRetentionPolicyAuditAppender({
+        sqlite: db,
+        idGenerator: () => `aud-${String(++idCounter).padStart(4, "0")}`,
+      }),
+      nowIso: () => clockIso,
+      idGenerator: () => `op-${String(++idCounter).padStart(4, "0")}`,
+      readReceiptByRecoveryKey: createFridayRetentionReceiptRecovery({ sqlite: db }),
+      ...(opts.persistReceipt
+        ? { persistReceipt: opts.persistReceipt as unknown as never }
+        : {}),
+    });
+  }
+
+  // Reaper bound to the canonical owner, loading the LIVE persisted policy (so the
+  // owner's opt-in governs the sweep) — mirrors production wiring.
+  function reaperForOwner() {
+    const loader = createFridayRetentionPolicyLoader({
+      db,
+      repo: createFridayRetentionSettingsRepository(),
+      principalId: CANON,
+    });
+    return createFridayRetentionJob({
+      db,
+      pairingRequestRepo: createFridaySatellitePairingRequestRepository(),
+      heartbeatRepo: createFridaySatelliteHeartbeatRepository(),
+      outboxRepo: createFridayOutboxMessageRepository(),
+      learningLedger: createFridayLearningEventLedger({ db }),
+      skillRunStore: createFridaySkillRunStore({ db }),
+      bootstrapNonceRepo: createFridaySetupBootstrapNonceRepository(),
+      nowIso: () => NOW,
+      loadPolicy: () => loader.load(),
+    });
+  }
+
+  // (a) FINITE retention → an AGED receipt EXPIRES from the store AND recovery
+  //     returns null. (RED pre-fix: the receipt survived in `security_audit_log`.)
+  it("(a) auditLogs opted into FINITE retention → aged receipt EXPIRES from the store AND recovery returns null", async () => {
+    const KEY = "finite-expiry-key";
+    // Commit an AGED receipt while opting auditLogs into a finite 30-day window.
+    const routes = makeRoutesAt(AGED);
+    const put = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+
+    // Pre-sweep: the receipt is durable and recoverable by the client key.
+    expect(receiptRows()).toHaveLength(1);
+    const recBefore = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(recBefore.receipt?.receiptId).toBe(put.receipt.receiptId);
+
+    // The reaper runs at NOW with the owner's finite auditLogs policy.
+    const result = reaperForOwner().run(NOW);
+
+    // The receipt EXPIRED under the auditLogs category (this is the fix — pre-fix
+    // it survived because it lived in the untouched `security_audit_log`).
+    expect(result.deletedRetentionReceipts).toBe(1);
+    expect(receiptRows()).toHaveLength(0);
+
+    // Recovery now returns null exactly because the user's deletion policy removed it.
+    const recAfter = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(recAfter.receipt).toBeNull();
+
+    // AUDIT-AUTHENTIC-ANCHOR-001: the content-free audit anchor is NOT swept (it is
+    // authentic-audit truth, default-permanent) — only the user receipt content went.
+    expect(auditRows()).toHaveLength(1);
+    expect(JSON.parse(auditRows()[0].metadata_json).before).toBeUndefined();
+  });
+
+  // (b) PERMANENT (default) retention → the receipt is PRESERVED + recovery works.
+  //     The receipt store is governed ONLY by the auditLogs category: a finite
+  //     window on a DIFFERENT category never expires it.
+  it("(b) auditLogs PERMANENT (default) → aged receipt is preserved + recovery still works, even with another category finite", async () => {
+    const KEY = "permanent-preserve-key";
+    // Aged receipt; auditLogs stays permanent, learningEvents opted into finite.
+    const routes = makeRoutesAt(AGED);
+    const put = (await putRouteOf(routes).handler(
+      makeCtx({
+        headers: { "idempotency-key": KEY },
+        body: { policy: { learningEvents: { mode: "after_days", days: 30 } } },
+      }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    expect(receiptRows()).toHaveLength(1);
+
+    // The reaper runs at NOW: learningEvents finite, auditLogs PERMANENT.
+    const result = reaperForOwner().run(NOW);
+
+    // auditLogs is permanent ⇒ ZERO receipts expired; the receipt is preserved.
+    expect(result.deletedRetentionReceipts).toBe(0);
+    expect(receiptRows()).toHaveLength(1);
+
+    // Recovery still returns the exact committed receipt.
+    const rec = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(rec.receipt?.receiptId).toBe(put.receipt.receiptId);
+  });
+
+  // (c) Cross-owner recovery remains DENIED at the STORE layer: an owner's lookup by
+  //     key hash never returns a different principal's receipt (owner-scoped query).
+  it("(c) receipt-store lookup is owner-scoped — a shared recovery-key hash never crosses principals", () => {
+    const repo = createFridayRetentionReceiptRepository();
+    const sharedHash = hashRecoveryKey("shared-key-across-owners");
+    const base = (ownerId: string, receiptId: string): FridayRetentionReceiptRecord => ({
+      receiptId,
+      ownerId,
+      ownerTenantId: ownerId,
+      correlationId: `corr:${receiptId}`,
+      auditId: `aud:${receiptId}`,
+      recoveryKeyHash: sharedHash,
+      payloadDigest: "digest",
+      before: { auditLogs: { mode: "permanent" } } as never,
+      after: { auditLogs: { mode: "after_days", days: 30 } } as never,
+      changedCategories: ["auditLogs"],
+      appliedUpdates: { auditLogs: { mode: "after_days", days: 30 } },
+      createdAt: NOW,
+    });
+    db.withWriteTransaction((conn) => {
+      repo.insert(conn, base(CANON, "receipt-owner-a"));
+      repo.insert(conn, base("admin-002", "receipt-owner-b"));
+    });
+
+    const a = db.withReadConnection((conn) =>
+      repo.findOldestByRecoveryKey(conn, { ownerId: CANON, recoveryKeyHash: sharedHash }),
+    );
+    const b = db.withReadConnection((conn) =>
+      repo.findOldestByRecoveryKey(conn, { ownerId: "admin-002", recoveryKeyHash: sharedHash }),
+    );
+    expect(a?.receiptId).toBe("receipt-owner-a");
+    expect(a?.ownerId).toBe(CANON);
+    expect(b?.receiptId).toBe("receipt-owner-b");
+    expect(b?.ownerId).toBe("admin-002");
+  });
+
+  // (d) ATOMICITY: a failure injected at the RECEIPT-WRITE stage rolls the WHOLE
+  //     transaction back — zero policy rows, zero audit anchor, zero receipt rows.
+  it("(d) receipt-write throws → 503-class abort with zero partial rows (policy + audit + receipt all rolled back)", async () => {
+    const routes = makeRoutesAt(NOW, {
+      persistReceipt: () => {
+        throw new FridayDomainError(
+          "RETENTION_RECEIPT_PERSIST_FAILED",
+          "injected receipt-write failure",
+          { httpStatus: 503 },
+        );
+      },
+    });
+    await expect(
+      putRouteOf(routes).handler(
+        makeCtx({ headers: { "idempotency-key": "atomic-key" }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+      ),
+    ).rejects.toMatchObject({ httpStatus: 503 });
+
+    // All-or-nothing: nothing persisted across ANY of the three stores.
+    expect(policyRows(CANON)).toHaveLength(0);
+    expect(auditRows()).toHaveLength(0);
+    expect(receiptRows()).toHaveLength(0);
+  });
+
+  // (e) The `security_audit_log` anchor no longer contains the full before/after
+  //     recovery payload — only the linkage (receiptId/correlationId) + digest.
+  it("(e) security_audit_log anchor is content-minimized — only linkage + digest, no before/after payload", async () => {
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": "min-key" }, body: { policy: { auditLogs: { mode: "after_days", days: 42 } } } }),
+    );
+    const rows = auditRows();
+    expect(rows).toHaveLength(1);
+    const meta = JSON.parse(rows[0].metadata_json) as Record<string, unknown>;
+    // ONLY these keys are permitted on the authentic-audit anchor.
+    expect(Object.keys(meta).sort()).toEqual(["correlationId", "payloadDigest", "receiptId"]);
+    // No user recovery payload / no recovery-key material at rest in the anchor.
+    for (const forbidden of ["before", "after", "appliedUpdates", "changedCategories", "recoveryKeyHash", "recoveryKey", "deletedData"]) {
+      expect(meta[forbidden]).toBeUndefined();
+    }
+    // The applied window (42) lives ONLY in the GOVERNED store, never the anchor —
+    // the anchor's `after` is absent, so a retention advance cannot orphan content.
+    expect(JSON.parse(receiptRows()[0].after_json).auditLogs).toEqual({ mode: "after_days", days: 42 });
   });
 });
 

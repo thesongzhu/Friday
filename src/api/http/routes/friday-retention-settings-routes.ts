@@ -4,9 +4,16 @@ import { FridayDomainError } from "#errors";
 import type {
   CategoryRetention,
   FridayRetentionContentPolicy,
+  FridayRetentionReceiptRecord,
+  FridayRetentionReceiptRepository,
   FridayRetentionSettingsStore,
 } from "#jobs";
-import { FRIDAY_MAX_AFTER_DAYS, FRIDAY_MIN_AFTER_DAYS, isValidAfterDays } from "#jobs";
+import {
+  createFridayRetentionReceiptRepository,
+  FRIDAY_MAX_AFTER_DAYS,
+  FRIDAY_MIN_AFTER_DAYS,
+  isValidAfterDays,
+} from "#jobs";
 import type { FridaySqliteLayer } from "#state";
 import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridayDiskGrowthWarning } from "../../../learning/services/friday-disk-growth-evaluator.js";
@@ -80,18 +87,32 @@ export interface FridayRetentionSettingsRoutesDeps {
    */
   db: FridaySqliteLayer;
   /**
-   * RETENTION-R3d: FAIL-CLOSED audit sink. Appends exactly ONE durable audit
-   * entry (carrying the full receipt facts) for a successful retention-policy
-   * mutation and returns the persisted `FridaySecurityAuditEntry`. Called INSIDE
-   * the `db.withWriteTransaction` that applies the policy so both commit or both
-   * roll back. THROWS (never fails open) on any persistence failure: the throw
-   * aborts the enclosing transaction → the policy write rolls back → the PUT
-   * handler surfaces 503 and NO mutation is left un-audited. The returned entry is
-   * fed to `projectCommittedAudit` (below) AFTER commit so the LIVE audit
+   * RETENTION-R3d: FAIL-CLOSED audit sink. Appends exactly ONE durable,
+   * CONTENT-MINIMIZED audit anchor (only the linkage — receiptId + correlationId —
+   * plus the payload digest; NEVER the before/after recovery payload, which lives
+   * in the governed `retention_recovery_receipts` store) for a successful
+   * retention-policy mutation and returns the persisted `FridaySecurityAuditEntry`.
+   * Called INSIDE the `db.withWriteTransaction` that applies the policy so both
+   * commit or both roll back. THROWS (never fails open) on any persistence failure:
+   * the throw aborts the enclosing transaction → the policy write rolls back → the
+   * PUT handler surfaces 503 and NO mutation is left un-audited. The returned entry
+   * is fed to `projectCommittedAudit` (below) AFTER commit so the LIVE audit
    * projection sees it. Build it with `createFridayRetentionPolicyAuditAppender`
    * (closing over the SAME layer).
    */
   appendPolicyAudit: (entry: FridayRetentionPolicyAuditEntry) => FridaySecurityAuditEntry;
+  /**
+   * RETENTION-R3d (governed receipt store): persists the FULL receipt facts into
+   * the dedicated owner-scoped `retention_recovery_receipts` table on the caller's
+   * WRITE connection, so it commits ATOMICALLY with the policy apply + the
+   * content-minimized audit anchor (same transaction/SAVEPOINT, all-or-nothing).
+   * OPTIONAL: when omitted, the handler writes via the internal repository (the
+   * production path). Injectable so a fault-injection test can throw at the
+   * receipt-write stage and assert the whole transaction rolls back (zero partial
+   * rows). A throw here aborts the enclosing transaction → 503, byte-unchanged
+   * policy, no audit anchor, no receipt.
+   */
+  persistReceipt?: (db: Database.Database, record: FridayRetentionReceiptRecord) => void;
   /**
    * RETENTION-R3d (P0 — audit-projection VISIBILITY). Optional post-commit hook
    * that reflects the committed audit entry into the product's LIVE audit
@@ -105,10 +126,12 @@ export interface FridayRetentionSettingsRoutesDeps {
   /**
    * RETENTION-R3d (P0 — uncertain-outcome RECOVERY). Owner-bound lookup of a
    * durably-committed receipt by the client-known idempotency/operation key. Reads
-   * the committed audit row (scoped to the canonical owner) and reconstructs the
-   * exact receipt, so an interrupted PUT (mutation committed, HTTP response lost)
-   * is recoverable through a product seam — never raw DB access, never blind
-   * replay. Returns null when no receipt is bound to that key for this owner.
+   * the dedicated, governed `retention_recovery_receipts` store (scoped to the
+   * canonical owner) — NOT `security_audit_log` — and reconstructs the exact
+   * receipt, so an interrupted PUT (mutation committed, HTTP response lost) is
+   * recoverable through a product seam — never raw DB access, never blind replay.
+   * Returns null when no receipt is bound to that key for this owner (including
+   * after the auditLogs-category reaper has expired it under a finite window).
    */
   readReceiptByRecoveryKey?: (input: {
     ownerId: string;
@@ -404,20 +427,18 @@ export function createFridayRetentionPolicyAuditAppender(deps: {
   const persistence = createSqliteAuditPersistence(deps.sqlite);
   return (entry) => {
     const auditId = deps.idGenerator();
-    // Persist the FULL receipt facts on the committed audit row so a committed
-    // policy effect is never left without a durably-recoverable receipt: the row
-    // `id` is the auditId, and this metadata carries receiptId + correlationId +
-    // before + after + changed + deletedData + the client recovery key (everything
-    // needed to reconstruct + look up the exact receipt from committed state).
+    // CONTENT-MINIMIZED authentic-audit anchor (AUDIT-AUTHENTIC-ANCHOR-001): this
+    // canonical `security_audit_log` row stays default-permanent for authentic
+    // audit truth, so it carries ONLY the linkage (receiptId + correlationId) and
+    // the non-reversible payload digest — NEVER the before/after recovery payload,
+    // the applied updates, or the recovery-key hash. The FULL receipt facts live in
+    // the dedicated, owner-scoped, retention-GOVERNED `retention_recovery_receipts`
+    // store (v107), so the user's auditLogs deletion policy is honored for the
+    // receipt content while the anchor remains a truthful, content-free record that
+    // a retention advance cannot silently orphan (DATA-RETENTION-001 / U9).
     const metadata = {
       receiptId: entry.receiptId,
       correlationId: entry.correlationId,
-      changedCategories: entry.changedCategories,
-      deletedData: false,
-      before: entry.before,
-      after: entry.after,
-      appliedUpdates: entry.appliedUpdates,
-      ...(entry.recoveryKeyHash ? { recoveryKeyHash: entry.recoveryKeyHash } : {}),
       ...(entry.payloadDigest ? { payloadDigest: entry.payloadDigest } : {}),
     } as unknown as JsonObject;
     const securityEntry: FridaySecurityAuditEntry = {
@@ -449,14 +470,6 @@ export function createFridayRetentionPolicyAuditAppender(deps: {
   };
 }
 
-/** SQLite row shape for a `security_audit_log` row this domain reads back. */
-interface RetentionAuditRow {
-  id: string;
-  principal_id: string;
-  created_at: string;
-  metadata_json: string;
-}
-
 /**
  * RETENTION-R3d (P1 — raw-key minimization): non-reversible hash of a recovery
  * key. `sha256` is deliberately KEYLESS: it must be STABLE across restarts so a
@@ -475,85 +488,82 @@ interface RetentionReceiptBinding {
   payloadDigest?: string;
 }
 
-/**
- * RETENTION-R3d (P0/P1 — recovery): read the OLDEST durable (owner,
- * recoveryKeyHash) binding on a supplied connection and reconstruct its EXACT
- * receipt + payload digest. The lookup matches the NON-REVERSIBLE hash (the raw
- * key is never stored). Reading the OLDEST (`created_at ASC`) — combined with the
- * write-path conflict/idempotency guard — makes the binding IMMUTABLE: a
- * same-key/different-payload write is rejected before it can shadow the first, so
- * the FIRST committed receipt for a key is always returned (never "latest wins").
- * Owner scoping is enforced in the query (a different principal's rows never match).
- */
-function readRetentionReceiptBinding(
-  db: Database.Database,
-  input: { ownerId: string; recoveryKeyHash: string },
-): RetentionReceiptBinding | null {
-  const row = db
-    .prepare(
-      `SELECT id, principal_id, created_at, metadata_json
-         FROM security_audit_log
-        WHERE principal_id = ?
-          AND action = 'retention.policy.update'
-          AND json_extract(metadata_json, '$.recoveryKeyHash') = ?
-        ORDER BY created_at ASC
-        LIMIT 1`,
-    )
-    .get(input.ownerId, input.recoveryKeyHash) as RetentionAuditRow | undefined;
-  if (!row) return null;
-  let meta: {
-    receiptId?: string;
-    correlationId?: string;
-    before?: FridayRetentionContentPolicy;
-    after?: FridayRetentionContentPolicy;
-    changedCategories?: string[];
-    payloadDigest?: string;
-  };
-  try {
-    meta = JSON.parse(row.metadata_json) as typeof meta;
-  } catch {
-    return null;
-  }
-  if (!meta.receiptId || !meta.correlationId || !meta.before || !meta.after) {
-    return null;
-  }
+/** Reconstruct the receipt envelope from a stored governed-store record. */
+function receiptFromRecord(record: FridayRetentionReceiptRecord): FridayRetentionPolicyUpdateReceipt {
   return {
-    payloadDigest: meta.payloadDigest,
-    receipt: {
-      receiptId: meta.receiptId,
-      correlationId: meta.correlationId,
-      auditId: row.id,
-      status: "applied",
-      runAt: row.created_at,
-      requestedBy: row.principal_id,
-      rollbackClass: "reversible_local_settings",
-      evidence: {
-        before: meta.before,
-        after: meta.after,
-        changed: meta.changedCategories ?? [],
-        deletedData: false,
-      },
+    receiptId: record.receiptId,
+    correlationId: record.correlationId,
+    auditId: record.auditId,
+    status: "applied",
+    runAt: record.createdAt,
+    requestedBy: record.ownerId,
+    rollbackClass: "reversible_local_settings",
+    evidence: {
+      before: record.before,
+      after: record.after,
+      changed: record.changedCategories,
+      deletedData: false,
     },
   };
 }
 
 /**
+ * RETENTION-R3d (P0/P1 — recovery): read the OLDEST durable (owner,
+ * recoveryKeyHash) binding on a supplied connection FROM THE DEDICATED,
+ * retention-GOVERNED `retention_recovery_receipts` store (NOT `security_audit_log`)
+ * and reconstruct its EXACT receipt + payload digest. The lookup matches the
+ * NON-REVERSIBLE hash (the raw key is never stored). Reading the OLDEST
+ * (`created_at ASC`) — combined with the write-path conflict/idempotency guard —
+ * makes the binding IMMUTABLE: a same-key/different-payload write is rejected
+ * before it can shadow the first, so the FIRST committed receipt for a key is
+ * always returned (never "latest wins"). Owner scoping is enforced in the query (a
+ * different principal's rows never match). Returns null once the auditLogs-category
+ * reaper has expired the receipt under a finite window — recovery must return null
+ * exactly when the user's deletion policy has removed it.
+ */
+function readRetentionReceiptBinding(
+  db: Database.Database,
+  input: { ownerId: string; recoveryKeyHash: string },
+  receiptRepo: FridayRetentionReceiptRepository,
+): RetentionReceiptBinding | null {
+  const record = receiptRepo.findOldestByRecoveryKey(db, input);
+  if (!record) return null;
+  return {
+    payloadDigest: record.payloadDigest ?? undefined,
+    receipt: receiptFromRecord(record),
+  };
+}
+
+/**
  * RETENTION-R3d (P0 — uncertain-outcome RECOVERY): build the owner-bound receipt
- * recovery reader over the durable audit row — so an interrupted PUT whose mutation
- * committed but whose HTTP response was lost is recoverable through a product seam
- * after restart, WITHOUT raw DB access or blind replay. The route additionally
- * denies non-canonical principals before this ever runs.
+ * recovery reader over the dedicated governed receipt store — so an interrupted PUT
+ * whose mutation + durable receipt committed but whose HTTP response was lost is
+ * recoverable through a product seam after restart, WITHOUT raw DB access or blind
+ * replay. The route additionally denies non-canonical principals before this ever
+ * runs. Reading the governed store (not `security_audit_log`) means recovery
+ * returns null exactly when the user's auditLogs retention policy has expired it.
  */
 export function createFridayRetentionReceiptRecovery(deps: {
   sqlite: FridaySqliteLayer;
 }): (input: { ownerId: string; recoveryKeyHash: string }) => FridayRetentionPolicyUpdateReceipt | null {
+  const receiptRepo = createFridayRetentionReceiptRepository();
   return (input) =>
-    deps.sqlite.withReadConnection((db) => readRetentionReceiptBinding(db, input)?.receipt ?? null);
+    deps.sqlite.withReadConnection(
+      (db) => readRetentionReceiptBinding(db, input, receiptRepo)?.receipt ?? null,
+    );
 }
 
 export function createFridayRetentionSettingsRoutes(
   deps: FridayRetentionSettingsRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  // Governed receipt store (v107). Stateless SQL helpers (a pure repository over a
+  // supplied connection) — constructed here, used for the in-txn idempotency/
+  // conflict read AND the atomic in-txn receipt write. `persistReceipt` defaults to
+  // the repository write; an injected override lets a fault-injection test throw at
+  // the receipt-write stage and prove the whole transaction rolls back.
+  const receiptRepo = createFridayRetentionReceiptRepository();
+  const persistReceipt =
+    deps.persistReceipt ?? ((conn, record) => receiptRepo.insert(conn, record));
   return [
     {
       operationId: "uix.retention.policy.get",
@@ -663,7 +673,11 @@ export function createFridayRetentionSettingsRoutes(
           | { kind: "idempotent"; receipt: FridayRetentionPolicyUpdateReceipt };
         deps.db.withWriteTransaction((conn) => {
           if (recoveryKeyHash) {
-            const existing = readRetentionReceiptBinding(conn, { ownerId, recoveryKeyHash });
+            const existing = readRetentionReceiptBinding(
+              conn,
+              { ownerId, recoveryKeyHash },
+              receiptRepo,
+            );
             if (existing) {
               if (existing.payloadDigest === payloadDigest) {
                 // True idempotency: replay the EXACT first committed receipt.
@@ -682,6 +696,7 @@ export function createFridayRetentionSettingsRoutes(
           deps.store.applyOwnerContentPolicyOnConnection(conn, { principalId: ownerId, updates });
           const after = deps.store.readOwnerContentPolicyOnConnection(conn, { principalId: ownerId });
           const changed = computeChangedCategories(before, after);
+          // (a) Content-minimized authentic-audit anchor (linkage + digest only).
           const auditEntry = deps.appendPolicyAudit({
             correlationId,
             receiptId,
@@ -694,6 +709,24 @@ export function createFridayRetentionSettingsRoutes(
             ownerTenantId,
             payloadDigest,
             ...(recoveryKeyHash ? { recoveryKeyHash } : {}),
+          });
+          // (b) FULL receipt facts → the dedicated, retention-GOVERNED store, on the
+          //     SAME write connection so it commits/rolls back ATOMICALLY with the
+          //     policy apply + the audit anchor (no orphan, no partial rows). If this
+          //     throws, the whole transaction aborts → 503, byte-unchanged policy.
+          persistReceipt(conn, {
+            receiptId,
+            ownerId,
+            ownerTenantId,
+            correlationId,
+            auditId: auditEntry.id,
+            recoveryKeyHash: recoveryKeyHash ?? null,
+            payloadDigest,
+            before,
+            after,
+            changedCategories: changed,
+            appliedUpdates: updates,
+            createdAt: runAt,
           });
           outcome = { kind: "applied", before, after, changed, auditEntry };
         });
@@ -729,8 +762,9 @@ export function createFridayRetentionSettingsRoutes(
       // RETENTION-R3d (P0 — uncertain-outcome RECOVERY): owner-bound receipt
       // recovery. An interrupted PUT can commit its mutation + durable receipt yet
       // lose its HTTP response; the client re-sends the SAME Idempotency-Key here to
-      // retrieve the EXACT committed receipt from the durable audit row — a product
-      // seam, not raw DB access. Canonical-owner-gated: a non-canonical principal
+      // retrieve the EXACT committed receipt from the dedicated, retention-GOVERNED
+      // receipt store (v107) — a product seam, not raw DB access, and NOT
+      // `security_audit_log`. Canonical-owner-gated: a non-canonical principal
       // (admin-002) is refused 403 BEFORE any lookup (zero cross-principal
       // disclosure), and the query itself is scoped to the owner's principal_id.
       // P2: the key is read ONLY from the `Idempotency-Key` HEADER — never a query
