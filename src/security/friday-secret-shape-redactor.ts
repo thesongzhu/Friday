@@ -192,20 +192,22 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   },
   // GitHub tokens: classic `gh?_` prefixes AND fine-grained `github_pat_`.
   //
-  // GLUED-PREFIX (SEC-SECRET-GLUED-PREFIX-001): the classic `gh[opsru]_` branch drops its leading `\b`
-  // so a token glued to a preceding word char (`keyghp_<36 base62>`) is still caught. Its body is
-  // BASE62 (`[A-Za-z0-9]`, NO `_`) — the shape real classic GitHub tokens actually have — and THAT is
-  // what makes dropping the boundary safe: like `hf_`/`gsk_`/`npm_`, a `_`-EXCLUDING body cannot span a
-  // snake_case tail, so a benign word ending in `ghs`/`gho`/`ghp`/`ghr`/`ghu` before `_` (e.g.
-  // `walkthroughs_completed_counter`, `breakthroughs_this_quarter`, `coughs_detected_v2`) breaks the
-  // body at the first `_` (`ghs_completed` → 9 base62 chars < 16 → no match) and stays byte-identical.
-  // (The prior `[A-Za-z0-9_]{16,}` body INCLUDED `_` and DID over-redact those benign identifiers — a
-  // real NO-DEGRADE regression, now fixed.) The `github_pat_` branch KEEPS its leading `\b` (moved onto
-  // the branch) AND its `_`-inclusive body: `github_pat` is a NATURAL English phrase ("github personal
-  // access token") and a flat identifier `stored_github_pat_reference_token` could plausibly appear in
-  // config/source, so the boundary keeps it protected (a fine-grained PAT's body legitimately has `_`).
+  // GLUED-PREFIX (SEC-SECRET-GLUED-PREFIX-001): the GitHub branch KEEPS its leading `\b` — UNLIKE the 10
+  // other de-`\b`'d shapes, the classic prefixes are common ENGLISH WORD-FRAGMENTS: `ghs` ends
+  // walkthrou-GHS, breakthrou-GHS, cou-GHS, hi-GHS, lau-GHS, rou-GHS, wei-GHS, plou-GHS, borou-GHS; and
+  // `github_pat_` contains the word "github". So dropping the boundary would over-redact benign
+  // `<word-ending-in-ghs>_<16+ CONTIGUOUS base62 run>` content this SHARED egress detector processes —
+  // even with a base62 body: `walkthroughs_completedThisWeek` → `ghs_completedThisWeek` (17 base62) or
+  // `coughs_e3b0c44298fc1c14` (a content-hash suffix) would be corrupted. Because the collision surface
+  // is a word FRAGMENT (not a distinctive token prefix), `\b` is REQUIRED. Effect: a DELIMITED /
+  // standalone / labeled classic token (`ghp_<base62>`, `token: ghp_…`, `apikey=ghp_…`) is STILL caught
+  // (the common case); only a classic token glued DIRECTLY after a word char (`keyghp_…`) is an
+  // ACCEPTED, documented gap — exactly like the kept-`\b` `sk-`/`AIza`/`ya29.`/`eyJ`/`xapp-` prefixes.
+  // The classic body is still BASE62 (`[A-Za-z0-9]`, real-token shape) so a standalone `ghs_a_b_c`
+  // snake_case identifier breaks at the first `_`; the `github_pat_` branch keeps its `_`-inclusive body
+  // (a fine-grained PAT's body legitimately has `_`).
   {
-    pattern: /(?:gh[opsru]_[A-Za-z0-9]{16,}|\bgithub_pat_[A-Za-z0-9_]{16,})\b/gu,
+    pattern: /\b(?:gh[opsru]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Provider hyphen-prefixed API keys: OpenAI `sk-` / `sk-proj-`, `rk-`, `ak-`, xAI `xai-`. The

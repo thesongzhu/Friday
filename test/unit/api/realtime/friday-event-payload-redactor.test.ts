@@ -227,8 +227,9 @@ describe("redactEventPayload — no over-redaction (NO DEGRADE)", () => {
   it("preserves benign `…ghs_<snake_case>` identifiers (github-classic base62 body, no over-redaction)", () => {
     const payload = {
       walk: "walkthroughs_completed_counter",
+      contig: "walkthroughs_completedThisWeek", // CONTIGUOUS 17-base62 run — only the leading `\b` closes this
       breakt: "breakthroughs_this_quarter_list",
-      cough: "coughs_detected_in_recording_v2",
+      cough: "coughs_e3b0c44298fc1c14", // ghs_ + content-hash suffix
       laugh: "laughs_per_minute_counter",
       note: "metric name walkthroughs_started_and_completed today",
     };

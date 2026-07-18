@@ -434,8 +434,8 @@ describe("friday-secret-shape-redactor", () => {
       ["SendGrid SG.<22>.<43>", SG_SECRET], // pragma: allowlist secret
       ["Square sq0atp-", seg("sq0atp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
       ["Square sq0csp-", seg("sq0csp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
-      ["GitHub ghp_", seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")], // pragma: allowlist secret — 36 body
-      ["GitHub gho_", seg("gho_", "ABCDEF0123456789GHIJKL")], // pragma: allowlist secret — 22 body
+      // NB: GitHub classic `gh[opsru]_` / `github_pat_` are NOT here — their prefixes are common English
+      // word-fragments (`-ghs`, "github"), so they KEEP `\b` (glued case is an accepted gap); see KEPT.
       ["AWS AKIA", seg("AKIA", "IOSFODNN7EXAMPLE")], // pragma: allowlist secret — 16 [0-9A-Z]
       ["Slack xoxb-", seg("xoxb-", "EXAMPLENOTAREALSLACKTOKEN")], // pragma: allowlist secret
     ];
@@ -474,14 +474,17 @@ describe("friday-secret-shape-redactor", () => {
       expect(redactSecretShapesInString(`​${HFV}`)).toBe(`​${M}`); // leading zero-width
     });
 
-    // KEPT the leading `\b` — the prefix is SHORT / low-signal and glues into a common word (or `AI`/`app`
-    // fragment), so a glued form would over-redact a benign identifier. Each: standalone STILL redacts,
-    // but the glued/word-embedded benign form is UNCHANGED. [name, standalone-secret, glued-BENIGN].
+    // KEPT the leading `\b` — the prefix is SHORT / low-signal and glues into a common word, or is itself
+    // a common English WORD-FRAGMENT (`AI`/`app`/`-ghs`/"github"), so a glued form would over-redact a
+    // benign identifier. Each: standalone STILL redacts, but the glued/word-embedded benign form is
+    // UNCHANGED. [name, standalone-secret, glued-BENIGN].
     const KEPT: Array<[string, string, string]> = [
       ["sk- (desk-/risk-/task-)", seg("sk-", "abcdefghijklmnopqrstuv0123456789"), "desk-management-framework-v2extras"], // pragma: allowlist secret
       ["xai- (…xai)", seg("xai-", "abcdefghijklmnop0123456789"), seg("proxai-", "abcdefghijklmnop0123456789")], // pragma: allowlist secret
       ["Stripe sk_live_ (desk_/risk_)", seg("sk", "_live_", "0123456789abcdefABCD"), seg("desk", "_live_", "0123456789abcdefABCD")], // pragma: allowlist secret
       ["github_pat_ (natural phrase)", seg("github_pat_", "11ABCDE0aBcDeFgHiJkL0"), seg("my", "github_pat_", "reference0token0id00")], // pragma: allowlist secret
+      // GitHub classic — `-ghs`/`-gho`/… are word-endings (walkthroughs), so a glued form is NOT caught.
+      ["GitHub classic ghp_ (…ghs word-ending)", seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"), seg("walkthroughs_", "completedThisWeekX")], // pragma: allowlist secret
       ["Slack xapp- (maxapp-)", seg("xapp-", "1-A0123ABCD-4567890123"), "maxapp-config-value-here"], // pragma: allowlist secret
       ["Google AIza (openAIza…)", seg("AIza", "SyDabcdefghijklmnopqrstuvwxyz012345"), seg("open", "AIza", "SyDabcdefghijklmnopqrstuvwxyz012345")], // pragma: allowlist secret
       ["Google ya29. (maya29.field)", seg("ya29.", "a0AfBbyDtestTokenValue0123456789ABCDEF"), "maya29.profile_image_url_field_v2"], // pragma: allowlist secret
@@ -520,6 +523,9 @@ describe("friday-secret-shape-redactor", () => {
       // before `_`. The classic branch body is BASE62 (excludes `_`), so the snake_case `_` breaks the
       // body below 16 chars → no match. (These were CORRUPTED by the first-round `[A-Za-z0-9_]` body.)
       "walkthroughs_completed_counter",
+      "walkthroughs_completedThisWeek", // CONTIGUOUS 17-base62 run after ghs_ — only the leading `\b` closes this
+      "coughs_e3b0c44298fc1c14", // ghs_ + a content-hash suffix (contiguous base62)
+      "highs_thresholdValueConfig1",
       "breakthroughs_this_quarter_list",
       "highs_and_lows_threshold_value",
       "coughs_detected_in_recording_v2",
@@ -536,19 +542,26 @@ describe("friday-secret-shape-redactor", () => {
       }
     });
 
-    // GitHub-classic sensitivity boundary (round-2 regression fix): a benign snake_case word ending in
-    // `ghs`/etc before `_` is UNCHANGED (base62 body breaks at the `_`), while a REAL glued classic token
-    // (`ghs_` + a contiguous 36-base62 body, no `_`) IS redacted. RED on the first-round `[A-Za-z0-9_]`
-    // body corrupted the benign form; GREEN after the base62 body.
-    it("GitHub-classic: benign `…ghs_<snake_case>` survives BUT a glued real classic token IS redacted", () => {
-      // Benign snake_case — the `_` after `ghs` breaks the base62 body (9 chars < 16) → unchanged.
+    // GitHub-classic sensitivity boundary (round-3): the classic prefixes are common English
+    // WORD-FRAGMENTS (`-ghs` ends walkthroughs/coughs/highs; "github" is a word), so — unlike the 10
+    // other de-`\b`'d shapes — the classic branch KEEPS `\b`. A benign `<-ghs word>_<contiguous base62
+    // run>` is UNCHANGED (the boundary blocks it, even for a contiguous run that a base62 body alone did
+    // not close). A DELIMITED / standalone / labeled classic token IS still caught (the common case); a
+    // classic token glued DIRECTLY after a word char is an ACCEPTED, documented gap (like sk-/AIza/ya29.).
+    it("GitHub-classic: benign `…ghs_<run>` survives; DELIMITED/standalone token redacts; GLUED is an accepted gap", () => {
+      // Benign — the leading `\b` blocks the match; UNCHANGED even for a CONTIGUOUS 17+ base62 run.
       expect(redactSecretShapesInString("walkthroughs_completed_counter")).toBe("walkthroughs_completed_counter");
-      expect(redactSecretShapesInString("coughs_detected today")).toBe("coughs_detected today");
-      // Real glued classic token — `ghs_` + 36 contiguous base62 (no `_`) → the credential is redacted,
-      // the benign leading `x`/word survives (green control that the de-`\b` still catches real tokens).
-      const REAL = seg("ghs_", "ABCdef0123456789ghijkLMNopqrstuvWXYZ12"); // pragma: allowlist secret — 38 base62, no `_`
-      expect(redactSecretShapesInString(seg("x", REAL))).toBe(`x${M}`);
-      expect(redactSecretShapesInString(seg("key", REAL))).toBe(`key${M}`);
+      expect(redactSecretShapesInString("walkthroughs_completedThisWeek")).toBe("walkthroughs_completedThisWeek"); // 17 contiguous base62
+      expect(redactSecretShapesInString("coughs_e3b0c44298fc1c14")).toBe("coughs_e3b0c44298fc1c14"); // hash suffix
+      expect(redactSecretShapesInString("highs_thresholdValueConfig1")).toBe("highs_thresholdValueConfig1");
+      const TOK = seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"); // pragma: allowlist secret — 36 base62
+      // DELIMITED / standalone / labeled classic token IS still caught (whitespace, `=`, bare value).
+      expect(redactSecretShapesInString(TOK)).toBe(M);
+      expect(redactSecretShapesInString(`token ${TOK} used`)).toBe(`token ${M} used`);
+      expect(redactSecretShapesInString(`apikey=${TOK}`)).toBe(`apikey=${M}`);
+      // GLUED directly after a word char is an ACCEPTED gap for these word-fragment prefixes.
+      expect(redactSecretShapesInString(seg("key", TOK))).toBe(seg("key", TOK));
+      expect(findSecretShapeSpans(seg("key", TOK))).toEqual([]);
     });
   });
 });

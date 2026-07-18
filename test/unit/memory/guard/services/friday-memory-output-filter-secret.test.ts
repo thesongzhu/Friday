@@ -319,7 +319,7 @@ describe("FridayMemoryOutputFilter — SEC-SECRET-GLUED-PREFIX-001 glued distinc
   // EVERY output-filter leg — the github-classic base62 body breaks at the `_`. The first-round
   // `[A-Za-z0-9_]` body corrupted these (`walkthroughs_completed_counter` → `walkthrou[REDACTED_SECRET]`).
   it("NO-DEGRADE: benign `…ghs_<snake_case>` identifiers survive content / metadata / tags byte-identical", () => {
-    const benign = ["walkthroughs_completed_counter", "breakthroughs_this_quarter_list", "coughs_detected_in_recording_v2", "laughs_per_minute_counter"];
+    const benign = ["walkthroughs_completed_counter", "walkthroughs_completedThisWeek", "coughs_e3b0c44298fc1c14", "breakthroughs_this_quarter_list", "laughs_per_minute_counter"];
     const out = filter.filterItem(makeItem({
       content: "metric name walkthroughs_started_and_completed today",
       metadata: { walk: benign[0], breakt: benign[1], note: "keep" },

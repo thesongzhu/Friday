@@ -224,11 +224,12 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     gskref: GSK_GLUED,
     glref: GLPAT_GLUED,
     note: "just a note",
-    // NO-DEGRADE (round-2): benign snake_case words ending in `ghs`/etc before `_` MUST survive in BOTH
-    // sinks (the github-classic base62 body breaks at the `_`) — the first-round `_`-body corrupted these.
+    // NO-DEGRADE: benign words ending in `ghs`/etc before `_` MUST survive in BOTH sinks — the
+    // github-classic branch keeps `\b`, so a `<-ghs word>_<contiguous base62 run>` is not over-matched.
     walk: "walkthroughs_completed_counter",
+    contig: "walkthroughs_completedThisWeek", // CONTIGUOUS 17-base62 run — only the leading `\b` closes this
     breakt: "breakthroughs_this_quarter_list",
-    cough: "coughs_detected_in_recording_v2",
+    cough: "coughs_e3b0c44298fc1c14", // ghs_ + content-hash suffix
   });
 
   it("glued distinctive-prefix credentials redact identically in the AUDIT sink and MEMORY redactDeep", async () => {
@@ -242,10 +243,12 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     expect(memoryValue.gskref).toBe(`x${M}`);
     expect(memoryValue.glref).toBe(`id${M}`);
     expect(memoryValue.note).toBe("just a note");
-    // Benign `…ghs_<snake_case>` identifiers survive byte-identical in BOTH sinks (no over-redaction).
+    // Benign `…ghs_<run>` identifiers survive byte-identical in BOTH sinks (no over-redaction), including
+    // a CONTIGUOUS base62 run that only the leading `\b` closes.
     expect(memoryValue.walk).toBe("walkthroughs_completed_counter");
+    expect(memoryValue.contig).toBe("walkthroughs_completedThisWeek");
     expect(memoryValue.breakt).toBe("breakthroughs_this_quarter_list");
-    expect(memoryValue.cough).toBe("coughs_detected_in_recording_v2");
+    expect(memoryValue.cough).toBe("coughs_e3b0c44298fc1c14");
     // No credential body survives in either sink's serialization.
     for (const sink of [auditDetails, memoryValue]) {
       const json = JSON.stringify(sink);
