@@ -33,26 +33,24 @@ function truncateString(value: string, maxChars: number): string {
 // The CANONICAL free-form VALUE redaction for every free-form string egressed on read-back
 // (`content`, `source`, `namespace`, `expiresAt`, and the search `snippet`), applied consistently on
 // BOTH the agent `memory_search` trust boundary and the HTTP get/list/search/replay routes (all route
-// through `filterItem` / `filterSearchResult`). It composes, in order:
-//   (1) the shared guard's canonical value transform (`scanAndTransform` → `redactSecretAndPiiValueString`)
-//       — raw email/phone/SSN/card PII ∪ raw AND Unicode-obfuscated SECRET shapes → canonical markers;
-//   (2) SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001 round-4 Defect 1 — Unicode-obfuscated PII coverage via the
-//       shared preserving fold `redactUnicodeResistantPii`, run with the guard's OWN PII detector
-//       (`scanAndTransform(normalized).matches`) over the NON-DESTRUCTIVE detection copy. This is the
-//       EXACT pattern the realtime event redactor uses. Before round-4 leg (1) ran the Unicode pass for
-//       SECRET shapes ONLY (`redactSecretAndPiiValueString`'s documented gap), so a zero-width-spliced
-//       email in `source` egressed VERBATIM; leg (2) closes that.
-// NON-BRIDGE / no-over-redaction is RETAINED: leg (2)'s fold PRESERVES U+3000 / U+FF0C / No·Nl
-// digit-likes, so a benign fullwidth-digit run separated by an ideographic space does NOT fabricate a
+// through `filterItem` / `filterSearchResult`). Delegates to the guard's ONE canonical FOLD-COMPLETE
+// value transform — the SAME transform the shared `redactDeep` string leaf applies to a nested
+// `metadata` value — which composes, in order:
+//   (1) SECRET (raw ∪ Unicode) — a credential is masked FIRST (`secret ≻ PII` precedence);
+//   (2) the shared Unicode-resistant PII preserving fold `redactUnicodeResistantPii` — full-span
+//       redaction of raw AND Unicode-obfuscated email/phone/SSN/card. Running it BEFORE the raw ASCII
+//       pass (round-6 ordering) is what redacts a LOCAL-PART-obfuscated email FULL-SPAN: the ASCII
+//       email regex can no longer match the domain-side fragment `ret@example.com` first and leave the
+//       local-part prefix (`agentsec` / real-name `john.d`) verbatim;
+//   (3) the raw ASCII/full-width PII residual — a defensive no-op on the `[EMAIL]` the fold spliced.
+// NON-BRIDGE / no-over-redaction is RETAINED: the fold PRESERVES U+3000 / U+FF0C / No·Nl digit-likes,
+// so a benign fullwidth-digit run separated by an ideographic space does NOT fabricate a
 // `[CREDIT_CARD]`, and benign multilingual text round-trips byte-identical. STRICT SUPERSET: a value
 // with no sensitive subspan (a benign identifier, a valid ISO timestamp, a benign namespace) folds
-// through every pass unchanged and is returned BYTE-IDENTICAL.
+// through every pass unchanged and is returned BYTE-IDENTICAL. Reused — NOT re-copied — so the
+// free-form VALUE fields and the nested-metadata deep leaf can never diverge.
 function redactFreeFormValue(value: string): string {
-  const afterSecretsAndRawPii = piiRedactor.scanAndTransform(value).transformedContent;
-  return redactUnicodeResistantPii(
-    afterSecretsAndRawPii,
-    (normalized) => piiRedactor.scanAndTransform(normalized).matches,
-  );
+  return piiRedactor.redactFreeFormValueString(value);
 }
 
 // `redactFreeFormValue` + a content egress-SIZE cap, for the two fields that carry an intentional
