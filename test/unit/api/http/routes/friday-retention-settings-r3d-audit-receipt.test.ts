@@ -1930,6 +1930,79 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
       receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } })),
     ).rejects.toMatchObject({ ...INTEGRITY, details: { reason: "invalid_created_at" } });
   });
+
+  // ── ROUND-10b: shaped-but-IMPOSSIBLE created_at (GLOB-passing, calendar-invalid).
+  //    The coarse shape GLOB accepts `2026-19-39T29:59:59.000Z` (month 19, day 39,
+  //    hour 29) — it has no calendar semantics — so a `NOT GLOB` quarantine would
+  //    MISS it and (sorting after any ISO cutoff) it would silently SURVIVE a finite
+  //    sweep. The quarantine now uses the STRICT round-trip gate, which rejects it.
+  it("(round-10b Probe-1) a shaped-but-IMPOSSIBLE created_at (2026-19-39…, GLOB-passing) under FINITE 30d → reaper QUARANTINE-deletes it (strict gate); it does NOT survive", async () => {
+    const KEY = "probe1b-impossible-key";
+    const IMPOSSIBLE = "2026-19-39T29:59:59.000Z"; // month 19 / day 39 / hour 29
+    const routes = makeRoutesAt(AGED);
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    expect(receiptRows()).toHaveLength(1);
+    // The v108 CHECK ACCEPTS the impossible value (GLOB is shape-only) → a PLAIN
+    // UPDATE succeeds; no CHECK bypass needed. This is the crux of the gap.
+    expect(() =>
+      db.writer
+        .prepare("UPDATE retention_recovery_receipts SET created_at = ? WHERE recovery_key_hash = ?")
+        .run(IMPOSSIBLE, hashRecoveryKey(KEY)),
+    ).not.toThrow();
+    expect(receiptRows()[0].created_at).toBe(IMPOSSIBLE);
+
+    const result = reaperForOwner().run(NOW);
+    // HEAD (strict quarantine): counted + gone. On base 0a9b9107 (coarse NOT GLOB):
+    // quarantinedIntegrityReceipts=0 AND deletedRetentionReceipts=0 → the row SURVIVES.
+    expect(result.quarantinedIntegrityReceipts).toBe(1);
+    expect(result.deletedRetentionReceipts).toBe(0);
+    expect(receiptRows()).toHaveLength(0);
+
+    // Unchanged: the read/recovery path already 500s on it (strict round-trip).
+    // (Re-seed is not needed — assert the strict gate directly on the value.)
+  });
+
+  it("(round-10b Probe-1) the read/recovery path already 500s on the impossible created_at (invalid_created_at) — unchanged", async () => {
+    const KEY = "probe1b-impossible-read-key";
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    db.writer
+      .prepare("UPDATE retention_recovery_receipts SET created_at = '2026-19-39T29:59:59.000Z' WHERE recovery_key_hash = ?")
+      .run(hashRecoveryKey(KEY));
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } })),
+    ).rejects.toMatchObject({ ...INTEGRITY, details: { reason: "invalid_created_at" } });
+  });
+
+  // Green over-fail-close: a CANONICAL not-yet-expired receipt (created_at=now) is
+  // NEVER quarantined (it round-trips) and is NOT date-expired; a CANONICAL expired
+  // receipt (created_at=aged) is deleted via `deleteExpiredBefore`, NOT the quarantine.
+  it("(round-10b green) canonical not-yet-expired row survives (never quarantined); a canonical aged row is date-expired — quarantine touches neither", async () => {
+    const KEY_NEW = "round10b-canon-new";
+    const KEY_OLD = "round10b-canon-old";
+    // A not-yet-expired receipt committed at NOW (> NOW-30d cutoff), and an aged one.
+    const nowRoutes = makeRoutes(realAppender()); // clock = NOW
+    await putRouteOf(nowRoutes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY_NEW }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    const agedRoutes = makeRoutesAt(AGED);
+    await putRouteOf(agedRoutes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY_OLD }, body: { policy: { agentRuns: { mode: "after_days", days: 60 } } } }),
+    );
+    expect(receiptRows()).toHaveLength(2);
+
+    const result = reaperForOwner().run(NOW);
+    expect(result.quarantinedIntegrityReceipts).toBe(0); // both are canonical → none quarantined
+    expect(result.deletedRetentionReceipts).toBe(1); // only the aged (canonical, < cutoff) row
+    // The canonical not-yet-expired receipt SURVIVES correctly (no over-fail-close).
+    const survivors = receiptRows();
+    expect(survivors).toHaveLength(1);
+    expect(survivors[0].created_at).toBe(NOW);
+  });
 });
 
 // ── ROUND-9 P1-B (pure unit): isValidCategoryRetention rejects unknown properties ─
