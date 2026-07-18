@@ -1,12 +1,24 @@
 import type Database from "better-sqlite3";
 import { FridayDomainError } from "#errors";
 
+// RETENTION-R3d round-9: recompute the receipt's derived facts with the EXACT
+// canonical write-path functions (zero drift). `hashIdempotencyPayload` is the SAME
+// pure digest the PUT handler uses to set `payloadDigest`; importing it directly
+// mirrors the existing satellites→routes value import of the same function (no
+// eslint import-boundary rule, and it pulls in only `node:crypto` + `#errors`).
+import { hashIdempotencyPayload } from "../../api/http/routes/friday-route-idempotency.js";
 import type { CategoryRetention, FridayRetentionContentPolicy } from "./friday-retention.types.js";
 import {
+  FRIDAY_RETENTION_CONTENT_CATEGORIES,
   isFridayRetentionContentCategory,
   isValidCategoryRetention,
   isValidFridayRetentionContentPolicy,
 } from "./friday-retention.types.js";
+import {
+  applyContentPolicyOverlay,
+  computeChangedCategories,
+  retentionEquals,
+} from "./friday-retention-receipt-coherence.js";
 
 /**
  * RETENTION-R3d round-8 (P1 fail-open fix): a TYPED storage-integrity failure for a
@@ -162,8 +174,18 @@ function isValidAppliedUpdates(value: unknown): value is Record<string, Category
  * throw. Every decoded field is validated — `before`/`after` are full content
  * policies (exactly the seven categories, each a valid `CategoryRetention`),
  * `changedCategories` is an array of canonical category names, and `appliedUpdates`
- * is a `{category → CategoryRetention}` map — so a corrupted binding can never be
- * mistaken for an unused key (which would re-execute a PUT) or silently recovered.
+ * is a `{category → CategoryRetention}` map.
+ *
+ * RETENTION-R3d round-9 (P1 fail-open fix): AFTER the per-field shapes pass, the
+ * fields are additionally CROSS-FIELD-validated for mutual coherence — `after` must
+ * equal overlay(`before`, `appliedUpdates`), `changedCategories` must be the
+ * authoritative sorted diff, and `payloadDigest` must equal the canonical recompute
+ * over `appliedUpdates` — recomputed with the SAME write-path functions (zero drift).
+ * This closes the fail-OPEN where a per-field-valid but tampered receipt (e.g. only
+ * `after_json` swapped 30→90) decoded fine, so a same-key replay / recovery served
+ * the tampered after-state. Coherence is INTERNAL to the receipt only (a legitimately
+ * STALE receipt still decodes); a corrupted binding can never be mistaken for an
+ * unused key (which would re-execute a PUT) or silently recovered.
  */
 function decodeReceiptRow(row: RetentionReceiptRow): FridayRetentionReceiptRecord {
   let before: unknown;
@@ -205,6 +227,55 @@ function decodeReceiptRow(row: RetentionReceiptRow): FridayRetentionReceiptRecor
       { details: { receiptId: row.receipt_id, reason: "invalid_applied_updates" } },
     );
   }
+
+  // ── RETENTION-R3d round-9: CROSS-FIELD COHERENCE (P1 fail-open fix) ─────────
+  // Every field is now individually well-shaped; verify they are MUTUALLY
+  // coherent. Coherence is INTERNAL to the receipt ONLY — it is NEVER compared
+  // against the current authoritative policy, so a legitimately STALE receipt
+  // (its `after` differs from a now-current policy a later different-key write
+  // changed) still decodes fine. Each recompute uses the SAME canonical write-path
+  // function the PUT handler used, so there is zero drift. Any incoherence is a
+  // storage-integrity fault → fail CLOSED with a distinct `reason` (never a null
+  // that the idempotency guard would read as "unused key" and re-execute on).
+
+  // (a) apply-coherence: the stored `after` must equal overlay(before,
+  //     appliedUpdates) across all seven categories — the store's apply semantics.
+  const expectedAfter = applyContentPolicyOverlay(before, appliedUpdates);
+  for (const category of FRIDAY_RETENTION_CONTENT_CATEGORIES) {
+    if (!retentionEquals(expectedAfter[category], after[category])) {
+      throw new FridayRetentionReceiptIntegrityError(
+        `Persisted retention recovery receipt '${row.receipt_id}' is incoherent: 'after' is not overlay(before, appliedUpdates).`,
+        { details: { receiptId: row.receipt_id, reason: "apply_incoherent", category } },
+      );
+    }
+  }
+
+  // (b) changed-coherence: the stored `changedCategories` must be EXACTLY the
+  //     authoritative sorted diff. Comparing the recomputed SORTED array to the
+  //     stored array element-by-element rejects duplicates / missing / extra /
+  //     wrong order in one check.
+  const expectedChanged = computeChangedCategories(before, after);
+  const changedCoherent =
+    expectedChanged.length === changedCategories.length &&
+    expectedChanged.every((category, index) => category === changedCategories[index]);
+  if (!changedCoherent) {
+    throw new FridayRetentionReceiptIntegrityError(
+      `Persisted retention recovery receipt '${row.receipt_id}' is incoherent: 'changedCategories' is not the authoritative sorted diff.`,
+      { details: { receiptId: row.receipt_id, reason: "changed_categories_incoherent" } },
+    );
+  }
+
+  // (c) digest-coherence: `payloadDigest` must equal the canonical recompute over
+  //     `appliedUpdates`. The write path ALWAYS sets it, so a null/absent stored
+  //     digest against a non-null recompute is itself corrupt (`string !== null`).
+  const expectedDigest = hashIdempotencyPayload(appliedUpdates);
+  if (row.payload_digest !== expectedDigest) {
+    throw new FridayRetentionReceiptIntegrityError(
+      `Persisted retention recovery receipt '${row.receipt_id}' is incoherent: 'payloadDigest' does not match the canonical recompute of appliedUpdates.`,
+      { details: { receiptId: row.receipt_id, reason: "digest_mismatch" } },
+    );
+  }
+
   return {
     receiptId: row.receipt_id,
     ownerId: row.principal_id,

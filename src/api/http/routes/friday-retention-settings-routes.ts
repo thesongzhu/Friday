@@ -9,6 +9,7 @@ import type {
   FridayRetentionSettingsStore,
 } from "#jobs";
 import {
+  computeChangedCategories,
   createFridayRetentionReceiptRepository,
   FRIDAY_MAX_AFTER_DAYS,
   FRIDAY_MIN_AFTER_DAYS,
@@ -373,34 +374,12 @@ function parseCategoryRetention(category: string, raw: unknown): CategoryRetenti
   return { mode: "after_days", days };
 }
 
-/** True when two per-category retention values are effectively identical. */
-function retentionEquals(a: CategoryRetention, b: CategoryRetention): boolean {
-  if (a.mode !== b.mode) return false;
-  if (a.mode === "after_days" && b.mode === "after_days") return a.days === b.days;
-  return true;
-}
-
-/**
- * RETENTION-R3d: the content categories whose EFFECTIVE policy differs between the
- * authoritative before- and after-states. Derived from the two authoritative
- * readbacks (never from the request), so the receipt reports what actually
- * changed. Sorted for a stable receipt/audit payload.
- */
-function computeChangedCategories(
-  before: FridayRetentionContentPolicy,
-  after: FridayRetentionContentPolicy,
-): string[] {
-  const categories = new Set<string>([...Object.keys(before), ...Object.keys(after)]);
-  const changed: string[] = [];
-  for (const category of categories) {
-    const b = (before as Record<string, CategoryRetention>)[category];
-    const a = (after as Record<string, CategoryRetention>)[category];
-    if (!b || !a || !retentionEquals(b, a)) {
-      changed.push(category);
-    }
-  }
-  return changed.sort();
-}
+// RETENTION-R3d round-9: `retentionEquals` + `computeChangedCategories` were
+// EXTRACTED to the shared, pure `friday-retention-receipt-coherence` module (jobs
+// layer, re-exported via `#jobs`) so the receipt-store decode path can CROSS-FIELD-
+// validate a persisted receipt with the EXACT write-path derivation (zero drift).
+// This write path imports `computeChangedCategories` from `#jobs` — behavior is
+// byte-identical to the former local copy.
 
 /**
  * RETENTION-R3d: build the FAIL-CLOSED retention-policy audit appender.

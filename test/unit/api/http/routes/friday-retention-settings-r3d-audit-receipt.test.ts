@@ -22,12 +22,14 @@ import { FridayDomainError } from "#errors";
 import { AuditLogger } from "../../../../../src/security/multi-tenant/engine/audit-logger.js";
 import { createSqliteAuditPersistence } from "../../../../../src/security/multi-tenant/persistence/friday-multi-tenant-sqlite-store.js";
 import type { FridaySecurityAuditEntry } from "../../../../../src/security/multi-tenant/model/friday-multi-tenant-security.types.js";
+import { hashIdempotencyPayload } from "../../../../../src/api/http/routes/friday-route-idempotency.js";
 import {
   createFridayRetentionJob,
   createFridayRetentionPolicyLoader,
   createFridayRetentionReceiptRepository,
   createFridayRetentionSettingsRepository,
   createFridayRetentionSettingsStore,
+  isValidCategoryRetention,
 } from "#jobs";
 import type { FridayRetentionReceiptRecord, FridayRetentionSettingsStore } from "#jobs";
 import {
@@ -970,7 +972,11 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
       correlationId: `corr:${receiptId}`,
       auditId: `aud:${receiptId}`,
       recoveryKeyHash: sharedHash,
-      payloadDigest: "digest",
+      // round-9: the decode path now CROSS-FIELD-validates digest coherence, so this
+      // fixture uses the REAL canonical digest of its appliedUpdates (not a
+      // placeholder) — the receipt is fully coherent and the test isolates
+      // owner-scoping, not digest integrity.
+      payloadDigest: hashIdempotencyPayload({ auditLogs: { mode: "after_days", days: 30 } }),
       // Full 7-category content policies — exactly what the store always emits (the
       // decode path strict-validates completeness, so a receipt's before/after must
       // carry every canonical category).
@@ -1246,6 +1252,339 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     expect(put.receipt.status).toBe("applied");
     expect(put.receipt.evidence.after.auditLogs).toEqual({ mode: "after_days", days: 90 });
     expect(receiptRows()).toHaveLength(1);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RETENTION-R3d ROUND-9 — cross-field COHERENCE + exact-shape validation
+  // (P1 fail-OPEN fix).
+  //
+  // Finding (fresh Advisor audit, reproduced by real-SQLite probes):
+  //   P1-A — decodeReceiptRow validated each JSON field INDEPENDENTLY but never
+  //     checked mutual coherence. Corrupting ONLY `after_json` from a valid 30-day
+  //     policy to a valid 90-day policy (leaving before/appliedUpdates/
+  //     changedCategories/payloadDigest describing the 30-day mutation) was ACCEPTED
+  //     — so a same-key/SAME-payload replay AND the recovery seam served the tampered
+  //     90 while the authoritative SQLite policy stayed 30 (fail-OPEN).
+  //   P1-B — isValidCategoryRetention did not reject unknown properties, so a
+  //     CategoryRetention carrying an EXTRA property decoded fine and EGRESSED
+  //     through the owner-facing recovery response.
+  //
+  // The fix: decodeReceiptRow now validates cross-field coherence AFTER per-field
+  // shape validation — after == overlay(before, appliedUpdates) (all 7 categories),
+  // changedCategories == the authoritative sorted diff, payloadDigest == the
+  // canonical recompute — and isValidCategoryRetention rejects unknown properties.
+  // Coherence is INTERNAL to the receipt only (a legitimately STALE receipt still
+  // decodes); `null` stays reserved EXCLUSIVELY for genuine absence/expiry.
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // (P1-A/1) Corrupt ONLY after_json 30→90 (still individually valid). A same-key
+  // SAME-payload replay must fail closed (not serve the tampered 90 via the
+  // idempotent-replay path), and recovery must 500 (not return the 90-day receipt).
+  // Authoritative policy stays 30; receipt + audit counts stay 1.
+  it("(round-9 P1-A/1) corrupt after_json 30→90 → same-key replay 500 + recovery 500 (never the tampered 90); policy stays 30; counts stay 1", async () => {
+    const KEY = "coherence-after-tamper-key";
+    const routes = makeRoutes(realAppender());
+    // 1) Coherent first write: auditLogs → 30.
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    expect(receiptRows()).toHaveLength(1);
+    expect(auditRows()).toHaveLength(1);
+    expect(policyRows(CANON)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+
+    // 2) Corrupt ONLY after_json: auditLogs 30 → 90 (a still-individually-valid
+    //    policy). before / appliedUpdates / changedCategories / payload_digest all
+    //    still describe the 30-day mutation → the receipt is now cross-field INCOHERENT.
+    const after = JSON.parse(receiptRows()[0].after_json) as Record<string, unknown>;
+    after.auditLogs = { mode: "after_days", days: 90 };
+    db.writer
+      .prepare("UPDATE retention_recovery_receipts SET after_json = ? WHERE recovery_key_hash = ?")
+      .run(JSON.stringify(after), hashRecoveryKey(KEY));
+
+    // (i) Same-key SAME-payload replay: the in-txn idempotency read decodes the
+    //     corrupt receipt → fail-closed integrity error (NOT an idempotent replay of
+    //     the tampered 90). On base 546ab54f this RESOLVED, serving after=90.
+    await expect(
+      putRouteOf(routes).handler(
+        makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+      ),
+    ).rejects.toMatchObject({ ...INTEGRITY, details: { reason: "apply_incoherent" } });
+
+    // (ii) Recovery seam on the same key → 500 (never the tampered 90-day receipt).
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } })),
+    ).rejects.toMatchObject(INTEGRITY);
+
+    // Authoritative policy remains 30; no second receipt/audit row.
+    expect(policyRows(CANON)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+    const get = (await getRouteOf(routes).handler(makeCtx())) as { policy: Record<string, unknown> };
+    expect(get.policy.auditLogs).toEqual({ mode: "after_days", days: 30 });
+    expect(receiptRows()).toHaveLength(1);
+    expect(auditRows()).toHaveLength(1);
+  });
+
+  // Seed a coherent receipt (auditLogs→30) under KEY, corrupt ONE field so the row is
+  // structurally valid but cross-field INCOHERENT, then recover by the key → the seam
+  // must 500 with the expected reason; the authoritative policy + counts stay put.
+  async function seedCoherentThenCorruptField(
+    KEY: string,
+    corrupt: (recoveryKeyHash: string) => void,
+    expectedReason: string,
+  ): Promise<void> {
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    expect(receiptRows()).toHaveLength(1);
+    expect(auditRows()).toHaveLength(1);
+    expect(policyRows(CANON)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+
+    corrupt(hashRecoveryKey(KEY));
+
+    // Recovery on the (structurally valid but incoherent) matching binding → 500 with
+    // the exact reason. On base 546ab54f this RESOLVED (returned the tampered receipt).
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } })),
+    ).rejects.toMatchObject({ ...INTEGRITY, details: { reason: expectedReason } });
+
+    // Authoritative policy + durable counts untouched by the failed decode.
+    expect(policyRows(CANON)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+    expect(receiptRows()).toHaveLength(1);
+    expect(auditRows()).toHaveLength(1);
+  }
+
+  // (P1-A/2 — changed_categories) each isolated corruption → changed_categories_incoherent.
+  const changedCategoryCorruptions: Array<[string, (h: string) => void]> = [
+    [
+      "extra (bogus-but-canonical) category",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET changed_categories_json = ? WHERE recovery_key_hash = ?")
+          .run(JSON.stringify(["agentRuns", "auditLogs"]), h), // agentRuns did not change
+    ],
+    [
+      "dropped category (empty)",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET changed_categories_json = ? WHERE recovery_key_hash = ?")
+          .run(JSON.stringify([]), h),
+    ],
+    [
+      "duplicated category",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET changed_categories_json = ? WHERE recovery_key_hash = ?")
+          .run(JSON.stringify(["auditLogs", "auditLogs"]), h),
+    ],
+  ];
+  it.each(changedCategoryCorruptions)(
+    "(round-9 P1-A/2 changed_categories) [%s] → recovery 500 changed_categories_incoherent; authoritative unchanged; counts 1",
+    async (label, corrupt) => {
+      await seedCoherentThenCorruptField(`changed-${label}`, corrupt, "changed_categories_incoherent");
+    },
+  );
+
+  // (P1-A/2 — changed_categories WRONG ORDER) a two-category write's changedCategories
+  // is the SORTED authoritative diff; an unsorted stored array is rejected.
+  it("(round-9 P1-A/2 changed_categories) UNSORTED stored order → recovery 500 changed_categories_incoherent", async () => {
+    const KEY = "changed-unsorted-key";
+    const routes = makeRoutes(realAppender());
+    // A two-category write: changed = ["agentRuns","auditLogs"] (sorted).
+    await putRouteOf(routes).handler(
+      makeCtx({
+        headers: { "idempotency-key": KEY },
+        body: { policy: { auditLogs: { mode: "after_days", days: 30 }, agentRuns: { mode: "after_days", days: 60 } } },
+      }),
+    );
+    expect(JSON.parse(receiptRows()[0].changed_categories_json)).toEqual(["agentRuns", "auditLogs"]);
+    // Store the SAME set but unsorted → element-by-element mismatch vs the sorted diff.
+    db.writer
+      .prepare("UPDATE retention_recovery_receipts SET changed_categories_json = ? WHERE recovery_key_hash = ?")
+      .run(JSON.stringify(["auditLogs", "agentRuns"]), hashRecoveryKey(KEY));
+    await expect(
+      receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } })),
+    ).rejects.toMatchObject({ ...INTEGRITY, details: { reason: "changed_categories_incoherent" } });
+  });
+
+  // (P1-A/2 — payload_digest) a bogus digest AND a NULL digest → digest_mismatch.
+  it("(round-9 P1-A/2 payload_digest) a WRONG digest → recovery 500 digest_mismatch", async () => {
+    await seedCoherentThenCorruptField(
+      "digest-wrong-key",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET payload_digest = ? WHERE recovery_key_hash = ?")
+          .run("deadbeef".repeat(8), h),
+      "digest_mismatch",
+    );
+  });
+  it("(round-9 P1-A/2 payload_digest) a NULL digest (write path ALWAYS sets it) → recovery 500 digest_mismatch", async () => {
+    await seedCoherentThenCorruptField(
+      "digest-null-key",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET payload_digest = NULL WHERE recovery_key_hash = ?")
+          .run(h),
+      "digest_mismatch",
+    );
+  });
+
+  // (P1-A/2 — applied_updates) overlay(before, applied) ≠ after → apply_incoherent.
+  it("(round-9 P1-A/2 applied_updates) applied changed so overlay(before,applied) ≠ after → recovery 500 apply_incoherent", async () => {
+    await seedCoherentThenCorruptField(
+      "applied-incoherent-key",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET applied_updates_json = ? WHERE recovery_key_hash = ?")
+          // still a valid appliedUpdates map, but overlay(allPermanent,{auditLogs:90})
+          // = {auditLogs:90} ≠ the stored after {auditLogs:30}.
+          .run(JSON.stringify({ auditLogs: { mode: "after_days", days: 90 } }), h),
+      "apply_incoherent",
+    );
+  });
+
+  // (P1-B) a CategoryRetention carrying an EXTRA property is rejected by decode, and
+  // the leaked property NEVER egresses through the owner-facing recovery response.
+  it("(round-9 P1-B) after.auditLogs carries an EXTRA property → recovery 500 (invalid_after) AND 'leaked' never egresses", async () => {
+    const KEY = "extra-prop-after-key";
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    const after = JSON.parse(receiptRows()[0].after_json) as Record<string, unknown>;
+    after.auditLogs = { mode: "after_days", days: 30, leaked: "x" };
+    db.writer
+      .prepare("UPDATE retention_recovery_receipts SET after_json = ? WHERE recovery_key_hash = ?")
+      .run(JSON.stringify(after), hashRecoveryKey(KEY));
+
+    let resolved: unknown;
+    let threw = false;
+    try {
+      resolved = await receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } }));
+    } catch (e) {
+      threw = true;
+      expect(e).toMatchObject({ ...INTEGRITY, details: { reason: "invalid_after" } });
+    }
+    // Post-fix: decode fails closed (threw). On base it RESOLVED and egressed 'leaked'.
+    expect(threw).toBe(true);
+    // Belt-and-suspenders: nothing the seam returned ever carries the leaked property.
+    expect(JSON.stringify(resolved ?? "")).not.toContain("leaked");
+  });
+  it("(round-9 P1-B) appliedUpdates.auditLogs carries an EXTRA property → recovery 500 (invalid_applied_updates)", async () => {
+    await seedCoherentThenCorruptField(
+      "extra-prop-applied-key",
+      (h) =>
+        db.writer
+          .prepare("UPDATE retention_recovery_receipts SET applied_updates_json = ? WHERE recovery_key_hash = ?")
+          .run(JSON.stringify({ auditLogs: { mode: "after_days", days: 30, leaked: "y" } }), h),
+      "invalid_applied_updates",
+    );
+  });
+
+  // ── ROUND-9 GREEN over-fail-close controls: coherence is INTERNAL-only; it must
+  //    NEVER fail a legitimate receipt (a fresh write, a stale receipt, an empty
+  //    update) and must never break genuine idempotency/absence. These prove the
+  //    overlay oracle matches the REAL store (load-bearing). ─────────────────────
+
+  it("(round-9 green) a normal write decodes its OWN receipt with coherence PASSING (no over-fail-close)", async () => {
+    const KEY = "coherent-normal-key";
+    const routes = makeRoutes(realAppender());
+    const put = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    const rec = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(rec.receipt).not.toBeNull();
+    expect(rec.receipt!.receiptId).toBe(put.receipt.receiptId);
+    expect(rec.receipt!.evidence.after.auditLogs).toEqual({ mode: "after_days", days: 30 });
+  });
+
+  it("(round-9 green) empty-update policy:{} write → coherent receipt decodes (overlay of a no-op == before == after)", async () => {
+    const KEY = "coherent-empty-key";
+    const routes = makeRoutes(realAppender());
+    const put = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: {} } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    expect(put.receipt.evidence.changed).toEqual([]);
+    const rec = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(rec.receipt).not.toBeNull();
+    expect(rec.receipt!.receiptId).toBe(put.receipt.receiptId);
+  });
+
+  it("(round-9 green) a later DIFFERENT-key write moves the policy — decoding the EARLIER (now-stale) receipt still PASSES coherence (internal-only, never vs current policy)", async () => {
+    const routes = makeRoutes(realAppender());
+    const KEY_A = "stale-A-key";
+    const KEY_B = "stale-B-key";
+    const a = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY_A }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    // A DIFFERENT key later changes auditLogs 30 → 90 (the current policy moves on).
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY_B }, body: { policy: { auditLogs: { mode: "after_days", days: 90 } } } }),
+    );
+    expect(policyRows(CANON)).toEqual([{ content_category: "auditLogs", after_days: 90 }]);
+    // Recovering A's receipt still SUCCEEDS and returns A's OWN historical after (30),
+    // NOT the now-current 90 — coherence never compares against the current policy.
+    const recA = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY_A } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+    expect(recA.receipt).not.toBeNull();
+    expect(recA.receipt!.receiptId).toBe(a.receipt.receiptId);
+    expect(recA.receipt!.evidence.after.auditLogs).toEqual({ mode: "after_days", days: 30 });
+  });
+
+  it("(round-9 green) same-key/same-payload idempotent replay still works; same-key/different-payload → 409 (coherence never breaks genuine idempotency)", async () => {
+    const routes = makeRoutes(realAppender());
+    const KEY = "idem-green-key";
+    const first = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    const replay = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    expect(replay.receipt.receiptId).toBe(first.receipt.receiptId);
+    expect(auditRows()).toHaveLength(1);
+    await expect(
+      putRouteOf(routes).handler(
+        makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 90 } } } }),
+      ),
+    ).rejects.toMatchObject({ httpStatus: 409 });
+  });
+
+  it("(round-9 green) a genuinely-absent key → recovery null AND a fresh PUT applies (coherence never over-fails a new write)", async () => {
+    const routes = makeRoutes(realAppender());
+    const miss = (await receiptRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": "round9-absent-key" } }),
+    )) as { receipt: unknown };
+    expect(miss.receipt).toBeNull();
+    const put = (await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": "round9-fresh-key" }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+    expect(put.receipt.status).toBe("applied");
+    expect(receiptRows()).toHaveLength(1);
+  });
+});
+
+// ── ROUND-9 P1-B (pure unit): isValidCategoryRetention rejects unknown properties ─
+describe("isValidCategoryRetention — exact-shape validation (round-9 P1-B)", () => {
+  it("accepts EXACTLY {mode:'permanent'} / {mode:'after_days',days:N} and rejects any extra property", () => {
+    // Canonical shapes accepted.
+    expect(isValidCategoryRetention({ mode: "permanent" })).toBe(true);
+    expect(isValidCategoryRetention({ mode: "after_days", days: 30 })).toBe(true);
+    // Unknown properties → invalid (the P1-B fix).
+    expect(isValidCategoryRetention({ mode: "permanent", x: 1 })).toBe(false);
+    expect(isValidCategoryRetention({ mode: "after_days", days: 30, x: 1 })).toBe(false);
+    expect(isValidCategoryRetention({ mode: "after_days", days: 30, leaked: "x" })).toBe(false);
+    // permanent must NOT carry days (exactly one own-enumerable key).
+    expect(isValidCategoryRetention({ mode: "permanent", days: 30 })).toBe(false);
+    // Pre-existing rejections still hold.
+    expect(isValidCategoryRetention({ mode: "forever" })).toBe(false);
+    expect(isValidCategoryRetention({ mode: "after_days", days: 0 })).toBe(false);
+    expect(isValidCategoryRetention({ mode: "after_days" })).toBe(false);
+    expect(isValidCategoryRetention(null)).toBe(false);
+    expect(isValidCategoryRetention([{ mode: "permanent" }])).toBe(false);
   });
 });
 

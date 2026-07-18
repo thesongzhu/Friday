@@ -54,19 +54,31 @@ export function isValidAfterDays(value: unknown): value is number {
 
 /**
  * STRICT structural validator for ONE `CategoryRetention` value read back from an
- * untrusted / persisted source (RETENTION-R3d round-8). Accepts EXACTLY
- * `{mode:"permanent"}` or `{mode:"after_days",days:N}` with N inside the canonical
- * honored `[FRIDAY_MIN_AFTER_DAYS, FRIDAY_MAX_AFTER_DAYS]` window (via
+ * untrusted / persisted source (RETENTION-R3d round-8, EXACT-SHAPE in round-9).
+ * Accepts EXACTLY `{mode:"permanent"}` (one own-enumerable key) or
+ * `{mode:"after_days",days:N}` (exactly two own-enumerable keys) with N inside the
+ * canonical honored `[FRIDAY_MIN_AFTER_DAYS, FRIDAY_MAX_AFTER_DAYS]` window (via
  * `isValidAfterDays`). Rejects a non-object / null / array, an unknown `mode`, a
- * missing/non-integer/NaN/Infinity `days`, and any OUT-OF-RANGE window — so a
- * decode path fails CLOSED on a schema-valid-but-semantically-invalid value (e.g. a
- * reaper-unhonored day count), not merely on undecodable JSON.
+ * missing/non-integer/NaN/Infinity `days`, any OUT-OF-RANGE window, AND any object
+ * that carries an UNKNOWN / EXTRA property (round-9 P1-B): a persisted
+ * `CategoryRetention` with a stray key is a storage-integrity fault whose extra
+ * property could otherwise egress through the owner-facing recovery response. So a
+ * decode path fails CLOSED on a schema-valid-but-semantically-invalid value (a
+ * reaper-unhonored day count OR an unexpected property), not merely on undecodable
+ * JSON. This tightening also flows into `isValidFridayRetentionContentPolicy` and
+ * `isValidAppliedUpdates`, whose per-category values pass through here.
  */
 export function isValidCategoryRetention(value: unknown): value is CategoryRetention {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keyCount = Object.keys(value as Record<string, unknown>).length;
   const mode = (value as { mode?: unknown }).mode;
-  if (mode === "permanent") return true;
+  if (mode === "permanent") {
+    // EXACTLY one own-enumerable key: `mode`. Any extra property → invalid.
+    return keyCount === 1;
+  }
   if (mode !== "after_days") return false;
+  // EXACTLY two own-enumerable keys: `mode`, `days`. Any extra property → invalid.
+  if (keyCount !== 2) return false;
   return isValidAfterDays((value as { days?: unknown }).days);
 }
 

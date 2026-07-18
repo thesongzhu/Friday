@@ -45,6 +45,11 @@ export type {
   FridayRetentionReceiptRepository,
   FridayRetentionReceiptRecord,
 } from "./retention/friday-retention-receipt-repository.js";
+export {
+  applyContentPolicyOverlay,
+  computeChangedCategories,
+  retentionEquals,
+} from "./retention/friday-retention-receipt-coherence.js";
 
 export type {
   FridayLearningMetricsJobResult,
