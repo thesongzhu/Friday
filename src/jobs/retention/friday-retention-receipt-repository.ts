@@ -114,8 +114,11 @@ export function isCanonicalReceiptCreatedAt(value: unknown): value is string {
  *                        (INTERNAL to the receipt only — a legitimately STALE receipt
  *                        still decodes; never compared to the current policy).
  *   - ANCHOR cross-check (cross-store): the content-minimized `security_audit_log`
- *                        anchor row `id == audit_id` MUST exist and satisfy the
- *                        LINKAGE (metadata.receiptId == receipt_id,
+ *                        anchor row `id == audit_id` MUST exist, carry EXACTLY the
+ *                        allowed metadata keys {receiptId, correlationId,
+ *                        payloadDigest} (no extra/missing key — closes the permanent-
+ *                        anchor content-retention island), and satisfy the LINKAGE
+ *                        (metadata.receiptId == receipt_id,
  *                        metadata.correlationId == correlation_id,
  *                        metadata.payloadDigest == payload_digest, principal_id ==
  *                        principal_id, tenant_id == tenant_id, created_at ==
@@ -131,7 +134,8 @@ export function isCanonicalReceiptCreatedAt(value: unknown): value is string {
 export const FRIDAY_RETENTION_RECEIPT_ROW_INVARIANT =
   "receipt_id/principal_id/tenant_id/correlation_id/audit_id/recovery_key_hash/" +
   "payload_digest/created_at + before/after/changedCategories/appliedUpdates coherence " +
-  "+ security_audit_log anchor cross-check — one validator, every seam, zero drift";
+  "+ security_audit_log anchor cross-check (exact-key metadata {receiptId,correlationId," +
+  "payloadDigest} + linkage + semantic envelope) — one validator, every seam, zero drift";
 
 /**
  * Owner-scoped persistence for retention-policy RECOVERY RECEIPTS (RETENTION-R3d).
@@ -338,6 +342,20 @@ const RETENTION_AUDIT_ANCHOR_DECISION = "allow";
 const RETENTION_AUDIT_ANCHOR_REASON = "canonical-owner retention policy update";
 
 /**
+ * EXACT allowed-key set for the content-minimized anchor's `metadata_json`. The
+ * write-path appender (`createFridayRetentionPolicyAuditAppender`) builds
+ * `metadata = { receiptId, correlationId, ...(payloadDigest ? {payloadDigest} : {}) }`
+ * and the PUT handler ALWAYS computes `payloadDigest = hashIdempotencyPayload(updates)`
+ * (a non-empty hex string), so a real anchor's metadata is EXACTLY
+ * `{receiptId, correlationId, payloadDigest}` — empirically verified byte-for-byte
+ * against a real single- AND multi-tenant PUT (observed own-key set, order aside:
+ * `["correlationId","payloadDigest","receiptId"]`). This EXACT set is enforced on the
+ * read path so no EXTRA key can ride along in the PERMANENT anchor (see
+ * `assertReceiptAnchor`).
+ */
+const ALLOWED_ANCHOR_METADATA_KEYS = ["receiptId", "correlationId", "payloadDigest"] as const;
+
+/**
  * CROSS-STORE anchor cross-check (RETENTION-R3d whole-row invariant, required
  * action #3). Before a receipt is REPLAYED or RECOVERED (served to the owner), it
  * is cross-checked against its content-minimized `security_audit_log` anchor — the
@@ -360,6 +378,36 @@ const RETENTION_AUDIT_ANCHOR_REASON = "canonical-owner retention policy update";
  * records a retention-policy update. Each mismatch fails closed with
  * `anchor_mismatch:<column>` (`action` / `resource_type` / `resource_id` /
  * `decision` / `session_id` / `reason`).
+ *
+ * EXACT-KEY METADATA (P1 — permanent-anchor content-retention island): the anchor's
+ * `metadata_json` is enforced to the EXACT allowed-key set
+ * `{receiptId, correlationId, payloadDigest}` (`ALLOWED_ANCHOR_METADATA_KEYS`).
+ * Because `security_audit_log` is PERMANENT (no reaper / `deleteAllForOwner` deletes
+ * it), an EXTRA key would persist indefinitely and, before this check, the read path
+ * still SERVED it (the linkage equalities ignored extra keys) — a content/secret
+ * retention island. Now: any EXTRA key (incl. `before`/`after`/`recoveryKey`/unknown
+ * ids/`__proto__`-as-own-key) → `anchor_metadata_unexpected_key`; any MISSING key →
+ * `anchor_metadata_missing_key`; a wrong-TYPE / nested-value / non-hex-digest field →
+ * `anchor_metadata_field_shape`; an array/non-object/undecodable metadata stays
+ * `anchor_metadata_unreadable`.
+ *
+ * U9 / DELETE-ALL AUDIT of the PERMANENT anchor's RETAINED fields (required_action
+ * #4). EVERY field this content-minimized anchor retains for a retention receipt is:
+ *   - metadata {receiptId, correlationId, payloadDigest} — content-free LINKAGE ids +
+ *     a NON-REVERSIBLE sha256 digest (never the raw applied-updates payload);
+ *   - principal_id / tenant_id — the OWNER id an audit log inherently records;
+ *   - action / resource_type / decision / reason — CONSTANTS (the canonical envelope);
+ *   - resource_id — `retention-policy:<principal_id>` (owner id, a constant shape);
+ *   - session_id — the correlation id (content-free linkage);
+ *   - created_at — the mutation instant.
+ * NONE of these carry before/after content, applied-update values, or a raw recovery
+ * key — so the anchor is DATA-DELETE-ALL-001 content-free-checkpoint compliant, and
+ * the exact-key metadata check PREVENTS any content from being introduced/served via
+ * the read path. RESIDUAL, HONESTLY ISOLATED (NOT closed here): a COORDINATED tamper
+ * that stuffs content into a permanent anchor ROW leaves that data in
+ * `security_audit_log` un-reaped; the read path now fails CLOSED on such an anchor
+ * (never serves it) but does NOT remove the row. Removing it is AUDIT-AUTHENTIC-
+ * ANCHOR-001 / audit-store Delete-All — a SEPARATE, still-unclosed requirement.
  */
 function assertReceiptAnchor(row: RetentionReceiptRow, db: Database.Database): void {
   const anchor = db
@@ -388,6 +436,59 @@ function assertReceiptAnchor(row: RetentionReceiptRow, db: Database.Database): v
       `Persisted retention recovery receipt '${row.receipt_id}' has an unreadable audit-anchor metadata.`,
       { cause, details: { receiptId: row.receipt_id, reason: "anchor_metadata_unreadable", auditId: row.audit_id } },
     );
+  }
+  // ── EXACT-SHAPE anchor metadata (P1 — content-retention-island fix) ────────────
+  // The PERMANENT anchor row (`security_audit_log`) is EXCLUDED from the finite
+  // receipt reaper AND from `deleteAllForOwner`, so ANY key that survives here
+  // persists INDEFINITELY. A coordinated raw-DB tamper that stuffs a `before`/`after`
+  // content key or a raw `recoveryKey` secret into an otherwise-coherent PERMANENT
+  // anchor would therefore be a content/secret RETENTION ISLAND — and, before this
+  // check, the read path still SERVED such a receipt (the linkage equality checks
+  // ignored extra keys). Enforce the EXACT allowed-key set so the read path fails
+  // CLOSED on any extra/missing key and never serves content/secret introduced via
+  // the anchor metadata (defeating U9/DATA-RETENTION-001 / DATA-DELETE-ALL-001 /
+  // AUDIT-AUTHENTIC-ANCHOR-001). `Object.keys` lists a JSON `"__proto__"` as an OWN
+  // enumerable key (JSON.parse uses defineProperty semantics — empirically verified),
+  // so a `__proto__`-as-own-key stuffing is rejected here as an unexpected key too.
+  const metadataKeys = Object.keys(metadata);
+  for (const key of metadataKeys) {
+    if (!(ALLOWED_ANCHOR_METADATA_KEYS as readonly string[]).includes(key)) {
+      throw new FridayRetentionReceiptIntegrityError(
+        `Persisted retention recovery receipt '${row.receipt_id}' has an audit-anchor metadata with an unexpected key '${key}'.`,
+        { details: { receiptId: row.receipt_id, reason: "anchor_metadata_unexpected_key", auditId: row.audit_id, key } },
+      );
+    }
+  }
+  for (const key of ALLOWED_ANCHOR_METADATA_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(metadata, key)) {
+      throw new FridayRetentionReceiptIntegrityError(
+        `Persisted retention recovery receipt '${row.receipt_id}' has an audit-anchor metadata missing the required key '${key}'.`,
+        { details: { receiptId: row.receipt_id, reason: "anchor_metadata_missing_key", auditId: row.audit_id, key } },
+      );
+    }
+  }
+  // Field TYPE + canonical shape (runs BEFORE the value-equality linkage checks so a
+  // wrong-TYPE / nested-value / non-hex-digest surfaces the precise shape reason, not
+  // a coincidental `anchor_mismatch`). receiptId/correlationId must be strings (their
+  // exact VALUE == the receipt's is asserted by the linkage checks below, and the
+  // receipt's own id shapes are validated in `assertReceiptScalarColumns`);
+  // payloadDigest must be a 64-char lowercase-hex string.
+  const payloadDigestValue = metadata.payloadDigest;
+  const shapeChecks: Array<readonly [string, boolean]> = [
+    ["receiptId", typeof metadata.receiptId === "string"],
+    ["correlationId", typeof metadata.correlationId === "string"],
+    [
+      "payloadDigest",
+      typeof payloadDigestValue === "string" && SHA256_LOWER_HEX_RE.test(payloadDigestValue),
+    ],
+  ];
+  for (const [field, ok] of shapeChecks) {
+    if (!ok) {
+      throw new FridayRetentionReceiptIntegrityError(
+        `Persisted retention recovery receipt '${row.receipt_id}' has an audit-anchor metadata field '${field}' of the wrong type/shape.`,
+        { details: { receiptId: row.receipt_id, reason: "anchor_metadata_field_shape", auditId: row.audit_id, field } },
+      );
+    }
   }
   const checks: Array<readonly [string, boolean]> = [
     ["receiptId", metadata.receiptId === row.receipt_id],

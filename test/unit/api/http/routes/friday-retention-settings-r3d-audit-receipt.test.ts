@@ -2329,6 +2329,190 @@ describe("friday-retention-settings PUT — RETENTION-R3d (audit + receipt, hand
     }
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // RETENTION-R3d ROUND-12 — EXACT-SHAPE audit-anchor METADATA (P1 — permanent-
+  // anchor CONTENT-RETENTION ISLAND). Fresh Advisor audit (NO-LOOP) BLOCKED HEAD:
+  // `assertReceiptAnchor` checked metadata.receiptId/correlationId/payloadDigest by
+  // EQUALITY but did NOT enforce an EXACT allowed-key set, so a coordinated raw-DB
+  // tamper that added `before` (content) and `recoveryKey` (a raw secret) to an
+  // otherwise-coherent PERMANENT anchor's metadata was STILL SERVED on recovery.
+  // Because `security_audit_log` is PERMANENT (excluded from the finite receipt reaper
+  // AND `deleteAllForOwner`), those extra keys persist INDEFINITELY = a content/secret
+  // retention island (U9/DATA-RETENTION-001 / DATA-DELETE-ALL-001 / AUDIT-AUTHENTIC-
+  // ANCHOR-001). The fix enforces the EXACT key set {receiptId, correlationId,
+  // payloadDigest} + per-field type/shape. RED on HEAD 1fd50280 (extra-key anchor
+  // SERVED), GREEN here. The 3-key set is empirically confirmed against a real single-
+  // AND multi-tenant PUT (the green catastrophic-guard test below asserts it in-suite).
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // A raw recovery-key VALUE that must NEVER be served through recovery once stuffed
+  // into the permanent anchor's metadata (the P1 secret-island probe).
+  const ANCHOR_LEAK_SECRET = "raw-recovery-secret-should-never-serve"; // pragma: allowlist secret (test fixture, not a real secret)
+
+  // Overwrite the anchor's metadata_json with a RAW string (for array / non-object /
+  // hand-built `__proto__` shapes that a parse→mutate→stringify round-trip can't make).
+  function setAnchorMetadataRaw(recoveryKeyHash: string, rawMetadataJson: string): void {
+    db.writer
+      .prepare(
+        `UPDATE security_audit_log SET metadata_json = ?
+           WHERE id = (SELECT audit_id FROM retention_recovery_receipts WHERE recovery_key_hash = ?)`,
+      )
+      .run(rawMetadataJson, recoveryKeyHash);
+  }
+
+  // Inject a LITERAL `"__proto__"` OWN key. An object-literal `{ __proto__: … }` sets
+  // the PROTOTYPE (not an own key) and JSON.stringify drops it, so the raw string is
+  // spliced by hand: `{"__proto__":1, <the real 3 keys>}`. JSON.parse then yields
+  // `__proto__` as an OWN enumerable key (verified) that the exact-key check rejects.
+  function injectProtoOwnKey(recoveryKeyHash: string): void {
+    const anchor = db.writer
+      .prepare(
+        `SELECT id, metadata_json FROM security_audit_log
+           WHERE id = (SELECT audit_id FROM retention_recovery_receipts WHERE recovery_key_hash = ?)`,
+      )
+      .get(recoveryKeyHash) as { id: string; metadata_json: string };
+    const withProto = `{"__proto__":1,${anchor.metadata_json.slice(1)}`;
+    db.writer.prepare("UPDATE security_audit_log SET metadata_json = ? WHERE id = ?").run(withProto, anchor.id);
+  }
+
+  // ── TABLE-DRIVEN adversarial metadata matrix (real route + recovery + real SQLite).
+  //    Seeds a coherent auditLogs→30 receipt, sets the anchor's metadata to the
+  //    adversarial shape, recovers → 500 fail-closed with the exact reason; the
+  //    authoritative policy + durable counts stay put (via seedCoherentThenCorruptField).
+  const anchorMetadataMutations: Array<[string, string, (h: string) => void]> = [
+    [
+      "extra `before` content key",
+      "anchor_metadata_unexpected_key",
+      (h) => tamperAnchorMetadata(h, (m) => { m.before = { auditLogs: { mode: "after_days", days: 30 } }; }),
+    ],
+    [
+      "extra `after` content key",
+      "anchor_metadata_unexpected_key",
+      (h) => tamperAnchorMetadata(h, (m) => { m.after = { auditLogs: { mode: "permanent" } }; }),
+    ],
+    [
+      "extra raw `recoveryKey` secret",
+      "anchor_metadata_unexpected_key",
+      (h) => tamperAnchorMetadata(h, (m) => { m.recoveryKey = ANCHOR_LEAK_SECRET; }),
+    ],
+    [
+      "unknown identifier key",
+      "anchor_metadata_unexpected_key",
+      (h) => tamperAnchorMetadata(h, (m) => { m.someOtherId = "op-unknown-123"; }),
+    ],
+    [
+      "`__proto__` own key",
+      "anchor_metadata_unexpected_key",
+      (h) => injectProtoOwnKey(h),
+    ],
+    [
+      "MISSING payloadDigest",
+      "anchor_metadata_missing_key",
+      (h) => tamperAnchorMetadata(h, (m) => { delete m.payloadDigest; }),
+    ],
+    [
+      "MISSING correlationId",
+      "anchor_metadata_missing_key",
+      (h) => tamperAnchorMetadata(h, (m) => { delete m.correlationId; }),
+    ],
+    [
+      "receiptId wrong TYPE (number)",
+      "anchor_metadata_field_shape",
+      (h) => tamperAnchorMetadata(h, (m) => { m.receiptId = 12345; }),
+    ],
+    [
+      "payloadDigest not 64-hex",
+      "anchor_metadata_field_shape",
+      (h) => tamperAnchorMetadata(h, (m) => { m.payloadDigest = "not-a-64-char-hex-digest"; }),
+    ],
+    [
+      "nested-object value on an allowed key (payloadDigest)",
+      "anchor_metadata_field_shape",
+      (h) => tamperAnchorMetadata(h, (m) => { m.payloadDigest = { nested: true }; }),
+    ],
+    [
+      "metadata is an ARRAY",
+      "anchor_metadata_unreadable",
+      (h) => setAnchorMetadataRaw(h, JSON.stringify(["receiptId", "correlationId", "payloadDigest"])),
+    ],
+    [
+      "metadata is a non-object STRING",
+      "anchor_metadata_unreadable",
+      (h) => setAnchorMetadataRaw(h, JSON.stringify("just-a-string")),
+    ],
+    [
+      "metadata is a non-object NUMBER",
+      "anchor_metadata_unreadable",
+      (h) => setAnchorMetadataRaw(h, "42"),
+    ],
+  ];
+  it.each(anchorMetadataMutations)(
+    "(round-12 anchor-metadata) [%s] → recovery 500 %s; authoritative policy unchanged; counts stay 1 (RED on HEAD 1fd50280: extra-key anchor SERVED)",
+    async (label, reason, corrupt) => {
+      await seedCoherentThenCorruptField(`meta-${label.replace(/[^a-zA-Z]/g, "")}`, corrupt, reason);
+    },
+  );
+
+  // ── P1 SECRET-ISLAND probe: a raw `recoveryKey` stuffed into the PERMANENT anchor
+  //    is NEVER served, AND the secret VALUE never appears in the fail-closed error. ──
+  it("(round-12 anchor-metadata) a raw `recoveryKey` stuffed into the permanent anchor is NEVER served — recovery 500s and the secret VALUE never appears in the error", async () => {
+    const KEY = "round12-recoverykey-island";
+    const routes = makeRoutes(realAppender());
+    await putRouteOf(routes).handler(
+      makeCtx({ headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+    );
+    // The permanent anchor really did carry the stuffed secret at rest (the island).
+    tamperAnchorMetadata(hashRecoveryKey(KEY), (m) => { m.recoveryKey = ANCHOR_LEAK_SECRET; });
+    expect(auditRows()[0].metadata_json).toContain(ANCHOR_LEAK_SECRET);
+
+    // Recovery fails CLOSED (RED on HEAD: it RESOLVED, serving the stuffed anchor).
+    let caught: unknown;
+    try {
+      await receiptRouteOf(routes).handler(makeCtx({ headers: { "idempotency-key": KEY } }));
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect(caught).toMatchObject({ ...INTEGRITY, details: { reason: "anchor_metadata_unexpected_key" } });
+    // The raw secret VALUE is never surfaced in the error (only the key NAME is diagnostic).
+    const e = caught as { message: string; details?: Record<string, unknown> };
+    expect(e.message).not.toContain(ANCHOR_LEAK_SECRET);
+    expect(JSON.stringify(e.details ?? {})).not.toContain(ANCHOR_LEAK_SECRET);
+    // Authoritative policy + durable counts untouched by the failed decode.
+    expect(policyRows(CANON)).toEqual([{ content_category: "auditLogs", after_days: 30 }]);
+    expect(receiptRows()).toHaveLength(1);
+    expect(auditRows()).toHaveLength(1);
+  });
+
+  // ── GREEN over-fail-close (CATASTROPHIC guard): a normal single + multi-tenant write
+  //    stores EXACTLY {receiptId,correlationId,payloadDigest} and recovers CLEAN. A
+  //    false-positive exact-key check here would 500 EVERY recovery/replay. ──
+  it("(round-12 anchor-metadata green) normal single + multi-tenant write stores EXACTLY the 3 metadata keys and recovers CLEAN (real 3-key metadata passes)", async () => {
+    for (const [label, principal] of [
+      ["single", owner(CANON)],
+      ["multi", ownerWithTenant(CANON, "admin-001")],
+    ] as const) {
+      const KEY = `round12-metadata-clean-${label}`;
+      const routes = makeRoutes(realAppender());
+      const put = (await putRouteOf(routes).handler(
+        makeCtx({ principal, headers: { "idempotency-key": KEY }, body: { policy: { auditLogs: { mode: "after_days", days: 30 } } } }),
+      )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+      // The stored anchor metadata is EXACTLY the 3 allowed keys — no more, no fewer.
+      const anchor = db.writer
+        .prepare("SELECT metadata_json FROM security_audit_log WHERE id = ?")
+        .get(put.receipt.auditId) as { metadata_json: string };
+      const meta = JSON.parse(anchor.metadata_json) as Record<string, unknown>;
+      expect(Object.keys(meta).sort()).toEqual(["correlationId", "payloadDigest", "receiptId"]);
+      expect(typeof meta.payloadDigest).toBe("string");
+      expect(meta.payloadDigest as string).toMatch(/^[0-9a-f]{64}$/);
+      // Recovery passes the exact-key check (no over-fail-close).
+      const rec = (await receiptRouteOf(routes).handler(
+        makeCtx({ principal, headers: { "idempotency-key": KEY } }),
+      )) as { receipt: FridayRetentionPolicyUpdateReceipt | null };
+      expect(rec.receipt?.receiptId).toBe(put.receipt.receiptId);
+    }
+  });
+
   // ── Cutoff boundary: exactly-at / just-inside / just-outside behave correctly ──
   it("(round-11 boundary) canonical rows at exactly-cutoff / just-outside SURVIVE; just-inside is date-expired; none quarantined", async () => {
     // cutoff = NOW − 30d = 2026-06-16T10:00:00.000Z (deleteExpiredBefore: created_at < cutoff).
