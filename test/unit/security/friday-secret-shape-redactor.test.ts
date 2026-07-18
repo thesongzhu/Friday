@@ -434,9 +434,10 @@ describe("friday-secret-shape-redactor", () => {
       ["SendGrid SG.<22>.<43>", SG_SECRET], // pragma: allowlist secret
       ["Square sq0atp-", seg("sq0atp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
       ["Square sq0csp-", seg("sq0csp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
-      // NB: GitHub classic `gh[opsru]_` / `github_pat_` are NOT here — their prefixes are common English
-      // word-fragments (`-ghs`, "github"), so they KEEP `\b` (glued case is an accepted gap); see KEPT.
-      ["AWS AKIA", seg("AKIA", "IOSFODNN7EXAMPLE")], // pragma: allowlist secret — 16 [0-9A-Z]
+      // NB: GitHub classic `gh[opsru]_` / `github_pat_` and AWS `AKIA…` are NOT here — their prefixes are
+      // English-word / base32 fragments (`-ghs`, "github", `ASIA`/`AIDA`), so they KEEP `\b` (glued case is
+      // an accepted gap); see KEPT. The 9 shapes above are non-word-fragment vendor prefixes with a body
+      // that excludes `_`/`-` (or an ultra-distinctive prefix), so they safely stay de-`\b`'d.
       ["Slack xoxb-", seg("xoxb-", "EXAMPLENOTAREALSLACKTOKEN")], // pragma: allowlist secret
     ];
 
@@ -485,6 +486,9 @@ describe("friday-secret-shape-redactor", () => {
       ["github_pat_ (natural phrase)", seg("github_pat_", "11ABCDE0aBcDeFgHiJkL0"), seg("my", "github_pat_", "reference0token0id00")], // pragma: allowlist secret
       // GitHub classic — `-ghs`/`-gho`/… are word-endings (walkthroughs), so a glued form is NOT caught.
       ["GitHub classic ghp_ (…ghs word-ending)", seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"), seg("walkthroughs_", "completedThisWeekX")], // pragma: allowlist secret
+      // AWS AKIA — `ASIA`/`AIDA` are English words + base32-constructible, body is all-caps/digit (ULID
+      // alphabet), so a glued form (a 26-char ULID `012345AGPA…`) is NOT caught; standalone still is.
+      ["AWS AKIA (ASIA/AIDA word-fragment)", seg("AKIA", "IOSFODNN7EXAMPLE"), "012345AGPABCDEFGHJKMNPQRST"], // pragma: allowlist secret — glued-benign is a ULID
       ["Slack xapp- (maxapp-)", seg("xapp-", "1-A0123ABCD-4567890123"), "maxapp-config-value-here"], // pragma: allowlist secret
       ["Google AIza (openAIza…)", seg("AIza", "SyDabcdefghijklmnopqrstuvwxyz012345"), seg("open", "AIza", "SyDabcdefghijklmnopqrstuvwxyz012345")], // pragma: allowlist secret
       ["Google ya29. (maya29.field)", seg("ya29.", "a0AfBbyDtestTokenValue0123456789ABCDEF"), "maya29.profile_image_url_field_v2"], // pragma: allowlist secret
@@ -514,6 +518,14 @@ describe("friday-secret-shape-redactor", () => {
       "aGVsbG8_d29ybGQ-dGhpc19pc19iZW5pZ24", // pragma: allowlist secret — base64url blob w/ `_` and `-`, not a secret shape
       "user_session_reference_identifier_v2", // snake_case id
       "AKIA is the aws access-key id prefix", // AKIA as a plain word (no 16-char body)
+      // AWS AKIA NO-DEGRADE: benign all-caps / ULID / base32 ids where an ASIA/AIDA/AGPA fragment is GLUED
+      // after a word char — the AKIA branch keeps `\b`, so these are UNCHANGED (they were CORRUPTED while
+      // AKIA was de-`\b`'d). (A DELIMITED `"ASIA<16>"` — quote boundary — is caught by BASE too, so it is
+      // NOT a benign-unchanged case; only the GLUED forms are the fix's concern.)
+      "012345AGPABCDEFGHJKMNPQRST", // 26-char Crockford-base32 ULID (AGPA glued after digit `5`)
+      "AUSTRALASIAWIDEDEPLOYMENT01", // all-caps constant, ASIA glued after `L`
+      "EURASIAREGIONCODE0123456789", // all-caps, ASIA glued after `R`
+      "PROJECTAIDABUILDPIPELINE42X", // all-caps, AIDA glued after `T`
       "9f8e7d6c5b4a3928170695f4e3d2c1b0", // pragma: allowlist secret — 32-hex id / git blob
       "/var/log/hf_service/npm_cache/output.log", // file path with hf_/npm_ short segments
       "GOCSPX_notasecret_underscore", // GOCSPX_ (underscore, not the required hyphen)
@@ -562,6 +574,27 @@ describe("friday-secret-shape-redactor", () => {
       // GLUED directly after a word char is an ACCEPTED gap for these word-fragment prefixes.
       expect(redactSecretShapesInString(seg("key", TOK))).toBe(seg("key", TOK));
       expect(findSecretShapeSpans(seg("key", TOK))).toEqual([]);
+    });
+
+    // AWS AKIA sensitivity boundary (round-4): the alternation embeds English-word / base32-constructible
+    // fragments (`ASIA`/`AIDA`/`AGPA`) and its body is `[0-9A-Z]{16}` (the ULID / all-caps-constant
+    // alphabet), so — like classic-github — the AKIA branch KEEPS `\b`. A benign all-caps / ULID / base32
+    // id where the fragment is GLUED after a word char is UNCHANGED. A DELIMITED / standalone / labeled
+    // AWS key IS still caught (the common case — AWS keys are ~always delimited in env/config); a key
+    // glued directly after a word char (`xAKIA<16>`) is an ACCEPTED, documented gap.
+    it("AWS AKIA: benign glued ULID/all-caps survives; DELIMITED/standalone key redacts; GLUED is an accepted gap", () => {
+      // Benign all-caps / ULID with a fragment GLUED after a word char → UNCHANGED (the `\b` blocks it).
+      expect(redactSecretShapesInString("012345AGPABCDEFGHJKMNPQRST")).toBe("012345AGPABCDEFGHJKMNPQRST"); // ULID
+      expect(redactSecretShapesInString("AUSTRALASIAWIDEDEPLOYMENT01")).toBe("AUSTRALASIAWIDEDEPLOYMENT01");
+      expect(redactSecretShapesInString("PROJECTAIDABUILDPIPELINE42X")).toBe("PROJECTAIDABUILDPIPELINE42X");
+      const KEY = seg("AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
+      // DELIMITED / standalone / labeled AWS key IS still caught (whitespace, `=`, bare value).
+      expect(redactSecretShapesInString(KEY)).toBe(M);
+      expect(redactSecretShapesInString(`token ${KEY} used`)).toBe(`token ${M} used`);
+      expect(redactSecretShapesInString(`apikey=${KEY}`)).toBe(`apikey=${M}`);
+      // GLUED directly after a word char is an ACCEPTED gap for this word-fragment prefix.
+      expect(redactSecretShapesInString(seg("x", KEY))).toBe(seg("x", KEY));
+      expect(findSecretShapeSpans(seg("x", KEY))).toEqual([]);
     });
   });
 });

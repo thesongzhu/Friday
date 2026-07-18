@@ -230,6 +230,10 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     contig: "walkthroughs_completedThisWeek", // CONTIGUOUS 17-base62 run — only the leading `\b` closes this
     breakt: "breakthroughs_this_quarter_list",
     cough: "coughs_e3b0c44298fc1c14", // ghs_ + content-hash suffix
+    // AWS AKIA word-fragment: a benign ULID / all-caps id with ASIA/AGPA glued after a word char MUST
+    // survive in BOTH sinks — the AKIA branch keeps `\b` (was corrupted while AKIA was de-`\b`'d).
+    ulid: "012345AGPABCDEFGHJKMNPQRST",
+    caps: "AUSTRALASIAWIDEDEPLOYMENT01",
   });
 
   it("glued distinctive-prefix credentials redact identically in the AUDIT sink and MEMORY redactDeep", async () => {
@@ -249,6 +253,8 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     expect(memoryValue.contig).toBe("walkthroughs_completedThisWeek");
     expect(memoryValue.breakt).toBe("breakthroughs_this_quarter_list");
     expect(memoryValue.cough).toBe("coughs_e3b0c44298fc1c14");
+    expect(memoryValue.ulid).toBe("012345AGPABCDEFGHJKMNPQRST");
+    expect(memoryValue.caps).toBe("AUSTRALASIAWIDEDEPLOYMENT01");
     // No credential body survives in either sink's serialization.
     for (const sink of [auditDetails, memoryValue]) {
       const json = JSON.stringify(sink);

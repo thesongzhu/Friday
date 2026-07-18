@@ -232,6 +232,9 @@ describe("redactEventPayload — no over-redaction (NO DEGRADE)", () => {
       cough: "coughs_e3b0c44298fc1c14", // ghs_ + content-hash suffix
       laugh: "laughs_per_minute_counter",
       note: "metric name walkthroughs_started_and_completed today",
+      // AWS AKIA word-fragment: benign ULID / all-caps id with ASIA/AGPA glued after a word char.
+      ulid: "012345AGPABCDEFGHJKMNPQRST",
+      caps: "AUSTRALASIAWIDEDEPLOYMENT01",
     };
     const out = redactEventPayload(payload);
     expect(out).toEqual(payload);

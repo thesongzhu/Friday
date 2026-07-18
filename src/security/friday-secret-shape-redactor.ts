@@ -241,12 +241,20 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   // AWS access-key id (`AKIA…` long-term + STS/temporary variants). NB: the AWS SECRET access key is
   // a shapeless 40-char base64 with no prefix — it is caught by its KEY NAME (`secretAccessKey`,
   // in the sensitive-field-name set), NOT a shape, so it is not (and must not be) a content pattern.
-  // GLUED-PREFIX: leading `\b` dropped (see hf_ note). The `A(?:KIA|SIA|…)` prefix + 16 CONTIGUOUS
-  // `[0-9A-Z]` (uppercase/digit only — a `_`, `-`, or lowercase char breaks the body) is the gate: a
-  // benign snake_case constant like `REGION_ASIA_PACIFIC_1` cannot span it (the `_` after `ASIA` ends
-  // the body at 0 chars), so allowing a glued prefix (`xAKIA<16>`) does not over-match plausible ids.
+  // GLUED-PREFIX: leading `\b` KEPT deliberately (UNLIKE the base62 vendor prefixes). The `A(?:KIA|SIA|…)`
+  // alternation embeds ENGLISH-WORD / base32-constructible fragments — `ASIA` (Asia / Eurasia /
+  // Australasia), `AIDA`, and `AGPA`/`ANPA`/`ANVA` (constructible from Crockford base32) — AND its body is
+  // `[0-9A-Z]{16}`, i.e. UPPERCASE + DIGIT, exactly the alphabet of an all-caps constant or a ULID. So
+  // de-`\b` over-redacts benign all-caps / ULID / base32 identifiers this SHARED egress detector
+  // processes: a 26-char ULID `012345AGPABCDEFGHJKMNPQRST` → `012345[REDACTED]`, `AUSTRALASIAWIDE…` →
+  // `AUSTRAL[REDACTED]`, a base32 OTP `ASIAMFRGGZDFMZTWQ2LK`. (The earlier "REGION_ASIA_PACIFIC_1 cannot
+  // span it" reasoning was WRONG — it only considered `_`-separated forms and missed all-caps-contiguous
+  // / ULID / base32.) Same word-fragment class we keep `\b` on for classic-github (`-ghs`), `xapp` (app),
+  // `sk-`, `AIza` (AI), `ya29`. Effect: standalone / delimited / labeled AWS keys (`AKIA<16>`,
+  // `token AKIA…`, `apikey=AKIA…` — AWS keys are ~always delimited in env/config) are STILL caught; only
+  // a key glued DIRECTLY after a word char (`xAKIA<16>`) is an ACCEPTED, documented gap.
   {
-    pattern: /A(?:KIA|SIA|GPA|IDA|ROA|IPA|NPA|NVA)[0-9A-Z]{16}\b/gu,
+    pattern: /\bA(?:KIA|SIA|GPA|IDA|ROA|IPA|NPA|NVA)[0-9A-Z]{16}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   // Google API key — `AIza` + 35 chars of `[0-9A-Za-z_-]` (documented 39-char format).
