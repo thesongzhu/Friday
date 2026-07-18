@@ -9,6 +9,13 @@ import { createFridayMemoryPiiGuard } from "./friday-memory-pii-guard.js";
 // full-width form / combining mark in a TAG is dropped too (it survived the raw-only check before).
 import { findSecretShapeSpans } from "../../../security/friday-secret-shape-redactor.js";
 import { buildUnicodeDetectionCopy } from "../../../security/friday-unicode-pii-normalizer.js";
+// SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001 (round-4, Defect 1): the CANONICAL value-PII preserving fold
+// (#1618, relocated to the shared `src/security/` leaf). Detects Unicode-obfuscated PII (zero-width /
+// combining / fullwidth / precomposed email·phone·SSN·card) over a fold that PRESERVES compat-whitespace
+// (U+3000 / U+00A0 / …) and No/Nl digit-likes, so it never fabricates an ideographic-space-bridged card
+// the shared guard would not. Reused (NOT re-copied) by BOTH this memory egress leg and the realtime
+// event redactor, closing the round-14 "value leg does not cover Unicode-obfuscated PII" gap here.
+import { redactUnicodeResistantPii } from "../../../security/friday-value-pii-fold.js";
 
 import {
   FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS,
@@ -23,22 +30,38 @@ function truncateString(value: string, maxChars: number): string {
   return value.slice(0, maxChars);
 }
 
-function redactAndTruncate(value: string, maxChars: number): string {
-  return truncateString(piiRedactor.scanAndTransform(value).transformedContent, maxChars);
+// The CANONICAL free-form VALUE redaction for every free-form string egressed on read-back
+// (`content`, `source`, `namespace`, `expiresAt`, and the search `snippet`), applied consistently on
+// BOTH the agent `memory_search` trust boundary and the HTTP get/list/search/replay routes (all route
+// through `filterItem` / `filterSearchResult`). It composes, in order:
+//   (1) the shared guard's canonical value transform (`scanAndTransform` → `redactSecretAndPiiValueString`)
+//       — raw email/phone/SSN/card PII ∪ raw AND Unicode-obfuscated SECRET shapes → canonical markers;
+//   (2) SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001 round-4 Defect 1 — Unicode-obfuscated PII coverage via the
+//       shared preserving fold `redactUnicodeResistantPii`, run with the guard's OWN PII detector
+//       (`scanAndTransform(normalized).matches`) over the NON-DESTRUCTIVE detection copy. This is the
+//       EXACT pattern the realtime event redactor uses. Before round-4 leg (1) ran the Unicode pass for
+//       SECRET shapes ONLY (`redactSecretAndPiiValueString`'s documented gap), so a zero-width-spliced
+//       email in `source` egressed VERBATIM; leg (2) closes that.
+// NON-BRIDGE / no-over-redaction is RETAINED: leg (2)'s fold PRESERVES U+3000 / U+FF0C / No·Nl
+// digit-likes, so a benign fullwidth-digit run separated by an ideographic space does NOT fabricate a
+// `[CREDIT_CARD]`, and benign multilingual text round-trips byte-identical. STRICT SUPERSET: a value
+// with no sensitive subspan (a benign identifier, a valid ISO timestamp, a benign namespace) folds
+// through every pass unchanged and is returned BYTE-IDENTICAL.
+function redactFreeFormValue(value: string): string {
+  const afterSecretsAndRawPii = piiRedactor.scanAndTransform(value).transformedContent;
+  return redactUnicodeResistantPii(
+    afterSecretsAndRawPii,
+    (normalized) => piiRedactor.scanAndTransform(normalized).matches,
+  );
 }
 
-// The SAME canonical PII + secret-VALUE transform `redactAndTruncate` applies to `content`/`source`
-// (`scanAndTransform` → `redactSecretAndPiiValueString`: Unicode-aware PII ∪ raw/obfuscated secret
-// shapes → canonical markers), WITHOUT the content-size truncation. Truncation is a content
-// egress-size defense; the identifier fields it is applied to here (`key`, `namespace`, `expiresAt`)
-// are naturally bounded, so truncating them would add no security value while risking the
-// addressability of an over-length benign identifier. The redaction itself is a PROVABLE STRICT
-// SUPERSET — a value with no sensitive subspan folds through every pass unchanged — so a benign
-// `key` (`user:preferences:theme`, `session:abc`), benign `namespace` (`chat`, `user-facts`), and a
-// valid ISO `expiresAt` timestamp are returned BYTE-IDENTICAL and stay addressable. ONLY a
-// key/namespace/expiresAt that literally contains a secret or PII value is rewritten.
-function redactValueString(value: string): string {
-  return piiRedactor.scanAndTransform(value).transformedContent;
+// `redactFreeFormValue` + a content egress-SIZE cap, for the two fields that carry an intentional
+// read-back size defense: `content` (the agent-facing payload) and the search `snippet`. Truncation is
+// applied AFTER redaction so a sensitive span is never split across the cut. This is NOT applied to the
+// identifier-ish free-form fields (`source`, `namespace`, `expiresAt`) — those have no egress-size role
+// and truncating them would silently drop benign, addressable data on read-back (round-4 Defect 3).
+function redactAndTruncate(value: string, maxChars: number): string {
+  return truncateString(redactFreeFormValue(value), maxChars);
 }
 
 // Strip PII + secrets from metadata + tags on read-back (defense in depth: items stored before
@@ -70,45 +93,46 @@ function dropSensitiveTags(tags: string[]): string[] {
 function filterItemImpl(item: FridayMemoryItem): FridayMemoryItem {
   return {
     ...item,
+    // `content` — the agent-facing payload. Bounded at WRITE to 64 KiB
+    // (`FRIDAY_MEMORY_GUARD_MAX_CONTENT_BYTES`) but the read-back cap `MAX_RESULT_CONTENT_CHARS` (8192)
+    // is a DELIBERATE, pre-existing egress-SIZE defense (limits how much a single memory row dumps into
+    // an agent's context window), so its truncation is INTENTIONAL, not a silent no-op. Redaction now
+    // ALSO covers Unicode-obfuscated PII (Defect 1) and truncation runs AFTER redaction (no split span).
     content: redactAndTruncate(item.content, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
-    // FIELD-ENUMERATION follow-up (round-3): `filterItemImpl` spread `{...item}` and only overrode
-    // content/source/metadata/tags, so the OTHER free-form persisted string fields passed RAW.
-    //   • `key` — free-form + user-writable. The store-time `validateKey` regex
-    //     (`/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/`) ADMITS credential shapes (`hf_…`, `sk-…`, `ghp_…`,
-    //     `AKIA…`, a pure-digit card) and the HTTP `validateStoreBody` performs NO key check, so a
-    //     client can POST `key="hf_…"` and read it back VERBATIM on memory.get / memory.list /
-    //     store-idempotency-replay (all return `filterItem(item).key`).
-    //   • `namespace` — free-form. Egresses as `metadata.namespace` on the agent `memory_search`
-    //     serialization AND as `item.namespace` on the HTTP routes. `validateNamespace` rejects most
-    //     secret shapes at write, so this is the SAME legacy-pre-guard row class the `source` fix
-    //     already accepts as in-scope.
-    //   • `expiresAt` — free-form string; the HTTP store applies NO validation. Timestamp-semantic, so
-    //     a real timestamp carries no sensitive subspan and the redactor is a no-op — redacting it is
-    //     SAFE and forecloses the finding. Optional: a non-string/absent value is passed through
+    // FIELD-ENUMERATION (round-3) + round-4 policy split. `filterItemImpl` covers EVERY free-form
+    // persisted string field, but with the CORRECT per-field policy:
+    //   • `key` (round-4 Defect 2) — an addressable IDENTIFIER, so it routes through the guard's
+    //     identifier-aware `redactStructuredKey` (all-`\p{Nd}` exempt — a pure-decimal key of ANY
+    //     script is an ambiguous business id preserved BYTE-IDENTICAL — while a credential-shaped key
+    //     `hf_…`/`sk-…`/`ghp_…`/`AKIA…` and a formatted-PII key SSN-/email-shaped STILL redact), NOT the
+    //     free-form value transform (which would fold a 16-digit key to `[CREDIT_CARD]`, corrupting a
+    //     benign id). The store-time `validateKey` regex ADMITS these credential shapes and the HTTP
+    //     `validateStoreBody` performs NO key check, so a client can POST `key="hf_…"` and read it back
+    //     on memory.get / memory.list / store-idempotency-replay.
+    //   • `namespace` / `expiresAt` — free-form VALUE fields (not addressable identifiers), so they take
+    //     the canonical value redaction `redactFreeFormValue` (raw PII ∪ raw/Unicode secret ∪
+    //     Unicode-obfuscated PII), NON-truncating. `validateNamespace` rejects most secret shapes at
+    //     write and a real ISO `expiresAt` carries no sensitive subspan, so the STRICT-SUPERSET transform
+    //     returns both BYTE-IDENTICAL for benign inputs. A non-string/absent `expiresAt` passes through
     //     unchanged (never coerced).
-    // All route through the SAME canonical value-redaction as content/source, so EVERY serialized
-    // free-form field is now covered and no round-4 residual remains.
-    key: redactValueString(item.key),
-    namespace: redactValueString(item.namespace),
-    // `source` is a FREE-FORM persisted string (accepted verbatim through `FridayMemoryStoreInput`
-    // and the HTTP memory-store body), so a legacy/older-writer row can carry PII or a credential
-    // VALUE inside it. The read-back filter redacted content/metadata/tags/snippet but PRESERVED
-    // `source`, leaving it an unfiltered sensitive-data egress channel across the agent trust
-    // boundary (memory_search serializes `r.item.source` verbatim) AND the HTTP memory routes
-    // (memory.get/list/replay all return `filterItem(item).source`). Route it through the SAME
-    // canonical PII + secret-VALUE transform as `content` (`redactAndTruncate` → the Unicode-aware
-    // `scanAndTransform` → `redactSecretAndPiiValueString`): email/phone/SSN/card + raw AND
-    // Unicode-obfuscated secret shapes (hf_/sk-/Bearer/…) become their canonical markers. That
-    // transform is a PROVABLE STRICT SUPERSET — a `source` with no sensitive subspan folds through
-    // every pass unchanged, so a benign identifier (`session:abc123`, `user`, `channel:telegram`,
-    // `import:2026`, a UUID, `preference`) is returned BYTE-IDENTICAL. The boundary policy's reserved
-    // `learned_fact` source (matched exactly downstream to surface the learning-boundary metadata) is
-    // likewise benign, so it round-trips verbatim and the reservation stays intact.
-    source: redactAndTruncate(item.source, FRIDAY_MEMORY_GUARD_MAX_RESULT_CONTENT_CHARS),
+    key: piiRedactor.redactStructuredKey(item.key),
+    namespace: redactFreeFormValue(item.namespace),
+    // `source` (round-2 finding; round-4 Defect 3) is a FREE-FORM persisted string accepted VERBATIM
+    // through `FridayMemoryStoreInput` and the HTTP store body with NO write-time length bound, so a
+    // legacy/older-writer row can carry PII or a credential VALUE inside it and it egresses across the
+    // agent trust boundary (`memory_search` serializes `r.item.source`) AND the HTTP routes
+    // (memory.get/list/replay return `filterItem(item).source`). Route it through the canonical
+    // `redactFreeFormValue` (email/phone/SSN/card + raw AND Unicode-obfuscated PII + raw/Unicode secret
+    // shapes → canonical markers) — NON-TRUNCATING. Round-2 used the content SIZE cap here, silently
+    // truncating a benign 10 KiB `source` on read-back (Defect 3); `source` has no egress-size role, so
+    // truncating it only drops benign, addressable data. STRICT SUPERSET — a `source` with no sensitive
+    // subspan (`session:abc123`, `user`, `channel:telegram`, a UUID, the reserved `learned_fact` source)
+    // folds through unchanged and is returned BYTE-IDENTICAL, so the learning-boundary reservation holds.
+    source: redactFreeFormValue(item.source),
     metadata: redactMetadata(item.metadata),
     tags: dropSensitiveTags(item.tags),
     expiresAt:
-      typeof item.expiresAt === "string" ? redactValueString(item.expiresAt) : item.expiresAt,
+      typeof item.expiresAt === "string" ? redactFreeFormValue(item.expiresAt) : item.expiresAt,
   };
 }
 

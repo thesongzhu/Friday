@@ -273,14 +273,17 @@ describe("FridayMemoryRoutes — free-form key/namespace/expiresAt secret/PII eg
     expect(byId("k-sk").key).toContain(SECRET_MARKER);
     expect(byId("k-akia").key).not.toBe(AKIA);
     expect(byId("k-akia").key).toContain(SECRET_MARKER);
-    // Pure-digit card → the canonical PII card marker.
-    expect(byId("k-card").key).not.toBe(CARD);
-    expect(byId("k-card").key).toContain("[CREDIT_CARD]");
+    // round-4 Defect 2: a PURE-DECIMAL key (any script) is an ambiguous business identifier — it is
+    // preserved BYTE-IDENTICAL by the identifier-aware `redactStructuredKey` (all-`\p{Nd}` exempt), NOT
+    // folded to `[CREDIT_CARD]` (which would corrupt a benign, addressable id). The credential shapes
+    // above still redact because they contain non-`Nd` characters.
+    expect(byId("k-card").key).toBe(CARD);
     // A benign key is returned BYTE-IDENTICAL (addressability unaffected).
     expect(byId("k-benign").key).toBe("user:preferences:theme");
 
+    // CARD is intentionally EXCLUDED: a pure-decimal key legitimately round-trips verbatim (see above).
     const json = JSON.stringify(res);
-    for (const raw of [HF, HF_BODY, SK, SK_BODY, AKIA, CARD]) {
+    for (const raw of [HF, HF_BODY, SK, SK_BODY, AKIA]) {
       expect(json).not.toContain(raw);
     }
   });

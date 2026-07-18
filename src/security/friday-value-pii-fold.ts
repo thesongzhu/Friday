@@ -1,6 +1,15 @@
 /**
- * SEC-REALTIME-EVENT-PII-BY-VALUE — the value-PII detection FOLD for the realtime / agent
- * event-payload redactor.
+ * SEC-REALTIME-EVENT-PII-BY-VALUE — the CANONICAL value-PII detection FOLD.
+ *
+ * SHARED across every free-form VALUE egress that needs Unicode-obfuscated PII coverage WITHOUT the
+ * canonical aggressive fold's benign over-redaction: the realtime / agent event-payload redactor
+ * (`src/api/realtime/friday-event-payload-redactor.ts`) AND the memory read-back output filter
+ * (`src/memory/guard/services/friday-memory-output-filter.ts`, which covers BOTH the agent
+ * `memory_search` trust boundary and the HTTP memory get/list/search/replay routes). Relocated from
+ * `src/api/realtime/` to this dependency-free `src/security/` leaf (alongside the sibling
+ * `friday-unicode-pii-normalizer.ts` / `friday-secret-shape-redactor.ts` primitives it composes with)
+ * so both consumers import ONE canonical fold — resolving the module-header FOLLOW-UP below — with no
+ * cross-layer (memory → api) dependency.
  *
  * This module is NOT a detector. It carries NO secret-shape patterns (secret redaction is now
  * delegated wholesale to the CANONICAL `findSecretShapeSpans` / `redactSecretShapesInString` in
@@ -48,11 +57,12 @@
  * content, extended ONLY by the letter / zero-width / combining / precomposed obfuscation the guard
  * misses — never a divergence that over-redacts benign data.
  *
- * FOLLOW-UP (out of scope for this rebase — touches #1619): the cleanest end state is a fold-policy
- * parameter on the canonical `buildUnicodeDetectionCopy` so this adapter collapses into the shared
- * module. Kept local here so the rebase neither degrades benign fidelity nor touches #1619's files.
+ * FOLLOW-UP (further consolidation): the cleanest end state is a fold-policy parameter on the
+ * canonical `buildUnicodeDetectionCopy` so this adapter collapses into the normalizer itself. Kept as
+ * a distinct leaf here so it neither degrades benign fidelity nor entangles the normalizer's default
+ * aggressive fold; both value-PII consumers now share THIS one module.
  *
- * @module api/realtime
+ * @module security
  */
 
 // ─── Cross-script decimal-digit fold (real \p{Nd} blocks NFKD does not fold to ASCII) ───

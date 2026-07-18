@@ -458,12 +458,58 @@ function numericValueMatchesKeyedType(str: string, type: FridayKeyDrivenPiiType)
   return false;
 }
 
+/**
+ * CANONICAL structured-KEY redaction (identifier-aware), factored OUT of the `redactDeep` object-KEY
+ * leg so an EGRESS sink that must sanitize a bare identifier field (the memory read-back filter's
+ * `FridayMemoryItem.key`) routes it through the SAME policy `redactDeep` applies to a JSON object key —
+ * NOT the free-form value transform. A `key` is an addressable IDENTIFIER, not free-form content, so it
+ * follows the KEY policy's two deliberate divergences from `redactSecretAndPiiValueString`:
+ *   • ALL-`\p{Nd}` EXEMPTION (any script — ASCII `4111111111111111`, Arabic-Indic `١٢٣…`, Devanagari,
+ *     …): a key composed ENTIRELY of decimal digits is an ambiguous business identifier (order / invoice
+ *     / account id) and is preserved BYTE-IDENTICAL. The value transform, by contrast, would fold a
+ *     16-digit run to a Luhn card and rewrite it to `[CREDIT_CARD]` — corrupting a benign, addressable
+ *     id (DATA-RETENTION-001 no-corruption; PRIV-UNICODE-REDACTION-001 benign no-degrade). A FORMATTED
+ *     PII key (dashes/letters — an SSN-shaped `123-45-6789`, an email key) contains a non-`Nd` char, so
+ *     it FAILS the exemption and STILL redacts.
+ *   • SECRET ∪ PII over raw ∪ Unicode: a credential-shaped key (`hf_…`, `sk-…`, `ghp_…`, `AKIA…`, or a
+ *     Unicode-obfuscated variant) redacts to the secret marker; a formatted-PII key redacts to its
+ *     canonical `[<TYPE>]` marker — identical to the `redactDeep` key leg's redact-mode output.
+ * This is BYTE-IDENTICAL to the `redactKey` closure's redact-mode result (the closure now delegates its
+ * mutation here and retains ONLY the tag-union side effect); the all-`Nd` check is repeated here so the
+ * function is a correct standalone policy when called directly by an egress sink. STRICT SUPERSET: a
+ * benign key (no secret/PII in either the raw or the Unicode-de-obfuscated view) folds through every
+ * pass unchanged and is returned verbatim, so addressability of `user:preferences:theme`, `session:abc`,
+ * an ISO-ish id, etc. is unaffected.
+ */
+function redactStructuredKeyString(key: string): string {
+  if (/^\p{Nd}+$/u.test(key)) return key; // all-Nd (any script) exempt — ambiguous business id
+  const detection = buildUnicodeDetectionCopy(key);
+  // Pass (1) Unicode-aware full-span redaction — secret ∪ PII (skipped when the copy is unchanged —
+  // pure ASCII). Secret finder FIRST so an overlap keeps the secret marker.
+  const unicodeRedacted = detection.changed
+    ? redactUnicodeObfuscated(key, [findSecretSpans, findPiiSpans])
+    : key;
+  // Pass (2) raw residual — secret-shape FIRST (no-op when no secret shape), then the raw PII residual.
+  const secretResidual = redactSecretShapesInString(unicodeRedacted, SECRET_MARKER);
+  const rawResidual = findMatches(secretResidual);
+  return rawResidual.length > 0 ? redactContent(secretResidual, rawResidual) : secretResidual;
+}
+
 export function createFridayMemoryPiiGuard(
   mode?: FridayMemoryGuardPiiMode,
 ): FridayMemoryGuardPiiGuard {
   const effectiveMode: FridayMemoryGuardPiiMode = mode ?? FRIDAY_MEMORY_GUARD_PII_MODE;
 
   return {
+    // Identifier-aware structured-KEY redaction for an egress sink that must sanitize a bare `key`
+    // field (memory read-back). Applies the SAME canonical key policy `redactDeep` applies to an
+    // object KEY (all-Nd exempt + secret ∪ PII), NOT the free-form value transform — so a pure-decimal
+    // key is preserved byte-identical while a credential/formatted-PII key redacts. Mode-honoring:
+    // tag/block never mutate (return the key unchanged), mirroring the `redactKey` closure's contract.
+    redactStructuredKey(key: string): string {
+      return effectiveMode === "redact" ? redactStructuredKeyString(key) : key;
+    },
+
     scanAndTransform(content: string): FridayMemoryGuardPiiScanResult {
       // `matches` / `distinctTypes` / `tagsToAdd` remain PII-ONLY (secrets carry no guard tag — the
       // guard is a PII tagger; secret redaction is a mutation, matching the key leg + the audit
@@ -627,19 +673,11 @@ export function createFridayMemoryPiiGuard(
 
         if (effectiveMode !== "redact") return key; // tag/block: never mutate the key
 
-        // Pass (1) Unicode-aware full-span redaction — secret ∪ PII (skipped when the copy is
-        // unchanged — pure ASCII). Secret finder FIRST so an overlap keeps the secret marker.
-        const unicodeRedacted = detection.changed
-          ? redactUnicodeObfuscated(key, [findSecretSpans, findPiiSpans])
-          : key;
-        // Pass (2) raw residual — secret-shape FIRST (no-op when no secret shape), then the UNCHANGED
-        // round-11 PII residual. On a non-secret key `secretResidual === unicodeRedacted`, so this is
-        // byte-identical to round-11.
-        const secretResidual = redactSecretShapesInString(unicodeRedacted, SECRET_MARKER);
-        const rawResidual = findMatches(secretResidual);
-        return rawResidual.length > 0
-          ? redactContent(secretResidual, rawResidual)
-          : secretResidual;
+        // The redaction itself (all-Nd exemption + secret ∪ PII over raw ∪ Unicode) is the CANONICAL
+        // structured-key policy, factored to the module-level `redactStructuredKeyString` so the memory
+        // egress filter's bare-`key` leg applies the IDENTICAL policy. This closure retains ONLY the
+        // tag-union side effect above; the mutation is byte-identical to the prior inline Pass (1)/(2).
+        return redactStructuredKeyString(key);
       };
 
       // Write `val` under `key` as an OWN DATA property rather than `out[key] = val`: a

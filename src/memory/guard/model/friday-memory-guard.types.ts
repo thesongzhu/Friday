@@ -125,6 +125,16 @@ export interface FridayMemoryGuardQuotaRepository {
 export interface FridayMemoryGuardPiiGuard {
   scanAndTransform(content: string): FridayMemoryGuardPiiScanResult;
   /**
+   * Redact a bare STRUCTURED-KEY / identifier string with the SAME identifier-aware policy
+   * `redactDeep` applies to an object KEY — NOT the free-form value transform. A key composed
+   * ENTIRELY of decimal digits (any script) is an ambiguous business identifier and is preserved
+   * BYTE-IDENTICAL (never folded to `[CREDIT_CARD]`); a credential-shaped key (`hf_…` / `sk-…` /
+   * `ghp_…` / `AKIA…`, raw or Unicode-obfuscated) and a formatted-PII key (SSN-/email-shaped) are
+   * redacted to their canonical markers. Mode-honoring: `tag`/`block` return the key unchanged.
+   * Used by the memory read-back output filter for `FridayMemoryItem.key`.
+   */
+  redactStructuredKey(key: string): string;
+  /**
    * Recursively redact PII in an arbitrary structured value (memory metadata objects, tag
    * arrays, learned-fact values). Coverage:
    *  - STRING leaves and STRING key content: existing shape-based patterns (email / phone /

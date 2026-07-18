@@ -64,7 +64,7 @@ import {
   redactUnicodeObfuscated,
 } from "../../security/friday-unicode-pii-normalizer.js";
 import { createFridayMemoryPiiGuard } from "../../memory/guard/services/friday-memory-pii-guard.js";
-import { redactUnicodeResistantPii } from "./friday-realtime-value-pii-fold.js";
+import { redactUnicodeResistantPii } from "../../security/friday-value-pii-fold.js";
 
 // Shared production value-PII guard — constructed ONCE at module load. The factory
 // takes only an optional mode and has NO dependencies, so no DI/bootstrap wiring is
@@ -138,7 +138,7 @@ function redactString(value: string): string {
  *      split / combining / precomposed-accent email (or phone/SSN/card) is redacted FULL-SPAN with
  *      the guard's canonical `[<TYPE>]` marker BEFORE any ASCII pass can fragment it (no partial-
  *      fragment residual). The copy is ALIGNED with the guard's deliberate width fold
- *      (`friday-realtime-value-pii-fold.ts`) so it never over-redacts compat-whitespace-bridged
+ *      (the shared `src/security/friday-value-pii-fold.ts`) so it never over-redacts compat-whitespace-bridged
  *      fullwidth digits or decorative No/Nl digit runs (round-9 F2b-ND-1);
  *   3. shared `redactDeep` — an idempotent ASCII/fullwidth-DIGIT safety net (the markers
  *      from steps 1–2 carry no PII shape, so it is a no-op on them) that also preserves the
