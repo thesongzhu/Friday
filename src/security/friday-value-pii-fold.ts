@@ -57,19 +57,23 @@
  * content, extended ONLY by the letter / zero-width / combining / precomposed obfuscation the guard
  * misses — never a divergence that over-redacts benign data.
  *
- * FABRICATED-SEPARATOR NEUTRALIZATION (round-7, whole-class NO-DEGRADE — see
- * {@link foldFabricatesMatcherSeparator}). Preserving whitespace + No/Nl covers the code points that
+ * FABRICATED DIGIT-GROUP-BRIDGE NEUTRALIZATION (round-7, refined round-8; whole-class NO-DEGRADE — see
+ * {@link foldFabricatesDigitGroupSeparator}). Preserving whitespace + No/Nl covers the code points that
  * fold TO whitespace/digits, but NFKD also decomposes NON-whitespace, non-No/Nl compatibility code
  * points into a leading/standalone matcher-significant ASCII SEPARATOR the guard never produces: a
  * spacing accent (U+00A8 ¨ → `<space>+◌̈`, stripped to a bare `<space>`; U+00B4 ´, U+00AF ¯, U+00B8 ¸,
  * U+02D8–U+02DD, …), a dot-leader (U+2024 → `.`), a small hyphen-minus (U+FE63 → `-`), a full-width
- * macron (U+FFE3 → space), etc. Accepting such a fabricated separator lets the card/ssn/phone/email
- * matcher BRIDGE two benign digit groups into a false `[CREDIT_CARD]` / `[SSN_US]` / `[PHONE_US]` /
- * `[EMAIL]`. The fold NEUTRALIZES the whole class by a GENERAL rule (not an enumerated list): any
- * source code point that is NOT itself a matcher separator (nor a genuine Unicode whitespace, nor the
- * guard's deliberate full-width `foldWidthForMatching` set `（ ） ＋ － ．`) whose fold would contribute
- * a matcher-significant ASCII separator is PRESERVED unchanged, so in the detection copy it stays a
- * single non-separator, non-digit char that neither bridges nor joins adjacent groups.
+ * macron (U+FFE3 → space), etc. Accepting such a fabricated separator lets the card/ssn/phone matcher
+ * BRIDGE two benign digit groups into a false `[CREDIT_CARD]` / `[SSN_US]` / `[PHONE_US]`. The fold
+ * NEUTRALIZES the whole class by a GENERAL rule (not an enumerated list): any source code point that is
+ * NOT itself a DIGIT-GROUP-BRIDGE separator (nor a genuine Unicode whitespace, nor the guard's
+ * deliberate full-width `foldWidthForMatching` set `（ ） ＋ － ．`) whose fold would contribute a
+ * digit-group-bridge ASCII separator is PRESERVED unchanged, so in the detection copy it stays a single
+ * non-separator, non-digit char that neither bridges nor joins adjacent groups. Round-8 SCOPES this to
+ * DIGIT-GROUP bridges ONLY: the EMAIL matcher's anchors `@` / `_` / `%` are NOT digit-group bridges
+ * (the card/ssn/phone regexes never use them), so a compat fold that yields one — full-width `＠`
+ * U+FF20 → `@`, `＿` U+FF3F → `_`, `％` U+FF05 → `%` — is NOT neutralized and KEEPS folding, so a
+ * full-width / obfuscated EMAIL still de-obfuscates and redacts to `[EMAIL]` full-span (leak coverage).
  *
  * FOLLOW-UP (further consolidation): the cleanest end state is a fold-policy parameter on the
  * canonical `buildUnicodeDetectionCopy` so this adapter collapses into the normalizer itself. Kept as
@@ -189,30 +193,40 @@ function foldCodePoint(codePoint: string): string {
 const PII_PRESERVED_NUMERIC_RE = /[\p{No}\p{Nl}]/u;
 const PII_PRESERVED_WHITESPACE_RE = /\p{White_Space}/u;
 
-// ─── Fabricated matcher-separator neutralization (NO-DEGRADE, whole class) ───
+// ─── Fabricated DIGIT-GROUP-BRIDGE neutralization (NO-DEGRADE, whole class) ───
 //
-// The ASCII code units the shared guard's four PII regexes CONSUME as a group separator / connector:
-//   • card  `\b(?:\d[ -]*?){13,19}\b`     → SPACE, '-'
-//   • ssn   `\d{3}[- ]?\d{2}[- ]?\d{4}`   → '-', SPACE
-//   • phone `(?:\+1[-.\s]?)?(?:\(?…\)?…)` → '+', '(' ')', '-', '.', and all of ASCII `\s`
-//   • email `[A-Z0-9._%+-]+@[A-Z0-9.-]+…` → '.', '_', '%', '+', '-', '@'
-// A DETECTION-COPY occurrence of any of these can BRIDGE two benign digit groups into a false
-// card/ssn/phone (or connect an email), so one FABRICATED by decomposition corrupts benign data.
-const MATCHER_SIGNIFICANT_ASCII_SEPARATORS: ReadonlySet<number> = new Set<number>([
+// The FALSE POSITIVE this neutralization prevents is a FABRICATED DIGIT-GROUP BRIDGE: an ASCII
+// separator the card / ssn / phone matchers consume BETWEEN two digit groups, so a BENIGN digit run
+// split by a decomposing compat char gets corrupted into `[CREDIT_CARD]` / `[SSN_US]` / `[PHONE_US]`.
+// Exactly those digit-group-bridge separators are (round-8: this set is the neutralization TRIGGER —
+// no email-only anchor belongs in it; see below):
+//   • card  `\b(?:\d[ -]*?){13,19}\b`             → SPACE, '-'
+//   • ssn   `\d{3}[- ]?\d{2}[- ]?\d{4}`           → '-', SPACE
+//   • phone `(?:\+1[-.\s]?)?(?:\(?…\)?…)`         → '+', '(' ')', '-', '.', and all of ASCII `\s`
+const DIGIT_GROUP_BRIDGE_SEPARATORS: ReadonlySet<number> = new Set<number>([
   0x09, 0x0a, 0x0b, 0x0c, 0x0d, // \t \n \v \f \r  (phone `\s`)
   0x20, //   SPACE                (card `[ -]`, ssn `[- ]`, phone `\s`)
-  0x2d, // - HYPHEN-MINUS         (card, ssn, phone, email)
-  0x2e, // . FULL STOP            (phone, email)
-  0x2b, // + PLUS                 (phone `\+`, email)
+  0x2d, // - HYPHEN-MINUS         (card, ssn, phone)
+  0x2e, // . FULL STOP            (phone)
+  0x2b, // + PLUS                 (phone `\+`)
   0x28, 0x29, // ( )  PARENS      (phone)
-  0x5f, // _ LOW LINE             (email)
-  0x25, // % PERCENT              (email)
-  0x40, // @ COMMERCIAL AT        (email)
 ]);
 
-// The ONLY compatibility code points whose fold to an ASCII separator is DELIBERATE and matches the
+// EMAIL-ONLY ANCHORS/COMPONENTS `@` (0x40) `_` (0x5F) `%` (0x25) are DELIBERATELY ABSENT from the
+// bridge set above (round-8 email leak-coverage fix). The email matcher `[A-Z0-9._%+-]+@[A-Z0-9.-]+\.
+// [A-Z]{2,}` also consumes them, but they are used by NO other matcher — the card/ssn/phone regexes
+// never contain `@` / `_` / `%` — so a FABRICATED one can never bridge two benign digit groups into a
+// false card/ssn/phone. Because they are not in the bridge set, folding a full-width / compat form TO
+// one of them (`＠` U+FF20 → '@', `＿` U+FF3F → '_', `％` U+FF05 → '%', …) is NOT neutralized and KEEPS
+// folding — REQUIRED to de-obfuscate and redact a full-width / obfuscated EMAIL to `[EMAIL]` full-span.
+// ('.', '-', '+' ARE bridge separators AND email components: their guard-aligned full-width forms
+// FF0E/FF0D/FF0B keep folding via GUARD_ALIGNED_WIDTH_SEPARATOR_FOLDS below — so a full-width email
+// keeps its dot / hyphen / plus — while a NON-guard fabricator of those, e.g. dot-leader U+2024 → '.'
+// or small hyphen-minus U+FE63 → '-', is still neutralized as a benign digit-group bridge.)
+
+// The ONLY compatibility code points whose fold to a BRIDGE separator is DELIBERATE and matches the
 // shared guard's `foldWidthForMatching` (full-width `（ ） ＋ － ．` → `( ) + - .`). Every OTHER source
-// code point that NFKD decomposes into a matcher separator does so via a compatibility fold the guard
+// code point that NFKD decomposes into a bridge separator does so via a compatibility fold the guard
 // NEVER applies, so it must not be allowed to fabricate one. (Full-width DIGITS U+FF10–FF19 also fold,
 // but to ASCII DIGITS — never a separator — so they are irrelevant here and correctly keep folding.)
 const GUARD_ALIGNED_WIDTH_SEPARATOR_FOLDS: ReadonlySet<number> = new Set<number>([
@@ -220,22 +234,24 @@ const GUARD_ALIGNED_WIDTH_SEPARATOR_FOLDS: ReadonlySet<number> = new Set<number>
 ]);
 
 /**
- * True when folding `codePoint` would CONTRIBUTE a matcher-significant ASCII separator that the source
- * code point is NOT itself — a FABRICATED bridge. A source code point that IS such a separator (its
- * fold is that separator, legitimately) or is a guard-aligned full-width separator (folds to the SAME
- * ASCII the shared guard's `foldWidthForMatching` produces) is exempt; every other code point whose
- * NFKD decomposition yields a separator (spacing accents U+00A8/¨ → `<space>+◌̈` → `<space>`, dot-leader
- * U+2024 → `.`, small hyphen-minus U+FE63 → `-`, full-width macron U+FFE3 → space, …) is caught —
- * a GENERAL rule over the whole class, not an enumerated list.
+ * True when folding `codePoint` would CONTRIBUTE a DIGIT-GROUP-BRIDGE separator that the source code
+ * point is NOT itself — a FABRICATED bridge that lets the card / ssn / phone matcher join two BENIGN
+ * digit groups into a false `[CREDIT_CARD]` / `[SSN_US]` / `[PHONE_US]`. Exempt: a source that IS such
+ * a separator (its fold is that separator, legitimately) or a guard-aligned full-width separator
+ * (folds to the SAME ASCII the shared guard's `foldWidthForMatching` produces). The EMAIL-ONLY anchors
+ * `@` / `_` / `%` are NOT bridge separators, so a fold that yields one (`＠` U+FF20 → `@`, `＿` U+FF3F →
+ * `_`, `％` U+FF05 → `%`) is NOT caught here and KEEPS folding — REQUIRED to de-obfuscate a full-width /
+ * obfuscated EMAIL, and unable to fabricate a benign card/ssn/phone match (those matchers never use
+ * `@` / `_` / `%`). A GENERAL rule over the whole class, not an enumerated list.
  */
-function foldFabricatesMatcherSeparator(codePoint: string, folded: string): boolean {
+function foldFabricatesDigitGroupSeparator(codePoint: string, folded: string): boolean {
   const cp = codePoint.codePointAt(0);
   if (cp === undefined) return false;
-  if (MATCHER_SIGNIFICANT_ASCII_SEPARATORS.has(cp)) return false; // source IS the separator — legit
+  if (DIGIT_GROUP_BRIDGE_SEPARATORS.has(cp)) return false; // source IS the bridge separator — legit
   if (GUARD_ALIGNED_WIDTH_SEPARATOR_FOLDS.has(cp)) return false; // guard-aligned width fold — legit
   for (const ch of folded) {
     const u = ch.codePointAt(0);
-    if (u !== undefined && MATCHER_SIGNIFICANT_ASCII_SEPARATORS.has(u)) return true; // fabricated
+    if (u !== undefined && DIGIT_GROUP_BRIDGE_SEPARATORS.has(u)) return true; // fabricated bridge
   }
   return false;
 }
@@ -258,16 +274,18 @@ function foldCodePointForPii(codePoint: string): string {
     return codePoint;
   }
   const folded = foldCodePoint(codePoint);
-  // NO-DEGRADE (fabricated matcher-separator neutralization — SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001
-  // round-7). Full NFKD can decompose a source code point that is NOT itself a matcher separator into
-  // one that CONTRIBUTES an ASCII separator (spacing accent U+00A8 ¨ → `<space>+◌̈` → `<space>`; dot-
-  // leader U+2024 → `.`; small hyphen-minus U+FE63 → `-`). The shared guard's `foldWidthForMatching`
-  // never produces such a separator, so accepting it lets the card/ssn/phone/email matcher BRIDGE two
-  // BENIGN groups into a false [CREDIT_CARD]/[SSN_US]/[PHONE_US]/[EMAIL] — corrupting benign content.
-  // PRESERVE the ORIGINAL source code point instead: in the detection copy it stays a single non-
-  // separator, non-digit character that neither BRIDGES nor JOINS adjacent groups — guard-aligned
-  // (the guard doesn't fold it either), extended only by the letter/digit de-obfuscation folds.
-  if (foldFabricatesMatcherSeparator(codePoint, folded)) return codePoint;
+  // NO-DEGRADE (fabricated digit-group-bridge neutralization — SEC-AGENT-MEMORY-SEARCH-RAW-EGRESS-001
+  // round-7, refined round-8). Full NFKD can decompose a source code point that is NOT itself a matcher
+  // separator into one that CONTRIBUTES an ASCII digit-group-bridge separator (spacing accent U+00A8 ¨
+  // → `<space>+◌̈` → `<space>`; dot-leader U+2024 → `.`; small hyphen-minus U+FE63 → `-`). The shared
+  // guard's `foldWidthForMatching` never produces such a bridge, so accepting it lets the card/ssn/
+  // phone matcher BRIDGE two BENIGN digit groups into a false [CREDIT_CARD]/[SSN_US]/[PHONE_US] —
+  // corrupting benign content. PRESERVE the ORIGINAL source code point instead: in the detection copy
+  // it stays a single non-separator, non-digit character that neither BRIDGES nor JOINS adjacent
+  // groups — guard-aligned (the guard doesn't fold it either). This is scoped to DIGIT-GROUP bridges
+  // ONLY: the EMAIL-only anchors `@` / `_` / `%` are NOT bridges (round-8), so a fold that yields one
+  // (`＠` U+FF20 → `@`) KEEPS folding and a full-width / obfuscated EMAIL still de-obfuscates to [EMAIL].
+  if (foldFabricatesDigitGroupSeparator(codePoint, folded)) return codePoint;
   return folded;
 }
 
