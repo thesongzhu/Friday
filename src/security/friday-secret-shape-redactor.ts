@@ -262,34 +262,40 @@ const SECRET_CONTENT_PATTERNS: readonly SecretContentPattern[] = [
   // a shapeless 40-char base64 with no prefix — it is caught by its KEY NAME (`secretAccessKey`,
   // in the sensitive-field-name set), NOT a shape, so it is not (and must not be) a content pattern.
   //
-  // GLUED-PREFIX (SEC-SECRET-GLUED-PREFIX-001): the AWS family is SPLIT by prefix and the leading `\b` is
-  // DROPPED ONLY on `AKIA`. The AWS body is `[0-9A-Z]{16}` — UPPERCASE + DIGIT, i.e. the alphabet of an
+  // GLUED-PREFIX (SEC-SECRET-GLUED-PREFIX-001): the AWS family is SPLIT by prefix and only `AKIA` catches
+  // a glued credential. The AWS body is `[0-9A-Z]{16}` — UPPERCASE + DIGIT, i.e. the alphabet of an
   // all-caps constant / ULID / base32 blob — so (UNLIKE the mixed-case github body above) a member
-  // over-redacts ONLY when it sits inside an ALL-CAPS 20+ contiguous run; a lowercase prose word never
-  // collides. A member is de-`\b`'d ONLY if it fails ALL of: (a) a COMMON word-ending that forms all-caps
-  // runs, (b) ULID-constructible (Crockford base32 = 0-9 A-Z minus I,L,O,U — a member of only Crockford
-  // chars can sit mid-ULID), and (c) a common all-caps ACRONYM / fragment:
-  //   • AKIA — has `I` → NOT ULID-constructible; only OBSCURE lowercase word-endings (aph-AKIA,
-  //     leucopl-AKIA, Lat-AKIA — medical / geographic, never written as ALL-CAPS 20+ runs); no common
-  //     all-caps acronym source → fails (a),(b),(c) → UNAMBIGUOUS → `\b` DROPPED (a glued `keyAKIA<16>`
-  //     is now caught; this is the Advisor P1 canary).
-  //   • ASIA — has `I` (not ULID) BUT a COMMON word-ending (Eur-ASIA, Austral-ASIA, aph-ASIA) written
-  //     all-caps in region constants (…ASIA…, AUSTRALASIA…, EURASIA…) → fails (a),(c) → AMBIGUOUS → `\b` KEPT.
+  // over-redacts ONLY when it sits inside an ALL-CAPS / alphanumeric 20+ contiguous run; a lowercase prose
+  // word never collides. The 7 other prefixes KEEP `\b` — each is (a) a COMMON all-caps word-ending, (b)
+  // ULID-constructible (Crockford base32 = 0-9 A-Z minus I,L,O,U — a member of only Crockford chars can
+  // sit mid-ULID), or (c) a common all-caps ACRONYM / fragment:
+  //   • ASIA — a COMMON word-ending (Eur-ASIA, Austral-ASIA, aph-ASIA) written all-caps in region
+  //     constants (…ASIA…, AUSTRALASIA…, EURASIA…) → (a),(c) → AMBIGUOUS → `\b` KEPT.
   //   • AGPA / ANPA / ANVA — Crockford-only (no I/L/O/U) → ULID-CONSTRUCTIBLE (sit mid-ULID, e.g.
-  //     `012345AGPA…`); ANVA is also inside C-ANVA-S → fails (b) → AMBIGUOUS → `\b` KEPT.
-  //   • AIDA — has `I` (not ULID) BUT a common all-caps ACRONYM (the AIDA marketing model, PROJECT-AIDA,
-  //     the opera) → fails (c) → AMBIGUOUS → `\b` KEPT.
-  //   • AROA — has `O` (not ULID) BUT the place name AOTE-AROA (all-caps-able in NZ constants) → fails
-  //     (a),(c) → AMBIGUOUS → `\b` KEPT.
-  //   • AIPA — has `I` (not ULID) BUT a prefix of the common all-caps acronym / org AIPA-C
-  //     (`AIPACPOLICYCONFERENCE…`) → fails (c) → AMBIGUOUS → `\b` KEPT.
-  // Effect: a DELIMITED / standalone / labeled AWS key of ANY prefix is STILL caught (the common case —
-  // AWS keys are ~always delimited in env/config); a glued `keyAKIA<16>` is now REDACTED at exactly the
-  // credential subspan, while a glued benign all-caps / ULID carrying an AMBIGUOUS fragment
-  // (`012345AGPA…`, `…ASIA…WIDE…`, `PROJECTAIDA…`) is UNCHANGED (`AKIA` never appears in those blobs).
+  //     `012345AGPA…`); ANVA is also inside C-ANVA-S → (b) → AMBIGUOUS → `\b` KEPT.
+  //   • AIDA — a common all-caps ACRONYM (the AIDA marketing model, PROJECT-AIDA, the opera) → (c) →
+  //     AMBIGUOUS → `\b` KEPT.
+  //   • AROA — the place name AOTE-AROA (all-caps-able in NZ constants) → (a),(c) → AMBIGUOUS → `\b` KEPT.
+  //   • AIPA — a prefix of the common all-caps acronym / org AIPA-C (`AIPACPOLICYCONFERENCE…`) → (c) →
+  //     AMBIGUOUS → `\b` KEPT.
+  //   • AKIA — has `I` → NOT ULID-constructible, and no common all-caps ACRONYM. BUT it IS the SUFFIX of
+  //     the country names SLOV-AKIA and CZECHOSLOV-AKIA (proper nouns absent from /usr/share/dict/words,
+  //     so the per-word dict analysis missed them) — an ALL-CAPS `SLOVAKIA<16>` region constant would be
+  //     corrupted by a plain leading-`\b` drop. So AKIA is de-bounded with a CONTEXT-SENSITIVE
+  //     NEGATIVE-LOOKBEHIND `(?<![A-Z0-9])` instead of a plain `\b`-drop: it matches only when `AKIA`
+  //     starts a FRESH token (after a lowercase word char, a symbol, whitespace, or the string start —
+  //     the credential-glue case `keyAKIA<16>` / `=AKIA<16>` / ` AKIA<16>`), NOT when it is embedded
+  //     after an UPPERCASE letter or DIGIT (mid-all-caps-word `SLOVAKIA…` / mid-alphanumeric run
+  //     `PROJECT2AKIA…`). The lookbehind is zero-width, so the redacted span is still exactly `AKIA<16>`
+  //     and the benign leading char survives byte-for-byte. This is robust (no per-word enumeration).
+  // Effect: a DELIMITED / standalone / labeled / glued-after-lowercase AWS key is STILL caught (the common
+  // case — AWS keys are ~always delimited in env/config, and the glued `keyAKIA<16>` P1 canary is caught),
+  // while an ALL-CAPS / alphanumeric blob carrying an AMBIGUOUS fragment (`012345AGPA…`, `…ASIA…WIDE…`,
+  // `PROJECTAIDA…`) OR `SLOVAKIA…`/`CZECHOSLOVAKIA…`/`PROJECT2AKIA…` (AKIA after `[A-Z0-9]`) is UNCHANGED.
   {
-    // UNAMBIGUOUS — leading `\b` DROPPED so a glued `<word>AKIA<16>` is caught.
-    pattern: /AKIA[0-9A-Z]{16}\b/gu,
+    // UNAMBIGUOUS — de-bounded via a CONTEXT-SENSITIVE negative-lookbehind (NOT a plain `\b`-drop) so a
+    // glued `<lowercase|symbol|space>AKIA<16>` is caught but a mid-all-caps-word `SLOVAKIA<16>` is NOT.
+    pattern: /(?<![A-Z0-9])AKIA[0-9A-Z]{16}\b/gu,
     sensitiveSpan: wholeMatchSpan,
   },
   {

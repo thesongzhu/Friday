@@ -239,6 +239,10 @@ describe("redactEventPayload — no over-redaction (NO DEGRADE)", () => {
       // AWS AKIA word-fragment: benign ULID / all-caps id with ASIA/AGPA glued after a word char.
       ulid: "012345AGPABCDEFGHJKMNPQRST", // pragma: allowlist secret — benign ULID (AKIA-family scanner false positive)
       caps: "AUSTRALASIAWIDEDEPLOYMENT01", // pragma: allowlist secret — benign all-caps constant (AKIA-family scanner false positive)
+      // AKIA is the SUFFIX of SLOV-AKIA / CZECHOSLOV-AKIA — the `(?<![A-Z0-9])` lookbehind keeps an all-caps
+      // `SLOVAKIA<16>` region constant UNCHANGED (a plain `\b`-drop corrupts it → `SLOV[REDACTED]`).
+      country: "SLOVAKIAREGIONCODE2024AB", // pragma: allowlist secret — AKIA after `V` (uppercase)
+      country2: "CZECHOSLOVAKIAREGIONCODE012345", // pragma: allowlist secret — AKIA after `V`
     };
     const out = redactEventPayload(payload);
     expect(out).toEqual(payload);

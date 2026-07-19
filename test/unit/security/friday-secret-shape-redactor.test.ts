@@ -434,16 +434,16 @@ describe("friday-secret-shape-redactor", () => {
       ["SendGrid SG.<22>.<43>", SG_SECRET], // pragma: allowlist secret
       ["Square sq0atp-", seg("sq0atp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
       ["Square sq0csp-", seg("sq0csp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
-      // GitHub classic {ghp,ghr} and AWS {AKIA} were SPLIT out of their alternations and de-`\b`'d
-      // (SEC-SECRET-GLUED-PREFIX-001 P1 fix): `ghp`/`ghr` have ZERO dict word-endings; `AKIA` has `I`
-      // (not ULID-constructible), only obscure lowercase word-endings (aphakia/leucoplakia — never
-      // all-caps 20+ runs), and no common all-caps acronym → all three are provably NOT benign fragments,
-      // so a glued `keyghp_<36>` / `keyghr_<…>` / `keyAKIA<16>` real credential is now CAUGHT. The
-      // AMBIGUOUS members {gho,ghs,ghu,github_pat_} and {ASIA,AGPA,AIDA,AROA,AIPA,ANPA,ANVA} KEEP `\b`
-      // (word-ending / ULID / acronym fragments) — see KEPT.
+      // GitHub classic {ghp,ghr} were SPLIT out of the classic alternation and PLAIN de-`\b`'d
+      // (SEC-SECRET-GLUED-PREFIX-001 P1 fix): both have ZERO dict word-endings and are not a benign
+      // fragment, so a glued `keyghp_<36>` / `keyghr_<…>` (after ANY word char) is now CAUGHT. The
+      // AMBIGUOUS classic members {gho,ghs,ghu,github_pat_} KEEP `\b` — see KEPT.
+      // NB: AWS `AKIA` is ALSO de-bounded (P1 canary) but via a CONTEXT-SENSITIVE `(?<![A-Z0-9])`
+      // lookbehind — NOT a plain `\b`-drop — because `AKIA` is the suffix of SLOV-AKIA / CZECHOSLOV-AKIA,
+      // so it is NOT in this DEBOUNDED set (whose generic assertion is that an UPPERCASE-`X`-glued form
+      // also redacts, which must NOT hold for AKIA). AKIA has its own dedicated lookbehind test below.
       ["GitHub classic ghp_ (0 word-endings)", seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")], // pragma: allowlist secret — 36 base62
       ["GitHub classic ghr_ (0 word-endings)", seg("ghr_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")], // pragma: allowlist secret — 36 base62
-      ["AWS AKIA (not ULID/word/acronym)", seg("AKIA", "IOSFODNN7EXAMPLE")], // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
       ["Slack xoxb-", seg("xoxb-", "EXAMPLENOTAREALSLACKTOKEN")], // pragma: allowlist secret
     ];
 
@@ -539,6 +539,14 @@ describe("friday-secret-shape-redactor", () => {
       "AIPACPOLICYCONFERENCE2024ABC", // pragma: allowlist secret — AIPA is a prefix of the all-caps org AIPAC
       "AOTEAROANEWZEALANDGOVT01ABCD", // pragma: allowlist secret — AROA is inside the place name AOTEAROA
       "OPENCANVASRENDERINGCONTEXT2D", // pragma: allowlist secret — ANVA is inside CANVAS (also ULID-constructible)
+      // Negative controls for the de-`\b`'d AKIA member: `AKIA` is the SUFFIX of the country names
+      // SLOV-AKIA / CZECHOSLOV-AKIA (absent from the dict, so the per-word analysis missed them). The
+      // `(?<![A-Z0-9])` context-lookbehind keeps `AKIA<16>` glued mid-all-caps-word / mid-alphanumeric-run
+      // UNCHANGED (would corrupt under a plain leading-`\b` drop — `SLOVAKIA…` → `SLOV[REDACTED]`).
+      "SLOVAKIAREGIONCODE2024AB", // pragma: allowlist secret — AKIA after `V` (uppercase) → not a credential
+      "CZECHOSLOVAKIAREGIONCODE012345", // pragma: allowlist secret — AKIA after `V` → not a credential
+      "deployed to SLOVAKIAREGIONCODE2024AB today", // pragma: allowlist secret — free-text SLOVAKIA embedding
+      "PROJECT2AKIAXYZ0123456789ABC", // pragma: allowlist secret — AKIA after `2` (digit) → not a credential
       "9f8e7d6c5b4a3928170695f4e3d2c1b0", // pragma: allowlist secret — 32-hex id / git blob
       "/var/log/hf_service/npm_cache/output.log", // file path with hf_/npm_ short segments
       "GOCSPX_notasecret_underscore", // GOCSPX_ (underscore, not the required hyphen)
@@ -607,8 +615,10 @@ describe("friday-secret-shape-redactor", () => {
     });
 
     // AWS sensitivity boundary (SEC-SECRET-GLUED-PREFIX-001 P1 split): the AWS alternation is SPLIT by
-    // prefix. `AKIA` (has `I` → not ULID; only obscure lowercase word-endings; no common all-caps acronym)
-    // is de-`\b`'d → a glued `keyAKIA<16>` is now CAUGHT (P1 canary). The AMBIGUOUS members
+    // prefix. `AKIA` (has `I` → not ULID; no common all-caps acronym) is de-bounded via a context-sensitive
+    // `(?<![A-Z0-9])` lookbehind — NOT a plain `\b`-drop — because `AKIA` is the suffix of the country
+    // names SLOV-AKIA / CZECHOSLOV-AKIA (see the dedicated lookbehind test below); a glued `keyAKIA<16>`
+    // is CAUGHT (P1 canary) while a mid-all-caps-word `SLOVAKIA<16>` is NOT. The AMBIGUOUS members
     // {ASIA,AGPA,AIDA,AROA,AIPA,ANPA,ANVA} — word-endings (Eur-ASIA), ULID-constructible (AGPA/ANPA/ANVA),
     // or acronym fragments (AIDA, AIPA→AIPAC, AROA→AOTEAROA) — KEEP `\b`, so a benign all-caps / ULID id
     // where the fragment is GLUED after a word char is UNCHANGED. A DELIMITED / standalone / labeled AWS
@@ -636,6 +646,39 @@ describe("friday-secret-shape-redactor", () => {
         expect(redactSecretShapesInString(seg("x", K)), `${p} GLUED gap`).toBe(seg("x", K));
         expect(findSecretShapeSpans(seg("x", K)), `${p} glued span`).toEqual([]);
       }
+    });
+
+    // AWS AKIA context-lookbehind (SEC-SECRET-GLUED-PREFIX-001 round-5 NO-DEGRADE): `AKIA` is the SUFFIX of
+    // the country names SLOV-AKIA / CZECHOSLOV-AKIA (proper nouns absent from /usr/share/dict/words, so the
+    // per-word dict analysis missed them). A plain leading-`\b` drop corrupts an ALL-CAPS `SLOVAKIA<16>`
+    // region constant (`SLOVAKIA<16>` → `SLOV[REDACTED]`). The `(?<![A-Z0-9])` lookbehind fixes
+    // it: `AKIA` matches only when it starts a FRESH token (after lowercase / symbol / space / start), not
+    // when embedded after an UPPERCASE letter or DIGIT. RED on 2c83630f (plain de-`\b`); GREEN after.
+    it("AWS AKIA lookbehind: SLOVAKIA/CZECHOSLOVAKIA/alphanumeric-embedded survives; lowercase/symbol/space-glued still caught", () => {
+      const K = seg("AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
+      // NEGATIVE: AKIA preceded by an UPPERCASE letter or DIGIT → NOT a credential → UNCHANGED, 0 spans.
+      const negatives = [
+        "SLOVAKIAREGIONCODE2024AB", // pragma: allowlist secret — AKIA after `V`
+        "CZECHOSLOVAKIAREGIONCODE012345", // pragma: allowlist secret — AKIA after `V`
+        "deployed to SLOVAKIAREGIONCODE2024AB today", // pragma: allowlist secret — free-text SLOVAKIA embedding
+        seg("PROJECT2", K), // AKIA after digit `2`
+        seg("XAKIA", "IOSFODNN7EXAMPLE"), // pragma: allowlist secret — AKIA after uppercase `X` (mid-all-caps-word)
+      ];
+      for (const n of negatives) {
+        expect(redactSecretShapesInString(n), n).toBe(n);
+        expect(findSecretShapeSpans(n), n).toEqual([]);
+      }
+      // POSITIVE: AKIA starting a fresh token (lowercase / symbol / space / assignment / string start) → CAUGHT.
+      expect(redactSecretShapesInString(seg("key", K))).toBe(`key${M}`); // lowercase glue (P1 canary)
+      expect(redactSecretShapesInString(seg("aws", K))).toBe(`aws${M}`); // lowercase glue
+      expect(redactSecretShapesInString(`(${K})`)).toBe(`(${M})`); // symbol glue
+      expect(redactSecretShapesInString(`region ${K}`)).toBe(`region ${M}`); // whitespace delimited
+      expect(redactSecretShapesInString(`aws_key=${K}`)).toBe(`aws_key=${M}`); // assignment
+      expect(redactSecretShapesInString(K)).toBe(M); // string start
+      // Span still excludes the benign lowercase lead (lookbehind is zero-width).
+      const spans = findSecretShapeSpans(seg("key", K));
+      expect(spans.length).toBe(1);
+      expect(seg("key", K).slice(spans[0]!.start, spans[0]!.end)).toBe(K);
     });
   });
 });

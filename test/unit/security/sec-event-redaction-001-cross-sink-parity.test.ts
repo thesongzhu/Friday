@@ -240,6 +240,10 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     // survive in BOTH sinks — the AKIA branch keeps `\b` (was corrupted while AKIA was de-`\b`'d).
     ulid: "012345AGPABCDEFGHJKMNPQRST", // pragma: allowlist secret — benign ULID (AKIA-family scanner false positive)
     caps: "AUSTRALASIAWIDEDEPLOYMENT01", // pragma: allowlist secret — benign all-caps constant (AKIA-family scanner false positive)
+    // AKIA is the SUFFIX of SLOV-AKIA / CZECHOSLOV-AKIA — the `(?<![A-Z0-9])` lookbehind keeps these all-caps
+    // country region constants UNCHANGED in BOTH sinks (a plain `\b`-drop corrupts `SLOVAKIA<16>`).
+    country: "SLOVAKIAREGIONCODE2024AB", // pragma: allowlist secret — AKIA after uppercase `V`
+    country2: "CZECHOSLOVAKIAREGIONCODE012345", // pragma: allowlist secret — AKIA after uppercase `V`
   });
 
   it("glued distinctive-prefix credentials redact identically in the AUDIT sink and MEMORY redactDeep", async () => {
@@ -263,6 +267,8 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
     expect(memoryValue.cough).toBe("coughs_e3b0c44298fc1c14");
     expect(memoryValue.ulid).toBe("012345AGPABCDEFGHJKMNPQRST"); // pragma: allowlist secret — benign ULID (AKIA-family scanner false positive)
     expect(memoryValue.caps).toBe("AUSTRALASIAWIDEDEPLOYMENT01"); // pragma: allowlist secret — benign all-caps constant (AKIA-family scanner false positive)
+    expect(memoryValue.country).toBe("SLOVAKIAREGIONCODE2024AB"); // pragma: allowlist secret — SLOVAKIA suffix preserved by the lookbehind in both sinks
+    expect(memoryValue.country2).toBe("CZECHOSLOVAKIAREGIONCODE012345"); // pragma: allowlist secret — CZECHOSLOVAKIA suffix preserved
     // No credential body survives in either sink's serialization.
     for (const sink of [auditDetails, memoryValue]) {
       const json = JSON.stringify(sink);

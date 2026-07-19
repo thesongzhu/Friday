@@ -345,7 +345,10 @@ describe("FridayMemoryOutputFilter — SEC-SECRET-GLUED-PREFIX-001 glued distinc
   it("NO-DEGRADE: benign `…ghs_<snake_case>` identifiers survive content / metadata / tags byte-identical", () => {
     const benign = ["walkthroughs_completed_counter", "walkthroughs_completedThisWeek", "coughs_e3b0c44298fc1c14", "breakthroughs_this_quarter_list", "laughs_per_minute_counter",
       // AWS AKIA word-fragment: benign ULID / all-caps id with ASIA/AGPA glued after a word char.
-      "012345AGPABCDEFGHJKMNPQRST", "AUSTRALASIAWIDEDEPLOYMENT01"]; // pragma: allowlist secret — benign ULID/all-caps (AKIA-family scanner false positives)
+      "012345AGPABCDEFGHJKMNPQRST", "AUSTRALASIAWIDEDEPLOYMENT01", // pragma: allowlist secret — benign ULID/all-caps (AKIA-family scanner false positives)
+      // AKIA is the SUFFIX of SLOV-AKIA / CZECHOSLOV-AKIA — the `(?<![A-Z0-9])` lookbehind keeps these all-caps
+      // country region constants UNCHANGED (a plain `\b`-drop corrupts `SLOVAKIA<16>` → `SLOV[REDACTED_SECRET]`).
+      "SLOVAKIAREGIONCODE2024AB", "CZECHOSLOVAKIAREGIONCODE012345"]; // pragma: allowlist secret — AKIA after uppercase `V`
     const out = filter.filterItem(makeItem({
       content: "metric name walkthroughs_started_and_completed today",
       metadata: { walk: benign[0], breakt: benign[1], note: "keep" },
