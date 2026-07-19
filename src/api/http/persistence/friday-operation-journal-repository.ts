@@ -35,13 +35,21 @@ export interface FridayHttpIdempotencyEntry {
   payloadHash: string;
   /**
    * "in_flight" = a request with this key is currently executing (reservation set
-   * before the handler runs). "completed" = the handler finished and `data` holds
-   * the replayable response. "indeterminate" = a reservation orphaned by a crash: the
-   * handler may have committed its side-effect but never wrote its completed receipt, so
-   * the outcome is unknown — fail-closed, never auto-retried, never TTL-pruned.
+   * before the handler runs). "completed" = the handler finished and `responseJson`
+   * holds the replayable response bytes. "indeterminate" = a reservation orphaned by a
+   * crash: the handler may have committed its side-effect but never wrote its completed
+   * receipt, so the outcome is unknown — fail-closed, never auto-retried, never TTL-pruned.
    */
   status: "in_flight" | "completed" | "indeterminate";
-  data: unknown;
+  /**
+   * The RAW, already-serialized replay JSON string exactly as stored in the
+   * `response_json` column — never a re-serialized object. `undefined` for
+   * in_flight/indeterminate rows (no replayable body). The server splices this string
+   * verbatim into the replay envelope; it is NEVER JSON.parse'd + re-JSON.stringify'd,
+   * so a polluted `Object.prototype.toJSON` cannot make the served/inspected bytes
+   * diverge from what is persisted at rest.
+   */
+  responseJson: string | undefined;
   expiresAtMs: number;
 }
 
@@ -56,7 +64,12 @@ export interface FridayHttpIdempotencyCompleteInput {
   operationId: string;
   principalId: string;
   payloadHash: string;
-  data: unknown;
+  /**
+   * The EXACT, already-serialized replay JSON string to persist verbatim into
+   * `response_json`. The server serializes the handler result to a string exactly once
+   * and passes that string here — completion NEVER re-serializes a result-derived object.
+   */
+  responseJson: string;
   expiresAtMs: number;
 }
 
@@ -80,6 +93,12 @@ export interface FridayHttpIdempotencyStore {
   complete(key: string, input: FridayHttpIdempotencyCompleteInput): void;
   /** Drop the entry for this key (release an unfinished reservation). */
   release(key: string): void;
+  /**
+   * Mark an in_flight reservation indeterminate WITHOUT deleting it — used when a
+   * side-effect committed but the completed receipt write failed, so a retry is refused
+   * (fail-closed) rather than re-executing.
+   */
+  markIndeterminate(key: string): void;
   /**
    * Prune expired entries. ONLY `completed` replay entries are pruned — an `in_flight`
    * or `indeterminate` reservation is NEVER TTL-deleted, because deleting it would let a
@@ -111,7 +130,7 @@ export class FridayInMemoryOperationJournalStore implements FridayHttpIdempotenc
       principalId: input.principalId,
       payloadHash: input.payloadHash,
       status: "in_flight",
-      data: undefined,
+      responseJson: undefined,
       expiresAtMs: input.expiresAtMs,
     });
   }
@@ -122,13 +141,24 @@ export class FridayInMemoryOperationJournalStore implements FridayHttpIdempotenc
       principalId: input.principalId,
       payloadHash: input.payloadHash,
       status: "completed",
-      data: input.data,
+      // Store the already-serialized replay string VERBATIM — never a re-serialized object.
+      responseJson: input.responseJson,
       expiresAtMs: input.expiresAtMs,
     });
   }
 
   release(key: string): void {
     this.entries.delete(key);
+  }
+
+  markIndeterminate(key: string): void {
+    // Fail-closed transition for the effect-committed-but-receipt-write-failed case: keep the
+    // reservation row and flip it to indeterminate so a retry is refused, never re-executed. No-op
+    // if the entry is absent or is no longer in_flight (a completed receipt wins).
+    const entry = this.entries.get(key);
+    if (entry && entry.status === "in_flight") {
+      entry.status = "indeterminate";
+    }
   }
 
   pruneExpired(nowMs: number): void {
@@ -188,7 +218,10 @@ export class FridaySqliteOperationJournalStore implements FridayHttpIdempotencyS
       principalId: row.principal_id,
       payloadHash: row.payload_digest,
       status: row.status,
-      data: row.response_json != null ? (JSON.parse(row.response_json) as unknown) : undefined,
+      // The RAW stored string — never JSON.parse'd back into an object. The server splices
+      // it verbatim into the replay envelope, so a polluted Object.prototype.toJSON cannot
+      // re-serialize it into different (secret-bearing) bytes on the replay path.
+      responseJson: row.response_json ?? undefined,
       expiresAtMs: row.expires_at_ms,
     };
   }
@@ -262,7 +295,11 @@ export class FridaySqliteOperationJournalStore implements FridayHttpIdempotencyS
 
   complete(key: string, input: FridayHttpIdempotencyCompleteInput): void {
     const idempotencyKey = idempotencyKeyFromStoreKey(key, input.principalId, input.operationId);
-    const responseJson = JSON.stringify(input.data ?? null);
+    // Persist the caller's already-serialized replay bytes VERBATIM. We do NOT re-serialize any
+    // result-derived object here: the server serialized the result to a string exactly once and
+    // passed it as `input.responseJson`, so a stateful/polluted `toJSON` cannot make the persisted
+    // bytes diverge from the bytes the server inspected for secrets.
+    const responseJson = input.responseJson;
     const nowMs = Date.now();
     this.sqlite.withWriteTransaction((db) => {
       // Upsert on the composite PK: normally the in_flight reservation exists and is
@@ -294,6 +331,20 @@ export class FridaySqliteOperationJournalStore implements FridayHttpIdempotencyS
       db.prepare(
         `DELETE FROM http_operation_journal
           WHERE (principal_id || ':' || operation_id || ':' || idempotency_key) = ?`,
+      ).run(key);
+    });
+  }
+
+  markIndeterminate(key: string): void {
+    // Fail-closed transition for the effect-committed-but-receipt-write-failed case: the
+    // reservation row is KEPT (never DELETEd) and flipped to indeterminate so a retry with the same
+    // key is refused rather than re-executing the already-committed side-effect. Scoped to
+    // status='in_flight' so a concurrently-written completed receipt is never clobbered.
+    this.sqlite.withWriteTransaction((db) => {
+      db.prepare(
+        `UPDATE http_operation_journal SET status = 'indeterminate'
+          WHERE (principal_id || ':' || operation_id || ':' || idempotency_key) = ?
+            AND status = 'in_flight'`,
       ).run(key);
     });
   }

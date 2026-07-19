@@ -36,6 +36,7 @@ import {
   isUnauthenticatedPublicPrincipal,
   redactWebhookPathTokenInPath,
 } from "../../security/friday-owner-session-channel-capability.js";
+import { findSecretShapeSpans } from "../../security/friday-secret-shape-redactor.js";
 
 // ─── Types ───
 
@@ -81,6 +82,22 @@ export interface FridayHttpServer {
 const FRIDAY_METHODS_WITH_BODY: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const FRIDAY_HTTP_MAX_BODY_BYTES = 1_048_576; // 1MB
 const FRIDAY_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Sentinel STRING stored in the operation journal's `response_json` column IN PLACE of a handler
+ * response whose serialized form contained a secret SHAPE (per the canonical detector). The response
+ * actually SENT to the first caller is always the real handler result (the first call legitimately
+ * needs its tokens); only the STORED replay copy is replaced by this sentinel, so
+ * `http_operation_journal.response_json` never holds a raw secret at rest (24h TTL). A later same-key
+ * retry that lands on this sentinel is refused with a 409 (SECURITY_IDEMPOTENCY_NONREPLAYABLE) rather
+ * than replaying sensitive data — the caller re-issues with a fresh Idempotency-Key.
+ *
+ * This is a raw STRING (not an object) on purpose: the guard serializes the handler result exactly
+ * once and thereafter operates only on strings. Storing/comparing the sentinel as a string means no
+ * result-derived object is ever re-serialized downstream, so a polluted `Object.prototype.toJSON`
+ * cannot make the inspected bytes differ from the persisted bytes (the round-4 HIGH).
+ */
+const FRIDAY_NON_REPLAYABLE_JSON = '{"__fridayNonReplayable":true}';
 
 /** Base security headers applied to every response. */
 const FRIDAY_BASE_SECURITY_HEADERS: Readonly<Record<string, string>> = {
@@ -177,18 +194,6 @@ function hasJsonContentType(headers: IncomingMessage["headers"]): boolean {
     .trim()
     .toLowerCase()
     .includes("json");
-}
-
-function assertSerializableJsonResponse(value: unknown, operationId: string): void {
-  if (value === undefined) {
-    throw new Error(`Route '${operationId}' returned undefined without taking over the response`);
-  }
-  try {
-    JSON.stringify(value);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Route '${operationId}' returned a non-JSON-serializable response: ${message}`);
-  }
 }
 
 class PayloadTooLargeError extends Error {
@@ -749,9 +754,17 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
     const rawMethod = (req.method ?? "GET").toUpperCase();
     const isHead = rawMethod === "HEAD";
 
-    // Declared outside the request try so the catch block can release an in-flight idempotency
-    // reservation if the handler throws.
+    // Declared outside the request try so the catch block can fail the idempotency reservation
+    // CLOSED on ANY post-reservation error. Once we hold a reservation and have invoked the handler,
+    // a thrown handler MAY already have committed a durable effect (a rejected promise is NOT proof
+    // that no effect committed), so the reservation transitions only to `completed` (success) or
+    // `indeterminate` (failure) — it is NEVER released/deleted, which would let a retry re-execute.
     let idempotencyStoreKey: string | undefined;
+    // The AUTHORITATIVE reservation values, captured when the reservation is taken (below). Completion
+    // REUSES these instead of recomputing principal/payload-hash — a recompute could observe a mutated
+    // request or a polluted `Object.prototype.toJSON` and diverge from what was reserved.
+    let reservedPrincipalId: string | undefined;
+    let reservedPayloadHash: string | undefined;
 
     try {
       // Handle CORS preflight (before casting to FridayHttpMethod)
@@ -1083,11 +1096,27 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
             return;
           }
 
-          const replayBody = JSON.stringify({
-            ok: true,
-            data: existing.data,
-            requestId,
-          });
+          // The prior completed response contained a secret shape, so only a non-replayable
+          // sentinel was persisted (never the raw secret). Refuse to serve a cached body — fail
+          // closed with a 409 rather than returning a placeholder that a client might mistake for
+          // the real payload. The caller re-issues with a fresh Idempotency-Key. STRING compare
+          // against the stored bytes — no stored object is re-serialized on the replay path.
+          if (existing.responseJson === FRIDAY_NON_REPLAYABLE_JSON) {
+            sendJsonWithHeaders(res, 409, {
+              ok: false,
+              error: {
+                code: "SECURITY_IDEMPOTENCY_NONREPLAYABLE",
+                message: "this operation completed but its response contained sensitive data and cannot be replayed; re-issue with a new Idempotency-Key.",
+                retryable: false,
+              },
+              requestId,
+            }, { ...corsHeaders, ...middlewareHeaders }, isHead);
+            return;
+          }
+
+          // Splice the RAW stored JSON string directly into the replay envelope — never JSON.parse +
+          // re-JSON.stringify a stored object (a polluted `toJSON` could then re-inject a secret).
+          const replayBody = `{"ok":true,"data":${existing.responseJson ?? "null"},"requestId":${JSON.stringify(requestId)}}`;
           const replayHeaders: Record<string, string | number> = {
             "Content-Type": "application/json; charset=utf-8",
             "Content-Length": Buffer.byteLength(replayBody),
@@ -1118,26 +1147,39 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
           expiresAtMs: Date.now() + FRIDAY_IDEMPOTENCY_TTL_MS,
         });
         idempotencyStoreKey = idempotencyLookupKey;
+        // Capture the reservation's authoritative identity so completion REUSES them rather than
+        // recomputing (a recompute could diverge from the reserved values, e.g. under a polluted
+        // Object.prototype.toJSON that mutates the hashed payload's serialization statefully).
+        reservedPrincipalId = principalId;
+        reservedPayloadHash = payloadHash;
       }
 
       // Inject raw response reference for SSE streaming routes
       (ctx as FridayHttpContext<unknown, unknown, unknown> & { _raw?: ServerResponse })._raw = res;
 
-      // Call handler
+      // Call handler. Once this returns (or throws) any durable side-effect it performed is
+      // committed, so from here the reservation transitions only to `completed` or `indeterminate`
+      // — never released — else a same-key retry could re-execute the effect.
       const result = await route.handler(ctx);
 
-      // If the handler already took over the response (e.g. SSE streaming), bail out.
-      // The handler owns the response, so there is no replayable JSON body to cache — drop the
-      // in-flight reservation so the key is not wedged until TTL.
+      // The handler took over the response (e.g. SSE streaming): there is no replayable JSON body,
+      // and it may have committed an effect. Fail CLOSED — mark the reservation indeterminate (kept,
+      // never deleted) so a same-key retry is refused rather than re-executing. (Previously released,
+      // which let a retry re-run a committed effect.)
       if (res.headersSent || res.writableEnded) {
-        if (idempotencyStoreKey) idempotencyStore.release(idempotencyStoreKey);
+        if (idempotencyStoreKey) {
+          try { idempotencyStore.markIndeterminate(idempotencyStoreKey); } catch { /* boot reconcile handles a residual in_flight row */ }
+        }
         return;
       }
 
       if (isFridayHttpRawTextResponse(result)) {
-        // Raw-text responses are not cached for replay (original behavior); release the
-        // reservation so a later same-key request is not rejected against a never-completed entry.
-        if (idempotencyStoreKey) idempotencyStore.release(idempotencyStoreKey);
+        // Raw-text responses are not cached for replay; like the SSE path, mark the reservation
+        // indeterminate (fail closed) instead of releasing it, so a committed effect cannot be
+        // re-executed by a same-key retry.
+        if (idempotencyStoreKey) {
+          try { idempotencyStore.markIndeterminate(idempotencyStoreKey); } catch { /* boot reconcile handles a residual in_flight row */ }
+        }
         const responseBody = result.body;
         const responseHeaders: Record<string, string | number> = {
           "Content-Type": result.contentType ?? "text/plain; charset=utf-8",
@@ -1156,31 +1198,61 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         return;
       }
 
-      assertSerializableJsonResponse(result, route.operationId);
+      if (result === undefined) {
+        throw new Error(`Route '${route.operationId}' returned undefined without taking over the response`);
+      }
+
+      // EXACT-BYTE BOUNDARY: serialize the handler result to a STRING exactly ONCE. Everything
+      // downstream (secret inspection, at-rest persistence, the response body, and any later replay)
+      // operates ONLY on this string — no result-derived object is ever re-serialized. A polluted /
+      // stateful `Object.prototype.toJSON` therefore cannot make the inspected bytes differ from the
+      // persisted or served bytes: there is exactly one serialization, so there is nothing to diverge.
+      let serializedResult: string | undefined;
+      try {
+        serializedResult = JSON.stringify(result ?? null);
+      } catch (err) {
+        throw new Error(
+          `Route '${route.operationId}' returned a non-JSON-serializable response: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      // `JSON.stringify` returns `undefined` (WITHOUT throwing) for a top-level symbol or function.
+      // The TS lib types it as `string`, so this runtime guard is load-bearing: splicing `undefined`
+      // into the envelope below would emit an invalid `{"ok":true,"data":undefined,...}` body with a
+      // 200 status. Route it through the same non-JSON-serializable error path instead — BEFORE secret
+      // inspection, journal completion, or response construction — so no malformed 200 and no
+      // malformed replay row is ever produced.
+      if (serializedResult === undefined) {
+        throw new Error(
+          `Route '${route.operationId}' returned a non-JSON-serializable response (a top-level symbol or function)`,
+        );
+      }
 
       if (idempotencyStoreKey) {
-        // Upgrade the in-flight reservation to a completed, replayable entry.
+        // Inspect the EXACT string that will be persisted. Store the non-replayable sentinel STRING
+        // when a secret shape is present, else the serialized string verbatim. REUSE the reservation's
+        // principal + payload digest (never recompute) so the completed row matches the reserved row.
+        const replayJson = findSecretShapeSpans(serializedResult).length > 0
+          ? FRIDAY_NON_REPLAYABLE_JSON
+          : serializedResult;
         idempotencyStore.complete(idempotencyStoreKey, {
           operationId: route.operationId,
-          principalId: ctx.principal?.principalId ?? "anonymous",
-          payloadHash: hashIdempotencyPayload({
+          principalId: reservedPrincipalId ?? (ctx.principal?.principalId ?? "anonymous"),
+          payloadHash: reservedPayloadHash ?? hashIdempotencyPayload({
             method,
             path: route.path,
             params,
             query,
             body,
           }),
-          data: result,
+          responseJson: replayJson,
           expiresAtMs: Date.now() + FRIDAY_IDEMPOTENCY_TTL_MS,
         });
       }
 
-      // Send success response with middleware + CORS headers merged in
-      const successBody = JSON.stringify({
-        ok: true,
-        data: result,
-        requestId,
-      });
+      // Build the success envelope by STRING SPLICING the one serialized-result string — never a
+      // re-serialization of `result`. The first caller always receives the real result bytes; only
+      // the STORED replay copy may have been swapped for the sentinel above.
+      const successBody = `{"ok":true,"data":${serializedResult},"requestId":${JSON.stringify(requestId)}}`;
       const responseHeaders: Record<string, string | number> = {
         "Content-Type": "application/json; charset=utf-8",
         "Content-Length": Buffer.byteLength(successBody),
@@ -1196,11 +1268,20 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         res.end(successBody);
       }
     } catch (error: unknown) {
-      // The handler threw, so no completed entry was written. Release the in-flight reservation
-      // so this idempotency key is retryable rather than wedged in_flight until TTL. Only set when
-      // THIS request won the reservation, so a lost cross-process reserve race never releases the
-      // winner's row.
-      if (idempotencyStoreKey) idempotencyStore.release(idempotencyStoreKey);
+      // ANY error after we hold the reservation fails CLOSED. A thrown handler may already have
+      // committed a durable effect (the effect and the completed-receipt write are separate
+      // transactions, and a rejected promise is NOT authoritative proof that no effect committed),
+      // so the reservation is marked indeterminate (kept, never deleted) — a same-key retry is
+      // refused rather than re-executing. Only act when THIS request won the reservation, so a lost
+      // cross-process reserve race never touches the winner's row. If the mark write itself fails,
+      // the row stays in_flight and boot reconcileOrphanedReservations() marks it indeterminate.
+      if (idempotencyStoreKey) {
+        try {
+          idempotencyStore.markIndeterminate(idempotencyStoreKey);
+        } catch {
+          /* leave in_flight; boot reconcile will mark it indeterminate */
+        }
+      }
       // If headers were already sent (e.g. SSE stream errored mid-flight), we cannot send JSON
       if (res.headersSent || res.writableEnded) {
         res.end();
