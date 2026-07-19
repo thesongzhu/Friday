@@ -1207,12 +1207,23 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       // operates ONLY on this string — no result-derived object is ever re-serialized. A polluted /
       // stateful `Object.prototype.toJSON` therefore cannot make the inspected bytes differ from the
       // persisted or served bytes: there is exactly one serialization, so there is nothing to diverge.
-      let serializedResult: string;
+      let serializedResult: string | undefined;
       try {
         serializedResult = JSON.stringify(result ?? null);
       } catch (err) {
         throw new Error(
           `Route '${route.operationId}' returned a non-JSON-serializable response: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      // `JSON.stringify` returns `undefined` (WITHOUT throwing) for a top-level symbol or function.
+      // The TS lib types it as `string`, so this runtime guard is load-bearing: splicing `undefined`
+      // into the envelope below would emit an invalid `{"ok":true,"data":undefined,...}` body with a
+      // 200 status. Route it through the same non-JSON-serializable error path instead — BEFORE secret
+      // inspection, journal completion, or response construction — so no malformed 200 and no
+      // malformed replay row is ever produced.
+      if (serializedResult === undefined) {
+        throw new Error(
+          `Route '${route.operationId}' returned a non-JSON-serializable response (a top-level symbol or function)`,
         );
       }
 

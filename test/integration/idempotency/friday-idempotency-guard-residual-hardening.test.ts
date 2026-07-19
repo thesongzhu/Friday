@@ -518,4 +518,63 @@ describe("HTTP idempotency guard — residual hardening (DUR-OPERATION-JOURNAL-0
       expect(stored?.payload_digest).toBe(capturing.reservePayloadHash);
     },
   );
+
+  it(
+    "#2d non-JSON-serializable result (top-level symbol/function) → typed error, never a malformed 200 or completed row",
+    async () => {
+      layer = createTestDb();
+      const symbolRoute: FridayRouteEntry = {
+        operationId: "test.result.symbol",
+        method: "POST",
+        path: "/v1/test/symbol",
+        auth: { public: true, allowUnauthenticatedMutation: true },
+        // JSON.stringify(symbol) returns undefined WITHOUT throwing — the totality edge #2d covers.
+        handler: (async () => Symbol("nope")) as unknown as FridayRouteEntry["handler"],
+      };
+      const functionRoute: FridayRouteEntry = {
+        operationId: "test.result.function",
+        method: "POST",
+        path: "/v1/test/function",
+        auth: { public: true, allowUnauthenticatedMutation: true },
+        handler: (async () => () => "nope") as unknown as FridayRouteEntry["handler"],
+      };
+
+      const store = new FridaySqliteOperationJournalStore(layer);
+      booted = await bootServer([symbolRoute, functionRoute], store);
+
+      // (A) Symbol result WITH an Idempotency-Key. RED pre-fix: the splice emits `{"data":undefined,...}`
+      // as a 200 — invalid JSON, so JSON.parse below throws. The fix routes it to a valid typed error.
+      const key = "nonserializable-key-1";
+      const symRes = await fetch(`${booted.baseUrl}/v1/test/symbol`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+        body: JSON.stringify({ do: "x" }),
+      });
+      const symText = await symRes.text();
+      const symJson = JSON.parse(symText) as { ok?: boolean }; // throws on the malformed pre-fix 200
+      expect(symJson.ok).toBe(false);
+      expect(symRes.status).toBeGreaterThanOrEqual(400);
+      expect(symText).not.toContain("\"data\":undefined");
+
+      // No COMPLETED journal row with a malformed body was written for this key (the throw precedes complete()).
+      const row = layer.writer
+        .prepare("SELECT status, response_json FROM http_operation_journal WHERE idempotency_key = ?")
+        .get(key) as { status: string; response_json: string | null } | undefined;
+      if (row) {
+        expect(row.status).not.toBe("completed");
+        expect(row.response_json ?? "").not.toContain("undefined");
+      }
+
+      // (B) Function result WITHOUT a key: also a valid-JSON typed error, never a malformed 200.
+      const fnRes = await fetch(`${booted.baseUrl}/v1/test/function`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ do: "y" }),
+      });
+      const fnText = await fnRes.text();
+      const fnJson = JSON.parse(fnText) as { ok?: boolean };
+      expect(fnJson.ok).toBe(false);
+      expect(fnRes.status).toBeGreaterThanOrEqual(400);
+    },
+  );
 });
