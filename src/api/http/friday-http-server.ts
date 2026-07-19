@@ -1207,16 +1207,22 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
 
       assertSerializableJsonResponse(result, route.operationId);
 
+      // The bytes we may persist for replay MUST be the exact bytes we inspect for secrets. When we
+      // hold a reservation, serialize the handler result ONCE into an immutable, getter-free snapshot
+      // (`JSON.parse(JSON.stringify(...))`); a stateful `toJSON()`/getter then cannot make the
+      // inspected view differ from the stored or returned view. Non-idempotent requests keep the
+      // original object.
+      let responseData: unknown = result;
       if (idempotencyStoreKey) {
-        // Never persist raw secrets in the journal's cached-for-replay body. If the serialized
-        // handler result contains ANY secret shape (per the canonical detector — no per-route
-        // enumeration), store a non-replayable sentinel instead of the real payload, so
-        // `http_operation_journal.response_json` never holds a secret at rest. The response SENT to
-        // THIS caller below still uses the real `result` (the first call legitimately needs its
-        // tokens); only the stored replay copy is sanitized.
-        const storedData = findSecretShapeSpans(JSON.stringify(result ?? null)).length > 0
+        const snapshot: unknown = JSON.parse(JSON.stringify(result ?? null));
+        responseData = snapshot;
+        // Inspect the EXACT string that will be persisted: `snapshot` has no `toJSON`/getters, so
+        // `JSON.stringify(snapshot)` is deterministic and identical to what `complete()` re-serializes.
+        // Store the non-replayable sentinel when a secret shape is present, else the inspected
+        // snapshot — never the original object (whose serialization could differ on a later call).
+        const storedData = findSecretShapeSpans(JSON.stringify(snapshot)).length > 0
           ? FRIDAY_NON_REPLAYABLE_RESPONSE
-          : result;
+          : snapshot;
         // Upgrade the in-flight reservation to a completed, replayable entry.
         idempotencyStore.complete(idempotencyStoreKey, {
           operationId: route.operationId,
@@ -1233,10 +1239,11 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         });
       }
 
-      // Send success response with middleware + CORS headers merged in
+      // Send success response. For an idempotent request this uses the same immutable snapshot that
+      // was inspected + persisted, so the returned, stored, and inspected bytes cannot diverge.
       const successBody = JSON.stringify({
         ok: true,
-        data: result,
+        data: responseData,
         requestId,
       });
       const responseHeaders: Record<string, string | number> = {

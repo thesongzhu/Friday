@@ -46,6 +46,7 @@ import { createTestDb } from "../../unit/satellites/_helpers/create-test-db.help
 
 // A value the canonical secret-shape detector flags (OpenAI-style `sk-` + 30 base62 chars).
 const SECRET_TOKEN = "sk-livesecret0123456789abcdef0123"; // pragma: allowlist secret
+const STATEFUL_SECRET = "sk-statefulLEAK0123456789abcdef01"; // pragma: allowlist secret
 
 // ─── Minimal wiring: public routes, so the guard runs without an auth/bearer dance ───
 
@@ -331,6 +332,56 @@ describe("HTTP idempotency guard — residual hardening (DUR-OPERATION-JOURNAL-0
       expect(replayJson.ok).toBe(false);
       expect(replayJson.error?.code).toBe("SECURITY_IDEMPOTENCY_NONREPLAYABLE");
       expect(replayJson.error?.retryable).toBe(false);
+    },
+  );
+
+  it(
+    "#2b stateful toJSON cannot slip a raw secret past inspection into response_json (inspected bytes == stored bytes)",
+    async () => {
+      layer = createTestDb();
+      let serializeCount = 0;
+      const statefulRoute: FridayRouteEntry = {
+        operationId: "test.stateful.tojson",
+        method: "POST",
+        path: "/v1/test/stateful",
+        auth: { public: true, allowUnauthenticatedMutation: true },
+        handler: (async () => {
+          // A response whose serialization is STATEFUL: benign on the first two JSON.stringify calls
+          // (the serializability assert + the secret inspection), then the raw secret on the third
+          // (the at-rest persistence). A check/use gap would inspect the benign view but persist the
+          // secret. With a single immutable snapshot, inspected bytes == stored bytes, so it cannot.
+          return {
+            toJSON() {
+              serializeCount += 1;
+              // Benign uses a non-credential key + clean value (so the detector does NOT fire on the
+              // inspected view); the secret is a raw `sk-`-shaped VALUE (fires on shape) surfaced only
+              // on the third serialization (the at-rest persistence).
+              return serializeCount <= 2
+                ? { note: "all-clear-placeholder" }
+                : { note: STATEFUL_SECRET };
+            },
+          };
+        }) as FridayRouteEntry["handler"],
+      };
+
+      const store = new FridaySqliteOperationJournalStore(layer);
+      booted = await bootServer([statefulRoute], store);
+
+      const key = "stateful-key-1";
+      const res = await fetch(`${booted.baseUrl}/v1/test/stateful`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+        body: JSON.stringify({ do: "stateful" }),
+      });
+      expect(res.status).toBe(200);
+
+      // The EXACT bytes persisted at rest must never contain a secret the detector was shown a benign
+      // view of. Verified RED on the prior head (inspection saw benign, persistence emitted the secret).
+      const stored = layer.writer
+        .prepare("SELECT response_json FROM http_operation_journal WHERE idempotency_key = ?")
+        .get(key) as { response_json: string | null } | undefined;
+      expect(stored).toBeDefined();
+      expect(stored?.response_json ?? "").not.toContain(STATEFUL_SECRET);
     },
   );
 });
