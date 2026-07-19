@@ -467,54 +467,89 @@ describe("Audit Sink Integration", () => {
   });
 });
 
-// ─── Audit-Sink Failure Message Scrubbing (canonical secret detector) ───
+// ─── Audit-Sink Failure Message Scrubbing (canonical detector ∪ full legacy display regex) ───
 
-// SEC — the audit-sink exception message (surfaced to `auditSinkFailures` + `console.warn`) is scrubbed
-// by the CANONICAL secret-shape detector (`redactSecretShapesInString`), NOT a divergent local prefix
-// list. The old local regex covered `gsk_` but MISSED `hf_` / `glpat-` / `ghp_` / AWS / JWT / PEM etc.
-// RED on the pre-fix emitter (hf_/glpat- passed through verbatim to the logs); GREEN once the scrub
-// converges onto the single canonical detector.
+// SEC — the audit-sink exception message reaches BOTH `auditSinkFailures[0].message` and the process
+// logs via `console.warn`. It is scrubbed by the CANONICAL secret-shape detector
+// (`redactSecretShapesInString`) UNIONED with the FULL unchanged legacy display regex. The canonical
+// detector adds the shapes the old local list MISSED (`hf_` / `glpat-` / `ghp_` / AWS / JWT / PEM …);
+// the full legacy regex is retained as a display-only over-redactor so EVERY shape + threshold the old
+// scrub redacted still redacts — including SUB-THRESHOLD `sk-`/`rk-`/`xai-`/`gsk_` bodies (8–15 chars)
+// that canonical (which requires the real credential length `{16,}`/`{40,}`) does NOT match. Both are
+// asserted on BOTH sinks (surfaced message + spied `console.warn`).
 describe("Audit Sink Failure Message Scrubbing", () => {
   // Build secret-shaped fixtures at runtime so no contiguous literal token ever appears in SOURCE
   // (GitHub push protection scans source text and does NOT honor the detect-secrets pragma — same
-  // rationale as the redactor unit test's `stripeShaped` helper). At runtime each concatenation
-  // produces the exact provider shape the canonical redactor recognizes.
+  // rationale as the redactor unit test's `stripeShaped` helper).
   const hfToken = "hf_" + "AbCdEfGhIjKlMnOpQrStUvWx0123456789yZ"; // pragma: allowlist secret
   const glpatToken = "glpat-" + "AbCdEfGhIjKlMnOpQrStUv"; // pragma: allowlist secret
   const gskToken = "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd"; // pragma: allowlist secret
+  // SUB-THRESHOLD legacy-only shapes: 8-char bodies the OLD `{8,}` regex redacted but canonical
+  // (`sk-`/`rk-`/`xai-` need `{16,}`, `gsk_` needs `{40,}`) does NOT — these MUST stay redacted.
+  const shortSk = "sk-" + "AbCdEf12"; // pragma: allowlist secret
+  const shortRk = "rk-" + "AbCdEf12"; // pragma: allowlist secret
+  const shortXai = "xai-" + "AbCdEf12"; // pragma: allowlist secret
+  const shortGsk = "gsk_" + "AbCdEf12"; // pragma: allowlist secret
 
-  function scrubbedFailureMessage(errorMessage: string): string {
-    const bus = freshBus();
-    const emitter = createExecutionControlEventEmitter({
-      eventBus: bus,
-      nowIso,
-      auditSink: () => {
-        throw new Error(errorMessage);
-      },
-    });
-    emitter.emit("rules.bundle.created", { bundleId: "pb-1", name: "test" });
-    expect(emitter.auditSinkFailures).toHaveLength(1);
-    return emitter.auditSinkFailures[0].message;
+  // Drive the audit-sink-throws path and capture what reaches BOTH sinks: the surfaced
+  // `auditSinkFailures[0].message` AND the process-log line emitted via `console.warn` (spied).
+  function driveAuditSinkFailure(errorMessage: string): { surfaced: string; warned: string } {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const bus = freshBus();
+      const emitter = createExecutionControlEventEmitter({
+        eventBus: bus,
+        nowIso,
+        auditSink: () => {
+          throw new Error(errorMessage);
+        },
+      });
+      emitter.emit("rules.bundle.created", { bundleId: "pb-1", name: "test" });
+      expect(emitter.auditSinkFailures).toHaveLength(1);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      return {
+        surfaced: emitter.auditSinkFailures[0].message,
+        warned: warnSpy.mock.calls[0].map(String).join(" "),
+      };
+    } finally {
+      warnSpy.mockRestore();
+    }
+  }
+
+  function expectRedactedNotLeaked(errorMessage: string, ...rawTokens: string[]): void {
+    const { surfaced, warned } = driveAuditSinkFailure(errorMessage);
+    for (const raw of rawTokens) {
+      expect(surfaced, `surfaced leaked ${raw.slice(0, 6)}`).not.toContain(raw);
+      expect(warned, `console.warn leaked ${raw.slice(0, 6)}`).not.toContain(raw);
+    }
+    expect(surfaced).toContain("[REDACTED]");
+    expect(warned).toContain("[REDACTED]");
   }
 
   it("redacts hf_ / glpat- tokens the old local prefix list MISSED (canonical convergence)", () => {
-    const scrubbed = scrubbedFailureMessage(
+    expectRedactedNotLeaked(
       `Audit persistence failed for hf=${hfToken} gitlab=${glpatToken}`,
+      hfToken,
+      glpatToken,
     );
-    expect(scrubbed).not.toContain(hfToken);
-    expect(scrubbed).not.toContain(glpatToken);
-    expect(scrubbed).toContain("[REDACTED]");
   });
 
-  it("still redacts a gsk_ token the local regex already covered (no regression)", () => {
-    const scrubbed = scrubbedFailureMessage(`Audit persistence failed for token=${gskToken}`);
-    expect(scrubbed).not.toContain(gskToken);
-    expect(scrubbed).toContain("[REDACTED]");
+  it("redacts SUB-THRESHOLD sk-/rk-/xai-/gsk_ bodies the legacy regex covered but canonical does not (no recall regression)", () => {
+    expectRedactedNotLeaked(`fail sk=${shortSk}`, shortSk);
+    expectRedactedNotLeaked(`fail rk=${shortRk}`, shortRk);
+    expectRedactedNotLeaked(`fail xai=${shortXai}`, shortXai);
+    expectRedactedNotLeaked(`fail gsk=${shortGsk}`, shortGsk);
   });
 
-  it("leaves a benign exception message byte-identical (no over-redaction)", () => {
+  it("still redacts a realistic-length gsk_ token (no regression on the previously-covered prefix)", () => {
+    expectRedactedNotLeaked(`Audit persistence failed for token=${gskToken}`, gskToken);
+  });
+
+  it("leaves a benign exception message byte-identical on both sinks (no over-redaction)", () => {
     const benign = "Audit sink unavailable: connection refused (ECONNREFUSED) after 3 retries";
-    expect(scrubbedFailureMessage(benign)).toBe(benign);
+    const { surfaced, warned } = driveAuditSinkFailure(benign);
+    expect(surfaced).toBe(benign);
+    expect(warned).toContain(benign);
   });
 });
 
