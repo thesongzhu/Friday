@@ -46,6 +46,10 @@ import type { FridayStateRuntime } from "#state";
 import { createFridayLocalDaemonService } from "#daemon";
 import { createFridayMutatingActionGate } from "../security/friday-mutating-action-gate.js";
 import {
+  fridayProtectedProfileTestOnlySwitchMessage,
+  isFridayProtectedReleaseProfile,
+} from "../security/friday-protected-profile.js";
+import {
   buildFridayRuntimeCapabilityMatrix,
   createFridayProviderCostCalculator,
   createFridayProviderPricingCatalog,
@@ -870,10 +874,14 @@ export function resolveFridayHubConfig(
   const allowTestOnlyPluginExecution = resolveTestOnlyFlagFromEnv(
     input.allowTestOnlyPluginExecution,
     env.FRIDAY_ALLOW_TEST_ONLY_PLUGIN_EXECUTION,
+    "FRIDAY_ALLOW_TEST_ONLY_PLUGIN_EXECUTION",
+    env,
   );
   const allowTestOnlyAutonomyLifecycleExecution = resolveTestOnlyFlagFromEnv(
     input.allowTestOnlyAutonomyLifecycleExecution,
     env.FRIDAY_ALLOW_TEST_ONLY_AUTONOMY_LIFECYCLE_EXECUTION,
+    "FRIDAY_ALLOW_TEST_ONLY_AUTONOMY_LIFECYCLE_EXECUTION",
+    env,
   );
   const pluginRuntimeModeRaw = input.pluginRuntimeMode ?? env.FRIDAY_PLUGIN_RUNTIME_MODE ?? "stub";
   const pluginRuntimeMode = pluginRuntimeModeRaw === "full"
@@ -917,22 +925,42 @@ export function resolveFridayHubConfig(
 }
 
 function isFridayCanonicalGateProtectedProfile(env: NodeJS.ProcessEnv): boolean {
-  return env.NODE_ENV?.trim().toLowerCase() === "production"
-    || Boolean(env.FRIDAY_RELEASE_TAG?.trim());
+  // Single source of truth (shared with secret-crypto) — see friday-protected-profile.ts.
+  return isFridayProtectedReleaseProfile(env);
 }
 
+/**
+ * Resolve a test-only activation flag from an EXPLICIT config boolean or, as a
+ * fallback, its `FRIDAY_ALLOW_TEST_ONLY_*` ENV var.
+ *
+ * ART-NONPROD-001 (fail-closed): a test/mock lane MUST NOT be activatable in a
+ * production / tagged-release build. When the resolved value would be `true`
+ * AND the runtime is a protected profile, THROW instead of activating. This
+ * mirrors the `resolveFridayCanonicalMutatingActionGate` throw precedent. The
+ * throw covers BOTH the env-sourced path (the primary defect) and, as
+ * defense-in-depth, an explicit `configValue === true`.
+ */
 function resolveTestOnlyFlagFromEnv(
   configValue: boolean | undefined,
   envValue: string | undefined,
+  envVarName: string,
+  env: NodeJS.ProcessEnv,
 ): boolean | undefined {
   if (typeof configValue === "boolean") {
+    if (configValue === true && isFridayCanonicalGateProtectedProfile(env)) {
+      throw new Error(fridayProtectedProfileTestOnlySwitchMessage(envVarName));
+    }
     return configValue;
   }
   const raw = (envValue ?? "").trim().toLowerCase();
   if (raw === "") {
     return undefined;
   }
-  return raw === "1" || raw === "true";
+  const enabled = raw === "1" || raw === "true";
+  if (enabled && isFridayCanonicalGateProtectedProfile(env)) {
+    throw new Error(fridayProtectedProfileTestOnlySwitchMessage(envVarName));
+  }
+  return enabled;
 }
 
 export function resolveFridayCanonicalMutatingActionGate(
@@ -1514,10 +1542,14 @@ export async function createFridayHub(
   const configuredAllowTestOnlyPluginExecution = resolveTestOnlyFlagFromEnv(
     config.allowTestOnlyPluginExecution,
     process.env.FRIDAY_ALLOW_TEST_ONLY_PLUGIN_EXECUTION,
+    "FRIDAY_ALLOW_TEST_ONLY_PLUGIN_EXECUTION",
+    process.env,
   );
   const configuredAllowTestOnlyAutonomyLifecycleExecution = resolveTestOnlyFlagFromEnv(
     config.allowTestOnlyAutonomyLifecycleExecution,
     process.env.FRIDAY_ALLOW_TEST_ONLY_AUTONOMY_LIFECYCLE_EXECUTION,
+    "FRIDAY_ALLOW_TEST_ONLY_AUTONOMY_LIFECYCLE_EXECUTION",
+    process.env,
   );
   const configuredPluginRuntimeModeRaw = (
     config.pluginRuntimeMode ??
