@@ -218,6 +218,66 @@ describe("HTTP idempotency guard — residual hardening (DUR-OPERATION-JOURNAL-0
   );
 
   it(
+    "#1b handler commits a durable effect and THEN throws — fails CLOSED (indeterminate), retry refused, effect not re-executed",
+    async () => {
+      layer = createTestDb();
+      let effectCount = 0;
+      const effectThenThrowRoute: FridayRouteEntry = {
+        operationId: "test.effect.commit.then.throw",
+        method: "POST",
+        path: "/v1/test/effect-throw",
+        auth: { public: true, allowUnauthenticatedMutation: true },
+        handler: (async () => {
+          // The durable side-effect commits, THEN the handler throws (e.g. a later step fails). The
+          // completed-receipt write is never reached, so a promise-resolution heuristic would wrongly
+          // treat this as "no effect" and release the reservation — the exact defect this guards.
+          effectCount += 1;
+          throw new Error("handler failed AFTER committing its side-effect");
+        }) as FridayRouteEntry["handler"],
+      };
+
+      // Real durable store (no wrapper): the failure path is the HANDLER throwing, not complete().
+      const store = new FridaySqliteOperationJournalStore(layer);
+      booted = await bootServer([effectThenThrowRoute], store);
+
+      const key = "effect-throw-key-1";
+      const post = () =>
+        fetch(`${booted!.baseUrl}/v1/test/effect-throw`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+          body: JSON.stringify({ do: "commit-then-throw" }),
+        });
+
+      // First request: handler commits the effect (count → 1), then throws.
+      const firstRes = await post();
+      expect(firstRes.status).toBeGreaterThanOrEqual(500);
+      expect(effectCount).toBe(1);
+
+      // The reservation must NOT be deleted (release would let a retry re-execute); it is kept and
+      // marked indeterminate (fail-closed) — a rejected handler is not proof that no effect committed.
+      const row = layer.writer
+        .prepare("SELECT status FROM http_operation_journal WHERE idempotency_key = ?")
+        .get(key) as { status: string } | undefined;
+      expect(row).toBeDefined();
+      expect(row?.status).toBe("indeterminate");
+
+      // Retry with the SAME key: refused (non-retryable indeterminate 409); handler NOT re-run.
+      const retryRes = await post();
+      expect(retryRes.status).toBe(409);
+      const retryJson = (await retryRes.json()) as {
+        ok: boolean;
+        error?: { code?: string; retryable?: boolean };
+      };
+      expect(retryJson.ok).toBe(false);
+      expect(retryJson.error?.code).toBe("SECURITY_IDEMPOTENCY_INDETERMINATE");
+      expect(retryJson.error?.retryable).toBe(false);
+
+      // The committed side-effect happened EXACTLY ONCE (no re-execution across the retry).
+      expect(effectCount).toBe(1);
+    },
+  );
+
+  it(
     "#2 a secret-shaped response is sent to the first caller but never persisted; a replay is refused 409",
     async () => {
       layer = createTestDb();

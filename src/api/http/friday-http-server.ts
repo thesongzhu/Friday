@@ -770,12 +770,12 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
     const rawMethod = (req.method ?? "GET").toUpperCase();
     const isHead = rawMethod === "HEAD";
 
-    // Declared outside the request try so the catch block can release an in-flight idempotency
-    // reservation if the handler threw BEFORE committing its side-effect, or fail it CLOSED
-    // (indeterminate, never released) if the handler already committed and only the completed-receipt
-    // write failed. `handlerCommitted` records that boundary.
+    // Declared outside the request try so the catch block can fail the idempotency reservation
+    // CLOSED on ANY post-reservation error. Once we hold a reservation and have invoked the handler,
+    // a thrown handler MAY already have committed a durable effect (a rejected promise is NOT proof
+    // that no effect committed), so the reservation transitions only to `completed` (success) or
+    // `indeterminate` (failure) — it is NEVER released/deleted, which would let a retry re-execute.
     let idempotencyStoreKey: string | undefined;
-    let handlerCommitted = false;
 
     try {
       // Handle CORS preflight (before casting to FridayHttpMethod)
@@ -1164,29 +1164,29 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       // Inject raw response reference for SSE streaming routes
       (ctx as FridayHttpContext<unknown, unknown, unknown> & { _raw?: ServerResponse })._raw = res;
 
-      // Call handler
+      // Call handler. Once this returns (or throws) any durable side-effect it performed is
+      // committed, so from here the reservation transitions only to `completed` or `indeterminate`
+      // — never released — else a same-key retry could re-execute the effect.
       const result = await route.handler(ctx);
-      // The handler returned: any durable side-effect it performs is now committed. From here on a
-      // failure (e.g. the completed-receipt write below throwing) MUST NOT release the reservation —
-      // releasing it would let a retry re-execute the already-committed effect. See the catch block.
-      handlerCommitted = true;
 
-      // If the handler already took over the response (e.g. SSE streaming), bail out.
-      // The handler owns the response, so there is no replayable JSON body to cache — drop the
-      // in-flight reservation so the key is not wedged until TTL. SUCCESS-path release (the response
-      // has already been sent to the client): intentionally distinct from the error-path handling in
-      // the catch below, which must NOT release once the handler committed.
+      // The handler took over the response (e.g. SSE streaming): there is no replayable JSON body,
+      // and it may have committed an effect. Fail CLOSED — mark the reservation indeterminate (kept,
+      // never deleted) so a same-key retry is refused rather than re-executing. (Previously released,
+      // which let a retry re-run a committed effect.)
       if (res.headersSent || res.writableEnded) {
-        if (idempotencyStoreKey) idempotencyStore.release(idempotencyStoreKey);
+        if (idempotencyStoreKey) {
+          try { idempotencyStore.markIndeterminate(idempotencyStoreKey); } catch { /* boot reconcile handles a residual in_flight row */ }
+        }
         return;
       }
 
       if (isFridayHttpRawTextResponse(result)) {
-        // Raw-text responses are not cached for replay (original behavior); release the
-        // reservation so a later same-key request is not rejected against a never-completed entry.
-        // SUCCESS-path release (the raw-text response is sent just below): intentionally distinct
-        // from the catch-block error path, which must NOT release once the handler committed.
-        if (idempotencyStoreKey) idempotencyStore.release(idempotencyStoreKey);
+        // Raw-text responses are not cached for replay; like the SSE path, mark the reservation
+        // indeterminate (fail closed) instead of releasing it, so a committed effect cannot be
+        // re-executed by a same-key retry.
+        if (idempotencyStoreKey) {
+          try { idempotencyStore.markIndeterminate(idempotencyStoreKey); } catch { /* boot reconcile handles a residual in_flight row */ }
+        }
         const responseBody = result.body;
         const responseHeaders: Record<string, string | number> = {
           "Content-Type": result.contentType ?? "text/plain; charset=utf-8",
@@ -1254,27 +1254,18 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         res.end(successBody);
       }
     } catch (error: unknown) {
-      // Idempotency reservation disposition depends on WHETHER the handler already committed its
-      // side-effect (`handlerCommitted`). Only act when THIS request won the reservation, so a lost
-      // cross-process reserve race never touches the winner's row.
+      // ANY error after we hold the reservation fails CLOSED. A thrown handler may already have
+      // committed a durable effect (the effect and the completed-receipt write are separate
+      // transactions, and a rejected promise is NOT authoritative proof that no effect committed),
+      // so the reservation is marked indeterminate (kept, never deleted) — a same-key retry is
+      // refused rather than re-executing. Only act when THIS request won the reservation, so a lost
+      // cross-process reserve race never touches the winner's row. If the mark write itself fails,
+      // the row stays in_flight and boot reconcileOrphanedReservations() marks it indeterminate.
       if (idempotencyStoreKey) {
-        if (handlerCommitted) {
-          // The handler ran to completion — its durable side-effect is committed — and the failure
-          // is downstream of it (e.g. the completed-receipt write threw SQLITE_BUSY/IOERR AFTER the
-          // effect committed). RELEASING here would delete the reservation and let a retry with the
-          // same key re-execute the already-committed effect. Instead fail CLOSED: mark the row
-          // indeterminate (kept, never deleted) so the retry is refused. If even that write fails,
-          // leave the row in_flight — boot reconcileOrphanedReservations() will mark it indeterminate.
-          try {
-            idempotencyStore.markIndeterminate(idempotencyStoreKey);
-          } catch {
-            /* leave in_flight; boot reconcile will mark it indeterminate */
-          }
-        } else {
-          // The handler threw BEFORE committing any side-effect, so no completed entry was written
-          // and no effect happened. Release the reservation so this key is retryable rather than
-          // wedged in_flight until TTL.
-          idempotencyStore.release(idempotencyStoreKey);
+        try {
+          idempotencyStore.markIndeterminate(idempotencyStoreKey);
+        } catch {
+          /* leave in_flight; boot reconcile will mark it indeterminate */
         }
       }
       // If headers were already sent (e.g. SSE stream errored mid-flight), we cannot send JSON
