@@ -299,12 +299,23 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
       const existingAgentRunDigest = db
         .prepare("SELECT payload_digest FROM friday_agent_runs WHERE id = ?")
         .get(runId) as { payload_digest: string | null } | undefined;
-      if (
-        existingAgentRunDigest
-        && existingAgentRunDigest.payload_digest !== null
-        && existingAgentRunDigest.payload_digest !== payloadDigest
-      ) {
-        throwIdempotencyConflict(runId, "mission_spine.rust_continuity_projection");
+      if (existingAgentRunDigest) {
+        if (existingAgentRunDigest.payload_digest === null) {
+          // Legacy pre-v100 row (its `payload_digest` predates the digest column, so it is NULL):
+          // BACKFILL the canonical digest onto the row on the FIRST digest-bearing projection so a
+          // SUBSEQUENT projection of the same run_id with a DIFFERENT digest then hits the non-null
+          // typed-409 branch below. Without this the null short-circuits the guard, so a divergent
+          // re-projection is neither recorded nor flagged — it is silently dropped by INSERT OR
+          // IGNORE (the row already exists). Scoped to `payload_digest IS NULL` so it stamps a
+          // legacy row exactly once and never overwrites an already-stamped digest; atomic with the
+          // conflict decision inside the caller's write transaction (composeRustReadOnlyAgentRun
+          // runs project() in withWriteTransaction). Does NOT touch row content or the insert path.
+          db
+            .prepare("UPDATE friday_agent_runs SET payload_digest = ? WHERE id = ? AND payload_digest IS NULL")
+            .run(payloadDigest, runId);
+        } else if (existingAgentRunDigest.payload_digest !== payloadDigest) {
+          throwIdempotencyConflict(runId, "mission_spine.rust_continuity_projection");
+        }
       }
 
       const agentRunInsert = db
@@ -361,12 +372,19 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
       const existingUsageDigest = db
         .prepare("SELECT payload_digest FROM llm_usage_records WHERE id = ?")
         .get(usageLedgerId) as { payload_digest: string | null } | undefined;
-      if (
-        existingUsageDigest
-        && existingUsageDigest.payload_digest !== null
-        && existingUsageDigest.payload_digest !== payloadDigest
-      ) {
-        throwIdempotencyConflict(runId, "mission_spine.rust_continuity_projection");
+      if (existingUsageDigest) {
+        if (existingUsageDigest.payload_digest === null) {
+          // Legacy pre-v100 usage row (NULL digest): BACKFILL the canonical digest so a later
+          // divergent projection conflicts (via the non-null branch below) instead of being
+          // silently dropped by INSERT OR IGNORE. Companion to the agent_run backfill above;
+          // `payload_digest IS NULL` keeps it a first-write-only stamp, atomic with the conflict
+          // decision in the caller's transaction. Does NOT touch row content or the insert path.
+          db
+            .prepare("UPDATE llm_usage_records SET payload_digest = ? WHERE id = ? AND payload_digest IS NULL")
+            .run(payloadDigest, usageLedgerId);
+        } else if (existingUsageDigest.payload_digest !== payloadDigest) {
+          throwIdempotencyConflict(runId, "mission_spine.rust_continuity_projection");
+        }
       }
 
       const usageInsert = db

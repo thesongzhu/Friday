@@ -84,7 +84,21 @@ export function createFridayOutboxQueueService(
           | { id: string; payload_digest: string | null }
           | undefined;
         if (existing) {
-          if (existing.payload_digest !== null && existing.payload_digest !== payloadDigest) {
+          if (existing.payload_digest === null) {
+            // Legacy pre-v100 row (NULL digest): BACKFILL the canonical digest onto the row on the
+            // FIRST digest-bearing enqueue so a SUBSEQUENT enqueue that reuses this
+            // (satellite_id, idempotency_key) with a DIFFERENT message identity then hits the typed
+            // 409 branch below. Without this the null short-circuits the guard, so a divergent
+            // re-enqueue is silently resolved to the existing id instead of being flagged. Scoped to
+            // `payload_digest IS NULL` so it stamps a legacy row exactly once and never overwrites an
+            // already-stamped digest; atomic with the conflict decision inside this
+            // withWriteTransaction. Does NOT insert a row or alter the idempotent-replay path.
+            db
+              .prepare(
+                "UPDATE outbox_messages SET payload_digest = ? WHERE satellite_id = ? AND idempotency_key = ? AND payload_digest IS NULL",
+              )
+              .run(payloadDigest, input.satelliteId, input.idempotencyKey);
+          } else if (existing.payload_digest !== payloadDigest) {
             throwIdempotencyConflict(input.idempotencyKey, "outbox.enqueue");
           }
           // Same identity (idempotent retry) → resolve to the existing id, unchanged behavior.
