@@ -84,16 +84,25 @@ export type FridayLegacyDigestReconcileOutcome =
   | "match";
 
 /**
- * The SINGLE cross-store rule for reconciling a digest-bearing write against a pre-existing row,
- * INCLUDING legacy rows written before the v100 migration added the (nullable) `payload_digest`
- * column. Every cross-store idempotency site (HTTP journal, Rust continuity projector, satellite
- * outbox) routes through this one primitive so their legacy handling can never drift apart.
+ * The reconcile rule for a digest-bearing write against a pre-existing row, INCLUDING a legacy row
+ * written before the v100 migration added the (nullable) `payload_digest` column, for sites whose
+ * digest inputs are ALL persisted columns (so a legacy row's identity is EXACTLY reconstructable).
+ * The satellite outbox uses this: its digest is over the stable routing identity
+ * {satelliteId, queueKey, messageType, keyId}, all persisted, so the incoming digest can be
+ * recomputed from the row's own stored columns and compared exactly.
+ *
+ * Sites whose identity CANNOT be exactly reconstructed from persisted columns (e.g. the Rust
+ * continuity projector — its digest is over the whole receipt, which is not stored, and some
+ * receipt fields are never persisted) MUST NOT use this to backfill; they fail closed instead
+ * (a legacy row → typed conflict), because a lossy content comparison would launder a divergent
+ * write whose divergence lives in an omitted/unpersisted field.
  *
  * A legacy row has no stored digest to compare against, so this must NEVER blindly stamp the
  * incoming digest — that would LAUNDER a divergent write (same key reused for a DIFFERENT identity)
  * into "the canonical digest". Instead the caller supplies a `contentIdentity` recomputed
- * SYMMETRICALLY over the row's persisted columns and over the incoming write's values; equality
- * proves the incoming write reproduces the bytes ALREADY PERSISTED. Decisions:
+ * SYMMETRICALLY over the row's persisted columns and over the incoming write's values; for these
+ * exactly-reconstructable sites equality proves the incoming write reproduces the bytes ALREADY
+ * PERSISTED. Decisions:
  *   - no existing row              → `insert` (caller's INSERT stamps the digest).
  *   - legacy NULL + identity MATCH → `backfill` (caller stamps the digest first-write-only).
  *   - legacy NULL + identity DIFF  → throwIdempotencyConflict (genuine divergence; nothing stamped).

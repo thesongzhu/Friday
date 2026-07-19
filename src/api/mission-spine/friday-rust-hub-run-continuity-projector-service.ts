@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 import { FridayDomainError } from "#errors";
 import {
   hashIdempotencyPayload,
-  reconcileLegacyBackfillDigest,
+  throwIdempotencyConflict,
 } from "../http/routes/friday-route-idempotency.js";
 
 /**
@@ -218,203 +218,6 @@ function bodyRefFromReceipt(receipt: FridayRustHubRunReceipt): string {
   return `rust-run-body-ref:sha256=${receipt.finalMessageSha256};len=${receipt.finalMessageLen}`;
 }
 
-/**
- * Content-identity of a projected `friday_agent_runs` row: a digest over exactly the deterministic
- * columns the projection writes (the constant columns attempt/max_attempts/duration_ms/task are
- * omitted — they never vary between projections). It exists ONLY to decide, when a re-projection
- * lands on a LEGACY row whose `payload_digest` is NULL (pre-v100, so no receipt digest is stored
- * to compare against), whether the incoming projection reproduces the bytes ALREADY PERSISTED. The
- * SAME function is applied to the existing row's stored columns and to the values the incoming
- * projection would write, so equality proves identity symmetrically. This is a transient
- * comparison value, never persisted (the persisted digest is the receipt digest `payloadDigest`).
- */
-function projectedAgentRunContentIdentity(fields: {
-  status: string;
-  sessionKey: string | null;
-  providerId: string | null;
-  model: string | null;
-  completedAt: string | null;
-  usageInput: number | null;
-  usageOutput: number | null;
-  errorCode: string | null;
-  responseText: string | null;
-  summary: string | null;
-  metadataJson: string | null;
-}): string {
-  return hashIdempotencyPayload({
-    status: fields.status,
-    sessionKey: fields.sessionKey,
-    providerId: fields.providerId,
-    model: fields.model,
-    completedAt: fields.completedAt,
-    usageInput: fields.usageInput,
-    usageOutput: fields.usageOutput,
-    errorCode: fields.errorCode,
-    responseText: fields.responseText,
-    summary: fields.summary,
-    metadataJson: fields.metadataJson,
-  });
-}
-
-/**
- * Content-identity of a projected `llm_usage_records` row (companion to
- * {@link projectedAgentRunContentIdentity}); the constant columns provider_kind, provider_api,
- * route_strategy, task_complexity, cache_read/cache_write tokens, cost_usd and currency are omitted.
- * Same legacy-row backfill decision, same never-persisted transient role.
- */
-function projectedUsageContentIdentity(fields: {
-  occurredAt: string | null;
-  usageDay: string | null;
-  usageMonth: string | null;
-  providerId: string | null;
-  model: string | null;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  totalTokens: number | null;
-  metadataJson: string | null;
-  createdAt: string | null;
-}): string {
-  return hashIdempotencyPayload({
-    occurredAt: fields.occurredAt,
-    usageDay: fields.usageDay,
-    usageMonth: fields.usageMonth,
-    providerId: fields.providerId,
-    model: fields.model,
-    inputTokens: fields.inputTokens,
-    outputTokens: fields.outputTokens,
-    totalTokens: fields.totalTokens,
-    metadataJson: fields.metadataJson,
-    createdAt: fields.createdAt,
-  });
-}
-
-/**
- * Reconcile the projected `friday_agent_runs` row's digest against any pre-existing row (including a
- * LEGACY NULL-digest row), via the single {@link reconcileLegacyBackfillDigest} primitive: a legacy
- * row is stamped (backfilled) first-write-only ONLY when its persisted content-identity matches the
- * incoming projection, otherwise a divergence throws the typed 409 before any stamp. Runs inside the
- * caller's write transaction, so a throw rolls back data-loss-free.
- */
-function reconcileProjectedAgentRunDigest(
-  db: Database.Database,
-  runId: string,
-  payloadDigest: string,
-  incoming: Parameters<typeof projectedAgentRunContentIdentity>[0],
-): void {
-  const existing = db
-    .prepare(
-      `SELECT status, session_key, provider_id, model, completed_at,
-              usage_input, usage_output, error_code, response_text, summary,
-              metadata_json, payload_digest
-         FROM friday_agent_runs WHERE id = ?`,
-    )
-    .get(runId) as
-    | {
-        status: string;
-        session_key: string | null;
-        provider_id: string | null;
-        model: string | null;
-        completed_at: string | null;
-        usage_input: number | null;
-        usage_output: number | null;
-        error_code: string | null;
-        response_text: string | null;
-        summary: string | null;
-        metadata_json: string | null;
-        payload_digest: string | null;
-      }
-    | undefined;
-  const outcome = reconcileLegacyBackfillDigest({
-    existing: existing && {
-      payloadDigest: existing.payload_digest,
-      contentIdentity: projectedAgentRunContentIdentity({
-        status: existing.status,
-        sessionKey: existing.session_key,
-        providerId: existing.provider_id,
-        model: existing.model,
-        completedAt: existing.completed_at,
-        usageInput: existing.usage_input,
-        usageOutput: existing.usage_output,
-        errorCode: existing.error_code,
-        responseText: existing.response_text,
-        summary: existing.summary,
-        metadataJson: existing.metadata_json,
-      }),
-    },
-    incomingDigest: payloadDigest,
-    incomingContentIdentity: projectedAgentRunContentIdentity(incoming),
-    conflictKey: runId,
-    conflictOperationId: "mission_spine.rust_continuity_projection",
-  });
-  if (outcome === "backfill") {
-    db
-      .prepare("UPDATE friday_agent_runs SET payload_digest = ? WHERE id = ? AND payload_digest IS NULL")
-      .run(payloadDigest, runId);
-  }
-}
-
-/**
- * Companion to {@link reconcileProjectedAgentRunDigest} for the `llm_usage_records` row — the SOLE
- * divergence check when the terminal agent_run row was reaped but the longer-retained usage ledger
- * row survives. Same single-primitive backfill/conflict rule.
- */
-function reconcileProjectedUsageDigest(
-  db: Database.Database,
-  runId: string,
-  usageLedgerId: string,
-  payloadDigest: string,
-  incoming: Parameters<typeof projectedUsageContentIdentity>[0],
-): void {
-  const existing = db
-    .prepare(
-      `SELECT occurred_at, usage_day, usage_month, provider_id, model,
-              input_tokens, output_tokens, total_tokens, metadata_json,
-              created_at, payload_digest
-         FROM llm_usage_records WHERE id = ?`,
-    )
-    .get(usageLedgerId) as
-    | {
-        occurred_at: string | null;
-        usage_day: string | null;
-        usage_month: string | null;
-        provider_id: string | null;
-        model: string | null;
-        input_tokens: number | null;
-        output_tokens: number | null;
-        total_tokens: number | null;
-        metadata_json: string | null;
-        created_at: string | null;
-        payload_digest: string | null;
-      }
-    | undefined;
-  const outcome = reconcileLegacyBackfillDigest({
-    existing: existing && {
-      payloadDigest: existing.payload_digest,
-      contentIdentity: projectedUsageContentIdentity({
-        occurredAt: existing.occurred_at,
-        usageDay: existing.usage_day,
-        usageMonth: existing.usage_month,
-        providerId: existing.provider_id,
-        model: existing.model,
-        inputTokens: existing.input_tokens,
-        outputTokens: existing.output_tokens,
-        totalTokens: existing.total_tokens,
-        metadataJson: existing.metadata_json,
-        createdAt: existing.created_at,
-      }),
-    },
-    incomingDigest: payloadDigest,
-    incomingContentIdentity: projectedUsageContentIdentity(incoming),
-    conflictKey: runId,
-    conflictOperationId: "mission_spine.rust_continuity_projection",
-  });
-  if (outcome === "backfill") {
-    db
-      .prepare("UPDATE llm_usage_records SET payload_digest = ? WHERE id = ? AND payload_digest IS NULL")
-      .run(payloadDigest, usageLedgerId);
-  }
-}
-
 export function createFridayRustHubRunContinuityProjectorService(): FridayRustHubRunContinuityProjectorService {
   return {
     project(db, receipt) {
@@ -489,25 +292,21 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
       // no-op (no dup, no throw). `create()` in the agent-run repo is a plain INSERT hardcoded
       // to 'pending', so it cannot be reused for an idempotent terminal projected row.
       //
-      // Digest guard: a pre-existing row whose stored digest DIFFERS is a genuine cross-store
-      // idempotency conflict (the same run_id projected from a divergent receipt), NOT a
-      // replay. INSERT OR IGNORE alone would silently drop the divergent projection; instead
-      // surface the SAME typed 409 the HTTP idempotency layer raises.
-      // Reconcile the agent_run digest (legacy backfill / cross-store conflict) via the single
-      // primitive — see `reconcileProjectedAgentRunDigest`.
-      reconcileProjectedAgentRunDigest(db, runId, payloadDigest, {
-        status,
-        sessionKey,
-        providerId: receipt.providerId,
-        model: receipt.model,
-        completedAt: completedAtIso,
-        usageInput: receipt.usagePromptTokens,
-        usageOutput: receipt.usageCompletionTokens,
-        errorCode,
-        responseText: responseTextRef,
-        summary,
-        metadataJson,
-      });
+      // Digest guard — FAIL-CLOSED on any pre-existing row that is not an EXACT digest match,
+      // INCLUDING a LEGACY (NULL-digest) pre-v100 row. A projected row's digest is over the WHOLE
+      // refs-only receipt, and the raw receipt is NOT persisted (nor are unpersisted receipt fields
+      // like modelSize/backendKind, nor several inserted columns), so the ORIGINAL receipt identity
+      // of a legacy row CANNOT be reconstructed — we therefore must NOT stamp/backfill a digest we
+      // cannot validate (that would launder a divergent re-projection). `null !== payloadDigest` is
+      // always true, so any digest-bearing projection landing on a legacy row raises the SAME typed
+      // 409 the non-null-divergent case raises, rather than being silently swallowed by INSERT OR
+      // IGNORE. A non-null EXACT match falls through to the idempotent INSERT OR IGNORE no-op.
+      const existingAgentRunDigest = db
+        .prepare("SELECT payload_digest FROM friday_agent_runs WHERE id = ?")
+        .get(runId) as { payload_digest: string | null } | undefined;
+      if (existingAgentRunDigest && existingAgentRunDigest.payload_digest !== payloadDigest) {
+        throwIdempotencyConflict(runId, "mission_spine.rust_continuity_projection");
+      }
 
       const agentRunInsert = db
         .prepare(
@@ -557,23 +356,17 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
         // wiring is deferred), so pricing is unresolved by definition.
         pricingResolved: false,
       });
-      // Digest guard (companion to the agent_run guard): a pre-existing usage row for this
-      // run whose stored digest DIFFERS is the same divergent-receipt conflict — surface the
-      // typed 409 rather than silently dropping via INSERT OR IGNORE.
-      // Companion reconcile for the usage row, through the SAME primitive — see
-      // `reconcileProjectedUsageDigest`.
-      reconcileProjectedUsageDigest(db, runId, usageLedgerId, payloadDigest, {
-        occurredAt: completedAtIso,
-        usageDay,
-        usageMonth,
-        providerId: receipt.providerId,
-        model: receipt.model,
-        inputTokens: receipt.usagePromptTokens,
-        outputTokens: receipt.usageCompletionTokens,
-        totalTokens: receipt.usageTotalTokens,
-        metadataJson: usageMetadataJson,
-        createdAt: completedAtIso,
-      });
+      // Digest guard (FAIL-CLOSED companion to the agent_run guard) — the SOLE divergence check
+      // when the terminal agent_run row was reaped but the longer-retained usage ledger row
+      // survives. Same rule: a legacy (NULL-digest) usage row's original receipt identity cannot be
+      // reconstructed, so any digest-bearing projection onto it (or a non-null divergent one) raises
+      // the typed 409 rather than stamping an unvalidatable digest; a non-null EXACT match no-ops.
+      const existingUsageDigest = db
+        .prepare("SELECT payload_digest FROM llm_usage_records WHERE id = ?")
+        .get(usageLedgerId) as { payload_digest: string | null } | undefined;
+      if (existingUsageDigest && existingUsageDigest.payload_digest !== payloadDigest) {
+        throwIdempotencyConflict(runId, "mission_spine.rust_continuity_projection");
+      }
 
       const usageInsert = db
         .prepare(
