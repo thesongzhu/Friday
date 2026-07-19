@@ -13,6 +13,11 @@ import {
   FRIDAY_BOOTSTRAP_NONCE_SWEEP_BATCH_LIMIT,
   FRIDAY_DEFAULT_RETENTION_POLICY,
 } from "./friday-retention.types.js";
+// SINGLE canonical authority for category → physical delete-target. The
+// SQL-direct DELETEs below interpolate the table name FROM this map (not a local
+// literal), so changing the canonical table changes the ACTUAL delete target —
+// genuine coupling shared with the inventory census oracle (INV-DATA-001).
+import { FRIDAY_RETENTION_CATEGORY_TARGETS as RETENTION_TARGETS } from "./friday-retention-targets.js";
 
 export interface FridayRetentionJob {
   run(nowIso?: string): FridayRetentionJobResult;
@@ -169,7 +174,7 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
           : deps.db.withWriteTransaction(
               (db) =>
                 db
-                  .prepare("DELETE FROM learning_events WHERE ts < ?")
+                  .prepare(`DELETE FROM ${RETENTION_TARGETS.learningEvents.table} WHERE ts < ?`)
                   .run(learningCutoff).changes,
             );
 
@@ -189,7 +194,7 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
           : deps.db.withWriteTransaction(
               (db) =>
                 db
-                  .prepare("DELETE FROM audit_logs WHERE ts < ?")
+                  .prepare(`DELETE FROM ${RETENTION_TARGETS.auditLogs.table} WHERE ts < ?`)
                   .run(auditCutoff).changes,
             );
 
@@ -202,7 +207,7 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
               (db) =>
                 db
                   .prepare(
-                    "DELETE FROM friday_agent_runs WHERE created_at < ? AND status IN ('completed', 'failed', 'cancelled')",
+                    `DELETE FROM ${RETENTION_TARGETS.agentRuns.table} WHERE created_at < ? AND status IN ('completed', 'failed', 'cancelled')`,
                   )
                   .run(agentRunCutoff).changes,
             );
@@ -215,7 +220,7 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
           : deps.db.withWriteTransaction(
               (db) =>
                 db
-                  .prepare("DELETE FROM llm_usage_records WHERE created_at < ?")
+                  .prepare(`DELETE FROM ${RETENTION_TARGETS.llmUsageRecords.table} WHERE created_at < ?`)
                   .run(llmUsageCutoff).changes,
             );
 
@@ -228,7 +233,7 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
               (db) =>
                 db
                   .prepare(
-                    "DELETE FROM error_incidents WHERE status = 'resolved' AND updated_at < ?",
+                    `DELETE FROM ${RETENTION_TARGETS.errorIncidents.table} WHERE status = 'resolved' AND updated_at < ?`,
                   )
                   .run(errorCutoff).changes,
             );

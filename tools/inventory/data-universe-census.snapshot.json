@@ -1,7 +1,7 @@
 {
   "truth": "data_universe_census_snapshot",
   "note": "AUTHORITATIVE data-universe census. SQLite = real migration execution + introspection (captures V069 dynamic columns + FTS shadow tables); Rust = static schema.rs parse (documented boundary); retention = canonical governance constants. Regenerate with INV_DATA_SNAPSHOT_REGEN=1 vitest run test/contracts/inventory/friday-data-universe-reconcile.contract.test.ts. The .mjs reconcile CLI fails closed if sourceFingerprint no longer matches disk.",
-  "sourceFingerprint": "sha256:430b3ec4d721f507644131434086ae20ef250bbccf3e00d2637d276e077e9a19",
+  "sourceFingerprint": "sha256:3b09d627de9d87f34a5451c8ef2ae39b90990d859a8152fe58b99e45a6eb7267",
   "coverage": {
     "totalElements": 251,
     "bySource": {

@@ -40,6 +40,12 @@ import {
   FRIDAY_DEFAULT_RETENTION_POLICY,
   FRIDAY_RETENTION_CONTENT_CATEGORIES,
 } from "../../src/jobs/retention/friday-retention.types.js";
+// SINGLE canonical authority for category → physical delete-target, shared with
+// the production reaper (friday-retention-job.ts). The census derives its
+// category→table classification from THIS map — no hand-maintained second copy —
+// so a changed real DELETE target reclassifies the census (and, via the source
+// fingerprint over the reaper + repositories, RED-s a stale snapshot).
+import { FRIDAY_RETENTION_CATEGORY_TARGETS } from "../../src/jobs/retention/friday-retention-targets.js";
 // Shared with the reconcile CLI so both sides compute the SAME source fingerprint.
 import { REPO_ROOT, computeSourceFingerprint } from "./data-universe-source-fingerprint.mjs";
 
@@ -87,26 +93,18 @@ function deriveEncryption(columns: string[]): string {
 }
 
 // ── Canonical retention category → physical table mapping ───────────────────
-// The physical DELETE target for each governance category is NOT cleanly exported
-// (it lives inline in the reaper's SQL + repos), so it is hand-maintained here —
-// but BOUND to the canonical category CONSTANTS by a fail-closed cross-check: if
-// source adds / removes / renames a retention category, `assertMappingCoversSource`
-// throws, so the change can never stay invisible (false-green). Everything not
-// listed defaults to `permanent-default` (DATA-RETENTION-001).
-const CONTENT_CATEGORY_TABLE: Record<string, string> = {
-  learningEvents: "learning_events",
-  heartbeats: "satellite_heartbeats",
-  skillRunTerminal: "skill_run_snapshots",
-  auditLogs: "audit_logs",
-  agentRuns: "friday_agent_runs",
-  llmUsageRecords: "llm_usage_records",
-  errorIncidents: "error_incidents",
-};
-const SECURITY_LIFECYCLE_TABLE: Record<string, string> = {
-  pairingRequestsDays: "satellite_pairing_requests",
-  outboxTerminalDays: "outbox_messages",
-  bootstrapNoncesConsumedDays: "friday_setup_bootstrap_nonces",
-};
+// There is NO hand-maintained mapping here anymore: the physical DELETE target
+// for every governance category is derived from the SINGLE canonical authority
+// `FRIDAY_RETENTION_CATEGORY_TARGETS` — the SAME map the production reaper
+// (friday-retention-job.ts) uses for its SQL-direct DELETEs. So a change to a
+// real DELETE target changes the census here too (genuine coupling), and the
+// source fingerprint (which now covers the reaper + repositories) RED-s a stale
+// snapshot. Everything not listed defaults to `permanent-default`
+// (DATA-RETENTION-001). `assertMappingCoversSource` still fails closed if a
+// governance category loses / gains / renames its physical target.
+const RETENTION_TARGET_TABLE = (category: string): string =>
+  FRIDAY_RETENTION_CATEGORY_TARGETS[category as keyof typeof FRIDAY_RETENTION_CATEGORY_TARGETS]
+    ?.table;
 
 /** The security-lifecycle categories = policy fields that are NOT content categories. */
 export function securityLifecycleCategories(): string[] {
@@ -122,28 +120,48 @@ function sameSet(a: string[], b: string[]): boolean {
   return b.every((x) => set.has(x));
 }
 
-/** Fail closed unless the hand-maintained mappings exactly cover the canonical source. */
+// Tables owned by a CONTENT category vs a SECURITY-LIFECYCLE category, PROJECTED
+// from the canonical authority (no second literal map). Precomputed once.
+const CONTENT_TARGET_TABLES = new Set<string>(
+  FRIDAY_RETENTION_CONTENT_CATEGORIES.map((c) => RETENTION_TARGET_TABLE(c)),
+);
+const SECURITY_TARGET_TABLES = new Set<string>(
+  securityLifecycleCategories().map((c) => RETENTION_TARGET_TABLE(c)),
+);
+
+/**
+ * Fail closed unless the canonical target map exactly covers the canonical
+ * governance categories. The content partition of the map must equal the content
+ * categories (arg / constant), and the security partition must equal the
+ * derived security-lifecycle categories — so adding / removing / renaming a
+ * retention category (in the categories constant OR the target map) can never
+ * stay invisible (false-green).
+ */
 function assertMappingCoversSource(contentCategories: readonly string[]): void {
-  if (!sameSet([...contentCategories], Object.keys(CONTENT_CATEGORY_TABLE))) {
+  const targetKeys = Object.keys(FRIDAY_RETENTION_CATEGORY_TARGETS);
+  const security = securityLifecycleCategories();
+  const securitySet = new Set(security);
+  const mappedContent = targetKeys.filter((k) => !securitySet.has(k));
+  if (!sameSet([...contentCategories], mappedContent)) {
     throw new DataOracleError(
       "retention_content_category_drift",
       `canonical content categories [${[...contentCategories].sort().join(",")}] ` +
-        `!= mapped [${Object.keys(CONTENT_CATEGORY_TABLE).sort().join(",")}] — update the category→table mapping`,
+        `!= content targets [${mappedContent.sort().join(",")}] — update FRIDAY_RETENTION_CATEGORY_TARGETS`,
     );
   }
-  const security = securityLifecycleCategories();
-  if (!sameSet(security, Object.keys(SECURITY_LIFECYCLE_TABLE))) {
+  const mappedSecurity = targetKeys.filter((k) => securitySet.has(k));
+  if (!sameSet(security, mappedSecurity)) {
     throw new DataOracleError(
       "retention_security_category_drift",
       `canonical security-lifecycle categories [${security.join(",")}] ` +
-        `!= mapped [${Object.keys(SECURITY_LIFECYCLE_TABLE).sort().join(",")}] — update the category→table mapping`,
+        `!= security targets [${mappedSecurity.sort().join(",")}] — update FRIDAY_RETENTION_CATEGORY_TARGETS`,
     );
   }
 }
 
 function deriveRetentionForTable(table: string): string {
-  if (new Set(Object.values(CONTENT_CATEGORY_TABLE)).has(table)) return "content-opt-in";
-  if (new Set(Object.values(SECURITY_LIFECYCLE_TABLE)).has(table)) return "security-lifecycle-ttl";
+  if (CONTENT_TARGET_TABLES.has(table)) return "content-opt-in";
+  if (SECURITY_TARGET_TABLES.has(table)) return "security-lifecycle-ttl";
   return "permanent-default";
 }
 
@@ -348,7 +366,7 @@ export function buildRetentionCensus(
       key: `retention:${category}`,
       kind: "retention-category",
       source: "retention",
-      table: CONTENT_CATEGORY_TABLE[category],
+      table: RETENTION_TARGET_TABLE(category),
       columns: [],
       columnCount: 0,
       derived: { owner: "friday-retention", encryption: "not-applicable", retention: "content-opt-in" },
@@ -359,7 +377,7 @@ export function buildRetentionCensus(
       key: `retention:${category}`,
       kind: "retention-category",
       source: "retention",
-      table: SECURITY_LIFECYCLE_TABLE[category],
+      table: RETENTION_TARGET_TABLE(category),
       columns: [],
       columnCount: 0,
       derived: {

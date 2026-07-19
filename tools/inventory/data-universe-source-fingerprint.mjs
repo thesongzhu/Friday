@@ -28,10 +28,17 @@ const SQLITE_MIGRATIONS_DIR = join(REPO_ROOT, "src", "state", "sqlite", "migrati
  *   - every SQLite migration `.ts` (incl. index.ts ordering + the migration types),
  *   - the migration runner (it creates `schema_migrations` + governs apply hooks),
  *   - the Rust-owned `schema.rs` (parsed statically — documented boundary),
- *   - the retention policy category constants (canonical governance source), and
+ *   - the retention policy category constants (canonical governance source),
+ *   - the canonical retention category → physical-target map
+ *     (`friday-retention-targets.ts`) that BOTH the reaper and this census consume,
+ *   - EVERY executable retention-target source — the reaper itself
+ *     (`friday-retention-job.ts`, which runs the SQL-direct DELETEs) AND every
+ *     repository that owns a repository-routed retention DELETE (skill-run store,
+ *     heartbeat / outbox / pairing-request / bootstrap-nonce repos) — so a change
+ *     to ANY real retention delete target invalidates the snapshot fingerprint, and
  *   - the census oracle itself (its introspection / rust-parse / mapping logic).
- * A change to ANY of these can change the census, so ANY change must re-stamp the
- * snapshot.
+ * A change to ANY of these can change the census (or a real delete target), so
+ * ANY change must re-stamp the snapshot.
  */
 export function sourceInputFiles() {
   const files = [];
@@ -41,6 +48,29 @@ export function sourceInputFiles() {
   files.push(join(REPO_ROOT, "src", "state", "sqlite", "friday-migration-runner.ts"));
   files.push(join(REPO_ROOT, "rust-core", "crates", "friday-storage", "src", "schema.rs"));
   files.push(join(REPO_ROOT, "src", "jobs", "retention", "friday-retention.types.ts"));
+  // Canonical category → physical-target authority (consumed by BOTH the reaper
+  // and the oracle) + every executable retention-target source.
+  files.push(join(REPO_ROOT, "src", "jobs", "retention", "friday-retention-targets.ts"));
+  files.push(join(REPO_ROOT, "src", "jobs", "retention", "friday-retention-job.ts"));
+  files.push(join(REPO_ROOT, "src", "ledger", "runs", "friday-skill-run-store.ts"));
+  files.push(
+    join(REPO_ROOT, "src", "satellites", "persistence", "friday-satellite-heartbeat-repository.ts"),
+  );
+  files.push(
+    join(REPO_ROOT, "src", "satellites", "persistence", "friday-outbox-message-repository.ts"),
+  );
+  files.push(
+    join(
+      REPO_ROOT,
+      "src",
+      "satellites",
+      "persistence",
+      "friday-satellite-pairing-request-repository.ts",
+    ),
+  );
+  files.push(
+    join(REPO_ROOT, "src", "api", "persistence", "friday-setup-bootstrap-nonce-repository.ts"),
+  );
   files.push(join(HERE, "data-universe-oracle.ts"));
   return files.sort();
 }
