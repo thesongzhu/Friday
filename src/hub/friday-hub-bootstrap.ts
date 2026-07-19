@@ -334,6 +334,7 @@ import { createFridaySatelliteRuntimeRoutes } from "../api/http/routes/friday-sa
 import { scanLocalSkills } from "../skills/converter/discovery/friday-local-skill-scanner.js";
 import { getCommunitySkillCatalog } from "../skills/converter/discovery/friday-community-skill-catalog.js";
 import { createFridayScanMigrateRoutes } from "../api/http/routes/friday-scan-migrate-routes.js";
+import { hashIdempotencyPayload } from "../api/http/routes/friday-route-idempotency.js";
 import { createFridaySessionService } from "#sessions";
 import {
   computeNextRunAtMs,
@@ -8933,6 +8934,19 @@ export async function createFridayHub(
           timeoutMs: effectiveTimeoutMs,
           requestedAt: now,
         };
+        // Stable logical-payload identity: the control payload MINUS `requestedAt` (the only
+        // volatile field — a per-dispatch timestamp, also embedded in the idempotencyKey below).
+        // `timeoutMs` is kept: it is a bound of the requested operation, not a transport/nonce
+        // field, so a reuse of the key with a different timeout is a genuinely different op.
+        const logicalPayloadDigest = hashIdempotencyPayload({
+          type: payload.type,
+          nodeId: payload.nodeId,
+          command: payload.command,
+          args: payload.args,
+          timeoutMs: payload.timeoutMs,
+          // requestedAt EXCLUDED: per-dispatch timestamp; a same-key retry of the SAME control
+          // op must stay idempotent (no over-fail).
+        });
         const queued = satelliteRuntime.outbox.enqueue({
           satelliteId,
           queueKey: `node:${satelliteId}`,
@@ -8941,6 +8955,7 @@ export async function createFridayHub(
           nonce: "inline-transport",
           keyId: "inline-transport:v1",
           idempotencyKey: `node-control:${satelliteId}:${command}:${now}`,
+          logicalPayloadDigest,
           expiresAt,
         });
 

@@ -73,24 +73,35 @@ export function createFridayOutboxQueueService(
         keyId: input.keyId,
       });
       return deps.db.withWriteTransaction((db) => {
-        // A pre-existing row for this (satellite_id, idempotency_key) with a DIFFERENT stored
-        // digest is the same key reused for a DIFFERENT message identity: surface the typed 409
-        // conflict rather than silently resolving to the existing id.
+        // The AUTHORITATIVE idempotency identity is the caller-computed `logical_payload_digest`
+        // (the digest over the STABLE logical operation payload). The routing `payload_digest`
+        // above is kept for back-compat only — it EXCLUDES the operation payload and so cannot
+        // distinguish a reused idempotency_key carrying a DIFFERENT logical operation.
         const existing = db
           .prepare(
-            "SELECT id, payload_digest FROM outbox_messages WHERE satellite_id = ? AND idempotency_key = ?",
+            "SELECT id, logical_payload_digest FROM outbox_messages WHERE satellite_id = ? AND idempotency_key = ?",
           )
           .get(input.satelliteId, input.idempotencyKey) as
-          | { id: string; payload_digest: string | null }
+          | { id: string; logical_payload_digest: string | null }
           | undefined;
         if (existing) {
-          if (existing.payload_digest !== null && existing.payload_digest !== payloadDigest) {
+          if (existing.logical_payload_digest === null) {
+            // Legacy pre-v107 row: its logical-payload identity was never recorded and cannot be
+            // reconstructed (the persisted ciphertext is not a stable identity), so we MUST NOT
+            // resolve or stamp — that would launder a possibly-divergent payload. Fail closed with
+            // the typed 409.
             throwIdempotencyConflict(input.idempotencyKey, "outbox.enqueue");
           }
-          // Same identity (idempotent retry) → resolve to the existing id, unchanged behavior.
+          if (existing.logical_payload_digest !== input.logicalPayloadDigest) {
+            // Same key reused for a DIFFERENT logical payload → typed 409 (not a silent resolve).
+            throwIdempotencyConflict(input.idempotencyKey, "outbox.enqueue");
+          }
+          // Same logical payload (volatile transport fields may differ) → idempotent resolve,
+          // unchanged behavior.
           return { id: existing.id };
         }
 
+        // fresh insert (writes routing payload_digest AND logical_payload_digest)
         deps.outboxRepo.insertMessage(db, id, input, nowIso, payloadDigest);
         return { id };
       });

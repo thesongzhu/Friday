@@ -292,16 +292,20 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
       // no-op (no dup, no throw). `create()` in the agent-run repo is a plain INSERT hardcoded
       // to 'pending', so it cannot be reused for an idempotent terminal projected row.
       //
-      // Digest guard: a pre-existing row whose stored digest DIFFERS is a genuine cross-store
-      // idempotency conflict (the same run_id projected from a divergent receipt), NOT a
-      // replay. INSERT OR IGNORE alone would silently drop the divergent projection; instead
-      // surface the SAME typed 409 the HTTP idempotency layer raises.
+      // Digest guard (FAIL-CLOSED): a pre-existing row whose stored digest DIFFERS from the
+      // digest of THIS receipt is a genuine cross-store idempotency conflict (the same run_id
+      // projected from a divergent receipt), NOT a replay; INSERT OR IGNORE alone would silently
+      // drop the divergent projection, so surface the SAME typed 409 the HTTP idempotency layer
+      // raises. A legacy NULL-digest row ALSO fails closed here (`null !== payloadDigest`): the
+      // whole-receipt digest is NOT reconstructable from the persisted columns (the raw receipt,
+      // plus `modelSize`/`backendKind`, are not stored), so we cannot prove a NULL-digest row was
+      // projected from THIS same receipt — treating it as an idempotent no-op could silently
+      // swallow a divergence. Only a NON-NULL EXACT match is the idempotent no-op.
       const existingAgentRunDigest = db
         .prepare("SELECT payload_digest FROM friday_agent_runs WHERE id = ?")
         .get(runId) as { payload_digest: string | null } | undefined;
       if (
         existingAgentRunDigest
-        && existingAgentRunDigest.payload_digest !== null
         && existingAgentRunDigest.payload_digest !== payloadDigest
       ) {
         throwIdempotencyConflict(runId, "mission_spine.rust_continuity_projection");
@@ -355,15 +359,17 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
         // wiring is deferred), so pricing is unresolved by definition.
         pricingResolved: false,
       });
-      // Digest guard (companion to the agent_run guard): a pre-existing usage row for this
-      // run whose stored digest DIFFERS is the same divergent-receipt conflict — surface the
-      // typed 409 rather than silently dropping via INSERT OR IGNORE.
+      // Digest guard (companion to the agent_run guard, FAIL-CLOSED): a pre-existing usage row
+      // for this run whose stored digest DIFFERS is the same divergent-receipt conflict — surface
+      // the typed 409 rather than silently dropping via INSERT OR IGNORE. A legacy NULL-digest row
+      // ALSO fails closed (`null !== payloadDigest`): the whole-receipt digest is not
+      // reconstructable from the persisted columns, so a NULL-digest row cannot be proven to be a
+      // replay of THIS receipt. Only a NON-NULL EXACT match is the idempotent no-op.
       const existingUsageDigest = db
         .prepare("SELECT payload_digest FROM llm_usage_records WHERE id = ?")
         .get(usageLedgerId) as { payload_digest: string | null } | undefined;
       if (
         existingUsageDigest
-        && existingUsageDigest.payload_digest !== null
         && existingUsageDigest.payload_digest !== payloadDigest
       ) {
         throwIdempotencyConflict(runId, "mission_spine.rust_continuity_projection");

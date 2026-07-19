@@ -12,11 +12,14 @@
  *  2. The satellite OUTBOX enqueue used `INSERT OR IGNORE` on the
  *     `(satellite_id, idempotency_key)` unique index and then resolved the
  *     no-op to the EXISTING row id — so the same key reused with a DIFFERENT
- *     message identity silently returned the wrong (original) id.
+ *     logical operation payload silently returned the wrong (original) id.
+ *     Its idempotency identity is now the caller-computed `logical_payload_digest`
+ *     (v107) — the digest over the STABLE logical payload — NOT the routing-only
+ *     `payload_digest`, which excludes the operation payload.
  *
- * The fix adds a durable `payload_digest` guard on each: a pre-existing row with
- * a DIFFERENT digest raises the SAME typed 409 SECURITY_IDEMPOTENCY_KEY_CONFLICT
- * the HTTP idempotency layer raises. An IDENTICAL re-submit stays idempotent.
+ * The fix adds a durable digest guard on each: a pre-existing row with a DIFFERENT
+ * digest raises the SAME typed 409 SECURITY_IDEMPOTENCY_KEY_CONFLICT the HTTP
+ * idempotency layer raises. An IDENTICAL re-submit stays idempotent.
  *
  * RED-FIRST: on the unmodified code both "different content, same key" cases are
  * silent no-ops — the `toThrow` assertions FAIL. The idempotent-replay assertions
@@ -157,9 +160,10 @@ describe("cross-store digest-conflict guard — satellite outbox enqueue", () =>
     nonce: "nonce-A",
     keyId: "inline-transport:v1",
     idempotencyKey: "idem-conflict-1",
+    logicalPayloadDigest: "logical-A",
   };
 
-  it("raises a typed 409 conflict when the same key is reused with a DIFFERENT message identity", () => {
+  it("raises a typed 409 conflict when the same key is reused with a DIFFERENT logical payload", () => {
     const layer = createTestDb();
     try {
       insertSatellite(layer, SAT);
@@ -168,10 +172,12 @@ describe("cross-store digest-conflict guard — satellite outbox enqueue", () =>
       const first = service.enqueue(base);
       expect(first.id).toBeTruthy();
 
-      // Same key, DIFFERENT identity (messageType diverges) → must conflict.
+      // Same key + same routing (messageType unchanged), but a DIFFERENT logical-payload digest
+      // → must conflict. The routing digest alone cannot see this divergence; the payload-bound
+      // identity does.
       let caught: unknown;
       try {
-        service.enqueue({ ...base, messageType: "skill.execute" });
+        service.enqueue({ ...base, logicalPayloadDigest: "logical-B" });
       } catch (err) {
         caught = err;
       }
@@ -187,7 +193,7 @@ describe("cross-store digest-conflict guard — satellite outbox enqueue", () =>
     }
   });
 
-  it("stays idempotent (no throw) when the same key retries the SAME identity with a re-encoded body", () => {
+  it("stays idempotent (no throw) when the same key retries the SAME logical payload with a re-encoded body", () => {
     const layer = createTestDb();
     try {
       insertSatellite(layer, SAT);
@@ -195,7 +201,7 @@ describe("cross-store digest-conflict guard — satellite outbox enqueue", () =>
 
       const first = service.enqueue(base);
       // A legitimate re-dispatch re-encodes the transport body (fresh timestamp →
-      // different ciphertext) but keeps the same routing identity + key. This MUST
+      // different ciphertext/nonce) but keeps the SAME logical-payload digest + key. This MUST
       // remain an idempotent no-op resolving to the original id (no-degrade).
       const retry = service.enqueue({
         ...base,

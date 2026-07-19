@@ -1,4 +1,5 @@
 import type { FridaySqliteLayer } from "#state";
+import { hashIdempotencyPayload } from "../../api/http/routes/friday-route-idempotency.js";
 import type { JsonValue, UUID } from "../model/friday-workflow.types.js";
 import type {
   FridayWorkflowDistributedDispatcher,
@@ -374,6 +375,26 @@ export function createFridayWorkflowSatelliteDispatchService(
         requestedAt: nowIso,
       };
 
+      // Stable logical-payload identity: the dispatch payload MINUS `requestedAt` (the only
+      // volatile field — a per-dispatch timestamp). A legit re-dispatch of the SAME node
+      // execution carries a fresh `requestedAt` (→ different ciphertext) but the same logical
+      // operation, so it MUST stay idempotent (no over-fail); a reused idempotency_key carrying
+      // a DIFFERENT logical operation diverges here and surfaces as a typed 409 conflict.
+      const logicalPayloadDigest = hashIdempotencyPayload({
+        type: payload.type,
+        runId: payload.runId,
+        workflowId: payload.workflowId,
+        workflowVersionId: payload.workflowVersionId,
+        nodeId: payload.nodeId,
+        attemptId: payload.attemptId,
+        attempt: payload.attempt,
+        node: payload.node,
+        inputData: payload.inputData,
+        expressionContext: payload.expressionContext,
+        // requestedAt EXCLUDED: per-dispatch timestamp; a legit re-dispatch of the SAME node
+        // execution must stay idempotent (no over-fail).
+      });
+
       deps.outbox.enqueue({
         satelliteId,
         queueKey: `workflow:${input.runId}`,
@@ -382,6 +403,7 @@ export function createFridayWorkflowSatelliteDispatchService(
         nonce: "inline-transport",
         keyId: "inline-transport:v1",
         idempotencyKey: input.idempotencyKey,
+        logicalPayloadDigest,
         expiresAt,
       });
 

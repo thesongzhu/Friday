@@ -53,8 +53,9 @@ export function createFridayOutboxMessageRepository(): FridayOutboxMessageReposi
         `INSERT OR IGNORE INTO outbox_messages (
           id, satellite_id, queue_key, message_type, payload_ciphertext,
           nonce, key_id, idempotency_key, status, max_attempts,
-          deliver_after, expires_at, created_at, updated_at, payload_digest
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`,
+          deliver_after, expires_at, created_at, updated_at, payload_digest,
+          logical_payload_digest
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         input.satelliteId,
@@ -70,6 +71,7 @@ export function createFridayOutboxMessageRepository(): FridayOutboxMessageReposi
         nowIso,
         nowIso,
         payloadDigest,
+        input.logicalPayloadDigest,
       );
     },
 
