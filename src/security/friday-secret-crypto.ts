@@ -5,6 +5,10 @@ import * as os from "node:os";
 import { execFileSync } from "node:child_process";
 
 import { FridayDomainError } from "#errors";
+import {
+  fridayProtectedProfileTestOnlySwitchMessage,
+  isFridayProtectedReleaseProfile,
+} from "./friday-protected-profile.js";
 
 // ─── Encrypted envelope ───
 
@@ -393,6 +397,22 @@ export function getMasterKey(): Buffer {
       "VALIDATION_ERROR",
       "FRIDAY_MASTER_KEY_SOURCE=keychain requires a pre-provisioned macOS keychain item; Friday will not pass generated master keys through process arguments",
       { httpStatus: 400 },
+    );
+  }
+
+  // ART-NONPROD-001 (fail-closed): the test-only master-key GENERATION escape
+  // hatch must NEVER be activatable in a production / tagged-release profile —
+  // even as a leftover env var — so the release path can never silently mint a
+  // fresh encryption root. Refuse BEFORE it is honored below (fail-open persisted
+  // read at `failClosed` and the generation branch).
+  if (
+    process.env[TEST_ONLY_MASTER_KEY_GENERATION_ENV] === "1"
+    && isFridayProtectedReleaseProfile(process.env)
+  ) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      fridayProtectedProfileTestOnlySwitchMessage(TEST_ONLY_MASTER_KEY_GENERATION_ENV),
+      { httpStatus: 503 },
     );
   }
 
