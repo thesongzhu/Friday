@@ -17,7 +17,17 @@
  *   detector), still SENDS the real result to the first caller, and refuses a replay with 409.
  *   RED (pre-fix): response_json holds the raw token and the replay returns it (200, cached).
  *
- * Both tests drive the REAL FridaySqliteOperationJournalStore (in-memory better-sqlite3 with the
+ * DEFECT #2c (round-4 HIGH) — a re-serialization boundary defeats the #2 snapshot.
+ *   The prior #2 fix serialized the result into a `JSON.parse(JSON.stringify(result))` snapshot, but
+ *   that snapshot object still INHERITS `Object.prototype.toJSON`; complete() RE-serialized it, so
+ *   under prototype pollution (a stateful `Object.prototype.toJSON`) inspection saw benign bytes while
+ *   persistence wrote a raw secret into `response_json`. It also RECOMPUTED payload_digest at complete()
+ *   instead of reusing the reservation's. The fix serializes the result to a STRING exactly once and
+ *   operates only on strings downstream (no re-serialization of any result-derived object anywhere), and
+ *   reuses the reserved principal/digest. RED (pre-fix): response_json holds the stateful secret and the
+ *   stored payload_digest diverges from the reservation digest.
+ *
+ * All tests drive the REAL FridaySqliteOperationJournalStore (in-memory better-sqlite3 with the
  * v100 migration applied) through the REAL createFridayHttpServer guard over a real route.
  */
 
@@ -142,11 +152,50 @@ class CompleteOnceFailsStore implements FridayHttpIdempotencyStore {
   }
 }
 
+/**
+ * Wraps a real store and captures the payload digest the guard passes to reserve() and to complete().
+ * Used by #2c to prove completion REUSES the reservation digest (they must be EQUAL) rather than
+ * recomputing it — a recompute under a stateful/polluted `Object.prototype.toJSON` would diverge.
+ */
+class ReserveCompleteCapturingStore implements FridayHttpIdempotencyStore {
+  reservePayloadHash: string | undefined;
+  completePayloadHash: string | undefined;
+
+  constructor(private readonly inner: FridayHttpIdempotencyStore) {}
+
+  get(key: string) {
+    return this.inner.get(key);
+  }
+  reserve(key: string, input: FridayHttpIdempotencyReserveInput) {
+    this.reservePayloadHash = input.payloadHash;
+    this.inner.reserve(key, input);
+  }
+  complete(key: string, input: FridayHttpIdempotencyCompleteInput) {
+    this.completePayloadHash = input.payloadHash;
+    this.inner.complete(key, input);
+  }
+  release(key: string) {
+    this.inner.release(key);
+  }
+  markIndeterminate(key: string) {
+    this.inner.markIndeterminate(key);
+  }
+  pruneExpired(nowMs: number) {
+    this.inner.pruneExpired(nowMs);
+  }
+  reconcileOrphanedReservations() {
+    this.inner.reconcileOrphanedReservations();
+  }
+}
+
 describe("HTTP idempotency guard — residual hardening (DUR-OPERATION-JOURNAL-001)", () => {
   let layer: FridaySqliteLayer | undefined;
   let booted: BootedServer | undefined;
 
   afterEach(async () => {
+    // Safety net: never let a #2c prototype-pollution leak escape into another test, even if that
+    // test's own try/finally somehow did not run.
+    delete (Object.prototype as { toJSON?: unknown }).toJSON;
     if (booted) {
       try {
         await booted.server.close();
@@ -382,6 +431,91 @@ describe("HTTP idempotency guard — residual hardening (DUR-OPERATION-JOURNAL-0
         .get(key) as { response_json: string | null } | undefined;
       expect(stored).toBeDefined();
       expect(stored?.response_json ?? "").not.toContain(STATEFUL_SECRET);
+    },
+  );
+
+  it(
+    "#2c inherited Object.prototype.toJSON pollution cannot slip a secret into response_json, and the stored digest equals the reservation digest",
+    async () => {
+      layer = createTestDb();
+      // A PLAIN object result (no own toJSON): the leak vector is the INHERITED, polluted
+      // Object.prototype.toJSON, and the snapshot the #2 fix produced also inherited it.
+      const plainRoute: FridayRouteEntry = {
+        operationId: "test.proto.tojson",
+        method: "POST",
+        path: "/v1/test/proto-tojson",
+        auth: { public: true, allowUnauthenticatedMutation: true },
+        handler: (async () => ({ ok: true })) as FridayRouteEntry["handler"],
+      };
+
+      const capturing = new ReserveCompleteCapturingStore(new FridaySqliteOperationJournalStore(layer));
+      booted = await bootServer([plainRoute], capturing);
+
+      const key = "proto-tojson-key-1";
+      // Build the request body string BEFORE installing the pollution, so the client-side serialization
+      // does not consume a counter tick and shift the server-side invocation window.
+      const bodyStr = JSON.stringify({ do: "proto-tojson" });
+
+      // Precondition: the prototype is clean going in.
+      expect((Object.prototype as { toJSON?: unknown }).toJSON).toBeUndefined();
+
+      // Stateful pollution: benign on the first two serializations (the reservation-hash serialize and
+      // the ONE result serialize), then the raw secret afterward — mirroring #2b's counter. A check/use
+      // gap that RE-serializes the result-derived object for persistence would emit the secret AT REST
+      // while inspection saw a benign view. Non-enumerable so unrelated for-in loops are unaffected.
+      let serializeCount = 0;
+      Object.defineProperty(Object.prototype, "toJSON", {
+        configurable: true,
+        enumerable: false,
+        writable: true,
+        value: function fridayPollutedToJSON() {
+          serializeCount += 1;
+          // `leaked` is a NON-credential key, so inspection only ever flags the raw `sk-`-shaped VALUE
+          // by shape — never the benign view, which carries no secret at all.
+          return serializeCount <= 2 ? { ok: true } : { leaked: STATEFUL_SECRET };
+        },
+      });
+
+      let status: number | undefined;
+      try {
+        const res = await fetch(`${booted.baseUrl}/v1/test/proto-tojson`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+          body: bodyStr,
+        });
+        status = res.status;
+        // Drain the body (no JSON.stringify here, so no extra counter tick).
+        await res.text();
+      } finally {
+        // CRITICAL: the pollution must NOT survive this test.
+        delete (Object.prototype as { toJSON?: unknown }).toJSON;
+      }
+
+      // The pollution is gone — it cannot leak into another test.
+      expect((Object.prototype as { toJSON?: unknown }).toJSON).toBeUndefined();
+
+      // The request succeeded.
+      expect(status).toBe(200);
+
+      const stored = layer.writer
+        .prepare(
+          "SELECT response_json, payload_digest, status FROM http_operation_journal WHERE idempotency_key = ?",
+        )
+        .get(key) as
+        | { response_json: string | null; payload_digest: string; status: string }
+        | undefined;
+      expect(stored).toBeDefined();
+      expect(stored?.status).toBe("completed");
+
+      // (A) The EXACT bytes persisted at rest must NEVER contain the secret the inspector was shown a
+      // benign view of. RED pre-fix: complete() re-serialized the snapshot and emitted the secret here.
+      expect(stored?.response_json ?? "").not.toContain(STATEFUL_SECRET);
+
+      // (B) Completion REUSED the reservation digest instead of recomputing it. Under pollution a
+      // recompute observes a later (secret-injected) toJSON tick, so the recomputed digest DIVERGES.
+      expect(capturing.reservePayloadHash).toBeDefined();
+      expect(capturing.completePayloadHash).toBe(capturing.reservePayloadHash);
+      expect(stored?.payload_digest).toBe(capturing.reservePayloadHash);
     },
   );
 });

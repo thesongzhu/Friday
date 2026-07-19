@@ -84,24 +84,20 @@ const FRIDAY_HTTP_MAX_BODY_BYTES = 1_048_576; // 1MB
 const FRIDAY_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Sentinel stored in the operation journal's cached-for-replay `data` slot IN PLACE of a handler
+ * Sentinel STRING stored in the operation journal's `response_json` column IN PLACE of a handler
  * response whose serialized form contained a secret SHAPE (per the canonical detector). The response
  * actually SENT to the first caller is always the real handler result (the first call legitimately
  * needs its tokens); only the STORED replay copy is replaced by this sentinel, so
  * `http_operation_journal.response_json` never holds a raw secret at rest (24h TTL). A later same-key
  * retry that lands on this sentinel is refused with a 409 (SECURITY_IDEMPOTENCY_NONREPLAYABLE) rather
  * than replaying sensitive data — the caller re-issues with a fresh Idempotency-Key.
+ *
+ * This is a raw STRING (not an object) on purpose: the guard serializes the handler result exactly
+ * once and thereafter operates only on strings. Storing/comparing the sentinel as a string means no
+ * result-derived object is ever re-serialized downstream, so a polluted `Object.prototype.toJSON`
+ * cannot make the inspected bytes differ from the persisted bytes (the round-4 HIGH).
  */
-const FRIDAY_NON_REPLAYABLE_RESPONSE = { __fridayNonReplayable: true } as const;
-
-/** True when a journal entry's cached `data` is the non-replayable secret sentinel. */
-function isNonReplayableSentinel(data: unknown): boolean {
-  return (
-    typeof data === "object" &&
-    data !== null &&
-    (data as { __fridayNonReplayable?: unknown }).__fridayNonReplayable === true
-  );
-}
+const FRIDAY_NON_REPLAYABLE_JSON = '{"__fridayNonReplayable":true}';
 
 /** Base security headers applied to every response. */
 const FRIDAY_BASE_SECURITY_HEADERS: Readonly<Record<string, string>> = {
@@ -198,18 +194,6 @@ function hasJsonContentType(headers: IncomingMessage["headers"]): boolean {
     .trim()
     .toLowerCase()
     .includes("json");
-}
-
-function assertSerializableJsonResponse(value: unknown, operationId: string): void {
-  if (value === undefined) {
-    throw new Error(`Route '${operationId}' returned undefined without taking over the response`);
-  }
-  try {
-    JSON.stringify(value);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Route '${operationId}' returned a non-JSON-serializable response: ${message}`);
-  }
 }
 
 class PayloadTooLargeError extends Error {
@@ -776,6 +760,11 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
     // that no effect committed), so the reservation transitions only to `completed` (success) or
     // `indeterminate` (failure) — it is NEVER released/deleted, which would let a retry re-execute.
     let idempotencyStoreKey: string | undefined;
+    // The AUTHORITATIVE reservation values, captured when the reservation is taken (below). Completion
+    // REUSES these instead of recomputing principal/payload-hash — a recompute could observe a mutated
+    // request or a polluted `Object.prototype.toJSON` and diverge from what was reserved.
+    let reservedPrincipalId: string | undefined;
+    let reservedPayloadHash: string | undefined;
 
     try {
       // Handle CORS preflight (before casting to FridayHttpMethod)
@@ -1110,8 +1099,9 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
           // The prior completed response contained a secret shape, so only a non-replayable
           // sentinel was persisted (never the raw secret). Refuse to serve a cached body — fail
           // closed with a 409 rather than returning a placeholder that a client might mistake for
-          // the real payload. The caller re-issues with a fresh Idempotency-Key.
-          if (isNonReplayableSentinel(existing.data)) {
+          // the real payload. The caller re-issues with a fresh Idempotency-Key. STRING compare
+          // against the stored bytes — no stored object is re-serialized on the replay path.
+          if (existing.responseJson === FRIDAY_NON_REPLAYABLE_JSON) {
             sendJsonWithHeaders(res, 409, {
               ok: false,
               error: {
@@ -1124,11 +1114,9 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
             return;
           }
 
-          const replayBody = JSON.stringify({
-            ok: true,
-            data: existing.data,
-            requestId,
-          });
+          // Splice the RAW stored JSON string directly into the replay envelope — never JSON.parse +
+          // re-JSON.stringify a stored object (a polluted `toJSON` could then re-inject a secret).
+          const replayBody = `{"ok":true,"data":${existing.responseJson ?? "null"},"requestId":${JSON.stringify(requestId)}}`;
           const replayHeaders: Record<string, string | number> = {
             "Content-Type": "application/json; charset=utf-8",
             "Content-Length": Buffer.byteLength(replayBody),
@@ -1159,6 +1147,11 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
           expiresAtMs: Date.now() + FRIDAY_IDEMPOTENCY_TTL_MS,
         });
         idempotencyStoreKey = idempotencyLookupKey;
+        // Capture the reservation's authoritative identity so completion REUSES them rather than
+        // recomputing (a recompute could diverge from the reserved values, e.g. under a polluted
+        // Object.prototype.toJSON that mutates the hashed payload's serialization statefully).
+        reservedPrincipalId = principalId;
+        reservedPayloadHash = payloadHash;
       }
 
       // Inject raw response reference for SSE streaming routes
@@ -1205,47 +1198,50 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         return;
       }
 
-      assertSerializableJsonResponse(result, route.operationId);
+      if (result === undefined) {
+        throw new Error(`Route '${route.operationId}' returned undefined without taking over the response`);
+      }
 
-      // The bytes we may persist for replay MUST be the exact bytes we inspect for secrets. When we
-      // hold a reservation, serialize the handler result ONCE into an immutable, getter-free snapshot
-      // (`JSON.parse(JSON.stringify(...))`); a stateful `toJSON()`/getter then cannot make the
-      // inspected view differ from the stored or returned view. Non-idempotent requests keep the
-      // original object.
-      let responseData: unknown = result;
+      // EXACT-BYTE BOUNDARY: serialize the handler result to a STRING exactly ONCE. Everything
+      // downstream (secret inspection, at-rest persistence, the response body, and any later replay)
+      // operates ONLY on this string — no result-derived object is ever re-serialized. A polluted /
+      // stateful `Object.prototype.toJSON` therefore cannot make the inspected bytes differ from the
+      // persisted or served bytes: there is exactly one serialization, so there is nothing to diverge.
+      let serializedResult: string;
+      try {
+        serializedResult = JSON.stringify(result ?? null);
+      } catch (err) {
+        throw new Error(
+          `Route '${route.operationId}' returned a non-JSON-serializable response: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
       if (idempotencyStoreKey) {
-        const snapshot: unknown = JSON.parse(JSON.stringify(result ?? null));
-        responseData = snapshot;
-        // Inspect the EXACT string that will be persisted: `snapshot` has no `toJSON`/getters, so
-        // `JSON.stringify(snapshot)` is deterministic and identical to what `complete()` re-serializes.
-        // Store the non-replayable sentinel when a secret shape is present, else the inspected
-        // snapshot — never the original object (whose serialization could differ on a later call).
-        const storedData = findSecretShapeSpans(JSON.stringify(snapshot)).length > 0
-          ? FRIDAY_NON_REPLAYABLE_RESPONSE
-          : snapshot;
-        // Upgrade the in-flight reservation to a completed, replayable entry.
+        // Inspect the EXACT string that will be persisted. Store the non-replayable sentinel STRING
+        // when a secret shape is present, else the serialized string verbatim. REUSE the reservation's
+        // principal + payload digest (never recompute) so the completed row matches the reserved row.
+        const replayJson = findSecretShapeSpans(serializedResult).length > 0
+          ? FRIDAY_NON_REPLAYABLE_JSON
+          : serializedResult;
         idempotencyStore.complete(idempotencyStoreKey, {
           operationId: route.operationId,
-          principalId: ctx.principal?.principalId ?? "anonymous",
-          payloadHash: hashIdempotencyPayload({
+          principalId: reservedPrincipalId ?? (ctx.principal?.principalId ?? "anonymous"),
+          payloadHash: reservedPayloadHash ?? hashIdempotencyPayload({
             method,
             path: route.path,
             params,
             query,
             body,
           }),
-          data: storedData,
+          responseJson: replayJson,
           expiresAtMs: Date.now() + FRIDAY_IDEMPOTENCY_TTL_MS,
         });
       }
 
-      // Send success response. For an idempotent request this uses the same immutable snapshot that
-      // was inspected + persisted, so the returned, stored, and inspected bytes cannot diverge.
-      const successBody = JSON.stringify({
-        ok: true,
-        data: responseData,
-        requestId,
-      });
+      // Build the success envelope by STRING SPLICING the one serialized-result string — never a
+      // re-serialization of `result`. The first caller always receives the real result bytes; only
+      // the STORED replay copy may have been swapped for the sentinel above.
+      const successBody = `{"ok":true,"data":${serializedResult},"requestId":${JSON.stringify(requestId)}}`;
       const responseHeaders: Record<string, string | number> = {
         "Content-Type": "application/json; charset=utf-8",
         "Content-Length": Buffer.byteLength(successBody),

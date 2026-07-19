@@ -35,13 +35,21 @@ export interface FridayHttpIdempotencyEntry {
   payloadHash: string;
   /**
    * "in_flight" = a request with this key is currently executing (reservation set
-   * before the handler runs). "completed" = the handler finished and `data` holds
-   * the replayable response. "indeterminate" = a reservation orphaned by a crash: the
-   * handler may have committed its side-effect but never wrote its completed receipt, so
-   * the outcome is unknown — fail-closed, never auto-retried, never TTL-pruned.
+   * before the handler runs). "completed" = the handler finished and `responseJson`
+   * holds the replayable response bytes. "indeterminate" = a reservation orphaned by a
+   * crash: the handler may have committed its side-effect but never wrote its completed
+   * receipt, so the outcome is unknown — fail-closed, never auto-retried, never TTL-pruned.
    */
   status: "in_flight" | "completed" | "indeterminate";
-  data: unknown;
+  /**
+   * The RAW, already-serialized replay JSON string exactly as stored in the
+   * `response_json` column — never a re-serialized object. `undefined` for
+   * in_flight/indeterminate rows (no replayable body). The server splices this string
+   * verbatim into the replay envelope; it is NEVER JSON.parse'd + re-JSON.stringify'd,
+   * so a polluted `Object.prototype.toJSON` cannot make the served/inspected bytes
+   * diverge from what is persisted at rest.
+   */
+  responseJson: string | undefined;
   expiresAtMs: number;
 }
 
@@ -56,7 +64,12 @@ export interface FridayHttpIdempotencyCompleteInput {
   operationId: string;
   principalId: string;
   payloadHash: string;
-  data: unknown;
+  /**
+   * The EXACT, already-serialized replay JSON string to persist verbatim into
+   * `response_json`. The server serializes the handler result to a string exactly once
+   * and passes that string here — completion NEVER re-serializes a result-derived object.
+   */
+  responseJson: string;
   expiresAtMs: number;
 }
 
@@ -117,7 +130,7 @@ export class FridayInMemoryOperationJournalStore implements FridayHttpIdempotenc
       principalId: input.principalId,
       payloadHash: input.payloadHash,
       status: "in_flight",
-      data: undefined,
+      responseJson: undefined,
       expiresAtMs: input.expiresAtMs,
     });
   }
@@ -128,7 +141,8 @@ export class FridayInMemoryOperationJournalStore implements FridayHttpIdempotenc
       principalId: input.principalId,
       payloadHash: input.payloadHash,
       status: "completed",
-      data: input.data,
+      // Store the already-serialized replay string VERBATIM — never a re-serialized object.
+      responseJson: input.responseJson,
       expiresAtMs: input.expiresAtMs,
     });
   }
@@ -204,7 +218,10 @@ export class FridaySqliteOperationJournalStore implements FridayHttpIdempotencyS
       principalId: row.principal_id,
       payloadHash: row.payload_digest,
       status: row.status,
-      data: row.response_json != null ? (JSON.parse(row.response_json) as unknown) : undefined,
+      // The RAW stored string — never JSON.parse'd back into an object. The server splices
+      // it verbatim into the replay envelope, so a polluted Object.prototype.toJSON cannot
+      // re-serialize it into different (secret-bearing) bytes on the replay path.
+      responseJson: row.response_json ?? undefined,
       expiresAtMs: row.expires_at_ms,
     };
   }
@@ -278,7 +295,11 @@ export class FridaySqliteOperationJournalStore implements FridayHttpIdempotencyS
 
   complete(key: string, input: FridayHttpIdempotencyCompleteInput): void {
     const idempotencyKey = idempotencyKeyFromStoreKey(key, input.principalId, input.operationId);
-    const responseJson = JSON.stringify(input.data ?? null);
+    // Persist the caller's already-serialized replay bytes VERBATIM. We do NOT re-serialize any
+    // result-derived object here: the server serialized the result to a string exactly once and
+    // passed it as `input.responseJson`, so a stateful/polluted `toJSON` cannot make the persisted
+    // bytes diverge from the bytes the server inspected for secrets.
+    const responseJson = input.responseJson;
     const nowMs = Date.now();
     this.sqlite.withWriteTransaction((db) => {
       // Upsert on the composite PK: normally the in_flight reservation exists and is
