@@ -20,6 +20,7 @@ import type {
 import type { FridayRealtimeEventBus } from "./friday-realtime-event-bus.types.js";
 import type { FridayAuditRecord } from "../../security/friday-audit-log.js";
 import { redactEventPayload } from "./friday-event-payload-redactor.js";
+import { redactSecretShapesInString } from "../../security/friday-secret-shape-redactor.js";
 
 const DEFAULT_EMITTED_EVENTS_LIMIT = 1_000;
 const DEFAULT_AUDIT_SINK_FAILURES_LIMIT = 100;
@@ -129,7 +130,26 @@ function clampPositiveInteger(value: number | undefined, fallback: number): numb
 
 function auditSinkErrorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
-  return raw
+  // Secret-shape scrubbing for this logs-only exception-message DISPLAY sink is the UNION of two
+  // passes, so its recall is a STRICT SUPERSET of both:
+  //
+  //   1. the CANONICAL secret detector `redactSecretShapesInString` — the single source of truth for
+  //      provider-credential shapes the old local list MISSED: `hf_` / `glpat-` / `ghp_` / `gh?_` /
+  //      `github_pat_` / AWS `AKIA…` / JWT / PEM / `AIza…` / `ya29.` / `GOCSPX-` / `SG.` / `sq0…` /
+  //      `dop_v1_` / `npm_` / Slack / `Bearer …` / generic `key=value` assignments (see
+  //      friday-secret-shape-redactor.ts);
+  //   2. the FULL UNCHANGED legacy display regex, retained VERBATIM as a display-only over-redactor.
+  //
+  // The legacy expression is kept in full — including `sk-` / `rk-` / `xai-` / `gsk_` — because the
+  // canonical detector only matches those at their REAL credential lengths (`{16,}` / `{40,}`), so a
+  // SUB-THRESHOLD body (8–15 chars) that the legacy `{8,}` regex redacts would otherwise SURVIVE into
+  // `auditSinkFailures` + `console.warn`. The legacy pass also carries the generic / unverified
+  // prefixes (`key-` / `pk-` / `aip-` / `whsk-` / `sess-` / `ssm-`) + any long base64 blob that the
+  // canonical persistence/egress detector DELIBERATELY EXCLUDES as over-redactors. Over-redaction is
+  // fine for THIS logs-only display sink (its existing design) where the canonical detector must not.
+  // Net: every shape + threshold the old scrub redacted still redacts, PLUS the canonical shapes it
+  // previously missed — a true coverage superset, no legacy prefix or threshold dropped.
+  return redactSecretShapesInString(raw, "[REDACTED]")
     .replace(/\b(sk-|key-|pk-|rk-|xai-|gsk_|aip-|whsk-|sess-|ssm-)[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
     .replace(/\b[A-Za-z0-9/+]{40,}={0,2}\b/g, "[REDACTED]");
 }
