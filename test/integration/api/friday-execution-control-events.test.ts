@@ -467,6 +467,57 @@ describe("Audit Sink Integration", () => {
   });
 });
 
+// ─── Audit-Sink Failure Message Scrubbing (canonical secret detector) ───
+
+// SEC — the audit-sink exception message (surfaced to `auditSinkFailures` + `console.warn`) is scrubbed
+// by the CANONICAL secret-shape detector (`redactSecretShapesInString`), NOT a divergent local prefix
+// list. The old local regex covered `gsk_` but MISSED `hf_` / `glpat-` / `ghp_` / AWS / JWT / PEM etc.
+// RED on the pre-fix emitter (hf_/glpat- passed through verbatim to the logs); GREEN once the scrub
+// converges onto the single canonical detector.
+describe("Audit Sink Failure Message Scrubbing", () => {
+  // Build secret-shaped fixtures at runtime so no contiguous literal token ever appears in SOURCE
+  // (GitHub push protection scans source text and does NOT honor the detect-secrets pragma — same
+  // rationale as the redactor unit test's `stripeShaped` helper). At runtime each concatenation
+  // produces the exact provider shape the canonical redactor recognizes.
+  const hfToken = "hf_" + "AbCdEfGhIjKlMnOpQrStUvWx0123456789yZ"; // pragma: allowlist secret
+  const glpatToken = "glpat-" + "AbCdEfGhIjKlMnOpQrStUv"; // pragma: allowlist secret
+  const gskToken = "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd"; // pragma: allowlist secret
+
+  function scrubbedFailureMessage(errorMessage: string): string {
+    const bus = freshBus();
+    const emitter = createExecutionControlEventEmitter({
+      eventBus: bus,
+      nowIso,
+      auditSink: () => {
+        throw new Error(errorMessage);
+      },
+    });
+    emitter.emit("rules.bundle.created", { bundleId: "pb-1", name: "test" });
+    expect(emitter.auditSinkFailures).toHaveLength(1);
+    return emitter.auditSinkFailures[0].message;
+  }
+
+  it("redacts hf_ / glpat- tokens the old local prefix list MISSED (canonical convergence)", () => {
+    const scrubbed = scrubbedFailureMessage(
+      `Audit persistence failed for hf=${hfToken} gitlab=${glpatToken}`,
+    );
+    expect(scrubbed).not.toContain(hfToken);
+    expect(scrubbed).not.toContain(glpatToken);
+    expect(scrubbed).toContain("[REDACTED]");
+  });
+
+  it("still redacts a gsk_ token the local regex already covered (no regression)", () => {
+    const scrubbed = scrubbedFailureMessage(`Audit persistence failed for token=${gskToken}`);
+    expect(scrubbed).not.toContain(gskToken);
+    expect(scrubbed).toContain("[REDACTED]");
+  });
+
+  it("leaves a benign exception message byte-identical (no over-redaction)", () => {
+    const benign = "Audit sink unavailable: connection refused (ECONNREFUSED) after 3 retries";
+    expect(scrubbedFailureMessage(benign)).toBe(benign);
+  });
+});
+
 // ─── PII Redaction in Events ───
 
 describe("PII Redaction in Event Payloads", () => {

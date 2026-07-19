@@ -20,6 +20,7 @@ import type {
 import type { FridayRealtimeEventBus } from "./friday-realtime-event-bus.types.js";
 import type { FridayAuditRecord } from "../../security/friday-audit-log.js";
 import { redactEventPayload } from "./friday-event-payload-redactor.js";
+import { redactSecretShapesInString } from "../../security/friday-secret-shape-redactor.js";
 
 const DEFAULT_EMITTED_EVENTS_LIMIT = 1_000;
 const DEFAULT_AUDIT_SINK_FAILURES_LIMIT = 100;
@@ -129,8 +130,21 @@ function clampPositiveInteger(value: number | undefined, fallback: number): numb
 
 function auditSinkErrorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
-  return raw
-    .replace(/\b(sk-|key-|pk-|rk-|xai-|gsk_|aip-|whsk-|sess-|ssm-)[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
+  // Secret-shape scrubbing converges onto the CANONICAL detector — the single source of truth for
+  // provider-credential shapes (`hf_` / `glpat-` / `ghp_` / `gh?_` / `github_pat_` / `sk-` / `gsk_` /
+  // AWS `AKIA…` / JWT / PEM / `AIza…` / `ya29.` / `GOCSPX-` / `SG.` / `sq0…` / `dop_v1_` / `npm_` /
+  // Slack / `Bearer …` / generic `key=value` assignments — see friday-secret-shape-redactor.ts). The
+  // previous LOCAL prefix list was divergent: it covered `gsk_` but MISSED `hf_` / `glpat-` / `ghp_` /
+  // AWS / JWT / PEM, so a raw token in the sink's exception message leaked to the process logs.
+  //
+  // Two DISPLAY-only extras are kept, layered ON TOP, precisely because the canonical persistence /
+  // egress detector DELIBERATELY EXCLUDES them (see that module's header): (1) the generic /
+  // unverified-provenance error-message prefixes `key-` / `pk-` / `aip-` / `whsk-` / `sess-` / `ssm-`
+  // that canonical drops as over-redactors, and (2) any long base64 blob. This is a logs-only
+  // exception-message display sink that TOLERATES over-redaction where the canonical detector must
+  // not — so the scrub is never LESS aggressive than before, only strictly more (no coverage lost).
+  return redactSecretShapesInString(raw, "[REDACTED]")
+    .replace(/\b(key-|pk-|aip-|whsk-|sess-|ssm-)[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
     .replace(/\b[A-Za-z0-9/+]{40,}={0,2}\b/g, "[REDACTED]");
 }
 
