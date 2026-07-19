@@ -1,0 +1,6135 @@
+{
+  "truth": "data_universe_census_snapshot",
+  "note": "AUTHORITATIVE data-universe census. SQLite = real migration execution + introspection (captures V069 dynamic columns + FTS shadow tables); Rust = static schema.rs parse (documented boundary); retention = canonical governance constants. Regenerate with INV_DATA_SNAPSHOT_REGEN=1 vitest run test/contracts/inventory/friday-data-universe-reconcile.contract.test.ts. The .mjs reconcile CLI fails closed if sourceFingerprint no longer matches disk.",
+  "sourceFingerprint": "sha256:430b3ec4d721f507644131434086ae20ef250bbccf3e00d2637d276e077e9a19",
+  "coverage": {
+    "totalElements": 251,
+    "bySource": {
+      "retention": 10,
+      "rust": 57,
+      "sqlite": 184
+    },
+    "tableElements": 241,
+    "retentionCategoryElements": 10,
+    "totalColumnsEnumerated": 2613
+  },
+  "elements": [
+    {
+      "key": "retention:agentRuns",
+      "kind": "retention-category",
+      "source": "retention",
+      "table": "friday_agent_runs",
+      "columns": [],
+      "columnCount": 0,
+      "derived": {
+        "owner": "friday-retention",
+        "encryption": "not-applicable",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "retention:auditLogs",
+      "kind": "retention-category",
+      "source": "retention",
+      "table": "audit_logs",
+      "columns": [],
+      "columnCount": 0,
+      "derived": {
+        "owner": "friday-retention",
+        "encryption": "not-applicable",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "retention:bootstrapNoncesConsumedDays",
+      "kind": "retention-category",
+      "source": "retention",
+      "table": "friday_setup_bootstrap_nonces",
+      "columns": [],
+      "columnCount": 0,
+      "derived": {
+        "owner": "friday-retention",
+        "encryption": "not-applicable",
+        "retention": "security-lifecycle-ttl"
+      }
+    },
+    {
+      "key": "retention:errorIncidents",
+      "kind": "retention-category",
+      "source": "retention",
+      "table": "error_incidents",
+      "columns": [],
+      "columnCount": 0,
+      "derived": {
+        "owner": "friday-retention",
+        "encryption": "not-applicable",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "retention:heartbeats",
+      "kind": "retention-category",
+      "source": "retention",
+      "table": "satellite_heartbeats",
+      "columns": [],
+      "columnCount": 0,
+      "derived": {
+        "owner": "friday-retention",
+        "encryption": "not-applicable",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "retention:learningEvents",
+      "kind": "retention-category",
+      "source": "retention",
+      "table": "learning_events",
+      "columns": [],
+      "columnCount": 0,
+      "derived": {
+        "owner": "friday-retention",
+        "encryption": "not-applicable",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "retention:llmUsageRecords",
+      "kind": "retention-category",
+      "source": "retention",
+      "table": "llm_usage_records",
+      "columns": [],
+      "columnCount": 0,
+      "derived": {
+        "owner": "friday-retention",
+        "encryption": "not-applicable",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "retention:outboxTerminalDays",
+      "kind": "retention-category",
+      "source": "retention",
+      "table": "outbox_messages",
+      "columns": [],
+      "columnCount": 0,
+      "derived": {
+        "owner": "friday-retention",
+        "encryption": "not-applicable",
+        "retention": "security-lifecycle-ttl"
+      }
+    },
+    {
+      "key": "retention:pairingRequestsDays",
+      "kind": "retention-category",
+      "source": "retention",
+      "table": "satellite_pairing_requests",
+      "columns": [],
+      "columnCount": 0,
+      "derived": {
+        "owner": "friday-retention",
+        "encryption": "not-applicable",
+        "retention": "security-lifecycle-ttl"
+      }
+    },
+    {
+      "key": "retention:skillRunTerminal",
+      "kind": "retention-category",
+      "source": "retention",
+      "table": "skill_run_snapshots",
+      "columns": [],
+      "columnCount": 0,
+      "derived": {
+        "owner": "friday-retention",
+        "encryption": "not-applicable",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "rust:activity_item",
+      "kind": "table",
+      "source": "rust",
+      "table": "activity_item",
+      "columns": [
+        "activity_id",
+        "created_at",
+        "deep_link",
+        "owner",
+        "session_id",
+        "state",
+        "summary",
+        "type",
+        "updated_at"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "shared-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:agent_run",
+      "kind": "table",
+      "source": "rust",
+      "table": "agent_run",
+      "columns": [
+        "created_at",
+        "run_id",
+        "state",
+        "task",
+        "updated_at"
+      ],
+      "columnCount": 5,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:agent_run_event",
+      "kind": "table",
+      "source": "rust",
+      "table": "agent_run_event",
+      "columns": [
+        "created_at",
+        "event_id",
+        "kind",
+        "run_id",
+        "seq"
+      ],
+      "columnCount": 5,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:agent_session",
+      "kind": "table",
+      "source": "rust",
+      "table": "agent_session",
+      "columns": [
+        "account_id",
+        "agent_session_id",
+        "archived_at",
+        "channel",
+        "chat_id",
+        "chat_kind",
+        "created_at",
+        "forked_from",
+        "idle_at",
+        "last_activity_at",
+        "parent_session_id",
+        "pruned_at",
+        "session_kind",
+        "status",
+        "status_changed_at",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:agent_session_message",
+      "kind": "table",
+      "source": "rust",
+      "table": "agent_session_message",
+      "columns": [
+        "agent_session_id",
+        "content",
+        "created_at",
+        "memory_extract_status",
+        "message_id",
+        "refs",
+        "role",
+        "seq"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:audit_chain_head",
+      "kind": "table",
+      "source": "rust",
+      "table": "audit_chain_head",
+      "columns": [
+        "chain_id",
+        "entry_hash",
+        "last_audit_id",
+        "row_count"
+      ],
+      "columnCount": 4,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:audit_ledger",
+      "kind": "table",
+      "source": "rust",
+      "table": "audit_ledger",
+      "columns": [
+        "action",
+        "actor",
+        "audit_id",
+        "created_at",
+        "entry_hash",
+        "payload_ref",
+        "prev_hash"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:blob_index",
+      "kind": "table",
+      "source": "rust",
+      "table": "blob_index",
+      "columns": [
+        "access_policy",
+        "blob_id",
+        "created_at",
+        "enc_alg",
+        "kind",
+        "nonce",
+        "path_or_ref",
+        "size"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "shared-rust",
+        "encryption": "column-encrypted",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:blob_store",
+      "kind": "table",
+      "source": "rust",
+      "table": "blob_store",
+      "columns": [
+        "blob_id",
+        "ciphertext"
+      ],
+      "columnCount": 2,
+      "derived": {
+        "owner": "shared-rust",
+        "encryption": "column-encrypted",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:channel_binding",
+      "kind": "table",
+      "source": "rust",
+      "table": "channel_binding",
+      "columns": [
+        "allowlist",
+        "bound_principal_id",
+        "channel_id",
+        "created_at",
+        "kind",
+        "status",
+        "webhook_auth_ref"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:consumed_approval",
+      "kind": "table",
+      "source": "rust",
+      "table": "consumed_approval",
+      "columns": [
+        "action_digest",
+        "approval_id",
+        "consumed_at",
+        "use_key"
+      ],
+      "columnCount": 4,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:context_passport",
+      "kind": "table",
+      "source": "rust",
+      "table": "context_passport",
+      "columns": [
+        "approved_sensitive",
+        "created_at_ms",
+        "destination_lane",
+        "destination_target",
+        "mission_id",
+        "passport_id",
+        "work_item_id"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:context_passport_item",
+      "kind": "table",
+      "source": "rust",
+      "table": "context_passport_item",
+      "columns": [
+        "included",
+        "kind",
+        "label",
+        "passport_id",
+        "sensitive",
+        "seq"
+      ],
+      "columnCount": 6,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:device_identity",
+      "kind": "table",
+      "source": "rust",
+      "table": "device_identity",
+      "columns": [
+        "created_at",
+        "device_id",
+        "display_name",
+        "public_key",
+        "role"
+      ],
+      "columnCount": 5,
+      "derived": {
+        "owner": "shared-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:friday_conversation",
+      "kind": "table",
+      "source": "rust",
+      "table": "friday_conversation",
+      "columns": [
+        "active_mission_ids",
+        "created_at_ms",
+        "current_focus_summary",
+        "friday_conversation_id",
+        "memory_scope_ref",
+        "owner_principal",
+        "proof_refs",
+        "surface_thread_ids",
+        "title",
+        "truth_status",
+        "updated_at_ms"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:memory_fts",
+      "kind": "table",
+      "source": "rust",
+      "table": "memory_fts",
+      "columns": [
+        "content"
+      ],
+      "columnCount": 1,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:memory_item",
+      "kind": "table",
+      "source": "rust",
+      "table": "memory_item",
+      "columns": [
+        "confidence",
+        "confirmed_at",
+        "content",
+        "content_ref",
+        "created_at",
+        "memory_id",
+        "principal_id",
+        "scope",
+        "sensitive",
+        "state"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:mission",
+      "kind": "table",
+      "source": "rust",
+      "table": "mission",
+      "columns": [
+        "considered_options",
+        "context_passport_refs",
+        "created_at_ms",
+        "decision_path_summary",
+        "deferred_options",
+        "friday_conversation_id",
+        "handoff_inheritance",
+        "intent",
+        "known_pitfalls",
+        "memory_candidate_refs",
+        "mission_id",
+        "proof_refs",
+        "status",
+        "title",
+        "updated_at_ms",
+        "why_now",
+        "work_item_ids"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:mission_body_snapshot",
+      "kind": "table",
+      "source": "rust",
+      "table": "mission_body_snapshot",
+      "columns": [
+        "body",
+        "body_len",
+        "body_ref",
+        "body_sha256",
+        "created_at_ms",
+        "mission_id",
+        "owner_principal",
+        "source_surface",
+        "work_item_id"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:mission_link",
+      "kind": "table",
+      "source": "rust",
+      "table": "mission_link",
+      "columns": [
+        "created_at_ms",
+        "link_id",
+        "link_kind",
+        "mission_id",
+        "proof_ref",
+        "target_ref",
+        "work_item_id"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:offline_queue",
+      "kind": "table",
+      "source": "rust",
+      "table": "offline_queue",
+      "columns": [
+        "action_kind",
+        "approval_scope_ref",
+        "created_at",
+        "msg_id",
+        "payload_ref",
+        "queue_id",
+        "state"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "shared-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:pending_approval_request",
+      "kind": "table",
+      "source": "rust",
+      "table": "pending_approval_request",
+      "columns": [
+        "action",
+        "action_digest",
+        "approval_id",
+        "created_at",
+        "expires_at",
+        "issuer",
+        "principal_id",
+        "resource_id",
+        "resource_type",
+        "run_id",
+        "status",
+        "surface",
+        "tool_params"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:process_lease",
+      "kind": "table",
+      "source": "rust",
+      "table": "process_lease",
+      "columns": [
+        "claim_id",
+        "command_hash",
+        "command_ref",
+        "created_at_ms",
+        "cwd_ref",
+        "health_check_ref",
+        "last_observed_at_ms",
+        "lease_id",
+        "mission_id",
+        "pid",
+        "port_bindings",
+        "process_group_id",
+        "process_kind",
+        "proof_refs",
+        "safe_stop_ref",
+        "stale_after_ms",
+        "started_by_provider_session_id",
+        "started_by_surface_thread_id",
+        "state",
+        "updated_at_ms",
+        "work_item_id"
+      ],
+      "columnCount": 21,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:process_observation",
+      "kind": "table",
+      "source": "rust",
+      "table": "process_observation",
+      "columns": [
+        "command_hash",
+        "cwd_ref",
+        "matched_claim_id",
+        "observation_id",
+        "observed_at_ms",
+        "ownership_status",
+        "pid",
+        "port_bindings",
+        "ppid",
+        "process_kind"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:provider_session_event",
+      "kind": "table",
+      "source": "rust",
+      "table": "provider_session_event",
+      "columns": [
+        "approval_ref",
+        "audit_receipt_ref",
+        "body_ref",
+        "event_kind",
+        "friday_session_id",
+        "observed_at",
+        "provider",
+        "provider_event_id",
+        "redaction_level",
+        "token_ledger_ref",
+        "transcript_item_kind"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:provider_session_link",
+      "kind": "table",
+      "source": "rust",
+      "table": "provider_session_link",
+      "columns": [
+        "account_key_hash",
+        "capability_snapshot",
+        "cwd",
+        "external_session_id",
+        "external_thread_id",
+        "external_url",
+        "friday_session_id",
+        "last_friday_event_id",
+        "last_provider_seen_at",
+        "provider",
+        "sync_mode",
+        "truth_label",
+        "workspace_id"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:provider_timeline",
+      "kind": "table",
+      "source": "rust",
+      "table": "provider_timeline",
+      "columns": [
+        "created_at",
+        "next_seq",
+        "retained_from_seq",
+        "revision",
+        "session_id",
+        "updated_at"
+      ],
+      "columnCount": 6,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:provider_timeline_event",
+      "kind": "table",
+      "source": "rust",
+      "table": "provider_timeline_event",
+      "columns": [
+        "actor",
+        "body_ref",
+        "created_at",
+        "event_kind",
+        "provider_event_id",
+        "revision",
+        "seq",
+        "session_id"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:provider_timeline_pending",
+      "kind": "table",
+      "source": "rust",
+      "table": "provider_timeline_pending",
+      "columns": [
+        "action",
+        "base_revision",
+        "blocker",
+        "client_msg_id",
+        "created_at",
+        "dispatch_ref",
+        "request_id",
+        "session_id",
+        "state",
+        "updated_at_revision"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:retention_log",
+      "kind": "table",
+      "source": "rust",
+      "table": "retention_log",
+      "columns": [
+        "created_at",
+        "retention_log_id",
+        "summary",
+        "tick_kind"
+      ],
+      "columnCount": 4,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:route_decision",
+      "kind": "table",
+      "source": "rust",
+      "table": "route_decision",
+      "columns": [
+        "action_items",
+        "conflict_refs",
+        "considered_options",
+        "created_at_ms",
+        "decision_id",
+        "deferred_options",
+        "expires_at_ms",
+        "inheritable_context",
+        "mission_id",
+        "ownership_claim_ids",
+        "previous_pitfalls",
+        "proof_requirements",
+        "selected_lane",
+        "selected_provider_or_agent",
+        "trace_refs",
+        "why_this_route",
+        "work_item_id"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:route_decision_control",
+      "kind": "table",
+      "source": "rust",
+      "table": "route_decision_control",
+      "columns": [
+        "active",
+        "actor_ref",
+        "control_kind",
+        "created_at_ms",
+        "decision_id",
+        "mission_id",
+        "override_lane",
+        "override_provider_or_agent",
+        "reason",
+        "work_item_id"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:run_outcome_learning_candidate",
+      "kind": "table",
+      "source": "rust",
+      "table": "run_outcome_learning_candidate",
+      "columns": [
+        "candidate_id",
+        "created_at_ms",
+        "decided_at_ms",
+        "decision_reason",
+        "evidence_ref",
+        "executed_tools",
+        "kind",
+        "run_id",
+        "session_id",
+        "state",
+        "summary",
+        "turns"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:run_result",
+      "kind": "table",
+      "source": "rust",
+      "table": "run_result",
+      "columns": [
+        "answer",
+        "answer_len",
+        "answer_sha256",
+        "audit_ref",
+        "created_at",
+        "owner_principal",
+        "run_id",
+        "status"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:scheduler_control",
+      "kind": "table",
+      "source": "rust",
+      "table": "scheduler_control",
+      "columns": [
+        "id",
+        "paused",
+        "reason",
+        "updated_at"
+      ],
+      "columnCount": 4,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:scheduler_lease",
+      "kind": "table",
+      "source": "rust",
+      "table": "scheduler_lease",
+      "columns": [
+        "expires_at",
+        "holder",
+        "id",
+        "updated_at"
+      ],
+      "columnCount": 4,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:session",
+      "kind": "table",
+      "source": "rust",
+      "table": "session",
+      "columns": [
+        "created_at",
+        "kind",
+        "session_id",
+        "source",
+        "state",
+        "title",
+        "updated_at"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "shared-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:surface_event",
+      "kind": "table",
+      "source": "rust",
+      "table": "surface_event",
+      "columns": [
+        "body_ref",
+        "created_at_ms",
+        "event_kind",
+        "friday_conversation_id",
+        "mission_id",
+        "proof_ref",
+        "source_surface",
+        "surface_event_id",
+        "surface_thread_id",
+        "visibility_policy",
+        "work_item_id"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:surface_thread",
+      "kind": "table",
+      "source": "rust",
+      "table": "surface_thread",
+      "columns": [
+        "allowed_actions",
+        "channel_binding_id",
+        "created_at_ms",
+        "delivery_route",
+        "friday_conversation_id",
+        "last_delivered_event_seq",
+        "last_seen_at_ms",
+        "mission_id",
+        "surface_kind",
+        "surface_thread_id",
+        "updated_at_ms",
+        "visibility_policy"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:system_control_lease",
+      "kind": "table",
+      "source": "rust",
+      "table": "system_control_lease",
+      "columns": [
+        "acquired_at",
+        "expires_at",
+        "lease_id",
+        "owner_id",
+        "owner_kind",
+        "reason",
+        "revoked_at",
+        "revoked_reason"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:system_intent_approval_record",
+      "kind": "table",
+      "source": "rust",
+      "table": "system_intent_approval_record",
+      "columns": [
+        "action",
+        "approval_required",
+        "created_at",
+        "decision",
+        "intent_id",
+        "reason",
+        "record_id",
+        "risk"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:system_intent_request",
+      "kind": "table",
+      "source": "rust",
+      "table": "system_intent_request",
+      "columns": [
+        "action",
+        "actor_id",
+        "actor_kind",
+        "created_at",
+        "intent_id",
+        "mutating",
+        "risk",
+        "target_ref"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:system_intent_result",
+      "kind": "table",
+      "source": "rust",
+      "table": "system_intent_result",
+      "columns": [
+        "action",
+        "control_lease_id",
+        "created_at",
+        "gate_reason",
+        "intent_id",
+        "message",
+        "status"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:token_ledger",
+      "kind": "table",
+      "source": "rust",
+      "table": "token_ledger",
+      "columns": [
+        "activity_id",
+        "base_url_host",
+        "completion_tokens",
+        "cost_estimate",
+        "created_at",
+        "fallback",
+        "ledger_id",
+        "model",
+        "prompt_tokens",
+        "provider_kind",
+        "result_link",
+        "run_id",
+        "session_id",
+        "total_tokens"
+      ],
+      "columnCount": 14,
+      "derived": {
+        "owner": "shared-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:tool_usage_ledger",
+      "kind": "table",
+      "source": "rust",
+      "table": "tool_usage_ledger",
+      "columns": [
+        "cost_estimate",
+        "created_at",
+        "input_count",
+        "input_unit",
+        "model",
+        "output_count",
+        "output_unit",
+        "provider_kind",
+        "result_link",
+        "run_id",
+        "tool",
+        "usage_id"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:trust_grant",
+      "kind": "table",
+      "source": "rust",
+      "table": "trust_grant",
+      "columns": [
+        "agent_id",
+        "boundaries",
+        "expires_at",
+        "grant_id",
+        "granted_at",
+        "revoked",
+        "revoked_at"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:trust_grant_run_usage",
+      "kind": "table",
+      "source": "rust",
+      "table": "trust_grant_run_usage",
+      "columns": [
+        "claimed_at",
+        "grant_id",
+        "run_id"
+      ],
+      "columnCount": 3,
+      "derived": {
+        "owner": "shared-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:trusted_device",
+      "kind": "table",
+      "source": "rust",
+      "table": "trusted_device",
+      "columns": [
+        "device_id",
+        "key_rotated_at",
+        "label",
+        "paired_at",
+        "public_key",
+        "revoked_at",
+        "sealed_key_ref"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "column-encrypted",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:work_item",
+      "kind": "table",
+      "source": "rust",
+      "table": "work_item",
+      "columns": [
+        "approval_state",
+        "blocking_reason",
+        "capability_id",
+        "created_at_ms",
+        "executing",
+        "input_refs",
+        "judgment_considered_options",
+        "judgment_current_blocker",
+        "judgment_deferred_options",
+        "judgment_done_criteria",
+        "judgment_inheritable_context",
+        "judgment_ownership_claim_ids",
+        "judgment_previous_pitfalls",
+        "judgment_proof_requirements",
+        "judgment_read_first_files",
+        "judgment_red_lines",
+        "judgment_required_output",
+        "judgment_target_lane_thread_agent_provider",
+        "judgment_task",
+        "judgment_why_this_route",
+        "lane",
+        "last_heartbeat_ms",
+        "mission_id",
+        "output_refs",
+        "owner_claim_ids",
+        "proof_receipts",
+        "proof_requirements",
+        "risk_level",
+        "status",
+        "target_provider_or_agent",
+        "updated_at_ms",
+        "work_item_id",
+        "workspace_refs"
+      ],
+      "columnCount": 33,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:workflow_catalog",
+      "kind": "table",
+      "source": "rust",
+      "table": "workflow_catalog",
+      "columns": [
+        "created_at",
+        "deployed_version",
+        "description",
+        "etag",
+        "is_archived",
+        "name",
+        "revision",
+        "slug",
+        "tags_json",
+        "updated_at",
+        "workflow_id"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:workflow_definition",
+      "kind": "table",
+      "source": "rust",
+      "table": "workflow_definition",
+      "columns": [
+        "checksum",
+        "created_at",
+        "definition_json",
+        "is_published",
+        "name",
+        "source",
+        "source_meta",
+        "version",
+        "workflow_id"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:workflow_run",
+      "kind": "table",
+      "source": "rust",
+      "table": "workflow_run",
+      "columns": [
+        "cancel_reason",
+        "created_at",
+        "name",
+        "run_id",
+        "state",
+        "updated_at"
+      ],
+      "columnCount": 6,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:workflow_schedule",
+      "kind": "table",
+      "source": "rust",
+      "table": "workflow_schedule",
+      "columns": [
+        "created_at",
+        "cron_expr",
+        "enabled",
+        "last_slot_ts",
+        "schedule_id",
+        "timezone",
+        "updated_at",
+        "workflow_id"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:workflow_schedule_fire",
+      "kind": "table",
+      "source": "rust",
+      "table": "workflow_schedule_fire",
+      "columns": [
+        "created_at",
+        "detail_token",
+        "outcome",
+        "run_id",
+        "schedule_id",
+        "slot_ts"
+      ],
+      "columnCount": 6,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:workflow_step",
+      "kind": "table",
+      "source": "rust",
+      "table": "workflow_step",
+      "columns": [
+        "attempt",
+        "created_at",
+        "evidence_ref",
+        "has_side_effect",
+        "run_id",
+        "seq",
+        "status",
+        "step_id",
+        "updated_at"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:workflow_step_effect",
+      "kind": "table",
+      "source": "rust",
+      "table": "workflow_step_effect",
+      "columns": [
+        "action",
+        "committed_at",
+        "idem_key",
+        "receipt_content",
+        "receipt_summary",
+        "run_id",
+        "seq",
+        "step_id"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "rust:workspace_claim",
+      "kind": "table",
+      "source": "rust",
+      "table": "workspace_claim",
+      "columns": [
+        "claim_id",
+        "claim_kind",
+        "created_at_ms",
+        "mission_id",
+        "owner_agent",
+        "owner_principal",
+        "proof_refs",
+        "proof_requirements",
+        "reason",
+        "released_at_ms",
+        "safe_release_policy",
+        "state",
+        "updated_at_ms",
+        "work_item_id",
+        "workspace_ref"
+      ],
+      "columnCount": 15,
+      "derived": {
+        "owner": "hub-rust",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:acceptance_runs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "acceptance_runs",
+      "columns": [
+        "artifact_json",
+        "artifact_type",
+        "artifact_uri",
+        "checks_failed",
+        "checks_passed",
+        "checks_skipped",
+        "checks_total",
+        "checks_warned",
+        "created_at",
+        "duration_ms",
+        "execution_id",
+        "id",
+        "idempotency_key",
+        "overall_severity",
+        "overall_verdict",
+        "result_json",
+        "state",
+        "updated_at"
+      ],
+      "columnCount": 18,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:acceptance_test_versions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "acceptance_test_versions",
+      "columns": [
+        "change_note",
+        "changed_by",
+        "created_at",
+        "id",
+        "snapshot_json",
+        "test_id",
+        "version"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:acceptance_tests",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "acceptance_tests",
+      "columns": [
+        "artifact_type",
+        "check_type",
+        "config_json",
+        "created_at",
+        "deleted_at",
+        "description",
+        "enabled",
+        "etag",
+        "id",
+        "name",
+        "priority",
+        "rule_policy_bundle_id",
+        "short_circuit",
+        "tags_json",
+        "updated_at",
+        "version"
+      ],
+      "columnCount": 16,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:api_rate_limit_counters",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "api_rate_limit_counters",
+      "columns": [
+        "bucket_key",
+        "hit_count",
+        "updated_at",
+        "window_start"
+      ],
+      "columnCount": 4,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:api_tokens",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "api_tokens",
+      "columns": [
+        "created_at",
+        "expires_at",
+        "id",
+        "label",
+        "principal_type",
+        "revoked_at",
+        "scopes_json",
+        "token_hash",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:approval_requests",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "approval_requests",
+      "columns": [
+        "action_id",
+        "created_at",
+        "description",
+        "expires_at",
+        "plan_json",
+        "request_id",
+        "requested_at",
+        "responded_at",
+        "responded_by",
+        "response_reason",
+        "risk_tier",
+        "run_id",
+        "status",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 15,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:audit_logs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "audit_logs",
+      "columns": [
+        "action",
+        "actor_id",
+        "actor_type",
+        "details_json",
+        "id",
+        "ip",
+        "request_id",
+        "resource_id",
+        "resource_type",
+        "trace_id",
+        "ts"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "sqlite:auth_access_tokens",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "auth_access_tokens",
+      "columns": [
+        "created_at",
+        "expires_at_epoch",
+        "revoked_at",
+        "session_id",
+        "token_id",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:auth_profiles",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "auth_profiles",
+      "columns": [
+        "auth_mode",
+        "created_at",
+        "display_label",
+        "id",
+        "is_active",
+        "key_source_json",
+        "metadata_json",
+        "oauth_provider",
+        "profile_key",
+        "provider_kind",
+        "provider_profile_id",
+        "updated_at"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:auth_sessions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "auth_sessions",
+      "columns": [
+        "created_at",
+        "device_label",
+        "expires_at",
+        "id",
+        "ip_address",
+        "refresh_token_hash",
+        "revoked_at",
+        "updated_at",
+        "user_agent",
+        "user_id"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:auto_fix_actions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "auto_fix_actions",
+      "columns": [
+        "action_id",
+        "applied_at",
+        "created_at",
+        "incident_id",
+        "outcome",
+        "plan_json",
+        "risk_tier",
+        "rollback_attempted",
+        "rollback_attempted_at",
+        "rollback_error_message",
+        "rollback_plan_json",
+        "rollback_succeeded",
+        "rolled_back_at",
+        "status",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 16,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:autonomy_subject_upgrade_state",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "autonomy_subject_upgrade_state",
+      "columns": [
+        "canary_stats_json",
+        "compatibility_status",
+        "created_at",
+        "last_verified_at",
+        "last_verified_provider_model",
+        "last_verified_runtime_version",
+        "promotion_channel",
+        "shadow_version_id",
+        "subject_id",
+        "subject_kind",
+        "updated_at"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:capability_grants",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "capability_grants",
+      "columns": [
+        "approval_provenance",
+        "expires_at",
+        "id",
+        "issued_at",
+        "last_used_at",
+        "principal_id",
+        "revoked_at",
+        "run_id",
+        "scopes",
+        "session_key",
+        "surface",
+        "target",
+        "tool_name"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:channel_agent_bindings",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "channel_agent_bindings",
+      "columns": [
+        "agent_config_key",
+        "channel_id",
+        "channel_kind",
+        "created_at",
+        "enabled",
+        "id",
+        "priority",
+        "updated_at"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:config_revisions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "config_revisions",
+      "columns": [
+        "changed_by_user_id",
+        "changed_keys_json",
+        "created_at",
+        "full_snapshot_json",
+        "id",
+        "patch_json",
+        "reason",
+        "revision"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:diagnosis_records",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "diagnosis_records",
+      "columns": [
+        "confidence",
+        "created_at",
+        "diagnosis_json",
+        "error_fingerprint",
+        "id",
+        "incident_id",
+        "node_id",
+        "resolved_at",
+        "run_id",
+        "updated_at"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:error_incidents",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "error_incidents",
+      "columns": [
+        "auto_fix_eligible",
+        "category",
+        "context_json",
+        "created_at",
+        "incident_id",
+        "node_id",
+        "run_id",
+        "severity",
+        "signature",
+        "status",
+        "ts",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "sqlite:friday_agenda_items",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_agenda_items",
+      "columns": [
+        "approval_required",
+        "created_at",
+        "id",
+        "plan_json",
+        "required_capabilities_json",
+        "risk_level",
+        "source",
+        "standing_goal_id",
+        "status",
+        "summary",
+        "title",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_agenda_runs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_agenda_runs",
+      "columns": [
+        "agenda_item_id",
+        "capability_check_json",
+        "completed_at",
+        "cost_json",
+        "created_at",
+        "evidence_json",
+        "id",
+        "improvement_records_json",
+        "plan_json",
+        "rollback_json",
+        "started_at",
+        "status",
+        "updated_at",
+        "user_id",
+        "verification_json"
+      ],
+      "columnCount": 15,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_agent_automations",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_agent_automations",
+      "columns": [
+        "created_at",
+        "description",
+        "enabled",
+        "estimated_time_saved_minutes",
+        "id",
+        "last_outcome_score",
+        "last_run_at",
+        "last_run_id",
+        "name",
+        "promotion_state",
+        "reuse_count",
+        "run_count",
+        "schedule_cron_expr",
+        "schedule_tz",
+        "session_target_kind",
+        "session_target_session_key",
+        "skill_ids",
+        "source_run_id",
+        "task_template",
+        "trigger_id",
+        "updated_at",
+        "variables",
+        "workflow_ids"
+      ],
+      "columnCount": 23,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_agent_context_replay_entries",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_agent_context_replay_entries",
+      "columns": [
+        "blocks_json",
+        "compacted_at",
+        "created_at",
+        "entry_id",
+        "kind",
+        "metadata_json",
+        "run_id",
+        "session_key",
+        "source",
+        "summary_json",
+        "trust_level"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_agent_loop_policy",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_agent_loop_policy",
+      "columns": [
+        "auto_apply_low_risk",
+        "context_inference_allowed",
+        "cooldown_minutes",
+        "cross_surface_orchestration_allowed",
+        "expert_mode_enabled",
+        "expert_mode_environments_json",
+        "expert_mode_user_ids_json",
+        "expert_mode_workspace_ids_json",
+        "high_risk_final_approval_required",
+        "id",
+        "max_attempts_per_fingerprint",
+        "mode",
+        "multi_step_hypothesis_search_allowed",
+        "paused",
+        "probe_budget",
+        "production_destructive_action_approval_required",
+        "require_acceptance_check",
+        "require_rollback_plan",
+        "safe_probe_execution_allowed",
+        "time_budget_minutes",
+        "updated_at"
+      ],
+      "columnCount": 21,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_agent_loop_runs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_agent_loop_runs",
+      "columns": [
+        "action_id",
+        "approval_required",
+        "assumptions_json",
+        "attempt_number",
+        "cancelled_at",
+        "completed_at",
+        "cooldown_until",
+        "correlation_id",
+        "created_at",
+        "expert_mode_enabled",
+        "fingerprint",
+        "halt_reason",
+        "hypotheses_json",
+        "incident_id",
+        "last_error",
+        "lesson_id",
+        "loop_run_id",
+        "objective",
+        "paused_at",
+        "plan_summary",
+        "probe_budget",
+        "probe_steps_json",
+        "requires_final_approval",
+        "resumed_at",
+        "risk_class",
+        "risk_tier",
+        "rollback_attempted",
+        "rollback_succeeded",
+        "started_at",
+        "status",
+        "trigger",
+        "unknowns_json",
+        "updated_at",
+        "user_id",
+        "verification_passed"
+      ],
+      "columnCount": 35,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_agent_run_checkpoints",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_agent_run_checkpoints",
+      "columns": [
+        "backup_path",
+        "canonical_path",
+        "existed_before",
+        "original_path",
+        "rollback_available",
+        "run_id",
+        "snapshot_at",
+        "updated_at"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_agent_run_events",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_agent_run_events",
+      "columns": [
+        "created_at",
+        "emitted_at",
+        "event_id",
+        "event_name",
+        "payload_json",
+        "run_id",
+        "seq"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_agent_runs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_agent_runs",
+      "columns": [
+        "actual_execution_json",
+        "artifact_dir",
+        "artifacts",
+        "attempt",
+        "completed_at",
+        "constraints_json",
+        "context_cost_summary_json",
+        "cost_usd",
+        "created_at",
+        "duration_ms",
+        "error_code",
+        "error_message",
+        "id",
+        "max_attempts",
+        "metadata_json",
+        "model",
+        "organic",
+        "organic_attestation_ref",
+        "organic_principal",
+        "organic_source",
+        "payload_digest",
+        "plan_review_json",
+        "provider_id",
+        "response_text",
+        "session_key",
+        "started_at",
+        "status",
+        "summary",
+        "task",
+        "task_profile_json",
+        "test_results",
+        "usage_input",
+        "usage_output"
+      ],
+      "columnCount": 33,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "sqlite:friday_autonomous_goals",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_autonomous_goals",
+      "columns": [
+        "completed_at",
+        "created_at",
+        "current_step_index",
+        "description",
+        "failure_reason",
+        "id",
+        "iteration_count",
+        "max_iterations",
+        "parent_goal_id",
+        "priority",
+        "source",
+        "started_at",
+        "status",
+        "step_ids_json",
+        "success_criteria_json",
+        "timeout_ms"
+      ],
+      "columnCount": 16,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_autonomous_iterations",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_autonomous_iterations",
+      "columns": [
+        "decision_json",
+        "duration_ms",
+        "goal_id",
+        "id",
+        "idx",
+        "observations_json",
+        "reasoning",
+        "result_json",
+        "step_id",
+        "timestamp",
+        "usage_input",
+        "usage_output"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_autonomous_steps",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_autonomous_steps",
+      "columns": [
+        "completed_at",
+        "domain",
+        "failure_reason",
+        "goal_id",
+        "id",
+        "idx",
+        "instruction",
+        "max_retries",
+        "observations_json",
+        "planned_action_json",
+        "retry_count",
+        "started_at",
+        "status",
+        "verification_actual",
+        "verification_json",
+        "verification_method",
+        "verification_pattern_family"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_autonomy_policy",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_autonomy_policy",
+      "columns": [
+        "budget_json",
+        "evidence_retention_days",
+        "id",
+        "mode",
+        "paused",
+        "risk_switches_json",
+        "updated_at"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_capability_acquisition_runs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_capability_acquisition_runs",
+      "columns": [
+        "approval_reasons_json",
+        "candidates_json",
+        "created_at",
+        "execution_suggestion_json",
+        "goal",
+        "human_blockers_json",
+        "id",
+        "matrix_summary_json",
+        "missing_capabilities_json",
+        "plan_json",
+        "policy_snapshot_json",
+        "registered_capabilities_json",
+        "required_capabilities_json",
+        "status",
+        "updated_at",
+        "user_id",
+        "verification_results_json"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_credential_tombstones",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_credential_tombstones",
+      "columns": [
+        "credential_kind",
+        "hub_id",
+        "id",
+        "origin",
+        "retired_at",
+        "retired_reason",
+        "superseded_by_binding_id",
+        "user_id"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_device_owner_bindings",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_device_owner_bindings",
+      "columns": [
+        "activated_at",
+        "created_at",
+        "device_id",
+        "device_public_key",
+        "device_public_key_hash",
+        "hub_id",
+        "id",
+        "migrated_from",
+        "origin",
+        "revoked_at",
+        "state",
+        "user_id"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_episodes",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_episodes",
+      "columns": [
+        "context_files_json",
+        "created_at",
+        "duration_ms",
+        "id",
+        "outcome",
+        "run_id",
+        "steps_json",
+        "task_intent",
+        "task_profile",
+        "tool_sequence_json",
+        "user_id"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_heartbeat_runs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_heartbeat_runs",
+      "columns": [
+        "action_required",
+        "created_at",
+        "finished_at",
+        "id",
+        "reason",
+        "response_text",
+        "run_id",
+        "started_at",
+        "status"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_heartbeat_state",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_heartbeat_state",
+      "columns": [
+        "cooldown_until",
+        "id",
+        "last_action_at",
+        "last_run_at",
+        "updated_at"
+      ],
+      "columnCount": 5,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_improvement_records",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_improvement_records",
+      "columns": [
+        "changes_json",
+        "created_at",
+        "evidence_json",
+        "id",
+        "source_run_id",
+        "source_type",
+        "summary",
+        "target_id",
+        "target_type",
+        "user_id"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_learned_patterns",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_learned_patterns",
+      "columns": [
+        "confidence",
+        "created_at",
+        "description",
+        "id",
+        "kind",
+        "last_updated",
+        "pattern_json",
+        "sample_count",
+        "user_id"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_reflex_candidates",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_reflex_candidates",
+      "columns": [
+        "channel_kind",
+        "channel_user_id",
+        "confidence",
+        "created_at",
+        "decided_at",
+        "evidence_json",
+        "id",
+        "kind",
+        "origin",
+        "payload_json",
+        "risk_tier",
+        "session_key",
+        "source_run_id",
+        "status",
+        "summary",
+        "title",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 18,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_reflex_onboarding_answers",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_reflex_onboarding_answers",
+      "columns": [
+        "answer_json",
+        "created_at",
+        "id",
+        "question_id",
+        "session_id",
+        "source_surface",
+        "status",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_reflex_onboarding_sessions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_reflex_onboarding_sessions",
+      "columns": [
+        "active_question_id",
+        "completed_at",
+        "created_at",
+        "dismissed_at",
+        "id",
+        "primary_channel_kind",
+        "primary_channel_user_id",
+        "status",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_retention_settings",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_retention_settings",
+      "columns": [
+        "after_days",
+        "content_category",
+        "created_at",
+        "id",
+        "principal_id",
+        "updated_at"
+      ],
+      "columnCount": 6,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_scheduler_jobs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_scheduler_jobs",
+      "columns": [
+        "catch_up_runs",
+        "consecutive_failures",
+        "created_at",
+        "enabled",
+        "id",
+        "interval_ms",
+        "last_duration_ms",
+        "last_error",
+        "last_run_at",
+        "last_status",
+        "next_run_at",
+        "running_at",
+        "schedule_anchor_ms",
+        "schedule_at",
+        "schedule_cron_expr",
+        "schedule_every_ms",
+        "schedule_kind",
+        "schedule_tz",
+        "timeout_ms",
+        "updated_at"
+      ],
+      "columnCount": 20,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_setup_bootstrap_nonces",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_setup_bootstrap_nonces",
+      "columns": [
+        "action",
+        "claimed_user_id",
+        "consumed_at",
+        "created_at",
+        "device_id",
+        "device_public_key",
+        "device_public_key_hash",
+        "expires_at",
+        "hub_id",
+        "id",
+        "install_id",
+        "kind",
+        "nonce_hash",
+        "origin",
+        "os_user"
+      ],
+      "columnCount": 15,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "security-lifecycle-ttl"
+      }
+    },
+    {
+      "key": "sqlite:friday_setup_state",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_setup_state",
+      "columns": [
+        "channels_json",
+        "completed_steps",
+        "config_hash",
+        "config_revision",
+        "created_at",
+        "id",
+        "network_host",
+        "network_mode",
+        "network_port",
+        "setup_completed_at",
+        "skipped_steps",
+        "updated_at"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_standing_goals",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_standing_goals",
+      "columns": [
+        "budget_json",
+        "created_at",
+        "id",
+        "objective",
+        "risk_policy_json",
+        "scope_json",
+        "status",
+        "success_criteria_json",
+        "title",
+        "triggers_json",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_subagent_runs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_subagent_runs",
+      "columns": [
+        "archival_deadline",
+        "child_run_id",
+        "child_session_key",
+        "cleanup_requested",
+        "completed_at",
+        "created_at",
+        "depth",
+        "duration_ms",
+        "forked_from_message_id",
+        "id",
+        "inherited_message_count",
+        "label",
+        "mode",
+        "model",
+        "outcome",
+        "parent_run_id",
+        "parent_session_key",
+        "requester_session_key",
+        "root_run_id",
+        "started_at",
+        "status",
+        "task"
+      ],
+      "columnCount": 22,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_system_approval_rules",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_system_approval_rules",
+      "columns": [
+        "action",
+        "app_identifier",
+        "created_at",
+        "decision",
+        "id",
+        "last_used_at",
+        "rationale",
+        "risk_level",
+        "updated_at"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_system_control_leases",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_system_control_leases",
+      "columns": [
+        "acquired_at",
+        "expires_at",
+        "id",
+        "owner_id",
+        "owner_kind",
+        "reason",
+        "revoked_at",
+        "revoked_reason"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_system_remote_assertion_grants",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_system_remote_assertion_grants",
+      "columns": [
+        "consumed_at",
+        "created_at",
+        "device_id",
+        "expires_at",
+        "id",
+        "ip_address",
+        "token_hash",
+        "user_agent"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_system_remote_auth_challenges",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_system_remote_auth_challenges",
+      "columns": [
+        "challenge",
+        "created_at",
+        "device_id",
+        "expires_at",
+        "id",
+        "kind",
+        "origin",
+        "rp_id",
+        "used_at"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_system_remote_devices",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_system_remote_devices",
+      "columns": [
+        "credential_id",
+        "fingerprint",
+        "id",
+        "label",
+        "last_seen_at",
+        "platform",
+        "registered_at",
+        "revoked_at",
+        "status",
+        "trust_scope"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_system_remote_passkeys",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_system_remote_passkeys",
+      "columns": [
+        "backed_up",
+        "counter",
+        "credential_id",
+        "device_id",
+        "device_type",
+        "last_used_at",
+        "public_key_b64u",
+        "registered_at",
+        "transports_json",
+        "updated_at"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_system_remote_sessions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_system_remote_sessions",
+      "columns": [
+        "closed_at",
+        "closed_reason",
+        "connected_at",
+        "device_id",
+        "id",
+        "ip_address",
+        "last_seen_at",
+        "status",
+        "user_agent"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_system_state_journal",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_system_state_journal",
+      "columns": [
+        "emitted_at",
+        "event_name",
+        "id",
+        "payload_json",
+        "seq"
+      ],
+      "columnCount": 5,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_world_entities",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_world_entities",
+      "columns": [
+        "attributes_json",
+        "created_at",
+        "id",
+        "last_mentioned",
+        "mention_count",
+        "name",
+        "relations_json",
+        "type",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:friday_world_state_snapshots",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "friday_world_state_snapshots",
+      "columns": [
+        "created_at",
+        "id",
+        "state_json",
+        "user_id"
+      ],
+      "columnCount": 4,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:http_operation_journal",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "http_operation_journal",
+      "columns": [
+        "created_at_ms",
+        "expires_at_ms",
+        "idempotency_key",
+        "operation_id",
+        "payload_digest",
+        "principal_id",
+        "response_json",
+        "status"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:hub_settings",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "hub_settings",
+      "columns": [
+        "created_at",
+        "created_by",
+        "key",
+        "revision",
+        "updated_at",
+        "updated_by",
+        "value_json"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:learned_lessons",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "learned_lessons",
+      "columns": [
+        "cause",
+        "created_at",
+        "fingerprint",
+        "fix",
+        "id",
+        "last_seen_at",
+        "mitigation_json",
+        "occurrences",
+        "source_diagnosis_id",
+        "source_incident_id",
+        "title",
+        "updated_at"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:learning_events",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "learning_events",
+      "columns": [
+        "created_at",
+        "event_id",
+        "kind",
+        "payload_json",
+        "run_id",
+        "session_id",
+        "ts",
+        "user_id"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "sqlite:learning_metrics",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "learning_metrics",
+      "columns": [
+        "actions_executed",
+        "activation_rate",
+        "auto_fix_success_rate",
+        "created_at",
+        "day",
+        "facts_updated",
+        "incidents_total",
+        "promotion_rate",
+        "request_fulfillment_rate",
+        "reuse_rate",
+        "rollback_rate",
+        "save_rate",
+        "success_rate",
+        "support_conversion_rate",
+        "updated_at"
+      ],
+      "columnCount": 15,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:llm_usage_records",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "llm_usage_records",
+      "columns": [
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "cost_usd",
+        "created_at",
+        "currency",
+        "id",
+        "input_tokens",
+        "metadata_json",
+        "model",
+        "occurred_at",
+        "output_tokens",
+        "payload_digest",
+        "provider_api",
+        "provider_id",
+        "provider_kind",
+        "receipt",
+        "request_id",
+        "route_strategy",
+        "run_id",
+        "task_complexity",
+        "total_tokens",
+        "turn_id",
+        "usage_day",
+        "usage_month"
+      ],
+      "columnCount": 24,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "sqlite:memory_embeddings",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "memory_embeddings",
+      "columns": [
+        "created_at",
+        "dimensions",
+        "id",
+        "item_id",
+        "model",
+        "provider_id",
+        "updated_at",
+        "vector_json"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:memory_file_sync_dirty",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "memory_file_sync_dirty",
+      "columns": [
+        "entity_key",
+        "entity_type",
+        "first_dirty_at",
+        "last_dirty_at"
+      ],
+      "columnCount": 4,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:memory_file_sync_state",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "memory_file_sync_state",
+      "columns": [
+        "content_hash",
+        "entity_key",
+        "entity_type",
+        "exported_at",
+        "file_path",
+        "last_exported_hash",
+        "last_exported_mtime_ms",
+        "last_exported_sequence"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:memory_items",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "memory_items",
+      "columns": [
+        "access_count",
+        "confidence",
+        "content_text",
+        "created_at",
+        "embedding_vector_ref",
+        "expires_at",
+        "id",
+        "key",
+        "last_accessed_at",
+        "memory_type",
+        "metadata_json",
+        "namespace",
+        "source",
+        "tags_json",
+        "tags_text",
+        "ttl_seconds",
+        "updated_at",
+        "value_json"
+      ],
+      "columnCount": 18,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:memory_items_fts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "memory_items_fts",
+      "columns": [
+        "content_text",
+        "namespace",
+        "source",
+        "tags_text"
+      ],
+      "columnCount": 4,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:memory_items_fts_config",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "memory_items_fts_config",
+      "columns": [
+        "k",
+        "v"
+      ],
+      "columnCount": 2,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:memory_items_fts_data",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "memory_items_fts_data",
+      "columns": [
+        "block",
+        "id"
+      ],
+      "columnCount": 2,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:memory_items_fts_docsize",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "memory_items_fts_docsize",
+      "columns": [
+        "id",
+        "sz"
+      ],
+      "columnCount": 2,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:memory_items_fts_idx",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "memory_items_fts_idx",
+      "columns": [
+        "pgno",
+        "segid",
+        "term"
+      ],
+      "columnCount": 3,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:oauth_credentials",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "oauth_credentials",
+      "columns": [
+        "access_token_encrypted",
+        "created_at",
+        "expires_at",
+        "id",
+        "metadata_json",
+        "oauth_provider",
+        "owner_user_id",
+        "provider_profile_id",
+        "refresh_token_encrypted",
+        "scope",
+        "token_type",
+        "updated_at"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "column-encrypted",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:oauth_credentials_v010_legacy",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "oauth_credentials_v010_legacy",
+      "columns": [
+        "access_token_encrypted",
+        "created_at",
+        "expires_at",
+        "id",
+        "oauth_provider",
+        "provider_profile_id",
+        "refresh_token_encrypted",
+        "scope",
+        "token_type",
+        "updated_at"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "column-encrypted",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:obs_alert_channels",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "obs_alert_channels",
+      "columns": [
+        "config_json",
+        "created_at",
+        "enabled",
+        "id",
+        "name",
+        "type",
+        "updated_at"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:obs_audit_entries",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "obs_audit_entries",
+      "columns": [
+        "action",
+        "action_category",
+        "actor_json",
+        "description",
+        "error_code",
+        "error_message",
+        "id",
+        "integrity_hash",
+        "metadata_json",
+        "module",
+        "outcome",
+        "previous_hash",
+        "recorded_at",
+        "resource_json",
+        "sequence_number",
+        "span_id",
+        "trace_id"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:obs_retention_checkpoints",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "obs_retention_checkpoints",
+      "columns": [
+        "boundary_hash",
+        "created_at",
+        "first_retained_sequence_number",
+        "id",
+        "last_deleted_sequence_number",
+        "reason"
+      ],
+      "columnCount": 6,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:obs_slo_definitions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "obs_slo_definitions",
+      "columns": [
+        "alert_rule_ids_json",
+        "burn_rates_json",
+        "compliance_window_days",
+        "created_at",
+        "description",
+        "enabled",
+        "error_budget_json",
+        "etag",
+        "id",
+        "name",
+        "sli_metric_json",
+        "status",
+        "tags_json",
+        "target",
+        "updated_at"
+      ],
+      "columnCount": 15,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:outbox_messages",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "outbox_messages",
+      "columns": [
+        "acked_at",
+        "attempts",
+        "created_at",
+        "deliver_after",
+        "expires_at",
+        "id",
+        "idempotency_key",
+        "key_id",
+        "last_error_code",
+        "last_error_message",
+        "leased_until",
+        "max_attempts",
+        "message_type",
+        "nonce",
+        "payload_ciphertext",
+        "payload_digest",
+        "queue_key",
+        "satellite_id",
+        "status",
+        "updated_at"
+      ],
+      "columnCount": 20,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "column-encrypted",
+        "retention": "security-lifecycle-ttl"
+      }
+    },
+    {
+      "key": "sqlite:package_installs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "package_installs",
+      "columns": [
+        "created_at",
+        "error_code",
+        "error_message",
+        "etag",
+        "id",
+        "idempotency_key",
+        "install_dir",
+        "installed_by",
+        "package_id",
+        "package_name",
+        "package_version",
+        "previous_version",
+        "state",
+        "tenant_id",
+        "updated_at",
+        "version"
+      ],
+      "columnCount": 16,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:package_lifecycle_log",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "package_lifecycle_log",
+      "columns": [
+        "created_at",
+        "details_json",
+        "id",
+        "operation",
+        "package_name",
+        "package_version",
+        "principal_id",
+        "state_from",
+        "state_to",
+        "tenant_id"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:package_registry",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "package_registry",
+      "columns": [
+        "archive_digest",
+        "assets_json",
+        "author_json",
+        "capabilities_json",
+        "created_at",
+        "deleted_at",
+        "dependencies_json",
+        "description",
+        "etag",
+        "friday_version",
+        "hooks_json",
+        "id",
+        "license",
+        "manifest_digest",
+        "metadata_json",
+        "name",
+        "peer_deps_json",
+        "published_by",
+        "signature_json",
+        "size_bytes",
+        "tenant_id",
+        "updated_at",
+        "version"
+      ],
+      "columnCount": 23,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:package_rollbacks",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "package_rollbacks",
+      "columns": [
+        "completed_at",
+        "error_message",
+        "from_version",
+        "id",
+        "initiated_by",
+        "install_id",
+        "package_name",
+        "reason",
+        "started_at",
+        "state",
+        "to_version"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:package_trusted_keys",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "package_trusted_keys",
+      "columns": [
+        "algorithm",
+        "created_at",
+        "expires_at",
+        "id",
+        "key_id",
+        "owner",
+        "public_key",
+        "revocation_reason",
+        "revoked_at",
+        "tenant_id",
+        "trusted_at",
+        "updated_at"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:playbook_candidates",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "playbook_candidates",
+      "columns": [
+        "created_at",
+        "evidence_count",
+        "failure_count",
+        "fingerprint",
+        "first_observed_at",
+        "id",
+        "last_observed_at",
+        "pattern_json",
+        "promoted_playbook_id",
+        "source_run_ids_json",
+        "status",
+        "success_count",
+        "tags_json",
+        "total_cost_json",
+        "total_duration_ms",
+        "updated_at",
+        "workflow_type"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:playbook_lifecycle_events",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "playbook_lifecycle_events",
+      "columns": [
+        "from_version_number",
+        "id",
+        "occurred_at",
+        "playbook_id",
+        "reason",
+        "to_version_number",
+        "type"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:playbook_scores",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "playbook_scores",
+      "columns": [
+        "calculated_at",
+        "composite_score",
+        "cost_efficiency_score",
+        "id",
+        "playbook_id",
+        "sample_size",
+        "satisfaction_score",
+        "speed_score",
+        "success_rate",
+        "version_number"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:playbook_selections",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "playbook_selections",
+      "columns": [
+        "context_json",
+        "id",
+        "match_score",
+        "playbook_id",
+        "reason",
+        "run_id",
+        "selected_at",
+        "similarity",
+        "version_number",
+        "workflow_id"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:playbook_versions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "playbook_versions",
+      "columns": [
+        "candidate_id",
+        "change_note",
+        "created_at",
+        "fingerprint",
+        "id",
+        "pattern_json",
+        "playbook_id",
+        "version_number"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:playbooks",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "playbooks",
+      "columns": [
+        "active_version_number",
+        "archived_at",
+        "composite_score",
+        "created_at",
+        "description",
+        "etag",
+        "id",
+        "last_successful_at",
+        "last_used_at",
+        "name",
+        "source_candidate_id",
+        "status",
+        "tags_json",
+        "total_successes",
+        "total_uses",
+        "updated_at",
+        "workflow_type"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:plugin_dependencies",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "plugin_dependencies",
+      "columns": [
+        "created_at",
+        "dependency_plugin_id",
+        "optional",
+        "plugin_id",
+        "semver_range",
+        "updated_at"
+      ],
+      "columnCount": 6,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:plugin_versions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "plugin_versions",
+      "columns": [
+        "checksum_sha256",
+        "created_at",
+        "id",
+        "manifest_json",
+        "package_url",
+        "plugin_id",
+        "released_at",
+        "signature_algorithm",
+        "signature_key_id",
+        "signature_value",
+        "updated_at",
+        "version",
+        "yanked_at"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:plugins",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "plugins",
+      "columns": [
+        "canary_stats_json",
+        "compatibility_status",
+        "config_json",
+        "description",
+        "enabled",
+        "id",
+        "install_path",
+        "installed_at",
+        "kinds_json",
+        "last_error_code",
+        "last_error_message",
+        "last_verified_at",
+        "last_verified_provider_model",
+        "last_verified_runtime_version",
+        "manifest_json",
+        "name",
+        "promotion_channel",
+        "shadow_version_id",
+        "signature_algorithm",
+        "signature_key_id",
+        "signature_value",
+        "signature_verified",
+        "source",
+        "status",
+        "trust_mode",
+        "trusted_fingerprint_sha256",
+        "updated_at",
+        "version"
+      ],
+      "columnCount": 28,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:preference_facts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "preference_facts",
+      "columns": [
+        "confidence",
+        "created_at",
+        "evidence_count",
+        "fact_id",
+        "key",
+        "last_confirmed_at",
+        "metadata_json",
+        "source_event_ids_json",
+        "updated_at",
+        "user_id",
+        "value_json"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:promotion_decisions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "promotion_decisions",
+      "columns": [
+        "candidate_id",
+        "decided_at",
+        "decision",
+        "id",
+        "reason",
+        "rule_results_json",
+        "rules_result_json",
+        "score_snapshot_json"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:provider_profiles",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "provider_profiles",
+      "columns": [
+        "canary_stats_json",
+        "compatibility_status",
+        "config_json",
+        "created_at",
+        "default_model",
+        "display_name",
+        "enabled",
+        "endpoint_url",
+        "id",
+        "kind",
+        "last_verified_at",
+        "last_verified_provider_model",
+        "last_verified_runtime_version",
+        "promotion_channel",
+        "shadow_version_id",
+        "updated_at"
+      ],
+      "columnCount": 16,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:realtime_checkpoints",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "realtime_checkpoints",
+      "columns": [
+        "cursor",
+        "epoch",
+        "last_acked_seq",
+        "principal_id",
+        "stream_id",
+        "updated_at"
+      ],
+      "columnCount": 6,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:realtime_events",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "realtime_events",
+      "columns": [
+        "correlation_id",
+        "created_at",
+        "emitted_at",
+        "event",
+        "event_id",
+        "identifier_epoch",
+        "owner_id",
+        "payload_json",
+        "seq",
+        "state_version_json",
+        "stream_id"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:retry_attempts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "retry_attempts",
+      "columns": [
+        "attempt_number",
+        "classified_failure_json",
+        "completed_at",
+        "cost_record_json",
+        "decision_json",
+        "delay_ms",
+        "error_code",
+        "error_message",
+        "execution_id",
+        "id",
+        "metadata_json",
+        "outcome",
+        "rules_result_json",
+        "started_at",
+        "trace_id"
+      ],
+      "columnCount": 15,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:retry_circuit_breakers",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "retry_circuit_breakers",
+      "columns": [
+        "consecutive_failures",
+        "failure_threshold",
+        "last_opened_at",
+        "state",
+        "target_id",
+        "trip_count",
+        "updated_at"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:retry_cost_records",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "retry_cost_records",
+      "columns": [
+        "attempt_number",
+        "cost_api_calls",
+        "cost_compute_ms",
+        "cost_tokens",
+        "cumulative_api_calls",
+        "cumulative_compute_ms",
+        "cumulative_tokens",
+        "id",
+        "node_id",
+        "per_attempt_budget_exceeded",
+        "recorded_at",
+        "run_id",
+        "total_budget_exceeded",
+        "trace_id"
+      ],
+      "columnCount": 14,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:retry_escalations",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "retry_escalations",
+      "columns": [
+        "acknowledged",
+        "acknowledged_at",
+        "attempt_count",
+        "channel",
+        "escalated_at",
+        "failure_category",
+        "id",
+        "reason",
+        "target",
+        "total_cost_api_calls",
+        "total_cost_compute_ms",
+        "total_cost_tokens",
+        "trace_id"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:retry_policies",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "retry_policies",
+      "columns": [
+        "cost_budget_json",
+        "created_at",
+        "deleted_at",
+        "description",
+        "enabled",
+        "etag",
+        "id",
+        "name",
+        "priority",
+        "strategies_json",
+        "tags_json",
+        "updated_at",
+        "version"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:retry_policy_versions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "retry_policy_versions",
+      "columns": [
+        "change_note",
+        "changed_by",
+        "created_at",
+        "id",
+        "policy_id",
+        "snapshot_json",
+        "version"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:retry_traces",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "retry_traces",
+      "columns": [
+        "attempts_json",
+        "cost_summary_json",
+        "created_at",
+        "duration_ms",
+        "first_failure_at",
+        "id",
+        "node_id",
+        "original_error_code",
+        "original_error_message",
+        "original_failure_category",
+        "policy_id",
+        "resolved_at",
+        "run_id",
+        "status",
+        "total_attempts",
+        "updated_at",
+        "workflow_id"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:revoked_access_tokens",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "revoked_access_tokens",
+      "columns": [
+        "expires_at_epoch",
+        "revoked_at",
+        "token_id"
+      ],
+      "columnCount": 3,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:rule_eval_audit",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "rule_eval_audit",
+      "columns": [
+        "action",
+        "context_hash",
+        "context_redacted_json",
+        "created_at",
+        "decision",
+        "duration_ms",
+        "id",
+        "matched_rules_json",
+        "policy_bundle_id",
+        "principal_id",
+        "redacted_fields_json",
+        "redaction_applied",
+        "resource",
+        "rule_id",
+        "run_id",
+        "workflow_id"
+      ],
+      "columnCount": 16,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:rule_evaluation_log",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "rule_evaluation_log",
+      "columns": [
+        "action",
+        "context_redacted_json",
+        "created_at",
+        "decision",
+        "duration_ms",
+        "id",
+        "matched_rules_json",
+        "policy_bundle_id",
+        "principal_id",
+        "redacted_fields_json",
+        "redaction_applied",
+        "resource",
+        "rule_id",
+        "run_id",
+        "workflow_id"
+      ],
+      "columnCount": 15,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:rule_policy_bundle_versions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "rule_policy_bundle_versions",
+      "columns": [
+        "bundle_id",
+        "change_note",
+        "changed_by",
+        "created_at",
+        "id",
+        "snapshot_json",
+        "version"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:rule_policy_bundles",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "rule_policy_bundles",
+      "columns": [
+        "checksum",
+        "created_at",
+        "deleted_at",
+        "description",
+        "enabled",
+        "etag",
+        "id",
+        "name",
+        "priority",
+        "signature_algorithm",
+        "signature_key_id",
+        "signature_value",
+        "source",
+        "tags_json",
+        "updated_at",
+        "version"
+      ],
+      "columnCount": 16,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:rule_versions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "rule_versions",
+      "columns": [
+        "change_note",
+        "changed_by",
+        "created_at",
+        "id",
+        "rule_id",
+        "snapshot_json",
+        "version"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:rules",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "rules",
+      "columns": [
+        "action",
+        "checksum",
+        "conditions_json",
+        "created_at",
+        "decision",
+        "deleted_at",
+        "description",
+        "enabled",
+        "etag",
+        "id",
+        "message",
+        "name",
+        "policy_bundle_id",
+        "priority",
+        "resource",
+        "updated_at",
+        "version"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:satellite_capabilities",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "satellite_capabilities",
+      "columns": [
+        "available",
+        "created_at",
+        "id",
+        "key",
+        "limits_json",
+        "metadata_json",
+        "satellite_id",
+        "updated_at"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:satellite_heartbeats",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "satellite_heartbeats",
+      "columns": [
+        "active_runs",
+        "cpu_percent",
+        "details_json",
+        "id",
+        "load_avg_1m",
+        "memory_percent",
+        "queue_depth",
+        "satellite_id",
+        "status",
+        "ts"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "sqlite:satellite_pairing_requests",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "satellite_pairing_requests",
+      "columns": [
+        "code",
+        "created_at",
+        "expires_at",
+        "id",
+        "nonce",
+        "requested_by_ip",
+        "requested_by_user_agent",
+        "resolved_at",
+        "resolver_user_id",
+        "satellite_id",
+        "satellite_payload_json",
+        "status",
+        "updated_at"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "security-lifecycle-ttl"
+      }
+    },
+    {
+      "key": "sqlite:satellites",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "satellites",
+      "columns": [
+        "app_version",
+        "arch",
+        "created_at",
+        "deleted_at",
+        "deleted_by",
+        "display_name",
+        "external_ip",
+        "id",
+        "last_seen_at",
+        "local_ip",
+        "metadata_json",
+        "node_version",
+        "pairing_status",
+        "platform",
+        "public_key",
+        "tags_json",
+        "token_version",
+        "transport",
+        "trust_level",
+        "type",
+        "updated_at"
+      ],
+      "columnCount": 21,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:schema_migrations",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "schema_migrations",
+      "columns": [
+        "applied_at",
+        "checksum",
+        "name",
+        "version"
+      ],
+      "columnCount": 4,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:secrets",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "secrets",
+      "columns": [
+        "created_at",
+        "encrypted_value",
+        "expires_at",
+        "id",
+        "key_id",
+        "ref_key",
+        "rotated_at",
+        "scope",
+        "updated_at"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "column-encrypted",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:security_audit_log",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "security_audit_log",
+      "columns": [
+        "action",
+        "created_at",
+        "decision",
+        "id",
+        "ip_address",
+        "metadata_json",
+        "principal_id",
+        "reason",
+        "resource_id",
+        "resource_type",
+        "session_id",
+        "tenant_id",
+        "user_agent"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:security_role_assignments",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "security_role_assignments",
+      "columns": [
+        "expires_at",
+        "granted_at",
+        "granted_by",
+        "id",
+        "principal_id",
+        "revoked_at",
+        "role_id",
+        "scope_id",
+        "scope_type",
+        "tenant_id"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:security_roles",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "security_roles",
+      "columns": [
+        "created_at",
+        "deleted_at",
+        "etag",
+        "id",
+        "is_system",
+        "name",
+        "permissions_json",
+        "scope_type",
+        "tenant_id",
+        "updated_at"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:security_secret_access_log",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "security_secret_access_log",
+      "columns": [
+        "accessed_at",
+        "action",
+        "granted",
+        "id",
+        "ip_address",
+        "policy_evaluation_id",
+        "principal_id",
+        "secret_id",
+        "tenant_id",
+        "user_agent"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:security_secret_rotations",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "security_secret_rotations",
+      "columns": [
+        "completed_at",
+        "details_json",
+        "grace_period_seconds",
+        "id",
+        "initiated_by",
+        "retired_at",
+        "secret_id",
+        "started_at",
+        "state",
+        "tenant_id"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:security_secrets",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "security_secrets",
+      "columns": [
+        "created_at",
+        "deleted_at",
+        "description",
+        "encrypted_value",
+        "encryption_key_id",
+        "etag",
+        "expires_at",
+        "id",
+        "name",
+        "resource_id",
+        "rotated_at",
+        "rotation_state",
+        "scope_type",
+        "tenant_id",
+        "updated_at",
+        "version",
+        "workspace_id"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "column-encrypted",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:security_tenant_scoped_resources",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "security_tenant_scoped_resources",
+      "columns": [
+        "created_at",
+        "deleted_at",
+        "etag",
+        "id",
+        "resource_id",
+        "resource_kind",
+        "resource_label",
+        "tenant_id",
+        "updated_at",
+        "workspace_id"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:security_tenants",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "security_tenants",
+      "columns": [
+        "config_json",
+        "created_at",
+        "deleted_at",
+        "etag",
+        "id",
+        "name",
+        "slug",
+        "status",
+        "updated_at"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:security_violations",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "security_violations",
+      "columns": [
+        "action_attempted",
+        "created_at",
+        "description",
+        "id",
+        "ip_address",
+        "metadata_json",
+        "principal_id",
+        "resolved",
+        "resolved_at",
+        "resolved_by",
+        "resource_id",
+        "resource_type",
+        "severity",
+        "tenant_id",
+        "violation_type"
+      ],
+      "columnCount": 15,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:security_workspace_memberships",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "security_workspace_memberships",
+      "columns": [
+        "expires_at",
+        "granted_at",
+        "granted_by",
+        "id",
+        "principal_id",
+        "revoked_at",
+        "role_id",
+        "tenant_id",
+        "workspace_id"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:security_workspaces",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "security_workspaces",
+      "columns": [
+        "config_json",
+        "created_at",
+        "deleted_at",
+        "etag",
+        "id",
+        "name",
+        "slug",
+        "status",
+        "tenant_id",
+        "updated_at"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:session_memory_extraction_jobs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "session_memory_extraction_jobs",
+      "columns": [
+        "attempts",
+        "batch_size",
+        "completed_at",
+        "created_at",
+        "failed_at",
+        "id",
+        "last_error_code",
+        "last_error_message",
+        "max_attempts",
+        "max_batches",
+        "next_attempt_at",
+        "requested_message_ids_json",
+        "result_json",
+        "session_key",
+        "started_at",
+        "status",
+        "trigger",
+        "updated_at"
+      ],
+      "columnCount": 18,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:session_messages",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "session_messages",
+      "columns": [
+        "content_json",
+        "content_text",
+        "created_at",
+        "id",
+        "idempotency_key",
+        "inherited_from_message_id",
+        "inherited_from_session_key",
+        "is_inherited",
+        "memory_extract_status",
+        "memory_extracted_at",
+        "metadata_json",
+        "occurred_at",
+        "parent_message_id",
+        "role",
+        "sequence",
+        "session_id",
+        "session_key",
+        "source_satellite_id",
+        "token_count",
+        "token_usage_json",
+        "tool_calls_json",
+        "updated_at"
+      ],
+      "columnCount": 22,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:session_messages_fts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "session_messages_fts",
+      "columns": [
+        "content_text",
+        "session_id"
+      ],
+      "columnCount": 2,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:session_messages_fts_config",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "session_messages_fts_config",
+      "columns": [
+        "k",
+        "v"
+      ],
+      "columnCount": 2,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:session_messages_fts_data",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "session_messages_fts_data",
+      "columns": [
+        "block",
+        "id"
+      ],
+      "columnCount": 2,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:session_messages_fts_docsize",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "session_messages_fts_docsize",
+      "columns": [
+        "id",
+        "sz"
+      ],
+      "columnCount": 2,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:session_messages_fts_idx",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "session_messages_fts_idx",
+      "columns": [
+        "pgno",
+        "segid",
+        "term"
+      ],
+      "columnCount": 3,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:sessions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "sessions",
+      "columns": [
+        "account_id",
+        "agent_id",
+        "archived_at",
+        "channel",
+        "chat_id",
+        "chat_kind",
+        "context_input_tokens",
+        "context_output_tokens",
+        "context_total_tokens",
+        "created_at",
+        "deleted_at",
+        "deleted_by",
+        "forked_from_message_id",
+        "id",
+        "idle_at",
+        "last_activity_at",
+        "memory_namespace",
+        "message_count",
+        "metadata_json",
+        "metadata_version",
+        "owner_lease_epoch",
+        "owner_lease_expires_at",
+        "owner_satellite_id",
+        "parent_session_key",
+        "pruned_at",
+        "root_session_key",
+        "send_policy",
+        "session_key",
+        "status",
+        "status_changed_at",
+        "summary",
+        "updated_at",
+        "user_id"
+      ],
+      "columnCount": 33,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:skill_generation_drafts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "skill_generation_drafts",
+      "columns": [
+        "created_at",
+        "session_id",
+        "tags_json",
+        "updated_at",
+        "value_json"
+      ],
+      "columnCount": 5,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:skill_generation_sessions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "skill_generation_sessions",
+      "columns": [
+        "channel",
+        "created_at",
+        "session_id",
+        "status",
+        "tags_json",
+        "updated_at",
+        "user_id",
+        "value_json"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:skill_generation_turns",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "skill_generation_turns",
+      "columns": [
+        "created_at",
+        "role",
+        "session_id",
+        "tags_json",
+        "turn_id",
+        "value_json"
+      ],
+      "columnCount": 6,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:skill_installations",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "skill_installations",
+      "columns": [
+        "created_at",
+        "id",
+        "last_error",
+        "permissions_granted_json",
+        "satellite_id",
+        "skill_id",
+        "status",
+        "updated_at",
+        "version"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:skill_run_snapshots",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "skill_run_snapshots",
+      "columns": [
+        "channel",
+        "current_step_id",
+        "last_transition_at",
+        "run_id",
+        "session_id",
+        "skill_id",
+        "started_at",
+        "status",
+        "tags_json",
+        "updated_at",
+        "user_id",
+        "value_json",
+        "version"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "content-opt-in"
+      }
+    },
+    {
+      "key": "sqlite:skill_versions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "skill_versions",
+      "columns": [
+        "checksum",
+        "created_at",
+        "id",
+        "manifest_json",
+        "package_url",
+        "released_at",
+        "signature_algorithm",
+        "signature_key_id",
+        "signature_value",
+        "skill_id",
+        "updated_at",
+        "version",
+        "yanked_at"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:skills",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "skills",
+      "columns": [
+        "canary_stats_json",
+        "compatibility_status",
+        "created_at",
+        "current_manifest_json",
+        "deleted_at",
+        "deleted_by",
+        "id",
+        "installed_version",
+        "last_verified_at",
+        "last_verified_provider_model",
+        "last_verified_runtime_version",
+        "latest_version",
+        "name",
+        "origin",
+        "promotion_channel",
+        "publisher",
+        "shadow_version_id",
+        "source",
+        "status",
+        "updated_at"
+      ],
+      "columnCount": 20,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:task_workflow_channel_commands",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "task_workflow_channel_commands",
+      "columns": [
+        "channel_chat_hash",
+        "channel_kind",
+        "channel_message_hash",
+        "confirmation_token",
+        "confirmed_at",
+        "created_at",
+        "declined_reason",
+        "dispatched_action",
+        "dispatched_at",
+        "expires_at",
+        "id",
+        "intent_kind",
+        "issued_at",
+        "sender_hash",
+        "status",
+        "workflow_id"
+      ],
+      "columnCount": 16,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:task_workflow_claims",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "task_workflow_claims",
+      "columns": [
+        "claim_kind",
+        "claim_text",
+        "created_at",
+        "evidence_ref_count",
+        "id",
+        "reason",
+        "spec_hash",
+        "status",
+        "updated_at",
+        "verifier_lane_id",
+        "verifier_verdict",
+        "workflow_id"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:task_workflow_cli_handoffs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "task_workflow_cli_handoffs",
+      "columns": [
+        "backend_id",
+        "capability_label_json",
+        "created_at",
+        "elapsed_ms",
+        "failure_reason",
+        "id",
+        "lane_id",
+        "produced_at",
+        "repair_attempts",
+        "status",
+        "summary_draft",
+        "workflow_id"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:task_workflow_closeout_receipts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "task_workflow_closeout_receipts",
+      "columns": [
+        "blockers_json",
+        "claim_summary_json",
+        "compensating_action",
+        "created_at",
+        "evidence_durability",
+        "gate_outcomes_json",
+        "id",
+        "non_reversible_reason",
+        "proof_claimable",
+        "rollback_class",
+        "spec_hash",
+        "status",
+        "workflow_id"
+      ],
+      "columnCount": 13,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:task_workflow_evidence_refs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "task_workflow_evidence_refs",
+      "columns": [
+        "claim_id",
+        "created_at",
+        "id",
+        "ref_hash",
+        "ref_id",
+        "ref_kind",
+        "ref_source",
+        "workflow_id"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:task_workflow_lanes",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "task_workflow_lanes",
+      "columns": [
+        "blocker",
+        "context_snapshot_hash",
+        "context_snapshot_spec_hash",
+        "created_at",
+        "executor_run_ref",
+        "fallback_availability",
+        "id",
+        "independence",
+        "lane_kind",
+        "lane_role",
+        "parent_lane_id",
+        "provider_id",
+        "route_trace_ref",
+        "status",
+        "updated_at",
+        "workflow_id"
+      ],
+      "columnCount": 16,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:task_workflow_revisions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "task_workflow_revisions",
+      "columns": [
+        "charter",
+        "created_at",
+        "id",
+        "parent_spec_hash",
+        "reason",
+        "spec_hash",
+        "workflow_id"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:task_workflow_supervisor_cursor",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "task_workflow_supervisor_cursor",
+      "columns": [
+        "blockers_json",
+        "current_stage",
+        "last_event_ref",
+        "updated_at",
+        "workflow_id"
+      ],
+      "columnCount": 5,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:task_workflows",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "task_workflows",
+      "columns": [
+        "boundary_refs_json",
+        "budget",
+        "charter",
+        "context_package_json",
+        "created_at",
+        "gate_plan_json",
+        "id",
+        "metadata_json",
+        "parent_spec_hash",
+        "risk",
+        "spec_hash",
+        "stage",
+        "supervisor_mode",
+        "task_kind",
+        "updated_at"
+      ],
+      "columnCount": 15,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:telegram_inbox",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "telegram_inbox",
+      "columns": [
+        "channel_id",
+        "processed_at_ms",
+        "received_at_ms",
+        "status",
+        "update_id",
+        "update_json"
+      ],
+      "columnCount": 6,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:telegram_poll_cursor",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "telegram_poll_cursor",
+      "columns": [
+        "channel_id",
+        "next_offset",
+        "updated_at_ms"
+      ],
+      "columnCount": 3,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:template_harness_artifacts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "template_harness_artifacts",
+      "columns": [
+        "artifact_id",
+        "artifact_kind",
+        "created_at",
+        "scope_id",
+        "scope_kind",
+        "tags_json",
+        "updated_at",
+        "value_json"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:uix_guided_contexts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "uix_guided_contexts",
+      "columns": [
+        "channel_id",
+        "completed_steps_json",
+        "current_step_index",
+        "expires_at",
+        "finished_at",
+        "id",
+        "principal_id",
+        "session_data_json",
+        "started_at",
+        "status",
+        "updated_at",
+        "workflow_id"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:uix_onboarding_sessions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "uix_onboarding_sessions",
+      "columns": [
+        "current_step_index",
+        "finished_at",
+        "flow_id",
+        "id",
+        "principal_id",
+        "started_at",
+        "status",
+        "step_progress",
+        "updated_at"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:uix_user_preferences",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "uix_user_preferences",
+      "columns": [
+        "category",
+        "confidence",
+        "created_at",
+        "id",
+        "key",
+        "principal_id",
+        "source",
+        "updated_at",
+        "value_json"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:users",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "users",
+      "columns": [
+        "created_at",
+        "deleted_at",
+        "deleted_by",
+        "display_name",
+        "email",
+        "id",
+        "is_local_only",
+        "last_login_at",
+        "password_hash",
+        "role",
+        "updated_at"
+      ],
+      "columnCount": 11,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "hashed",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_approval_requests",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_approval_requests",
+      "columns": [
+        "approver_role",
+        "approver_user_id",
+        "created_at",
+        "decided_at",
+        "decided_by_user_id",
+        "decision_comment",
+        "id",
+        "node_id",
+        "request_payload_json",
+        "run_id",
+        "run_node_attempt_id",
+        "status",
+        "timeout_at",
+        "updated_at",
+        "workflow_id",
+        "workflow_version_id"
+      ],
+      "columnCount": 16,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_artifacts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_artifacts",
+      "columns": [
+        "artifact_type",
+        "checksum",
+        "created_at",
+        "id",
+        "metadata_json",
+        "node_id",
+        "run_id",
+        "updated_at",
+        "uri"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_builder_drafts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_builder_drafts",
+      "columns": [
+        "autosave_enabled",
+        "autosave_interval_ms",
+        "autosave_last_saved_at",
+        "base_workflow_version_id",
+        "created_at",
+        "draft_id",
+        "lock_token",
+        "owner_user_id",
+        "published_workflow_version_id",
+        "revision",
+        "source_review_json",
+        "spec_json",
+        "status",
+        "title",
+        "updated_at",
+        "visual_json",
+        "workflow_id"
+      ],
+      "columnCount": 17,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_builder_spec_versions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_builder_spec_versions",
+      "columns": [
+        "checksum",
+        "created_at",
+        "spec_json",
+        "workflow_id",
+        "workflow_version_id"
+      ],
+      "columnCount": 5,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_builder_templates",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_builder_templates",
+      "columns": [
+        "created_at",
+        "description",
+        "kind",
+        "name",
+        "owner_user_id",
+        "scope",
+        "source_skill_id",
+        "spec_json",
+        "tags_json",
+        "template_id",
+        "updated_at",
+        "visual_json"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_builder_test_runs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_builder_test_runs",
+      "columns": [
+        "case_results_json",
+        "draft_id",
+        "finished_at",
+        "passed",
+        "run_id",
+        "started_at",
+        "workflow_id"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_conflicts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_conflicts",
+      "columns": [
+        "base_workflow_version_id",
+        "conflict_id",
+        "created_at",
+        "detected_at",
+        "draft_id",
+        "head_workflow_version_id",
+        "kind",
+        "patches_json",
+        "resolved_at",
+        "resolved_by_user_id",
+        "status",
+        "summary",
+        "updated_at",
+        "workflow_id"
+      ],
+      "columnCount": 14,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_generation_approvals",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_generation_approvals",
+      "columns": [
+        "saved_at",
+        "session_id",
+        "tags_json",
+        "updated_at",
+        "value_json",
+        "workflow_id",
+        "workflow_version_id"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_generation_drafts",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_generation_drafts",
+      "columns": [
+        "created_at",
+        "session_id",
+        "tags_json",
+        "updated_at",
+        "value_json"
+      ],
+      "columnCount": 5,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_generation_sessions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_generation_sessions",
+      "columns": [
+        "channel",
+        "created_at",
+        "session_id",
+        "status",
+        "tags_json",
+        "updated_at",
+        "user_id",
+        "value_json"
+      ],
+      "columnCount": 8,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_generation_turns",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_generation_turns",
+      "columns": [
+        "created_at",
+        "role",
+        "session_id",
+        "tags_json",
+        "turn_id",
+        "value_json"
+      ],
+      "columnCount": 6,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_locks",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_locks",
+      "columns": [
+        "acquired_at",
+        "created_at",
+        "expires_at",
+        "heartbeat_at",
+        "lock_token",
+        "owner_session_id",
+        "owner_user_id",
+        "updated_at",
+        "workflow_id"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_run_checkpoints",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_run_checkpoints",
+      "columns": [
+        "active_node_ids_json",
+        "checkpoint_seq",
+        "completed_node_ids_json",
+        "context_json",
+        "failed_node_ids_json",
+        "last_node_id",
+        "run_id",
+        "run_status",
+        "updated_at",
+        "waiting_approval_node_ids_json"
+      ],
+      "columnCount": 10,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_run_evidence_exports",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_run_evidence_exports",
+      "columns": [
+        "artifact_id",
+        "checksum",
+        "created_at",
+        "id",
+        "payload_json",
+        "query_json",
+        "run_id",
+        "summary_json",
+        "uri"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_run_nodes",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_run_nodes",
+      "columns": [
+        "approval_request_id",
+        "attempt",
+        "attempt_id",
+        "created_at",
+        "error_json",
+        "finished_at",
+        "id",
+        "idempotency_key",
+        "input_json",
+        "lease_expires_at",
+        "lease_owner",
+        "node_id",
+        "node_type",
+        "output_json",
+        "run_id",
+        "satellite_id",
+        "started_at",
+        "status",
+        "timeout_ms",
+        "updated_at"
+      ],
+      "columnCount": 20,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_run_pipeline_events",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_run_pipeline_events",
+      "columns": [
+        "attempt",
+        "emitted_at",
+        "event_id",
+        "event_name",
+        "module",
+        "node_id",
+        "payload_json",
+        "redacted",
+        "run_id",
+        "span_id",
+        "trace_id",
+        "workflow_id"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_run_playbook_traces",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_run_playbook_traces",
+      "columns": [
+        "feedback_json",
+        "id",
+        "intake_json",
+        "phase",
+        "run_id",
+        "timestamp",
+        "workflow_id"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_run_retry_traces",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_run_retry_traces",
+      "columns": [
+        "attempt",
+        "category",
+        "decision_json",
+        "error_code",
+        "error_message",
+        "id",
+        "node_id",
+        "run_id",
+        "timestamp"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_runs",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_runs",
+      "columns": [
+        "completion_verification",
+        "context_json",
+        "correlation_id",
+        "created_at",
+        "deadline_at",
+        "failure_code",
+        "failure_details_json",
+        "failure_message",
+        "finished_at",
+        "id",
+        "paused_at",
+        "proof_required",
+        "resumed_at",
+        "started_at",
+        "started_by_satellite_id",
+        "started_by_user_id",
+        "status",
+        "timeout_ms",
+        "trigger_node_id",
+        "trigger_payload_json",
+        "trigger_type",
+        "updated_at",
+        "workflow_id",
+        "workflow_version_id"
+      ],
+      "columnCount": 24,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_trigger_deliveries",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_trigger_deliveries",
+      "columns": [
+        "created_at",
+        "dedupe_key",
+        "delivered_at",
+        "error_code",
+        "error_message",
+        "id",
+        "run_id",
+        "status",
+        "trigger_registration_id"
+      ],
+      "columnCount": 9,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_trigger_registrations",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_trigger_registrations",
+      "columns": [
+        "created_at",
+        "cron_expression",
+        "cron_timezone",
+        "dedupe_window_sec",
+        "enabled",
+        "event_filter_expr",
+        "event_name",
+        "event_source",
+        "id",
+        "last_fired_at",
+        "next_fire_at",
+        "plugin_id",
+        "trigger_node_id",
+        "trigger_type",
+        "updated_at",
+        "webhook_path_token",
+        "webhook_secret_ref",
+        "webhook_signature_header",
+        "workflow_id",
+        "workflow_version_id"
+      ],
+      "columnCount": 20,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflow_versions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflow_versions",
+      "columns": [
+        "change_note",
+        "checksum",
+        "config_json",
+        "created_at",
+        "created_by_user_id",
+        "editor_graph_json",
+        "graph_json",
+        "id",
+        "is_published",
+        "updated_at",
+        "version_number",
+        "workflow_id"
+      ],
+      "columnCount": 12,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:workflows",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "workflows",
+      "columns": [
+        "canary_stats_json",
+        "compatibility_status",
+        "created_at",
+        "deleted_at",
+        "deleted_by",
+        "description",
+        "etag",
+        "id",
+        "is_archived",
+        "last_verified_at",
+        "last_verified_provider_model",
+        "last_verified_runtime_version",
+        "latest_version_number",
+        "name",
+        "owner_user_id",
+        "promotion_channel",
+        "published_version_number",
+        "revision",
+        "shadow_version_id",
+        "slug",
+        "tags_json",
+        "updated_at"
+      ],
+      "columnCount": 22,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "plaintext",
+        "retention": "permanent-default"
+      }
+    },
+    {
+      "key": "sqlite:xhs_sessions",
+      "kind": "table",
+      "source": "sqlite",
+      "table": "xhs_sessions",
+      "columns": [
+        "account_name",
+        "cookies_encrypted",
+        "cookies_json",
+        "created_at",
+        "id",
+        "last_used_at",
+        "user_agent"
+      ],
+      "columnCount": 7,
+      "derived": {
+        "owner": "hub-sqlite",
+        "encryption": "column-encrypted",
+        "retention": "permanent-default"
+      }
+    }
+  ]
+}

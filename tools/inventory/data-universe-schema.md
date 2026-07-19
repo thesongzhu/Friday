@@ -1,10 +1,62 @@
 # Data-universe schema — INV-DATA-001 (P0)
 
 Schema, policy-dimension model, and blocker vocabulary for the deterministic
-STATIC-SOURCE data-universe census + reconcile gate implemented in
-[`data-universe-census.mjs`](./data-universe-census.mjs). Sibling of the
-artifact-inventory gate ([`reconcile.mjs`](./reconcile.mjs), INV-ARTIFACT-001):
-same pure keyed set-difference discipline, applied to the DATA universe.
+data-universe census + reconcile gate. The reconcile CLI
+([`data-universe-census.mjs`](./data-universe-census.mjs)) is a **thin** pure
+keyed set-difference engine; the census it reconciles against is produced by an
+**authoritative oracle** ([`data-universe-oracle.ts`](./data-universe-oracle.ts)).
+Sibling of the artifact-inventory gate ([`reconcile.mjs`](./reconcile.mjs),
+INV-ARTIFACT-001): same discipline, applied to the DATA universe.
+
+## Authoritative census — NOT a regex parse (read second)
+
+The SQLite half of the census is **authoritative**: the oracle EXECUTES the exact
+committed migration chain (`FRIDAY_SQLITE_MIGRATIONS` via `runFridayMigrations`)
+against a fresh `new Database(":memory:")` and then INTROSPECTS the resulting
+schema (`sqlite_master` + `PRAGMA table_info`). What the running database reports
+**is** the census. This is not a static DDL "replay": a regex parser is
+structurally blind to
+
+- **dynamic migrations** — e.g. V069 adds its metadata columns
+  (`last_verified_*`, `compatibility_status`, `promotion_channel`,
+  `shadow_version_id`, `canary_stats_json`) through an imperative `apply(db)` hook,
+  not static `ALTER TABLE` text; and
+- **FTS5 shadow tables** — `CREATE VIRTUAL TABLE … USING fts5` auto-creates
+  `*_fts_data` / `*_fts_idx` / `*_fts_docsize` / `*_fts_config` tables that exist
+  only once the vtable is really created.
+
+Executing the chain recovers all of these (37 real table/column entries a regex
+replay missed on the current schema).
+
+Because the oracle imports the repo's `.ts` migration sources (and `#state`
+resolves to a `dist` alias unavailable to plain node), it runs under the repo's
+vitest/TS toolchain — the same way every migration test bootstraps a DB. It
+regenerates a committed **snapshot** ([`data-universe-census.snapshot.json`](./data-universe-census.snapshot.json))
+that the plain-node CLI reads. The snapshot carries a **`sourceFingerprint`**
+(sha256 over every migration `.ts`, the runner, `schema.rs`,
+`friday-retention.types.ts`, and the oracle). The CLI recomputes it from disk and
+**fails closed** if it drifts, so a migration / schema / retention / oracle change
+that is not followed by a snapshot regeneration turns the gate RED instead of
+serving a stale (possibly false-clean) census. The contract test additionally
+re-executes the migrations every CI run and asserts the snapshot equals the live
+schema + fingerprint — that is what keeps the committed snapshot **LIVE**.
+
+Regenerate the snapshot after any source change with:
+
+```
+INV_DATA_SNAPSHOT_REGEN=1 npx vitest run \
+  test/contracts/inventory/friday-data-universe-reconcile.contract.test.ts
+```
+
+### Rust boundary (honest gap)
+
+A Node in-memory DB cannot run the Rust store's rusqlite migrations, so the Rust
+surface (`rust-core/crates/friday-storage/src/schema.rs`) is parsed **statically**
+(CREATE / ALTER / RENAME / DROP replay of the literal SQL text). This is a
+**documented gap**: if the Rust store ever adds **programmatic / conditional** DDL
+(the Rust analog of V069's `apply` hook), that construct would be invisible here
+and must be resolved by the gated live/operator-sealed crawl — Rust completeness
+is **never** claimed from this static parse.
 
 ## Honest scoping — the GATED remainder (read first)
 
@@ -51,12 +103,14 @@ schema declares, so two things are **deferred to the gated closure**:
 
 The reconciler consumes two element universes that share one key space:
 
-- **CENSUS** (discovered / derived) — enumerated from source by the crawler:
-  SQLite migrations (`src/state/sqlite/migrations/v*.ts`), the Rust-owned schema
-  (`rust-core/crates/friday-storage/src/schema.rs`), and the retention policy
-  (`src/jobs/retention/*`). Each element carries the source-**derived** static
-  dims. In this slice the census is the live source crawl; the *authoritative*
-  census (runtime + signed artifact) is out of scope.
+- **CENSUS** (discovered / derived) — the authoritative snapshot the oracle
+  produces from source: SQLite via **real migration execution + introspection**,
+  the Rust-owned schema (`schema.rs`) via static parse (documented boundary), and
+  the retention categories from the **canonical governance constants**
+  (`FRIDAY_RETENTION_CONTENT_CATEGORIES` + the security-lifecycle fields of
+  `FRIDAY_DEFAULT_RETENTION_POLICY`). Each element carries the source-**derived**
+  static dims. This is the *source-discoverable* surface; the runtime + signed
+  artifact *authoritative* universe remains out of scope.
 - **REGISTRY** (declared / expected) — the checked-in
   [`data-universe-registry.json`](./data-universe-registry.json): the **declared**
   policy classification for every known element. Seeded from the source-derived
@@ -145,14 +199,19 @@ gap.
   column matching `/hash/i` → `hashed`; else `plaintext`. This reflects the
   at-rest posture *visible in schema*; the true at-rest posture (whole-DB
   encryption, OS-keychain sealing) is part of the gated closure.
-- **retention** — the reaper mapping in `src/jobs/retention/*`: the seven
-  owner-configurable CONTENT categories (`learning_events`, `satellite_heartbeats`,
+- **retention** — the reaper mapping keyed by the **canonical** governance
+  categories. The oracle imports `FRIDAY_RETENTION_CONTENT_CATEGORIES` (the seven
+  owner-configurable CONTENT categories) + the SECURITY-LIFECYCLE fields of
+  `FRIDAY_DEFAULT_RETENTION_POLICY` — it never re-declares them. The hand-maintained
+  category→physical-table map (`learning_events`, `satellite_heartbeats`,
   `skill_run_snapshots`, `audit_logs`, `friday_agent_runs`, `llm_usage_records`,
-  `error_incidents`) → `content-opt-in`; the three SECURITY-LIFECYCLE TTL tables
-  (`satellite_pairing_requests`, `outbox_messages`, `friday_setup_bootstrap_nonces`)
-  → `security-lifecycle-ttl`; everything else → `permanent-default` (the
-  DATA-RETENTION-001 default: local data is default-permanent, auto-cleanup is
-  opt-in per category).
+  `error_incidents` → `content-opt-in`; `satellite_pairing_requests`,
+  `outbox_messages`, `friday_setup_bootstrap_nonces` → `security-lifecycle-ttl`) is
+  **fail-closed cross-checked** against those constants: if a source category is
+  added / removed / renamed, the oracle throws (`retention_*_category_drift`) so the
+  change can never stay invisible (no false-green). Everything else →
+  `permanent-default` (DATA-RETENTION-001: local data is default-permanent,
+  auto-cleanup is opt-in per category).
 
 ## Blocker vocabulary
 
@@ -168,6 +227,29 @@ gap.
 source: if a table gains an encrypted column, is moved under a reaper category,
 or changes ownership, the census re-derives the new value and the drift REDs
 until the registry is re-classified.
+
+### Fail-closed rejections (exit 3, never "passed")
+
+Beyond the five blocker codes above (which produce `status: "blocked"`), the
+engine rejects structurally / semantically invalid input **unconditionally** with
+`status: "error"` and exit **3**:
+
+| code                                                   | meaning                                                                            |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `invalid_kind` / `invalid_source`                      | element `kind`/`source` missing or outside the allowed set                          |
+| `invalid_key_prefix`                                   | key has no `sqlite:` / `rust:` / `retention:` prefix                                 |
+| `semantic_source_mismatch` / `semantic_kind_mismatch`  | key-prefix contradicts the element's `source` / `kind` (e.g. a `sqlite:` key claiming `source=retention`) |
+| `key_table_mismatch`                                   | a table element's key ≠ `source:table`                                             |
+| `column_count_mismatch`                                | `columnCount` ≠ `columns.length` (a census element lying about its shape)           |
+| `invalid_columns` / `invalid_table` / `retention_columns_nonempty` | malformed census shape                                            |
+| `invalid_derived_value` / `invalid_policy_value`       | a dim carries a value outside its allowed set                                       |
+| `snapshot_stale` / `snapshot_unreadable` / `invalid_snapshot` | the committed census snapshot's `sourceFingerprint` ≠ disk, or it is missing/corrupt |
+
+The **semantic-identity** checks close a false-clean hole: an element with a
+consistent-looking key but a flipped `kind`/`source` used to reconcile as passed.
+The **`snapshot_stale`** check is the LIVE guard — the plain-node CLI cannot run
+the migrations, so it proves the snapshot still matches source by fingerprint and
+refuses to serve a stale census.
 
 ## Verdict
 
@@ -189,17 +271,22 @@ only**.
 ## CLI
 
 ```
-# Emit the static-source census (deterministic).
+# Emit the authoritative census (from the fingerprint-guarded snapshot).
 node tools/inventory/data-universe-census.mjs [census] [--out=/abs/census.json]
 
-# Re-seed the registry from current source-derived signals.
+# Re-seed the registry from the authoritative census.
 node tools/inventory/data-universe-census.mjs emit-registry [--out=/abs/registry.json]
 
-# Reconcile the declared registry against the source-discoverable census.
+# Reconcile the declared registry against the authoritative census.
 node tools/inventory/data-universe-census.mjs reconcile \
   --registry=/abs/data-universe-registry.json \
-  [--census=/abs/census.json]   # omit to crawl the live source tree
+  [--census=/abs/census.json]   # omit to use the authoritative snapshot
   [--out=/abs/reconcile-report.json] [--allow-blocked]
+
+# Regenerate the snapshot after a migration / schema / retention / oracle change
+# (runs the REAL migrations under vitest):
+INV_DATA_SNAPSHOT_REGEN=1 npx vitest run \
+  test/contracts/inventory/friday-data-universe-reconcile.contract.test.ts
 ```
 
 Exit codes: `0` passed (or blocked under `--allow-blocked`), `2` blocked

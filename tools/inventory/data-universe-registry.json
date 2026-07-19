@@ -1500,6 +1500,50 @@
       "backup": "gated"
     },
     {
+      "key": "sqlite:memory_items_fts_config",
+      "kind": "table",
+      "source": "sqlite",
+      "owner": "hub-sqlite",
+      "encryption": "plaintext",
+      "retention": "permanent-default",
+      "export": "gated",
+      "delete": "gated",
+      "backup": "gated"
+    },
+    {
+      "key": "sqlite:memory_items_fts_data",
+      "kind": "table",
+      "source": "sqlite",
+      "owner": "hub-sqlite",
+      "encryption": "plaintext",
+      "retention": "permanent-default",
+      "export": "gated",
+      "delete": "gated",
+      "backup": "gated"
+    },
+    {
+      "key": "sqlite:memory_items_fts_docsize",
+      "kind": "table",
+      "source": "sqlite",
+      "owner": "hub-sqlite",
+      "encryption": "plaintext",
+      "retention": "permanent-default",
+      "export": "gated",
+      "delete": "gated",
+      "backup": "gated"
+    },
+    {
+      "key": "sqlite:memory_items_fts_idx",
+      "kind": "table",
+      "source": "sqlite",
+      "owner": "hub-sqlite",
+      "encryption": "plaintext",
+      "retention": "permanent-default",
+      "export": "gated",
+      "delete": "gated",
+      "backup": "gated"
+    },
+    {
       "key": "sqlite:oauth_credentials",
       "kind": "table",
       "source": "sqlite",
@@ -2150,6 +2194,50 @@
     },
     {
       "key": "sqlite:session_messages_fts",
+      "kind": "table",
+      "source": "sqlite",
+      "owner": "hub-sqlite",
+      "encryption": "plaintext",
+      "retention": "permanent-default",
+      "export": "gated",
+      "delete": "gated",
+      "backup": "gated"
+    },
+    {
+      "key": "sqlite:session_messages_fts_config",
+      "kind": "table",
+      "source": "sqlite",
+      "owner": "hub-sqlite",
+      "encryption": "plaintext",
+      "retention": "permanent-default",
+      "export": "gated",
+      "delete": "gated",
+      "backup": "gated"
+    },
+    {
+      "key": "sqlite:session_messages_fts_data",
+      "kind": "table",
+      "source": "sqlite",
+      "owner": "hub-sqlite",
+      "encryption": "plaintext",
+      "retention": "permanent-default",
+      "export": "gated",
+      "delete": "gated",
+      "backup": "gated"
+    },
+    {
+      "key": "sqlite:session_messages_fts_docsize",
+      "kind": "table",
+      "source": "sqlite",
+      "owner": "hub-sqlite",
+      "encryption": "plaintext",
+      "retention": "permanent-default",
+      "export": "gated",
+      "delete": "gated",
+      "backup": "gated"
+    },
+    {
+      "key": "sqlite:session_messages_fts_idx",
       "kind": "table",
       "source": "sqlite",
       "owner": "hub-sqlite",
