@@ -8256,6 +8256,12 @@ export async function createFridayHub(
         createFridayHealthLogDeduper,
         healthCheckStatusLabel,
       } = await import("../learning/services/friday-system-health-monitor.js");
+      // RETENTION-R3c: the bounded rolling growth-rate sampler that turns #1613's
+      // (R3b) 7-day projected-exhaustion branch from inert (constant null) into a
+      // real observable measurement. Report-only; in-memory; never deletes anything.
+      const { createFridayDiskGrowthRateSampler } = await import(
+        "../learning/services/friday-disk-growth-rate-sampler.js"
+      );
       // One-time setup (persists across ticks): a transition-only log deduper so
       // a persistently large table never spams a warning every 5 minutes. Per the
       // #1606 split, the report-only realtime_events growth reading is surfaced
@@ -8263,6 +8269,15 @@ export async function createFridayHub(
       // observability route / HTTP surface (owner-authorized readback is deferred
       // to R3). Report-only — none of this deletes anything.
       const systemHealthLogDeduper = createFridayHealthLogDeduper();
+      // RETENTION-R3c: created ONCE so the rolling window persists across ticks (the
+      // monitor itself is recreated every tick). Each tick's probeDiskSpace records a
+      // freeBytes sample (timestamped by the sampler's own MONOTONIC clock, immune to
+      // wall-clock jumps); probeGrowthRateBytesPerDay serves the conservative
+      // (full-window vs recent-horizon) least-squares consumption rate. Bounded both
+      // ways (count cap + age window), so memory stays bounded; NOT restart-durable
+      // (re-accrues after restart, reads `unknown` until enough samples — the correct
+      // fail-closed startup posture).
+      const diskGrowthRateSampler = createFridayDiskGrowthRateSampler();
       schedulerJobs.push({
         id: "system-health-monitor",
         intervalMs: 300_000, // every 5 min
@@ -8282,21 +8297,31 @@ export async function createFridayHub(
                 const freeBytes = st.bavail * st.bsize;
                 const totalBytes = st.blocks * st.bsize;
                 if (!Number.isFinite(freeBytes) || !Number.isFinite(totalBytes)) return null;
+                // RETENTION-R3c: feed the rolling growth-rate sampler with this tick's
+                // valid free-space reading. probeDiskSpace is called BEFORE
+                // probeGrowthRateBytesPerDay in the monitor's disk_growth check, so the
+                // sample is visible to the rate accessor within the same tick. Only
+                // finite readings reach here, so the buffer is never poisoned. The
+                // sampler timestamps the sample with its own MONOTONIC clock (never
+                // Date.now) so a wall-clock jump cannot distort the rate.
+                diskGrowthRateSampler.record(freeBytes);
                 return { freeBytes, totalBytes };
               } catch {
                 return null;
               }
             },
-            // U13 projected-exhaustion branch: no AUTHORITATIVE growth-window
-            // measurement exists in the TS runtime yet, so the growth rate is
-            // UNKNOWN today. Returning null is the HONEST fail-closed posture — per
-            // U13, above the max(10 GiB, 10%) free-space floor the disk_growth
-            // reading reports `unknown` (healthy=false), NEVER a false healthy `ok`;
-            // below the floor it still warns (the live authoritative signal). An
-            // authoritative bytes/day growth-window measurement is the named R3c
-            // follow-up; it will replace this null with a real rate so the 7-day
-            // projected-exhaustion warning becomes observable.
-            probeGrowthRateBytesPerDay: () => null,
+            // RETENTION-R3c: U13 projected-exhaustion branch, now backed by a REAL
+            // bounded rolling measurement. The sampler returns the SAFETY-CONSERVATIVE
+            // net consumption rate (bytes/day) — the sooner-exhaustion max of its full
+            // window and a recent 6h horizon (so a fresh cliff on top of a rising trend
+            // still warns): `null` while neither horizon is observable (→ #1613
+            // fail-closes `unknown`, healthy=false — the correct startup posture before
+            // enough samples accrue), `0` when free is stable/increasing over BOTH
+            // horizons (KNOWN no-growth → `ok`), or a positive rate for a genuine
+            // sustained decrease (→ #1613 projects `days = free/rate`, warns if ≤ 7).
+            // Elapsed time and stale-sample pruning use the sampler's MONOTONIC clock
+            // (never Date.now), so a wall-clock jump cannot distort the rate.
+            probeGrowthRateBytesPerDay: () => diskGrowthRateSampler.getGrowthRateBytesPerDay(),
             onRunComplete: (summary) => {
               // Log an unhealthy/warn/critical/degraded check only on a status
               // TRANSITION; feed healthy statuses too so a recovery resets state
