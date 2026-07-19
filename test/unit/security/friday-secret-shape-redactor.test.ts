@@ -385,16 +385,18 @@ describe("friday-secret-shape-redactor", () => {
       expect(spans[0]!.replacement).toBe(M);
     });
 
-    // NO-DEGRADE: the body class excludes `_` and requires a leading word boundary + 34+ chars, so a
-    // benign `hf_`-prefixed snake_case identifier, a short form, a bare 34-char hash (no prefix), and a
-    // mid-word `…hf_…` all survive byte-identical with NO span (not an over-redactor).
-    it("does NOT redact benign hf_ near-misses (hf_docs / short / underscore body / bare hash / mid-word)", () => {
+    // NO-DEGRADE: the body class excludes `_` and requires 34+ contiguous base62 chars, so a benign
+    // `hf_`-prefixed snake_case identifier, a short form, and a bare 34-char hash (no prefix) all survive
+    // byte-identical with NO span (not an over-redactor). NOTE: a `hf_` GLUED to a preceding word char
+    // followed by a real 34+ high-entropy body (`shf_<34>`) is NO LONGER a benign near-miss — it is a
+    // leaked-credential evasion the glued-prefix fix (SEC-SECRET-GLUED-PREFIX-001) now catches; that case
+    // moved to the glued-prefix describe block below.
+    it("does NOT redact benign hf_ near-misses (hf_docs / short / underscore body / bare hash)", () => {
       for (const benign of [
         "hf_docs", // short (4 body chars)
         "hf_", // prefix only
         "hf_config_value_thing", // underscore-separated identifier, no 34-char base62 run
         "AbCdEfGhIjKlMnOpQrStUvWxYz01234567", // pragma: allowlist secret — bare 34-char hash, NO hf_ prefix
-        seg("shf_", HF_BODY), // pragma: allowlist secret — no word boundary before `hf` (embedded in a longer token)
       ]) {
         expect(redactSecretShapesInString(benign), benign).toBe(benign);
         expect(findSecretShapeSpans(benign), benign).toEqual([]);
@@ -404,6 +406,279 @@ describe("friday-secret-shape-redactor", () => {
     it("SENSITIVITY: the hf_ shape produces the marker (no silent pass-through)", () => {
       expect(redactSecretShapesInString(HF)).toContain(M);
       expect(redactSecretShapesInString(HF)).not.toContain(HF);
+    });
+  });
+
+  // ─── SEC-SECRET-GLUED-PREFIX-001: the canonical detector missed a distinctive-prefix credential
+  //     GLUED directly after an ASCII word char (`keyhf_<34>`): the leading `\b` on the whole-match
+  //     prefix patterns requires a NON-word boundary before the prefix, so `<wordchar>hf_<body>` has no
+  //     boundary and survived — reaching the audit-read, realtime on-wire, and memory read-back sinks.
+  //     The fix DROPS the leading `\b` on the HIGH-ENTROPY distinctive-prefix whole-match patterns only.
+  //     RED on bf6968f9 (glued forms return verbatim, 0 spans); GREEN after. Fixtures are BUILT from
+  //     parts (`seg`) so no contiguous literal credential appears in SOURCE (GitHub push protection). ───
+  describe("SEC-SECRET-GLUED-PREFIX-001 glued distinctive-prefix credential (leading \\b evasion)", () => {
+    const seg = (...p: string[]): string => p.join(""); // pragma: allowlist secret
+    const SGPOOL = "ABCdefGHIjkl0123456789abcdefghijkLMNopqrstuvwxyz0123456789"; // pragma: allowlist secret
+    const SG_SECRET = seg("SG.", SGPOOL.slice(0, 22), ".", SGPOOL.slice(0, 43)); // pragma: allowlist secret
+
+    // Patterns whose leading `\b` was DROPPED — each is a high-signal literal prefix + LONG high-entropy
+    // body (body excludes separators OR the prefix is astronomically distinctive), so allowing a glued
+    // prefix cannot over-match a plausible benign identifier. [name, whole-secret].
+    const DEBOUNDED: Array<[string, string]> = [
+      ["HuggingFace hf_", seg("hf_", "AbCdEfGhIjKlMnOpQrStUvWxYz01234567")], // pragma: allowlist secret — 34 base62
+      ["Groq gsk_", seg("gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx")], // pragma: allowlist secret — 42 base62
+      ["npm npm_", seg("npm_", "abcdefghijklmnopqrstuvwxyz0123456789")], // pragma: allowlist secret — 36 base62
+      ["DigitalOcean dop_v1_", seg("dop_v1_", "0123456789abcdef".repeat(4))], // pragma: allowlist secret — 64 hex
+      ["Google GOCSPX-", seg("GOCSPX-", "abcdefghijklmnop_qrstuvwx")], // pragma: allowlist secret
+      ["GitLab glpat-", seg("glpat-", "ABCdef0123456789ghijkLMNop")], // pragma: allowlist secret
+      ["SendGrid SG.<22>.<43>", SG_SECRET], // pragma: allowlist secret
+      ["Square sq0atp-", seg("sq0atp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
+      ["Square sq0csp-", seg("sq0csp-", "0123456789abcdefghijklABCDwxyz")], // pragma: allowlist secret
+      // GitHub classic {ghp,ghr} were SPLIT out of the classic alternation and PLAIN de-`\b`'d
+      // (SEC-SECRET-GLUED-PREFIX-001 P1 fix): both have ZERO dict word-endings and are not a benign
+      // fragment, so a glued `keyghp_<36>` / `keyghr_<…>` (after ANY word char) is now CAUGHT. The
+      // AMBIGUOUS classic members {gho,ghs,ghu,github_pat_} KEEP `\b` — see KEPT.
+      // NB: AWS `AKIA` is ALSO de-bounded (P1 canary) but via a CONTEXT-SENSITIVE `(?<![A-Z0-9])`
+      // lookbehind — NOT a plain `\b`-drop — because `AKIA` is the suffix of SLOV-AKIA / CZECHOSLOV-AKIA,
+      // so it is NOT in this DEBOUNDED set (whose generic assertion is that an UPPERCASE-`X`-glued form
+      // also redacts, which must NOT hold for AKIA). AKIA has its own dedicated lookbehind test below.
+      ["GitHub classic ghp_ (0 word-endings)", seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")], // pragma: allowlist secret — 36 base62
+      ["GitHub classic ghr_ (0 word-endings)", seg("ghr_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")], // pragma: allowlist secret — 36 base62
+      ["Slack xoxb-", seg("xoxb-", "EXAMPLENOTAREALSLACKTOKEN")], // pragma: allowlist secret
+    ];
+
+    it("RED→GREEN: a glued (word-char-prefixed) credential is redacted, benign prefix char preserved", () => {
+      for (const [name, secret] of DEBOUNDED) {
+        // Standalone still redacts (no regression on the existing whole-value behavior).
+        expect(redactSecretShapesInString(secret), `${name} standalone`).toBe(M);
+        // GLUED after a single word char, and after a multi-char word — only the credential is redacted.
+        expect(redactSecretShapesInString(seg("X", secret)), `${name} X-glued`).toBe(`X${M}`);
+        expect(redactSecretShapesInString(seg("key", secret)), `${name} key-glued`).toBe(`key${M}`);
+      }
+    });
+
+    it("reports the glued credential as a span that EXCLUDES the benign leading char (byte-preserving)", () => {
+      for (const [name, secret] of DEBOUNDED) {
+        const input = seg("key", secret);
+        const spans = findSecretShapeSpans(input);
+        expect(spans.length, name).toBe(1);
+        // The span is exactly the credential (prefix+body) — the leading `key` is outside it.
+        expect(input.slice(spans[0]!.start, spans[0]!.end), name).toBe(secret);
+        expect(spans[0]!.replacement, name).toBe(M);
+        // Splicing reproduces the in-place scrubber output (path parity, no off-by-one).
+        const spliced = input.slice(0, spans[0]!.start) + spans[0]!.replacement + input.slice(spans[0]!.end);
+        expect(spliced, name).toBe(redactSecretShapesInString(input));
+        expect(spliced, name).toBe(`key${M}`);
+      }
+    });
+
+    it("still redacts through the EXISTING delimited paths (whitespace / quote / = / : / leading zero-width)", () => {
+      const [, HFV] = DEBOUNDED[0]!; // hf_ secret
+      expect(redactSecretShapesInString(`leak ${HFV} here`)).toBe(`leak ${M} here`);
+      expect(redactSecretShapesInString(`"${HFV}"`)).toBe(`"${M}"`);
+      expect(redactSecretShapesInString(`x=${HFV}`)).toBe(`x=${M}`);
+      expect(redactSecretShapesInString(`ref: ${HFV}`)).toBe(`ref: ${M}`);
+      expect(redactSecretShapesInString(`​${HFV}`)).toBe(`​${M}`); // leading zero-width
+    });
+
+    // KEPT the leading `\b` — the prefix is SHORT / low-signal and glues into a common word, or is itself
+    // a common English WORD-FRAGMENT (`AI`/`app`/`-ghs`/"github"), so a glued form would over-redact a
+    // benign identifier. Each: standalone STILL redacts, but the glued/word-embedded benign form is
+    // UNCHANGED. [name, standalone-secret, glued-BENIGN].
+    const KEPT: Array<[string, string, string]> = [
+      ["sk- (desk-/risk-/task-)", seg("sk-", "abcdefghijklmnopqrstuv0123456789"), "desk-management-framework-v2extras"], // pragma: allowlist secret
+      ["xai- (…xai)", seg("xai-", "abcdefghijklmnop0123456789"), seg("proxai-", "abcdefghijklmnop0123456789")], // pragma: allowlist secret
+      ["Stripe sk_live_ (desk_/risk_)", seg("sk", "_live_", "0123456789abcdefABCD"), seg("desk", "_live_", "0123456789abcdefABCD")], // pragma: allowlist secret
+      ["github_pat_ (natural phrase)", seg("github_pat_", "11ABCDE0aBcDeFgHiJkL0"), seg("my", "github_pat_", "reference0token0id00")], // pragma: allowlist secret
+      // GitHub classic AMBIGUOUS {gho,ghs,ghu} — word-endings (sor-GHO / walkthrou-GHS / Ra-GHU), so a
+      // glued form is NOT caught; standalone still is. (ghp/ghr were de-`\b`'d — see DEBOUNDED.)
+      ["GitHub classic gho_ (…gho/ghs word-ending)", seg("gho_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"), seg("walkthroughs_", "completedThisWeekX")], // pragma: allowlist secret
+      // AWS AMBIGUOUS {ASIA,AGPA,…} — ASIA is an English word + AGPA is ULID-constructible; the body is
+      // all-caps/digit (ULID alphabet), so a glued form (a 26-char ULID `012345AGPA…`) is NOT caught;
+      // standalone still is. (AKIA was de-`\b`'d — see DEBOUNDED.)
+      ["AWS AMBIGUOUS ASIA/AGPA (word/ULID fragment)", seg("ASIA", "JEXAMPLE01234XYZ"), "012345AGPABCDEFGHJKMNPQRST"], // pragma: allowlist secret — glued-benign is a ULID
+      ["Slack xapp- (maxapp-)", seg("xapp-", "1-A0123ABCD-4567890123"), "maxapp-config-value-here"], // pragma: allowlist secret
+      ["Google AIza (openAIza…)", seg("AIza", "SyDabcdefghijklmnopqrstuvwxyz012345"), seg("open", "AIza", "SyDabcdefghijklmnopqrstuvwxyz012345")], // pragma: allowlist secret
+      ["Google ya29. (maya29.field)", seg("ya29.", "a0AfBbyDtestTokenValue0123456789ABCDEF"), "maya29.profile_image_url_field_v2"], // pragma: allowlist secret
+    ];
+
+    it("NO-DEGRADE: KEPT-boundary short/low-signal prefixes still redact standalone but NOT when glued into a word", () => {
+      for (const [name, standalone, gluedBenign] of KEPT) {
+        expect(redactSecretShapesInString(standalone), `${name} standalone`).toBe(M);
+        expect(redactSecretShapesInString(gluedBenign), `${name} glued-benign`).toBe(gluedBenign);
+        expect(findSecretShapeSpans(gluedBenign), `${name} glued-benign span`).toEqual([]);
+      }
+    });
+
+    // NO-DEGRADE benign-identifier corpus — MUST be returned byte-identical (zero redaction). These are
+    // the ordinary identifiers/blobs the shared detector protects: short/low-entropy bodies after a
+    // distinctive prefix, UUIDs, base64 blobs (incl. a `_`/`-`-bearing base64url one), snake_case ids,
+    // `AKIA` as a plain word, hex ids, file paths, and hyphen/underscore near-misses.
+    const BENIGN_CORPUS = [
+      "myhf_variable", // hf_ + short body
+      "staging_key",
+      seg("gsk_", "count"), // gsk_count (short body)
+      "sq0_index", // sq0 not followed by atp-/csp-
+      "npm_config", // npm_ + short body with `_`
+      "npm_config_cache is set",
+      "550e8400-e29b-41d4-a716-446655440000", // a UUID
+      "abc123def456ghi789jkl012mno345pqr678stuv", // pragma: allowlist secret — pure lowercase-alnum blob, no prefix reachable
+      "aGVsbG8_d29ybGQ-dGhpc19pc19iZW5pZ24", // pragma: allowlist secret — base64url blob w/ `_` and `-`, not a secret shape
+      "user_session_reference_identifier_v2", // snake_case id
+      "AKIA is the aws access-key id prefix", // AKIA as a plain word (no 16-char body)
+      // AWS AKIA NO-DEGRADE: benign all-caps / ULID / base32 ids where an ASIA/AIDA/AGPA fragment is GLUED
+      // after a word char — the AKIA branch keeps `\b`, so these are UNCHANGED (they were CORRUPTED while
+      // AKIA was de-`\b`'d). (A DELIMITED `"ASIA<16>"` — quote boundary — is caught by BASE too, so it is
+      // NOT a benign-unchanged case; only the GLUED forms are the fix's concern.)
+      "012345AGPABCDEFGHJKMNPQRST", // pragma: allowlist secret — 26-char Crockford-base32 ULID (AGPA glued after digit `5`)
+      "AUSTRALASIAWIDEDEPLOYMENT01", // pragma: allowlist secret — all-caps constant, ASIA glued after `L`
+      "EURASIAREGIONCODE0123456789", // pragma: allowlist secret — all-caps, ASIA glued after `R`
+      "PROJECTAIDABUILDPIPELINE42X", // pragma: allowlist secret — all-caps, AIDA glued after `T`
+      // Negative controls for the KEPT-`\b` AWS members whose fragment is NOT ULID nor a common word but
+      // IS inside a common all-caps acronym / place name (criterion (c)) — these MUST survive:
+      "AIPACPOLICYCONFERENCE2024ABC", // pragma: allowlist secret — AIPA is a prefix of the all-caps org AIPAC
+      "AOTEAROANEWZEALANDGOVT01ABCD", // pragma: allowlist secret — AROA is inside the place name AOTEAROA
+      "OPENCANVASRENDERINGCONTEXT2D", // pragma: allowlist secret — ANVA is inside CANVAS (also ULID-constructible)
+      // Negative controls for the de-`\b`'d AKIA member: `AKIA` is the SUFFIX of the country names
+      // SLOV-AKIA / CZECHOSLOV-AKIA (absent from the dict, so the per-word analysis missed them). The
+      // `(?<![A-Z0-9])` context-lookbehind keeps `AKIA<16>` glued mid-all-caps-word / mid-alphanumeric-run
+      // UNCHANGED (would corrupt under a plain leading-`\b` drop — `SLOVAKIA…` → `SLOV[REDACTED]`).
+      "SLOVAKIAREGIONCODE2024AB", // pragma: allowlist secret — AKIA after `V` (uppercase) → not a credential
+      "CZECHOSLOVAKIAREGIONCODE012345", // pragma: allowlist secret — AKIA after `V` → not a credential
+      "deployed to SLOVAKIAREGIONCODE2024AB today", // pragma: allowlist secret — free-text SLOVAKIA embedding
+      "PROJECT2AKIAXYZ0123456789ABC", // pragma: allowlist secret — AKIA after `2` (digit) → not a credential
+      "9f8e7d6c5b4a3928170695f4e3d2c1b0", // pragma: allowlist secret — 32-hex id / git blob
+      "/var/log/hf_service/npm_cache/output.log", // file path with hf_/npm_ short segments
+      "GOCSPX_notasecret_underscore", // GOCSPX_ (underscore, not the required hyphen)
+      "glpat_docs", // glpat_ (underscore, not the hyphen)
+      "sq0abc-nothing", // sq0 near-miss (neither atp nor csp)
+      // GitHub-classic NO-DEGRADE (round-2): benign snake_case words ENDING in ghs/gho/ghp/ghr/ghu
+      // before `_`. The classic branch body is BASE62 (excludes `_`), so the snake_case `_` breaks the
+      // body below 16 chars → no match. (These were CORRUPTED by the first-round `[A-Za-z0-9_]` body.)
+      "walkthroughs_completed_counter",
+      "walkthroughs_completedThisWeek", // CONTIGUOUS 17-base62 run after ghs_ — only the leading `\b` closes this
+      "coughs_e3b0c44298fc1c14", // ghs_ + a content-hash suffix (contiguous base62)
+      "highs_thresholdValueConfig1",
+      "breakthroughs_this_quarter_list",
+      "highs_and_lows_threshold_value",
+      "coughs_detected_in_recording_v2",
+      "laughs_per_minute_counter",
+      "troughs_index",
+      "sighs_and_weighs_and_doughs", // multiple ghs-ending words
+      "metric name walkthroughs_started_and_completed today", // free-text sentence
+      // Negative controls for the KEPT-`\b` github members gho/ghu (word-endings sor-GHO / Ra-GHU): a
+      // lowercase `<word>_<16+ contiguous base62>` MUST survive (would over-redact if these were de-`\b`'d).
+      "sorgho_yieldPerHectare2024xx", // gho_ + 21 contiguous base62 — only the leading `\b` closes this
+      "raghu_authTokenReferenceValueV2", // ghu_ + contiguous base62 run
+    ];
+
+    it("NO-DEGRADE: the benign-identifier corpus is returned byte-identical (zero over-redaction)", () => {
+      for (const benign of BENIGN_CORPUS) {
+        expect(redactSecretShapesInString(benign), benign).toBe(benign);
+        expect(findSecretShapeSpans(benign), benign).toEqual([]);
+      }
+    });
+
+    // GitHub-classic sensitivity boundary (SEC-SECRET-GLUED-PREFIX-001 P1 split): the classic alternation
+    // is SPLIT by prefix. {ghp,ghr} have ZERO dict word-endings → de-`\b`'d (a glued token is now CAUGHT);
+    // {gho,ghs,ghu} are word-endings (sor-GHO / walkthrou-GHS / Ra-GHU) and `github_pat_` contains
+    // "github" → KEEP `\b` (a glued token stays an ACCEPTED gap). Benign `<-ghs word>_<contiguous base62
+    // run>` is UNCHANGED for the KEPT members even for a contiguous run a base62 body alone did not close;
+    // a DELIMITED / standalone / labeled classic token IS still caught for EVERY prefix.
+    it("GitHub-classic split: ghp/ghr GLUED redacts (P1); benign `…ghs_<run>` survives; gho/ghs/ghu GLUED is an accepted gap", () => {
+      // Benign — the KEPT `\b` blocks the match; UNCHANGED even for a CONTIGUOUS 17+ base62 run.
+      expect(redactSecretShapesInString("walkthroughs_completed_counter")).toBe("walkthroughs_completed_counter");
+      expect(redactSecretShapesInString("walkthroughs_completedThisWeek")).toBe("walkthroughs_completedThisWeek"); // 17 contiguous base62
+      expect(redactSecretShapesInString("coughs_e3b0c44298fc1c14")).toBe("coughs_e3b0c44298fc1c14"); // hash suffix
+      expect(redactSecretShapesInString("highs_thresholdValueConfig1")).toBe("highs_thresholdValueConfig1");
+      const B62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; // 36 base62
+      // DE-`\b`'d {ghp,ghr}: DELIMITED still caught AND a GLUED token is now REDACTED (P1 canary), the
+      // benign leading char preserved byte-for-byte; the span is exactly the credential.
+      for (const p of ["ghp_", "ghr_"]) {
+        const TOK = seg(p, B62); // pragma: allowlist secret
+        expect(redactSecretShapesInString(TOK), `${p} standalone`).toBe(M);
+        expect(redactSecretShapesInString(`token ${TOK} used`), `${p} delimited`).toBe(`token ${M} used`);
+        expect(redactSecretShapesInString(seg("key", TOK)), `${p} GLUED`).toBe(`key${M}`); // P1: now caught
+        const spans = findSecretShapeSpans(seg("key", TOK));
+        expect(spans.length, `${p} glued span`).toBe(1);
+        expect(seg("key", TOK).slice(spans[0]!.start, spans[0]!.end), `${p} glued span body`).toBe(TOK);
+      }
+      // KEPT-`\b` {gho,ghs,ghu}: DELIMITED / standalone still caught, but a GLUED token stays an ACCEPTED
+      // gap (these prefixes are benign word-endings, so de-`\b` would over-redact `sorgho_…`/`…ghs_…`).
+      for (const p of ["gho_", "ghs_", "ghu_"]) {
+        const TOK = seg(p, B62); // pragma: allowlist secret
+        expect(redactSecretShapesInString(TOK), `${p} standalone`).toBe(M);
+        expect(redactSecretShapesInString(`apikey=${TOK}`), `${p} labeled`).toBe(`apikey=${M}`);
+        expect(redactSecretShapesInString(seg("key", TOK)), `${p} GLUED gap`).toBe(seg("key", TOK));
+        expect(findSecretShapeSpans(seg("key", TOK)), `${p} glued span`).toEqual([]);
+      }
+    });
+
+    // AWS sensitivity boundary (SEC-SECRET-GLUED-PREFIX-001 P1 split): the AWS alternation is SPLIT by
+    // prefix. `AKIA` (has `I` → not ULID; no common all-caps acronym) is de-bounded via a context-sensitive
+    // `(?<![A-Z0-9])` lookbehind — NOT a plain `\b`-drop — because `AKIA` is the suffix of the country
+    // names SLOV-AKIA / CZECHOSLOV-AKIA (see the dedicated lookbehind test below); a glued `keyAKIA<16>`
+    // is CAUGHT (P1 canary) while a mid-all-caps-word `SLOVAKIA<16>` is NOT. The AMBIGUOUS members
+    // {ASIA,AGPA,AIDA,AROA,AIPA,ANPA,ANVA} — word-endings (Eur-ASIA), ULID-constructible (AGPA/ANPA/ANVA),
+    // or acronym fragments (AIDA, AIPA→AIPAC, AROA→AOTEAROA) — KEEP `\b`, so a benign all-caps / ULID id
+    // where the fragment is GLUED after a word char is UNCHANGED. A DELIMITED / standalone / labeled AWS
+    // key IS still caught for EVERY prefix (the common case — AWS keys are ~always delimited in env/config).
+    it("AWS split: AKIA GLUED redacts (P1); benign glued ULID/all-caps survives; ASIA/AGPA/AIDA/… GLUED is an accepted gap", () => {
+      const B16 = "JEXAMPLE01234XYZ"; // 16 [0-9A-Z]
+      // Benign all-caps / ULID with an AMBIGUOUS fragment GLUED after a word char → UNCHANGED (the `\b` blocks it).
+      expect(redactSecretShapesInString("012345AGPABCDEFGHJKMNPQRST")).toBe("012345AGPABCDEFGHJKMNPQRST"); // pragma: allowlist secret — benign ULID (AKIA-family scanner false positive)
+      expect(redactSecretShapesInString("AUSTRALASIAWIDEDEPLOYMENT01")).toBe("AUSTRALASIAWIDEDEPLOYMENT01"); // pragma: allowlist secret — benign all-caps constant
+      expect(redactSecretShapesInString("PROJECTAIDABUILDPIPELINE42X")).toBe("PROJECTAIDABUILDPIPELINE42X"); // pragma: allowlist secret — benign all-caps constant
+      // DE-`\b`'d AKIA: DELIMITED still caught AND a GLUED key is now REDACTED (P1 canary); leading char preserved.
+      const KEY = seg("AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
+      expect(redactSecretShapesInString(KEY)).toBe(M);
+      expect(redactSecretShapesInString(`token ${KEY} used`)).toBe(`token ${M} used`);
+      expect(redactSecretShapesInString(`apikey=${KEY}`)).toBe(`apikey=${M}`);
+      expect(redactSecretShapesInString(seg("key", KEY))).toBe(`key${M}`); // P1: glued now caught
+      const spans = findSecretShapeSpans(seg("key", KEY));
+      expect(spans.length).toBe(1);
+      expect(seg("key", KEY).slice(spans[0]!.start, spans[0]!.end)).toBe(KEY);
+      // KEPT-`\b` AMBIGUOUS members: DELIMITED / standalone still caught, but a GLUED key stays an ACCEPTED gap.
+      for (const p of ["ASIA", "AGPA", "AIDA", "AROA", "AIPA", "ANPA", "ANVA"]) {
+        const K = seg(p, B16); // pragma: allowlist secret
+        expect(redactSecretShapesInString(K), `${p} standalone`).toBe(M);
+        expect(redactSecretShapesInString(`apikey=${K}`), `${p} labeled`).toBe(`apikey=${M}`);
+        expect(redactSecretShapesInString(seg("x", K)), `${p} GLUED gap`).toBe(seg("x", K));
+        expect(findSecretShapeSpans(seg("x", K)), `${p} glued span`).toEqual([]);
+      }
+    });
+
+    // AWS AKIA context-lookbehind (SEC-SECRET-GLUED-PREFIX-001 round-5 NO-DEGRADE): `AKIA` is the SUFFIX of
+    // the country names SLOV-AKIA / CZECHOSLOV-AKIA (proper nouns absent from /usr/share/dict/words, so the
+    // per-word dict analysis missed them). A plain leading-`\b` drop corrupts an ALL-CAPS `SLOVAKIA<16>`
+    // region constant (`SLOVAKIA<16>` → `SLOV[REDACTED]`). The `(?<![A-Z0-9])` lookbehind fixes
+    // it: `AKIA` matches only when it starts a FRESH token (after lowercase / symbol / space / start), not
+    // when embedded after an UPPERCASE letter or DIGIT. RED on 2c83630f (plain de-`\b`); GREEN after.
+    it("AWS AKIA lookbehind: SLOVAKIA/CZECHOSLOVAKIA/alphanumeric-embedded survives; lowercase/symbol/space-glued still caught", () => {
+      const K = seg("AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
+      // NEGATIVE: AKIA preceded by an UPPERCASE letter or DIGIT → NOT a credential → UNCHANGED, 0 spans.
+      const negatives = [
+        "SLOVAKIAREGIONCODE2024AB", // pragma: allowlist secret — AKIA after `V`
+        "CZECHOSLOVAKIAREGIONCODE012345", // pragma: allowlist secret — AKIA after `V`
+        "deployed to SLOVAKIAREGIONCODE2024AB today", // pragma: allowlist secret — free-text SLOVAKIA embedding
+        seg("PROJECT2", K), // AKIA after digit `2`
+        seg("XAKIA", "IOSFODNN7EXAMPLE"), // pragma: allowlist secret — AKIA after uppercase `X` (mid-all-caps-word)
+      ];
+      for (const n of negatives) {
+        expect(redactSecretShapesInString(n), n).toBe(n);
+        expect(findSecretShapeSpans(n), n).toEqual([]);
+      }
+      // POSITIVE: AKIA starting a fresh token (lowercase / symbol / space / assignment / string start) → CAUGHT.
+      expect(redactSecretShapesInString(seg("key", K))).toBe(`key${M}`); // lowercase glue (P1 canary)
+      expect(redactSecretShapesInString(seg("aws", K))).toBe(`aws${M}`); // lowercase glue
+      expect(redactSecretShapesInString(`(${K})`)).toBe(`(${M})`); // symbol glue
+      expect(redactSecretShapesInString(`region ${K}`)).toBe(`region ${M}`); // whitespace delimited
+      expect(redactSecretShapesInString(`aws_key=${K}`)).toBe(`aws_key=${M}`); // assignment
+      expect(redactSecretShapesInString(K)).toBe(M); // string start
+      // Span still excludes the benign lowercase lead (lookbehind is zero-width).
+      const spans = findSecretShapeSpans(seg("key", K));
+      expect(spans.length).toBe(1);
+      expect(seg("key", K).slice(spans[0]!.start, spans[0]!.end)).toBe(K);
     });
   });
 });

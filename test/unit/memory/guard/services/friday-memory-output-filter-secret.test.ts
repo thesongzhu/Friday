@@ -271,3 +271,94 @@ describe("FridayMemoryOutputFilter — round-17 HuggingFace hf_ shape (content +
     expect(out.content).toBe("hf_docs reference");
   });
 });
+
+// ─── SEC-SECRET-GLUED-PREFIX-001: a distinctive-prefix credential GLUED directly to a preceding ASCII
+//     word char (`keyhf_<34>`) had no word boundary before the prefix, so the canonical detector's
+//     leading `\b` skipped it and it survived memory read-back to agents through EVERY output-filter leg
+//     (content scanAndTransform / metadata redactDeep / tag drop). RED on bf6968f9 (glued token verbatim
+//     in content + metadata, kept as a tag); GREEN after the leading `\b` is dropped on the high-entropy
+//     distinctive-prefix patterns. Built from parts so no contiguous literal token appears in SOURCE. ───
+describe("FridayMemoryOutputFilter — SEC-SECRET-GLUED-PREFIX-001 glued distinctive-prefix credential", () => {
+  const filter = createFridayMemoryOutputFilter();
+  const seg = (...p: string[]): string => p.join(""); // pragma: allowlist secret
+  const HF_BODY = "AbCdEfGhIjKlMnOpQrStUvWxYz01234567"; // pragma: allowlist secret — 34 base62
+  const HF = seg("hf_", HF_BODY); // pragma: allowlist secret
+  const GLUED = seg("key", HF); // pragma: allowlist secret — hf_ glued after the word `key`
+
+  it("redacts a GLUED hf_ token in item.content (scanAndTransform leg), leaving the benign leading `key`", () => {
+    const out = filter.filterItem(makeItem({ content: seg("auth used ", GLUED, " today") }));
+    expect(out.content).toContain(M);
+    expect(out.content).not.toContain(HF);
+    expect(out.content).not.toContain(HF_BODY);
+    // Only the credential subspan is masked — the glued `key` and surrounding text survive.
+    expect(out.content).toBe(`auth used key${M} today`);
+  });
+
+  it("redacts a GLUED hf_ token carried in item.metadata VALUES (redactDeep leg) under a non-sensitive key", () => {
+    const out = filter.filterItem(makeItem({ metadata: { tokenPreview: GLUED, note: "keep" } }));
+    const md = out.metadata as { tokenPreview: string; note: string };
+    expect(md.tokenPreview).toBe(`key${M}`);
+    expect(md.note).toBe("keep");
+    expect(JSON.stringify(md)).not.toContain(HF_BODY);
+  });
+
+  it("DROPS a GLUED hf_-shaped tag, preserving benign tags byte-identical", () => {
+    const out = filter.filterItem(makeItem({ tags: ["ok", GLUED, "fine"] }));
+    expect(JSON.stringify(out.tags)).not.toContain(HF_BODY);
+    expect(out.tags).toEqual(["ok", "fine"]);
+  });
+
+  it("NO-DEGRADE: a word-embedded near-miss with a SHORT body is not a token (survives)", () => {
+    // `keyhf_` + a short body has no 34-char high-entropy run, so it is NOT a credential — untouched.
+    const out = filter.filterItem(makeItem({ tags: [seg("key", "hf_docs")], content: seg("ref key", "hf_docs") }));
+    expect(out.tags).toEqual([seg("key", "hf_docs")]);
+    expect(out.content).toBe(seg("ref key", "hf_docs"));
+  });
+
+  // SEC-SECRET-GLUED-PREFIX-001 P1: GitHub classic `ghp_`/`ghr_` and AWS `AKIA` were SPLIT out of their
+  // alternations and de-`\b`'d (they are provably NOT benign word/ULID/acronym fragments), so a real
+  // credential GLUED after a word char is now caught in every output-filter leg. RED on 7021926c (glued
+  // token survives content + metadata + kept as a tag); GREEN after.
+  it("redacts GLUED ghp_/ghr_/AKIA credentials in content / metadata / tags (P1 split), benign lead preserved", () => {
+    const GHP = seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"); // pragma: allowlist secret — 36 base62
+    const AKIA = seg("AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
+    for (const [glueWord, body] of [["key", GHP], ["aws", AKIA]] as const) {
+      const glued = seg(glueWord, body);
+      // content leg — only the credential subspan is masked, the glued benign word survives.
+      const c = filter.filterItem(makeItem({ content: seg("token ", glued, " now") }));
+      expect(c.content).toBe(`token ${glueWord}${M} now`);
+      expect(c.content).not.toContain(body);
+      // metadata value leg under a non-sensitive key.
+      const m = filter.filterItem(makeItem({ metadata: { ref: glued, note: "keep" } }));
+      expect((m.metadata as { ref: string; note: string }).ref).toBe(`${glueWord}${M}`);
+      expect((m.metadata as { note: string }).note).toBe("keep");
+      // tag leg — the glued-credential tag is dropped, benign tags preserved.
+      const t = filter.filterItem(makeItem({ tags: ["ok", glued, "fine"] }));
+      expect(JSON.stringify(t.tags)).not.toContain(body);
+      expect(t.tags).toEqual(["ok", "fine"]);
+    }
+  });
+
+  // NO-DEGRADE (round-2): benign snake_case words ending in `ghs`/etc before `_` MUST survive through
+  // EVERY output-filter leg — the github-classic base62 body breaks at the `_`. The first-round
+  // `[A-Za-z0-9_]` body corrupted these (`walkthroughs_completed_counter` → `walkthrou[REDACTED_SECRET]`).
+  it("NO-DEGRADE: benign `…ghs_<snake_case>` identifiers survive content / metadata / tags byte-identical", () => {
+    const benign = ["walkthroughs_completed_counter", "walkthroughs_completedThisWeek", "coughs_e3b0c44298fc1c14", "breakthroughs_this_quarter_list", "laughs_per_minute_counter",
+      // AWS AKIA word-fragment: benign ULID / all-caps id with ASIA/AGPA glued after a word char.
+      "012345AGPABCDEFGHJKMNPQRST", "AUSTRALASIAWIDEDEPLOYMENT01", // pragma: allowlist secret — benign ULID/all-caps (AKIA-family scanner false positives)
+      // AKIA is the SUFFIX of SLOV-AKIA / CZECHOSLOV-AKIA — the `(?<![A-Z0-9])` lookbehind keeps these all-caps
+      // country region constants UNCHANGED (a plain `\b`-drop corrupts `SLOVAKIA<16>` → `SLOV[REDACTED_SECRET]`).
+      "SLOVAKIAREGIONCODE2024AB", "CZECHOSLOVAKIAREGIONCODE012345"]; // pragma: allowlist secret — AKIA after uppercase `V`
+    const out = filter.filterItem(makeItem({
+      content: "metric name walkthroughs_started_and_completed today",
+      metadata: { walk: benign[0], breakt: benign[1], note: "keep" },
+      tags: [...benign],
+    }));
+    expect(out.content).toBe("metric name walkthroughs_started_and_completed today");
+    const md = out.metadata as { walk: string; breakt: string; note: string };
+    expect(md.walk).toBe(benign[0]);
+    expect(md.breakt).toBe(benign[1]);
+    expect(md.note).toBe("keep");
+    expect(out.tags).toEqual(benign); // no tag dropped, none rewritten
+  });
+});

@@ -207,4 +207,74 @@ describe("SEC-EVENT-REDACTION-001 — cross-sink parity (memory egress == audit 
       expect(json).not.toContain(HF_RAW);
     }
   });
+
+  // ─── SEC-SECRET-GLUED-PREFIX-001: a distinctive-prefix credential GLUED directly to a preceding word
+  //     char (`keyhf_<34>`) under a NON-sensitive key had no word boundary before the prefix, so the
+  //     canonical detector's leading `\b` skipped it and it egressed VERBATIM through BOTH the audit sink
+  //     and memory read-back. The fix drops the leading `\b` on the high-entropy distinctive-prefix
+  //     patterns, so the SAME canonical detector catches the glued credential in both sinks (parity holds
+  //     automatically). Only the credential subspan is masked — the glued benign leading char survives.
+  //     RED on bf6968f9 (both sinks return the glued token verbatim); GREEN after. ───
+  const GSK_GLUED = seg("x", "gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx"); // pragma: allowlist secret
+  const GLPAT_GLUED = seg("id", "glpat-", "ABCdef0123456789ghijkLMNop"); // pragma: allowlist secret
+  const HF_GLUED = seg("key", "hf_", HF_BODY); // pragma: allowlist secret
+  // SEC-SECRET-GLUED-PREFIX-001 P1: GitHub classic `ghp_` and AWS `AKIA` were SPLIT out and de-`\b`'d, so
+  // a glued real credential must be caught identically in the AUDIT sink (persisted JSONL) and memory egress.
+  const GHP_GLUED = seg("key", "ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"); // pragma: allowlist secret — 36 base62
+  const AKIA_GLUED = seg("aws", "AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
+  const GLUED_PAYLOAD = (): Record<string, unknown> => ({
+    // non-sensitive KEY NAMES so the key-name nuke does NOT fire — the glued SHAPE must be caught.
+    hfref: HF_GLUED,
+    gskref: GSK_GLUED,
+    glref: GLPAT_GLUED,
+    ghpref: GHP_GLUED,
+    akiaref: AKIA_GLUED,
+    note: "just a note",
+    // NO-DEGRADE: benign words ending in `ghs`/etc before `_` MUST survive in BOTH sinks — the
+    // github-classic branch keeps `\b`, so a `<-ghs word>_<contiguous base62 run>` is not over-matched.
+    walk: "walkthroughs_completed_counter",
+    contig: "walkthroughs_completedThisWeek", // CONTIGUOUS 17-base62 run — only the leading `\b` closes this
+    breakt: "breakthroughs_this_quarter_list",
+    cough: "coughs_e3b0c44298fc1c14", // ghs_ + content-hash suffix
+    // AWS AKIA word-fragment: a benign ULID / all-caps id with ASIA/AGPA glued after a word char MUST
+    // survive in BOTH sinks — the AKIA branch keeps `\b` (was corrupted while AKIA was de-`\b`'d).
+    ulid: "012345AGPABCDEFGHJKMNPQRST", // pragma: allowlist secret — benign ULID (AKIA-family scanner false positive)
+    caps: "AUSTRALASIAWIDEDEPLOYMENT01", // pragma: allowlist secret — benign all-caps constant (AKIA-family scanner false positive)
+    // AKIA is the SUFFIX of SLOV-AKIA / CZECHOSLOV-AKIA — the `(?<![A-Z0-9])` lookbehind keeps these all-caps
+    // country region constants UNCHANGED in BOTH sinks (a plain `\b`-drop corrupts `SLOVAKIA<16>`).
+    country: "SLOVAKIAREGIONCODE2024AB", // pragma: allowlist secret — AKIA after uppercase `V`
+    country2: "CZECHOSLOVAKIAREGIONCODE012345", // pragma: allowlist secret — AKIA after uppercase `V`
+  });
+
+  it("glued distinctive-prefix credentials redact identically in the AUDIT sink and MEMORY redactDeep", async () => {
+    const auditDetails = await auditRedactedDetails(GLUED_PAYLOAD());
+    const memoryGuard = createFridayMemoryPiiGuard("redact");
+    const memoryValue = memoryGuard.redactDeep(GLUED_PAYLOAD()).value as Record<string, unknown>;
+    // Cross-sink equality — memory egress == audit sink for the glued credentials.
+    expect(memoryValue).toEqual(auditDetails);
+    // The credential subspan is masked, the benign glued leading char (`key`/`x`/`id`/`aws`) survives.
+    expect(memoryValue.hfref).toBe(`key${M}`);
+    expect(memoryValue.gskref).toBe(`x${M}`);
+    expect(memoryValue.glref).toBe(`id${M}`);
+    expect(memoryValue.ghpref).toBe(`key${M}`); // P1: glued GitHub classic ghp_ now caught in both sinks
+    expect(memoryValue.akiaref).toBe(`aws${M}`); // P1: glued AWS AKIA now caught in both sinks
+    expect(memoryValue.note).toBe("just a note");
+    // Benign `…ghs_<run>` identifiers survive byte-identical in BOTH sinks (no over-redaction), including
+    // a CONTIGUOUS base62 run that only the leading `\b` closes.
+    expect(memoryValue.walk).toBe("walkthroughs_completed_counter");
+    expect(memoryValue.contig).toBe("walkthroughs_completedThisWeek");
+    expect(memoryValue.breakt).toBe("breakthroughs_this_quarter_list");
+    expect(memoryValue.cough).toBe("coughs_e3b0c44298fc1c14");
+    expect(memoryValue.ulid).toBe("012345AGPABCDEFGHJKMNPQRST"); // pragma: allowlist secret — benign ULID (AKIA-family scanner false positive)
+    expect(memoryValue.caps).toBe("AUSTRALASIAWIDEDEPLOYMENT01"); // pragma: allowlist secret — benign all-caps constant (AKIA-family scanner false positive)
+    expect(memoryValue.country).toBe("SLOVAKIAREGIONCODE2024AB"); // pragma: allowlist secret — SLOVAKIA suffix preserved by the lookbehind in both sinks
+    expect(memoryValue.country2).toBe("CZECHOSLOVAKIAREGIONCODE012345"); // pragma: allowlist secret — CZECHOSLOVAKIA suffix preserved
+    // No credential body survives in either sink's serialization.
+    for (const sink of [auditDetails, memoryValue]) {
+      const json = JSON.stringify(sink);
+      for (const cred of [HF_GLUED.slice(3), GSK_GLUED.slice(1), GLPAT_GLUED.slice(2), GHP_GLUED.slice(3), AKIA_GLUED.slice(3)]) {
+        expect(json, cred).not.toContain(cred);
+      }
+    }
+  });
 });

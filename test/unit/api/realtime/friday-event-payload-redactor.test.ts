@@ -157,6 +157,30 @@ describe("redactEventPayload — secret shapes (no regression)", () => {
     expect(s).toContain("[REDACTED]");
   });
 
+  // SEC-SECRET-GLUED-PREFIX-001: a distinctive-prefix credential GLUED directly to a preceding word
+  // char (`keyhf_<34>`) had no word boundary before the prefix, so the canonical detector's leading
+  // `\b` skipped it and it egressed on-wire to agents/channels. Built from parts (`seg`) so no literal
+  // token appears in SOURCE. RED on bf6968f9 (credential survives in the payload), GREEN after.
+  it("redacts a distinctive-prefix credential GLUED after a word char (glued-prefix evasion, on-wire)", () => {
+    const seg = (...p: string[]) => p.join(""); // pragma: allowlist secret
+    const HF = seg("hf_", "AbCdEfGhIjKlMnOpQrStUvWxYz01234567"); // pragma: allowlist secret — 34 base62
+    const GSK = seg("gsk_", "abcdefghijklmnopqrstuvwxyz0123456789ABCDwx"); // pragma: allowlist secret — 42 base62
+    const GLPAT = seg("glpat-", "ABCdef0123456789ghijkLMNop"); // pragma: allowlist secret
+    // SEC-SECRET-GLUED-PREFIX-001 P1: GitHub classic `ghp_` and AWS `AKIA` were SPLIT out and de-`\b`'d —
+    // a real credential glued after a word char (`keyghp_<36>`, `keyAKIA<16>`) must now be caught on-wire.
+    const GHP = seg("ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"); // pragma: allowlist secret — 36 base62
+    const AKIA = seg("AKIA", "IOSFODNN7EXAMPLE"); // pragma: allowlist secret — AKIA + 16 [0-9A-Z]
+    const out = redactEventPayload({
+      log: seg("deploy key", HF, " and x", GSK, " and id", GLPAT, " and gh", GHP, " and aws", AKIA, " done"),
+    });
+    const s = serialize(out);
+    for (const cred of [HF, GSK, GLPAT, GHP, AKIA]) expect(s, cred).not.toContain(cred);
+    expect(s).toContain("[REDACTED]");
+    // Benign surrounding + glued leading chars survive (only the credential subspan is masked).
+    expect(s).toContain("deploy key");
+    expect(s).toContain("done");
+  });
+
   it("masks values under legacy sensitive keys", () => {
     const out = redactEventPayload({
       password: "hunter2-a5", // pragma: allowlist secret
@@ -199,6 +223,30 @@ describe("redactEventPayload — no over-redaction (NO DEGRADE)", () => {
     const payload = { status: "active", region: "us-west-2", sku: "ORD-98765" };
     const out = redactEventPayload(payload);
     expect(out).toEqual(payload);
+  });
+
+  // NO-DEGRADE (SEC-SECRET-GLUED-PREFIX-001 round-2): benign snake_case words ending in `ghs`/etc before
+  // `_` must NOT be over-redacted on-wire — the github-classic base62 body breaks at the `_`. The
+  // first-round `[A-Za-z0-9_]` body corrupted these (`walkthroughs_completed_counter` → `walkthrou[REDACTED]`).
+  it("preserves benign `…ghs_<snake_case>` identifiers (github-classic base62 body, no over-redaction)", () => {
+    const payload = {
+      walk: "walkthroughs_completed_counter",
+      contig: "walkthroughs_completedThisWeek", // CONTIGUOUS 17-base62 run — only the leading `\b` closes this
+      breakt: "breakthroughs_this_quarter_list",
+      cough: "coughs_e3b0c44298fc1c14", // ghs_ + content-hash suffix
+      laugh: "laughs_per_minute_counter",
+      note: "metric name walkthroughs_started_and_completed today",
+      // AWS AKIA word-fragment: benign ULID / all-caps id with ASIA/AGPA glued after a word char.
+      ulid: "012345AGPABCDEFGHJKMNPQRST", // pragma: allowlist secret — benign ULID (AKIA-family scanner false positive)
+      caps: "AUSTRALASIAWIDEDEPLOYMENT01", // pragma: allowlist secret — benign all-caps constant (AKIA-family scanner false positive)
+      // AKIA is the SUFFIX of SLOV-AKIA / CZECHOSLOV-AKIA — the `(?<![A-Z0-9])` lookbehind keeps an all-caps
+      // `SLOVAKIA<16>` region constant UNCHANGED (a plain `\b`-drop corrupts it → `SLOV[REDACTED]`).
+      country: "SLOVAKIAREGIONCODE2024AB", // pragma: allowlist secret — AKIA after `V` (uppercase)
+      country2: "CZECHOSLOVAKIAREGIONCODE012345", // pragma: allowlist secret — AKIA after `V`
+    };
+    const out = redactEventPayload(payload);
+    expect(out).toEqual(payload);
+    expect(serialize(out)).not.toContain("[REDACTED]");
   });
 
   it("preserves a pure-digit object key (business id, \\p{Nd} exemption)", () => {
