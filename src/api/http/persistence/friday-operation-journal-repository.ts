@@ -81,6 +81,12 @@ export interface FridayHttpIdempotencyStore {
   /** Drop the entry for this key (release an unfinished reservation). */
   release(key: string): void;
   /**
+   * Mark an in_flight reservation indeterminate WITHOUT deleting it — used when a
+   * side-effect committed but the completed receipt write failed, so a retry is refused
+   * (fail-closed) rather than re-executing.
+   */
+  markIndeterminate(key: string): void;
+  /**
    * Prune expired entries. ONLY `completed` replay entries are pruned — an `in_flight`
    * or `indeterminate` reservation is NEVER TTL-deleted, because deleting it would let a
    * retry miss the journal and re-execute a possibly-committed side-effect.
@@ -129,6 +135,16 @@ export class FridayInMemoryOperationJournalStore implements FridayHttpIdempotenc
 
   release(key: string): void {
     this.entries.delete(key);
+  }
+
+  markIndeterminate(key: string): void {
+    // Fail-closed transition for the effect-committed-but-receipt-write-failed case: keep the
+    // reservation row and flip it to indeterminate so a retry is refused, never re-executed. No-op
+    // if the entry is absent or is no longer in_flight (a completed receipt wins).
+    const entry = this.entries.get(key);
+    if (entry && entry.status === "in_flight") {
+      entry.status = "indeterminate";
+    }
   }
 
   pruneExpired(nowMs: number): void {
@@ -294,6 +310,20 @@ export class FridaySqliteOperationJournalStore implements FridayHttpIdempotencyS
       db.prepare(
         `DELETE FROM http_operation_journal
           WHERE (principal_id || ':' || operation_id || ':' || idempotency_key) = ?`,
+      ).run(key);
+    });
+  }
+
+  markIndeterminate(key: string): void {
+    // Fail-closed transition for the effect-committed-but-receipt-write-failed case: the
+    // reservation row is KEPT (never DELETEd) and flipped to indeterminate so a retry with the same
+    // key is refused rather than re-executing the already-committed side-effect. Scoped to
+    // status='in_flight' so a concurrently-written completed receipt is never clobbered.
+    this.sqlite.withWriteTransaction((db) => {
+      db.prepare(
+        `UPDATE http_operation_journal SET status = 'indeterminate'
+          WHERE (principal_id || ':' || operation_id || ':' || idempotency_key) = ?
+            AND status = 'in_flight'`,
       ).run(key);
     });
   }

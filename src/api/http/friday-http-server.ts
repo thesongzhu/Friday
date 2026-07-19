@@ -36,6 +36,7 @@ import {
   isUnauthenticatedPublicPrincipal,
   redactWebhookPathTokenInPath,
 } from "../../security/friday-owner-session-channel-capability.js";
+import { findSecretShapeSpans } from "../../security/friday-secret-shape-redactor.js";
 
 // ─── Types ───
 
@@ -81,6 +82,26 @@ export interface FridayHttpServer {
 const FRIDAY_METHODS_WITH_BODY: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const FRIDAY_HTTP_MAX_BODY_BYTES = 1_048_576; // 1MB
 const FRIDAY_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Sentinel stored in the operation journal's cached-for-replay `data` slot IN PLACE of a handler
+ * response whose serialized form contained a secret SHAPE (per the canonical detector). The response
+ * actually SENT to the first caller is always the real handler result (the first call legitimately
+ * needs its tokens); only the STORED replay copy is replaced by this sentinel, so
+ * `http_operation_journal.response_json` never holds a raw secret at rest (24h TTL). A later same-key
+ * retry that lands on this sentinel is refused with a 409 (SECURITY_IDEMPOTENCY_NONREPLAYABLE) rather
+ * than replaying sensitive data — the caller re-issues with a fresh Idempotency-Key.
+ */
+const FRIDAY_NON_REPLAYABLE_RESPONSE = { __fridayNonReplayable: true } as const;
+
+/** True when a journal entry's cached `data` is the non-replayable secret sentinel. */
+function isNonReplayableSentinel(data: unknown): boolean {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { __fridayNonReplayable?: unknown }).__fridayNonReplayable === true
+  );
+}
 
 /** Base security headers applied to every response. */
 const FRIDAY_BASE_SECURITY_HEADERS: Readonly<Record<string, string>> = {
@@ -750,8 +771,11 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
     const isHead = rawMethod === "HEAD";
 
     // Declared outside the request try so the catch block can release an in-flight idempotency
-    // reservation if the handler throws.
+    // reservation if the handler threw BEFORE committing its side-effect, or fail it CLOSED
+    // (indeterminate, never released) if the handler already committed and only the completed-receipt
+    // write failed. `handlerCommitted` records that boundary.
     let idempotencyStoreKey: string | undefined;
+    let handlerCommitted = false;
 
     try {
       // Handle CORS preflight (before casting to FridayHttpMethod)
@@ -1083,6 +1107,23 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
             return;
           }
 
+          // The prior completed response contained a secret shape, so only a non-replayable
+          // sentinel was persisted (never the raw secret). Refuse to serve a cached body — fail
+          // closed with a 409 rather than returning a placeholder that a client might mistake for
+          // the real payload. The caller re-issues with a fresh Idempotency-Key.
+          if (isNonReplayableSentinel(existing.data)) {
+            sendJsonWithHeaders(res, 409, {
+              ok: false,
+              error: {
+                code: "SECURITY_IDEMPOTENCY_NONREPLAYABLE",
+                message: "this operation completed but its response contained sensitive data and cannot be replayed; re-issue with a new Idempotency-Key.",
+                retryable: false,
+              },
+              requestId,
+            }, { ...corsHeaders, ...middlewareHeaders }, isHead);
+            return;
+          }
+
           const replayBody = JSON.stringify({
             ok: true,
             data: existing.data,
@@ -1125,10 +1166,16 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
 
       // Call handler
       const result = await route.handler(ctx);
+      // The handler returned: any durable side-effect it performs is now committed. From here on a
+      // failure (e.g. the completed-receipt write below throwing) MUST NOT release the reservation —
+      // releasing it would let a retry re-execute the already-committed effect. See the catch block.
+      handlerCommitted = true;
 
       // If the handler already took over the response (e.g. SSE streaming), bail out.
       // The handler owns the response, so there is no replayable JSON body to cache — drop the
-      // in-flight reservation so the key is not wedged until TTL.
+      // in-flight reservation so the key is not wedged until TTL. SUCCESS-path release (the response
+      // has already been sent to the client): intentionally distinct from the error-path handling in
+      // the catch below, which must NOT release once the handler committed.
       if (res.headersSent || res.writableEnded) {
         if (idempotencyStoreKey) idempotencyStore.release(idempotencyStoreKey);
         return;
@@ -1137,6 +1184,8 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       if (isFridayHttpRawTextResponse(result)) {
         // Raw-text responses are not cached for replay (original behavior); release the
         // reservation so a later same-key request is not rejected against a never-completed entry.
+        // SUCCESS-path release (the raw-text response is sent just below): intentionally distinct
+        // from the catch-block error path, which must NOT release once the handler committed.
         if (idempotencyStoreKey) idempotencyStore.release(idempotencyStoreKey);
         const responseBody = result.body;
         const responseHeaders: Record<string, string | number> = {
@@ -1159,6 +1208,15 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
       assertSerializableJsonResponse(result, route.operationId);
 
       if (idempotencyStoreKey) {
+        // Never persist raw secrets in the journal's cached-for-replay body. If the serialized
+        // handler result contains ANY secret shape (per the canonical detector — no per-route
+        // enumeration), store a non-replayable sentinel instead of the real payload, so
+        // `http_operation_journal.response_json` never holds a secret at rest. The response SENT to
+        // THIS caller below still uses the real `result` (the first call legitimately needs its
+        // tokens); only the stored replay copy is sanitized.
+        const storedData = findSecretShapeSpans(JSON.stringify(result ?? null)).length > 0
+          ? FRIDAY_NON_REPLAYABLE_RESPONSE
+          : result;
         // Upgrade the in-flight reservation to a completed, replayable entry.
         idempotencyStore.complete(idempotencyStoreKey, {
           operationId: route.operationId,
@@ -1170,7 +1228,7 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
             query,
             body,
           }),
-          data: result,
+          data: storedData,
           expiresAtMs: Date.now() + FRIDAY_IDEMPOTENCY_TTL_MS,
         });
       }
@@ -1196,11 +1254,29 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         res.end(successBody);
       }
     } catch (error: unknown) {
-      // The handler threw, so no completed entry was written. Release the in-flight reservation
-      // so this idempotency key is retryable rather than wedged in_flight until TTL. Only set when
-      // THIS request won the reservation, so a lost cross-process reserve race never releases the
-      // winner's row.
-      if (idempotencyStoreKey) idempotencyStore.release(idempotencyStoreKey);
+      // Idempotency reservation disposition depends on WHETHER the handler already committed its
+      // side-effect (`handlerCommitted`). Only act when THIS request won the reservation, so a lost
+      // cross-process reserve race never touches the winner's row.
+      if (idempotencyStoreKey) {
+        if (handlerCommitted) {
+          // The handler ran to completion — its durable side-effect is committed — and the failure
+          // is downstream of it (e.g. the completed-receipt write threw SQLITE_BUSY/IOERR AFTER the
+          // effect committed). RELEASING here would delete the reservation and let a retry with the
+          // same key re-execute the already-committed effect. Instead fail CLOSED: mark the row
+          // indeterminate (kept, never deleted) so the retry is refused. If even that write fails,
+          // leave the row in_flight — boot reconcileOrphanedReservations() will mark it indeterminate.
+          try {
+            idempotencyStore.markIndeterminate(idempotencyStoreKey);
+          } catch {
+            /* leave in_flight; boot reconcile will mark it indeterminate */
+          }
+        } else {
+          // The handler threw BEFORE committing any side-effect, so no completed entry was written
+          // and no effect happened. Release the reservation so this key is retryable rather than
+          // wedged in_flight until TTL.
+          idempotencyStore.release(idempotencyStoreKey);
+        }
+      }
       // If headers were already sent (e.g. SSE stream errored mid-flight), we cannot send JSON
       if (res.headersSent || res.writableEnded) {
         res.end();
