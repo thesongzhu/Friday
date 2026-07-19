@@ -43,6 +43,7 @@ import { FridayDomainError } from "#errors";
 import { buildOpenBrowserUrlCommand, isFridayTestSecurityWarningSuppressed, safeJsonParse } from "#utilities";
 import { initializeFridayState } from "#state";
 import type { FridayStateRuntime } from "#state";
+import type { FridaySecurityAuditEntry } from "../security/multi-tenant/model/friday-multi-tenant-security.types.js";
 import { createFridayLocalDaemonService } from "#daemon";
 import { createFridayMutatingActionGate } from "../security/friday-mutating-action-gate.js";
 import {
@@ -112,6 +113,8 @@ import {
   createFridayDeterministicPipelineRuntime,
   createFridayMissionAutoDispatchDriver,
   createFridayReflexRoutes,
+  createFridayRetentionPolicyAuditAppender,
+  createFridayRetentionReceiptRecovery,
   createFridayRustHubSystemIntentService,
   getChannelPersona,
   hydrateChannelPersonaStore,
@@ -6742,6 +6745,24 @@ export async function createFridayHub(
     idGenerator,
     nowIso,
   });
+  // RETENTION-R3d: FAIL-CLOSED, transaction-participating audit appender for the
+  // owner-bound retention-Settings PUT. It closes over the SAME sqlite layer the
+  // store writes through, so the audit INSERT nests in the store's write
+  // transaction and commits/rolls back atomically (no un-audited policy write).
+  const retentionPolicyAuditAppender = createFridayRetentionPolicyAuditAppender({
+    sqlite: stateRuntime.sqlite,
+    idGenerator,
+  });
+  // RETENTION-R3d (P0 — uncertain-outcome recovery): owner-bound receipt recovery
+  // reader over the durable audit row (scoped to the canonical owner).
+  const retentionReceiptRecovery = createFridayRetentionReceiptRecovery({
+    sqlite: stateRuntime.sqlite,
+  });
+  // RETENTION-R3d (P0 — audit-projection visibility): when the multi-tenant audit
+  // projection is wired (below), reflect each committed retention audit row into
+  // its boot-hydrated in-memory map POST-COMMIT so `queryAuditLog` sees it. Stays
+  // undefined otherwise (the committed `security_audit_log` row is then the record).
+  let retentionAuditProjector: ((entry: FridaySecurityAuditEntry) => void) | undefined;
   const retentionPolicyLoader = createFridayRetentionPolicyLoader({
     db: stateRuntime.sqlite,
     repo: retentionSettingsRepository,
@@ -7045,6 +7066,9 @@ export async function createFridayHub(
     const scopedResourcePersistence = createSqliteTenantScopedResourcePersistence(stateRuntime.sqlite);
 
     const mtAuditLogger = new AuditLogger({ persistence: auditPersistence });
+    // RETENTION-R3d (P0): the retention route's committed audit rows become visible
+    // in this live projection via a post-commit, in-memory-only hydration.
+    retentionAuditProjector = (entry) => mtAuditLogger.hydratePersistedEntry(entry);
     const mtTenantManager = new TenantManager(mtAuditLogger, { persistence: tenantPersistence });
     const mtRbacEngine = new RbacEngine(mtAuditLogger);
     const mtPolicyEngine = new PolicyEngine(mtAuditLogger);
@@ -7498,6 +7522,20 @@ export async function createFridayHub(
       // RETENTION-R3b: owner-bound disk-usage readback source (report-only; the
       // ONLY read surface for the disk-growth reading — never on any public route).
       readDiskUsage: () => diskGrowthHolder.get(),
+      // RETENTION-R3d: audited + correlated + receipted PUT. `db` and
+      // `appendPolicyAudit` share the SAME writer connection so apply + audit are
+      // one atomic transaction; the injected clock/id keep the correlation id and
+      // audit entry deterministic and free of inline Date.now()/Math.random().
+      db: stateRuntime.sqlite,
+      appendPolicyAudit: retentionPolicyAuditAppender,
+      nowIso,
+      // RETENTION-R3d: collision-resistant per-write id seeding the unique
+      // correlation + receipt identities (crypto.randomUUID — never clock-derived).
+      idGenerator,
+      // RETENTION-R3d (P0): post-commit audit-projection visibility (undefined when
+      // no in-memory projection is wired) + owner-bound receipt recovery.
+      projectCommittedAudit: retentionAuditProjector,
+      readReceiptByRecoveryKey: retentionReceiptRecovery,
     },
     uix: {
       service: uixService,

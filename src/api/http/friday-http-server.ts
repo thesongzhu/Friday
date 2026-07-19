@@ -133,6 +133,23 @@ function isMissingFileError(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && err.code === "ENOENT";
 }
 
+/**
+ * Redact a request URL before it reaches the access log.
+ *
+ * Beyond the workflow-webhook PATH token (module_28a), STRIP EVERY query-string
+ * value: sensitive credentials — recovery / idempotency keys, tokens — travel in
+ * query params on some clients, and `redactWebhookPathTokenInPath` leaves the
+ * query intact. This runs for EVERY logged request (including rejected/unknown
+ * routes, whose handler never sanitizes anything), so a `?key=…` — a real `?`,
+ * an encoded `%3F`, or multiple `&`-separated params — can never be emitted to a
+ * log/URL. Everything after the first (encoded-or-literal) query delimiter is
+ * collapsed to a fixed marker; the path (already token-redacted) is preserved for
+ * debuggability.
+ */
+function redactSensitiveUrlForLog(rawUrl: string): string {
+  return redactWebhookPathTokenInPath(rawUrl).replace(/(\?|%3[fF]).*$/, "$1<redacted>");
+}
+
 function extractParams(pattern: string, actual: string): Record<string, string> {
   const patternParts = pattern.split("/");
   const actualParts = actual.split("/");
@@ -742,7 +759,7 @@ export function createFridayHttpServer(deps: FridayHttpServerDeps): FridayHttpSe
         const elapsedNs = process.hrtime.bigint() - startNs;
         const elapsedMs = Number(elapsedNs / 1_000_000n);
         const method = req.method ?? "GET";
-        const url = redactWebhookPathTokenInPath(req.url ?? "/");
+        const url = redactSensitiveUrlForLog(req.url ?? "/");
         logger(`[FRIDAY] ${method} ${url} ${res.statusCode} ${elapsedMs}ms`);
       });
     }

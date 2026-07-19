@@ -52,6 +52,36 @@ export function isValidAfterDays(value: unknown): value is number {
   );
 }
 
+/**
+ * STRICT structural validator for ONE `CategoryRetention` value read back from an
+ * untrusted / persisted source (RETENTION-R3d round-8, EXACT-SHAPE in round-9).
+ * Accepts EXACTLY `{mode:"permanent"}` (one own-enumerable key) or
+ * `{mode:"after_days",days:N}` (exactly two own-enumerable keys) with N inside the
+ * canonical honored `[FRIDAY_MIN_AFTER_DAYS, FRIDAY_MAX_AFTER_DAYS]` window (via
+ * `isValidAfterDays`). Rejects a non-object / null / array, an unknown `mode`, a
+ * missing/non-integer/NaN/Infinity `days`, any OUT-OF-RANGE window, AND any object
+ * that carries an UNKNOWN / EXTRA property (round-9 P1-B): a persisted
+ * `CategoryRetention` with a stray key is a storage-integrity fault whose extra
+ * property could otherwise egress through the owner-facing recovery response. So a
+ * decode path fails CLOSED on a schema-valid-but-semantically-invalid value (a
+ * reaper-unhonored day count OR an unexpected property), not merely on undecodable
+ * JSON. This tightening also flows into `isValidFridayRetentionContentPolicy` and
+ * `isValidAppliedUpdates`, whose per-category values pass through here.
+ */
+export function isValidCategoryRetention(value: unknown): value is CategoryRetention {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keyCount = Object.keys(value as Record<string, unknown>).length;
+  const mode = (value as { mode?: unknown }).mode;
+  if (mode === "permanent") {
+    // EXACTLY one own-enumerable key: `mode`. Any extra property → invalid.
+    return keyCount === 1;
+  }
+  if (mode !== "after_days") return false;
+  // EXACTLY two own-enumerable keys: `mode`, `days`. Any extra property → invalid.
+  if (keyCount !== 2) return false;
+  return isValidAfterDays((value as { days?: unknown }).days);
+}
+
 export interface FridayRetentionPolicy {
   // ── CONTENT categories (canonical + derived-content) ──────────────────────
   // Default PERMANENT. Auto-deletion is opt-in per category via `after_days`;
@@ -138,6 +168,47 @@ export type FridayRetentionContentPolicy = Record<
   CategoryRetention
 >;
 
+/** The canonical content-category name set (for O(1) membership checks). */
+const FRIDAY_RETENTION_CONTENT_CATEGORY_SET: ReadonlySet<string> = new Set(
+  FRIDAY_RETENTION_CONTENT_CATEGORIES,
+);
+
+/**
+ * STRICT validator that a value is EXACTLY one of the seven canonical content
+ * category NAMES (RETENTION-R3d round-8). Used by decode paths to reject an
+ * unknown / malformed category name in a persisted receipt's `changedCategories`
+ * or `appliedUpdates` keys.
+ */
+export function isFridayRetentionContentCategory(
+  value: unknown,
+): value is FridayRetentionContentCategory {
+  return typeof value === "string" && FRIDAY_RETENTION_CONTENT_CATEGORY_SET.has(value);
+}
+
+/**
+ * STRICT validator for a full `FridayRetentionContentPolicy` read back from an
+ * untrusted / persisted source (RETENTION-R3d round-8). Requires a plain object
+ * carrying EXACTLY the seven canonical content categories (no missing, no unknown
+ * key), each mapped to a valid `CategoryRetention` (via `isValidCategoryRetention`).
+ * This is the shape the store always produces (`allPermanentPolicy` seeds all seven),
+ * so anything else — a truncated policy, an extra/renamed key, or an out-of-domain
+ * per-category value — is a STORAGE-INTEGRITY failure and must fail CLOSED, never be
+ * surfaced as a partially-decoded policy.
+ */
+export function isValidFridayRetentionContentPolicy(
+  value: unknown,
+): value is FridayRetentionContentPolicy {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  // EXACTLY the seven canonical categories: no unknown key, no missing key.
+  if (Object.keys(record).length !== FRIDAY_RETENTION_CONTENT_CATEGORIES.length) return false;
+  for (const category of FRIDAY_RETENTION_CONTENT_CATEGORIES) {
+    if (!Object.prototype.hasOwnProperty.call(record, category)) return false;
+    if (!isValidCategoryRetention(record[category])) return false;
+  }
+  return true;
+}
+
 /**
  * Max setup-bootstrap nonce rows deleted PER class (expired-unconsumed /
  * consumed-retired) per retention pass. Bounds the reaper's work so it cannot
@@ -154,6 +225,46 @@ export interface FridayRetentionJobResult {
   deletedLearningEvents: number;
   deletedSkillRuns: number;
   deletedAuditLogs: number;
+  /**
+   * RETENTION-R3d: recovery-receipt rows (`retention_recovery_receipts`) expired
+   * this pass. GOVERNED by the SAME `auditLogs` content-retention category as
+   * `deletedAuditLogs`: default-permanent (0 while auditLogs is permanent), and >0
+   * only once the owner opts auditLogs into a finite `after_days` window.
+   */
+  deletedRetentionReceipts: number;
+  /**
+   * RETENTION-R3d (whole-row receipt invariant): recovery-receipt rows QUARANTINE-
+   * deleted this pass because their persisted `created_at` is NON-CANONICAL (fails
+   * the canonical-ISO shape gate `FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB`, e.g.
+   * `"zzzz"`). Such a row cannot be reliably dated, so a lexicographic
+   * `created_at < cutoff` compare would let it SILENTLY SURVIVE a finite-retention
+   * sweep (a DATA-RETENTION-001 truthfulness break — "a successful zero-deletion
+   * sweep silently surviving a finite retention policy"). Its content category is
+   * opted into deletion, so the finite sweep DELETES it and surfaces this typed
+   * integrity incident instead of a silent zero. GOVERNED by the SAME `auditLogs`
+   * category as `deletedRetentionReceipts`: 0 while auditLogs is PERMANENT
+   * (default-permanent + fail-closed is preserved — an un-datable row is retained,
+   * never served, until the owner opts into a finite window). This is the
+   * Advisor-authorized "documented safe quarantine strategy" for the ONE operator-
+   * locked (DATA-RETENTION-001) design fork.
+   */
+  quarantinedIntegrityReceipts: number;
+  /**
+   * RETENTION-R3d (clock-regression-safe reaper): recovery-receipt rows that are
+   * FUTURE-dated relative to the sweep's `now` but whose authentic-audit ANCHOR
+   * carries the SAME `created_at` — a genuine CLOCK-SKEWED pair (e.g. a receipt
+   * written before a BACKWARD wall-clock jump / NTP correction). These are NOT
+   * corrupt: they are PRESERVED (never quarantine-deleted) and surfaced here as a
+   * clock anomaly, then expired normally once they are DEMONSTRABLY older than the
+   * retention cutoff (`deleteExpiredBefore`, `created_at < cutoff`). Replacing the
+   * old blind `created_at > now ⇒ quarantine` rule with this anchor-comparison model
+   * closes a DATA-RETENTION-001 over-fail-close that DESTROYED legitimate data on a
+   * clock rollback. GOVERNED by the SAME `auditLogs` category as the other receipt
+   * counters: 0 while auditLogs is PERMANENT (the finite sweep never runs). Only a
+   * ONE-SIDED future corruption (anchor `created_at` MISMATCHES) is quarantined; an
+   * ABSENT anchor is preserved (fail-closed — the read path refuses to serve it).
+   */
+  clockAnomalyRetentionReceipts: number;
   deletedAgentRuns: number;
   deletedLlmUsageRecords: number;
   deletedErrorIncidents: number;

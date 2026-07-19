@@ -11,8 +11,13 @@ import {
 } from "#satellites";
 import { createFridayLearningEventLedger, createFridaySkillRunStore } from "#ledger";
 import { createFridaySetupBootstrapNonceRepository } from "#api";
-import { createFridayRetentionSettingsRoutes } from "#api";
+import {
+  createFridayRetentionSettingsRoutes,
+  createFridayRetentionPolicyAuditAppender,
+  createFridayRetentionReceiptRecovery,
+} from "#api";
 import type { FridayHttpContext } from "#api";
+import type { FridayRetentionPolicyUpdateReceipt } from "#api";
 import {
   createFridayRetentionJob,
   createFridayRetentionPolicyLoader,
@@ -66,6 +71,31 @@ function makeStore(layer: FridaySqliteLayer) {
   });
 }
 
+/**
+ * RETENTION-R3d: build the owner-bound routes for a given on-disk layer. `db` and
+ * the audit appender share the SAME layer so the PUT's apply + audit are one
+ * atomic transaction; the durable audit row lands in the same on-disk db.
+ */
+function makeRoutes(layer: FridaySqliteLayer) {
+  let idc = 0;
+  return createFridayRetentionSettingsRoutes({
+    store: makeStore(layer),
+    resolveCanonicalOwnerId: () => OWNER,
+    db: layer,
+    appendPolicyAudit: createFridayRetentionPolicyAuditAppender({
+      sqlite: layer,
+      idGenerator: () => `aud-${++idc}`,
+    }),
+    nowIso: () => NOW,
+    idGenerator: () => `op-${++idc}`,
+    readReceiptByRecoveryKey: createFridayRetentionReceiptRecovery({ sqlite: layer }),
+  });
+}
+
+function makeKeyedCtx(idempotencyKey: string, body?: unknown): FridayHttpContext<unknown, unknown, unknown> {
+  return makeCtx({ headers: { "idempotency-key": idempotencyKey }, ...(body ? { body } : {}) });
+}
+
 describe("RETENTION-R3a restart-readback (integration)", () => {
   let tmpDir: string;
   let dbPath: string;
@@ -82,7 +112,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
   it("policy written via PUT survives a store re-open and drives the reaper", () => {
     // ── Session 1: write via the PUT route, then close the store. ──
     const layer1 = openLayer(dbPath);
-    const routes1 = createFridayRetentionSettingsRoutes({ store: makeStore(layer1), resolveCanonicalOwnerId: () => OWNER });
+    const routes1 = makeRoutes(layer1);
     const put1 = routes1.find((r) => r.operationId === "uix.retention.policy.update")!;
     const get1 = routes1.find((r) => r.operationId === "uix.retention.policy.get")!;
 
@@ -109,7 +139,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
       // ── Session 2: re-open a FRESH store on the SAME on-disk db. ──
       const layer2 = openLayer(dbPath);
       try {
-        const routes2 = createFridayRetentionSettingsRoutes({ store: makeStore(layer2), resolveCanonicalOwnerId: () => OWNER });
+        const routes2 = makeRoutes(layer2);
         const get2 = routes2.find((r) => r.operationId === "uix.retention.policy.get")!;
 
         const after = (await get2.handler(makeCtx())) as { policy: Record<string, unknown> };
@@ -167,7 +197,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
 
     // ── Session 1: write the boundary window via the PUT route, then close. ──
     const layer1 = openLayer(dbPath);
-    const routes1 = createFridayRetentionSettingsRoutes({ store: makeStore(layer1), resolveCanonicalOwnerId: () => OWNER });
+    const routes1 = makeRoutes(layer1);
     const put1 = routes1.find((r) => r.operationId === "uix.retention.policy.update")!;
     const putResult = (await put1.handler(
       makeCtx({ body: { policy: { auditLogs: { mode: "after_days", days: MAX } } } }),
@@ -178,7 +208,7 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
     // ── Session 2: re-open a FRESH store on the SAME on-disk db. ──
     const layer2 = openLayer(dbPath);
     try {
-      const routes2 = createFridayRetentionSettingsRoutes({ store: makeStore(layer2), resolveCanonicalOwnerId: () => OWNER });
+      const routes2 = makeRoutes(layer2);
       const get2 = routes2.find((r) => r.operationId === "uix.retention.policy.get")!;
       const after = (await get2.handler(makeCtx())) as { policy: Record<string, unknown> };
 
@@ -197,5 +227,54 @@ describe("RETENTION-R3a restart-readback (integration)", () => {
     } finally {
       layer2.close();
     }
+  });
+
+  // RETENTION-R3d (P0 — uncertain-outcome recovery): an interrupted PUT whose
+  // mutation + durable receipt COMMITTED but whose HTTP response was lost is
+  // recoverable, after a full process restart, through the owner-bound product seam
+  // by the CLIENT-KNOWN idempotency key — and cross-principal lookup is denied.
+  it("a committed receipt survives restart and is recoverable by the client key; cross-principal denied", () => {
+    const KEY = "client-restart-key-001";
+    return (async () => {
+      // ── Session 1: PUT with the client key commits the mutation + durable receipt,
+      //    then the process 'crashes' (close) BEFORE the caller observed the response. ──
+      const layer1 = openLayer(dbPath);
+      const routes1 = makeRoutes(layer1);
+      const put1 = routes1.find((r) => r.operationId === "uix.retention.policy.update")!;
+      const putResult = (await put1.handler(
+        makeKeyedCtx(KEY, { policy: { auditLogs: { mode: "after_days", days: 90 } } }),
+      )) as { receipt: FridayRetentionPolicyUpdateReceipt };
+      const committedReceipt = putResult.receipt;
+      layer1.close(); // simulate crash: in-memory state gone, on-disk committed.
+
+      // ── Session 2: fresh process on the SAME on-disk db. ──
+      const layer2 = openLayer(dbPath);
+      try {
+        const routes2 = makeRoutes(layer2);
+        const recover = routes2.find((r) => r.operationId === "uix.retention.policy.receipt.get")!;
+
+        // The EXACT committed receipt is recovered through the product seam by key.
+        const recovered = (await recover.handler(makeKeyedCtx(KEY))) as {
+          receipt: FridayRetentionPolicyUpdateReceipt | null;
+        };
+        expect(recovered.receipt).not.toBeNull();
+        expect(recovered.receipt!.receiptId).toBe(committedReceipt.receiptId);
+        expect(recovered.receipt!.correlationId).toBe(committedReceipt.correlationId);
+        expect(recovered.receipt!.auditId).toBe(committedReceipt.auditId);
+        expect(recovered.receipt!.evidence.after).toEqual(committedReceipt.evidence.after);
+
+        // Cross-principal recovery (a distinct authenticated admin) → 403, zero disclosure.
+        await expect(
+          recover.handler(
+            makeCtx({
+              principal: { userId: "admin-002", principalId: "admin-002", role: "admin", scopes: ["hub.admin"] } as never,
+              headers: { "idempotency-key": KEY },
+            }),
+          ),
+        ).rejects.toMatchObject({ httpStatus: 403 });
+      } finally {
+        layer2.close();
+      }
+    })();
   });
 });

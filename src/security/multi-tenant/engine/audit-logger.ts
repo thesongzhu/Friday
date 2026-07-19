@@ -120,6 +120,22 @@ export class AuditLogger {
     return cloneAndFreeze(entry);
   }
 
+  /**
+   * Reflect an ALREADY-DURABLY-COMMITTED audit row into the in-memory projection
+   * WITHOUT re-persisting it.
+   *
+   * This exists so a producer that appends to `security_audit_log` inside its OWN
+   * write transaction (for atomic rollback-safety — no phantom in-memory entry if
+   * that transaction rolls back) can, AFTER a successful commit, make the entry
+   * visible through the live audit query projection (`queryAuditLog`/
+   * `getAuditEntry`). Call it ONLY post-commit with the committed entry: it is a
+   * pure in-memory upsert (no I/O, cannot fail), so it never reintroduces an
+   * orphan/uncertain outcome, and it never double-writes persistence.
+   */
+  hydratePersistedEntry(entry: FridaySecurityAuditEntry): void {
+    this.auditEntries.set(entry.id, entry);
+  }
+
   /** Record a security violation. */
   recordViolation(input: CreateViolationInput): FridaySecurityViolation {
     const violation: FridaySecurityViolation = {

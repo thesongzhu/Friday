@@ -13,6 +13,7 @@ import {
   FRIDAY_BOOTSTRAP_NONCE_SWEEP_BATCH_LIMIT,
   FRIDAY_DEFAULT_RETENTION_POLICY,
 } from "./friday-retention.types.js";
+import { createFridayRetentionReceiptRepository } from "./friday-retention-receipt-repository.js";
 
 export interface FridayRetentionJob {
   run(nowIso?: string): FridayRetentionJobResult;
@@ -90,6 +91,11 @@ export function resolveCutoff(
 }
 
 export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRetentionJob {
+  // RETENTION-R3d: the governed recovery-receipt store's deletion seam (stateless
+  // SQL helpers). The reaper's auditLogs-category sweep uses `deleteExpiredBefore`
+  // so the receipt-expiry SQL has ONE source of truth shared with the store.
+  const receiptRepo = createFridayRetentionReceiptRepository();
+
   // RETENTION-R3a: resolve the governing policy PER SWEEP (not once at
   // construction) so live owner opt-in/opt-OUT changes are authoritative for the
   // running reaper. FAIL-CLOSED: any error / nullish live read ⇒ all-permanent ⇒
@@ -119,6 +125,9 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
         deletedLearningEvents: 0,
         deletedSkillRuns: 0,
         deletedAuditLogs: 0,
+        deletedRetentionReceipts: 0,
+        quarantinedIntegrityReceipts: 0,
+        clockAnomalyRetentionReceipts: 0,
         deletedAgentRuns: 0,
         deletedLlmUsageRecords: 0,
         deletedErrorIncidents: 0,
@@ -182,16 +191,54 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
 
       // CONTENT category (canonical): default-permanent, fail-closed.
       // audit_logs permanence is a hard requirement — never auto-delete by default.
+      // The SAME `auditLogs` category governs the retention RECOVERY-RECEIPT store
+      // (`retention_recovery_receipts`, RETENTION-R3d): the full user receipt lives
+      // there (only a content-free linkage/digest anchor stays in
+      // `security_audit_log`), so honoring the user's auditLogs deletion policy MUST
+      // expire aged receipts too — otherwise an aged receipt would silently survive
+      // a finite-retention advance (the U9/DATA-RETENTION-001 violation this fixes).
+      // Both deletions run under the SAME cutoff, in ONE transaction, so they stay
+      // consistent; default-permanent + fail-closed (auditCutoff === null ⇒ delete
+      // nothing, quarantine nothing) is preserved for BOTH.
+      //
+      // WHOLE-ROW INVARIANT (RETENTION-R3d) — DOCUMENTED SAFE QUARANTINE: a receipt
+      // whose persisted `created_at` is NON-CANONICAL cannot be dated, so the
+      // lexicographic `created_at < cutoff` compare would let it SILENTLY SURVIVE
+      // this finite window (a DATA-RETENTION-001 truthfulness break — "a successful
+      // zero-deletion sweep silently surviving a finite retention policy"). Its
+      // content category is opted into deletion, so the finite sweep QUARANTINE-
+      // deletes exactly those un-datable rows and surfaces a TYPED integrity incident
+      // (`quarantinedIntegrityReceipts`) so the sweep is never a silent zero-deletion
+      // success. It does NOT abort the sweep — one corrupt row must not block reaping
+      // valid rows. This is the ONE operator-locked (DATA-RETENTION-001) design fork,
+      // implemented as the Advisor-authorized "documented safe quarantine strategy";
+      // under default-permanent (auditCutoff === null) the un-datable row is RETAINED
+      // (never served — the read path fails closed on it) until the owner opts in.
       const auditCutoff = resolveCutoff(nowIso, policy.auditLogs);
-      result.deletedAuditLogs =
-        auditCutoff === null
-          ? 0
-          : deps.db.withWriteTransaction(
-              (db) =>
-                db
-                  .prepare("DELETE FROM audit_logs WHERE ts < ?")
-                  .run(auditCutoff).changes,
-            );
+      if (auditCutoff === null) {
+        result.deletedAuditLogs = 0;
+        result.deletedRetentionReceipts = 0;
+        result.quarantinedIntegrityReceipts = 0;
+        result.clockAnomalyRetentionReceipts = 0;
+      } else {
+        const swept = deps.db.withWriteTransaction((db) => {
+          const logs = db.prepare("DELETE FROM audit_logs WHERE ts < ?").run(auditCutoff).changes;
+          const receipts = receiptRepo.deleteExpiredBefore(db, auditCutoff);
+          // Clock-regression-safe quarantine: DELETES un-datable / one-sided-corrupt
+          // rows and PRESERVES-and-flags genuine clock-skewed rows (anchor agrees).
+          const quarantine = receiptRepo.quarantineNonCanonicalCreatedAt(db, nowIso);
+          return {
+            logs,
+            receipts,
+            quarantined: quarantine.quarantined,
+            clockAnomaly: quarantine.clockAnomalyPreserved,
+          };
+        });
+        result.deletedAuditLogs = swept.logs;
+        result.deletedRetentionReceipts = swept.receipts;
+        result.quarantinedIntegrityReceipts = swept.quarantined;
+        result.clockAnomalyRetentionReceipts = swept.clockAnomaly;
+      }
 
       // CONTENT category (canonical): default-permanent, fail-closed.
       const agentRunCutoff = resolveCutoff(nowIso, policy.agentRuns);

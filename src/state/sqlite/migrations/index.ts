@@ -105,6 +105,8 @@ import { V103_SETUP_BOOTSTRAP_DEVICE_CLAIM_MIGRATION } from "./v103-setup-bootst
 import { V104_SETUP_BOOTSTRAP_MIGRATION_STATE_MIGRATION } from "./v104-setup-bootstrap-migration-state.js";
 import { V105_RETENTION_SETTINGS_MIGRATION } from "./v105-retention-settings.js";
 import { V106_REALTIME_EVENTS_OWNER_MIGRATION } from "./v106-realtime-events-owner.js";
+import { V107_RETENTION_RECOVERY_RECEIPTS_MIGRATION } from "./v107-retention-recovery-receipts.js";
+import { V108_RETENTION_RECEIPT_CREATED_AT_CHECK_MIGRATION } from "./v108-retention-receipt-created-at-check.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -216,6 +218,8 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V104_SETUP_BOOTSTRAP_MIGRATION_STATE_MIGRATION,
   V105_RETENTION_SETTINGS_MIGRATION,
   V106_REALTIME_EVENTS_OWNER_MIGRATION,
+  V107_RETENTION_RECOVERY_RECEIPTS_MIGRATION,
+  V108_RETENTION_RECEIPT_CREATED_AT_CHECK_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };

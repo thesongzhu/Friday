@@ -5,6 +5,7 @@ import {
   createFridayHttpRouteRegistry,
   createFridayHttpServer,
   createFridayRetentionSettingsRoutes,
+  createFridayRetentionPolicyAuditAppender,
   createFridaySetupBootstrapNonceRepository,
   type FridayAuthMiddlewareFactory,
   type FridayHttpServer,
@@ -173,7 +174,17 @@ describe("FridayHttpServer — /v1/uix/retention-policy canonical-owner binding 
     resolveCanonicalOwnerId: () => string | null | undefined = () => CANONICAL_OWNER_ID,
   ) {
     const routes = createFridayHttpRouteRegistry();
-    for (const route of createFridayRetentionSettingsRoutes({ store, resolveCanonicalOwnerId })) {
+    for (const route of createFridayRetentionSettingsRoutes({
+      store,
+      resolveCanonicalOwnerId,
+      db: db!,
+      appendPolicyAudit: createFridayRetentionPolicyAuditAppender({
+        sqlite: db!,
+        idGenerator: () => `aud-${String(++idc).padStart(4, "0")}`,
+      }),
+      nowIso: () => NOW,
+      idGenerator: () => `op-${String(++idc).padStart(4, "0")}`,
+    })) {
       routes.register(route);
     }
     server = createFridayHttpServer({

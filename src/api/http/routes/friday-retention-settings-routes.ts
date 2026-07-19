@@ -1,12 +1,33 @@
+import { createHash } from "node:crypto";
+import type Database from "better-sqlite3";
 import { FridayDomainError } from "#errors";
-import type { CategoryRetention, FridayRetentionSettingsStore } from "#jobs";
-import { FRIDAY_MAX_AFTER_DAYS, FRIDAY_MIN_AFTER_DAYS, isValidAfterDays } from "#jobs";
+import type {
+  CategoryRetention,
+  FridayRetentionContentPolicy,
+  FridayRetentionReceiptRecord,
+  FridayRetentionReceiptRepository,
+  FridayRetentionSettingsStore,
+} from "#jobs";
+import {
+  computeChangedCategories,
+  createFridayRetentionReceiptRepository,
+  FRIDAY_MAX_AFTER_DAYS,
+  FRIDAY_MIN_AFTER_DAYS,
+  isValidAfterDays,
+} from "#jobs";
+import type { FridaySqliteLayer } from "#state";
 import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridayDiskGrowthWarning } from "../../../learning/services/friday-disk-growth-evaluator.js";
 import {
   assertBoundPrincipalAuthorityForOperation,
   isUnauthenticatedPublicPrincipal,
 } from "../../../security/friday-owner-session-channel-capability.js";
+import { createSqliteAuditPersistence } from "../../../security/multi-tenant/persistence/friday-multi-tenant-sqlite-store.js";
+import type {
+  FridaySecurityAuditEntry,
+  JsonObject,
+} from "../../../security/multi-tenant/model/friday-multi-tenant-security.types.js";
+import { hashIdempotencyPayload, readIdempotencyKeyHeader } from "./friday-route-idempotency.js";
 
 /**
  * Owner-bound retention-Settings HTTP surface (RETENTION-R3a).
@@ -58,10 +79,169 @@ export interface FridayRetentionSettingsRoutesDeps {
    * DERIVED/observable and never persisted as canonical (DATA-RETENTION-001).
    */
   readDiskUsage?: () => FridayDiskGrowthWarning | null;
+  /**
+   * RETENTION-R3d: the write layer used to run the policy-apply AND the audit
+   * append inside ONE write transaction. MUST be the SAME `FridaySqliteLayer`
+   * instance (same writer connection) that backs both `store` and
+   * `appendPolicyAudit`, so the two writes NEST and commit/roll back atomically —
+   * an audit failure leaves the persisted policy byte-unchanged (no orphan write).
+   */
+  db: FridaySqliteLayer;
+  /**
+   * RETENTION-R3d: FAIL-CLOSED audit sink. Appends exactly ONE durable,
+   * CONTENT-MINIMIZED audit anchor (only the linkage — receiptId + correlationId —
+   * plus the payload digest; NEVER the before/after recovery payload, which lives
+   * in the governed `retention_recovery_receipts` store) for a successful
+   * retention-policy mutation and returns the persisted `FridaySecurityAuditEntry`.
+   * Called INSIDE the `db.withWriteTransaction` that applies the policy so both
+   * commit or both roll back. THROWS (never fails open) on any persistence failure:
+   * the throw aborts the enclosing transaction → the policy write rolls back → the
+   * PUT handler surfaces 503 and NO mutation is left un-audited. The returned entry
+   * is fed to `projectCommittedAudit` (below) AFTER commit so the LIVE audit
+   * projection sees it. Build it with `createFridayRetentionPolicyAuditAppender`
+   * (closing over the SAME layer).
+   */
+  appendPolicyAudit: (entry: FridayRetentionPolicyAuditEntry) => FridaySecurityAuditEntry;
+  /**
+   * RETENTION-R3d (governed receipt store): persists the FULL receipt facts into
+   * the dedicated owner-scoped `retention_recovery_receipts` table on the caller's
+   * WRITE connection, so it commits ATOMICALLY with the policy apply + the
+   * content-minimized audit anchor (same transaction/SAVEPOINT, all-or-nothing).
+   * OPTIONAL: when omitted, the handler writes via the internal repository (the
+   * production path). Injectable so a fault-injection test can throw at the
+   * receipt-write stage and assert the whole transaction rolls back (zero partial
+   * rows). A throw here aborts the enclosing transaction → 503, byte-unchanged
+   * policy, no audit anchor, no receipt.
+   */
+  persistReceipt?: (db: Database.Database, record: FridayRetentionReceiptRecord) => void;
+  /**
+   * RETENTION-R3d (P0 — audit-projection VISIBILITY). Optional post-commit hook
+   * that reflects the committed audit entry into the product's LIVE audit
+   * projection (the boot-hydrated `AuditLogger`), so the raw `security_audit_log`
+   * insert is not invisible to `queryAuditLog`. Called ONLY after the write
+   * transaction commits — a pure in-memory upsert (cannot fail), so it preserves
+   * rollback-safety (no phantom on failure) AND visibility on success. Absent when
+   * no in-memory projection is wired (the committed row is then the record).
+   */
+  projectCommittedAudit?: (entry: FridaySecurityAuditEntry) => void;
+  /**
+   * RETENTION-R3d (P0 — uncertain-outcome RECOVERY). Owner-bound lookup of a
+   * durably-committed receipt by the client-known idempotency/operation key. Reads
+   * the dedicated, governed `retention_recovery_receipts` store (scoped to the
+   * canonical owner) — NOT `security_audit_log` — and reconstructs the exact
+   * receipt, so an interrupted PUT (mutation committed, HTTP response lost) is
+   * recoverable through a product seam — never raw DB access, never blind replay.
+   * Returns null when no receipt is bound to that key for this owner (including
+   * after the auditLogs-category reaper has expired it under a finite window).
+   */
+  readReceiptByRecoveryKey?: (input: {
+    ownerId: string;
+    recoveryKeyHash: string;
+  }) => FridayRetentionPolicyUpdateReceipt | null;
+  /**
+   * Injected clock (RETENTION-R3d: no inline `Date.now()`). Drives the receipt
+   * `runAt`. It is NOT the source of correlation/receipt UNIQUENESS — two writes
+   * by the same owner in the same millisecond must not collide, so uniqueness
+   * comes from `idGenerator` below, not the timestamp.
+   */
+  nowIso: () => string;
+  /**
+   * Injected collision-resistant id generator (RETENTION-R3d: no inline
+   * `Math.random()`/`crypto`). Produces a UNIQUE operation id per PUT that seeds
+   * BOTH the correlation id and the receipt id, so distinct same-owner/same-clock
+   * writes carry distinct traceability identities. Independent of the audit-entry
+   * id (which `appendPolicyAudit` generates from its own generator).
+   */
+  idGenerator: () => string;
+}
+
+/**
+ * RETENTION-R3d: the audit record for one retention-policy mutation. It carries
+ * ALL the durable receipt facts and is persisted INSIDE the write transaction, so
+ * a committed policy effect ALWAYS has its receipt durably recorded on the same
+ * committed audit row (no committed-but-unreceipted write). The after-state is the
+ * authoritative applied-but-not-yet-committed state captured in-txn — exactly what
+ * the commit persists — never a fallible post-commit read.
+ */
+export interface FridayRetentionPolicyAuditEntry {
+  /** UNIQUE (id-generator-seeded) correlation id binding audit ⇄ receipt. */
+  correlationId: string;
+  /** UNIQUE (id-generator-seeded) receipt id — persisted for durable recovery. */
+  receiptId: string;
+  /** The RESOLVED canonical owner (never a caller-supplied id). */
+  ownerId: string;
+  /** ISO time the mutation was applied (injected clock). */
+  occurredAt: string;
+  /** Authoritative before-state read from the store (pre-apply). */
+  before: FridayRetentionContentPolicy;
+  /** Authoritative after-state captured IN-TXN (== what is committed). */
+  after: FridayRetentionContentPolicy;
+  /** The validated per-category updates that were applied. */
+  appliedUpdates: Record<string, CategoryRetention>;
+  /** Content categories whose EFFECTIVE policy changed (before ≠ after). */
+  changedCategories: string[];
+  /**
+   * RETENTION-R3d (P1 — raw-key minimization): the NON-REVERSIBLE hash of the
+   * client-known idempotency/operation key (`sha256`; see `hashRecoveryKey`). The
+   * RAW key is NEVER persisted — recovery hashes the presented `Idempotency-Key`
+   * and matches by this hash, preserving exact-replay + 409-conflict semantics
+   * without leaving the key at rest. Absent when the client supplied no key.
+   */
+  recoveryKeyHash?: string;
+  /**
+   * RETENTION-R3d (P1 — recovery collision): digest of the request payload,
+   * persisted so a (owner, recoveryKey) binding is IMMUTABLE across HTTP-journal
+   * expiry + key reuse: a later same-key/same-payload request replays this exact
+   * receipt, a same-key/DIFFERENT-payload request is a 409 conflict — never
+   * "latest wins", so no committed receipt is ever shadowed.
+   */
+  payloadDigest?: string;
+  /**
+   * RETENTION-R3d (P1 — audit visibility): the canonical owner's tenant namespace
+   * (the authenticated principal's tenantId). Persisted as the audit entry's
+   * `tenantId` so the product's tenant-scoped audit projection
+   * (`queryAuditLog({ tenantId })`) returns it — a `null` tenant is invisible to
+   * that exact-tenant query. Null only when no tenant context exists.
+   */
+  ownerTenantId?: string | null;
+}
+
+/**
+ * RETENTION-R3d: the RECEIPT envelope returned by a successful PUT. Binds the
+ * correlation id, the durable audit entry id, the authoritative before + after
+ * states, and the changed categories. `deletedData` is always `false`: a settings
+ * write never deletes stored data rows (opt-out only removes an override row).
+ */
+export interface FridayRetentionPolicyUpdateReceipt {
+  receiptId: string;
+  correlationId: string;
+  /** The durable audit entry id this update is bound to. */
+  auditId: string;
+  status: "applied";
+  runAt: string;
+  /** The RESOLVED canonical owner (never a caller-supplied id). */
+  requestedBy: string;
+  rollbackClass: "reversible_local_settings";
+  evidence: {
+    before: FridayRetentionContentPolicy;
+    after: FridayRetentionContentPolicy;
+    changed: string[];
+    deletedData: false;
+  };
 }
 
 interface FridayRetentionPolicyResponse {
   policy: Record<string, CategoryRetention>;
+}
+
+interface FridayRetentionPolicyUpdateResponse {
+  policy: Record<string, CategoryRetention>;
+  receipt: FridayRetentionPolicyUpdateReceipt;
+}
+
+interface FridayRetentionReceiptRecoveryResponse {
+  /** The durably-committed receipt for the recovery key, or null if none. */
+  receipt: FridayRetentionPolicyUpdateReceipt | null;
 }
 
 interface FridayRetentionDiskUsageResponse {
@@ -194,9 +374,175 @@ function parseCategoryRetention(category: string, raw: unknown): CategoryRetenti
   return { mode: "after_days", days };
 }
 
+// RETENTION-R3d round-9: `retentionEquals` + `computeChangedCategories` were
+// EXTRACTED to the shared, pure `friday-retention-receipt-coherence` module (jobs
+// layer, re-exported via `#jobs`) so the receipt-store decode path can CROSS-FIELD-
+// validate a persisted receipt with the EXACT write-path derivation (zero drift).
+// This write path imports `computeChangedCategories` from `#jobs` — behavior is
+// byte-identical to the former local copy.
+
+/**
+ * RETENTION-R3d: build the FAIL-CLOSED retention-policy audit appender.
+ *
+ * It writes exactly ONE structured entry into the durable `security_audit_log`
+ * chain — REUSING `createSqliteAuditPersistence` (NOT a new audit store), keyed as
+ * resource `policy` / decision `allow` — and returns the entry id. It MUST close
+ * over the SAME `FridaySqliteLayer` the retention store writes through, so the
+ * INSERT NESTS inside the caller's write transaction (a SAVEPOINT on the one
+ * writer connection) and commits/rolls back atomically with the policy write.
+ *
+ * FAIL-CLOSED: any persistence failure is re-thrown as a typed 503 (mirrors the
+ * observability audit posture) so the enclosing transaction ABORTS and no policy
+ * mutation is ever left un-audited. The SQLite write is the ONLY thing that
+ * participates in the transaction (so a rollback can't leave a phantom in-memory
+ * audit entry); making the committed entry visible in the LIVE audit projection is
+ * done SEPARATELY, post-commit, via `projectCommittedAudit` — the returned
+ * `FridaySecurityAuditEntry` is what the handler feeds to that hook.
+ */
+export function createFridayRetentionPolicyAuditAppender(deps: {
+  sqlite: FridaySqliteLayer;
+  idGenerator: () => string;
+}): (entry: FridayRetentionPolicyAuditEntry) => FridaySecurityAuditEntry {
+  const persistence = createSqliteAuditPersistence(deps.sqlite);
+  return (entry) => {
+    const auditId = deps.idGenerator();
+    // CONTENT-MINIMIZED authentic-audit anchor (AUDIT-AUTHENTIC-ANCHOR-001): this
+    // canonical `security_audit_log` row stays default-permanent for authentic
+    // audit truth, so it carries ONLY the linkage (receiptId + correlationId) and
+    // the non-reversible payload digest — NEVER the before/after recovery payload,
+    // the applied updates, or the recovery-key hash. The FULL receipt facts live in
+    // the dedicated, owner-scoped, retention-GOVERNED `retention_recovery_receipts`
+    // store (v107), so the user's auditLogs deletion policy is honored for the
+    // receipt content while the anchor remains a truthful, content-free record that
+    // a retention advance cannot silently orphan (DATA-RETENTION-001 / U9).
+    const metadata = {
+      receiptId: entry.receiptId,
+      correlationId: entry.correlationId,
+      ...(entry.payloadDigest ? { payloadDigest: entry.payloadDigest } : {}),
+    } as unknown as JsonObject;
+    const securityEntry: FridaySecurityAuditEntry = {
+      id: auditId,
+      // P1 — audit visibility: bind to the canonical owner's tenant namespace so
+      // the product's tenant-scoped audit projection returns it (a null tenant is
+      // invisible to `queryAuditLog({ tenantId })`).
+      tenantId: entry.ownerTenantId ?? null,
+      principalId: entry.ownerId,
+      action: "retention.policy.update",
+      resourceType: "policy",
+      resourceId: `retention-policy:${entry.ownerId}`,
+      decision: "allow",
+      reason: "canonical-owner retention policy update",
+      sessionId: entry.correlationId,
+      metadata,
+      createdAt: entry.occurredAt,
+    };
+    try {
+      persistence.saveAuditEntry(securityEntry);
+    } catch (cause) {
+      throw new FridayDomainError(
+        "RETENTION_AUDIT_APPEND_FAILED",
+        "Retention audit append failed; refusing to complete the retention-policy update",
+        { httpStatus: 503, cause },
+      );
+    }
+    return securityEntry;
+  };
+}
+
+/**
+ * RETENTION-R3d (P1 — raw-key minimization): non-reversible hash of a recovery
+ * key. `sha256` is deliberately KEYLESS: it must be STABLE across restarts so a
+ * receipt bound before a restart is still recoverable after one (a confirmed
+ * invariant); keying on a rotate-able/possibly-ephemeral server key would break
+ * that. It is non-reversible and never stores the raw key; exact-replay + conflict
+ * detection compare hashes. (Idempotency keys are high-entropy in practice.)
+ */
+export function hashRecoveryKey(recoveryKey: string): string {
+  return createHash("sha256").update(recoveryKey).digest("hex");
+}
+
+/** The durable recovery binding: the reconstructed receipt + its payload digest. */
+interface RetentionReceiptBinding {
+  receipt: FridayRetentionPolicyUpdateReceipt;
+  payloadDigest?: string;
+}
+
+/** Reconstruct the receipt envelope from a stored governed-store record. */
+function receiptFromRecord(record: FridayRetentionReceiptRecord): FridayRetentionPolicyUpdateReceipt {
+  return {
+    receiptId: record.receiptId,
+    correlationId: record.correlationId,
+    auditId: record.auditId,
+    status: "applied",
+    runAt: record.createdAt,
+    requestedBy: record.ownerId,
+    rollbackClass: "reversible_local_settings",
+    evidence: {
+      before: record.before,
+      after: record.after,
+      changed: record.changedCategories,
+      deletedData: false,
+    },
+  };
+}
+
+/**
+ * RETENTION-R3d (P0/P1 — recovery): read the OLDEST durable (owner,
+ * recoveryKeyHash) binding on a supplied connection FROM THE DEDICATED,
+ * retention-GOVERNED `retention_recovery_receipts` store (NOT `security_audit_log`)
+ * and reconstruct its EXACT receipt + payload digest. The lookup matches the
+ * NON-REVERSIBLE hash (the raw key is never stored). Reading the OLDEST
+ * (`created_at ASC`) — combined with the write-path conflict/idempotency guard —
+ * makes the binding IMMUTABLE: a same-key/different-payload write is rejected
+ * before it can shadow the first, so the FIRST committed receipt for a key is
+ * always returned (never "latest wins"). Owner scoping is enforced in the query (a
+ * different principal's rows never match). Returns null once the auditLogs-category
+ * reaper has expired the receipt under a finite window — recovery must return null
+ * exactly when the user's deletion policy has removed it.
+ */
+function readRetentionReceiptBinding(
+  db: Database.Database,
+  input: { ownerId: string; recoveryKeyHash: string },
+  receiptRepo: FridayRetentionReceiptRepository,
+): RetentionReceiptBinding | null {
+  const record = receiptRepo.findOldestByRecoveryKey(db, input);
+  if (!record) return null;
+  return {
+    payloadDigest: record.payloadDigest ?? undefined,
+    receipt: receiptFromRecord(record),
+  };
+}
+
+/**
+ * RETENTION-R3d (P0 — uncertain-outcome RECOVERY): build the owner-bound receipt
+ * recovery reader over the dedicated governed receipt store — so an interrupted PUT
+ * whose mutation + durable receipt committed but whose HTTP response was lost is
+ * recoverable through a product seam after restart, WITHOUT raw DB access or blind
+ * replay. The route additionally denies non-canonical principals before this ever
+ * runs. Reading the governed store (not `security_audit_log`) means recovery
+ * returns null exactly when the user's auditLogs retention policy has expired it.
+ */
+export function createFridayRetentionReceiptRecovery(deps: {
+  sqlite: FridaySqliteLayer;
+}): (input: { ownerId: string; recoveryKeyHash: string }) => FridayRetentionPolicyUpdateReceipt | null {
+  const receiptRepo = createFridayRetentionReceiptRepository();
+  return (input) =>
+    deps.sqlite.withReadConnection(
+      (db) => readRetentionReceiptBinding(db, input, receiptRepo)?.receipt ?? null,
+    );
+}
+
 export function createFridayRetentionSettingsRoutes(
   deps: FridayRetentionSettingsRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  // Governed receipt store (v107). Stateless SQL helpers (a pure repository over a
+  // supplied connection) — constructed here, used for the in-txn idempotency/
+  // conflict read AND the atomic in-txn receipt write. `persistReceipt` defaults to
+  // the repository write; an injected override lets a fault-injection test throw at
+  // the receipt-write stage and prove the whole transaction rolls back.
+  const receiptRepo = createFridayRetentionReceiptRepository();
+  const persistReceipt =
+    deps.persistReceipt ?? ((conn, record) => receiptRepo.insert(conn, record));
   return [
     {
       operationId: "uix.retention.policy.get",
@@ -217,7 +563,10 @@ export function createFridayRetentionSettingsRoutes(
       method: "PUT",
       path: "/v1/uix/retention-policy",
       auth: { public: true },
-      async handler(ctx): Promise<FridayRetentionPolicyResponse> {
+      async handler(ctx): Promise<FridayRetentionPolicyUpdateResponse> {
+        // 1. AuthZ FIRST: canonical-owner binding. A non-canonical authenticated
+        //    admin (admin-002) is refused 403 here, BEFORE any before-readback,
+        //    audit, mutation, or receipt side effect.
         const ownerId = assertCanonicalRetentionOwner(
           ctx.principal ?? null,
           "retention.policy.update",
@@ -241,14 +590,13 @@ export function createFridayRetentionSettingsRoutes(
           );
         }
 
-        // Known content categories = the keys of the effective policy (all 7).
-        // Deriving them from the store keeps this handler decoupled from the
-        // category list while still rejecting unknown keys.
-        const known = new Set(
-          Object.keys(deps.store.readOwnerContentPolicy({ principalId: ownerId })),
-        );
-
-        // Validate the WHOLE body FIRST (reject → 400, persist nothing), then apply.
+        // 2. Validate the WHOLE body FIRST (reject → 400, persist nothing / no
+        //    audit / no receipt), THEN apply. The KNOWN content-category set is the
+        //    invariant 7 categories — derived from a read of the current policy's
+        //    KEYS only (values are irrelevant to validation), so unknown-key
+        //    rejection stays fail-closed BEFORE any mutation. Authoritative
+        //    before/after VALUES are read IN-TXN below (never from this snapshot).
+        const known = new Set(Object.keys(deps.store.readOwnerContentPolicy({ principalId: ownerId })));
         const updates: Record<string, CategoryRetention> = {};
         for (const [category, raw] of Object.entries(policyInput as Record<string, unknown>)) {
           if (!known.has(category)) {
@@ -261,9 +609,172 @@ export function createFridayRetentionSettingsRoutes(
           updates[category] = parseCategoryRetention(category, raw);
         }
 
-        return {
-          policy: deps.store.applyOwnerContentPolicy({ principalId: ownerId, updates }),
+        // 3. UNIQUE operation identity (P0 — traceability). Uniqueness comes from
+        //    the injected collision-resistant id generator, NOT the clock: two
+        //    same-owner/same-millisecond writes get DISTINCT correlation AND receipt
+        //    ids. The readable domain prefix is cosmetic. The CLIENT-KNOWN recovery
+        //    key (Idempotency-Key header, optional) binds the durable receipt for
+        //    owner-bound recovery of an interrupted request.
+        const runAt = deps.nowIso();
+        const operationId = deps.idGenerator();
+        const correlationId = `retention-policy-update:${ownerId}:${operationId}`;
+        const receiptId = `retention-receipt:${ownerId}:${operationId}`;
+        // The CLIENT-KNOWN recovery key comes ONLY from the Idempotency-Key HEADER
+        // (P2 — never a query string, so the key can never reach access logs/URL).
+        // P1: only its NON-REVERSIBLE hash is ever persisted / matched — the raw
+        // key is never written to `security_audit_log`.
+        const rawRecoveryKey = readIdempotencyKeyHeader(
+          ctx.headers as Record<string, string | undefined> | undefined,
+        );
+        const recoveryKeyHash = rawRecoveryKey ? hashRecoveryKey(rawRecoveryKey) : undefined;
+        // Immutable-binding payload digest (P1 — recovery collision). Digests the
+        // NORMALIZED applied updates so same-key/same-payload replays match and
+        // same-key/different-payload writes are detected as conflicts.
+        const payloadDigest = hashIdempotencyPayload(updates);
+        // Bind the audit to the canonical owner's tenant namespace (P1 — visibility).
+        const ownerTenantId = ctx.principal?.tenantId ?? null;
+
+        // 4. ONE writer transaction carries the idempotency/conflict guard, the
+        //    AUTHORITATIVE before-read, the apply, the AUTHORITATIVE after-read, the
+        //    durable-receipt capture, and the audit — all on the SAME writer
+        //    connection. Reading on the writer connection inside its own transaction
+        //    SEES this txn's uncommitted apply AND reflects any disjoint write
+        //    another connection committed before this txn opened, so `before`/`after`
+        //    are the TRUE committed states. The (owner, recoveryKey) binding is
+        //    checked IN-TXN so a same-key/same-payload retry replays the EXACT first
+        //    receipt (idempotent) and a same-key/different-payload write is rejected
+        //    409 BEFORE any mutation — the first committed receipt is never shadowed
+        //    ("latest wins" is impossible). If the audit append THROWS (fail-closed
+        //    503) the whole transaction rolls back → policy byte-unchanged, no audit
+        //    row, no orphan.
+        let outcome!:
+          | { kind: "applied"; before: FridayRetentionContentPolicy; after: FridayRetentionContentPolicy; changed: string[]; auditEntry: FridaySecurityAuditEntry }
+          | { kind: "idempotent"; receipt: FridayRetentionPolicyUpdateReceipt };
+        deps.db.withWriteTransaction((conn) => {
+          if (recoveryKeyHash) {
+            const existing = readRetentionReceiptBinding(
+              conn,
+              { ownerId, recoveryKeyHash },
+              receiptRepo,
+            );
+            if (existing) {
+              if (existing.payloadDigest === payloadDigest) {
+                // True idempotency: replay the EXACT first committed receipt.
+                outcome = { kind: "idempotent", receipt: existing.receipt };
+                return;
+              }
+              // Same key, DIFFERENT payload → conflict; never overwrite/shadow.
+              throw new FridayDomainError(
+                "RETENTION_RECOVERY_KEY_CONFLICT",
+                "This Idempotency-Key is already bound to a different retention-policy request.",
+                { httpStatus: 409 },
+              );
+            }
+          }
+          const before = deps.store.readOwnerContentPolicyOnConnection(conn, { principalId: ownerId });
+          deps.store.applyOwnerContentPolicyOnConnection(conn, { principalId: ownerId, updates });
+          const after = deps.store.readOwnerContentPolicyOnConnection(conn, { principalId: ownerId });
+          const changed = computeChangedCategories(before, after);
+          // (a) Content-minimized authentic-audit anchor (linkage + digest only).
+          const auditEntry = deps.appendPolicyAudit({
+            correlationId,
+            receiptId,
+            ownerId,
+            occurredAt: runAt,
+            before,
+            after,
+            appliedUpdates: updates,
+            changedCategories: changed,
+            ownerTenantId,
+            payloadDigest,
+            ...(recoveryKeyHash ? { recoveryKeyHash } : {}),
+          });
+          // (b) FULL receipt facts → the dedicated, retention-GOVERNED store, on the
+          //     SAME write connection so it commits/rolls back ATOMICALLY with the
+          //     policy apply + the audit anchor (no orphan, no partial rows). If this
+          //     throws, the whole transaction aborts → 503, byte-unchanged policy.
+          persistReceipt(conn, {
+            receiptId,
+            ownerId,
+            ownerTenantId,
+            correlationId,
+            auditId: auditEntry.id,
+            recoveryKeyHash: recoveryKeyHash ?? null,
+            payloadDigest,
+            before,
+            after,
+            changedCategories: changed,
+            appliedUpdates: updates,
+            createdAt: runAt,
+          });
+          outcome = { kind: "applied", before, after, changed, auditEntry };
+        });
+
+        // 5. Idempotent replay: the receipt is already committed + already projected;
+        //    return it as a pure serialization (no new side effect).
+        if (outcome.kind === "idempotent") {
+          return { policy: outcome.receipt.evidence.after, receipt: outcome.receipt };
+        }
+
+        // 6. Post-commit: make the committed audit entry VISIBLE in the LIVE audit
+        //    projection (P0/P1 — audit visibility). Pure in-memory upsert, cannot
+        //    fail, runs ONLY after a successful commit → preserves rollback-safety
+        //    AND live visibility. No fallible DB access after commit.
+        deps.projectCommittedAudit?.(outcome.auditEntry);
+
+        // 7. The response is a PURE serialization of already-durable in-memory facts.
+        const receipt: FridayRetentionPolicyUpdateReceipt = {
+          receiptId,
+          correlationId,
+          auditId: outcome.auditEntry.id,
+          status: "applied",
+          runAt,
+          requestedBy: ownerId,
+          rollbackClass: "reversible_local_settings",
+          evidence: { before: outcome.before, after: outcome.after, changed: outcome.changed, deletedData: false },
         };
+
+        return { policy: outcome.after, receipt };
+      },
+    },
+    {
+      // RETENTION-R3d (P0 — uncertain-outcome RECOVERY): owner-bound receipt
+      // recovery. An interrupted PUT can commit its mutation + durable receipt yet
+      // lose its HTTP response; the client re-sends the SAME Idempotency-Key here to
+      // retrieve the EXACT committed receipt from the dedicated, retention-GOVERNED
+      // receipt store (v107) — a product seam, not raw DB access, and NOT
+      // `security_audit_log`. Canonical-owner-gated: a non-canonical principal
+      // (admin-002) is refused 403 BEFORE any lookup (zero cross-principal
+      // disclosure), and the query itself is scoped to the owner's principal_id.
+      // P2: the key is read ONLY from the `Idempotency-Key` HEADER — never a query
+      // string — so the sensitive key can never land in access logs, URLs, or proxy
+      // history.
+      operationId: "uix.retention.policy.receipt.get",
+      method: "GET",
+      path: "/v1/uix/retention-policy/receipt",
+      auth: { public: true },
+      async handler(ctx): Promise<FridayRetentionReceiptRecoveryResponse> {
+        const ownerId = assertCanonicalRetentionOwner(
+          ctx.principal ?? null,
+          "retention.policy.read",
+          deps.resolveCanonicalOwnerId,
+        );
+        const rawRecoveryKey = readIdempotencyKeyHeader(
+          ctx.headers as Record<string, string | undefined> | undefined,
+        );
+        if (!rawRecoveryKey) {
+          throw new FridayDomainError(
+            "RETENTION_RECOVERY_KEY_REQUIRED",
+            "An Idempotency-Key header is required to recover a retention-policy receipt.",
+            { httpStatus: 400 },
+          );
+        }
+        // Hash the presented key and match by hash — the raw key is never stored.
+        const recoveryKeyHash = hashRecoveryKey(rawRecoveryKey);
+        const receipt = deps.readReceiptByRecoveryKey
+          ? deps.readReceiptByRecoveryKey({ ownerId, recoveryKeyHash })
+          : null;
+        return { receipt };
       },
     },
     {

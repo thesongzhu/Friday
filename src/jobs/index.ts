@@ -12,6 +12,9 @@ export {
   FRIDAY_MIN_AFTER_DAYS,
   FRIDAY_MAX_AFTER_DAYS,
   isValidAfterDays,
+  isValidCategoryRetention,
+  isFridayRetentionContentCategory,
+  isValidFridayRetentionContentPolicy,
 } from "./retention/friday-retention.types.js";
 export { createFridayRetentionJob, resolveCutoff } from "./retention/friday-retention-job.js";
 export type { FridayRetentionJob } from "./retention/friday-retention-job.js";
@@ -32,6 +35,25 @@ export type {
   FridayRetentionPolicyLoader,
   CreateFridayRetentionPolicyLoaderDeps,
 } from "./retention/friday-retention-policy-loader.js";
+
+// ─── Governed recovery-receipt store (RETENTION-R3d) ───
+export {
+  createFridayRetentionReceiptRepository,
+  FridayRetentionReceiptIntegrityError,
+  assertReceiptRowIntegrity,
+  isCanonicalReceiptCreatedAt,
+  FRIDAY_RETENTION_RECEIPT_CREATED_AT_GLOB,
+  FRIDAY_RETENTION_RECEIPT_ROW_INVARIANT,
+} from "./retention/friday-retention-receipt-repository.js";
+export type {
+  FridayRetentionReceiptRepository,
+  FridayRetentionReceiptRecord,
+} from "./retention/friday-retention-receipt-repository.js";
+export {
+  applyContentPolicyOverlay,
+  computeChangedCategories,
+  retentionEquals,
+} from "./retention/friday-retention-receipt-coherence.js";
 
 export type {
   FridayLearningMetricsJobResult,
