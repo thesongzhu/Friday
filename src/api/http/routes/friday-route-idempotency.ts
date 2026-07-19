@@ -73,3 +73,54 @@ export function throwIdempotencyConflict(
     { httpStatus: 409 },
   );
 }
+
+/** What a caller must do to the persisted store after {@link reconcileLegacyBackfillDigest}. */
+export type FridayLegacyDigestReconcileOutcome =
+  /** No pre-existing row — proceed with the normal INSERT (which stamps the digest). */
+  | "insert"
+  /** Pre-existing LEGACY row (NULL digest) whose identity matches — BACKFILL the digest onto it. */
+  | "backfill"
+  /** Pre-existing row whose digest already matches — idempotent no-op; do not re-stamp. */
+  | "match";
+
+/**
+ * The SINGLE cross-store rule for reconciling a digest-bearing write against a pre-existing row,
+ * INCLUDING legacy rows written before the v100 migration added the (nullable) `payload_digest`
+ * column. Every cross-store idempotency site (HTTP journal, Rust continuity projector, satellite
+ * outbox) routes through this one primitive so their legacy handling can never drift apart.
+ *
+ * A legacy row has no stored digest to compare against, so this must NEVER blindly stamp the
+ * incoming digest — that would LAUNDER a divergent write (same key reused for a DIFFERENT identity)
+ * into "the canonical digest". Instead the caller supplies a `contentIdentity` recomputed
+ * SYMMETRICALLY over the row's persisted columns and over the incoming write's values; equality
+ * proves the incoming write reproduces the bytes ALREADY PERSISTED. Decisions:
+ *   - no existing row              → `insert` (caller's INSERT stamps the digest).
+ *   - legacy NULL + identity MATCH → `backfill` (caller stamps the digest first-write-only).
+ *   - legacy NULL + identity DIFF  → throwIdempotencyConflict (genuine divergence; nothing stamped).
+ *   - non-null digest match        → `match` (idempotent no-op).
+ *   - non-null digest mismatch     → throwIdempotencyConflict.
+ * The throw is raised BEFORE any stamp so the caller's transaction rolls back divergence
+ * data-loss-free (the existing row is preserved).
+ */
+export function reconcileLegacyBackfillDigest(params: {
+  existing: { payloadDigest: string | null; contentIdentity: string } | undefined;
+  incomingDigest: string;
+  incomingContentIdentity: string;
+  conflictKey: string;
+  conflictOperationId: string;
+}): FridayLegacyDigestReconcileOutcome {
+  const { existing } = params;
+  if (!existing) {
+    return "insert";
+  }
+  if (existing.payloadDigest === null) {
+    if (existing.contentIdentity !== params.incomingContentIdentity) {
+      throwIdempotencyConflict(params.conflictKey, params.conflictOperationId);
+    }
+    return "backfill";
+  }
+  if (existing.payloadDigest !== params.incomingDigest) {
+    throwIdempotencyConflict(params.conflictKey, params.conflictOperationId);
+  }
+  return "match";
+}

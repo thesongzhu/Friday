@@ -1,27 +1,33 @@
 /**
  * DUR-OPERATION-JOURNAL-001 — follow-up defect #4: legacy-NULL digest backfill (integration).
  *
- * The cross-store digest-conflict guards added by the merged PR (#1623) short-circuit
- * when the EXISTING row's `payload_digest` is NULL — the state of every row written
- * BEFORE the v100 migration added the (nullable) `payload_digest` column. Because the
- * guard only fires on a NON-NULL divergent digest, a divergent re-projection / re-enqueue
- * that targets a legacy row is neither recorded nor flagged: it is silently swallowed by
- * `INSERT OR IGNORE` (projector / outbox insert is a no-op — the row already exists) or
- * silently resolved to the existing id (outbox). The genuine payload divergence vanishes.
+ * The cross-store digest-conflict guards added by the merged PR (#1623) short-circuit when the
+ * EXISTING row's `payload_digest` is NULL — the state of every row written BEFORE the v100
+ * migration added the (nullable) `payload_digest` column. Because the guard only fires on a
+ * NON-NULL divergent digest, a divergent re-projection / re-enqueue that targets a legacy row is
+ * neither recorded nor flagged: it is silently swallowed by `INSERT OR IGNORE` (projector / outbox
+ * insert is a no-op — the row already exists) or silently resolved to the existing id (outbox).
  *
- * The fix BACKFILLS the canonical digest onto a legacy (NULL-digest) row on the FIRST
- * digest-bearing write (`UPDATE <table> SET payload_digest = ? WHERE <key> AND
- * payload_digest IS NULL`), so:
- *   - the first legitimate re-projection/re-enqueue is NOT rejected (no over-fail); it
- *     stamps the legacy row with its digest, and
- *   - a SUBSEQUENT write with a DIFFERENT digest then hits the now-non-null digest and
- *     raises the SAME typed 409 SECURITY_IDEMPOTENCY_KEY_CONFLICT the non-null path raises.
+ * The fix does NOT blindly stamp the incoming digest onto a legacy row — that would LAUNDER a
+ * divergent write (same key reused for a DIFFERENT identity) into "the canonical digest". Instead,
+ * on a legacy (NULL-digest) row it PROVES the incoming write reproduces the bytes ALREADY
+ * PERSISTED before stamping:
+ *   - outbox: recompute the canonical routing-identity digest from the row's OWN persisted columns
+ *     (`satellite_id, queue_key, message_type, key_id`) and compare;
+ *   - projector: recompute a content-identity over the row's persisted content columns and compare.
+ * Then:
+ *   - MATCH  ⇒ same identity → BACKFILL the canonical digest (first-write-only via
+ *     `payload_digest IS NULL`) so a LATER divergent write hits the now-non-null typed-409 branch;
+ *   - MISMATCH ⇒ genuine divergence → the SAME typed 409 (SECURITY_IDEMPOTENCY_KEY_CONFLICT) the
+ *     non-null path raises, BEFORE any stamp (data-loss-free: the row is preserved, nothing
+ *     laundered).
  *
- * RED-FIRST: on the pre-fix code the legacy-NULL divergent SECOND write is a silent no-op
- * (no conflict) — the `toThrow`/conflict assertions FAIL. After the backfill they pass. The
- * happy paths (non-null matching = no-op, non-null different = conflict, fresh insert sets
- * its digest, idempotent replay resolves to the existing id) are UNCHANGED and are covered
- * here and in `friday-cross-store-digest-conflict.test.ts`.
+ * RED-FIRST: on the pre-fix (blind-stamp) code, a DIVERGENT write against a legacy row on FIRST
+ * contact is silently accepted (stamped / resolved, no throw) — the `toThrow`/409 negative-control
+ * assertions FAIL. After the prove-then-stamp fix they pass, and the same-identity backfill +
+ * happy paths (non-null matching = no-op, non-null different = conflict, fresh insert stamps its
+ * digest, idempotent replay resolves to the existing id) remain UNCHANGED (covered here and in
+ * `friday-cross-store-digest-conflict.test.ts`).
  */
 
 import { describe, expect, it } from "vitest";
@@ -74,6 +80,16 @@ function isConflict(err: unknown): err is FridayDomainError {
   );
 }
 
+/** Run `fn`, returning whatever it threw (or `undefined` if it did not throw). */
+function capture(fn: () => void): unknown {
+  try {
+    fn();
+    return undefined;
+  } catch (err) {
+    return err;
+  }
+}
+
 /**
  * Drive the REAL projector exactly as production does: inside a write transaction
  * (`composeRustReadOnlyAgentRun` runs `project()` in `withWriteTransaction`), so a thrown
@@ -107,53 +123,41 @@ function makeLegacy(layer: FridaySqliteLayer, runId: string): void {
 }
 
 describe("legacy-NULL digest backfill — Rust run-continuity projector (friday_agent_runs, site 1)", () => {
-  it("backfills the legacy row's digest on the first divergent projection, then conflicts on the second", () => {
+  it("REJECTS a DIVERGENT projection against a legacy row on first contact — never launders its digest", () => {
     const layer = createTestDb();
     try {
       const runId = BASE_RECEIPT.runId;
       const usageId = usageLedgerIdForRun(runId);
 
-      // Seed a pre-v100 legacy row (digest column NULL).
+      // Seed a pre-v100 legacy row (digest column NULL) from BASE_RECEIPT's content.
       project(layer, BASE_RECEIPT);
       makeLegacy(layer, runId);
       expect(agentRunDigest(layer, runId)).toBe(null); // precondition: legacy NULL
       expect(usageDigest(layer, usageId)).toBe(null);
 
-      // First divergent write with digest D1 → must NOT throw; must BACKFILL D1 onto the legacy
-      // row (both the agent_run row AND its companion usage row), not silently drop it.
-      const divergent1: FridayRustHubRunReceipt = {
+      // A DIVERGENT receipt (different usage content) is the same run_id reused for a DIFFERENT
+      // projection. On the FIRST digest-bearing contact the guard has no stored digest to compare,
+      // so it must PROVE identity against the persisted content — which differs — and raise the
+      // typed 409 rather than stamping the divergent digest. (RED on the blind-stamp code: it
+      // stamps + no-ops with no throw.)
+      const divergent: FridayRustHubRunReceipt = {
         ...BASE_RECEIPT,
         usagePromptTokens: 9999,
         usageTotalTokens: 10_419,
       };
-      const d1 = hashIdempotencyPayload(divergent1);
-      expect(() => project(layer, divergent1)).not.toThrow();
-      expect(agentRunDigest(layer, runId)).toBe(d1); // backfilled, not NULL, not dropped
-      expect(usageDigest(layer, usageId)).toBe(d1); // site-2 backfill in the same write
-
-      // Second write with a DIFFERENT digest D2 → the legacy gap is now closed: typed 409.
-      const divergent2: FridayRustHubRunReceipt = {
-        ...BASE_RECEIPT,
-        usagePromptTokens: 5555,
-        usageTotalTokens: 6000,
-      };
-      let caught: unknown;
-      try {
-        project(layer, divergent2);
-      } catch (err) {
-        caught = err;
-      }
+      const caught = capture(() => project(layer, divergent));
       expect(isConflict(caught)).toBe(true);
       expect((caught as FridayDomainError).httpStatus).toBe(409);
 
-      // The backfilled digest is unchanged by the rejected divergent write (guard threw first).
-      expect(agentRunDigest(layer, runId)).toBe(d1);
+      // The rejected write laundered nothing: the legacy digest is still NULL (throw rolled back
+      // before any UPDATE), so the divergent receipt's digest was NOT adopted as canonical.
+      expect(agentRunDigest(layer, runId)).toBe(null);
     } finally {
       layer.close();
     }
   });
 
-  it("stays an idempotent no-op when the legacy row is re-projected with the SAME receipt (no over-fail)", () => {
+  it("backfills a legacy row on a SAME-identity re-projection, then conflicts when a later projection diverges", () => {
     const layer = createTestDb();
     try {
       const runId = BASE_RECEIPT.runId;
@@ -162,8 +166,10 @@ describe("legacy-NULL digest backfill — Rust run-continuity projector (friday_
 
       project(layer, BASE_RECEIPT);
       makeLegacy(layer, runId);
+      expect(agentRunDigest(layer, runId)).toBe(null);
 
-      // Same receipt re-projected onto the legacy row: backfills to the SAME digest, never throws.
+      // Same run re-projected onto the legacy row: content matches → BACKFILL the canonical digest
+      // (both the agent_run row AND its companion usage row), never throwing (no over-fail).
       expect(() => project(layer, BASE_RECEIPT)).not.toThrow();
       expect(agentRunDigest(layer, runId)).toBe(dSame);
       expect(usageDigest(layer, usageId)).toBe(dSame);
@@ -173,6 +179,18 @@ describe("legacy-NULL digest backfill — Rust run-continuity projector (friday_
         .prepare("SELECT COUNT(*) AS n FROM friday_agent_runs WHERE id = ?")
         .get(runId) as { n: number };
       expect(count.n).toBe(1);
+
+      // The legacy gap is now closed: a LATER divergent projection hits the non-null typed 409.
+      const divergent: FridayRustHubRunReceipt = {
+        ...BASE_RECEIPT,
+        usagePromptTokens: 5555,
+        usageTotalTokens: 6000,
+      };
+      const caught = capture(() => project(layer, divergent));
+      expect(isConflict(caught)).toBe(true);
+      expect((caught as FridayDomainError).httpStatus).toBe(409);
+      // The backfilled digest is unchanged by the rejected divergent write (guard threw first).
+      expect(agentRunDigest(layer, runId)).toBe(dSame);
     } finally {
       layer.close();
     }
@@ -187,12 +205,11 @@ describe("legacy-NULL digest backfill — Rust run-continuity projector (llm_usa
   // agent_runs) while the longer-retained usage/cost ledger row survives — a re-projection then
   // re-inserts the agent_run fresh (no conflict) and the usage guard is the sole divergence check.
   // We drive the REAL projector against exactly that partial-legacy shape.
-  it("backfills a legacy usage row (agent_run reaped) then conflicts on a subsequent divergent projection", () => {
+  it("REJECTS a divergent usage projection (agent_run reaped) on first contact — never launders its digest", () => {
     const layer = createTestDb();
     try {
       const runId = BASE_RECEIPT.runId;
       const usageId = usageLedgerIdForRun(runId);
-      const dBase = hashIdempotencyPayload(BASE_RECEIPT);
 
       // Seed both rows, mark the usage row legacy (NULL), and simulate the agent_run reaper having
       // deleted the terminal agent_run row — leaving only the surviving legacy usage ledger row.
@@ -201,8 +218,38 @@ describe("legacy-NULL digest backfill — Rust run-continuity projector (llm_usa
       layer.writer.prepare("DELETE FROM friday_agent_runs WHERE id = ?").run(runId);
       expect(usageDigest(layer, usageId)).toBe(null); // precondition: legacy NULL usage row
 
+      // Divergent re-projection: agent_run absent → re-inserted fresh (no throw at site 1); the
+      // legacy usage row's content differs from the divergent projection → site 2 must raise the
+      // typed 409 rather than stamp. (RED on the blind-stamp code.)
+      const divergent: FridayRustHubRunReceipt = {
+        ...BASE_RECEIPT,
+        usagePromptTokens: 1,
+        usageTotalTokens: 2,
+      };
+      const caught = capture(() => project(layer, divergent));
+      expect(isConflict(caught)).toBe(true);
+      expect((caught as FridayDomainError).httpStatus).toBe(409);
+      // Nothing laundered: the usage row's digest is still NULL (throw rolled back the projection).
+      expect(usageDigest(layer, usageId)).toBe(null);
+    } finally {
+      layer.close();
+    }
+  });
+
+  it("backfills a legacy usage row (agent_run reaped) on a SAME-identity re-projection, then conflicts on divergence", () => {
+    const layer = createTestDb();
+    try {
+      const runId = BASE_RECEIPT.runId;
+      const usageId = usageLedgerIdForRun(runId);
+      const dBase = hashIdempotencyPayload(BASE_RECEIPT);
+
+      project(layer, BASE_RECEIPT);
+      layer.writer.prepare("UPDATE llm_usage_records SET payload_digest = NULL WHERE id = ?").run(usageId);
+      layer.writer.prepare("DELETE FROM friday_agent_runs WHERE id = ?").run(runId);
+      expect(usageDigest(layer, usageId)).toBe(null);
+
       // First re-projection (same receipt): agent_run absent → re-inserted fresh (no throw at
-      // site 1); legacy usage row → BACKFILLED to the canonical digest at site 2.
+      // site 1); legacy usage row content matches → BACKFILLED to the canonical digest at site 2.
       expect(() => project(layer, BASE_RECEIPT)).not.toThrow();
       expect(usageDigest(layer, usageId)).toBe(dBase);
 
@@ -216,12 +263,7 @@ describe("legacy-NULL digest backfill — Rust run-continuity projector (llm_usa
         usagePromptTokens: 1,
         usageTotalTokens: 2,
       };
-      let caught: unknown;
-      try {
-        project(layer, divergent);
-      } catch (err) {
-        caught = err;
-      }
+      const caught = capture(() => project(layer, divergent));
       expect(isConflict(caught)).toBe(true);
       expect((caught as FridayDomainError).httpStatus).toBe(409);
       // The usage row's backfilled digest survives the rejected write (guard threw before its insert).
@@ -282,6 +324,14 @@ describe("legacy-NULL digest backfill — satellite outbox enqueue (site 3)", ()
     return row ? row.payload_digest : null;
   }
 
+  function rowCount(layer: FridaySqliteLayer, satelliteId: string, idempotencyKey: string): number {
+    return (
+      layer.writer
+        .prepare("SELECT COUNT(*) AS n FROM outbox_messages WHERE satellite_id = ? AND idempotency_key = ?")
+        .get(satelliteId, idempotencyKey) as { n: number }
+    ).n;
+  }
+
   function makeLegacyRow(layer: FridaySqliteLayer, satelliteId: string, idempotencyKey: string): void {
     layer.writer
       .prepare(
@@ -290,7 +340,7 @@ describe("legacy-NULL digest backfill — satellite outbox enqueue (site 3)", ()
       .run(satelliteId, idempotencyKey);
   }
 
-  it("backfills the legacy row's digest on the first divergent enqueue, then conflicts on the second", () => {
+  it("REJECTS a DIVERGENT enqueue against a legacy row on first contact — never launders its digest", () => {
     const layer = createTestDb();
     try {
       insertSatellite(layer, SAT);
@@ -302,30 +352,47 @@ describe("legacy-NULL digest backfill — satellite outbox enqueue (site 3)", ()
       makeLegacyRow(layer, SAT, base.idempotencyKey);
       expect(rowDigest(layer, SAT, base.idempotencyKey)).toBe(null); // precondition: legacy NULL
 
-      // First divergent enqueue (same key, DIFFERENT message identity): must NOT throw, must
-      // resolve to the existing id (no-degrade), and must BACKFILL the row's digest to D1.
-      const divergent1: FridayOutboxEnqueueInput = { ...base, messageType: "skill.execute" };
-      const d1 = digestOf(divergent1);
-      const retry = service.enqueue(divergent1);
-      expect(retry.id).toBe(first.id);
-      expect(rowDigest(layer, SAT, base.idempotencyKey)).toBe(d1); // backfilled, not NULL
-
-      // Second enqueue with ANOTHER different identity (D2 != D1) → legacy gap closed: typed 409.
-      let caught: unknown;
-      try {
-        service.enqueue({ ...base, messageType: "channel.deliver" });
-      } catch (err) {
-        caught = err;
-      }
+      // A DIVERGENT enqueue (same key, DIFFERENT message identity) on FIRST contact must PROVE
+      // identity against the persisted routing columns — which differ — and raise the typed 409
+      // rather than stamp the divergent digest and resolve to the existing id. (RED on the
+      // blind-stamp code: it stamps + resolves with no throw.)
+      const divergent: FridayOutboxEnqueueInput = { ...base, messageType: "skill.execute" };
+      const caught = capture(() => service.enqueue(divergent));
       expect(isConflict(caught)).toBe(true);
       expect((caught as FridayDomainError).httpStatus).toBe(409);
 
-      // Still exactly one row; digest unchanged by the rejected write.
-      const count = layer.writer
-        .prepare("SELECT COUNT(*) AS n FROM outbox_messages WHERE satellite_id = ? AND idempotency_key = ?")
-        .get(SAT, base.idempotencyKey) as { n: number };
-      expect(count.n).toBe(1);
-      expect(rowDigest(layer, SAT, base.idempotencyKey)).toBe(d1);
+      // Nothing laundered: still one row, digest still NULL (the divergent digest was NOT adopted).
+      expect(rowCount(layer, SAT, base.idempotencyKey)).toBe(1);
+      expect(rowDigest(layer, SAT, base.idempotencyKey)).toBe(null);
+    } finally {
+      layer.close();
+    }
+  });
+
+  it("backfills a legacy row on a SAME-identity re-enqueue, then conflicts when a later enqueue diverges", () => {
+    const layer = createTestDb();
+    try {
+      insertSatellite(layer, SAT);
+      const service = makeService(layer);
+      const dSame = digestOf(base);
+
+      const first = service.enqueue(base);
+      makeLegacyRow(layer, SAT, base.idempotencyKey);
+      expect(rowDigest(layer, SAT, base.idempotencyKey)).toBe(null);
+
+      // Same routing identity + key, re-encoded transport body (fresh nonce/ciphertext): identity
+      // matches → resolves to the original id (no-degrade) and BACKFILLS the canonical digest.
+      const retry = service.enqueue({ ...base, payloadCiphertext: "cipher-A-reencoded", nonce: "nonce-A2" });
+      expect(retry.id).toBe(first.id);
+      expect(rowDigest(layer, SAT, base.idempotencyKey)).toBe(dSame); // backfilled, not NULL
+      expect(rowCount(layer, SAT, base.idempotencyKey)).toBe(1);
+
+      // The legacy gap is now closed: a LATER enqueue with a different identity → typed 409.
+      const caught = capture(() => service.enqueue({ ...base, messageType: "channel.deliver" }));
+      expect(isConflict(caught)).toBe(true);
+      expect((caught as FridayDomainError).httpStatus).toBe(409);
+      // Digest unchanged by the rejected write.
+      expect(rowDigest(layer, SAT, base.idempotencyKey)).toBe(dSame);
     } finally {
       layer.close();
     }
@@ -341,20 +408,10 @@ describe("legacy-NULL digest backfill — satellite outbox enqueue (site 3)", ()
       const first = service.enqueue(base);
       makeLegacyRow(layer, SAT, base.idempotencyKey);
 
-      // Same routing identity + key, re-encoded transport body (fresh nonce/ciphertext): MUST
-      // remain an idempotent no-op resolving to the original id, and backfill the SAME digest.
-      const retry = service.enqueue({
-        ...base,
-        payloadCiphertext: "cipher-A-reencoded",
-        nonce: "nonce-A2",
-      });
+      const retry = service.enqueue({ ...base, payloadCiphertext: "cipher-A-reencoded", nonce: "nonce-A2" });
       expect(retry.id).toBe(first.id);
       expect(rowDigest(layer, SAT, base.idempotencyKey)).toBe(dSame);
-
-      const count = layer.writer
-        .prepare("SELECT COUNT(*) AS n FROM outbox_messages WHERE satellite_id = ? AND idempotency_key = ?")
-        .get(SAT, base.idempotencyKey) as { n: number };
-      expect(count.n).toBe(1);
+      expect(rowCount(layer, SAT, base.idempotencyKey)).toBe(1);
     } finally {
       layer.close();
     }

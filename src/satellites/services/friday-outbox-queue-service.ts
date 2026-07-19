@@ -2,7 +2,7 @@ import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import {
   hashIdempotencyPayload,
-  throwIdempotencyConflict,
+  reconcileLegacyBackfillDigest,
 } from "../../api/http/routes/friday-route-idempotency.js";
 import type {
   FridayOutboxEnqueueInput,
@@ -54,6 +54,28 @@ export interface CreateOutboxQueueServiceDeps {
 /** Base retry backoff: 5 seconds, doubled per attempt. */
 const BASE_RETRY_MS = 5_000;
 
+/**
+ * Canonical digest over the STABLE outbox message identity (routing fields only — never the
+ * per-dispatch transport ciphertext/nonce/timestamp, so a legitimate same-key re-dispatch stays an
+ * idempotent no-op). A SINGLE definition consumed by BOTH the incoming-write digest and the
+ * recompute over a legacy row's stored columns, so the two can never drift apart. All four fields
+ * are persisted columns (`satellite_id, queue_key, message_type, key_id`), which is what makes a
+ * legacy (NULL-digest) row's identity provable from the bytes already persisted.
+ */
+function outboxRoutingIdentityDigest(fields: {
+  satelliteId: string;
+  queueKey: string;
+  messageType: string;
+  keyId: string;
+}): string {
+  return hashIdempotencyPayload({
+    satelliteId: fields.satelliteId,
+    queueKey: fields.queueKey,
+    messageType: fields.messageType,
+    keyId: fields.keyId,
+  });
+}
+
 export function createFridayOutboxQueueService(
   deps: CreateOutboxQueueServiceDeps,
 ): FridayOutboxQueueService {
@@ -61,12 +83,12 @@ export function createFridayOutboxQueueService(
     enqueue(input) {
       const id = deps.idGenerator();
       const nowIso = deps.nowIso();
-      // Digest over the STABLE message identity only. The transport ciphertext/nonce carry a
-      // per-dispatch timestamp (see the workflow satellite dispatch payload's `requestedAt`),
-      // so digesting them would false-positive on a legitimate same-key re-dispatch — which
-      // MUST stay an idempotent no-op (no-degrade). Divergence in the routing identity, on the
-      // other hand, is a genuine reuse-of-key-for-a-different-message conflict.
-      const payloadDigest = hashIdempotencyPayload({
+      // Digest over the STABLE message identity only (see `outboxRoutingIdentityDigest`): the
+      // transport ciphertext/nonce carry a per-dispatch timestamp, so digesting them would
+      // false-positive on a legitimate same-key re-dispatch — which MUST stay an idempotent no-op
+      // (no-degrade). Divergence in the routing identity, on the other hand, is a genuine
+      // reuse-of-key-for-a-different-message conflict.
+      const payloadDigest = outboxRoutingIdentityDigest({
         satelliteId: input.satelliteId,
         queueKey: input.queueKey,
         messageType: input.messageType,
@@ -78,30 +100,50 @@ export function createFridayOutboxQueueService(
         // conflict rather than silently resolving to the existing id.
         const existing = db
           .prepare(
-            "SELECT id, payload_digest FROM outbox_messages WHERE satellite_id = ? AND idempotency_key = ?",
+            `SELECT id, satellite_id, queue_key, message_type, key_id, payload_digest
+               FROM outbox_messages WHERE satellite_id = ? AND idempotency_key = ?`,
           )
           .get(input.satelliteId, input.idempotencyKey) as
-          | { id: string; payload_digest: string | null }
+          | {
+              id: string;
+              satellite_id: string;
+              queue_key: string;
+              message_type: string;
+              key_id: string;
+              payload_digest: string | null;
+            }
           | undefined;
         if (existing) {
-          if (existing.payload_digest === null) {
-            // Legacy pre-v100 row (NULL digest): BACKFILL the canonical digest onto the row on the
-            // FIRST digest-bearing enqueue so a SUBSEQUENT enqueue that reuses this
-            // (satellite_id, idempotency_key) with a DIFFERENT message identity then hits the typed
-            // 409 branch below. Without this the null short-circuits the guard, so a divergent
-            // re-enqueue is silently resolved to the existing id instead of being flagged. Scoped to
-            // `payload_digest IS NULL` so it stamps a legacy row exactly once and never overwrites an
-            // already-stamped digest; atomic with the conflict decision inside this
-            // withWriteTransaction. Does NOT insert a row or alter the idempotent-replay path.
+          // Reconcile through the SINGLE cross-store primitive. For a LEGACY (NULL-digest) row the
+          // row's identity is PROVED from the bytes already persisted — the canonical routing-identity
+          // digest recomputed from its OWN stored routing columns (all four inputs are persisted),
+          // via the SAME `outboxRoutingIdentityDigest` used for the incoming digest, so the incoming
+          // routing identity IS `payloadDigest`. A `backfill` outcome means "same identity" ⇒ stamp
+          // the legacy row first-write-only; a divergence throws inside the primitive before any
+          // stamp, never laundering a divergent re-enqueue's digest onto the row.
+          const reconcile = reconcileLegacyBackfillDigest({
+            existing: {
+              payloadDigest: existing.payload_digest,
+              contentIdentity: outboxRoutingIdentityDigest({
+                satelliteId: existing.satellite_id,
+                queueKey: existing.queue_key,
+                messageType: existing.message_type,
+                keyId: existing.key_id,
+              }),
+            },
+            incomingDigest: payloadDigest,
+            incomingContentIdentity: payloadDigest,
+            conflictKey: input.idempotencyKey,
+            conflictOperationId: "outbox.enqueue",
+          });
+          if (reconcile === "backfill") {
             db
               .prepare(
                 "UPDATE outbox_messages SET payload_digest = ? WHERE satellite_id = ? AND idempotency_key = ? AND payload_digest IS NULL",
               )
               .run(payloadDigest, input.satelliteId, input.idempotencyKey);
-          } else if (existing.payload_digest !== payloadDigest) {
-            throwIdempotencyConflict(input.idempotencyKey, "outbox.enqueue");
           }
-          // Same identity (idempotent retry) → resolve to the existing id, unchanged behavior.
+          // Same identity (idempotent retry, or just-backfilled legacy) → resolve to the existing id.
           return { id: existing.id };
         }
 
