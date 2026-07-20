@@ -22,6 +22,7 @@ export type FridayPublicMutationOperation =
   | "capability.grant.revoke"
   | "sessions.create"
   | "sessions.messages.create"
+  | "sessions.run"
   | "workflow.create"
   | "workflow.update"
   | "workflow.archive"

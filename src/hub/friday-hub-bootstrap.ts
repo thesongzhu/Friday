@@ -144,6 +144,7 @@ import {
   readRunOutcomeLearningRustWsPort,
 } from "../api/mission-spine/friday-run-outcome-learning-dispatch-adapter.js";
 import { resolveRustAgentRunWsClientX25519Secret } from "../api/mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
+import { createFridayRustHubSessionLifecycleDispatchAdapter } from "../api/mission-spine/friday-rust-hub-session-lifecycle-dispatch-adapter.js";
 import type { FridayChannelPersonaConfig, FridayGuideLensRoutesDeps, FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
 import {
@@ -990,6 +991,31 @@ export function resolveRouteAgentRunViaRust(
     return configValue;
   }
   const raw = (env.FRIDAY_ROUTE_AGENT_RUN_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+/**
+ * (CORE-RUNNABLE-001 / CORE-A CR-3) Single source of truth resolving the `routeSessionsViaRust`
+ * flag from (1) an EXPLICIT {@link FridayHubConfig.routeSessionsViaRust} and, only as a fallback,
+ * (2) the `FRIDAY_ROUTE_SESSIONS_VIA_RUST` env var — the operator knob that lets the Rust session
+ * run route be flipped WITHOUT a source edit.
+ *
+ * PRECEDENCE + PARSE MIRROR {@link resolveRouteAgentRunViaRust} EXACTLY: an explicit config boolean
+ * (true OR false) ALWAYS wins; the env is consulted ONLY when config does not specify. Case-
+ * insensitive, trimmed `"1"` or `"true"` ⇒ true; ABSENT / `""` / `"0"` / `"false"` / ANY other
+ * value ⇒ false. DEFAULT (both unset) ⇒ false, so the runtime threads NO `rustSessionLifecycleBridge`
+ * and the session routes stay byte-identical to today's fail-closed 503. Intentionally NARROWER than
+ * the canonical-gate true-set so any ambiguity resolves OFF.
+ */
+export function resolveRouteSessionsViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // Config explicit (true OR false) wins — env is the fallback for the unset gap only.
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_ROUTE_SESSIONS_VIA_RUST ?? "").trim().toLowerCase();
   return raw === "1" || raw === "true";
 }
 
@@ -7389,6 +7415,25 @@ export async function createFridayHub(
     })
     : null;
 
+  // (CORE-RUNNABLE-001 / CORE-A CR-3) SESSION Rust-owned lifecycle/run bridge (DARK, default-off).
+  // SINGLE SOURCE OF TRUTH for resolution = `resolveRouteSessionsViaRust` (explicit config wins; else
+  // the `FRIDAY_ROUTE_SESSIONS_VIA_RUST` env knob, case-insensitive "1"/"true" → true; anything else
+  // incl. unset → false). When OFF (the default) the bridge is NOT constructed and the runtime dep
+  // stays unset → the session routes resolve today's fail-closed 503 → byte-identical. When ON, build
+  // the REAL sealed-WS session dispatch adapter (mirrors the agent-run sealed-WS host/port/secret
+  // config exactly) so the session run route is reachable-and-real; the adapter is SIDE-EFFECT-FREE
+  // (resolves no secret + opens no socket until a real run). `readMissionSpineRustWsPort` parses the
+  // SAME `FRIDAY_HUB_AGENT_RUN_WS_PORT` the agent-run path dials.
+  const routeSessionsViaRust = resolveRouteSessionsViaRust(config.routeSessionsViaRust);
+  const rustSessionLifecycleBridge = routeSessionsViaRust
+    ? createFridayRustHubSessionLifecycleDispatchAdapter({
+      host: process.env.FRIDAY_HUB_AGENT_RUN_WS_HOST ?? "127.0.0.1",
+      port: readMissionSpineRustWsPort(process.env.FRIDAY_HUB_AGENT_RUN_WS_PORT),
+      secretResolver: resolveRustAgentRunWsClientX25519Secret,
+      idGenerator,
+    })
+    : undefined;
+
   const runtimeSupportedChannelKinds = FRIDAY_SUPPORTED_CHANNEL_KINDS.filter(isFridayChannelKindSupported);
 
   const apiRuntime = createFridayApiRuntime({
@@ -7674,6 +7719,12 @@ export async function createFridayHub(
     // set (the default) this is `false`, so the `=== true` gate is never satisfied → the
     // predicate is never evaluated → byte-identical to today's fail-closed 503.
     routeAgentRunViaRust: resolveRouteAgentRunViaRust(config.routeAgentRunViaRust),
+    // (CORE-RUNNABLE-001 / CORE-A CR-3) SESSION Rust-owned lifecycle/run bridge (DARK): the resolved
+    // default-false flag + the REAL bridge (constructed above ONLY when the flag is on). With nothing
+    // set (the default) `routeSessionsViaRust` is false AND `rustSessionLifecycleBridge` is undefined,
+    // so the session routes resolve today's fail-closed 503 → byte-identical to today.
+    routeSessionsViaRust,
+    ...(rustSessionLifecycleBridge ? { rustSessionLifecycleBridge } : {}),
     // GATE-AGENT-REPLACE A3 courier (DARK): default-false master flag arming the pause/resume
     // PRODUCT TRANSPORT (the sealed WS courier's `AgentRunPaused` inbound + `resumeWithApproval`
     // relay). SINGLE SOURCE OF TRUTH = `resolveAgentRunControlViaRust` (explicit config wins; else

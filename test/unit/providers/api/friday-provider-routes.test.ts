@@ -392,11 +392,21 @@ describe("FridayProviderRoutes", () => {
     };
   }
 
-  it("creates 22 route definitions", () => {
+  it("creates 25 route definitions", () => {
     const routes = createFridayProviderRoutes({
       providerService: makeMockService(),
     });
-    expect(routes).toHaveLength(23);
+    // 23 → 25: CORE-A CR-2 added the two owner-confirm handshake routes below. The count is
+    // asserted TOGETHER with their exact identity so a future accidental route cannot slip in
+    // behind a silently bumped number.
+    expect(routes).toHaveLength(25);
+    const planRoutes = routes
+      .filter((r) => r.path === "/v1/providers/plan" || r.path === "/v1/providers/plan/confirm")
+      .map((r) => ({ path: r.path, operationId: r.operationId }));
+    expect(planRoutes).toEqual([
+      { path: "/v1/providers/plan", operationId: "providers.plan" },
+      { path: "/v1/providers/plan/confirm", operationId: "providers.plan.confirm" },
+    ]);
   });
 
   it("has correct operation ids", () => {

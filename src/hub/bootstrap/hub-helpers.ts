@@ -1957,6 +1957,18 @@ export interface FridayHubConfig {
    */
   routeAgentRunViaRust?: boolean;
   /**
+   * (CORE-RUNNABLE-001 / CORE-A CR-3) SESSION Rust-owned lifecycle/run bridge (DARK): "route the
+   * session run (`POST /v1/sessions/:sessionKey/run`) to the Rust-owned loop instead of fail-closing
+   * with 503" flag. DEFAULT-FALSE — production hub creation must leave this unset so the runtime
+   * threads NO `rustSessionLifecycleBridge` and every session route stays byte-identical to today's
+   * fail-closed 503. When true, bootstrap builds the REAL sealed-WS session dispatch adapter
+   * (mirroring the agent-run sealed-WS config) and injects it. End-to-end closure ALSO needs the
+   * provisioned sealed-WS host + answer-readback DB + a real turn (operator-gated). Resolution:
+   * `resolveRouteSessionsViaRust` (explicit config wins; otherwise the `FRIDAY_ROUTE_SESSIONS_VIA_RUST`
+   * env knob).
+   */
+  routeSessionsViaRust?: boolean;
+  /**
    * GATE-AGENT-REPLACE A3 courier (DARK): master ON/OFF arming the pause/resume PRODUCT
    * TRANSPORT (the sealed WS courier's `AgentRunPaused` inbound + `resumeWithApproval` relay).
    * DEFAULT-FALSE — production hub creation must leave this unset so the courier's paused/resume

@@ -40,6 +40,7 @@ import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-
 import type { FridayRustHubWorkflowCatalogBridgeService } from "../mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
 import type { FridayRustHubWorkflowRunBridgeService } from "../mission-spine/friday-rust-hub-workflow-run-bridge-service.js";
 import type { FridayD20SignedBatchWorktreeService } from "../mission-spine/friday-rust-hub-d20-signed-batch-worktree-service.js";
+import type { FridayRustSessionLifecycleBridge } from "../http/routes/friday-session-routes.js";
 import type { FridayMediaUnderstandingRoutesDeps } from "../http/routes/friday-media-understanding-routes.js";
 import type { FridaySocialImportRoutesDeps } from "../http/routes/friday-social-import-routes.js";
 import type { FridayTaskWorkflowRoutesDeps } from "../http/routes/friday-task-workflow-routes.js";
@@ -521,6 +522,23 @@ export interface CreateFridayApiRuntimeDeps {
    * fail-closed until Rust owns the session memory extraction entrypoint.
    */
   allowTestOnlySessionMemoryExtractionExecution?: boolean;
+  /**
+   * (CORE-RUNNABLE-001 / CORE-A CR-3) SESSION Rust-owned lifecycle/run bridge (DARK): the resolved
+   * default-false master flag for routing the session run (`POST /v1/sessions/:sessionKey/run`) to
+   * the Rust-owned loop instead of fail-closing. DEFAULT-FALSE — leave unset in production/runtime so
+   * the session routes stay byte-identical to today's fail-closed 503. Sourced (in bootstrap) from
+   * `FRIDAY_ROUTE_SESSIONS_VIA_RUST` / explicit config via `resolveRouteSessionsViaRust`. When
+   * unset/false the {@link rustSessionLifecycleBridge} is never consulted.
+   */
+  routeSessionsViaRust?: boolean;
+  /**
+   * (CORE-RUNNABLE-001 / CORE-A CR-3) The REAL Rust-owned session lifecycle/run bridge consulted by
+   * the session routes ONLY when {@link routeSessionsViaRust} is true. OPTIONAL — bootstrap builds +
+   * injects the real sealed-WS adapter ONLY when the flag is on; when omitted (the DEFAULT) the
+   * session routes fail closed (503). Tests inject the real adapter over a test transport (a fake
+   * sealed client + readback) to prove reachability WITHOUT a socket.
+   */
+  rustSessionLifecycleBridge?: FridayRustSessionLifecycleBridge;
   /**
    * Test-oracle only: allow the legacy TypeScript realtime checkpoint-ack
    * mutation (POST /v1/realtime/ack). Production/runtime callers must leave this

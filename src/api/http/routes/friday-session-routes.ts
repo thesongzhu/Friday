@@ -133,6 +133,23 @@ export interface FridayRustSessionLifecycleBridge {
     sessionKey: string;
     principal: FridayAuthPrincipal;
   }): Promise<FridaySessionMemoryNamespaceResponse>;
+  /**
+   * (CORE-RUNNABLE-001 / CORE-A CR-3) Execute a session-scoped agent RUN on the Rust-owned loop and
+   * return the run result. OPTIONAL so a bridge that only implements the storage lifecycle ops
+   * still satisfies the interface (an absent `runSession` ⇒ `sessions.run` stays fail-closed 503,
+   * exactly as when the Rust route is off). The production adapter
+   * ({@link createFridayRustHubSessionLifecycleDispatchAdapter}) implements this REALLY over the
+   * sealed-WS agent-run transport + the owner-gated answer readback.
+   */
+  runSession?(input: {
+    sessionKey: string;
+    task: string;
+    principalId: string;
+    providerId?: string;
+    model?: string;
+    timezone?: string;
+    timeoutMs?: number;
+  }): Promise<FridaySessionRunResponse["run"]>;
 }
 
 // ─── Metadata sanitization (VULN-1: Prototype Pollution DoS) ───
@@ -1302,6 +1319,40 @@ export function createFridaySessionRoutes(
               : "task is required unless useLastUserMessage is explicitly true",
             { httpStatus: 400 },
           );
+        }
+
+        // (CORE-RUNNABLE-001 / CORE-A CR-3) Rust-owned session-run branch — mirrors the session
+        // lifecycle branches (create/messages.create). DEFAULT-OFF: only when `routeSessionsViaRust`
+        // is on AND a real bridge is wired does the run dispatch to the Rust-owned loop instead of
+        // fail-closing. An absent `runSession` on the bridge fails closed the same as a retired run,
+        // so a lifecycle-only bridge never silently no-ops. Placed BEFORE the TS-path oracle guard so
+        // flag-OFF is byte-identical (falls through to `assertSessionRunTestOracleAllowed` → 503).
+        if (deps.routeSessionsViaRust === true) {
+          const bridge = rustSessionLifecycleBridgeOrRetired(deps);
+          if (!bridge.runSession) {
+            throwRetiredSession(
+              "TS_RUNTIME_SESSION_RUN_RETIRED",
+              "TypeScript session agent-run execution",
+              "session_run",
+            );
+          }
+          const principal = assertSessionWritePrincipal(ctx.principal ?? null, "sessions.run");
+          const run = await bridge.runSession({
+            sessionKey: key,
+            task,
+            principalId: principal.principalId,
+            ...(body.providerId !== undefined ? { providerId: body.providerId } : {}),
+            ...(body.model !== undefined ? { model: body.model } : {}),
+            ...(body.timezone?.trim() ? { timezone: body.timezone.trim() } : {}),
+            ...(body.timeoutMs !== undefined ? { timeoutMs: body.timeoutMs } : {}),
+          });
+          return {
+            run,
+            messages: [
+              { role: "user" as const, content: task },
+              { role: "assistant" as const, content: run.response },
+            ],
+          };
         }
 
         assertSessionRunTestOracleAllowed(deps);

@@ -4343,6 +4343,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     allowTestOnlyProviderRoutingControlsExecution: deps.allowTestOnlyProviderRoutingControlsExecution,
     routeProvidersViaRust: deps.routeProvidersViaRust,
     rustCapabilityDoctor: rustCapabilityDoctorService,
+    nowIso: deps.nowIso,
+    // CORE-A CR-2: the owner-confirm approval minter. Same signing seam the plugin /
+    // upgrade lifecycles use; consulted ONLY by POST /v1/providers/plan/confirm after
+    // an owner explicitly confirms a server-produced plan digest.
+    signCanonicalApproval: signCanonicalApprovalForRequest,
   })) {
     routes.register(route);
   }
@@ -4930,6 +4935,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     channelRegistry: deps.channels?.registry,
     nowIso: deps.nowIso,
     runSession,
+    // (CORE-RUNNABLE-001 / CORE-A CR-3) Rust-owned session lifecycle/run bridge (DARK, default-off).
+    // With nothing set (the default) `routeSessionsViaRust` is falsy AND `rustSessionLifecycleBridge`
+    // is omitted, so the session routes resolve today's fail-closed 503 → byte-identical to today.
+    ...(deps.routeSessionsViaRust !== undefined ? { routeSessionsViaRust: deps.routeSessionsViaRust } : {}),
+    ...(deps.rustSessionLifecycleBridge ? { rustSessionLifecycleBridge: deps.rustSessionLifecycleBridge } : {}),
     allowTestOnlySessionExecution: deps.allowTestOnlySessionExecution,
     allowTestOnlySessionRunExecution: deps.allowTestOnlySessionRunExecution,
     allowTestOnlySessionMemoryExtractionExecution: deps.allowTestOnlySessionMemoryExtractionExecution,

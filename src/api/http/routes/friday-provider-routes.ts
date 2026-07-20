@@ -8,6 +8,7 @@ import type {
   FridayCompleteAnthropicOAuthCallbackRequest,
   FridayCompleteAnthropicOAuthCallbackResponse,
   FridayCompleteOpenAICodexDeviceOAuthResponse,
+  FridayConfirmProviderMutationResponse,
   FridayCreateProviderRequest,
   FridayCreateProviderResponse,
   FridayDeleteProviderResponse,
@@ -25,6 +26,9 @@ import type {
   FridayListProvidersResponse,
   FridayListProviderTemplatesResponse,
   FridayPinProviderRouteResponse,
+  FridayPlanProviderMutationResponse,
+  FridayProviderMutationPlan,
+  FridayProviderPlannableAction,
   FridayRunCapabilityDoctorRequest,
   FridayRunCapabilityDoctorResponse,
   FridaySetRoutingConfigRequest,
@@ -64,12 +68,14 @@ import {
 } from "../../../providers/services/friday-provider-oauth-selection.js";
 import { FRIDAY_ANTHROPIC_OAUTH_DISABLED_MESSAGE } from "../../../providers/oauth/friday-anthropic-oauth.js";
 import {
+  createFridayMutatingActionDigest,
   type FridayCanonicalApprovalResolution,
   type FridayMutatingActionActor,
   type FridayMutatingActionGate,
   type FridayMutatingActionRequest,
   type FridayMutatingActionTicket,
 } from "../../../security/friday-mutating-action-gate.js";
+import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
 
 // ─── Validation helpers ───
 
@@ -450,6 +456,455 @@ export interface FridayProviderRoutesDeps {
    * When the flag is on but this is absent, those routes fail closed.
    */
   rustCapabilityDoctor?: FridayRustHubCapabilityDoctorService;
+  /**
+   * Clock for the provider mutation plan store (plan TTL / confirm expiry checks).
+   * Defaults to the wall clock; the runtime injects its canonical `nowIso`.
+   */
+  nowIso?: () => string;
+  /**
+   * Owner-confirm approval MINTER (CORE-RUNNABLE-001 / CORE-A CR-2).
+   *
+   * Injected by the runtime with the SAME `signCanonicalApprovalForRequest` seam the
+   * plugin / provider-profile-upgrade lifecycles use: it derives the action digest
+   * itself with {@link createFridayMutatingActionDigest}, stamps a ~10-minute expiry
+   * and HMAC-signs with the hub token secret.
+   *
+   * It is consulted from EXACTLY ONE place — `providers.plan.confirm` — and only after
+   * an explicit, owner-authenticated confirmation of a plan digest the server itself
+   * produced. When absent, the confirm route fails closed (503); it never falls back
+   * to an unsigned or self-minted approval.
+   */
+  signCanonicalApproval?: (
+    request: FridayMutatingActionRequest,
+    input: { approvalIdPrefix: string; childOfLifecycleTicketId?: string },
+  ) => FridayCanonicalApprovalResolution;
+}
+
+// ─── Provider mutation plan / owner-confirm protocol (CORE-RUNNABLE-001) ───
+
+/** Plan lifetime. Deliberately <= the signed approval's ~10 minute expiry. */
+const PROVIDER_MUTATION_PLAN_TTL_MS = 10 * 60 * 1000;
+/** Hard cap so an authenticated client cannot grow the plan store without bound. */
+const PROVIDER_MUTATION_PLAN_MAX_ENTRIES = 256;
+
+const PROVIDER_PLANNABLE_ACTIONS = new Set<string>([
+  "providers.create",
+  "providers.update",
+  "providers.delete",
+  "providers.validate",
+  "providers.routing.set",
+  "providers.routing.pin",
+  "providers.routing.penalty.clear",
+  "providers.auth.profiles.activate",
+  "providers.oauth.openai_codex.device.initiate",
+  "providers.oauth.openai_codex.device.complete",
+  "capabilities.doctor",
+]);
+
+/**
+ * The single canonical description of a gated provider mutation: the exact
+ * `{action, surface, resourceId, parameters}` tuple that feeds
+ * {@link createFridayProviderSetupMutatingActionRequest}.
+ *
+ * Both the plan endpoint AND every mutation route derive their gate inputs from this
+ * one builder, so a plan and the mutation it authorizes cannot drift apart.
+ */
+interface FridayProviderMutationDescriptor {
+  readonly action: FridayProviderPlannableAction;
+  readonly surface: string;
+  readonly resourceId?: string;
+  readonly parameters: Record<string, unknown>;
+  /** Secret-free review lines shown to the owner before they confirm. */
+  readonly humanReadableSummary: string[];
+}
+
+interface FridayProviderMutationPlanRecord {
+  readonly planDigest: string;
+  readonly actionDigest: string;
+  readonly request: FridayMutatingActionRequest;
+  readonly ownerPrincipalId: string;
+  readonly action: FridayProviderPlannableAction;
+  readonly surface: string;
+  readonly resourceId?: string;
+  readonly idempotencyKey?: string;
+  readonly humanReadableSummary: string[];
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  confirmedAt?: string;
+}
+
+function asProviderMutationRecord(value: unknown): Record<string, unknown> | null {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new FridayDomainError("VALIDATION_ERROR", "Request body must be an object", { httpStatus: 400 });
+  }
+  return { ...(value as Record<string, unknown>) };
+}
+
+function readOptionalTrimmedString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function requireProviderMutationTargetId(value: string | undefined, field: string, action: string): string {
+  const trimmed = readOptionalTrimmedString(value);
+  if (!trimmed) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${field} is required to plan ${action}`,
+      { httpStatus: 400 },
+    );
+  }
+  return trimmed;
+}
+
+/**
+ * DX-001 create-shape normalization (nested `config` → flat), extracted so the plan
+ * endpoint and the create route normalize byte-identically before hashing.
+ */
+function liftProviderCreateConfigFields(
+  rawInput: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const raw = rawInput ? { ...rawInput } : rawInput;
+  if (raw && raw.config && typeof raw.config === "object" && !Array.isArray(raw.config)) {
+    const config = raw.config as Record<string, unknown>;
+    const liftFields = [
+      "api", "authMode", "supportedModels", "apiKey", "defaultModel", "headers",
+      "backendKind", "cliConfig", "runtimeCapabilities", "deploymentKind", "regionTag",
+    ] as const;
+    for (const field of liftFields) {
+      if (config[field] !== undefined && raw[field] === undefined) {
+        raw[field] = config[field];
+      }
+    }
+  }
+  return raw;
+}
+
+function assertProviderRoutingControlBody(
+  body: Record<string, unknown> | null,
+): asserts body is Record<string, unknown> {
+  if (!body || typeof body !== "object") {
+    throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });
+  }
+  if (typeof body.providerId !== "string" || typeof body.model !== "string") {
+    throw new FridayDomainError("VALIDATION_ERROR", "providerId and model are required", { httpStatus: 400 });
+  }
+  if (body.backendKind !== "http" && body.backendKind !== "cli" && body.backendKind !== "sdk") {
+    throw new FridayDomainError("VALIDATION_ERROR", "backendKind must be one of: http, cli, sdk", { httpStatus: 400 });
+  }
+}
+
+// ─── Secret-free plan summaries ───
+//
+// EVERY line below is built from an explicit allow-list of non-secret fields. An API
+// key / token / header value is NEVER echoed: credentials are reported only as a
+// presence boolean, and free-form header values only as a count.
+
+function describeProviderCredentialFields(body: Record<string, unknown>, summary: string[]): void {
+  if (body.apiKey !== undefined) {
+    summary.push(
+      typeof body.apiKey === "string" && body.apiKey.length > 0
+        ? "Credential: a new API key will be stored encrypted (the key itself is never shown or echoed back)."
+        : "Credential: the stored API key will be cleared.",
+    );
+  }
+  if (body.headers !== undefined && body.headers && typeof body.headers === "object" && !Array.isArray(body.headers)) {
+    const count = Object.keys(body.headers as Record<string, unknown>).length;
+    summary.push(`Custom headers: ${String(count)} header value(s) will be stored (values are not shown).`);
+  }
+}
+
+function describeProviderShapeFields(body: Record<string, unknown>, summary: string[]): void {
+  const labels: Array<[string, string]> = [
+    ["kind", "Provider kind"],
+    ["name", "Display name"],
+    ["backendKind", "Backend"],
+    ["baseUrl", "Endpoint"],
+    ["api", "API dialect"],
+    ["authMode", "Auth mode"],
+    ["deploymentKind", "Deployment"],
+    ["regionTag", "Region"],
+    ["defaultModel", "Default model"],
+  ];
+  for (const [field, label] of labels) {
+    if (typeof body[field] === "string" && (body[field] as string).length > 0) {
+      summary.push(`${label}: ${body[field] as string}`);
+    }
+  }
+  if (Array.isArray(body.supportedModels)) {
+    summary.push(`Models: ${(body.supportedModels as unknown[]).map((m) => String(m)).join(", ")}`);
+  }
+  if (typeof body.enabled === "boolean") {
+    summary.push(`Enabled: ${body.enabled ? "yes" : "no"}`);
+  }
+  if (typeof body.validateOnSave === "boolean") {
+    summary.push(`Test the connection on save: ${body.validateOnSave ? "yes" : "no"}`);
+  }
+}
+
+function summarizeProviderCreate(body: Record<string, unknown>): string[] {
+  const summary = ["Add a new model provider connection to this Friday hub."];
+  describeProviderShapeFields(body, summary);
+  describeProviderCredentialFields(body, summary);
+  return summary;
+}
+
+function summarizeProviderUpdate(providerId: string, body: Record<string, unknown>): string[] {
+  const changed = Object.keys(body).sort();
+  const summary = [
+    `Change the saved settings of provider "${providerId}".`,
+    changed.length > 0 ? `Fields changed: ${changed.join(", ")}` : "Fields changed: (none)",
+  ];
+  describeProviderShapeFields(body, summary);
+  describeProviderCredentialFields(body, summary);
+  return summary;
+}
+
+function summarizeProviderRoutingSet(body: Record<string, unknown>): string[] {
+  const summary = ["Change which provider Friday uses to answer by default."];
+  if (typeof body.defaultProviderId === "string") {
+    summary.push(`Default provider: ${body.defaultProviderId}`);
+  }
+  if (typeof body.defaultModel === "string") {
+    summary.push(`Default model: ${body.defaultModel}`);
+  }
+  if (Array.isArray(body.fallbackProviderIds)) {
+    const fallbacks = (body.fallbackProviderIds as unknown[]).map((id) => String(id));
+    summary.push(`Fallback providers: ${fallbacks.length > 0 ? fallbacks.join(", ") : "(none)"}`);
+  }
+  if (typeof body.costMode === "string") {
+    summary.push(`Cost mode: ${body.costMode}`);
+  }
+  if (typeof body.enforceRequestedModel === "boolean") {
+    summary.push(`Enforce requested model: ${body.enforceRequestedModel ? "yes" : "no"}`);
+  }
+  return summary;
+}
+
+/**
+ * Builds the canonical gate descriptor for one provider mutation.
+ *
+ * SECURITY: this is the ONLY place `{action, surface, resourceId, parameters}` is
+ * decided. The plan endpoint and the mutation routes both call it, so the digest the
+ * owner confirms and the digest the gate recomputes are produced by the same code on
+ * the same inputs. It performs the same validation the mutation performs, so an
+ * invalid plan is rejected up front instead of minting an unusable approval.
+ */
+function buildFridayProviderMutationDescriptor(input: {
+  action: string;
+  providerId?: string;
+  profileKey?: string;
+  /**
+   * Owner user id, required by the provider-OAuth actions whose gate parameters are
+   * owner-scoped. It is supplied by the SERVER from the authenticated principal at
+   * both plan and mutation time (never read from the request body), so a plan minted
+   * for one owner can never authorize another owner's OAuth mutation.
+   */
+  ownerUserId?: string;
+  body: unknown;
+}): FridayProviderMutationDescriptor {
+  const action = input.action;
+  if (!PROVIDER_PLANNABLE_ACTIONS.has(action)) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `action must be one of: ${[...PROVIDER_PLANNABLE_ACTIONS].join(", ")}`,
+      { httpStatus: 400 },
+    );
+  }
+
+  switch (action as FridayProviderPlannableAction) {
+    case "providers.create": {
+      const raw = liftProviderCreateConfigFields(asProviderMutationRecord(input.body));
+      const body = raw ? stripProviderMutationControlFields(raw) : raw;
+      validateCreateBody(body);
+      const parameters = body as unknown as Record<string, unknown>;
+      return {
+        action: "providers.create",
+        surface: "api:/v1/providers/create",
+        parameters,
+        humanReadableSummary: summarizeProviderCreate(parameters),
+      };
+    }
+    case "providers.update": {
+      const providerId = requireProviderMutationTargetId(input.providerId, "providerId", action);
+      const raw = asProviderMutationRecord(input.body);
+      const body = raw ? stripProviderMutationControlFields(raw) : raw;
+      validateUpdateBody(body);
+      const patch = body as unknown as Record<string, unknown>;
+      return {
+        action: "providers.update",
+        surface: "api:/v1/providers/update",
+        resourceId: providerId,
+        parameters: { providerId, patch },
+        humanReadableSummary: summarizeProviderUpdate(providerId, patch),
+      };
+    }
+    case "providers.delete": {
+      const providerId = requireProviderMutationTargetId(input.providerId, "providerId", action);
+      return {
+        action: "providers.delete",
+        surface: "api:/v1/providers/delete",
+        resourceId: providerId,
+        parameters: { providerId },
+        humanReadableSummary: [
+          `Delete provider connection "${providerId}" from this hub.`,
+          "The stored credential for this provider is removed and any routing that points at it stops working.",
+        ],
+      };
+    }
+    case "providers.validate": {
+      const providerId = requireProviderMutationTargetId(input.providerId, "providerId", action);
+      return {
+        action: "providers.validate",
+        surface: "api:/v1/providers/validate",
+        resourceId: providerId,
+        parameters: { providerId },
+        humanReadableSummary: [
+          `Test the stored credential of provider "${providerId}" against its endpoint.`,
+          "This contacts the provider and records the validation result on the profile.",
+        ],
+      };
+    }
+    case "providers.routing.set": {
+      const raw = asProviderMutationRecord(input.body);
+      const body = raw ? stripProviderMutationControlFields(raw) : raw;
+      validateRoutingBody(body);
+      const parameters = body as unknown as Record<string, unknown>;
+      return {
+        action: "providers.routing.set",
+        surface: "api:/v1/model-routing/set",
+        resourceId: "model-routing",
+        parameters,
+        humanReadableSummary: summarizeProviderRoutingSet(parameters),
+      };
+    }
+    case "providers.routing.pin":
+    case "providers.routing.penalty.clear": {
+      const raw = asProviderMutationRecord(input.body);
+      const body = raw ? stripProviderMutationControlFields(raw) : raw;
+      assertProviderRoutingControlBody(body);
+      const resourceId = `${String(body.providerId)}:${String(body.model)}:${String(body.backendKind)}`;
+      const pinning = action === "providers.routing.pin";
+      return {
+        action: pinning ? "providers.routing.pin" : "providers.routing.penalty.clear",
+        surface: pinning ? "api:/v1/providers/routing/pin" : "api:/v1/providers/routing/penalties/clear",
+        resourceId,
+        parameters: body,
+        humanReadableSummary: [
+          pinning
+            ? `Pin routing to provider "${String(body.providerId)}" model "${String(body.model)}" (${String(body.backendKind)}).`
+            : `Clear the routing penalty on provider "${String(body.providerId)}" model "${String(body.model)}" (${String(body.backendKind)}).`,
+        ],
+      };
+    }
+    case "providers.auth.profiles.activate": {
+      const providerId = requireProviderMutationTargetId(input.providerId, "providerId", action);
+      const profileKey = requireProviderMutationTargetId(input.profileKey, "profileKey", action);
+      return {
+        action: "providers.auth.profiles.activate",
+        surface: "api:/v1/providers/auth-profiles/activate",
+        resourceId: `${providerId}:${profileKey}`,
+        parameters: { providerId, profileKey },
+        humanReadableSummary: [
+          `Switch provider "${providerId}" to auth profile "${profileKey}".`,
+          "Later requests to this provider will use that profile's stored credential.",
+        ],
+      };
+    }
+    case "providers.oauth.openai_codex.device.initiate":
+    case "providers.oauth.openai_codex.device.complete": {
+      const ownerUserId = requireProviderMutationTargetId(input.ownerUserId, "ownerUserId", action);
+      const raw = asProviderMutationRecord(input.body);
+      const body = raw ? stripProviderMutationControlFields(raw) : raw;
+      const completing = action === "providers.oauth.openai_codex.device.complete";
+      if (completing) {
+        // Same validation the mutation performs, so an unusable plan is refused up
+        // front. The device code VALUE never enters the descriptor (only its
+        // presence), so it can never reach a digest, a summary or a stored plan.
+        if (!body || typeof body.deviceCodeId !== "string" || body.deviceCodeId.trim() === "") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "deviceCodeId is required and must be a non-empty string",
+            { httpStatus: 400 },
+          );
+        }
+      }
+      const selection = readOAuthSelectionInput(body, "openai-codex");
+      const resourceId = readOptionalTrimmedString(body?.providerId) ?? "openai-codex";
+      const summary = completing
+        ? [
+          `Finish signing in to OpenAI Codex and store the resulting login on provider "${resourceId}".`,
+          "The device code and the returned tokens are never shown here; they are stored encrypted.",
+        ]
+        : [
+          `Start an OpenAI Codex device sign-in for provider "${resourceId}".`,
+          "This asks OpenAI for a device code you will approve in your browser; no credential is stored yet.",
+        ];
+      if (selection.kind) {
+        summary.push(`Provider kind: ${selection.kind}`);
+      }
+      if (selection.name) {
+        summary.push(`Display name: ${selection.name}`);
+      }
+      if (selection.defaultModel) {
+        summary.push(`Default model: ${selection.defaultModel}`);
+      }
+      return {
+        action: completing
+          ? "providers.oauth.openai_codex.device.complete"
+          : "providers.oauth.openai_codex.device.initiate",
+        surface: completing
+          ? "api:/v1/auth/oauth/openai-codex/device/complete"
+          : "api:/v1/auth/oauth/openai-codex/device/initiate",
+        resourceId,
+        parameters: completing
+          ? { ownerUserId, selection, deviceCodeIdPresent: true }
+          : { ownerUserId, selection },
+        humanReadableSummary: summary,
+      };
+    }
+    case "capabilities.doctor": {
+      const providerIds = parseCapabilityDoctorProviderIds(input.body ?? undefined);
+      return {
+        action: "capabilities.doctor",
+        surface: "api:/v1/capabilities/doctor",
+        resourceId: providerIds ? providerIds.join(",") : "all-providers",
+        parameters: { providerIds: providerIds ?? "all-providers" },
+        humanReadableSummary: [
+          providerIds
+            ? `Run the capability doctor against provider(s): ${providerIds.join(", ")}.`
+            : "Run the capability doctor against every configured provider.",
+          "This contacts the providers and records capability proof results.",
+        ],
+      };
+    }
+  }
+}
+
+/**
+ * SERVER-SIDE plan digest. Derived only from the sanitized (secret-redacted)
+ * parameters plus the immutable identity of the mutation, never from anything the
+ * client asserts. Deterministic on purpose: re-planning the same change for the same
+ * owner yields the same digest, so a stale digest is detectable.
+ */
+function computeFridayProviderMutationPlanDigest(input: {
+  descriptor: FridayProviderMutationDescriptor;
+  ownerPrincipalId: string;
+  idempotencyKey?: string;
+}): string {
+  const sanitizedParameters = sanitizeProviderMutationParameters(input.descriptor.parameters);
+  return `fpmp_${hashStableJson({
+    version: 1,
+    kind: "friday.provider.mutation.plan",
+    action: input.descriptor.action,
+    surface: input.descriptor.surface,
+    resourceId: input.descriptor.resourceId,
+    ownerPrincipalId: input.ownerPrincipalId,
+    parameters: sanitizedParameters,
+    idempotencyKey: input.idempotencyKey,
+  })}`;
 }
 
 export function createFridayProviderSetupMutatingActionRequest(input: {
@@ -565,14 +1020,54 @@ export function createFridayProviderRoutes(
     };
   }
 
+  const nowIso = deps.nowIso ?? ((): string => new Date().toISOString());
+
+  /**
+   * Owner-confirm plan store. In-memory and process-local BY DESIGN: a plan is a
+   * short-lived, unprivileged review artifact — losing it on restart only forces a
+   * re-plan (fail-closed), while persisting it would create a durable record keyed to
+   * a mutation the owner may never confirm.
+   */
+  const providerMutationPlans = new Map<string, FridayProviderMutationPlanRecord>();
+
+  function pruneProviderMutationPlans(): void {
+    const nowMs = Date.parse(nowIso());
+    for (const [key, record] of providerMutationPlans) {
+      const expiresAtMs = Date.parse(record.expiresAt);
+      if (!Number.isFinite(expiresAtMs) || !Number.isFinite(nowMs) || expiresAtMs <= nowMs) {
+        providerMutationPlans.delete(key);
+      }
+    }
+    while (providerMutationPlans.size > PROVIDER_MUTATION_PLAN_MAX_ENTRIES) {
+      const oldest = providerMutationPlans.keys().next();
+      if (oldest.done) break;
+      providerMutationPlans.delete(oldest.value);
+    }
+  }
+
+  /**
+   * The plan + confirm endpoints require exactly the authority the mutation requires:
+   * a bound (non-synthetic) owner principal. The HTTP server already refuses the
+   * synthetic public principal on public POST routes; this is the in-handler
+   * restatement so the seam is fail-closed for every caller of the factory.
+   */
+  function requireProviderMutationOwnerPrincipalId(principal: FridayAuthPrincipal | null): string {
+    if (isUnauthenticatedPublicPrincipal(principal) || !principal?.principalId) {
+      throw new FridayDomainError(
+        "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED",
+        "Provider setup planning and confirmation require a bound owner principal; the synthetic public principal cannot review or approve provider mutations.",
+        { httpStatus: 401 },
+      );
+    }
+    return principal.principalId;
+  }
+
   function maybeRequireProviderMutationTicket(input: {
-    action: string;
+    descriptor: FridayProviderMutationDescriptor;
     ctx: { requestId: string; principal: FridayAuthPrincipal | null };
     body?: Record<string, unknown> | null;
-    resourceId?: string;
-    parameters: Record<string, unknown>;
-    surface: string;
   }): FridayMutatingActionTicket | undefined {
+    const { action, surface, resourceId, parameters } = input.descriptor;
     if (!deps.providerMutationGateRequired) {
       return undefined;
     }
@@ -587,16 +1082,22 @@ export function createFridayProviderRoutes(
     if (!controls.planDigest) {
       throw new FridayDomainError(
         "PROVIDER_MUTATION_PLAN_DIGEST_REQUIRED",
-        "Provider setup and routing mutations require an approved plan digest in this profile.",
-        { httpStatus: 403, details: { action: input.action, resourceId: input.resourceId } },
+        "Provider setup and routing mutations require an approved plan digest in this profile. "
+          + "Call POST /v1/providers/plan, review the returned summary, then POST /v1/providers/plan/confirm.",
+        { httpStatus: 403, details: { action, resourceId } },
       );
     }
+    // The digest of record is recomputed HERE, server-side, from the sanitized
+    // parameters this request actually carries. The client-supplied `planDigest` is
+    // only an input to that computation — it is never trusted as the truth, and any
+    // drift between what was confirmed and what arrived changes the action digest and
+    // is refused below as `canonical_approval_digest_mismatch`.
     const request = createFridayProviderSetupMutatingActionRequest({
-      action: input.action,
+      action,
       actor: createActorFromPrincipal(input.ctx.principal, `api:${input.ctx.requestId}`),
-      surface: input.surface,
-      resourceId: input.resourceId,
-      parameters: input.parameters,
+      surface,
+      resourceId,
+      parameters,
       planDigest: controls.planDigest,
       idempotencyKey: controls.idempotencyKey,
     });
@@ -868,6 +1369,194 @@ export function createFridayProviderRoutes(
       },
     },
 
+    // ─── Plan a provider mutation (step 1 of the owner-confirm protocol) ───
+    //
+    // READ-SHAPED: builds and records a review artifact. It performs NO provider
+    // mutation, mints NO approval and grants NO authority — the returned digests are
+    // useless until the same owner explicitly confirms them at
+    // POST /v1/providers/plan/confirm.
+    {
+      operationId: "providers.plan",
+      method: "POST",
+      path: "/v1/providers/plan",
+      auth: { public: true },
+      rateLimitPolicyId: "provider.write",
+      async handler(ctx): Promise<FridayPlanProviderMutationResponse> {
+        const ownerPrincipalId = requireProviderMutationOwnerPrincipalId(ctx.principal);
+        const body = asProviderMutationRecord(ctx.body);
+        const action = typeof body?.action === "string" ? body.action.trim() : "";
+        const idempotencyKey = readOptionalTrimmedString(body?.idempotencyKey);
+        const descriptor = buildFridayProviderMutationDescriptor({
+          action,
+          providerId: readOptionalTrimmedString(body?.providerId),
+          profileKey: readOptionalTrimmedString(body?.profileKey),
+          // SERVER-supplied, never client-supplied: the owner identity that the
+          // mutation route will itself derive from its own authenticated principal.
+          ownerUserId: readOptionalTrimmedString(ctx.principal?.userId),
+          body: body?.params ?? null,
+        });
+
+        const planDigest = computeFridayProviderMutationPlanDigest({
+          descriptor,
+          ownerPrincipalId,
+          idempotencyKey,
+        });
+        // Same builder + same digest function the mutation route will use, so the
+        // action digest the owner confirms is byte-identical to the one the gate
+        // recomputes when the mutation actually arrives.
+        const request = createFridayProviderSetupMutatingActionRequest({
+          action: descriptor.action,
+          actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+          surface: descriptor.surface,
+          resourceId: descriptor.resourceId,
+          parameters: descriptor.parameters,
+          planDigest,
+          idempotencyKey,
+        });
+        const actionDigest = createFridayMutatingActionDigest(request);
+
+        const createdAt = nowIso();
+        const createdAtMs = Date.parse(createdAt);
+        const expiresAt = new Date(
+          (Number.isFinite(createdAtMs) ? createdAtMs : Date.now()) + PROVIDER_MUTATION_PLAN_TTL_MS,
+        ).toISOString();
+
+        pruneProviderMutationPlans();
+        // A fresh plan always REPLACES any earlier record for the same digest, and is
+        // always unconfirmed: planning can never resurrect a spent confirmation.
+        providerMutationPlans.delete(planDigest);
+        providerMutationPlans.set(planDigest, {
+          planDigest,
+          actionDigest,
+          request,
+          ownerPrincipalId,
+          action: descriptor.action,
+          surface: descriptor.surface,
+          resourceId: descriptor.resourceId,
+          idempotencyKey,
+          humanReadableSummary: descriptor.humanReadableSummary,
+          createdAt,
+          expiresAt,
+        });
+
+        const plan: FridayProviderMutationPlan = {
+          planDigest,
+          actionDigest,
+          action: descriptor.action,
+          surface: descriptor.surface,
+          resourceId: descriptor.resourceId,
+          idempotencyKey,
+          humanReadableSummary: descriptor.humanReadableSummary,
+          approvalRequired: deps.providerMutationGateRequired === true,
+          createdAt,
+          expiresAt,
+        };
+        return { plan };
+      },
+    },
+
+    // ─── Confirm a provider mutation plan (step 2: the owner's explicit decision) ───
+    //
+    // This is the ONLY seam that mints a provider-setup canonical approval. It refuses
+    // unless: the caller is the SAME bound owner principal that created the plan; the
+    // plan digest names a plan THIS server produced; that plan has not expired; and it
+    // has not already been confirmed. There is no plan-and-approve shortcut anywhere —
+    // the mutation route never calls this, so an approval can only exist because a
+    // human owner asked for it against a summary they were shown.
+    {
+      operationId: "providers.plan.confirm",
+      method: "POST",
+      path: "/v1/providers/plan/confirm",
+      auth: { public: true },
+      rateLimitPolicyId: "provider.write",
+      async handler(ctx): Promise<FridayConfirmProviderMutationResponse> {
+        const ownerPrincipalId = requireProviderMutationOwnerPrincipalId(ctx.principal);
+        const body = asProviderMutationRecord(ctx.body);
+        const planDigest = readOptionalTrimmedString(body?.planDigest);
+        if (!planDigest) {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "planDigest is required to confirm a provider mutation plan",
+            { httpStatus: 400 },
+          );
+        }
+        if (body?.confirm !== true) {
+          throw new FridayDomainError(
+            "PROVIDER_MUTATION_CONFIRMATION_REQUIRED",
+            "Provider mutation approval requires an explicit owner confirmation (`confirm: true`) of the reviewed plan.",
+            { httpStatus: 400 },
+          );
+        }
+        if (!deps.signCanonicalApproval) {
+          throw new FridayDomainError(
+            "PROVIDER_MUTATION_APPROVAL_SIGNER_UNAVAILABLE",
+            "This runtime cannot mint provider mutation approvals; the canonical approval signer is not wired.",
+            { httpStatus: 503 },
+          );
+        }
+
+        pruneProviderMutationPlans();
+        const record = providerMutationPlans.get(planDigest);
+        if (!record) {
+          throw new FridayDomainError(
+            "PROVIDER_MUTATION_PLAN_NOT_FOUND",
+            "No live provider mutation plan matches that plan digest. Re-plan the change and review it again.",
+            { httpStatus: 404 },
+          );
+        }
+        if (record.ownerPrincipalId !== ownerPrincipalId) {
+          throw new FridayDomainError(
+            "PROVIDER_MUTATION_PLAN_OWNER_MISMATCH",
+            "A provider mutation plan can only be confirmed by the owner principal that created it.",
+            { httpStatus: 403 },
+          );
+        }
+        if (record.confirmedAt !== undefined) {
+          throw new FridayDomainError(
+            "PROVIDER_MUTATION_PLAN_ALREADY_CONFIRMED",
+            "That provider mutation plan has already been confirmed. Re-plan the change to confirm it again.",
+            { httpStatus: 409 },
+          );
+        }
+
+        const confirmedAt = nowIso();
+        // Single-use at the plan layer too: the record is spent BEFORE the approval is
+        // minted, so a concurrent second confirm can never obtain a second signature.
+        record.confirmedAt = confirmedAt;
+
+        const canonicalApproval = deps.signCanonicalApproval(record.request, {
+          approvalIdPrefix: `provider-owner-confirm-${record.action}`,
+        });
+        if (canonicalApproval.actionDigest !== record.actionDigest) {
+          throw new FridayDomainError(
+            "PROVIDER_MUTATION_APPROVAL_DIGEST_MISMATCH",
+            "The minted approval did not bind to the reviewed plan's action digest; refusing to issue it.",
+            { httpStatus: 500 },
+          );
+        }
+        if (!canonicalApproval.expiresAt) {
+          throw new FridayDomainError(
+            "PROVIDER_MUTATION_APPROVAL_EXPIRY_REQUIRED",
+            "The minted approval carried no expiry; refusing to issue it.",
+            { httpStatus: 500 },
+          );
+        }
+
+        return {
+          approval: {
+            planDigest: record.planDigest,
+            actionDigest: record.actionDigest,
+            action: record.action,
+            resourceId: record.resourceId,
+            idempotencyKey: record.idempotencyKey,
+            confirmedAt,
+            expiresAt: canonicalApproval.expiresAt,
+            canonicalApproval,
+          },
+        };
+      },
+    },
+
     {
       operationId: "providers.templates.get",
       method: "GET",
@@ -925,12 +1614,9 @@ export function createFridayProviderRoutes(
         const raw = ctx.body as Record<string, unknown> | null;
         const providerIds = parseCapabilityDoctorProviderIds(raw);
         const ticket = maybeRequireProviderMutationTicket({
-          action: "capabilities.doctor",
+          descriptor: buildFridayProviderMutationDescriptor({ action: "capabilities.doctor", body: raw }),
           ctx,
           body: raw,
-          resourceId: providerIds ? providerIds.join(",") : "all-providers",
-          parameters: { providerIds: providerIds ?? "all-providers" },
-          surface: "api:/v1/capabilities/doctor",
         });
         // DARK cut-over (DEFAULT-OFF): bridge to the Rust hub_capability_doctor bin
         // instead of fail-closing. The canonical mutation gate above still runs first
@@ -983,26 +1669,15 @@ export function createFridayProviderRoutes(
         // DX-001: Accept both flat and nested (config) formats.
         // If the body has a `config` object with provider fields, lift them to top level.
         const rawInput = ctx.body as Record<string, unknown> | null;
-        const raw = rawInput && typeof rawInput === "object" ? { ...rawInput } : rawInput;
-        if (raw && typeof raw === "object" && raw.config && typeof raw.config === "object") {
-          const config = raw.config as Record<string, unknown>;
-          const liftFields = ["api", "authMode", "supportedModels", "apiKey", "defaultModel", "headers", "backendKind", "cliConfig", "runtimeCapabilities", "deploymentKind", "regionTag"] as const;
-          for (const field of liftFields) {
-            if (config[field] !== undefined && raw[field] === undefined) {
-              raw[field] = config[field];
-            }
-          }
-        }
+        const raw = liftProviderCreateConfigFields(rawInput);
         const body = raw && typeof raw === "object"
           ? stripProviderMutationControlFields(raw)
           : raw;
         validateCreateBody(body);
         const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.create",
+          descriptor: buildFridayProviderMutationDescriptor({ action: "providers.create", body: rawInput }),
           ctx,
           body: raw && typeof raw === "object" ? raw : undefined,
-          parameters: body as unknown as Record<string, unknown>,
-          surface: "api:/v1/providers/create",
         });
         const provider = await deps.providerService.createProvider(body);
         return withCanonicalGate({
@@ -1027,12 +1702,9 @@ export function createFridayProviderRoutes(
           : raw;
         validateUpdateBody(body);
         const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.update",
+          descriptor: buildFridayProviderMutationDescriptor({ action: "providers.update", providerId, body: raw }),
           ctx,
           body: raw,
-          resourceId: providerId,
-          parameters: { providerId, patch: body as unknown as Record<string, unknown> },
-          surface: "api:/v1/providers/update",
         });
         const provider = await deps.providerService.updateProvider(
           providerId,
@@ -1056,12 +1728,9 @@ export function createFridayProviderRoutes(
         const { providerId } = ctx.params as { providerId: string };
         const body = (ctx.body ?? {}) as Record<string, unknown>;
         const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.delete",
+          descriptor: buildFridayProviderMutationDescriptor({ action: "providers.delete", providerId, body }),
           ctx,
           body,
-          resourceId: providerId,
-          parameters: { providerId },
-          surface: "api:/v1/providers/delete",
         });
         await deps.providerService.deleteProvider(providerId);
         return withCanonicalGate({ deleted: true as const }, ticket);
@@ -1079,12 +1748,9 @@ export function createFridayProviderRoutes(
         const { providerId } = ctx.params as { providerId: string };
         const body = (ctx.body ?? {}) as Record<string, unknown>;
         const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.validate",
+          descriptor: buildFridayProviderMutationDescriptor({ action: "providers.validate", providerId, body }),
           ctx,
           body,
-          resourceId: providerId,
-          parameters: { providerId },
-          surface: "api:/v1/providers/validate",
         });
         // DARK cut-over (DEFAULT-OFF): bridge to the Rust hub_capability_doctor bin
         // instead of fail-closing. The canonical mutation gate above still runs first.
@@ -1194,12 +1860,9 @@ export function createFridayProviderRoutes(
           throw new FridayDomainError("VALIDATION_ERROR", "backendKind must be one of: http, cli, sdk", { httpStatus: 400 });
         }
         const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.routing.pin",
+          descriptor: buildFridayProviderMutationDescriptor({ action: "providers.routing.pin", body: raw }),
           ctx,
           body: raw,
-          resourceId: `${body.providerId}:${body.model}:${body.backendKind}`,
-          parameters: body,
-          surface: "api:/v1/providers/routing/pin",
         });
         assertProviderRoutingControlsTestOracleAllowed(deps);
         await deps.providerService.pinRoute({
@@ -1239,12 +1902,9 @@ export function createFridayProviderRoutes(
           throw new FridayDomainError("VALIDATION_ERROR", "backendKind must be one of: http, cli, sdk", { httpStatus: 400 });
         }
         const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.routing.penalty.clear",
+          descriptor: buildFridayProviderMutationDescriptor({ action: "providers.routing.penalty.clear", body: raw }),
           ctx,
           body: raw,
-          resourceId: `${body.providerId}:${body.model}:${body.backendKind}`,
-          parameters: body,
-          surface: "api:/v1/providers/routing/penalties/clear",
         });
         assertProviderRoutingControlsTestOracleAllowed(deps);
         const cleared = await deps.providerService.clearRoutePenalty({
@@ -1280,12 +1940,14 @@ export function createFridayProviderRoutes(
         const { providerId, profileKey } = ctx.params as { providerId: string; profileKey: string };
         const body = (ctx.body ?? {}) as Record<string, unknown>;
         const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.auth.profiles.activate",
+          descriptor: buildFridayProviderMutationDescriptor({
+            action: "providers.auth.profiles.activate",
+            providerId,
+            profileKey,
+            body,
+          }),
           ctx,
           body,
-          resourceId: `${providerId}:${profileKey}`,
-          parameters: { providerId, profileKey },
-          surface: "api:/v1/providers/auth-profiles/activate",
         });
         const profile = await deps.providerService.activateAuthProfile(providerId, profileKey);
         return withCanonicalGate({ profile }, ticket);
@@ -1318,12 +1980,9 @@ export function createFridayProviderRoutes(
           : raw;
         validateRoutingBody(body);
         const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.routing.set",
+          descriptor: buildFridayProviderMutationDescriptor({ action: "providers.routing.set", body: raw }),
           ctx,
           body: raw,
-          resourceId: "model-routing",
-          parameters: body as unknown as Record<string, unknown>,
-          surface: "api:/v1/model-routing/set",
         });
         const routing = await deps.providerService.setRoutingConfig(body);
         return withCanonicalGate({ routing }, ticket);
@@ -1376,15 +2035,13 @@ export function createFridayProviderRoutes(
           ? stripProviderMutationControlFields(raw)
           : raw;
         const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.oauth.openai_codex.device.initiate",
+          descriptor: buildFridayProviderMutationDescriptor({
+            action: "providers.oauth.openai_codex.device.initiate",
+            ownerUserId,
+            body: raw,
+          }),
           ctx,
           body: raw,
-          resourceId: typeof body?.providerId === "string" ? body.providerId : "openai-codex",
-          parameters: {
-            ownerUserId,
-            selection: readOAuthSelectionInput(body, "openai-codex"),
-          },
-          surface: "api:/v1/auth/oauth/openai-codex/device/initiate",
         });
         const selection = await resolveOrProvisionOAuthProvider(
           deps.providerService,
@@ -1424,16 +2081,13 @@ export function createFridayProviderRoutes(
           );
         }
         const ticket = maybeRequireProviderMutationTicket({
-          action: "providers.oauth.openai_codex.device.complete",
+          descriptor: buildFridayProviderMutationDescriptor({
+            action: "providers.oauth.openai_codex.device.complete",
+            ownerUserId,
+            body: raw,
+          }),
           ctx,
           body: raw,
-          resourceId: typeof body.providerId === "string" ? body.providerId : "openai-codex",
-          parameters: {
-            ownerUserId,
-            selection: readOAuthSelectionInput(body, "openai-codex"),
-            deviceCodeIdPresent: true,
-          },
-          surface: "api:/v1/auth/oauth/openai-codex/device/complete",
         });
         const selection = await resolveExistingOAuthProvider(
           deps.providerService,
