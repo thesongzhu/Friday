@@ -57,8 +57,16 @@ import type {
 } from "./device-attest/index.js";
 import {
   deriveDeviceKeyProtection,
-  isDeviceOwnerAuthorityEnabled,
+  type FridayDeviceKeyProtection,
+  isReleaseTrustedKeyProtection,
 } from "../../security/friday-device-owner-authority-precondition.js";
+import {
+  consumeVerifiedNativeOwnerClaimContext,
+  createAbsentNativeOwnerClaimResolver,
+  deriveNativeOwnerExchangeConnectionId,
+  type NativeOwnerClaimBinding,
+  type NativeOwnerClaimContextResolver,
+} from "../../security/attestation/friday-verified-native-owner-claim-context.js";
 
 // ─── Helpers ───
 
@@ -222,16 +230,70 @@ const READBACK_MAX_TRANSCRIPT_TTL_MS = 5 * 60 * 1000;
  * replay it indefinitely. Clamp the accepted window so a login proof is
  * short-lived by construction.
  *
- * ANTI-REPLAY CONTROL HIERARCHY (corrected — Advisor #1628 finding #2): the PRIMARY
- * anti-replay control is the server-issued single-use `device_login_challenge`
- * nonce, CAS-consumed inside the SAME transaction that mints the session (a
- * replayed login finds it consumed → mints NOTHING). This TTL clamp and the native
- * `isDeviceOwnerAuthorityEnabled` gate are DEFENCE-IN-DEPTH on top of it — the
- * native gate additionally decides whether a device may carry owner authority AT
- * ALL (hard-wired off today), and the clamp bounds a proof's freshness window; but
- * neither is what makes a proof single-use. The single-use nonce is.
+ * ANTI-REPLAY CONTROL HIERARCHY (Option C): the PRIMARY anti-replay control is the
+ * server-issued single-use `device_login_challenge` nonce, CAS-consumed inside the
+ * SAME transaction that mints the session (a replayed login finds it consumed →
+ * mints NOTHING). This TTL clamp and the per-claim `VerifiedNativeOwnerClaimContext`
+ * consume are DEFENCE-IN-DEPTH on top of it — the capability additionally decides
+ * whether THIS request carries owner authority AT ALL (absent on this tree), and the
+ * clamp bounds a proof's freshness window; but neither is what makes a proof
+ * single-use. The single-use nonce is.
  */
 const LOGIN_MAX_TRANSCRIPT_TTL_MS = 5 * 60 * 1000;
+
+// ─── CR-1 Option C — opaque per-claim native-owner capability binding ───
+
+/**
+ * The pinned artifact role the attested owner-device app binary must fill. Bound
+ * into every capability; the pinned code-sign policy refuses a validly-signed peer
+ * filling a DIFFERENT role (helper vs. main app).
+ */
+const OWNER_DEVICE_ARTIFACT_ROLE = "friday.owner-device.app" as const;
+
+/**
+ * The fixed presentation channel for the native install-IPC device claim/login
+ * exchange. Bound into the capability so a capability minted for the native IPC
+ * channel can never be consumed for a different channel.
+ */
+const NATIVE_OWNER_CLAIM_CHANNEL = "install-ipc" as const;
+
+/**
+ * Freshness window (epoch-ms) for a minted per-claim capability, aligned with the
+ * 300s bootstrap/login nonce TTL. The capability is dead past this instant even if
+ * every bound field still matches — expiry ⇒ refusal ⇒ zero state change.
+ */
+const NATIVE_OWNER_CAPABILITY_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Build the request-derived binding an opaque `VerifiedNativeOwnerClaimContext`
+ * must be bound to. Every field comes from THIS request's authoritative context —
+ * never from the capability's own self-assertion.
+ */
+function buildNativeOwnerClaimBinding(input: {
+  hubId: string;
+  installId: string;
+  osUser: string;
+  origin: string;
+  action: string;
+  nonce: string;
+  nowMs: number;
+  deviceId: string;
+  devicePublicKeyHash: string;
+}): NativeOwnerClaimBinding {
+  return {
+    hubId: input.hubId,
+    installId: input.installId,
+    osUser: input.osUser,
+    origin: input.origin,
+    channel: NATIVE_OWNER_CLAIM_CHANNEL,
+    action: input.action,
+    nonce: input.nonce,
+    expiresAtMs: input.nowMs + NATIVE_OWNER_CAPABILITY_TTL_MS,
+    deviceId: input.deviceId,
+    devicePublicKeyHash: input.devicePublicKeyHash,
+    artifactRole: OWNER_DEVICE_ARTIFACT_ROLE,
+  };
+}
 
 function isLocalhostAddress(addr?: string): boolean {
   return isFridayLoopbackAddress(addr);
@@ -418,13 +480,26 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
   const warn = deps.warn ?? console.warn;
   const warnOnce = createWarnOnce(warn);
   const rateLimiter = deps.rateLimiter;
-  // SEC-SETUP-BOOTSTRAP-001 (CR-1): the SOLE device-owner authority predicate.
-  // Defaults to the real, server-derived, fail-closed precondition (hard-wired
-  // false today — native-IPC attestation is absent). Injectable ONLY for tests
-  // that exercise the enabled branch without flipping the compile-time constant;
-  // production never overrides it, so the native gate is never faked here.
-  const deviceOwnerAuthorityEnabled =
-    deps.deviceOwnerAuthorityEnabled ?? (() => isDeviceOwnerAuthorityEnabled());
+  // CR-1 Option C: the SOLE device-owner authority is now an OPAQUE, per-claim
+  // `VerifiedNativeOwnerClaimContext` resolved from the native IPC accept boundary
+  // — NOT a global boolean. The default resolver is honestly ABSENT on this
+  // dev/CI tree (returns null → every device claim/login fails closed with ZERO
+  // state change). Production wires a resolver backed by the Companion Unix-socket
+  // peercred+codesign accept boundary; tests inject a resolver that runs the REAL
+  // mint over injected native-evidence doubles (the brand makes a forged literal
+  // impossible, so no request/env/test seam can fabricate authority).
+  const resolveNativeOwnerClaimContext: NativeOwnerClaimContextResolver =
+    deps.resolveNativeOwnerClaimContext ?? createAbsentNativeOwnerClaimResolver();
+  // Presence signal for getBootstrapStatus ONLY — reports whether the native claim
+  // surface currently exists, WITHOUT minting or authorizing any request. Defaults
+  // to false (no native surface on this tree).
+  const nativeOwnerClaimSurfaceAvailable =
+    deps.nativeOwnerClaimSurfaceAvailable ?? (() => false);
+  // CR-1 Option C (finding #6): on a fresh RELEASE profile, passphrase bootstrap is
+  // NOT offered (device-native only). Gates ONLY the creation of a fresh passphrase
+  // owner — legacy passphrase LOGIN + migration/recovery stay available. Defaults
+  // to false (dev/CI: passphrase bootstrap allowed).
+  const releaseProfileNativeOnly = deps.releaseProfileNativeOnly ?? (() => false);
   const warnSinkMeta = warn as unknown as { mock?: unknown };
   const suppressExpectedTestWarnings = isFridayTestSecurityWarningSuppressed()
     && warn === console.warn
@@ -734,12 +809,14 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
    *   - This path REQUIRES the sentinel prefix, so a scrypt/legacy passphrase owner
    *     (or a first-boot NULL slot) can never be logged in via the device path.
    *
-   * Honesty gate: possession of a SOFTWARE device key is insufficient to carry
-   * release-profile owner authority. Minting is gated on `deviceOwnerAuthorityEnabled()`
-   * — the server-derived native-IPC attestation precondition, hard-wired false on
-   * this build. So today this ALWAYS fails closed (the caller falls back to the
-   * passphrase gate); it starts minting the moment attestation lands, WITHOUT this
-   * code faking it.
+   * Honesty gate (Option C): possession of a SOFTWARE device key is insufficient
+   * to mint a session. Minting requires an OPAQUE per-claim
+   * `VerifiedNativeOwnerClaimContext` bound to THIS request, resolved from the
+   * native IPC accept boundary and CONSUMED atomically with the login-challenge CAS
+   * + session mint. On this dev/CI tree the boundary is honestly absent → the
+   * resolver returns null → the consume fails closed (DEVICE_AUTHORITY_DISABLED)
+   * with the challenge STILL LIVE. Nothing global authorizes; it starts minting the
+   * moment a real native accept boundary is wired, WITHOUT this code faking it.
    */
   function deviceKeyLogin(
     request: FridayLoginRequest,
@@ -868,35 +945,58 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       );
     }
 
-    // ── HONEST NATIVE-IPC GATE (fail-closed, checked AFTER full validation) ──
-    // Even a cryptographically VALID software-key PoP does NOT mint a session
-    // unless device-owner authority is enabled. Today that is hard-wired false
-    // (native-IPC attestation absent), so this ALWAYS fails closed and the caller
-    // falls back to the passphrase path. Not a credential failure → no lockout
-    // increment (the PoP was valid; the capability is simply disabled).
-    if (!deviceOwnerAuthorityEnabled()) {
-      throw new FridayAuthError(
-        "DEVICE_AUTHORITY_DISABLED",
-        "Device-bound owner authority is disabled on this build (native-IPC attestation unavailable).",
-      );
-    }
+    // ── OPAQUE PER-CLAIM NATIVE-OWNER CAPABILITY GATE (Option C) ──
+    // A cryptographically VALID software-key PoP is NOT sufficient to mint a
+    // session: the login must ALSO present a `VerifiedNativeOwnerClaimContext`
+    // bound to THIS exact request (hub/install/os-user/origin/channel/action/nonce/
+    // device/key/role + accepted native connection), minted ONLY inside the native
+    // IPC accept boundary from real peercred + code-sign attestation + release-
+    // trusted key custody. Nothing global authorizes. On this dev/CI tree the
+    // boundary is honestly absent → the resolver returns null → the consume below
+    // fails closed (DEVICE_AUTHORITY_DISABLED) with the login challenge STILL LIVE.
+    const loginBinding = buildNativeOwnerClaimBinding({
+      hubId: bootstrapHubId,
+      installId: proof.transcript.installId.trim(),
+      osUser: proof.transcript.osUser.trim(),
+      origin,
+      action: LOGIN_TRANSCRIPT_ACTION,
+      nonce: loginNonce,
+      nowMs,
+      deviceId,
+      devicePublicKeyHash: boundKeyHash,
+    });
+    const loginCapability = resolveNativeOwnerClaimContext(loginBinding);
 
-    // ── PRIMARY anti-replay: single-use login-challenge CAS-consume ⊗ session mint,
-    // ATOMICALLY in ONE write transaction ──
-    // The login-challenge nonce is CAS-consumed BEFORE the session is minted, in the
-    // SAME transaction. On the FIRST valid login the consume flips exactly one row
-    // (changes=1) and the mint runs. On a REPLAY (same signed transcript submitted
-    // again) the challenge is already consumed → changes=0 → we throw, the whole unit
-    // ROLLS BACK, and NO second token pair / session / last_login write survives
-    // (ZERO state change). The gate also binds origin + deviceId + devicePublicKeyHash,
-    // so a nonce minted for a different device/origin/key never consumes here. This is
-    // reached ONLY past the honesty gate above, so an attestation-disabled build never
-    // burns the nonce (it fails closed earlier with the nonce still live).
+    // ── PRIMARY anti-replay: capability consume ⊗ single-use login-challenge
+    // CAS-consume ⊗ session mint, ATOMICALLY in ONE write transaction ──
+    // The capability is consumed FIRST; a refusal throws BEFORE the nonce CAS, so
+    // the whole unit ROLLS BACK with the challenge STILL LIVE (an attestation-
+    // disabled build never burns the nonce). Past it, the login-challenge nonce is
+    // CAS-consumed BEFORE the session is minted, in the SAME transaction: the first
+    // valid login flips exactly one row (changes=1) and mints; a REPLAY finds the
+    // challenge consumed → changes=0 → throw → the whole unit rolls back with NO
+    // second token pair / session / last_login write (ZERO state change). The nonce
+    // gate binds origin + deviceId + devicePublicKeyHash, so a nonce minted for a
+    // different device/origin/key never consumes here.
     const now = deps.nowIso();
     const loginNonceHash = sha256Hex(loginNonce);
     let response: FridayLoginResponse;
     try {
       response = deps.db.withWriteTransaction((db) => {
+        const cap = consumeVerifiedNativeOwnerClaimContext(loginCapability, {
+          binding: loginBinding,
+          expectedConnectionId: deriveNativeOwnerExchangeConnectionId(loginBinding),
+          nowMs: Date.parse(now),
+        });
+        if (!cap.ok) {
+          // No valid per-claim capability for THIS request → fail closed. Not a
+          // credential failure (the PoP was valid) → no lockout increment. The
+          // throw precedes the nonce CAS, so the challenge stays live.
+          throw new FridayAuthError(
+            "DEVICE_AUTHORITY_DISABLED",
+            "Device-key login requires a verified native-owner capability for this request (native-IPC attestation unavailable or unverified).",
+          );
+        }
         const consumed = bootstrapNonceRepo.consumeLoginChallengeNonce(db, {
           nonceHash: loginNonceHash,
           origin,
@@ -937,10 +1037,13 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       );
       return {
         bootstrapRequired,
-        // CR-1: device-claim is the authoritative first-run path ONLY when
-        // device-owner authority is enabled (server-derived, fail-closed). False
-        // on the current build → the UI honestly keeps the passphrase gate.
-        deviceClaimAvailable: deviceOwnerAuthorityEnabled(),
+        // CR-1 Option C: report ONLY whether the native device-claim SURFACE is
+        // present for the current native surface — this is a presence signal, it
+        // does NOT authorize any later request (authorization is the per-claim
+        // capability, resolved+consumed at claim/login time). False on this tree →
+        // the UI honestly keeps the passphrase gate. NEVER derived from a global
+        // authority boolean.
+        deviceClaimAvailable: nativeOwnerClaimSurfaceAvailable(),
       };
     },
 
@@ -952,6 +1055,18 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         throw new FridayDomainError(
           "AUTH_BOOTSTRAP_NOT_ALLOWED",
           "Bootstrap is only allowed from localhost.",
+          { httpStatus: 403 },
+        );
+      }
+
+      // Option C (finding #6): a fresh RELEASE is device-native only — passphrase
+      // bootstrap is NOT offered and there is NO silent fallback. Legacy passphrase
+      // LOGIN and migration/recovery remain available; only CREATING a fresh
+      // passphrase owner is retired here. Dev/CI (non-release) is unaffected.
+      if (releaseProfileNativeOnly()) {
+        throw new FridayDomainError(
+          "AUTH_BOOTSTRAP_PASSPHRASE_RETIRED",
+          "A fresh release is device-native only; passphrase bootstrap is not offered. Use device-owner claim, or recover an existing passphrase owner.",
           { httpStatus: 403 },
         );
       }
@@ -1237,10 +1352,6 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
           { httpStatus: 401 },
         );
       }
-      // Server-derived key-protection posture (never self-reported). Today the
-      // only reachable value is "unverified" → fail closed for release authority.
-      const keyProtection = deriveDeviceKeyProtection();
-
       const localUser = findLocalUser();
       if (!localUser) {
         throw new FridayDomainError(
@@ -1260,19 +1371,61 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       }
 
       const now = deps.nowIso();
+      const nowMs = Date.parse(now);
       const nonceHash = sha256Hex(nonce);
       const devicePublicKeyHash = sha256Hex(devicePublicKey);
       const ownerSentinel = deviceOwnerSentinel(devicePublicKeyHash);
 
-      // Atomic, crash-safe claim: BOTH writes run in ONE write transaction, so a
-      // crash / thrown error mid-claim rolls back the whole unit — the nonce stays
-      // unconsumed AND the owner slot stays NULL (never a partial owner).
+      // ── OPAQUE PER-CLAIM NATIVE-OWNER CAPABILITY (Option C — LIVE-DEFECT FIX) ──
+      // Writing the durable device-owner sentinel is an AUTHORITY-bearing act: it
+      // seizes the single owner slot for a device key. It therefore REQUIRES a
+      // `VerifiedNativeOwnerClaimContext` bound to THIS request (minted only inside
+      // the native IPC accept boundary from real peercred + code-sign + release-
+      // trusted custody). WITHOUT a capability the claim is REFUSED with ZERO state
+      // change — no nonce consumed, no owner written. This closes the head defect
+      // where a valid software-key PoP wrote `device-owner$v1$…` + consumed the
+      // nonce with no native authority. Resolved OUTSIDE the txn (the native
+      // exchange must not hold the write lock); CONSUMED INSIDE it, atomically with
+      // the nonce CAS + owner CAS.
+      const claimBinding = buildNativeOwnerClaimBinding({
+        hubId: bootstrapHubId,
+        installId: (request.installId ?? "").trim(),
+        osUser: (request.osUser ?? "").trim(),
+        origin,
+        action: CLAIM_TRANSCRIPT_ACTION,
+        nonce,
+        nowMs,
+        deviceId,
+        devicePublicKeyHash,
+      });
+      const claimCapability = resolveNativeOwnerClaimContext(claimBinding);
+
+      // Atomic, crash-safe claim: capability consume + BOTH writes run in ONE write
+      // transaction, so a crash / thrown error mid-claim rolls back the whole unit —
+      // the nonce stays unconsumed AND the owner slot stays NULL (never a partial
+      // owner, never an authority-less write).
+      //   0. CONSUME the per-claim capability. Absent/drift/expired/replayed =>
+      //      refuse, ZERO state change (thrown BEFORE the nonce CAS).
       //   1. CAS-consume the nonce (origin/expiry/single-use gate). changes=0 =>
       //      replay / expired / cross-origin => reject, ZERO state change.
       //   2. CAS-claim the owner slot (password_hash IS NULL). changes=0 =>
       //      already claimed => 409, ZERO state change (nonce consume rolls back).
+      let grantedKeyProtection: FridayDeviceKeyProtection;
       try {
-        deps.db.withWriteTransaction((db) => {
+        grantedKeyProtection = deps.db.withWriteTransaction((db) => {
+          const cap = consumeVerifiedNativeOwnerClaimContext(claimCapability, {
+            binding: claimBinding,
+            expectedConnectionId: deriveNativeOwnerExchangeConnectionId(claimBinding),
+            nowMs,
+          });
+          if (!cap.ok) {
+            throw new FridayDomainError(
+              "AUTH_BOOTSTRAP_DEVICE_AUTHORITY_UNVERIFIED",
+              "Device owner-claim requires a verified native-owner capability for this request; refused with no state change (no owner written, no nonce consumed).",
+              { httpStatus: 401 },
+            );
+          }
+
           const consumed = bootstrapNonceRepo.consumeOwnerClaimNonce(db, {
             nonceHash,
             kind: "install_owner_claim",
@@ -1303,6 +1456,7 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
               { httpStatus: 409 },
             );
           }
+          return cap.keyProtection;
         });
       } catch (error) {
         // Defence-in-depth: the partial UNIQUE(kind) WHERE consumed_at IS NOT NULL
@@ -1324,11 +1478,11 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         userId: localUser.id,
         deviceId,
         devicePublicKeyHash,
-        // Authoritative readback: server-derived posture + the truth that this
-        // device binding carries NO owner authority in release/default (the
-        // device principal stays DISABLED until native-IPC precondition (b)).
-        keyProtection,
-        deviceAuthorityEnabled: deviceOwnerAuthorityEnabled(),
+        // Authoritative readback: the key-protection posture the consumed capability
+        // carried (release-trusted native custody), and — since a capability was
+        // consumed — this device binding now carries owner authority for THIS build.
+        keyProtection: grantedKeyProtection,
+        deviceAuthorityEnabled: isReleaseTrustedKeyProtection(grantedKeyProtection),
       };
     },
 
@@ -1614,7 +1768,11 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         keyProtection,
         // ALWAYS false in release/default — the provisional device binding
         // carries ZERO authority until native-IPC precondition (b) lands.
-        deviceAuthorityEnabled: deviceOwnerAuthorityEnabled(),
+        // Option C: this path grants ZERO owner authority (a provisional migration
+        // binding / an activated dual-read binding / a read-only posture never
+        // seizes owner login). Authority is ONLY the per-claim native capability
+        // consumed at claim/login — never a global boolean. Always false here.
+        deviceAuthorityEnabled: false,
       };
     },
 
@@ -1810,7 +1968,11 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         passphraseStillActive: true,
         // ALWAYS false in release/default — activation grants ZERO authority until
         // native-IPC precondition (b) lands.
-        deviceAuthorityEnabled: deviceOwnerAuthorityEnabled(),
+        // Option C: this path grants ZERO owner authority (a provisional migration
+        // binding / an activated dual-read binding / a read-only posture never
+        // seizes owner login). Authority is ONLY the per-claim native capability
+        // consumed at claim/login — never a global boolean. Always false here.
+        deviceAuthorityEnabled: false,
       };
     },
 
@@ -1855,7 +2017,11 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         activatedAt: row?.activated_at ?? null,
         revokedAt: row?.revoked_at ?? null,
         passphraseStillActive: true,
-        deviceAuthorityEnabled: deviceOwnerAuthorityEnabled(),
+        // Option C: this path grants ZERO owner authority (a provisional migration
+        // binding / an activated dual-read binding / a read-only posture never
+        // seizes owner login). Authority is ONLY the per-claim native capability
+        // consumed at claim/login — never a global boolean. Always false here.
+        deviceAuthorityEnabled: false,
       };
     },
 

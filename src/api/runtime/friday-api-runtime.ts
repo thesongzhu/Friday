@@ -58,6 +58,7 @@ import type {
   FridayApiRuntime,
 } from "./friday-api-runtime.types.js";
 import { createFridayAuthService } from "../auth/friday-auth-service.js";
+import { isFridayCanonicalGateProtectedProfile } from "../../hub/friday-hub-bootstrap.js";
 import { createFridayTokenValidator } from "../auth/friday-token-validator.js";
 import { createFridayRateLimitService } from "../auth/friday-rate-limit-service.js";
 import { createFridayAuthMiddlewareFactory } from "../auth/friday-auth-middleware.js";
@@ -2114,6 +2115,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       });
     },
     rateLimiter,
+    // CR-1 Option C: `resolveNativeOwnerClaimContext` + `nativeOwnerClaimSurfaceAvailable`
+    // default to honestly-absent (no native IPC accept boundary on this tree), so
+    // device owner-claim/login fail closed until a signed release wires the
+    // Companion Unix-socket peercred+codesign accept boundary (the external leaf).
+    // On a fresh RELEASE profile, passphrase bootstrap is retired (device-native
+    // only) per finding #6; dev/CI keeps it (non-release profile).
+    releaseProfileNativeOnly: () => isFridayCanonicalGateProtectedProfile(process.env),
     resolveTenantId: (input) =>
       deps.resolveAuthTenantId?.({
         principalType: input.principalType,

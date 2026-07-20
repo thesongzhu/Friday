@@ -28,6 +28,7 @@ import type {
   FridayRole,
 } from "../model/friday-api-auth.types.js";
 import type { FridayRateLimitService } from "./friday-rate-limit-service.types.js";
+import type { NativeOwnerClaimContextResolver } from "../../security/attestation/friday-verified-native-owner-claim-context.js";
 
 export interface FridayAuthService {
   login(request: FridayLoginRequest, ip?: string, userAgent?: string): FridayLoginResponse;
@@ -167,17 +168,35 @@ export interface CreateFridayAuthServiceDeps {
   /** Optional rate limit service for auth lockout. */
   rateLimiter?: FridayRateLimitService;
   /**
-   * SEC-SETUP-BOOTSTRAP-001 (CR-1): server-derived predicate for whether a
-   * device-bound owner principal may carry release-profile owner authority. This
-   * is the SOLE gate that lets a device-key login mint a session and that flags
-   * `deviceClaimAvailable` in the bootstrap status. It defaults to the real
-   * `isDeviceOwnerAuthorityEnabled()` (hard-wired `false` today because the
-   * native-IPC attestation precondition is absent). It is injectable ONLY so a
-   * test can exercise the enabled branch WITHOUT flipping the compile-time
-   * attestation constant — production wiring never overrides it, so the honest
-   * native gate is never faked.
+   * CR-1 Option C: the SOLE device-owner authority is an OPAQUE, per-claim
+   * `VerifiedNativeOwnerClaimContext` resolved from the native IPC accept boundary
+   * for THIS request — NOT a global boolean. It is CONSUMED atomically with the
+   * bootstrap/login nonce CAS + owner/session write; a refusal (absent, drift,
+   * expiry, replay, connection substitution, kill-switch) produces ZERO state
+   * change. Defaults to {@link createAbsentNativeOwnerClaimResolver} — honestly
+   * absent on this unsigned dev/CI tree (returns null → every device claim/login
+   * fails closed). Production wires a resolver backed by the Companion Unix-socket
+   * peercred+codesign accept boundary; tests inject a resolver that runs the REAL
+   * mint over injected native-evidence doubles. The capability brand makes a
+   * forged request/env/test literal impossible, so no seam can fabricate authority.
    */
-  deviceOwnerAuthorityEnabled?: () => boolean;
+  resolveNativeOwnerClaimContext?: NativeOwnerClaimContextResolver;
+  /**
+   * CR-1 Option C: presence signal for `getBootstrapStatus().deviceClaimAvailable`
+   * ONLY. Reports whether the native device-claim SURFACE currently exists, WITHOUT
+   * minting or authorizing any later request. Defaults to `() => false` (no native
+   * surface on this tree). It must never be used to authorize a claim/login.
+   */
+  nativeOwnerClaimSurfaceAvailable?: () => boolean;
+  /**
+   * CR-1 Option C (finding #6): when `true` (a fresh RELEASE profile —
+   * `isFridayCanonicalGateProtectedProfile(env)`), passphrase bootstrap is NOT
+   * offered and there is NO silent fallback (device-native only). It gates ONLY
+   * the creation of a fresh passphrase owner; legacy passphrase LOGIN and
+   * migration/recovery stay available so legacy data remains usable for bounded
+   * recovery. Defaults to `() => false` (dev/CI: passphrase bootstrap allowed).
+   */
+  releaseProfileNativeOnly?: () => boolean;
   /** Optional audit hook for failed auth and lockout decisions. */
   auditAuthEvent?: (event: {
     type: "auth.login.failed" | "auth.login.locked_out";

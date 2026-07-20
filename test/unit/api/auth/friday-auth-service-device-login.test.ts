@@ -27,6 +27,8 @@ import { createFridayAuthService, FridayAuthError } from "#api";
 import type { FridayAuthService } from "#api";
 import { createTestDb } from "../../satellites/_helpers/create-test-db.helper.js";
 import { NATIVE_IPC_ATTESTATION_AVAILABLE } from "../../../../src/security/friday-device-owner-authority-precondition.js";
+import type { NativeOwnerClaimContextResolver } from "../../../../src/security/attestation/friday-verified-native-owner-claim-context.js";
+import { createTestNativeOwnerResolver } from "../../../adversarial/_native-owner-capability.helpers.js";
 import {
   generateTestDeviceKey,
   makeTranscript,
@@ -53,8 +55,19 @@ function makeIdGen(): () => string {
 
 function makeService(
   db: FridaySqliteLayer,
-  opts: { authorityEnabled?: boolean; failMintAtRegister?: boolean } = {},
+  opts: {
+    authorityEnabled?: boolean;
+    resolver?: NativeOwnerClaimContextResolver;
+    failMintAtRegister?: boolean;
+    releaseNativeOnly?: boolean;
+  } = {},
 ): FridayAuthService {
+  // Option C: the enabled branch injects a resolver that runs the REAL capability
+  // mint over injected native-evidence doubles (NEVER flips
+  // NATIVE_IPC_ATTESTATION_AVAILABLE, NEVER forges a capability — the brand makes
+  // that impossible). An explicit `resolver` override drives the negative matrix.
+  const resolver =
+    opts.resolver ?? (opts.authorityEnabled === true ? createTestNativeOwnerResolver() : undefined);
   return createFridayAuthService({
     db,
     idGenerator: makeIdGen(),
@@ -64,11 +77,12 @@ function makeService(
     refreshTokenTtlSec: 604_800,
     hubId: "test-hub",
     bootstrapNonceTtlSec: 300,
-    // Inject the authority seam ONLY when a test needs the enabled branch. This
-    // NEVER flips NATIVE_IPC_ATTESTATION_AVAILABLE — it is the same override a
-    // signed-release/native slice supplies once the OS attestation bridge lands.
+    ...(resolver ? { resolveNativeOwnerClaimContext: resolver } : {}),
     ...(opts.authorityEnabled !== undefined
-      ? { deviceOwnerAuthorityEnabled: () => opts.authorityEnabled === true }
+      ? { nativeOwnerClaimSurfaceAvailable: () => opts.authorityEnabled === true }
+      : {}),
+    ...(opts.releaseNativeOnly !== undefined
+      ? { releaseProfileNativeOnly: () => opts.releaseNativeOnly === true }
       : {}),
     // Simulate a crash mid-mint: throw INSIDE the mint transaction AFTER the
     // login-challenge CAS-consume + session insert, so the whole unit must roll back.
@@ -91,7 +105,9 @@ function clearOwnerPassphrase(db: FridaySqliteLayer): void {
 
 /** Issue a challenge + atomically claim the owner slot with `key`. */
 function claimOwner(db: FridaySqliteLayer, key: TestDeviceKey): void {
-  const svc = makeService(db);
+  // Option C: seizing the owner slot for a device key is authority-bearing and
+  // REQUIRES a per-claim native capability (the resolver). No resolver → refused.
+  const svc = makeService(db, { authorityEnabled: true });
   const challenge = svc.issueBootstrapChallenge(
     { installId: "install-1", osUser: "jarvis", origin: ORIGIN },
     LOOPBACK,
@@ -124,7 +140,9 @@ function claimOwner(db: FridaySqliteLayer, key: TestDeviceKey): void {
   );
   expect(res.claimed).toBe(true);
   // Authoritative durable binding lives on users.password_hash (the sentinel).
-  expect(res.deviceAuthorityEnabled).toBe(false); // real precondition still off
+  // A release-trusted native capability was consumed → authority granted for this
+  // claim (Option C: authority is the per-claim capability, not a global boolean).
+  expect(res.deviceAuthorityEnabled).toBe(true);
 }
 
 /**
@@ -564,5 +582,29 @@ describe("FridayAuthService — CR-1 device-key login mint", () => {
     expect(res.accessToken.length).toBeGreaterThan(0);
     expect(sessionCount(db)).toBe(1);
     expect(loginChallengeConsumedAt(db, nonce)).not.toBeNull();
+  });
+
+  // ── (6) OLD-ROUTE RETIREMENT: fresh RELEASE is device-native only ──
+
+  it("dev/CI profile: passphrase bootstrap is OFFERED (legacy dev seam)", () => {
+    const svc = makeService(db); // default → releaseProfileNativeOnly false
+    const res = svc.bootstrapLocalPassphrase({ passphrase: "correct horse battery" }, LOOPBACK);
+    expect(res.initialized).toBe(true);
+  });
+
+  it("fresh RELEASE profile: passphrase bootstrap is NOT offered (no silent fallback), owner slot untouched", () => {
+    const svc = makeService(db, { releaseNativeOnly: true });
+    let code = "";
+    try {
+      svc.bootstrapLocalPassphrase({ passphrase: "correct horse battery" }, LOOPBACK);
+    } catch (err) {
+      code = (err as { code?: string }).code ?? "";
+    }
+    expect(code).toBe("AUTH_BOOTSTRAP_PASSPHRASE_RETIRED");
+    // The owner slot is untouched — no fresh passphrase owner created.
+    const hash = db.withReadConnection((conn) =>
+      (conn.prepare("SELECT password_hash AS h FROM users WHERE id = 'test-user'").get() as { h: string | null }).h,
+    );
+    expect(hash).toBeNull();
   });
 });

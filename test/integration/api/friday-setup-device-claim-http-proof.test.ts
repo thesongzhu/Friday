@@ -34,6 +34,7 @@ import type { FridaySqliteLayer } from "#state";
 // SEC-SETUP-BOOTSTRAP-001 Slice 3: device-claim now requires a real PoP. Reuse
 // the S2a signing helpers so this runtime proof drives the REAL verifier.
 import { generateTestDeviceKey, makeTranscript, signTranscriptLowS } from "../../adversarial/_secsetup-s2a.helpers.js";
+import { createTestNativeOwnerResolver } from "../../adversarial/_native-owner-capability.helpers.js";
 
 const OWNER_ID = "admin-001";
 const NOW = "2026-07-13T00:00:00.000Z";
@@ -163,6 +164,13 @@ describe("SEC-SETUP-BOOTSTRAP-001 runtime proof: device claim over real HTTP + r
       hubId: "http-proof-hub",
       bootstrapNonceTtlSec: 300,
       warn: () => {},
+      // Option C: seizing the owner slot for a device key REQUIRES a per-claim
+      // native capability. This proof drives the GRANTED path over real HTTP in a
+      // production posture by injecting a resolver that runs the REAL capability
+      // mint over injected native-evidence doubles (the same shape a signed release
+      // supplies from the Companion accept boundary). The capability-ABSENT refusal
+      // is proven in the sibling s3-device-principal-http-proof suite.
+      resolveNativeOwnerClaimContext: createTestNativeOwnerResolver(),
     });
 
     const routes = createFridayHttpRouteRegistry();
@@ -259,9 +267,11 @@ describe("SEC-SETUP-BOOTSTRAP-001 runtime proof: device claim over real HTTP + r
     expect(ok.status).toBe(200);
     expect(ok.json.data.claimed).toBe(true);
     expect(ok.json.data.devicePublicKeyHash).toBe(sha256Hex(DEVICE_PUBKEY));
-    // Slice 3 authoritative readback: the device binding carries ZERO authority.
-    expect(ok.json.data.deviceAuthorityEnabled).toBe(false);
-    expect(ok.json.data.keyProtection).toBe("unverified");
+    // Option C authoritative readback: a release-trusted per-claim native capability
+    // was consumed (Secure-Enclave OS-verified custody) → authority granted for THIS
+    // claim. Authority is the per-claim capability, never a global boolean.
+    expect(ok.json.data.deviceAuthorityEnabled).toBe(true);
+    expect(ok.json.data.keyProtection).toBe("secure_enclave_os_verified");
     const claimedHash = ownerHash();
     expect(claimedHash).toBe(`device-owner$v1$${sha256Hex(DEVICE_PUBKEY)}`);
     const consumedRow = nonceRow(nonce);

@@ -917,7 +917,7 @@ export function resolveFridayHubConfig(
   };
 }
 
-function isFridayCanonicalGateProtectedProfile(env: NodeJS.ProcessEnv): boolean {
+export function isFridayCanonicalGateProtectedProfile(env: NodeJS.ProcessEnv): boolean {
   return env.NODE_ENV?.trim().toLowerCase() === "production"
     || Boolean(env.FRIDAY_RELEASE_TAG?.trim());
 }

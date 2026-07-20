@@ -43,6 +43,7 @@ import type { FridaySqliteLayer } from "#state";
 // transcript's expiresAt is far-future so the AUTHORITATIVE single-use + TTL gate
 // stays server-side at nonce-consume — keeping every error code unchanged.
 import { generateTestDeviceKey, makeTranscript, signTranscriptLowS } from "./_secsetup-s2a.helpers.js";
+import { createTestNativeOwnerResolver } from "./_native-owner-capability.helpers.js";
 
 const OWNER_ID = "admin-001";
 const NOW = "2026-07-13T00:00:00.000Z";
@@ -83,6 +84,12 @@ function makeService(db: FridaySqliteLayer, nowIso: string = NOW) {
     refreshTokenTtlSec: 604_800,
     hubId: "test-hub",
     bootstrapNonceTtlSec: 300,
+    // Option C: the owner-sentinel write requires a per-claim native capability.
+    // These tests exercise NONCE mechanics (single-use/replay/race/expiry), so we
+    // inject a resolver that mints a real capability over injected native-evidence
+    // doubles — the capability gate is transparent and the nonce gate is what's
+    // under test. (Capability-absent refusal is covered in the s3 suite.)
+    resolveNativeOwnerClaimContext: createTestNativeOwnerResolver(),
   });
 }
 

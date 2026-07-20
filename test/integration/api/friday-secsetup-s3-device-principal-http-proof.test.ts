@@ -261,13 +261,19 @@ describe("S3 runtime proof A — device-claim requires PoP (real HTTP, productio
     expect(nonceConsumedAt(nonce)).toBeNull();
   });
 
-  it("ALLOW (owner-slot binding only): a valid PoP claim → 200 claimed, deviceAuthorityEnabled=false", async () => {
+  it("LIVE-DEFECT CLOSED (production posture, real HTTP): a valid PoP claim with NO native capability → 401 refused; owner NULL, nonce un-burned", async () => {
+    // At head this returned 200 claimed with deviceAuthorityEnabled=false — a valid
+    // software-key PoP seized the owner slot in a NODE_ENV=production posture with NO
+    // native authority. Option C gates the owner-sentinel write + nonce consume on a
+    // per-claim VerifiedNativeOwnerClaimContext; this authService is built with the
+    // DEFAULT absent resolver (no native accept boundary) → the claim is refused with
+    // ZERO state change.
     const nonce = await issue();
     const r = await post(claimBody(nonce));
-    expect(r.status).toBe(200);
-    expect(r.json.data.claimed).toBe(true);
-    expect(r.json.data.deviceAuthorityEnabled).toBe(false);
-    expect(r.json.data.keyProtection).toBe("unverified");
+    expect(r.status).toBe(401);
+    expect(r.json?.error?.code).toBe("AUTH_BOOTSTRAP_DEVICE_AUTHORITY_UNVERIFIED");
+    expect(ownerHash()).toBeNull();
+    expect(nonceConsumedAt(nonce)).toBeNull();
   });
 });
 

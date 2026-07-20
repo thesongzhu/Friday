@@ -21,6 +21,7 @@ import { createFridayOwnerClaimPoPVerifier } from "../../../src/api/auth/device-
 import { encodeOwnerClaimTranscript as serverEncode } from "../../../src/api/auth/device-attest/index.js";
 import type { OwnerClaimTranscript } from "../../../src/api/auth/device-attest/index.js";
 import { createTestDb } from "../satellites/_helpers/create-test-db.helper.js";
+import { createTestNativeOwnerResolver } from "../../adversarial/_native-owner-capability.helpers.js";
 import {
   createWebCryptoDeviceKeyProvider,
   encodeOwnerClaimTranscript as uiEncode,
@@ -106,7 +107,15 @@ describe("CR-1 UI device-key seam ⇄ server verifier", () => {
         refreshTokenTtlSec: 604_800,
         hubId: "test-hub",
         bootstrapNonceTtlSec: 300,
-        deviceOwnerAuthorityEnabled: () => authorityEnabled,
+        // Option C: the enabled branch injects a resolver that runs the REAL
+        // capability mint over injected native-evidence doubles (never flips the
+        // native constant, never forges). Disabled → no resolver → fails closed.
+        ...(authorityEnabled
+          ? {
+            resolveNativeOwnerClaimContext: createTestNativeOwnerResolver(),
+            nativeOwnerClaimSurfaceAvailable: () => true,
+          }
+          : {}),
       });
     }
 
@@ -147,16 +156,19 @@ describe("CR-1 UI device-key seam ⇄ server verifier", () => {
       expect(response.user.id).toBe("test-user");
     });
 
-    it("fails closed at the login leg when device authority is disabled", async () => {
+    it("fails closed when no native-owner capability is present (real-build honest state)", async () => {
       const provider = createWebCryptoDeviceKeyProvider();
-      const svc = makeService(false); // real-build honest state
+      const svc = makeService(false); // real-build honest state — no resolver
+      // Option C: without a per-claim native capability the CLAIM leg itself fails
+      // closed (the fresh owner slot can never be seized by a software key alone) —
+      // a strictly stronger guarantee than the prior login-leg-only gate.
       await expect(
         runDeviceOwnerBootstrap(provider, apiFor(svc), {
           origin: ORIGIN,
           installId: "install-1",
           osUser: "ui",
         }),
-      ).rejects.toThrow(/DEVICE_AUTHORITY_DISABLED|disabled/i);
+      ).rejects.toThrow(/DEVICE_AUTHORITY|native-owner capability|no state change/i);
     });
 
     it("orchestrator fails closed when the device-key capability is unavailable", async () => {

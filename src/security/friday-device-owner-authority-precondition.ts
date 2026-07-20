@@ -41,43 +41,65 @@ export function isDeviceOwnerPrincipalId(actorId: string | null | undefined): bo
   return typeof actorId === "string" && actorId.startsWith(DEVICE_OWNER_PRINCIPAL_ID_PREFIX);
 }
 
-// ─── (b) native-IPC caller-identity precondition (ABSENT today) ───
+// ─── (b) native-IPC honesty anchor — RETIRED AS AN AUTHORITY SOURCE (Option C) ───
 //
-// This is a compile-time constant, NOT a config flag. It flips to `true` ONLY in
-// the future slice that lands a trusted native-app IPC caller-identity bridge
-// (SO_PEERCRED / signed-shell attestation). Until then, no amount of env / header
-// / request / loopback fact can make a device principal trusted.
+// This compile-time constant is RETIRED as an authority source (Advisor Option C).
+// It is DELIBERATELY LEFT in place as a truthful honesty anchor — it remains
+// `false` on this unsigned dev/CI tree and is NEVER read to authorize anything —
+// but NO code path derives authority from it any longer. The Advisor rejected any
+// global boolean ("once true on a real release it authorizes EVERY HTTP caller, not
+// just the attested peer"); authority now flows ONLY through the opaque, per-claim
+// `VerifiedNativeOwnerClaimContext`
+// (src/security/attestation/friday-verified-native-owner-claim-context.ts), minted
+// solely inside the native IPC accept boundary. It is NEVER flipped `true`.
 export const NATIVE_IPC_ATTESTATION_AVAILABLE = false as const;
 
-// ─── Server-derived, off-by-default authority switch ───
+// ─── Emergency kill switch (can force OFF; can NEVER force ON) ───
 
 /**
- * Explicit server-side opt-in env var. Even when set, it does NOT enable device
- * authority on its own — precondition (b) (`NATIVE_IPC_ATTESTATION_AVAILABLE`)
- * must ALSO be present. This var is read ONLY from the process environment; it is
- * never derived from a request body, header, Origin, cookie, User-Agent,
- * bundle-id, loopback fact, or any nonce-holding process.
+ * Protected emergency kill switch. When engaged it FORCES device-owner authority
+ * OFF (mint + consume of every per-claim capability refuse). There is NO
+ * counterpart that forces authority ON — the Option-C flagless-positive contract
+ * means no env / config / header / body / test seam can make a capability mint;
+ * only real native attestation can. This env is read ONLY from the process
+ * environment, never from request data.
  */
-export const DEVICE_OWNER_AUTHORITY_ENABLED_ENV = "FRIDAY_DEVICE_OWNER_AUTHORITY_ENABLED";
+export const DEVICE_OWNER_AUTHORITY_KILL_SWITCH_ENV = "FRIDAY_DEVICE_OWNER_AUTHORITY_KILL_SWITCH";
+
+const KILL_SWITCH_ENGAGED_VALUES: ReadonlySet<string> = new Set([
+  "1",
+  "true",
+  "on",
+  "engage",
+  "engaged",
+  "disable",
+  "disabled",
+]);
 
 /**
- * True IFF a device-bound owner principal may carry release-profile owner
- * authority. Server-derived and fail-closed: requires BOTH the explicit
- * server-side env opt-in AND the native-IPC precondition (b). Because (b) is a
- * hard-wired `false` today, this ALWAYS returns `false` in the current build —
- * the truthful state of the requirement (NOT "passed").
- *
- * Takes NO request-derived input by design: there is structurally no way for a
- * caller to flip it via request data.
+ * True iff the emergency kill switch is engaged (forces device-owner authority
+ * OFF). Case-insensitive, trimmed. Consulted by the capability mint + consume.
  */
-export function isDeviceOwnerAuthorityEnabled(
+export function isDeviceOwnerAuthorityKillSwitchEngaged(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  if (!NATIVE_IPC_ATTESTATION_AVAILABLE) {
-    // Precondition (b) absent — fail closed regardless of any config.
-    return false;
-  }
-  return env[DEVICE_OWNER_AUTHORITY_ENABLED_ENV] === "1";
+  const raw = env[DEVICE_OWNER_AUTHORITY_KILL_SWITCH_ENV]?.trim().toLowerCase();
+  return raw !== undefined && KILL_SWITCH_ENGAGED_VALUES.has(raw);
+}
+
+/**
+ * RETIRED (Option C): there is NO global "device authority enabled" switch any
+ * more. Authority is conferred per-claim by a `VerifiedNativeOwnerClaimContext`,
+ * never by a process-wide boolean. This predicate is kept ONLY as a fail-closed
+ * floor signal — it is ALWAYS `false` (no env / config / request can flip it),
+ * so every enforcement floor that consults it continues to treat a device
+ * principal as unauthenticated. It takes NO request-derived input by design.
+ */
+export function isDeviceOwnerAuthorityEnabled(
+  _env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // No global enable exists under Option C. Fail closed, always.
+  return false;
 }
 
 // ─── keyProtection — server-derived 4-state (NEVER request-reported) ───
@@ -108,13 +130,54 @@ export function isReleaseTrustedKeyProtection(kp: FridayDeviceKeyProtection): bo
 }
 
 /**
- * Derive the device key-protection posture SERVER-SIDE. Today there is no OS
- * attestation bridge, so the only honest, reachable value is `"unverified"` —
- * which fails closed. A FUTURE native slice sets the hardware-backed states here
- * from a verified OS attestation, never from the request.
+ * The custody kind reported by a native key-custody provider (see
+ * src/security/attestation/friday-native-key-custody-provider.ts). This is
+ * OS-derived evidence, NEVER a request-reported or global posture.
  */
-export function deriveDeviceKeyProtection(): FridayDeviceKeyProtection {
-  return "unverified";
+export type NativeKeyCustodyKind =
+  | "secure_enclave"
+  | "keychain_acl"
+  | "webcrypto_software";
+
+/**
+ * Verified native key-custody evidence CONSUMED by {@link deriveDeviceKeyProtection}.
+ * A signed release supplies this from the OS (Secure Enclave / Keychain ACL); the
+ * WebCrypto dev seam supplies `webcrypto_software`, which can NEVER be
+ * release-trusted. There is no field a caller can set to self-report a hardware
+ * posture — `osVerified` is only ever true when the OS itself vouched for it.
+ */
+export interface NativeKeyCustodyEvidence {
+  readonly custody: NativeKeyCustodyKind;
+  /** Only ever `true` when the OS attested the custody (Secure Enclave / ACL). */
+  readonly osVerified: boolean;
+}
+
+/**
+ * Derive the device key-protection posture SERVER-SIDE by CONSUMING verified
+ * native key-custody evidence (Option C, finding #4). It NEVER returns/accepts a
+ * self-reported or global posture:
+ *   - absent evidence (`null`/`undefined`) → `"unverified"` (honest-absent on this
+ *     unsigned dev/CI tree — fails closed);
+ *   - `secure_enclave` + OS-verified → `"secure_enclave_os_verified"` (release-trusted);
+ *   - `keychain_acl` + OS-verified → `"keychain_acl_verified"` (release-trusted);
+ *   - `webcrypto_software` (or any non-OS-verified custody) → `"software_dev_only"`
+ *     — a dev/negative seam that is NEVER release-trusted.
+ * WebCrypto can therefore never yield a release-trusted keyProtection.
+ */
+export function deriveDeviceKeyProtection(
+  evidence?: NativeKeyCustodyEvidence | null,
+): FridayDeviceKeyProtection {
+  if (!evidence) {
+    return "unverified";
+  }
+  if (evidence.custody === "secure_enclave" && evidence.osVerified === true) {
+    return "secure_enclave_os_verified";
+  }
+  if (evidence.custody === "keychain_acl" && evidence.osVerified === true) {
+    return "keychain_acl_verified";
+  }
+  // WebCrypto software keys, and any custody the OS did NOT verify, are dev-only.
+  return "software_dev_only";
 }
 
 // ─── Fail-closed device-owner mint seam ───

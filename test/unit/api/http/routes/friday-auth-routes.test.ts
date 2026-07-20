@@ -6,6 +6,7 @@ import type { FridayAuthService } from "#api";
 import type { FridayRouteDefinition, FridayHttpContext } from "#api";
 // SEC-SETUP-BOOTSTRAP-001 Slice 3: device-claim now requires proof-of-possession.
 import { generateTestDeviceKey, makeTranscript, signTranscriptLowS } from "../../../../adversarial/_secsetup-s2a.helpers.js";
+import { createTestNativeOwnerResolver } from "../../../../adversarial/_native-owner-capability.helpers.js";
 
 const ROUTE_DEVICE_KEY = generateTestDeviceKey();
 /** Build a device-claim body carrying a valid PoP bound to (nonce, origin, deviceId). */
@@ -60,6 +61,10 @@ describe("FridayAuthRoutes", () => {
       tokenSecret: TOKEN_SECRET,
       accessTokenTtlSec: 900,
       refreshTokenTtlSec: 604800,
+      // Option C: the device-claim route flips ownership only with a per-claim
+      // native capability. Inject a resolver that runs the REAL mint over injected
+      // native-evidence doubles so the route-layer flow is exercised end to end.
+      resolveNativeOwnerClaimContext: createTestNativeOwnerResolver(),
     });
     routes = createFridayAuthRoutes({ authService });
   });

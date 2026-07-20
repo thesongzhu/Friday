@@ -35,6 +35,7 @@ import { createFridaySqliteLayer } from "#state";
 import type { FridaySqliteLayer } from "#state";
 // SEC-SETUP-BOOTSTRAP-001 Slice 3: device-claim now requires proof-of-possession.
 import { generateTestDeviceKey, makeTranscript, signTranscriptLowS, type TestDeviceKey } from "./_secsetup-s2a.helpers.js";
+import { createTestNativeOwnerResolver } from "./_native-owner-capability.helpers.js";
 
 const OWNER_ID = "admin-001";
 const NOW = "2026-07-13T00:00:00.000Z";
@@ -78,6 +79,11 @@ function makeService(db: FridaySqliteLayer, nowIso: string = NOW) {
     refreshTokenTtlSec: 604_800,
     hubId: "test-hub",
     bootstrapNonceTtlSec: BOOTSTRAP_TTL_SEC,
+    // Option C: the owner-sentinel write requires a per-claim native capability.
+    // These tests exercise NONCE lifecycle mechanics, so inject a resolver that
+    // mints a real capability over injected native-evidence doubles — the nonce
+    // gate remains what's under test.
+    resolveNativeOwnerClaimContext: createTestNativeOwnerResolver(),
   });
 }
 
