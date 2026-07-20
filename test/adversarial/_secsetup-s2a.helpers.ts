@@ -89,11 +89,19 @@ export function toLowS(raw: Buffer): Buffer {
   return Buffer.concat([r, bigIntTo32(s)]);
 }
 
-/** Produce the high-S malleable twin (s → n − s) of a raw P-1363 signature. */
+/**
+ * Produce the high-S malleable twin of a raw P-1363 signature.
+ * DETERMINISTIC: normalize to low-S first, then reflect (n − s_low). A fresh
+ * ECDSA signature's s is random-parity (~50% already high-S), and an
+ * unconditional `n − s` would yield a *low*-S value for those, silently making
+ * this a canonical (verifier-accepted) signature and flaking any "rejects
+ * high-S" assertion. Reflecting the low form guarantees s_high > n/2 every time.
+ */
 export function toHighSTwin(raw: Buffer): Buffer {
   const r = raw.subarray(0, 32);
-  const s = bufToBigInt(raw.subarray(32, 64));
-  return Buffer.concat([r, bigIntTo32(P256_ORDER_N - s)]);
+  let s = bufToBigInt(raw.subarray(32, 64));
+  if (s > P256_ORDER_N >> 1n) s = P256_ORDER_N - s; // normalize to low-S
+  return Buffer.concat([r, bigIntTo32(P256_ORDER_N - s)]); // reflect → always high-S
 }
 
 /**
