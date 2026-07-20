@@ -1,7 +1,26 @@
 import { FridayDomainError } from "#errors";
+import {
+  FRIDAY_SESSION_DEFAULT_ACCOUNT_ID,
+  normalizeFridaySessionKey,
+  parseFridaySessionKey,
+} from "#sessions";
+import type {
+  FridaySessionChatKind,
+  FridaySessionMessageRecord,
+  FridaySessionRecord,
+  FridaySessionRole,
+} from "#sessions";
 
 import type { FridayRustSessionLifecycleBridge } from "../http/routes/friday-session-routes.js";
-import type { FridaySessionRunResponse } from "../model/friday-api-session.types.js";
+import type {
+  FridaySessionCreateResponse,
+  FridaySessionMessageCreateResponse,
+  FridaySessionRunResponse,
+} from "../model/friday-api-session.types.js";
+import {
+  createFridayRustHubAgentRunSealedClient,
+  type FridayRustHubAgentRunSealedClient,
+} from "./friday-rust-hub-agent-run-ws-sealed-client.js";
 import {
   createFridayRustHubAgentRunSealedClientService,
   type CreateSealedClientFn,
@@ -33,15 +52,20 @@ import type { FridayRustAgentRunWsClientX25519SecretResolver } from "./friday-ru
  *   uses. It is NOT a mock — the low-level sealed client + readback are injectable ONLY as a
  *   test transport (a fake `createClient` / `readback` that maps/fail-closes WITHOUT a socket,
  *   exactly like the agent-run + mission-spine adapters' tests); the default is the real client.
- * - `createSession` / `appendMessage` / `getMemoryNamespace` are HONESTLY fail-closed (503).
- *   These are pure Hub STORAGE lifecycle ops with NO agent-run analog: the existing sealed-WS
- *   client exposes NO session-create / append-message / memory-namespace RPC, and the Rust hub
- *   server exposes NO matching handler. Building a "real" round-trip for them would require
- *   inventing a session-lifecycle wire protocol + a Rust server handler + a deploy — a
- *   LIVE/operator dependency out of scope for this agent-doable wiring slice. Rather than FAKE a
- *   success (a mock), this adapter surfaces the honest 503
- *   `RUST_SESSION_LIFECYCLE_PROTOCOL_UNAVAILABLE` and FLAGS the gap. When the Rust session
- *   lifecycle protocol ships, these become real round-trips here (the seam is already threaded).
+ * - `createSession` / `appendMessage` are now REAL (CR-3): they dispatch the CR-3 session-lifecycle
+ *   wire (`SessionCreateRequest` / `SessionMessageAppendRequest`) over the SAME low-level sealed
+ *   client ({@link createFridayRustHubAgentRunSealedClient}), whose Rust dispatch arms reuse the
+ *   EXISTING `ensure_session_with_owner` / owner-gated `append_session_message` storage primitives
+ *   (owner bound server-side to the authenticated principal; a foreign-owner append is refused →
+ *   the sealed client fails closed → 503). `createSession` derives the canonical session key with
+ *   the SAME `normalizeFridaySessionKey` the TS service uses (single source of truth), so the Rust
+ *   store keys on the identical id. Both receipts are REFS-ONLY (id + seq + timestamps); the
+ *   descriptive record fields are echoed from the caller's request (never a fabricated body).
+ * - `getMemoryNamespace` remains HONESTLY fail-closed (503). It is a pure owner-gated READ whose
+ *   faithful Rust port must replicate the TS effective-user-id resolution (DM-chatId fallback +
+ *   subagent parent-walk) to avoid a semantic-drift false-green; that parity proof is a bounded
+ *   follow-up. Rather than FAKE a namespace (a mock), this adapter surfaces the honest 503
+ *   `RUST_SESSION_LIFECYCLE_PROTOCOL_UNAVAILABLE` and FLAGS the gap.
  *
  * ## Construction seam (load-bearing for flag-OFF byte-identical)
  * SIDE-EFFECT-FREE: the factory captures host/port/timeout + resolver/createClient/readback seams
@@ -134,11 +158,87 @@ function sessionLifecycleProtocolUnavailable(op: string): FridayDomainError {
   );
 }
 
+type CreateSessionInput = Parameters<FridayRustSessionLifecycleBridge["createSession"]>[0];
+type AppendMessageInput = Parameters<FridayRustSessionLifecycleBridge["appendMessage"]>[0];
+
+/** ms → ISO-8601 for the response record timestamps (the Rust refs carry ms). */
+function msToIso(ms: number): string {
+  return new Date(ms).toISOString();
+}
+
+/**
+ * (CR-3) Build the {@link FridaySessionCreateResponse} session RECORD from the caller's request +
+ * the Rust REFS-ONLY receipt. AUTHORITATIVE facts (canonical `key`, `createdAt`/`updatedAt`) come
+ * from the derived key + Rust timestamps; the DESCRIPTIVE axes are the canonical parse of the key
+ * (channel/account/chat) plus the caller's echoed `userId`/`chatKind`/`metadata`. A fresh session
+ * has `messageCount: 0` and zero context tokens (honest — no turn has run).
+ */
+function buildSessionRecord(
+  sessionKey: string,
+  input: CreateSessionInput,
+  createdAtMs: number,
+  updatedAtMs: number,
+): FridaySessionRecord {
+  const parts = parseFridaySessionKey(sessionKey);
+  return {
+    id: sessionKey,
+    key: sessionKey,
+    channel: parts.channel ?? input.channel,
+    accountId: parts.accountId ?? input.accountId ?? FRIDAY_SESSION_DEFAULT_ACCOUNT_ID,
+    chatId: parts.chatId ?? input.chatId,
+    ...(input.userId !== undefined ? { userId: input.userId } : {}),
+    chatKind: (input.chatKind ?? "channel") as FridaySessionChatKind,
+    status: "active",
+    metadata: input.metadata ?? {},
+    contextInputTokens: 0,
+    contextOutputTokens: 0,
+    contextTotalTokens: 0,
+    messageCount: 0,
+    createdAt: msToIso(createdAtMs),
+    updatedAt: msToIso(updatedAtMs),
+  };
+}
+
+/**
+ * (CR-3) Build the {@link FridaySessionMessageCreateResponse} message RECORD from the caller's
+ * request + the Rust REFS-ONLY receipt. AUTHORITATIVE facts (`id`, `sequence`, timestamps) come from
+ * Rust; the body/role/tool-calls/metadata are the caller's echoed input (never a fabricated body).
+ * `memoryExtractStatus` starts `pending` (extraction is a later, separate loop).
+ */
+function buildMessageRecord(
+  input: AppendMessageInput,
+  contentText: string,
+  messageId: string,
+  seq: number,
+  createdAtMs: number,
+  updatedAtMs: number,
+): FridaySessionMessageRecord {
+  const createdIso = msToIso(createdAtMs);
+  return {
+    id: messageId,
+    sessionId: input.sessionKey,
+    sessionKey: input.sessionKey,
+    sequence: seq,
+    role: input.role as FridaySessionRole,
+    content: input.content,
+    contentText,
+    ...(input.toolCalls !== undefined ? { toolCalls: input.toolCalls } : {}),
+    tokenCount: input.tokenCount ?? 0,
+    ...(input.idempotencyKey !== undefined ? { idempotencyKey: input.idempotencyKey } : {}),
+    ...(input.parentMessageId !== undefined ? { parentMessageId: input.parentMessageId } : {}),
+    metadata: input.metadata ?? {},
+    memoryExtractStatus: "pending",
+    occurredAt: input.timestamp ?? createdIso,
+    createdAt: createdIso,
+    updatedAt: msToIso(updatedAtMs),
+  };
+}
+
 /**
  * Build the session-lifecycle dispatch ADAPTER the bootstrap injects into the runtime's
  * `rustSessionLifecycleBridge` dep when `FRIDAY_ROUTE_SESSIONS_VIA_RUST` is on. SIDE-EFFECT-FREE:
  * captures host/port/timeout + resolver/createClient/readback seams only; resolves no secret and
- * opens no socket until `runSession` actually runs on a real request.
+ * opens no socket until a lifecycle op actually runs on a real request.
  */
 export function createFridayRustHubSessionLifecycleDispatchAdapter(
   options: CreateFridayRustHubSessionLifecycleDispatchAdapterOptions,
@@ -160,14 +260,104 @@ export function createFridayRustHubSessionLifecycleDispatchAdapter(
       ...(options.createClient !== undefined ? { createClient: options.createClient } : {}),
     });
 
+  // (CR-3) The low-level sealed client factory for the CREATE/APPEND lifecycle round-trips (the SAME
+  // seam the mission/memory-spine adapters use). Default = the real sealed client. Constructed
+  // LAZILY per-call so the adapter stays side-effect-free (no secret resolved, no socket opened at
+  // construction). Tests inject a fake that maps/fail-closes WITHOUT a socket.
+  const createClient: CreateSealedClientFn = options.createClient ?? createFridayRustHubAgentRunSealedClient;
+
+  /**
+   * (CR-3) Resolve the X25519 secret + construct the low-level sealed client for one create/append
+   * round-trip. Fail-closed (503): a `null`/short resolve → no client; a constructor throw (non-32
+   * byte secret) → mapped to 503. NEVER logs the secret.
+   */
+  function buildLifecycleClient(): FridayRustHubAgentRunSealedClient {
+    const clientSecret = secretResolver();
+    if (!clientSecret) {
+      throw unavailable("Session lifecycle dispatch could not resolve the sealed-WS client secret.");
+    }
+    try {
+      return createClient({
+        ...(host !== undefined ? { host } : {}),
+        port,
+        clientSecret,
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      });
+    } catch {
+      throw unavailable("Session lifecycle dispatch could not construct the sealed-WS client.");
+    }
+  }
+
   return {
-    // ── Pure-storage lifecycle ops: HONEST fail-closed (no Rust RPC/handler yet). ──
-    async createSession(): Promise<never> {
-      throw sessionLifecycleProtocolUnavailable("sessions.create");
+    // ── CREATE: REAL — ensure the session row over the sealed-WS transport (owner bound server-side). ──
+    async createSession(input): Promise<FridaySessionCreateResponse> {
+      const ownerPrincipal = (input.principal.principalId ?? "").trim();
+      if (!ownerPrincipal) {
+        // The session owner is the authenticated principal; a blank one fails closed (no anon owner).
+        throw unavailable("Session create requires a bound owner principal.");
+      }
+      // Derive the canonical session key with the SAME normalizer the TS service uses (single source
+      // of truth) so the Rust store keys on the identical id.
+      const sessionKey = normalizeFridaySessionKey({
+        channel: input.channel,
+        chatId: input.chatId,
+        ...(input.userId !== undefined ? { userId: input.userId } : {}),
+        ...(input.accountId !== undefined ? { accountId: input.accountId } : {}),
+        ...(input.chatKind !== undefined ? { chatKind: input.chatKind } : {}),
+      });
+      const client = buildLifecycleClient();
+      let result;
+      try {
+        result = await client.createSession({
+          sessionId: sessionKey,
+          channel: input.channel,
+          chatId: input.chatId,
+          // The forwarded OWNER is the authenticated principal (the server binds it + FIX-Q3b-refuses
+          // a disagreeing value); the descriptive channel userId is echoed in the record below.
+          userId: ownerPrincipal,
+          ...(input.accountId !== undefined ? { accountId: input.accountId } : {}),
+          ...(input.chatKind !== undefined ? { chatKind: input.chatKind } : {}),
+          ...(input.metadata !== undefined ? { metadataJson: JSON.stringify(input.metadata) } : {}),
+        });
+      } catch (error) {
+        throw error instanceof FridayDomainError ? error : unavailable("Session create dispatch failed.");
+      }
+      return { session: buildSessionRecord(sessionKey, input, result.createdAt, result.updatedAt) };
     },
-    async appendMessage(): Promise<never> {
-      throw sessionLifecycleProtocolUnavailable("sessions.messages.create");
+
+    // ── APPEND: REAL — owner-gated message append over the sealed-WS transport. ──
+    async appendMessage(input): Promise<FridaySessionMessageCreateResponse> {
+      const ownerPrincipal = (input.principal.principalId ?? "").trim();
+      if (!ownerPrincipal) {
+        throw unavailable("Session append requires a bound owner principal.");
+      }
+      const role = (input.role ?? "").trim();
+      if (!role) {
+        throw unavailable("Session append requires a non-empty message role.");
+      }
+      // The Rust minimal store holds ONE string content body; serialize deterministically. Prefer the
+      // caller's `contentText`, else the string content, else a JSON-encoded structured content.
+      const contentText =
+        input.contentText ??
+        (typeof input.content === "string" ? input.content : JSON.stringify(input.content ?? ""));
+      const client = buildLifecycleClient();
+      let result;
+      try {
+        result = await client.appendSessionMessage({
+          sessionId: input.sessionKey,
+          role,
+          content: contentText,
+          ...(input.idempotencyKey !== undefined ? { refs: input.idempotencyKey } : {}),
+        });
+      } catch (error) {
+        throw error instanceof FridayDomainError ? error : unavailable("Session append dispatch failed.");
+      }
+      return {
+        message: buildMessageRecord(input, contentText, result.messageId, result.seq, result.createdAt, result.updatedAt),
+      };
     },
+
+    // ── Memory-namespace READ: HONEST fail-closed (Rust owner-gated port deferred; see module doc). ──
     async getMemoryNamespace(): Promise<never> {
       throw sessionLifecycleProtocolUnavailable("sessions.memory.namespace.get");
     },

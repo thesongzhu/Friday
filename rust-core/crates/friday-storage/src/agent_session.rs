@@ -259,6 +259,38 @@ pub fn session_exists(conn: &Connection, agent_session_id: &str) -> Result<bool>
     Ok(exists)
 }
 
+/// (CORE-A CR-3) A session's `(created_at, updated_at)` timestamps, or `None` when the session row
+/// is absent. Pure refs read (no body). The create receipt reads this back so it can report the
+/// row's ORIGINAL `created_at` (an idempotent re-ensure keeps `created_at` and only bumps
+/// `updated_at`) rather than guessing `now_ms`. `.optional()` maps ONLY the no-row case to `None`
+/// and propagates any real storage error.
+pub fn session_timestamps(
+    conn: &Connection,
+    agent_session_id: &str,
+) -> Result<Option<(i64, i64)>> {
+    let row = conn
+        .query_row(
+            "SELECT created_at, updated_at FROM agent_session WHERE agent_session_id = ?1",
+            [agent_session_id],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .optional()?;
+    Ok(row)
+}
+
+/// (CORE-A CR-3) PUBLIC fail-closed owner check: whether the session exists AND is owned by exactly
+/// `user_id` (the `agent_session.user_id` axis bound to the authenticated caller). Thin wrapper over
+/// the private [`owner_matches`] so the Hub session-append dispatch arm can OWNER-GATE without
+/// duplicating the check: a blank `user_id`, an absent session, an owner-less (NULL `user_id`)
+/// session, or a DIFFERENT owner all return `false`.
+pub fn session_owner_matches(
+    conn: &Connection,
+    user_id: &str,
+    agent_session_id: &str,
+) -> Result<bool> {
+    owner_matches(conn, user_id, agent_session_id)
+}
+
 /// Append one conversation message to a session, returning the assigned
 /// `message_id`. The `seq` is assigned as `max(seq) + 1` for the session (0 for the
 /// first message), computed and inserted in ONE transaction so concurrent appends

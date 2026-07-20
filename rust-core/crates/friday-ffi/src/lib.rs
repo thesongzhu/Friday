@@ -2026,6 +2026,13 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         // stays exhaustive.
         M::MemoryDecisionRequest { .. } => "MemoryDecisionRequest",
         M::MemoryDecisionResult { .. } => "MemoryDecisionResult",
+        // (CORE-A CR-3) Session create/append lifecycle. DARK on the FFI surface (nothing here
+        // constructs or dispatches them — they ride the FLAGLESS sealed-WS agent-run server arms);
+        // NAMED so unsupported envelopes keep the real kind and this match stays exhaustive.
+        M::SessionCreateRequest { .. } => "SessionCreateRequest",
+        M::SessionCreateResult { .. } => "SessionCreateResult",
+        M::SessionMessageAppendRequest { .. } => "SessionMessageAppendRequest",
+        M::SessionMessageAppendResult { .. } => "SessionMessageAppendResult",
         // A1 run-outcome learning terminal decision arm. DARK on the FFI surface (the owner-authed
         // decision rides the sealed-WS agent-run server arm gated by
         // FRIDAY_RUN_OUTCOME_LEARNING_CONFIRM); NAMED so unsupported envelopes keep the real kind.

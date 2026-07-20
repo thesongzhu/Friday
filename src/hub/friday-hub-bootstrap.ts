@@ -968,15 +968,20 @@ export function resolveFridayCanonicalMutatingActionGate(
  * and, only as a fallback, (2) the `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` env var — the operator
  * knob that lets the Rust read-only execrun route be flipped WITHOUT a source edit.
  *
- * PRECEDENCE: an explicit config boolean (true OR false) ALWAYS wins; the env is consulted
- * ONLY when config does not specify (the previously-unsettable gap). This preserves the
- * prior `config.routeAgentRunViaRust` precedence exactly.
+ * PRECEDENCE: an explicit config boolean (true OR false) ALWAYS wins; then an EXPLICIT env token
+ * (`1|true|0|false`); ONLY when BOTH config AND env are unset does the RELEASE-DEFAULT apply.
  *
- * PARSE (fail-safe OFF): case-insensitive, trimmed `"1"` or `"true"` ⇒ true; ABSENT, `""`,
- * `"0"`, `"false"`, or ANY other value ⇒ false. DEFAULT (env unset, config unset) ⇒ false,
- * so the downstream `deps.routeAgentRunViaRust === true` gate stays off → byte-identical to
- * today's fail-closed 503. Intentionally NARROWER than the canonical-gate true-set
- * (no yes/on/enabled) so any ambiguity resolves OFF.
+ * PARSE: case-insensitive, trimmed `"1"`/`"true"` ⇒ true; `"0"`/`"false"` ⇒ false (an explicit
+ * off — the operator KILL-SWITCH that forces the TS/mock lane even on a release build). ABSENT
+ * (`""`) or any UNRECOGNIZED value falls through to the RELEASE-DEFAULT.
+ *
+ * RELEASE-DEFAULT (R14, CR-3): when config AND env are both unset, the value is
+ * {@link isFridayCanonicalGateProtectedProfile} — i.e. a release/production build (NODE_ENV=production
+ * OR FRIDAY_RELEASE_TAG set) routes the agent run to the Rust path with NO flag (the FLAGLESS
+ * production-default the R14 finding requires), while dev/test (an unprotected profile) stays OFF →
+ * byte-identical to today's fail-closed 503 for the default dev/test lane. Fail-closed downstream is
+ * preserved: a release build with the Rust transport ABSENT surfaces the transport's 503, never a
+ * silent TS fallback.
  *
  * The sibling `FRIDAY_HUB_AGENT_RUN_*` knobs (WS host/port, DB path) are read and documented
  * at the deps/runtime construction point in `friday-api-runtime.ts`; this flag's resolve +
@@ -986,12 +991,19 @@ export function resolveRouteAgentRunViaRust(
   configValue: boolean | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  // Config explicit (true OR false) wins — env is the fallback for the unset gap only.
+  // Config explicit (true OR false) wins — then explicit env, then the release-default.
   if (typeof configValue === "boolean") {
     return configValue;
   }
   const raw = (env.FRIDAY_ROUTE_AGENT_RUN_VIA_RUST ?? "").trim().toLowerCase();
-  return raw === "1" || raw === "true";
+  if (raw === "1" || raw === "true") {
+    return true;
+  }
+  if (raw === "0" || raw === "false") {
+    return false;
+  }
+  // Both config AND env unset ⇒ FLAGLESS release-default (R14): route to Rust on a protected profile.
+  return isFridayCanonicalGateProtectedProfile(env);
 }
 
 /**
@@ -1001,22 +1013,34 @@ export function resolveRouteAgentRunViaRust(
  * run route be flipped WITHOUT a source edit.
  *
  * PRECEDENCE + PARSE MIRROR {@link resolveRouteAgentRunViaRust} EXACTLY: an explicit config boolean
- * (true OR false) ALWAYS wins; the env is consulted ONLY when config does not specify. Case-
- * insensitive, trimmed `"1"` or `"true"` ⇒ true; ABSENT / `""` / `"0"` / `"false"` / ANY other
- * value ⇒ false. DEFAULT (both unset) ⇒ false, so the runtime threads NO `rustSessionLifecycleBridge`
- * and the session routes stay byte-identical to today's fail-closed 503. Intentionally NARROWER than
- * the canonical-gate true-set so any ambiguity resolves OFF.
+ * (true OR false) ALWAYS wins; then an EXPLICIT env token (`"1"`/`"true"` ⇒ true; `"0"`/`"false"` ⇒
+ * false — the operator KILL-SWITCH that forces the TS/mock lane even on a release build); ONLY when
+ * BOTH config AND env are unset does the RELEASE-DEFAULT apply.
+ *
+ * RELEASE-DEFAULT (R14, CR-3): both-unset resolves to {@link isFridayCanonicalGateProtectedProfile}
+ * — a release/production build (NODE_ENV=production OR FRIDAY_RELEASE_TAG) routes sessions to the
+ * Rust path with NO flag (FLAGLESS), threading a REAL `rustSessionLifecycleBridge`; a dev/test
+ * (unprotected) profile stays OFF so the session routes remain byte-identical to today's fail-closed
+ * 503 (the CR-0 baseline). Fail-closed is preserved: a release build with the Rust Hub transport
+ * ABSENT surfaces the transport's 503 per call (the retired TS session path is NOT silently served).
  */
 export function resolveRouteSessionsViaRust(
   configValue: boolean | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  // Config explicit (true OR false) wins — env is the fallback for the unset gap only.
+  // Config explicit (true OR false) wins — then explicit env, then the release-default.
   if (typeof configValue === "boolean") {
     return configValue;
   }
   const raw = (env.FRIDAY_ROUTE_SESSIONS_VIA_RUST ?? "").trim().toLowerCase();
-  return raw === "1" || raw === "true";
+  if (raw === "1" || raw === "true") {
+    return true;
+  }
+  if (raw === "0" || raw === "false") {
+    return false;
+  }
+  // Both config AND env unset ⇒ FLAGLESS release-default (R14): route to Rust on a protected profile.
+  return isFridayCanonicalGateProtectedProfile(env);
 }
 
 /**
