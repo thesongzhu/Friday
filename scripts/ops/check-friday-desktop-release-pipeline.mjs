@@ -337,6 +337,84 @@ function runDesktopGuiSmokeContractCheck(repoRoot) {
   };
 }
 
+/**
+ * CORE-A round-3 Lane C (finding #4): static contract that the release artifacts PACKAGE the Rust
+ * agent-run WS server (both bins + the launchd plist template) and that the installer LAUNCHES +
+ * ENROLLS it. Before this, the DMG / source-dist / installer had ZERO hub_agent_run refs, so a clean
+ * install shipped no Rust server and every agent-run / session create+append hit a fail-closed 503.
+ */
+function rustAgentRunPackagingContractChecks(repoRoot) {
+  const readText = (rel) => {
+    const abs = path.join(repoRoot, rel);
+    return fs.existsSync(abs) ? fs.readFileSync(abs, "utf8") : null;
+  };
+  const check = (label, target, ok, detail) => ({
+    kind: "rust-agent-run-packaging-contract",
+    label,
+    target,
+    status: ok ? "passed" : "failed",
+    ...(ok ? {} : { stderr: detail ?? "contract assertion failed" }),
+  });
+  const containsAll = (text, tokens) => text != null && tokens.every((t) => text.includes(t));
+
+  const stagingHelperRel = "scripts/ops/launchd/stage-rust-agent-run-ws-server-payload.sh";
+  const plistRel = "scripts/ops/launchd/com.friday.rust-agent-run-ws-server.plist";
+  const dmgRel = "scripts/ops/build-friday-companion-dmg.sh";
+  const srcDistRel = "scripts/ops/build-friday-source-distribution.sh";
+  const installerRel = "scripts/ops/install-friday-launchagent.sh";
+
+  const stagingHelper = readText(stagingHelperRel);
+  const plist = readText(plistRel);
+  const dmg = readText(dmgRel);
+  const srcDist = readText(srcDistRel);
+  const installer = readText(installerRel);
+
+  return [
+    check(
+      "Rust agent-run plist template pins the server args",
+      plistRel,
+      containsAll(plist, ["__RUST_SERVER_BIN__", "--workspace", "--db", "--port", "--owner", "--store-dir"]),
+      "the launchd plist template must pin --workspace/--db/--port/--owner/--store-dir",
+    ),
+    check(
+      "Staging helper builds both bins + stages the plist + writes a manifest",
+      stagingHelperRel,
+      containsAll(stagingHelper, [
+        "cargo build --release --bin",
+        "hub_agent_run_server",
+        "hub_agent_run_enroll",
+        "PLIST_TEMPLATE",
+        "payload-manifest.json",
+      ]),
+      "the staging helper must cargo-build both bins, stage the plist template, and write payload-manifest.json",
+    ),
+    check(
+      "DMG build stages the Rust agent-run payload",
+      dmgRel,
+      containsAll(dmg, ["stage-rust-agent-run-ws-server-payload.sh"]),
+      "build-friday-companion-dmg.sh must invoke the Rust agent-run staging helper",
+    ),
+    check(
+      "Source distribution stages the Rust agent-run payload",
+      srcDistRel,
+      containsAll(srcDist, ["stage-rust-agent-run-ws-server-payload.sh"]),
+      "build-friday-source-distribution.sh must invoke the Rust agent-run staging helper",
+    ),
+    check(
+      "Installer launches + enrolls the Rust agent-run WS server",
+      installerRel,
+      containsAll(installer, [
+        "com.friday.rust-agent-run-ws-server",
+        "hub_agent_run_enroll",
+        "launchctl bootstrap",
+        "plutil -lint",
+        "master.key",
+      ]),
+      "install-friday-launchagent.sh must fill+lint the plist, enroll the peer, and launchctl bootstrap the WS server label",
+    ),
+  ];
+}
+
 const repoRoot = resolveRepoRoot();
 const pkg = readPackageJson(repoRoot);
 
@@ -375,6 +453,10 @@ const checks = [
     ["apps/friday-android/build-emu.sh", "Android emulator build script"],
     ["scripts/ops/check-friday-companion-release-env.sh", "Companion release env check"],
     ["scripts/ops/build-friday-companion-dmg.sh", "DMG build script"],
+    ["scripts/ops/build-friday-source-distribution.sh", "Source distribution build script"],
+    ["scripts/ops/launchd/stage-rust-agent-run-ws-server-payload.sh", "Rust agent-run WS server packaging staging helper"],
+    ["scripts/ops/launchd/com.friday.rust-agent-run-ws-server.plist", "Rust agent-run WS server launchd plist template"],
+    ["scripts/ops/launchd/build-and-install-rust-agent-run-ws-server.sh", "Rust agent-run WS server cutover tool"],
     ["scripts/ops/build-friday-sparkle-appcast.sh", "Sparkle appcast build script"],
     ["scripts/ops/publish-friday-homebrew-cask.sh", "Homebrew publication script"],
     ["scripts/ops/write-friday-release-manifest.mjs", "Release manifest generator"],
@@ -418,6 +500,7 @@ const checks = [
   runNativeActionClosureCheck(repoRoot),
   runIosDesignDestinationCaptureContractCheck(repoRoot),
   runDesktopGuiSmokeContractCheck(repoRoot),
+  ...rustAgentRunPackagingContractChecks(repoRoot),
   ...artifactFreshnessChecks(repoRoot),
 ];
 

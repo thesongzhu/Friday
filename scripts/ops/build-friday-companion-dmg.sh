@@ -115,6 +115,18 @@ mkdir -p "${OUTPUT_DIR}"
 cp -R "${APP_DIR}" "${STAGING_DIR}/FridayCompanion.app"
 ln -s /Applications "${STAGING_DIR}/Applications"
 
+# CORE-A round-3 Lane C (finding #4): stage the Rust agent-run WS server payload —
+# both bins (hub_agent_run_server + hub_agent_run_enroll), the launchd plist TEMPLATE,
+# the fill/enroll/launch cutover tool, and a payload-manifest.json — into the DMG (a
+# top-level rust-agent-run/ folder; kept OUT of the signed .app bundle so it does not
+# invalidate the app signature). The release runtime routes a qualifying agent-run /
+# session create+append to this loopback sealed-WS server; TS startRun is retired to a
+# fail-closed 503 with NO silent fallback. Before this, the DMG carried ZERO Rust
+# server, so a clean install hit 503 on every run. install-friday-launchagent.sh
+# consumes the staged payload to install + enroll + launch the 4th launch agent.
+bash "${REPO_DIR}/scripts/ops/launchd/stage-rust-agent-run-ws-server-payload.sh" \
+  --repo-dir "${REPO_DIR}" --dest-dir "${STAGING_DIR}" >/dev/null
+
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "${APP_DIR}" "${ZIP_PATH}"
 /usr/bin/hdiutil create \
   -quiet \

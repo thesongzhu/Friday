@@ -37,6 +37,19 @@ trap cleanup EXIT
 PACKAGE_TGZ="$("${NPM_BIN}" pack --ignore-scripts --silent --pack-destination "${PACK_TEMP_DIR}" "${REPO_DIR}" | tail -n 1 | tr -d '\r')"
 mv "${PACK_TEMP_DIR}/${PACKAGE_TGZ}" "${OUTPUT_DIR}/${PACKAGE_TGZ}"
 
+# CORE-A round-3 Lane C (finding #4): the cross-platform npm tarball cannot embed the
+# arch-specific Rust agent-run WS server, so stage the server payload — both bins
+# (hub_agent_run_server + hub_agent_run_enroll), the launchd plist TEMPLATE, the
+# fill/enroll/launch cutover tool, and a payload-manifest.json — as a SIBLING release
+# artifact (dist/releases/source/rust-agent-run/) next to the tgz. The release runtime
+# routes a qualifying agent-run / session create+append to this loopback sealed-WS
+# server; TS startRun is retired to a fail-closed 503 with NO silent fallback. Before
+# this, the source distribution shipped ZERO Rust server, so a clean install hit 503 on
+# every run. install-friday-launchagent.sh consumes the staged payload to install +
+# enroll + launch the server.
+bash "${REPO_DIR}/scripts/ops/launchd/stage-rust-agent-run-ws-server-payload.sh" \
+  --repo-dir "${REPO_DIR}" --dest-dir "${OUTPUT_DIR}" >/dev/null
+
 ARTIFACT_PATH="${OUTPUT_DIR}/${PACKAGE_TGZ}"
 DOWNLOAD_BASE_URL="${FRIDAY_RELEASE_DOWNLOAD_BASE_URL:-https://github.com/thesongzhu/Friday/releases/download/v${VERSION}}"
 
