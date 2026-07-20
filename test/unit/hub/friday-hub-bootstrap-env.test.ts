@@ -5,6 +5,7 @@ import {
   resolveFridayCanonicalMutatingActionGate,
   resolveFridayHubConfig,
   resolveRouteAgentRunViaRust,
+  resolveRouteSessionsViaRust,
   resolveRouteMissionSpineViaRust,
   resolveRouteMemorySpineViaRust,
   resolveRouteRunOutcomeLearningViaRust,
@@ -428,6 +429,38 @@ describe("resolveRouteAgentRunViaRust", () => {
     expect(resolveRouteAgentRunViaRust(false, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "1" })).toBe(false);
     expect(resolveRouteAgentRunViaRust(false, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "true" })).toBe(false);
     expect(resolveRouteAgentRunViaRust(false, emptyEnv())).toBe(false);
+  });
+});
+
+describe("resolveRouteSessionsViaRust (CORE-A CR-3 session bridge flag)", () => {
+  // DEFAULT-OFF: env unset → false → the runtime threads no session bridge → today's fail-closed 503.
+  it("defaults to false when neither config nor env is set", () => {
+    expect(resolveRouteSessionsViaRust(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("parses FRIDAY_ROUTE_SESSIONS_VIA_RUST=1 / =true (case-insensitive, trimmed) as true", () => {
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "1" })).toBe(true);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "true" })).toBe(true);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "TRUE" })).toBe(true);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "  True  " })).toBe(true);
+  });
+
+  // Fail-safe OFF: everything that is not exactly "1"/"true" → false (NARROWER than the canonical gate).
+  it("treats 0, false, empty, and garbage env values as false (fail-safe off)", () => {
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "0" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "false" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "yes" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "on" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "enabled" })).toBe(false);
+  });
+
+  // PRECEDENCE: an explicit config boolean ALWAYS wins over the env (the discriminating false case).
+  it("uses explicit config over the env (config true beats env false; config false beats env true)", () => {
+    expect(resolveRouteSessionsViaRust(true, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "false" })).toBe(true);
+    expect(resolveRouteSessionsViaRust(true, emptyEnv())).toBe(true);
+    expect(resolveRouteSessionsViaRust(false, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "1" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(false, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "true" })).toBe(false);
   });
 });
 

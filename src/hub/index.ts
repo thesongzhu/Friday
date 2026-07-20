@@ -39,6 +39,7 @@ export {
   resolveFridayHubConfig,
   resolveAgentRunControlViaRust,
   resolveRouteAgentRunViaRust,
+  resolveRouteSessionsViaRust,
   resolveRouteMissionSpineViaRust,
   resolveRouteMemorySpineViaRust,
   resolveRouteRunOutcomeLearningViaRust,
