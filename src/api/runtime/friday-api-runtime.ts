@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import type { Socket as NodeNetSocket } from "node:net";
 import type Database from "better-sqlite3";
 
 import { FridayDomainError } from "#errors";
@@ -59,6 +60,17 @@ import type {
 } from "./friday-api-runtime.types.js";
 import { createFridayAuthService } from "../auth/friday-auth-service.js";
 import { isFridayCanonicalGateProtectedProfile } from "../../hub/friday-hub-bootstrap.js";
+import {
+  createAbsentNativePeerAttestationProvider,
+  createMacosCodesignPeerVerifier,
+  verifyNativePeerAttestation,
+} from "../../security/attestation/friday-native-peer-attestation-verifier.js";
+import { createMacosSecureEnclaveKeyCustodyProvider, resolveDeviceKeyProtection } from "../../security/attestation/friday-native-key-custody-provider.js";
+import {
+  deriveNativeOwnerExchangeConnectionId,
+  mintVerifiedNativeOwnerClaimContext,
+  type NativeOwnerClaimContextResolver,
+} from "../../security/attestation/friday-verified-native-owner-claim-context.js";
 import { createFridayTokenValidator } from "../auth/friday-token-validator.js";
 import { createFridayRateLimitService } from "../auth/friday-rate-limit-service.js";
 import { createFridayAuthMiddlewareFactory } from "../auth/friday-auth-middleware.js";
@@ -1962,6 +1974,83 @@ async function composeRustReadOnlyAgentRun(args: {
   };
 }
 
+// ─── CR-1 Option C: DEFAULT native-owner claim wiring (SEC-NATIVE-*-001) ───
+//
+// The pinned code-sign identity a genuine owner-device release binary must carry.
+// On this UNSIGNED source/dev/CI tree it is inert (attestation is honestly absent, so
+// the mint is never reached); a signed release supplies the real signing identity (and
+// a real LOCAL_PEERCRED provider) from its build/signing slice. It is NEVER a way to
+// forge authority — the capability brand + `attested:true` requirement make that
+// impossible, and `NATIVE_IPC_ATTESTATION_AVAILABLE` stays `false`.
+const RELEASE_OWNER_DEVICE_CODESIGN_IDENTITY = "com.friday.owner-device.release";
+
+/**
+ * The DEFAULT native-owner claim resolver the runtime passes to the auth service when
+ * a caller injects none. It runs the REAL CR-4 pipeline — the macOS codesign peer
+ * verifier + the native LOCAL_PEERCRED provider + Secure-Enclave key custody →
+ * `mintVerifiedNativeOwnerClaimContext`. On this source/dev/CI tree there is NO AF_UNIX
+ * peer connection and NO native addon, so the peer provider is honestly ABSENT →
+ * `verifyNativePeerAttestation` is `attested:false` → NOTHING is minted (device
+ * claim/login fail closed). A signed release replaces the peer provider with a real
+ * LOCAL_PEERCRED reader and drives this from the Companion Unix-socket accept boundary
+ * (per native connection, not per HTTP request). It fakes nothing and reads no
+ * request/env fact for a POSITIVE (the only env input is the kill switch, honoured by
+ * the mint).
+ */
+function createReleaseNativeOwnerClaimResolver(env: NodeJS.ProcessEnv): NativeOwnerClaimContextResolver {
+  const codesignVerifier = createMacosCodesignPeerVerifier();
+  // Honest-absent on this tree (no getsockopt(LOCAL_PEERCRED) addon) → returns null.
+  const peerProvider = createAbsentNativePeerAttestationProvider();
+  const custodyProvider = createMacosSecureEnclaveKeyCustodyProvider();
+  return (binding) => {
+    const attestation = verifyNativePeerAttestation({
+      provider: peerProvider,
+      codesignVerifier,
+      expectedReleaseIdentity: RELEASE_OWNER_DEVICE_CODESIGN_IDENTITY,
+      // No live native peer socket in the HTTP runtime on this tree; the absent
+      // provider ignores it and returns null (→ attested:false). A signed release
+      // supplies the accepted native connection here.
+      socket: undefined as unknown as NodeNetSocket,
+    });
+    if (!attestation.attested || !attestation.peerCredential) {
+      return null;
+    }
+    const keyProtection = resolveDeviceKeyProtection(custodyProvider, binding.devicePublicKeyHash);
+    const result = mintVerifiedNativeOwnerClaimContext({
+      attestation,
+      keyProtection,
+      binding,
+      evidence: {
+        osUid: attestation.peerCredential.uid,
+        peerPid: attestation.peerCredential.pid,
+        acceptedConnectionId: deriveNativeOwnerExchangeConnectionId(binding),
+        auditTokenIdentity: attestation.codesignIdentity ?? "",
+        codesignIdentity: attestation.codesignIdentity ?? "",
+      },
+      policy: {
+        expectedReleaseIdentity: RELEASE_OWNER_DEVICE_CODESIGN_IDENTITY,
+        expectedArtifactRole: binding.artifactRole,
+      },
+      env,
+    });
+    return result.ok ? result.capability : null;
+  };
+}
+
+/**
+ * The DEFAULT native device-claim SURFACE presence signal for
+ * `getBootstrapStatus().deviceClaimAvailable` (UI routing ONLY — it authorizes
+ * nothing). Present ONLY on a RELEASE profile running on macOS (where a signed release
+ * WOULD ship the native accept boundary); honestly FALSE on dev/CI (non-release) so the
+ * UI keeps the passphrase gate. HONESTY: on a release macOS tree the surface may be
+ * `true` (UI shows the device gate) while the per-claim capability stays UNMINTABLE on
+ * an UNSIGNED build (`attested:true` unreachable) — that is the honest state; it is
+ * never faked, and it is a presence signal, NOT authority.
+ */
+function createReleaseNativeOwnerClaimSurfaceSignal(env: NodeJS.ProcessEnv): () => boolean {
+  return () => isFridayCanonicalGateProtectedProfile(env) && process.platform === "darwin";
+}
+
 export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): FridayApiRuntime {
   const accessTokenTtlSec = deps.accessTokenTtlSec ?? DEFAULT_ACCESS_TTL;
   const refreshTokenTtlSec = deps.refreshTokenTtlSec ?? DEFAULT_REFRESH_TTL;
@@ -2097,12 +2186,16 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
   });
 
-  // CR-1 Option C native-owner claim wiring. F2 seam: an injected resolver/surface
-  // (tests, or a future signed-release native boundary) overrides the auth service's
-  // honest-absent defaults. When absent, the auth service keeps its own honest-absent
-  // defaults (device claim/login fail closed; surface false → passphrase gate).
-  const nativeOwnerClaimResolver = deps.resolveNativeOwnerClaimContext;
-  const nativeOwnerClaimSurfaceAvailable = deps.nativeOwnerClaimSurfaceAvailable;
+  // CR-1 Option C native-owner claim wiring (F1). An injected resolver/surface (tests,
+  // or a future signed-release native boundary) overrides the runtime DEFAULTS. The
+  // defaults run the REAL macOS attestation pipeline (honest-ABSENT on this unsigned
+  // tree → device claim/login fail closed) and gate the surface on a release macOS
+  // profile (honest-FALSE on dev/CI → the UI keeps the passphrase gate). Nothing is
+  // faked; NATIVE_IPC_ATTESTATION_AVAILABLE stays `false`.
+  const nativeOwnerClaimResolver =
+    deps.resolveNativeOwnerClaimContext ?? createReleaseNativeOwnerClaimResolver(process.env);
+  const nativeOwnerClaimSurfaceAvailable =
+    deps.nativeOwnerClaimSurfaceAvailable ?? createReleaseNativeOwnerClaimSurfaceSignal(process.env);
 
   const authService = createFridayAuthService({
     db: deps.db,
@@ -2129,10 +2222,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     // defaults (resolver returns null → every device owner-claim/login fails closed;
     // surface false → the UI keeps the passphrase gate). This never fabricates
     // authority and never flips NATIVE_IPC_ATTESTATION_AVAILABLE.
-    ...(nativeOwnerClaimResolver ? { resolveNativeOwnerClaimContext: nativeOwnerClaimResolver } : {}),
-    ...(nativeOwnerClaimSurfaceAvailable
-      ? { nativeOwnerClaimSurfaceAvailable }
-      : {}),
+    resolveNativeOwnerClaimContext: nativeOwnerClaimResolver,
+    nativeOwnerClaimSurfaceAvailable,
     // On a fresh RELEASE profile, passphrase bootstrap is retired (device-native
     // only) per finding #6; dev/CI keeps it (non-release profile).
     releaseProfileNativeOnly: () => isFridayCanonicalGateProtectedProfile(process.env),
