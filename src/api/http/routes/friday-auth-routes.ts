@@ -10,6 +10,8 @@ import type {
   FridayAuthDeviceClaimResponse,
   FridayAuthDeviceReadbackRequest,
   FridayAuthDeviceReadbackResponse,
+  FridayAuthLoginChallengeRequest,
+  FridayAuthLoginChallengeResponse,
   FridayAuthMeResponse,
   FridayAuthMigrateChallengeRequest,
   FridayAuthMigrateChallengeResponse,
@@ -113,6 +115,42 @@ export function createFridayAuthRoutes(
           action: typeof body.action === "string" ? body.action : undefined,
         };
         return deps.authService.issueBootstrapChallenge(request, ctx.ip);
+      },
+    },
+    {
+      operationId: "auth.login.challenge",
+      method: "POST",
+      path: "/v1/auth/login/challenge",
+      // SEC-SETUP-BOOTSTRAP-001 (CR-1 · Advisor #1628 finding #2): device-key LOGIN
+      // challenge leg. Mints a single-use `device_login_challenge` nonce bound to the
+      // device (deviceId + devicePublicKeyHash) + origin so the login proof-of-
+      // possession is NOT replayable. authService.issueLoginChallenge enforces (a)
+      // loopback-only ingress and (b) required-field presence before any side effect;
+      // it does NOT gate on ownership (like auth.bootstrap.challenge). Only the nonce
+      // HASH is persisted; the raw nonce is returned once. Expired/unconsumed nonces
+      // are reaped by the bounded retention sweep, so this route cannot grow the
+      // ledger unbounded. Same public-first-run posture + rate-limit as the bootstrap
+      // challenge; the AUTHORITATIVE single-use gate is the CAS-consume at login.
+      auth: { public: true, allowUnauthenticatedMutation: true },
+      rateLimitPolicyId: "auth.login",
+      async handler(ctx): Promise<FridayAuthLoginChallengeResponse> {
+        const body = ctx.body as Record<string, unknown> | null;
+        if (!body || typeof body !== "object") {
+          throw new FridayDomainError(
+            "VALIDATION_ERROR",
+            "Request body is required",
+            { httpStatus: 400 },
+          );
+        }
+        const request: FridayAuthLoginChallengeRequest = {
+          installId: typeof body.installId === "string" ? body.installId : "",
+          osUser: typeof body.osUser === "string" ? body.osUser : "",
+          origin: typeof body.origin === "string" ? body.origin : "",
+          deviceId: typeof body.deviceId === "string" ? body.deviceId : "",
+          devicePublicKey: typeof body.devicePublicKey === "string" ? body.devicePublicKey : "",
+          action: typeof body.action === "string" ? body.action : undefined,
+        };
+        return deps.authService.issueLoginChallenge(request, ctx.ip);
       },
     },
     {
@@ -317,6 +355,15 @@ export function createFridayAuthRoutes(
           password: typeof body.password === "string" ? body.password : undefined,
           localPassphrase: typeof body.localPassphrase === "string" ? body.localPassphrase : undefined,
           rememberMe: typeof body.rememberMe === "boolean" ? body.rememberMe : undefined,
+          // SEC-SETUP-BOOTSTRAP-001 (CR-1): device-key login fields. The presence
+          // of deviceLoginProof selects the device path in authService.login; the
+          // auth SERVICE defensively validates the untrusted proof envelope and
+          // fails closed on anything malformed (and requires device-owner authority
+          // to be enabled before minting a session).
+          devicePublicKey: typeof body.devicePublicKey === "string" ? body.devicePublicKey : undefined,
+          deviceId: typeof body.deviceId === "string" ? body.deviceId : undefined,
+          origin: typeof body.origin === "string" ? body.origin : undefined,
+          deviceLoginProof: body.deviceLoginProof as FridayLoginRequest["deviceLoginProof"],
         };
         return deps.authService.login(request, ctx.ip, ctx.userAgent);
       },

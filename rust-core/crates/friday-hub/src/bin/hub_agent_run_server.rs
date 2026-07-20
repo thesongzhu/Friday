@@ -2282,6 +2282,58 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
                 processed += 1;
             }
+            // (CORE-A CR-3) SESSION-CREATE dispatch — FLAGLESS (always-on). An inbound
+            // `SessionCreateRequest` ensures ONE `agent_session` row via the EXISTING
+            // `friday_hub::hub_server::session_create_result_for_db` — owner bound to the Rust-derived
+            // AUTHENTICATED owner (`runtime.policy().principal_id()` == the configured `--owner`),
+            // FIX-Q3b fail-closed on a disagreeing body owner — and replies with a refs-only
+            // `SessionCreateResult` (or an `Error`). PURE `&Db` mutation: NO provider/model call, ZERO
+            // `token_ledger` rows; the sealed session IS the channel auth (single-peer/single-owner
+            // SERVER invariant). **UNLIKE the DARK-first sibling arms above (mission-intake /
+            // memory-confirm) this arm is intentionally NOT flag-gated:** R14 requires a FLAGLESS
+            // production-default Rust session path, and `SessionCreateRequest` is a BRAND-NEW wire kind
+            // that no existing client constructs — so handling it always-on is BYTE-IDENTICAL for ALL
+            // existing traffic (the deploy-safety concern the sibling flags addressed for DARK-first
+            // wire-before-handler splits does not apply when wire + handler ship together).
+            Message::SessionCreateRequest { request } => {
+                let now_ms = now_ms();
+                let result = friday_hub::hub_server::session_create_result_for_db(
+                    runtime.db(),
+                    &env.msg_id,
+                    request,
+                    runtime.policy().principal_id(),
+                    now_ms,
+                );
+                eprintln!(
+                    "hub_agent_run_server_dispatch: msg_id={} leg=session_create (flagless)",
+                    env.msg_id
+                );
+                ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
+                processed += 1;
+            }
+            // (CORE-A CR-3) SESSION-MESSAGE-APPEND dispatch — FLAGLESS (always-on; same rationale as
+            // the session-create arm). An inbound `SessionMessageAppendRequest` appends ONE message
+            // via the EXISTING owner-gated `friday_hub::hub_server::session_message_append_result_for_db`
+            // — OWNER-GATED fail-closed against the Rust-derived AUTHENTICATED owner (a message for a
+            // session the authenticated principal does not own writes ZERO rows) — and replies with a
+            // refs-only `SessionMessageAppendResult` (or an `Error`). PURE `&Db` mutation: NO
+            // provider/model call, ZERO `token_ledger` rows.
+            Message::SessionMessageAppendRequest { request } => {
+                let now_ms = now_ms();
+                let result = friday_hub::hub_server::session_message_append_result_for_db(
+                    runtime.db(),
+                    &env.msg_id,
+                    request,
+                    runtime.policy().principal_id(),
+                    now_ms,
+                );
+                eprintln!(
+                    "hub_agent_run_server_dispatch: msg_id={} leg=session_message_append (flagless)",
+                    env.msg_id
+                );
+                ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
+                processed += 1;
+            }
             Message::ContextPassportTransferRequest { request }
                 if context_passport_transfer_enabled =>
             {

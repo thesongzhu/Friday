@@ -11,6 +11,8 @@ import type {
   FridayAuthDeviceClaimResponse,
   FridayAuthDeviceReadbackRequest,
   FridayAuthDeviceReadbackResponse,
+  FridayAuthLoginChallengeRequest,
+  FridayAuthLoginChallengeResponse,
   FridayAuthMeResponse,
   FridayAuthMigrateChallengeRequest,
   FridayAuthMigrateChallengeResponse,
@@ -26,8 +28,17 @@ import type {
   FridayRole,
 } from "../model/friday-api-auth.types.js";
 import type { FridayRateLimitService } from "./friday-rate-limit-service.types.js";
+import type { NativeOwnerClaimContextResolver } from "../../security/attestation/friday-verified-native-owner-claim-context.js";
 
 export interface FridayAuthService {
+  /**
+   * SEC-APPROVAL-AUTHORITY-001 · CORE-A CR-2 (Option B*): resolve the authenticated
+   * user's durable owner↔device binding SERVER-SIDE. Returns the bound device's
+   * sentinel hash (the `<hash>` in `users.password_hash = device-owner$v1$<hash>`)
+   * when the user is a device-claimed owner, else `null` (passphrase / unclaimed).
+   * Pure read; mints nothing and never changes token minting (`principalId=user.id`).
+   */
+  resolveBoundDeviceOwnerSentinelHash(userId: string): string | null;
   login(request: FridayLoginRequest, ip?: string, userAgent?: string): FridayLoginResponse;
   refresh(request: FridayRefreshRequest): FridayRefreshResponse;
   logout(request: FridayLogoutRequest, principal: FridayAuthPrincipal): FridayLogoutResponse;
@@ -46,6 +57,18 @@ export interface FridayAuthService {
     request: FridayAuthBootstrapChallengeRequest,
     ip?: string,
   ): FridayAuthBootstrapChallengeResponse;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 (CR-1 · Advisor #1628 finding #2): mint a single-use
+   * `device_login_challenge` nonce bound to the device (deviceId +
+   * devicePublicKeyHash) + origin + action for a device-key LOGIN. Returns the raw
+   * nonce ONCE; only its hash is persisted. deviceKeyLogin CAS-consumes it inside
+   * the same transaction that mints the session, so the login proof-of-possession
+   * is NOT replayable. Loopback-only.
+   */
+  issueLoginChallenge(
+    request: FridayAuthLoginChallengeRequest,
+    ip?: string,
+  ): FridayAuthLoginChallengeResponse;
   /**
    * SEC-SETUP-BOOTSTRAP-001: atomically claim the local owner slot by consuming
    * a single-use install nonce and binding a device public key. Replay-protected,
@@ -152,6 +175,36 @@ export interface CreateFridayAuthServiceDeps {
   ) => void;
   /** Optional rate limit service for auth lockout. */
   rateLimiter?: FridayRateLimitService;
+  /**
+   * CR-1 Option C: the SOLE device-owner authority is an OPAQUE, per-claim
+   * `VerifiedNativeOwnerClaimContext` resolved from the native IPC accept boundary
+   * for THIS request — NOT a global boolean. It is CONSUMED atomically with the
+   * bootstrap/login nonce CAS + owner/session write; a refusal (absent, drift,
+   * expiry, replay, connection substitution, kill-switch) produces ZERO state
+   * change. Defaults to {@link createAbsentNativeOwnerClaimResolver} — honestly
+   * absent on this unsigned dev/CI tree (returns null → every device claim/login
+   * fails closed). Production wires a resolver backed by the Companion Unix-socket
+   * peercred+codesign accept boundary; tests inject a resolver that runs the REAL
+   * mint over injected native-evidence doubles. The capability brand makes a
+   * forged request/env/test literal impossible, so no seam can fabricate authority.
+   */
+  resolveNativeOwnerClaimContext?: NativeOwnerClaimContextResolver;
+  /**
+   * CR-1 Option C: presence signal for `getBootstrapStatus().deviceClaimAvailable`
+   * ONLY. Reports whether the native device-claim SURFACE currently exists, WITHOUT
+   * minting or authorizing any later request. Defaults to `() => false` (no native
+   * surface on this tree). It must never be used to authorize a claim/login.
+   */
+  nativeOwnerClaimSurfaceAvailable?: () => boolean;
+  /**
+   * CR-1 Option C (finding #6): when `true` (a fresh RELEASE profile —
+   * `isFridayCanonicalGateProtectedProfile(env)`), passphrase bootstrap is NOT
+   * offered and there is NO silent fallback (device-native only). It gates ONLY
+   * the creation of a fresh passphrase owner; legacy passphrase LOGIN and
+   * migration/recovery stay available so legacy data remains usable for bounded
+   * recovery. Defaults to `() => false` (dev/CI: passphrase bootstrap allowed).
+   */
+  releaseProfileNativeOnly?: () => boolean;
   /** Optional audit hook for failed auth and lockout decisions. */
   auditAuthEvent?: (event: {
     type: "auth.login.failed" | "auth.login.locked_out";

@@ -893,6 +893,16 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         // provisional→active flip never touches password_hash and the device binding
         // still carries zero authority.
         "auth.migrate.device.readback",
+        // CORE-A CR-2: provider setup plan → owner-confirm handshake. Both public
+        // POST handlers unconditionally call requireProviderMutationOwnerPrincipalId
+        // at the top, which refuses the synthetic public principal via the same
+        // isUnauthenticatedPublicPrincipal guard used by assertBoundPrincipalForOperation
+        // (throws OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED / 401). This is a strictly
+        // stronger in-handler gate than the sibling providers.create/update/delete
+        // mutations (which rely only on the optional canonical-approval ticket and
+        // therefore remain in the unclassified reconciliation bucket).
+        "providers.plan",
+        "providers.plan.confirm",
       ]);
       // rate_limited_pending
       const RATE_LIMITED_PENDING: ReadonlySet<string> = new Set([
@@ -905,6 +915,11 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         // compare-and-set, under the auth.login rate-limit policy.
         "auth.bootstrap.challenge",
         "auth.bootstrap.device.claim",
+        // SEC-SETUP-BOOTSTRAP-001 (CR-1 · Advisor #1628 finding #2): the device-key
+        // LOGIN challenge. Same posture as auth.bootstrap.challenge — public loopback
+        // mutation gated by a localhost-only IP check + single-use device_login_challenge
+        // nonce (CAS-consumed atomically with the login mint), under auth.login rate limit.
+        "auth.login.challenge",
         "auth.login",
       ]);
       // public_low_risk

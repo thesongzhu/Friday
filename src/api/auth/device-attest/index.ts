@@ -50,3 +50,31 @@ export {
   ownerClaimTranscriptDigestHex,
   parseCanonicalP1363Signature,
 } from "./friday-owner-claim-transcript.js";
+
+// ─── SEC-APPROVAL-AUTHORITY-001 · CORE-A CR-2 — device-authored provider approval ───
+
+export type {
+  FridayProviderApprovalPoPVerifier,
+  ProviderApprovalDeviceProof,
+  ProviderApprovalPoPFailure,
+  ProviderApprovalPoPRejectReason,
+  ProviderApprovalPoPResult,
+  ProviderApprovalPoPSuccess,
+  ProviderApprovalPresentedPublicKey,
+  ProviderApprovalPresentedSignature,
+  ProviderApprovalSignatureAlgorithm,
+  ProviderApprovalTranscript,
+  ProviderApprovalTranscriptVersion,
+  VerifyProviderApprovalPossessionInput,
+} from "./friday-provider-approval-transcript.types.js";
+
+export {
+  PROVIDER_APPROVAL_ALGORITHM,
+  PROVIDER_APPROVAL_ALLOWED_ALGORITHMS,
+  PROVIDER_APPROVAL_ALLOWED_TRANSCRIPT_VERSIONS,
+  PROVIDER_APPROVAL_KIND,
+  PROVIDER_APPROVAL_TRANSCRIPT_VERSION,
+  createFridayProviderApprovalPoPVerifier,
+  encodeProviderApprovalTranscript,
+  providerApprovalTranscriptDigestHex,
+} from "./friday-provider-approval-transcript.js";

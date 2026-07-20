@@ -2825,7 +2825,7 @@ export function createFridayProviderService(
       );
     },
 
-    async createProvider(input) {
+    async createProvider(input, options) {
       const id = deps.idGenerator();
       const now = deps.nowIso();
       const preset = getFridayProviderPreset(input.kind, input.baseUrl);
@@ -2943,6 +2943,9 @@ export function createFridayProviderService(
       }
 
       deps.db.withWriteTransaction((db) => {
+        // Durable single-use approval consumption commits ATOMICALLY with the create — a
+        // replayed approval throws a PK conflict here and rolls the whole insert back.
+        options?.consumeApprovalInTransaction?.(db);
         profileRepo.insert(db, normalizeProviderConfig(profile));
         syncDefaultAuthProfile(db, normalizeProviderConfig(profile));
       });
@@ -2950,7 +2953,7 @@ export function createFridayProviderService(
       return normalizeProviderConfig(profile);
     },
 
-    async updateProvider(providerId, patch) {
+    async updateProvider(providerId, patch, options) {
       const existing = deps.db.withReadConnection((db) =>
         profileRepo.getById(db, providerId),
       );
@@ -3120,6 +3123,8 @@ export function createFridayProviderService(
       }
 
       deps.db.withWriteTransaction((db) => {
+        // Durable single-use approval consumption commits ATOMICALLY with the update.
+        options?.consumeApprovalInTransaction?.(db);
         profileRepo.update(db, normalizeProviderConfig(updated));
         syncDefaultAuthProfile(db, normalizeProviderConfig(updated));
       });
@@ -3127,7 +3132,7 @@ export function createFridayProviderService(
       return normalizeProviderConfig(updated);
     },
 
-    async deleteProvider(providerId) {
+    async deleteProvider(providerId, options) {
       const existing = deps.db.withReadConnection((db) =>
         profileRepo.getById(db, providerId),
       );
@@ -3141,6 +3146,8 @@ export function createFridayProviderService(
       oauthTokenManager.clearProviderProfile(providerId);
 
       deps.db.withWriteTransaction((db) => {
+        // Durable single-use approval consumption commits ATOMICALLY with the delete.
+        options?.consumeApprovalInTransaction?.(db);
         authProfileRepo.deleteByProviderProfileId(db, providerId);
         // Delete secret if stored
         if (existing.config.keySource.kind === "secret-ref") {

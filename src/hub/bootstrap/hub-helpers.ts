@@ -48,6 +48,7 @@ import type { FridaySkillSecurityProfile } from "#skills";
 import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridaySkillConverterService } from "#skills/converter";
 import type { FridayProviderService } from "#providers";
+import type { NativeOwnerClaimContextResolver } from "../../security/attestation/friday-verified-native-owner-claim-context.js";
 import {
   normalizeFridayModelRoutingConfig,
   normalizeFridayProviderSupportedModels,
@@ -1957,6 +1958,18 @@ export interface FridayHubConfig {
    */
   routeAgentRunViaRust?: boolean;
   /**
+   * (CORE-RUNNABLE-001 / CORE-A CR-3) SESSION Rust-owned lifecycle/run bridge (DARK): "route the
+   * session run (`POST /v1/sessions/:sessionKey/run`) to the Rust-owned loop instead of fail-closing
+   * with 503" flag. DEFAULT-FALSE — production hub creation must leave this unset so the runtime
+   * threads NO `rustSessionLifecycleBridge` and every session route stays byte-identical to today's
+   * fail-closed 503. When true, bootstrap builds the REAL sealed-WS session dispatch adapter
+   * (mirroring the agent-run sealed-WS config) and injects it. End-to-end closure ALSO needs the
+   * provisioned sealed-WS host + answer-readback DB + a real turn (operator-gated). Resolution:
+   * `resolveRouteSessionsViaRust` (explicit config wins; otherwise the `FRIDAY_ROUTE_SESSIONS_VIA_RUST`
+   * env knob).
+   */
+  routeSessionsViaRust?: boolean;
+  /**
    * GATE-AGENT-REPLACE A3 courier (DARK): master ON/OFF arming the pause/resume PRODUCT
    * TRANSPORT (the sealed WS courier's `AgentRunPaused` inbound + `resumeWithApproval` relay).
    * DEFAULT-FALSE — production hub creation must leave this unset so the courier's paused/resume
@@ -2037,6 +2050,22 @@ export interface FridayHubConfig {
    * wins; otherwise the `FRIDAY_MISSION_AUTO_DISPATCH` env knob).
    */
   missionAutoDispatch?: boolean;
+  /**
+   * SEC-NATIVE-OWNER-CLAIM-CAPABILITY-001 · CORE-A CR-1 (Option C) INJECTION SEAM.
+   * Overrides the api-runtime's DEFAULT native-owner claim resolver (device
+   * owner-claim/login). Production leaves this UNSET so the runtime builds the real
+   * macOS peercred+codesign accept-boundary resolver (honest-absent on this unsigned
+   * tree). Tests inject a resolver that runs the REAL capability mint over injected
+   * native-evidence doubles. NEVER fabricates authority; NEVER flips
+   * `NATIVE_IPC_ATTESTATION_AVAILABLE`.
+   */
+  resolveNativeOwnerClaimContext?: NativeOwnerClaimContextResolver;
+  /**
+   * Overrides the api-runtime's DEFAULT native-surface presence signal for
+   * `getBootstrapStatus().deviceClaimAvailable`. Reports whether the native
+   * device-claim SURFACE exists; NEVER authorizes a claim.
+   */
+  nativeOwnerClaimSurfaceAvailable?: () => boolean;
 }
 
 // ─── Resolved Hub Config ───

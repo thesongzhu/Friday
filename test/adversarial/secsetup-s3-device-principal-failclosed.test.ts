@@ -39,17 +39,20 @@ import {
   isUnauthenticatedPublicPrincipal,
 } from "../../src/security/friday-owner-session-channel-capability.js";
 import {
-  DEVICE_OWNER_AUTHORITY_ENABLED_ENV,
+  DEVICE_OWNER_AUTHORITY_KILL_SWITCH_ENV,
   DEVICE_OWNER_PRINCIPAL_TYPE,
   NATIVE_IPC_ATTESTATION_AVAILABLE,
   deriveDeviceKeyProtection,
   deviceOwnerPrincipalId,
   isDeviceOwnerAuthorityEnabled,
+  isDeviceOwnerAuthorityKillSwitchEngaged,
   isReleaseTrustedKeyProtection,
   mintDeviceOwnerPrincipal,
   type FridayDeviceKeyProtection,
 } from "../../src/security/friday-device-owner-authority-precondition.js";
 import { generateTestDeviceKey, makeTranscript, signTranscriptLowS } from "./_secsetup-s2a.helpers.js";
+import { createTestNativeOwnerResolver } from "./_native-owner-capability.helpers.js";
+import type { NativeOwnerClaimContextResolver } from "../../src/security/attestation/friday-verified-native-owner-claim-context.js";
 
 const OWNER_ID = "admin-001";
 const NOW = "2026-07-13T00:00:00.000Z";
@@ -93,7 +96,7 @@ function seedOwner(db: FridaySqliteLayer): void {
   });
 }
 
-function makeService(db: FridaySqliteLayer) {
+function makeService(db: FridaySqliteLayer, resolver?: NativeOwnerClaimContextResolver) {
   return createFridayAuthService({
     db,
     idGenerator: (() => {
@@ -106,6 +109,10 @@ function makeService(db: FridaySqliteLayer) {
     refreshTokenTtlSec: 604_800,
     hubId: "test-hub",
     bootstrapNonceTtlSec: 300,
+    // Option C: default (no resolver) → absent native boundary → device claim
+    // fails closed. A test that exercises the granted path injects a resolver that
+    // runs the REAL capability mint over injected native-evidence doubles.
+    ...(resolver ? { resolveNativeOwnerClaimContext: resolver } : {}),
   });
 }
 
@@ -229,30 +236,45 @@ describe("S3 Group A — device mint seam + authority switch (fail-closed)", () 
     expect(result.reason).toBe("pop-unverified");
   });
 
-  it("switch is server-derived + hard-wired off: native-IPC precondition (b) is absent", () => {
+  it("Option C: retired global authority is ALWAYS off; NO env forces it on; honesty anchor untouched", () => {
+    // Honesty anchor is retired-as-authority but LEFT in place and still false.
     expect(NATIVE_IPC_ATTESTATION_AVAILABLE).toBe(false);
+    // There is no global "device authority enabled" — always false, no positive path.
     expect(isDeviceOwnerAuthorityEnabled()).toBe(false);
-    // Cannot be flipped by config while (b) is absent.
-    expect(isDeviceOwnerAuthorityEnabled({ [DEVICE_OWNER_AUTHORITY_ENABLED_ENV]: "1" })).toBe(false);
+    // The RETIRED positive opt-in cannot flip it on any more (env is inert here).
+    expect(isDeviceOwnerAuthorityEnabled({ FRIDAY_DEVICE_OWNER_AUTHORITY_ENABLED: "1" })).toBe(false);
     // keyProtection derives to a fail-closed state server-side (never trusted).
     const kp: FridayDeviceKeyProtection = deriveDeviceKeyProtection();
     expect(kp).toBe("unverified");
     expect(isReleaseTrustedKeyProtection(kp)).toBe(false);
   });
 
-  it("the switch takes NO request-derived input (cannot be flipped by request-body/header/Origin/loopback facts)", () => {
-    // The function's ONLY input is the process env. Passing request-shaped facts
-    // as an env-like object does nothing — there is structurally no request path.
+  it("the retired predicate takes NO request-derived input and no env can force it true", () => {
+    // Passing request-shaped facts — or even the retired positive opt-in — as an
+    // env-like object does nothing: there is structurally no path to `true`.
     const hostileEnvs: NodeJS.ProcessEnv[] = [
       { origin: "https://friday.localhost" } as unknown as NodeJS.ProcessEnv,
       { "user-agent": "Friday-Native/1.0" } as unknown as NodeJS.ProcessEnv,
       { "x-forwarded-for": "127.0.0.1" } as unknown as NodeJS.ProcessEnv,
       { nonce: "attacker-nonce" } as unknown as NodeJS.ProcessEnv,
       { bundleId: "com.friday.native" } as unknown as NodeJS.ProcessEnv,
+      { FRIDAY_DEVICE_OWNER_AUTHORITY_ENABLED: "1" } as unknown as NodeJS.ProcessEnv,
     ];
     for (const env of hostileEnvs) {
       expect(isDeviceOwnerAuthorityEnabled(env)).toBe(false);
     }
+  });
+
+  it("kill switch can force OFF but there is NO counterpart that forces ON", () => {
+    expect(isDeviceOwnerAuthorityKillSwitchEngaged({})).toBe(false);
+    for (const v of ["1", "true", "on", "disable", "disabled"]) {
+      expect(
+        isDeviceOwnerAuthorityKillSwitchEngaged({ [DEVICE_OWNER_AUTHORITY_KILL_SWITCH_ENV]: v }),
+      ).toBe(true);
+    }
+    // No env value engages "authority ON" — the predicate only ever forces OFF.
+    expect(isDeviceOwnerAuthorityKillSwitchEngaged({ [DEVICE_OWNER_AUTHORITY_KILL_SWITCH_ENV]: "off" }))
+      .toBe(false);
   });
 });
 
@@ -405,15 +427,41 @@ describe("S3 PoP — device-claim refuses a PoP-unverified key (nonce-possession
     expect(readNonceConsumedAt(db, nonce)).toBeNull();
   });
 
-  it("positive: a valid PoP claim succeeds but grants ZERO authority (deviceAuthorityEnabled=false, keyProtection=unverified)", () => {
+  // ── LIVE-DEFECT CLOSURE (Advisor Option C, finding #7) ──
+  // At head, a valid-PoP claim ATOMICALLY consumed the nonce AND wrote
+  // `device-owner$v1$…` while carrying NO native authority — any loopback process
+  // with a software key could seize the single owner slot. Option C gates the
+  // owner-sentinel write + nonce consume on a per-claim VerifiedNativeOwnerClaimContext.
+  it("LIVE-DEFECT CLOSED: a valid-PoP claim with NO native capability is REFUSED with ZERO state change", () => {
     const nonce = issueNonce(db);
-    const res = makeService(db).claimOwnerWithDeviceKey(
+    let caught: unknown;
+    try {
+      // Default service → absent native boundary → no capability.
+      makeService(db).claimOwnerWithDeviceKey(
+        { ...baseClaim(nonce), deviceClaimProof: validProof(nonce) },
+        LOOPBACK,
+      );
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(FridayDomainError);
+    expect((caught as FridayDomainError).code).toBe("AUTH_BOOTSTRAP_DEVICE_AUTHORITY_UNVERIFIED");
+    // ZERO state change: no owner written (recovery path intact), nonce NOT burned.
+    expect(readOwnerHash(db)).toBeNull();
+    expect(readNonceConsumedAt(db, nonce)).toBeNull();
+  });
+
+  it("granted: a valid-PoP claim WITH a per-claim native capability writes the owner + grants authority", () => {
+    const nonce = issueNonce(db);
+    const res = makeService(db, createTestNativeOwnerResolver()).claimOwnerWithDeviceKey(
       { ...baseClaim(nonce), deviceClaimProof: validProof(nonce) },
       LOOPBACK,
     );
     expect(res.claimed).toBe(true);
-    expect(res.deviceAuthorityEnabled).toBe(false);
-    expect(res.keyProtection).toBe("unverified");
+    // A release-trusted native capability was consumed → authority granted + the
+    // key-protection posture is the OS-verified Secure-Enclave state.
+    expect(res.deviceAuthorityEnabled).toBe(true);
+    expect(res.keyProtection).toBe("secure_enclave_os_verified");
     // Owner slot bound to the device sentinel; nonce consumed.
     expect(readOwnerHash(db)).toBe(`device-owner$v1$${sha256Hex(DEVICE_PUBKEY)}`);
     expect(readNonceConsumedAt(db, nonce)).not.toBeNull();

@@ -5,6 +5,7 @@ import {
   resolveFridayCanonicalMutatingActionGate,
   resolveFridayHubConfig,
   resolveRouteAgentRunViaRust,
+  resolveRouteSessionsViaRust,
   resolveRouteMissionSpineViaRust,
   resolveRouteMemorySpineViaRust,
   resolveRouteRunOutcomeLearningViaRust,
@@ -404,8 +405,9 @@ describe("resolveRouteAgentRunViaRust", () => {
     expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: " true " })).toBe(true);
   });
 
-  // Fail-safe OFF: everything that is not exactly "1"/"true" → false.
-  it("treats 0, false, empty, and garbage env values as false (fail-safe off)", () => {
+  // Explicit off (0/false) forces off; empty/garbage falls to the release-default (false here, since
+  // these envs carry NO release marker → unprotected profile). See the R14 release-default block.
+  it("treats 0, false, empty, and garbage env values as false on an unprotected profile", () => {
     expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "0" })).toBe(false);
     expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "false" })).toBe(false);
     expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "" })).toBe(false);
@@ -429,6 +431,76 @@ describe("resolveRouteAgentRunViaRust", () => {
     expect(resolveRouteAgentRunViaRust(false, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "true" })).toBe(false);
     expect(resolveRouteAgentRunViaRust(false, emptyEnv())).toBe(false);
   });
+});
+
+describe("resolveRouteSessionsViaRust (CORE-A CR-3 session bridge flag)", () => {
+  // DEFAULT-OFF: env unset → false → the runtime threads no session bridge → today's fail-closed 503.
+  it("defaults to false when neither config nor env is set", () => {
+    expect(resolveRouteSessionsViaRust(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("parses FRIDAY_ROUTE_SESSIONS_VIA_RUST=1 / =true (case-insensitive, trimmed) as true", () => {
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "1" })).toBe(true);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "true" })).toBe(true);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "TRUE" })).toBe(true);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "  True  " })).toBe(true);
+  });
+
+  // Explicit off (0/false) forces off; empty/garbage falls to the release-default (false here, since
+  // these envs carry NO release marker → unprotected profile). See the R14 release-default block.
+  it("treats 0, false, empty, and garbage env values as false on an unprotected profile", () => {
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "0" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "false" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "yes" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "on" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(undefined, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "enabled" })).toBe(false);
+  });
+
+  // PRECEDENCE: an explicit config boolean ALWAYS wins over the env (the discriminating false case).
+  it("uses explicit config over the env (config true beats env false; config false beats env true)", () => {
+    expect(resolveRouteSessionsViaRust(true, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "false" })).toBe(true);
+    expect(resolveRouteSessionsViaRust(true, emptyEnv())).toBe(true);
+    expect(resolveRouteSessionsViaRust(false, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "1" })).toBe(false);
+    expect(resolveRouteSessionsViaRust(false, { FRIDAY_ROUTE_SESSIONS_VIA_RUST: "true" })).toBe(false);
+  });
+});
+
+// ─── (R14 / CORE-A CR-3) FLAGLESS release-default: a protected profile routes to Rust with NO flag ───
+describe("route-*-via-rust FLAGLESS release-default (R14 CR-3)", () => {
+  for (const [name, resolve, envKey] of [
+    ["resolveRouteSessionsViaRust", resolveRouteSessionsViaRust, "FRIDAY_ROUTE_SESSIONS_VIA_RUST"],
+    ["resolveRouteAgentRunViaRust", resolveRouteAgentRunViaRust, "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST"],
+  ] as const) {
+    describe(name, () => {
+      it("routes to Rust with NO flag on a release profile (NODE_ENV=production)", () => {
+        expect(resolve(undefined, { NODE_ENV: "production" })).toBe(true);
+      });
+      it("routes to Rust with NO flag on a release profile (FRIDAY_RELEASE_TAG set)", () => {
+        expect(resolve(undefined, { FRIDAY_RELEASE_TAG: "v1.4.0" })).toBe(true);
+      });
+      it("stays OFF on a dev/test (unprotected) profile with no flag (CR-0 baseline unchanged)", () => {
+        expect(resolve(undefined, { NODE_ENV: "test" })).toBe(false);
+        expect(resolve(undefined, emptyEnv())).toBe(false);
+      });
+      it("HIGHEST-priority explicit env kill-switch (0|false) forces OFF even on a release profile", () => {
+        expect(resolve(undefined, { NODE_ENV: "production", [envKey]: "0" })).toBe(false);
+        expect(resolve(undefined, { NODE_ENV: "production", [envKey]: "false" })).toBe(false);
+        expect(resolve(undefined, { FRIDAY_RELEASE_TAG: "v1", [envKey]: "0" })).toBe(false);
+      });
+      it("explicit env ON (1|true) stays ON on a release profile", () => {
+        expect(resolve(undefined, { NODE_ENV: "production", [envKey]: "1" })).toBe(true);
+        expect(resolve(undefined, { NODE_ENV: "production", [envKey]: "true" })).toBe(true);
+      });
+      it("explicit config false beats the release-default (config is the highest priority)", () => {
+        expect(resolve(false, { NODE_ENV: "production" })).toBe(false);
+        expect(resolve(false, { FRIDAY_RELEASE_TAG: "v1" })).toBe(false);
+      });
+      it("explicit config true routes to Rust even on an unprotected profile", () => {
+        expect(resolve(true, { NODE_ENV: "test" })).toBe(true);
+      });
+    });
+  }
 });
 
 describe("resolveAgentRunControlViaRust (A3 courier pause/resume flag)", () => {

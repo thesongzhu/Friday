@@ -5,6 +5,7 @@ import type { FridayLearningEventAppendInput } from "#ledger";
 import type { FridayOutboxQueueService } from "#satellites";
 import type { FridayAccessTokenClaims, FridayRole } from "../model/friday-api-auth.types.js";
 import type { FridayAuthService } from "../auth/friday-auth-service.types.js";
+import type { NativeOwnerClaimContextResolver } from "../../security/attestation/friday-verified-native-owner-claim-context.js";
 import type { FridayRateLimitService } from "../auth/friday-rate-limit-service.types.js";
 import type { FridayTokenValidator } from "../auth/friday-token-validator.js";
 import type { FridayAuthMiddlewareFactory } from "../auth/friday-auth-middleware.js";
@@ -40,6 +41,7 @@ import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-
 import type { FridayRustHubWorkflowCatalogBridgeService } from "../mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
 import type { FridayRustHubWorkflowRunBridgeService } from "../mission-spine/friday-rust-hub-workflow-run-bridge-service.js";
 import type { FridayD20SignedBatchWorktreeService } from "../mission-spine/friday-rust-hub-d20-signed-batch-worktree-service.js";
+import type { FridayRustSessionLifecycleBridge } from "../http/routes/friday-session-routes.js";
 import type { FridayMediaUnderstandingRoutesDeps } from "../http/routes/friday-media-understanding-routes.js";
 import type { FridaySocialImportRoutesDeps } from "../http/routes/friday-social-import-routes.js";
 import type { FridayTaskWorkflowRoutesDeps } from "../http/routes/friday-task-workflow-routes.js";
@@ -198,6 +200,25 @@ export interface CreateFridayApiRuntimeDeps {
   tokenSecret: string;
   accessTokenTtlSec?: number;
   refreshTokenTtlSec?: number;
+  /**
+   * SEC-NATIVE-OWNER-CLAIM-CAPABILITY-001 · CORE-A CR-1 (Option C) INJECTION SEAM.
+   * When provided, overrides the runtime's DEFAULT native-owner claim resolver that
+   * is passed to the auth service (device owner-claim/login). Production leaves this
+   * UNSET so the runtime builds the real macOS peercred+codesign accept-boundary
+   * resolver (honest-ABSENT on this unsigned dev/CI tree → returns null → every
+   * device claim/login fails closed). Tests inject a resolver that runs the REAL
+   * capability mint over injected native-evidence doubles (the capability brand makes
+   * a forged literal impossible). NEVER flips `NATIVE_IPC_ATTESTATION_AVAILABLE`.
+   */
+  resolveNativeOwnerClaimContext?: NativeOwnerClaimContextResolver;
+  /**
+   * Presence signal for `getBootstrapStatus().deviceClaimAvailable` ONLY. When
+   * provided, overrides the runtime's DEFAULT native-surface presence signal.
+   * Reports whether the native device-claim SURFACE exists; NEVER authorizes a claim
+   * (authority is the per-claim capability). The surface flag MAY be true while the
+   * capability stays UNMINTABLE on an unsigned tree — that is the honest state.
+   */
+  nativeOwnerClaimSurfaceAvailable?: () => boolean;
   /** Optional tenant resolver shared by auth claim issuance and validation. */
   resolveAuthTenantId?: (input: {
     principalType: string;
@@ -521,6 +542,23 @@ export interface CreateFridayApiRuntimeDeps {
    * fail-closed until Rust owns the session memory extraction entrypoint.
    */
   allowTestOnlySessionMemoryExtractionExecution?: boolean;
+  /**
+   * (CORE-RUNNABLE-001 / CORE-A CR-3) SESSION Rust-owned lifecycle/run bridge (DARK): the resolved
+   * default-false master flag for routing the session run (`POST /v1/sessions/:sessionKey/run`) to
+   * the Rust-owned loop instead of fail-closing. DEFAULT-FALSE — leave unset in production/runtime so
+   * the session routes stay byte-identical to today's fail-closed 503. Sourced (in bootstrap) from
+   * `FRIDAY_ROUTE_SESSIONS_VIA_RUST` / explicit config via `resolveRouteSessionsViaRust`. When
+   * unset/false the {@link rustSessionLifecycleBridge} is never consulted.
+   */
+  routeSessionsViaRust?: boolean;
+  /**
+   * (CORE-RUNNABLE-001 / CORE-A CR-3) The REAL Rust-owned session lifecycle/run bridge consulted by
+   * the session routes ONLY when {@link routeSessionsViaRust} is true. OPTIONAL — bootstrap builds +
+   * injects the real sealed-WS adapter ONLY when the flag is on; when omitted (the DEFAULT) the
+   * session routes fail closed (503). Tests inject the real adapter over a test transport (a fake
+   * sealed client + readback) to prove reachability WITHOUT a socket.
+   */
+  rustSessionLifecycleBridge?: FridayRustSessionLifecycleBridge;
   /**
    * Test-oracle only: allow the legacy TypeScript realtime checkpoint-ack
    * mutation (POST /v1/realtime/ack). Production/runtime callers must leave this

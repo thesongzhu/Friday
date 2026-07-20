@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import type { Socket as NodeNetSocket } from "node:net";
 import type Database from "better-sqlite3";
 
 import { FridayDomainError } from "#errors";
@@ -58,6 +59,18 @@ import type {
   FridayApiRuntime,
 } from "./friday-api-runtime.types.js";
 import { createFridayAuthService } from "../auth/friday-auth-service.js";
+import { isFridayCanonicalGateProtectedProfile } from "../../hub/friday-hub-bootstrap.js";
+import {
+  createAbsentNativePeerAttestationProvider,
+  createMacosCodesignPeerVerifier,
+  verifyNativePeerAttestation,
+} from "../../security/attestation/friday-native-peer-attestation-verifier.js";
+import { createMacosSecureEnclaveKeyCustodyProvider, resolveDeviceKeyProtection } from "../../security/attestation/friday-native-key-custody-provider.js";
+import {
+  deriveNativeOwnerExchangeConnectionId,
+  mintVerifiedNativeOwnerClaimContext,
+  type NativeOwnerClaimContextResolver,
+} from "../../security/attestation/friday-verified-native-owner-claim-context.js";
 import { createFridayTokenValidator } from "../auth/friday-token-validator.js";
 import { createFridayRateLimitService } from "../auth/friday-rate-limit-service.js";
 import { createFridayAuthMiddlewareFactory } from "../auth/friday-auth-middleware.js";
@@ -207,11 +220,14 @@ import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
   type FridayCanonicalApprovalResolution,
+  type FridayDeviceApprovalVerifyResult,
   type FridayMutatingActionActor,
   type FridayMutatingActionRequest,
   type FridayMutatingActionTicket,
   signFridayCanonicalApproval,
 } from "../../security/friday-mutating-action-gate.js";
+import { createFridayProviderApprovalPoPVerifier } from "../auth/device-attest/index.js";
+import { FridaySqliteApprovalConsumptionStore } from "../http/persistence/friday-provider-approval-consumption-repository.js";
 import {
   assertBoundPrincipalAuthorityForOperation,
   assertBoundPrincipalForOperation,
@@ -1959,16 +1975,126 @@ async function composeRustReadOnlyAgentRun(args: {
   };
 }
 
+// ─── CR-1 Option C: DEFAULT native-owner claim wiring (SEC-NATIVE-*-001) ───
+//
+// The pinned code-sign identity a genuine owner-device release binary must carry.
+// On this UNSIGNED source/dev/CI tree it is inert (attestation is honestly absent, so
+// the mint is never reached); a signed release supplies the real signing identity (and
+// a real LOCAL_PEERCRED provider) from its build/signing slice. It is NEVER a way to
+// forge authority — the capability brand + `attested:true` requirement make that
+// impossible, and `NATIVE_IPC_ATTESTATION_AVAILABLE` stays `false`.
+const RELEASE_OWNER_DEVICE_CODESIGN_IDENTITY = "com.friday.owner-device.release";
+
+/**
+ * The DEFAULT native-owner claim resolver the runtime passes to the auth service when
+ * a caller injects none. It runs the REAL CR-4 pipeline — the macOS codesign peer
+ * verifier + the native LOCAL_PEERCRED provider + Secure-Enclave key custody →
+ * `mintVerifiedNativeOwnerClaimContext`. On this source/dev/CI tree there is NO AF_UNIX
+ * peer connection and NO native addon, so the peer provider is honestly ABSENT →
+ * `verifyNativePeerAttestation` is `attested:false` → NOTHING is minted (device
+ * claim/login fail closed). A signed release replaces the peer provider with a real
+ * LOCAL_PEERCRED reader and drives this from the Companion Unix-socket accept boundary
+ * (per native connection, not per HTTP request). It fakes nothing and reads no
+ * request/env fact for a POSITIVE (the only env input is the kill switch, honoured by
+ * the mint).
+ */
+function createReleaseNativeOwnerClaimResolver(env: NodeJS.ProcessEnv): NativeOwnerClaimContextResolver {
+  const codesignVerifier = createMacosCodesignPeerVerifier();
+  // Honest-absent on this tree (no getsockopt(LOCAL_PEERCRED) addon) → returns null.
+  const peerProvider = createAbsentNativePeerAttestationProvider();
+  const custodyProvider = createMacosSecureEnclaveKeyCustodyProvider();
+  return (binding) => {
+    const attestation = verifyNativePeerAttestation({
+      provider: peerProvider,
+      codesignVerifier,
+      expectedReleaseIdentity: RELEASE_OWNER_DEVICE_CODESIGN_IDENTITY,
+      // No live native peer socket in the HTTP runtime on this tree; the absent
+      // provider ignores it and returns null (→ attested:false). A signed release
+      // supplies the accepted native connection here.
+      socket: undefined as unknown as NodeNetSocket,
+    });
+    if (!attestation.attested || !attestation.peerCredential) {
+      return null;
+    }
+    const keyProtection = resolveDeviceKeyProtection(custodyProvider, binding.devicePublicKeyHash);
+    const result = mintVerifiedNativeOwnerClaimContext({
+      attestation,
+      keyProtection,
+      binding,
+      evidence: {
+        osUid: attestation.peerCredential.uid,
+        peerPid: attestation.peerCredential.pid,
+        acceptedConnectionId: deriveNativeOwnerExchangeConnectionId(binding),
+        auditTokenIdentity: attestation.codesignIdentity ?? "",
+        codesignIdentity: attestation.codesignIdentity ?? "",
+      },
+      policy: {
+        expectedReleaseIdentity: RELEASE_OWNER_DEVICE_CODESIGN_IDENTITY,
+        expectedArtifactRole: binding.artifactRole,
+      },
+      env,
+    });
+    return result.ok ? result.capability : null;
+  };
+}
+
+/**
+ * The DEFAULT native device-claim SURFACE presence signal for
+ * `getBootstrapStatus().deviceClaimAvailable` (UI routing ONLY — it authorizes
+ * nothing). Present ONLY on a RELEASE profile running on macOS (where a signed release
+ * WOULD ship the native accept boundary); honestly FALSE on dev/CI (non-release) so the
+ * UI keeps the passphrase gate. HONESTY: on a release macOS tree the surface may be
+ * `true` (UI shows the device gate) while the per-claim capability stays UNMINTABLE on
+ * an UNSIGNED build (`attested:true` unreachable) — that is the honest state; it is
+ * never faked, and it is a presence signal, NOT authority.
+ */
+function createReleaseNativeOwnerClaimSurfaceSignal(env: NodeJS.ProcessEnv): () => boolean {
+  return () => isFridayCanonicalGateProtectedProfile(env) && process.platform === "darwin";
+}
+
 export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): FridayApiRuntime {
   const accessTokenTtlSec = deps.accessTokenTtlSec ?? DEFAULT_ACCESS_TTL;
   const refreshTokenTtlSec = deps.refreshTokenTtlSec ?? DEFAULT_REFRESH_TTL;
   const serverVersion = deps.serverVersion ?? "1.0.0";
   const stateDir = deps.stateDir ?? ".";
+  // SEC-APPROVAL-AUTHORITY-001 (CORE-A CR-2): the ASYMMETRIC device-approval
+  // verifier. The Hub holds ONLY the public key on the provider approval path —
+  // it verifies the owner device's P-256 proof-of-possession and NEVER signs. The
+  // legacy symmetric `approvalSignatureSecret` remains ONLY for the plugin/mcp/
+  // channel/skill/workflow lifecycle path (a separate, out-of-CR-2-scope surface).
+  const providerApprovalVerifier = createFridayProviderApprovalPoPVerifier();
+  // SEC-APPROVAL-AUTHORITY-001 · Advisor round-2 finding #3: DURABLE single-use ledger for
+  // canonical approvals (migration v108), replacing the gate's process-local in-memory Set so
+  // a confirmed device-authored approval consumed once cannot be replayed after a restart or
+  // by a concurrent process. Boot-time reconcile marks any crash-orphaned in_flight
+  // reservation indeterminate (fail-closed) BEFORE the runtime serves requests.
+  const approvalConsumptionStore = new FridaySqliteApprovalConsumptionStore(deps.db);
+  approvalConsumptionStore.reconcileOrphanedReservations();
   const canonicalMutationGate = createFridayMutatingActionGate({
     nowIso: deps.nowIso,
     ticketIdGenerator: () => deps.idGenerator(),
     approvalSignatureSecret: deps.tokenSecret,
     requireApprovalSignature: true,
+    approvalConsumptionStore,
+    deviceApprovalVerifier: (proof, nowMs): FridayDeviceApprovalVerifyResult => {
+      const result = providerApprovalVerifier.verifyPossession({
+        transcript: proof.transcript,
+        devicePublicKey: proof.devicePublicKey,
+        signature: proof.signature,
+        nowMs,
+      });
+      if (!result.ok) {
+        return { ok: false, reason: result.reason };
+      }
+      return {
+        ok: true,
+        devicePublicKeyHash: result.devicePublicKeyHash,
+        approvalId: result.approvalId,
+        actionDigest: result.actionDigest,
+        decidedByPrincipalId: result.decidedByPrincipalId,
+        expiresAt: result.expiresAt,
+      };
+    },
   });
   const providerMutationGateRequired = deps.canonicalMutatingActionGate
     ?? resolveApiRuntimeCanonicalGateRequired(process.env);
@@ -2069,6 +2195,17 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
   });
 
+  // CR-1 Option C native-owner claim wiring (F1). An injected resolver/surface (tests,
+  // or a future signed-release native boundary) overrides the runtime DEFAULTS. The
+  // defaults run the REAL macOS attestation pipeline (honest-ABSENT on this unsigned
+  // tree → device claim/login fail closed) and gate the surface on a release macOS
+  // profile (honest-FALSE on dev/CI → the UI keeps the passphrase gate). Nothing is
+  // faked; NATIVE_IPC_ATTESTATION_AVAILABLE stays `false`.
+  const nativeOwnerClaimResolver =
+    deps.resolveNativeOwnerClaimContext ?? createReleaseNativeOwnerClaimResolver(process.env);
+  const nativeOwnerClaimSurfaceAvailable =
+    deps.nativeOwnerClaimSurfaceAvailable ?? createReleaseNativeOwnerClaimSurfaceSignal(process.env);
+
   const authService = createFridayAuthService({
     db: deps.db,
     idGenerator: deps.idGenerator,
@@ -2087,6 +2224,18 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       });
     },
     rateLimiter,
+    // CR-1 Option C: `resolveNativeOwnerClaimContext` + `nativeOwnerClaimSurfaceAvailable`.
+    // When a caller injects them (tests, or a signed release wiring the real
+    // Companion Unix-socket peercred+codesign accept boundary) they are threaded to
+    // the auth service; otherwise the auth service falls back to its honest-ABSENT
+    // defaults (resolver returns null → every device owner-claim/login fails closed;
+    // surface false → the UI keeps the passphrase gate). This never fabricates
+    // authority and never flips NATIVE_IPC_ATTESTATION_AVAILABLE.
+    resolveNativeOwnerClaimContext: nativeOwnerClaimResolver,
+    nativeOwnerClaimSurfaceAvailable,
+    // On a fresh RELEASE profile, passphrase bootstrap is retired (device-native
+    // only) per finding #6; dev/CI keeps it (non-release profile).
+    releaseProfileNativeOnly: () => isFridayCanonicalGateProtectedProfile(process.env),
     resolveTenantId: (input) =>
       deps.resolveAuthTenantId?.({
         principalType: input.principalType,
@@ -4343,6 +4492,22 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     allowTestOnlyProviderRoutingControlsExecution: deps.allowTestOnlyProviderRoutingControlsExecution,
     routeProvidersViaRust: deps.routeProvidersViaRust,
     rustCapabilityDoctor: rustCapabilityDoctorService,
+    nowIso: deps.nowIso,
+    // SEC-APPROVAL-AUTHORITY-001 (CORE-A CR-2): the ASYMMETRIC device-approval
+    // verifier. POST /v1/providers/plan/confirm VERIFIES the owner device's P-256
+    // proof-of-possession over the reviewed action digest — the Hub holds NO signing
+    // key on this path and never self-mints an approval.
+    providerApprovalVerifier,
+    // SEC-APPROVAL-AUTHORITY-001 (CORE-A CR-2, Option B*): resolve the authenticated
+    // owner's durable owner↔device binding SERVER-SIDE, so a device-authored approval
+    // binds to the owner's REGISTERED device while the session principal stays
+    // `user.id` (token minting unchanged).
+    resolveBoundDeviceOwnerSentinelHash: authService.resolveBoundDeviceOwnerSentinelHash,
+    // SEC-APPROVAL-AUTHORITY-001 · Advisor round-2 finding #3: the SAME durable single-use
+    // ledger the gate consumes. create/update/delete gate with deferred consumption, then
+    // finalize the reservation INSIDE the provider mutation's write transaction so consume ⊗
+    // mutation commit atomically.
+    approvalConsumptionStore,
   })) {
     routes.register(route);
   }
@@ -4930,6 +5095,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     channelRegistry: deps.channels?.registry,
     nowIso: deps.nowIso,
     runSession,
+    // (CORE-RUNNABLE-001 / CORE-A CR-3) Rust-owned session lifecycle/run bridge (DARK, default-off).
+    // With nothing set (the default) `routeSessionsViaRust` is falsy AND `rustSessionLifecycleBridge`
+    // is omitted, so the session routes resolve today's fail-closed 503 → byte-identical to today.
+    ...(deps.routeSessionsViaRust !== undefined ? { routeSessionsViaRust: deps.routeSessionsViaRust } : {}),
+    ...(deps.rustSessionLifecycleBridge ? { rustSessionLifecycleBridge: deps.rustSessionLifecycleBridge } : {}),
     allowTestOnlySessionExecution: deps.allowTestOnlySessionExecution,
     allowTestOnlySessionRunExecution: deps.allowTestOnlySessionRunExecution,
     allowTestOnlySessionMemoryExtractionExecution: deps.allowTestOnlySessionMemoryExtractionExecution,

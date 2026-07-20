@@ -144,6 +144,7 @@ import {
   readRunOutcomeLearningRustWsPort,
 } from "../api/mission-spine/friday-run-outcome-learning-dispatch-adapter.js";
 import { resolveRustAgentRunWsClientX25519Secret } from "../api/mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
+import { createFridayRustHubSessionLifecycleDispatchAdapter } from "../api/mission-spine/friday-rust-hub-session-lifecycle-dispatch-adapter.js";
 import type { FridayChannelPersonaConfig, FridayGuideLensRoutesDeps, FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
 import {
@@ -916,7 +917,7 @@ export function resolveFridayHubConfig(
   };
 }
 
-function isFridayCanonicalGateProtectedProfile(env: NodeJS.ProcessEnv): boolean {
+export function isFridayCanonicalGateProtectedProfile(env: NodeJS.ProcessEnv): boolean {
   return env.NODE_ENV?.trim().toLowerCase() === "production"
     || Boolean(env.FRIDAY_RELEASE_TAG?.trim());
 }
@@ -967,15 +968,20 @@ export function resolveFridayCanonicalMutatingActionGate(
  * and, only as a fallback, (2) the `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` env var — the operator
  * knob that lets the Rust read-only execrun route be flipped WITHOUT a source edit.
  *
- * PRECEDENCE: an explicit config boolean (true OR false) ALWAYS wins; the env is consulted
- * ONLY when config does not specify (the previously-unsettable gap). This preserves the
- * prior `config.routeAgentRunViaRust` precedence exactly.
+ * PRECEDENCE: an explicit config boolean (true OR false) ALWAYS wins; then an EXPLICIT env token
+ * (`1|true|0|false`); ONLY when BOTH config AND env are unset does the RELEASE-DEFAULT apply.
  *
- * PARSE (fail-safe OFF): case-insensitive, trimmed `"1"` or `"true"` ⇒ true; ABSENT, `""`,
- * `"0"`, `"false"`, or ANY other value ⇒ false. DEFAULT (env unset, config unset) ⇒ false,
- * so the downstream `deps.routeAgentRunViaRust === true` gate stays off → byte-identical to
- * today's fail-closed 503. Intentionally NARROWER than the canonical-gate true-set
- * (no yes/on/enabled) so any ambiguity resolves OFF.
+ * PARSE: case-insensitive, trimmed `"1"`/`"true"` ⇒ true; `"0"`/`"false"` ⇒ false (an explicit
+ * off — the operator KILL-SWITCH that forces the TS/mock lane even on a release build). ABSENT
+ * (`""`) or any UNRECOGNIZED value falls through to the RELEASE-DEFAULT.
+ *
+ * RELEASE-DEFAULT (R14, CR-3): when config AND env are both unset, the value is
+ * {@link isFridayCanonicalGateProtectedProfile} — i.e. a release/production build (NODE_ENV=production
+ * OR FRIDAY_RELEASE_TAG set) routes the agent run to the Rust path with NO flag (the FLAGLESS
+ * production-default the R14 finding requires), while dev/test (an unprotected profile) stays OFF →
+ * byte-identical to today's fail-closed 503 for the default dev/test lane. Fail-closed downstream is
+ * preserved: a release build with the Rust transport ABSENT surfaces the transport's 503, never a
+ * silent TS fallback.
  *
  * The sibling `FRIDAY_HUB_AGENT_RUN_*` knobs (WS host/port, DB path) are read and documented
  * at the deps/runtime construction point in `friday-api-runtime.ts`; this flag's resolve +
@@ -985,12 +991,56 @@ export function resolveRouteAgentRunViaRust(
   configValue: boolean | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  // Config explicit (true OR false) wins — env is the fallback for the unset gap only.
+  // Config explicit (true OR false) wins — then explicit env, then the release-default.
   if (typeof configValue === "boolean") {
     return configValue;
   }
   const raw = (env.FRIDAY_ROUTE_AGENT_RUN_VIA_RUST ?? "").trim().toLowerCase();
-  return raw === "1" || raw === "true";
+  if (raw === "1" || raw === "true") {
+    return true;
+  }
+  if (raw === "0" || raw === "false") {
+    return false;
+  }
+  // Both config AND env unset ⇒ FLAGLESS release-default (R14): route to Rust on a protected profile.
+  return isFridayCanonicalGateProtectedProfile(env);
+}
+
+/**
+ * (CORE-RUNNABLE-001 / CORE-A CR-3) Single source of truth resolving the `routeSessionsViaRust`
+ * flag from (1) an EXPLICIT {@link FridayHubConfig.routeSessionsViaRust} and, only as a fallback,
+ * (2) the `FRIDAY_ROUTE_SESSIONS_VIA_RUST` env var — the operator knob that lets the Rust session
+ * run route be flipped WITHOUT a source edit.
+ *
+ * PRECEDENCE + PARSE MIRROR {@link resolveRouteAgentRunViaRust} EXACTLY: an explicit config boolean
+ * (true OR false) ALWAYS wins; then an EXPLICIT env token (`"1"`/`"true"` ⇒ true; `"0"`/`"false"` ⇒
+ * false — the operator KILL-SWITCH that forces the TS/mock lane even on a release build); ONLY when
+ * BOTH config AND env are unset does the RELEASE-DEFAULT apply.
+ *
+ * RELEASE-DEFAULT (R14, CR-3): both-unset resolves to {@link isFridayCanonicalGateProtectedProfile}
+ * — a release/production build (NODE_ENV=production OR FRIDAY_RELEASE_TAG) routes sessions to the
+ * Rust path with NO flag (FLAGLESS), threading a REAL `rustSessionLifecycleBridge`; a dev/test
+ * (unprotected) profile stays OFF so the session routes remain byte-identical to today's fail-closed
+ * 503 (the CR-0 baseline). Fail-closed is preserved: a release build with the Rust Hub transport
+ * ABSENT surfaces the transport's 503 per call (the retired TS session path is NOT silently served).
+ */
+export function resolveRouteSessionsViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // Config explicit (true OR false) wins — then explicit env, then the release-default.
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_ROUTE_SESSIONS_VIA_RUST ?? "").trim().toLowerCase();
+  if (raw === "1" || raw === "true") {
+    return true;
+  }
+  if (raw === "0" || raw === "false") {
+    return false;
+  }
+  // Both config AND env unset ⇒ FLAGLESS release-default (R14): route to Rust on a protected profile.
+  return isFridayCanonicalGateProtectedProfile(env);
 }
 
 /**
@@ -7389,6 +7439,25 @@ export async function createFridayHub(
     })
     : null;
 
+  // (CORE-RUNNABLE-001 / CORE-A CR-3) SESSION Rust-owned lifecycle/run bridge (DARK, default-off).
+  // SINGLE SOURCE OF TRUTH for resolution = `resolveRouteSessionsViaRust` (explicit config wins; else
+  // the `FRIDAY_ROUTE_SESSIONS_VIA_RUST` env knob, case-insensitive "1"/"true" → true; anything else
+  // incl. unset → false). When OFF (the default) the bridge is NOT constructed and the runtime dep
+  // stays unset → the session routes resolve today's fail-closed 503 → byte-identical. When ON, build
+  // the REAL sealed-WS session dispatch adapter (mirrors the agent-run sealed-WS host/port/secret
+  // config exactly) so the session run route is reachable-and-real; the adapter is SIDE-EFFECT-FREE
+  // (resolves no secret + opens no socket until a real run). `readMissionSpineRustWsPort` parses the
+  // SAME `FRIDAY_HUB_AGENT_RUN_WS_PORT` the agent-run path dials.
+  const routeSessionsViaRust = resolveRouteSessionsViaRust(config.routeSessionsViaRust);
+  const rustSessionLifecycleBridge = routeSessionsViaRust
+    ? createFridayRustHubSessionLifecycleDispatchAdapter({
+      host: process.env.FRIDAY_HUB_AGENT_RUN_WS_HOST ?? "127.0.0.1",
+      port: readMissionSpineRustWsPort(process.env.FRIDAY_HUB_AGENT_RUN_WS_PORT),
+      secretResolver: resolveRustAgentRunWsClientX25519Secret,
+      idGenerator,
+    })
+    : undefined;
+
   const runtimeSupportedChannelKinds = FRIDAY_SUPPORTED_CHANNEL_KINDS.filter(isFridayChannelKindSupported);
 
   const apiRuntime = createFridayApiRuntime({
@@ -7406,6 +7475,15 @@ export async function createFridayHub(
     skillExecutor: executor,
     updateSkillStatus: (skillId, status) => memoryState.updateSkillStatus(skillId, status),
     tokenSecret,
+    // CR-1 Option C (Option B* / F1 injection seam): thread an injected native-owner
+    // claim resolver + surface signal (tests, or a future signed-release native
+    // boundary). Unset in production → the runtime builds its honest-absent default.
+    ...(config.resolveNativeOwnerClaimContext
+      ? { resolveNativeOwnerClaimContext: config.resolveNativeOwnerClaimContext }
+      : {}),
+    ...(config.nativeOwnerClaimSurfaceAvailable
+      ? { nativeOwnerClaimSurfaceAvailable: config.nativeOwnerClaimSurfaceAvailable }
+      : {}),
     pluginRuntimeMode,
     supportedChannelKinds: [...runtimeSupportedChannelKinds],
     enabledChannelKinds: getEnabledChannelKinds,
@@ -7674,6 +7752,12 @@ export async function createFridayHub(
     // set (the default) this is `false`, so the `=== true` gate is never satisfied → the
     // predicate is never evaluated → byte-identical to today's fail-closed 503.
     routeAgentRunViaRust: resolveRouteAgentRunViaRust(config.routeAgentRunViaRust),
+    // (CORE-RUNNABLE-001 / CORE-A CR-3) SESSION Rust-owned lifecycle/run bridge (DARK): the resolved
+    // default-false flag + the REAL bridge (constructed above ONLY when the flag is on). With nothing
+    // set (the default) `routeSessionsViaRust` is false AND `rustSessionLifecycleBridge` is undefined,
+    // so the session routes resolve today's fail-closed 503 → byte-identical to today.
+    routeSessionsViaRust,
+    ...(rustSessionLifecycleBridge ? { rustSessionLifecycleBridge } : {}),
     // GATE-AGENT-REPLACE A3 courier (DARK): default-false master flag arming the pause/resume
     // PRODUCT TRANSPORT (the sealed WS courier's `AgentRunPaused` inbound + `resumeWithApproval`
     // relay). SINGLE SOURCE OF TRUTH = `resolveAgentRunControlViaRust` (explicit config wins; else

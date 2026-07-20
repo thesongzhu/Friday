@@ -191,6 +191,51 @@ async function createFixtureRepo(): Promise<string> {
     "scripts/ops/friday-mobile-approval-approve-proof.sh",
     "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture mobile approval approve proof\"\n",
   );
+
+  // CORE-A round-3 Lane C (finding #4): the Rust agent-run WS server packaging contract now
+  // asserts the DMG + source distribution stage the server payload and the installer launches +
+  // enrolls it. Populate the fixture with files whose content satisfies the `containsAll` tokens
+  // (a placeholder alone would fail the new stronger contract).
+  await writeFileWithParents(
+    root,
+    "scripts/ops/build-friday-companion-dmg.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\n# fixture DMG build\n" +
+      "bash \"scripts/ops/launchd/stage-rust-agent-run-ws-server-payload.sh\" --repo-dir \"$PWD\" --dest-dir \"$STAGING_DIR\"\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/build-friday-source-distribution.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\n# fixture source distribution build\n" +
+      "bash \"scripts/ops/launchd/stage-rust-agent-run-ws-server-payload.sh\" --repo-dir \"$PWD\" --dest-dir \"$OUTPUT_DIR\"\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/launchd/stage-rust-agent-run-ws-server-payload.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\n# fixture staging helper\n" +
+      "PLIST_TEMPLATE=\"scripts/ops/launchd/com.friday.rust-agent-run-ws-server.plist\"\n" +
+      "cargo build --release --bin hub_agent_run_server --bin hub_agent_run_enroll\n" +
+      "# stages both bins + the plist template and writes payload-manifest.json\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/launchd/com.friday.rust-agent-run-ws-server.plist",
+    "<?xml version=\"1.0\"?>\n<!-- fixture Rust agent-run WS server plist -->\n" +
+      "<string>__RUST_SERVER_BIN__</string>\n<string>--workspace</string>\n<string>--db</string>\n" +
+      "<string>--port</string>\n<string>--owner</string>\n<string>--store-dir</string>\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/launchd/build-and-install-rust-agent-run-ws-server.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\necho \"fixture Rust agent-run cutover tool\"\n",
+  );
+  await writeFileWithParents(
+    root,
+    "scripts/ops/install-friday-launchagent.sh",
+    "#!/usr/bin/env bash\nset -euo pipefail\n# fixture installer\n" +
+      "# provision ~/.friday/master.key\n# plutil -lint the filled plist\n" +
+      "# hub_agent_run_enroll into the store dir\n" +
+      "# launchctl bootstrap com.friday.rust-agent-run-ws-server\n",
+  );
   return root;
 }
 
@@ -322,6 +367,32 @@ describe("client ship gate pipeline check", () => {
         }),
         expect.objectContaining({
           target: "proof:mobile:approval-approve",
+          status: "passed",
+        }),
+        // CORE-A round-3 Lane C (finding #4): the Rust agent-run WS server packaging contract.
+        expect.objectContaining({
+          kind: "rust-agent-run-packaging-contract",
+          target: "scripts/ops/launchd/com.friday.rust-agent-run-ws-server.plist",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          kind: "rust-agent-run-packaging-contract",
+          target: "scripts/ops/launchd/stage-rust-agent-run-ws-server-payload.sh",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          kind: "rust-agent-run-packaging-contract",
+          target: "scripts/ops/build-friday-companion-dmg.sh",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          kind: "rust-agent-run-packaging-contract",
+          target: "scripts/ops/build-friday-source-distribution.sh",
+          status: "passed",
+        }),
+        expect.objectContaining({
+          kind: "rust-agent-run-packaging-contract",
+          target: "scripts/ops/install-friday-launchagent.sh",
           status: "passed",
         }),
       ]),

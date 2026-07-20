@@ -33,12 +33,14 @@ use friday_protocol::{
     ProviderWorkspaceActionResultWire, RouteDecisionControlRequestWire,
     RouteDecisionControlResultWire, RouteDecisionProjectionWire,
     RunOutcomeLearningDecisionRequestWire, RunOutcomeLearningDecisionResultWire,
-    WorkItemStatusRequestWire, WorkItemStatusResultWire, SUPPORTED,
+    SessionCreateRequestWire, SessionCreateResultWire, SessionMessageAppendRequestWire,
+    SessionMessageAppendResultWire, WorkItemStatusRequestWire, WorkItemStatusResultWire, SUPPORTED,
 };
 use friday_providers::unified::{FallbackStatus, PlatformProvider, ProviderSession, SessionStatus};
 use friday_storage::{
     get_run_answer_for_principal, get_run_result, get_run_result_ref, load_session_owner,
-    AnswerDenyReason, Db, MissionBodySnapshot, RunAnswerAccess, RunResultRef,
+    AnswerDenyReason, Db, MissionBodySnapshot, RunAnswerAccess, RunResultRef, SessionMessage,
+    SessionOwner,
 };
 use friday_transport::{ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket};
 use serde_json::json;
@@ -1576,6 +1578,201 @@ pub fn memory_decision_result_for_db(
                 blocker: None,
                 recallable,
             },
+        },
+    )
+    .with_correlation(msg_id.to_string())
+}
+
+/// (CORE-A CR-3) CREATE/ensure ONE agent-session row from a sealed [`Message::SessionCreateRequest`]
+/// — the Rust-owned `sessions.create`. PURE Hub `&Db` mutation: NO provider/model call, ZERO
+/// `token_ledger` rows. Reuses the EXISTING [`friday_storage::ensure_session_with_owner`] storage
+/// primitive (no new storage).
+///
+/// **OWNER binding (FIX-Q3b + INV-5/INV-7):** the session's owner axis (`agent_session.user_id`) is
+/// bound to the Rust-derived AUTHENTICATED owner (`authenticated_owner`, the configured
+/// `--owner`/`principal_id`), NEVER a raw client field — exactly as `run_session_task_pinned` binds
+/// it. A body `user_id` that is present AND disagrees with the authenticated owner is fail-closed (an
+/// `Error`, writing ZERO rows); an absent/blank/matching body `user_id` binds the authenticated
+/// owner. An empty authenticated owner is refused (no anonymous session). The descriptive axes
+/// (channel/chat_id/account_id/chat_kind) ride from the request; `metadata_json` is refs-only and NOT
+/// persisted by the minimal store.
+///
+/// Reply: a REFS-ONLY [`Message::SessionCreateResult`] (id + stored timestamps, read back so an
+/// idempotent re-ensure reports the row's ORIGINAL `created_at`). Any storage failure surfaces as a
+/// typed `Error` (fail-closed) — never a fake receipt.
+pub fn session_create_result_for_db(
+    db: &Db,
+    msg_id: &str,
+    request: SessionCreateRequestWire,
+    authenticated_owner: Option<&str>,
+    now_ms: i64,
+) -> Envelope {
+    let owner = authenticated_owner.unwrap_or("").trim();
+    if owner.is_empty() {
+        return session_error(
+            msg_id,
+            now_ms,
+            "session create requires an authenticated owner",
+        );
+    }
+    if request.session_id.trim().is_empty() {
+        return session_error(
+            msg_id,
+            now_ms,
+            "session create requires a non-empty session id",
+        );
+    }
+    // FIX-Q3b: a body-asserted owner that DISAGREES with the authenticated owner is fail-closed.
+    // Absent/blank/matching ⇒ bind the authenticated owner (single-owner v1: the forwarded
+    // principal equals the configured owner, so the live path is unchanged).
+    if let Some(body_owner) = request.user_id.as_deref() {
+        let body_owner = body_owner.trim();
+        if !body_owner.is_empty() && body_owner != owner {
+            return session_error(
+                msg_id,
+                now_ms,
+                "session create owner mismatch (body user_id disagrees with authenticated owner)",
+            );
+        }
+    }
+
+    let session_id = request.session_id.trim();
+    let session_owner = SessionOwner {
+        // OWNER SCOPE axis = the authenticated principal (NEVER the raw body field).
+        user_id: Some(owner.to_string()),
+        channel: request.channel.clone(),
+        chat_id: request.chat_id.clone(),
+        account_id: request.account_id.clone(),
+        chat_kind: request.chat_kind.clone(),
+        ..SessionOwner::default()
+    };
+    if friday_storage::ensure_session_with_owner(db.conn(), session_id, &session_owner, now_ms)
+        .is_err()
+    {
+        return session_error(msg_id, now_ms, "session create storage write failed");
+    }
+    // Read back the AUTHORITATIVE timestamps (an idempotent re-ensure keeps `created_at`).
+    let (created_at, updated_at) = match friday_storage::session_timestamps(db.conn(), session_id) {
+        Ok(Some(ts)) => ts,
+        _ => return session_error(msg_id, now_ms, "session create readback failed"),
+    };
+
+    Envelope::new(
+        format!("{msg_id}-session-create"),
+        now_ms,
+        Message::SessionCreateResult {
+            result: SessionCreateResultWire {
+                session_id: session_id.to_string(),
+                created_at,
+                updated_at,
+            },
+        },
+    )
+    .with_correlation(msg_id.to_string())
+}
+
+/// (CORE-A CR-3) APPEND ONE conversation message from a sealed
+/// [`Message::SessionMessageAppendRequest`] — the Rust-owned `sessions.messages.create`. PURE Hub
+/// `&Db` mutation: NO provider/model call, ZERO `token_ledger` rows. Reuses the EXISTING owner-gated
+/// [`friday_storage::append_session_message`] (seq auto-increment, `updated_at` bump) — no new
+/// storage.
+///
+/// **OWNER-GATED fail-closed (INV-5/INV-7):** the append is REFUSED (a typed `Error`, ZERO rows)
+/// unless the target session is owned by the AUTHENTICATED principal
+/// ([`friday_storage::session_owner_matches`] on the SAME `agent_session.user_id` axis as the C2-4
+/// read API). A guessed `session_id`, an owner-less session, or a DIFFERENT owner cannot append. An
+/// empty authenticated owner is refused.
+///
+/// Reply: a REFS-ONLY [`Message::SessionMessageAppendResult`] (message id + store-assigned `seq` +
+/// timestamps; NEVER the appended body).
+pub fn session_message_append_result_for_db(
+    db: &Db,
+    msg_id: &str,
+    request: SessionMessageAppendRequestWire,
+    authenticated_owner: Option<&str>,
+    now_ms: i64,
+) -> Envelope {
+    let owner = authenticated_owner.unwrap_or("").trim();
+    if owner.is_empty() {
+        return session_error(
+            msg_id,
+            now_ms,
+            "session append requires an authenticated owner",
+        );
+    }
+    let session_id = request.session_id.trim();
+    if session_id.is_empty() {
+        return session_error(
+            msg_id,
+            now_ms,
+            "session append requires a non-empty session id",
+        );
+    }
+    if request.role.trim().is_empty() {
+        return session_error(msg_id, now_ms, "session append requires a non-empty role");
+    }
+    // OWNER GATE FIRST: refuse before ANY write when the authenticated principal does not own the
+    // session (a non-owner, an owner-less session, or an absent id all fail-closed here).
+    match friday_storage::session_owner_matches(db.conn(), owner, session_id) {
+        Ok(true) => {}
+        Ok(false) => {
+            return session_error(
+                msg_id,
+                now_ms,
+                "session append refused: authenticated owner does not own this session",
+            );
+        }
+        Err(_) => return session_error(msg_id, now_ms, "session append owner check failed"),
+    }
+
+    let message = SessionMessage {
+        role: request.role.clone(),
+        content: request.content.clone(),
+        refs: request.refs.clone(),
+    };
+    let message_id =
+        match friday_storage::append_session_message(db.conn(), session_id, &message, now_ms) {
+            Ok(id) => id,
+            Err(_) => return session_error(msg_id, now_ms, "session append storage write failed"),
+        };
+    // The store assigns `message_id = "<session>:m<seq>"` and writes the message `created_at` AND the
+    // session `updated_at` to the SAME `now_ms` — so `seq` is parsed from the id suffix and the
+    // timestamps are `now_ms` (authoritative, not invented). Defensive parse: an unexpected id shape
+    // fails closed rather than reporting a wrong ordinal.
+    let seq = match message_id
+        .rsplit_once(":m")
+        .and_then(|(_, s)| s.parse::<i64>().ok())
+    {
+        Some(seq) => seq,
+        None => return session_error(msg_id, now_ms, "session append produced an unparseable id"),
+    };
+
+    Envelope::new(
+        format!("{msg_id}-session-append"),
+        now_ms,
+        Message::SessionMessageAppendResult {
+            result: SessionMessageAppendResultWire {
+                message_id,
+                seq,
+                created_at: now_ms,
+                updated_at: now_ms,
+            },
+        },
+    )
+    .with_correlation(msg_id.to_string())
+}
+
+/// (CORE-A CR-3) Fail-closed session-lifecycle refusal/error envelope: a typed [`Message::Error`]
+/// correlated to the inbound request. Used for owner refusals, empty-owner, invalid input, and
+/// storage failures — a WRITE op that does not succeed surfaces an `Error` (the TS sealed client
+/// fails closed → 503), NEVER a fabricated refs receipt.
+fn session_error(msg_id: &str, now_ms: i64, message: &str) -> Envelope {
+    Envelope::new(
+        format!("{msg_id}-session-error"),
+        now_ms,
+        Message::Error {
+            code: ErrorCode::Internal,
+            message: message.to_string(),
         },
     )
     .with_correlation(msg_id.to_string())
@@ -3804,6 +4001,216 @@ mod tests {
             ))
             .to_string_lossy()
             .into_owned()
+    }
+
+    // ─── (CORE-A CR-3) session create/append handler KATs ───
+
+    #[test]
+    fn session_create_binds_authenticated_owner_and_append_is_owner_gated() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let now = 1_700_000_000_000;
+        let sid = "discord:default:cr3-chat";
+
+        // CREATE as owner "alice": ensures the row + binds the OWNER axis to the authenticated owner.
+        let create = session_create_result_for_db(
+            &db,
+            "m-create",
+            SessionCreateRequestWire {
+                session_id: sid.into(),
+                channel: Some("discord".into()),
+                chat_id: Some("cr3-chat".into()),
+                user_id: Some("alice".into()),
+                account_id: Some("default".into()),
+                chat_kind: Some("dm".into()),
+                metadata_json: Some("{\"src\":\"cr3\"}".into()),
+            },
+            Some("alice"),
+            now,
+        );
+        match create.message {
+            Message::SessionCreateResult { result } => {
+                assert_eq!(result.session_id, sid);
+                assert_eq!(result.created_at, now);
+                assert_eq!(result.updated_at, now);
+            }
+            other => panic!("expected SessionCreateResult, got {other:?}"),
+        }
+        // The stored owner axis is the AUTHENTICATED owner.
+        assert_eq!(
+            friday_storage::load_session_owner(db.conn(), sid)
+                .unwrap()
+                .unwrap()
+                .user_id
+                .as_deref(),
+            Some("alice")
+        );
+
+        // APPEND as the OWNER "alice" → accepted, refs-only receipt, row written.
+        let ok = session_message_append_result_for_db(
+            &db,
+            "m-append-ok",
+            SessionMessageAppendRequestWire {
+                session_id: sid.into(),
+                role: "user".into(),
+                content: "remember teal".into(),
+                refs: Some("run-1".into()),
+            },
+            Some("alice"),
+            now + 1,
+        );
+        match ok.message {
+            Message::SessionMessageAppendResult { result } => {
+                assert_eq!(result.message_id, format!("{sid}:m0"));
+                assert_eq!(result.seq, 0);
+                assert_eq!(result.created_at, now + 1);
+            }
+            other => panic!("expected SessionMessageAppendResult, got {other:?}"),
+        }
+        assert_eq!(
+            friday_storage::session_message_count(db.conn(), sid).unwrap(),
+            1
+        );
+
+        // APPEND as a DIFFERENT owner "bob" → REFUSED fail-closed (Error), NO row written.
+        let denied = session_message_append_result_for_db(
+            &db,
+            "m-append-bob",
+            SessionMessageAppendRequestWire {
+                session_id: sid.into(),
+                role: "user".into(),
+                content: "sneaky".into(),
+                refs: None,
+            },
+            Some("bob"),
+            now + 2,
+        );
+        assert!(
+            matches!(denied.message, Message::Error { .. }),
+            "a non-owner append must fail closed with an Error, got {:?}",
+            denied.message
+        );
+        assert_eq!(
+            friday_storage::session_message_count(db.conn(), sid).unwrap(),
+            1,
+            "a refused append must write ZERO rows"
+        );
+    }
+
+    #[test]
+    fn session_create_refuses_empty_and_mismatched_owner_and_append_unknown_session() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let now = 1_700_000_100_000;
+
+        // Empty authenticated owner → refused (no anonymous session).
+        let anon = session_create_result_for_db(
+            &db,
+            "m-anon",
+            SessionCreateRequestWire {
+                session_id: "s:default:x".into(),
+                channel: None,
+                chat_id: None,
+                user_id: None,
+                account_id: None,
+                chat_kind: None,
+                metadata_json: None,
+            },
+            Some("   "),
+            now,
+        );
+        assert!(matches!(anon.message, Message::Error { .. }));
+        assert!(!friday_storage::session_exists(db.conn(), "s:default:x").unwrap());
+
+        // FIX-Q3b: a body user_id that disagrees with the authenticated owner → fail-closed, no row.
+        let mismatch = session_create_result_for_db(
+            &db,
+            "m-mismatch",
+            SessionCreateRequestWire {
+                session_id: "s:default:y".into(),
+                channel: None,
+                chat_id: None,
+                user_id: Some("mallory".into()),
+                account_id: None,
+                chat_kind: None,
+                metadata_json: None,
+            },
+            Some("alice"),
+            now,
+        );
+        assert!(matches!(mismatch.message, Message::Error { .. }));
+        assert!(!friday_storage::session_exists(db.conn(), "s:default:y").unwrap());
+
+        // Append to a session that does not exist → owner check fails closed (Error), no row.
+        let ghost = session_message_append_result_for_db(
+            &db,
+            "m-ghost",
+            SessionMessageAppendRequestWire {
+                session_id: "s:default:ghost".into(),
+                role: "user".into(),
+                content: "hi".into(),
+                refs: None,
+            },
+            Some("alice"),
+            now,
+        );
+        assert!(matches!(ghost.message, Message::Error { .. }));
+    }
+
+    #[test]
+    fn session_create_is_idempotent_and_preserves_created_at() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let sid = "discord:default:idem";
+        let first = 1_700_000_200_000;
+        let r1 = session_create_result_for_db(
+            &db,
+            "m1",
+            SessionCreateRequestWire {
+                session_id: sid.into(),
+                channel: Some("discord".into()),
+                chat_id: Some("idem".into()),
+                user_id: Some("alice".into()),
+                account_id: None,
+                chat_kind: None,
+                metadata_json: None,
+            },
+            Some("alice"),
+            first,
+        );
+        let created_at = match r1.message {
+            Message::SessionCreateResult { result } => result.created_at,
+            other => panic!("expected SessionCreateResult, got {other:?}"),
+        };
+        assert_eq!(created_at, first);
+
+        // Re-ensure later: created_at is PRESERVED (original), updated_at BUMPED.
+        let later = first + 5_000;
+        let r2 = session_create_result_for_db(
+            &db,
+            "m2",
+            SessionCreateRequestWire {
+                session_id: sid.into(),
+                channel: Some("discord".into()),
+                chat_id: Some("idem".into()),
+                user_id: Some("alice".into()),
+                account_id: None,
+                chat_kind: None,
+                metadata_json: None,
+            },
+            Some("alice"),
+            later,
+        );
+        match r2.message {
+            Message::SessionCreateResult { result } => {
+                assert_eq!(
+                    result.created_at, first,
+                    "created_at must be preserved on re-ensure"
+                );
+                assert_eq!(
+                    result.updated_at, later,
+                    "updated_at must bump on re-ensure"
+                );
+            }
+            other => panic!("expected SessionCreateResult, got {other:?}"),
+        }
     }
 
     #[test]

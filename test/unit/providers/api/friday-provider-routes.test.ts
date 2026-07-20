@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createFridayProviderRoutes } from "#api";
 import type { FridayProviderService } from "#providers";
@@ -10,7 +12,15 @@ import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
   type FridayCanonicalApprovalResolution,
+  type FridayDeviceApprovalVerifyResult,
 } from "../../../../src/security/friday-mutating-action-gate.js";
+import { createFridayProviderApprovalPoPVerifier } from "../../../../src/api/auth/device-attest/index.js";
+import {
+  deviceOwnerPrincipalIdFor,
+  generateTestDeviceKey,
+  makeApprovalProof,
+  makeApprovalTranscript,
+} from "../../../helpers/friday-provider-approval-test-kit.js";
 
 describe("FridayProviderRoutes", () => {
   const NOW = "2026-02-17T10:00:00.000Z";
@@ -101,6 +111,11 @@ describe("FridayProviderRoutes", () => {
     });
   }
 
+  // A single owner device; the gate binds the device-authored approval to it.
+  const OWNER = generateTestDeviceKey();
+  const OWNER_PRINCIPAL = deviceOwnerPrincipalIdFor(OWNER);
+  const APPROVAL_EXPIRES_AT = "2026-02-17T10:09:00.000Z";
+
   function makeProviderMutationApproval(input: {
     action: string;
     surface: string;
@@ -112,8 +127,8 @@ describe("FridayProviderRoutes", () => {
       action: input.action,
       actor: {
         kind: "user",
-        id: "user-1",
-        principalId: "user-1",
+        id: OWNER_PRINCIPAL,
+        principalId: OWNER_PRINCIPAL,
       },
       surface: input.surface,
       resourceId: input.resourceId,
@@ -121,23 +136,79 @@ describe("FridayProviderRoutes", () => {
       planDigest: PLAN_DIGEST,
       idempotencyKey: input.idempotencyKey,
     });
+    const actionDigest = createFridayMutatingActionDigest(request);
+    const approvalId = `${input.action}-approval`;
+    // A DEVICE-AUTHORED approval (SEC-APPROVAL-AUTHORITY-001): the owner device
+    // signs it; the Hub only verifies. A Hub-minted / unsigned approval is refused.
+    const transcript = makeApprovalTranscript(OWNER, {
+      actionDigest,
+      decidedByPrincipalId: OWNER_PRINCIPAL,
+      approvalId,
+      expiresAt: APPROVAL_EXPIRES_AT,
+    });
     return {
       decision: "approved",
-      approvalId: `${input.action}-approval`,
-      decidedByPrincipalId: "user-1",
-      actionDigest: createFridayMutatingActionDigest(request),
-      expiresAt: "2026-02-17T11:00:00.000Z",
+      approvalId,
+      decidedByPrincipalId: OWNER_PRINCIPAL,
+      actionDigest,
+      expiresAt: APPROVAL_EXPIRES_AT,
+      issuer: "friday_device_owner",
+      deviceProof: makeApprovalProof(OWNER, transcript),
     };
   }
 
+  /** A ctx whose bound owner principal IS the device-owner (device-owner:<keyHash>). */
+  function makeDeviceOwnerCtx(overrides: Partial<FridayHttpContext<unknown, unknown, unknown>> = {}) {
+    return makeAdminCtx({
+      principal: {
+        principalType: "user",
+        principalId: OWNER_PRINCIPAL,
+        userId: "user-1",
+        role: "owner",
+        scopes: ["hub.admin"],
+        tokenId: "tok-1",
+        tokenKind: "access",
+        issuedAt: NOW,
+      } as FridayHttpContext<unknown, unknown, unknown>["principal"],
+      ...overrides,
+    });
+  }
+
   function createProviderRoutesWithGate(mockService: FridayProviderService) {
+    const providerApprovalVerifier = createFridayProviderApprovalPoPVerifier();
     return createFridayProviderRoutes({
       providerService: mockService,
       providerMutationGateRequired: true,
       canonicalMutationGate: createFridayMutatingActionGate({
         nowIso: () => NOW,
         ticketIdGenerator: () => "ticket-1",
+        deviceApprovalVerifier: (proof, nowMs): FridayDeviceApprovalVerifyResult => {
+          const r = providerApprovalVerifier.verifyPossession({
+            transcript: proof.transcript,
+            devicePublicKey: proof.devicePublicKey,
+            signature: proof.signature,
+            nowMs,
+          });
+          return r.ok
+            ? {
+                ok: true,
+                devicePublicKeyHash: r.devicePublicKeyHash,
+                approvalId: r.approvalId,
+                actionDigest: r.actionDigest,
+                decidedByPrincipalId: r.decidedByPrincipalId,
+                expiresAt: r.expiresAt,
+              }
+            : { ok: false, reason: r.reason };
+        },
       }),
+      providerApprovalVerifier,
+      // Option B*: resolve the authenticated owner's durable device binding
+      // server-side. The device-owner ctx has `userId: "user-1"` and its registered
+      // device is `OWNER`; a passphrase / unknown user resolves to null.
+      resolveBoundDeviceOwnerSentinelHash: (userId: string) =>
+        userId === "user-1"
+          ? createHash("sha256").update(OWNER.spkiDerBase64).digest("hex")
+          : null,
       // Probe + routing-controls surfaces fail-close by default; enable the
       // test-oracle flags so these positive-path tests exercise real behavior.
       // The dedicated retirement describe block omits these flags.
@@ -392,11 +463,21 @@ describe("FridayProviderRoutes", () => {
     };
   }
 
-  it("creates 22 route definitions", () => {
+  it("creates 25 route definitions", () => {
     const routes = createFridayProviderRoutes({
       providerService: makeMockService(),
     });
-    expect(routes).toHaveLength(23);
+    // 23 → 25: CORE-A CR-2 added the two owner-confirm handshake routes below. The count is
+    // asserted TOGETHER with their exact identity so a future accidental route cannot slip in
+    // behind a silently bumped number.
+    expect(routes).toHaveLength(25);
+    const planRoutes = routes
+      .filter((r) => r.path === "/v1/providers/plan" || r.path === "/v1/providers/plan/confirm")
+      .map((r) => ({ path: r.path, operationId: r.operationId }));
+    expect(planRoutes).toEqual([
+      { path: "/v1/providers/plan", operationId: "providers.plan" },
+      { path: "/v1/providers/plan/confirm", operationId: "providers.plan.confirm" },
+    ]);
   });
 
   it("has correct operation ids", () => {
@@ -491,7 +572,9 @@ describe("FridayProviderRoutes", () => {
       };
 
       const result = await createRoute.handler(makeCtx({ body }));
-      expect(mockService.createProvider).toHaveBeenCalledWith(body);
+      // Second arg is the optional provider-mutation options (approval consume hook); it is
+      // undefined here because this fixture injects no durable approval-consumption store.
+      expect(mockService.createProvider).toHaveBeenCalledWith(body, undefined);
       expect(result).toHaveProperty("provider");
     });
 
@@ -545,9 +628,11 @@ describe("FridayProviderRoutes", () => {
         }),
       };
 
-      const result = await createRoute.handler(makeAdminCtx({ body }));
+      const result = await createRoute.handler(makeDeviceOwnerCtx({ body }));
 
-      expect(mockService.createProvider).toHaveBeenCalledWith(providerBody);
+      // Second arg is the optional provider-mutation options (approval consume hook);
+      // undefined here because this fixture injects no durable approval-consumption store.
+      expect(mockService.createProvider).toHaveBeenCalledWith(providerBody, undefined);
       expect(result).toHaveProperty("canonicalGate.ticketId", "ticket-1");
     });
 
@@ -654,7 +739,7 @@ describe("FridayProviderRoutes", () => {
         (r) => r.operationId === "providers.validate",
       )!;
 
-      const result = await validateRoute.handler(makeAdminCtx({
+      const result = await validateRoute.handler(makeDeviceOwnerCtx({
         params: { providerId: "prov-001" },
         body: {
           planDigest: PLAN_DIGEST,
@@ -762,7 +847,7 @@ describe("FridayProviderRoutes", () => {
         (r) => r.operationId === "capabilities.doctor",
       )!;
 
-      const result = await doctorRoute.handler(makeAdminCtx({
+      const result = await doctorRoute.handler(makeDeviceOwnerCtx({
         body: {
           providerIds: ["prov-001"],
           planDigest: PLAN_DIGEST,
@@ -1069,7 +1154,7 @@ describe("FridayProviderRoutes", () => {
         }),
       };
 
-      const result = await setRoutingRoute.handler(makeAdminCtx({ body }));
+      const result = await setRoutingRoute.handler(makeDeviceOwnerCtx({ body }));
 
       expect(mockService.setRoutingConfig).toHaveBeenCalledWith(routingBody);
       expect(result).toHaveProperty("canonicalGate.ticketId", "ticket-1");

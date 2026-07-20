@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createFridayApiRuntime } from "#api";
@@ -26,7 +28,58 @@ import type { FridayProviderProfile } from "#providers";
 import type { FridaySqliteLayer } from "#state";
 import type { FridayWorkflowRuntime } from "#workflows";
 import { signFridayCanonicalApproval } from "../../../../src/security/friday-mutating-action-gate.js";
+import type { FridayCanonicalApprovalResolution } from "../../../../src/security/friday-mutating-action-gate.js";
+import {
+  deviceOwnerPrincipalIdFor,
+  generateTestDeviceKey,
+  makeApprovalProof,
+  makeApprovalTranscript,
+} from "../../../helpers/friday-provider-approval-test-kit.js";
 import { createTestDb } from "../../../helpers/friday-test-db.helper.js";
+
+// SEC-APPROVAL-AUTHORITY-001: a single owner device for the runtime provider-gate
+// tests. The Hub verifies its P-256 proof; no Hub signing key is on the approval path.
+const RUNTIME_OWNER_KEY = generateTestDeviceKey();
+const RUNTIME_OWNER_PRINCIPAL = deviceOwnerPrincipalIdFor(RUNTIME_OWNER_KEY);
+
+/**
+ * Option B*: seed a device-claimed owner (`users.password_hash = device-owner$v1$<sha256Hex
+ * (SPKI-DER base64)>`) so the runtime's server-side resolver binds a device-authored
+ * provider approval to the authenticated owner's registered device. `userId` is the
+ * authenticated principal's `userId` (makePrincipal defaults to "user-1").
+ */
+function seedDeviceOwner(db: FridaySqliteLayer, userId: string): void {
+  const sentinel = `device-owner$v1$${createHash("sha256").update(RUNTIME_OWNER_KEY.spkiDerBase64).digest("hex")}`;
+  db.withWriteTransaction((conn) => {
+    conn
+      .prepare(
+        `INSERT INTO users (id, display_name, role, is_local_only, password_hash, created_at, updated_at)
+         VALUES (?, 'Owner', 'admin', 1, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET password_hash = excluded.password_hash`,
+      )
+      .run(userId, sentinel, NOW, NOW);
+  });
+}
+
+/** A DEVICE-AUTHORED provider approval bound to `actionDigest` + the owner device. */
+function runtimeDeviceApproval(actionDigest: string, approvalId: string): FridayCanonicalApprovalResolution {
+  const expiresAt = "2026-02-27T01:00:00.000Z";
+  const transcript = makeApprovalTranscript(RUNTIME_OWNER_KEY, {
+    actionDigest,
+    decidedByPrincipalId: RUNTIME_OWNER_PRINCIPAL,
+    approvalId,
+    expiresAt,
+  });
+  return {
+    decision: "approved",
+    approvalId,
+    decidedByPrincipalId: RUNTIME_OWNER_PRINCIPAL,
+    actionDigest,
+    expiresAt,
+    issuer: "friday_device_owner",
+    deviceProof: makeApprovalProof(RUNTIME_OWNER_KEY, transcript),
+  };
+}
 
 const NOW = "2026-02-27T00:00:00.000Z";
 const allocatedDbs: FridaySqliteLayer[] = [];
@@ -1088,13 +1141,17 @@ describe("API Runtime — Extended Route Registration", () => {
       principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
     });
 
-    expect(providerService.createProvider).toHaveBeenCalledWith(providerBody);
+    // No canonical gate in this runtime → no deferred reservation → the optional
+    // provider-mutation options second arg is undefined.
+    expect(providerService.createProvider).toHaveBeenCalledWith(providerBody, undefined);
   });
 
   it("requires signed provider setup canonical approval when runtime canonical gate profile is on", async () => {
     const providerService = makeMockProviderService();
+    const deps = makeBaseDeps();
+    seedDeviceOwner(deps.db, "user-1");
     const runtime = createFridayApiRuntime({
-      ...makeBaseDeps(),
+      ...deps,
       providerService,
       canonicalMutatingActionGate: true,
     });
@@ -1109,7 +1166,12 @@ describe("API Runtime — Extended Route Registration", () => {
         planDigest: "provider-runtime-plan-1",
       },
       headers: {},
-      principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+      // Owner principal BOUND to the device (principalId = device-owner:<keyHash>).
+      principal: makePrincipal({
+        role: "admin",
+        scopes: ["hub.admin"],
+        principalId: RUNTIME_OWNER_PRINCIPAL,
+      }),
     };
 
     let actionDigest = "";
@@ -1123,21 +1185,37 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(actionDigest).toBeTruthy();
     expect(providerService.createProvider).not.toHaveBeenCalled();
 
-    const result = await route.handler({
+    // A Hub-minted HMAC approval must be REFUSED on the provider path (Hub self-sign).
+    await expect(route.handler({
       ...baseCtx,
       body: {
         ...baseCtx.body,
         canonicalApproval: signFridayCanonicalApproval({
           decision: "approved",
-          approvalId: "provider-runtime-approval",
-          decidedByPrincipalId: "tenant-a",
+          approvalId: "provider-runtime-hmac",
+          decidedByPrincipalId: RUNTIME_OWNER_PRINCIPAL,
           actionDigest,
           expiresAt: "2026-02-27T01:00:00.000Z",
         }, "test-secret"),
       },
+    })).rejects.toMatchObject({ code: "PROVIDER_MUTATION_APPROVAL_NOT_DEVICE_AUTHORED" });
+    expect(providerService.createProvider).not.toHaveBeenCalled();
+
+    // A DEVICE-AUTHORED approval admits — the Hub verified it with the public key.
+    const result = await route.handler({
+      ...baseCtx,
+      body: {
+        ...baseCtx.body,
+        canonicalApproval: runtimeDeviceApproval(actionDigest, "provider-runtime-approval"),
+      },
     });
 
-    expect(providerService.createProvider).toHaveBeenCalledWith(providerBody);
+    // Gate-required runtime injects the durable approval-consumption store, so the deferred
+    // ticket threads a consume-in-transaction hook as the second arg (finalized atomically
+    // with the mutation's write).
+    expect(providerService.createProvider).toHaveBeenCalledWith(providerBody, {
+      consumeApprovalInTransaction: expect.any(Function),
+    });
     expect(result).toHaveProperty("canonicalGate.ticketId");
   });
 
@@ -1252,8 +1330,10 @@ describe("API Runtime — Extended Route Registration", () => {
 
   it("requires signed model-routing canonical approval when runtime canonical gate profile is on", async () => {
     const providerService = makeMockProviderService();
+    const deps = makeBaseDeps();
+    seedDeviceOwner(deps.db, "user-1");
     const runtime = createFridayApiRuntime({
-      ...makeBaseDeps(),
+      ...deps,
       providerService,
       canonicalMutatingActionGate: true,
     });
@@ -1269,7 +1349,11 @@ describe("API Runtime — Extended Route Registration", () => {
         planDigest: "provider-routing-plan-1",
       },
       headers: {},
-      principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+      principal: makePrincipal({
+        role: "admin",
+        scopes: ["hub.admin"],
+        principalId: RUNTIME_OWNER_PRINCIPAL,
+      }),
     };
 
     let actionDigest = "";
@@ -1287,13 +1371,7 @@ describe("API Runtime — Extended Route Registration", () => {
       ...baseCtx,
       body: {
         ...baseCtx.body,
-        canonicalApproval: signFridayCanonicalApproval({
-          decision: "approved",
-          approvalId: "provider-routing-runtime-approval",
-          decidedByPrincipalId: "tenant-a",
-          actionDigest,
-          expiresAt: "2026-02-27T01:00:00.000Z",
-        }, "test-secret"),
+        canonicalApproval: runtimeDeviceApproval(actionDigest, "provider-routing-runtime-approval"),
       },
     });
 

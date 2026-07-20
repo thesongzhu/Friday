@@ -19,7 +19,10 @@ describe("install smoke root path handling", () => {
   it("uses fileURLToPath instead of URL pathname in the install smoke script", () => {
     const source = readFileSync(join(process.cwd(), "scripts/ci/install-smoke.mjs"), "utf8");
 
-    expect(source).toContain('import { fileURLToPath } from "node:url";');
+    // `fileURLToPath` must be imported from node:url — but the script may legitimately import
+    // additional named bindings from the same module (Lane C added `pathToFileURL` for the Rust
+    // agent-run proof), so assert the named import is PRESENT rather than the SOLE import.
+    expect(source).toMatch(/import \{[^}]*\bfileURLToPath\b[^}]*\} from "node:url";/);
     expect(source).toContain('fileURLToPath(new URL("../../", import.meta.url))');
     expect(source).not.toContain(".pathname.replace");
   });

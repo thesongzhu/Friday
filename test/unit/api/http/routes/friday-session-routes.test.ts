@@ -4,6 +4,9 @@ import { createFridaySessionRoutes } from "#api";
 import { FRIDAY_SESSION_ERROR_CODES, FRIDAY_SESSION_MEMORY_EXTRACTION_ERROR_CODES } from "#sessions";
 import type { FridaySessionService, FridaySessionMemoryExtractionService } from "#sessions";
 import type { FridaySessionRecord, FridaySessionMessageRecord } from "#sessions";
+import { createFridayRustHubSessionLifecycleDispatchAdapter } from "../../../../../src/api/mission-spine/friday-rust-hub-session-lifecycle-dispatch-adapter.js";
+import type { FridayRustHubAgentRunSealedClient } from "../../../../../src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
+import type { FridayRustHubRunAnswerReadbackService } from "../../../../../src/api/mission-spine/friday-rust-hub-run-answer-readback-service.js";
 
 function makeMockSession(overrides: Partial<FridaySessionRecord> = {}): FridaySessionRecord {
   return {
@@ -2756,5 +2759,325 @@ describe("Rust session lifecycle bridge", () => {
       "OWNER_SESSION_CHANNEL_AUTHORITY_REQUIRED",
     );
     expect(rustSessionLifecycleBridge.appendMessage).not.toHaveBeenCalled();
+  });
+});
+
+// (CORE-RUNNABLE-001 / CORE-A CR-3) The REAL production session bridge adapter — NOT a mock — driven
+// over a TEST TRANSPORT (a fake low-level sealed client + a fake owner-gated readback, exactly the
+// seams the agent-run + mission-spine adapters use in their tests). Proves the session run Rust route
+// is reachable-and-real when routeSessionsViaRust is on, and byte-identical fail-closed when off.
+describe("Rust session run route (REAL adapter over a test transport)", () => {
+  function makeRealBridgeWithTestTransport(
+    overrides: Partial<Parameters<typeof createFridayRustHubSessionLifecycleDispatchAdapter>[0]> = {},
+  ) {
+    const dispatchRun = vi.fn().mockResolvedValue({
+      truthLabel: "rust_wired",
+      runId: "rust-session-run-1",
+      status: "finished",
+      answerSha256: "sha-answer",
+      answerLen: 32,
+      turns: 1,
+      executedTools: 2,
+      promptTokens: 11,
+      completionTokens: 4,
+    });
+    const readAnswer = vi.fn().mockResolvedValue({
+      truthLabel: "rust_wired_dev",
+      proofOnly: true,
+      outcome: "delivered",
+      runId: "rust-session-run-1",
+      status: "finished",
+      answer: "hello from the rust session loop",
+      answerSha256: "sha-answer",
+      answerLen: 32,
+    });
+    // (CR-3) The fake low-level sealed client ALSO answers the session create/append round-trips —
+    // the SAME `createSession` / `appendSessionMessage` methods the Rust arms serve. These echo a
+    // refs-only receipt (id + seq + timestamps) WITHOUT a socket, exactly like the Rust store's
+    // refs-only reply, so the REAL adapter's create/append mapping is exercised end-to-end.
+    const createSession = vi.fn().mockResolvedValue({
+      truthLabel: "rust_wired",
+      sessionId: "discord:default:user1",
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+    });
+    const appendSessionMessage = vi.fn().mockResolvedValue({
+      truthLabel: "rust_wired",
+      messageId: "discord:default:user1:m0",
+      seq: 0,
+      createdAt: 1_700_000_000_500,
+      updatedAt: 1_700_000_000_500,
+    });
+    const bridge = createFridayRustHubSessionLifecycleDispatchAdapter({
+      port: 0,
+      // A fixture 32-byte secret; the fake createClient ignores it (no socket). NEVER a real key.
+      secretResolver: () => new Uint8Array(32),
+      idGenerator: () => "rust-session-run-1",
+      hubDbPath: "/tmp/friday-rust-session-test.db",
+      // Test transport: a fake low-level sealed client. The REAL service adapter wraps it.
+      createClient: () =>
+        ({
+          dispatchRun,
+          createSession,
+          appendSessionMessage,
+        } as unknown as FridayRustHubAgentRunSealedClient),
+      // Test transport: a fake owner-gated readback returning a delivered body.
+      readback: { readAnswer } as unknown as FridayRustHubRunAnswerReadbackService,
+      ...overrides,
+    });
+    return { bridge, dispatchRun, readAnswer, createSession, appendSessionMessage };
+  }
+
+  it("dispatches sessions.run to the Rust-backed bridge (not 503) when routeSessionsViaRust is on", async () => {
+    const { bridge, dispatchRun, readAnswer } = makeRealBridgeWithTestTransport();
+    const routes = createFridaySessionRoutes({
+      sessionService: createMockService(),
+      // Must be present so the route does not 501; NOT called (the Rust branch returns first).
+      runSession: vi.fn(),
+      routeSessionsViaRust: true,
+      rustSessionLifecycleBridge: bridge,
+      // The legacy TS run oracle is OFF — proving the Rust path (not the TS oracle) served the run.
+      allowTestOnlySessionRunExecution: false,
+    });
+
+    const run = routes.find((r) => r.operationId === "sessions.run")!;
+    const result = (await run.handler(
+      makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        body: { task: "summarize my day" },
+        principal: makeBoundPrincipal(),
+      }) as never,
+    )) as {
+      run: {
+        runId: string;
+        status: string;
+        response: string;
+        toolCallCount: number;
+        usageInput: number;
+        usageOutput: number;
+      };
+      messages: Array<{ role: string; content: string }>;
+    };
+
+    expect(result.run.status).toBe("completed");
+    expect(result.run.response).toBe("hello from the rust session loop");
+    expect(result.run.toolCallCount).toBe(2);
+    expect(result.run.usageInput).toBe(11);
+    expect(result.run.usageOutput).toBe(4);
+    expect(result.messages).toEqual([
+      { role: "user", content: "summarize my day" },
+      { role: "assistant", content: "hello from the rust session loop" },
+    ]);
+    // Proves the REAL adapter drove the sealed transport + owner-gated readback (not a mock bridge).
+    expect(dispatchRun).toHaveBeenCalledTimes(1);
+    expect(dispatchRun.mock.calls[0][0]).toMatchObject({
+      task: "summarize my day",
+      sessionKey: "discord:default:user1",
+      forwardedPrincipal: "user:bound-1",
+      constraints: { readOnly: true },
+    });
+    expect(readAnswer).toHaveBeenCalledTimes(1);
+    expect(readAnswer.mock.calls[0][0]).toMatchObject({
+      runId: "rust-session-run-1",
+      callerPrincipal: "user:bound-1",
+    });
+  });
+
+  it("still fails closed with TS_RUNTIME_SESSION_RUN_RETIRED when routeSessionsViaRust is OFF (unchanged default)", async () => {
+    const { bridge, dispatchRun } = makeRealBridgeWithTestTransport();
+    const routes = createFridaySessionRoutes({
+      sessionService: createMockService(),
+      runSession: vi.fn(),
+      // Flag OFF (omitted) + TS oracle off ⇒ today's fail-closed 503, bridge never consulted.
+      rustSessionLifecycleBridge: bridge,
+      allowTestOnlySessionRunExecution: false,
+    });
+
+    const run = routes.find((r) => r.operationId === "sessions.run")!;
+    await expectRouteError(
+      run.handler(
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          body: { task: "summarize my day" },
+          principal: makeBoundPrincipal(),
+        }) as never,
+      ),
+      "TS_RUNTIME_SESSION_RUN_RETIRED",
+    );
+    expect(dispatchRun).not.toHaveBeenCalled();
+  });
+
+  it("rejects a Rust session run without a bound session.write principal", async () => {
+    const { bridge, dispatchRun } = makeRealBridgeWithTestTransport();
+    const routes = createFridaySessionRoutes({
+      sessionService: createMockService(),
+      runSession: vi.fn(),
+      routeSessionsViaRust: true,
+      rustSessionLifecycleBridge: bridge,
+      allowTestOnlySessionRunExecution: false,
+    });
+
+    const run = routes.find((r) => r.operationId === "sessions.run")!;
+    await expectRouteError(
+      run.handler(
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          body: { task: "summarize my day" },
+          principal: makeBoundPrincipal({ scopes: ["session.read"], role: "viewer" }),
+        }) as never,
+      ),
+      "OWNER_SESSION_CHANNEL_AUTHORITY_REQUIRED",
+    );
+    expect(dispatchRun).not.toHaveBeenCalled();
+  });
+
+  it("dispatches the FULL create → append → run public seam to the Rust bridge (not 503) when routeSessionsViaRust is on", async () => {
+    const { bridge, createSession, appendSessionMessage, dispatchRun } =
+      makeRealBridgeWithTestTransport();
+    const routes = createFridaySessionRoutes({
+      sessionService: createMockService(),
+      runSession: vi.fn(),
+      routeSessionsViaRust: true,
+      rustSessionLifecycleBridge: bridge,
+      // Every legacy TS oracle OFF — proving the Rust path (not the TS oracle) served the seam.
+      allowTestOnlySessionExecution: false,
+      allowTestOnlySessionRunExecution: false,
+    });
+
+    // POST /v1/sessions → bridge.createSession → SessionCreateRequest → refs-only session.
+    const create = routes.find((r) => r.operationId === "sessions.create")!;
+    const created = (await create.handler(
+      makeMockCtx({
+        body: { channel: "discord", chatId: "user1", metadata: { source: "cr3" } },
+        principal: makeBoundPrincipal(),
+      }) as never,
+    )) as { session: { key: string; channel: string; status: string; messageCount: number } };
+    expect(created.session.key).toBe("discord:default:user1");
+    expect(created.session.channel).toBe("discord");
+    expect(created.session.status).toBe("active");
+    expect(created.session.messageCount).toBe(0);
+    // The REAL adapter drove the sealed transport: the derived canonical key rode the wire, and the
+    // forwarded owner is the AUTHENTICATED principal (never a client-asserted owner).
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession.mock.calls[0][0]).toMatchObject({
+      sessionId: "discord:default:user1",
+      userId: "user:bound-1",
+      metadataJson: JSON.stringify({ source: "cr3" }),
+    });
+
+    // POST /v1/sessions/:key/messages → bridge.appendMessage → SessionMessageAppendRequest → refs.
+    const message = routes.find((r) => r.operationId === "sessions.messages.create")!;
+    const appended = (await message.handler(
+      makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        body: { role: "user", content: "summarize my day", idempotencyKey: "idem-cr3" },
+        principal: makeBoundPrincipal(),
+      }) as never,
+    )) as { message: { id: string; sequence: number; role: string; contentText: string } };
+    expect(appended.message.id).toBe("discord:default:user1:m0");
+    expect(appended.message.sequence).toBe(0);
+    expect(appended.message.role).toBe("user");
+    expect(appended.message.contentText).toBe("summarize my day");
+    expect(appendSessionMessage).toHaveBeenCalledTimes(1);
+    expect(appendSessionMessage.mock.calls[0][0]).toMatchObject({
+      sessionId: "discord:default:user1",
+      role: "user",
+      content: "summarize my day",
+      refs: "idem-cr3",
+    });
+
+    // POST /v1/sessions/:key/run → bridge.runSession → dispatchRun (already proven) → answer.
+    const run = routes.find((r) => r.operationId === "sessions.run")!;
+    const ran = (await run.handler(
+      makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        body: { task: "summarize my day" },
+        principal: makeBoundPrincipal(),
+      }) as never,
+    )) as { run: { status: string; response: string } };
+    expect(ran.run.status).toBe("completed");
+    expect(ran.run.response).toBe("hello from the rust session loop");
+    expect(dispatchRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("getMemoryNamespace remains an HONEST 503 (deferred Rust owner-gated read; never a faked namespace)", async () => {
+    const { bridge } = makeRealBridgeWithTestTransport();
+    await expectRouteError(
+      bridge.getMemoryNamespace({
+        sessionKey: "discord:default:user1",
+        principal: makeBoundPrincipal() as never,
+      }),
+      "RUST_SESSION_LIFECYCLE_PROTOCOL_UNAVAILABLE",
+    );
+  });
+
+  it("create/append fail closed when the sealed-WS client secret cannot be resolved (no socket, no fake row)", async () => {
+    const { bridge, createSession, appendSessionMessage } = makeRealBridgeWithTestTransport({
+      secretResolver: () => null,
+    });
+    await expectRouteError(
+      bridge.createSession({
+        channel: "discord",
+        chatId: "user1",
+        principal: makeBoundPrincipal() as never,
+      }),
+      "RUST_SESSION_LIFECYCLE_DISPATCH_UNAVAILABLE",
+    );
+    await expectRouteError(
+      bridge.appendMessage({
+        sessionKey: "discord:default:user1",
+        role: "user",
+        content: "hi",
+        principal: makeBoundPrincipal() as never,
+      }),
+      "RUST_SESSION_LIFECYCLE_DISPATCH_UNAVAILABLE",
+    );
+    // Fail-closed BEFORE any socket: the underlying client round-trips were never constructed/called.
+    expect(createSession).not.toHaveBeenCalled();
+    expect(appendSessionMessage).not.toHaveBeenCalled();
+  });
+
+  it("a foreign-owner append surfaces the Rust owner-gate refusal as a fail-closed 503 (never a silent success)", async () => {
+    // The Rust arm refuses a non-owner append with an `Error` → the sealed client fails closed (503).
+    // Model that with a fake client whose `appendSessionMessage` rejects with the domain 503.
+    const denial = new FridayDomainError(
+      "MISSION_SPINE_RUST_AGENT_RUN_SEALED_WS_CLIENT_UNAVAILABLE",
+      "owner-gate refusal (Error inbound)",
+      { httpStatus: 503 },
+    );
+    const appendSessionMessage = vi.fn().mockRejectedValue(denial);
+    const bridge = createFridayRustHubSessionLifecycleDispatchAdapter({
+      port: 0,
+      secretResolver: () => new Uint8Array(32),
+      idGenerator: () => "run-x",
+      hubDbPath: "/tmp/friday-rust-session-test.db",
+      createClient: () =>
+        ({ appendSessionMessage } as unknown as FridayRustHubAgentRunSealedClient),
+    });
+    await expect(
+      bridge.appendMessage({
+        sessionKey: "discord:default:someone-elses",
+        role: "user",
+        content: "sneaky",
+        principal: makeBoundPrincipal() as never,
+      }),
+    ).rejects.toMatchObject({ httpStatus: 503 });
+    expect(appendSessionMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the sealed-WS client secret cannot be resolved (no socket, no fake body)", async () => {
+    const { bridge, dispatchRun, readAnswer } = makeRealBridgeWithTestTransport({
+      secretResolver: () => null,
+    });
+    await expectRouteError(
+      bridge.runSession!({
+        sessionKey: "discord:default:user1",
+        task: "summarize my day",
+        principalId: "user:bound-1",
+      }),
+      "RUST_SESSION_LIFECYCLE_DISPATCH_UNAVAILABLE",
+    );
+    expect(dispatchRun).not.toHaveBeenCalled();
+    expect(readAnswer).not.toHaveBeenCalled();
   });
 });

@@ -45,8 +45,8 @@ pub use agent_session::{
     append_session_message, archive_session_for_owner, ensure_session, ensure_session_with_owner,
     fork_session_for_owner, list_sessions_for_owner, load_session_messages, load_session_owner,
     open_session_for_owner, session_exists, session_forked_from, session_message_count,
-    session_message_count_for_owner, ArchiveOutcome, ForkOutcome, SessionListItem, SessionMessage,
-    SessionOwner, StoredSessionMessage,
+    session_message_count_for_owner, session_owner_matches, session_timestamps, ArchiveOutcome,
+    ForkOutcome, SessionListItem, SessionMessage, SessionOwner, StoredSessionMessage,
 };
 pub use authorize::authorize_mutating_action;
 pub use authorize_ed25519::{

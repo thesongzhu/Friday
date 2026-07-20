@@ -431,6 +431,87 @@ pub struct MemoryDecisionResultWire {
     pub recallable: bool,
 }
 
+/// (CORE-A CR-3) Client request to CREATE/ensure ONE agent-session row over the sealed single-peer
+/// session — the Rust-owned counterpart of the retired TS `sessions.create`. This is a PURE Hub
+/// `&Db` mutation (NO provider/model call). The session's OWNER is the server-AUTHENTICATED principal
+/// (the single-peer session IS the channel auth), NEVER a raw client field: the dispatch arm binds
+/// `agent_session.user_id` to the Rust-derived owner exactly as `run_session_task_pinned` does, and
+/// applies the FIX-Q3b cross-check (a body `user_id` that disagrees with the authenticated owner is
+/// fail-closed). `session_id` is the canonical session key the client already derives; the remaining
+/// axes are DESCRIPTIVE surface metadata. Matches the internally-tagged `{ request }` wrapper the
+/// sibling `MemoryDecisionRequest` uses.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionCreateRequestWire {
+    /// The canonical session key (`agent_session_id`) to ensure. Non-empty (the store rejects blank).
+    pub session_id: String,
+    /// Descriptive surface channel (e.g. `discord`). Additive + optional; absent ⇒ omitted on the wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+    /// Descriptive surface chat id. Additive + optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_id: Option<String>,
+    /// The OWNER principal the client forwards. **NOT the authority** — the dispatch arm binds the
+    /// session owner to the server-AUTHENTICATED principal and FIX-Q3b-refuses a value that
+    /// disagrees. Additive + optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    /// Descriptive account/tenant id. Additive + optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    /// Descriptive chat kind (e.g. `dm` / `channel`). Additive + optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_kind: Option<String>,
+    /// Opaque client metadata as a JSON STRING (refs-only; the minimal session store does not persist
+    /// it — it is echoed client-side). Additive + optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_json: Option<String>,
+}
+
+/// (CORE-A CR-3) Hub receipt for a session create/ensure. REFS-ONLY: the ensured session id + its
+/// stored timestamps — NEVER any message body or descriptive echo (the client already holds the
+/// surface fields it sent). `created_at` is the row's ORIGINAL creation time (an idempotent re-ensure
+/// of an existing session keeps its `created_at` and only bumps `updated_at`), read back from the
+/// store so the receipt is authoritative, not a `now_ms` guess.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionCreateResultWire {
+    pub session_id: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// (CORE-A CR-3) Client request to APPEND ONE conversation message to an existing session over the
+/// sealed single-peer session — the Rust-owned counterpart of the retired TS
+/// `sessions.messages.create`. PURE Hub `&Db` mutation (NO provider/model call). OWNER-GATED: the
+/// dispatch arm refuses fail-closed unless the target session is owned by the server-AUTHENTICATED
+/// principal (a guessed `session_id` cannot append to another owner's session). `content` is a BODY
+/// kept Hub-side (the SAME discipline as the session store) — it rides the SEALED session, never a
+/// refs field.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionMessageAppendRequestWire {
+    /// The target session key (`agent_session_id`) — the message is refused unless the authenticated
+    /// principal owns it.
+    pub session_id: String,
+    /// The speaker role (e.g. `user` / `assistant`). Non-empty (the store rejects a blank role).
+    pub role: String,
+    /// The message body kept Hub-side. Sealed on the wire; never echoed in the refs-only receipt.
+    pub content: String,
+    /// Optional soft-link ref (e.g. the producing run id). Additive + optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refs: Option<String>,
+}
+
+/// (CORE-A CR-3) Hub receipt for a session message append. REFS-ONLY: the assigned message id + its
+/// per-session ordinal + timestamps — NEVER the appended body. `seq` is the store-assigned monotonic
+/// ordinal (0 for the first message); `created_at`/`updated_at` are the append time (the store writes
+/// both to the same `now_ms`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionMessageAppendResultWire {
+    pub message_id: String,
+    pub seq: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// One refs-only context-passport item proposed by a trusted client. Labels are operator/user
 /// reviewed summaries or refs; sensitive raw material must not ride this wire. The Hub runs the
 /// canonical context-passport gate before persisting any row.
@@ -1547,6 +1628,22 @@ pub enum Message {
     /// the resulting lifecycle state, a coarse status, and whether it is now
     /// recallable. NEVER the candidate's content (the content stays Hub-side).
     MemoryDecisionResult { result: MemoryDecisionResultWire },
+    /// (CORE-A CR-3) client->hub: create/ensure ONE agent-session row (the Rust-owned
+    /// `sessions.create`). PURE Hub `&Db` mutation; NO provider/model call. Owner is the
+    /// server-AUTHENTICATED principal (single-peer session = channel auth), never a raw client field.
+    SessionCreateRequest { request: SessionCreateRequestWire },
+    /// (CORE-A CR-3) hub->client: refs-only session create receipt (id + timestamps; no body).
+    SessionCreateResult { result: SessionCreateResultWire },
+    /// (CORE-A CR-3) client->hub: append ONE conversation message to an existing session (the
+    /// Rust-owned `sessions.messages.create`). PURE Hub `&Db` mutation. OWNER-GATED fail-closed: a
+    /// message for a session the authenticated principal does not own is refused (no row written).
+    SessionMessageAppendRequest {
+        request: SessionMessageAppendRequestWire,
+    },
+    /// (CORE-A CR-3) hub->client: refs-only append receipt (message id + seq + timestamps; no body).
+    SessionMessageAppendResult {
+        result: SessionMessageAppendResultWire,
+    },
     /// client->hub: mint one ContextPassport for an existing Mission through the Hub gate.
     /// Never a provider/model call; never direct client DB writes.
     ContextPassportTransferRequest {
@@ -2631,6 +2728,101 @@ mod tests {
         assert!(json.contains("\"result\":{"));
         assert!(json.contains("\"recallable\":false"));
         assert!(json.contains("\"blocker\":\"owner_scope_mismatch\""));
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+    }
+
+    #[test]
+    fn session_lifecycle_wire_round_trips_and_uses_the_request_result_wrapper() {
+        // (CORE-A CR-3) The session create/append wire rides the SAME internally-tagged
+        // `{ request }` / `{ result }` wrapper as MemoryDecision/MissionIntake (enum `tag="kind"`
+        // + a single named field). This pins the byte-exact `{kind,request}` nesting so a flat-shape
+        // regression (which 503s server-side on `Envelope::decode`) is caught at the protocol layer.
+        let create_req = Message::SessionCreateRequest {
+            request: SessionCreateRequestWire {
+                session_id: "discord:default:chat-1".into(),
+                channel: Some("discord".into()),
+                chat_id: Some("chat-1".into()),
+                user_id: Some("owner-1".into()),
+                account_id: Some("default".into()),
+                chat_kind: Some("dm".into()),
+                metadata_json: Some("{\"source\":\"cr3\"}".into()),
+            },
+        };
+        let env = Envelope::new("sess-create-req", 1000, create_req.clone()).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"SessionCreateRequest\""));
+        assert!(json.contains("\"request\":{"));
+        assert!(json.contains("\"session_id\":\"discord:default:chat-1\""));
+        assert!(json.contains("\"chat_kind\":\"dm\""));
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+
+        // Absent optional axes are OMITTED (byte-clean) and round-trip to `None`.
+        let create_req_min = Message::SessionCreateRequest {
+            request: SessionCreateRequestWire {
+                session_id: "system:default:heartbeat".into(),
+                channel: None,
+                chat_id: None,
+                user_id: None,
+                account_id: None,
+                chat_kind: None,
+                metadata_json: None,
+            },
+        };
+        let env_min = Envelope::new("sess-create-min", 1000, create_req_min.clone());
+        let json_min = env_min.encode().unwrap();
+        assert!(!json_min.contains("channel"));
+        assert!(!json_min.contains("metadata_json"));
+        assert_eq!(Envelope::decode(&json_min).unwrap(), env_min);
+
+        let create_res = Message::SessionCreateResult {
+            result: SessionCreateResultWire {
+                session_id: "discord:default:chat-1".into(),
+                created_at: 900,
+                updated_at: 1000,
+            },
+        };
+        let env = Envelope::new("sess-create-res", 1001, create_res).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"SessionCreateResult\""));
+        assert!(json.contains("\"result\":{"));
+        assert!(json.contains("\"created_at\":900"));
+        assert!(json.contains("\"updated_at\":1000"));
+        // REFS-ONLY: no descriptive echo / no body on the receipt.
+        assert!(!json.contains("chat_kind"));
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+
+        let append_req = Message::SessionMessageAppendRequest {
+            request: SessionMessageAppendRequestWire {
+                session_id: "discord:default:chat-1".into(),
+                role: "user".into(),
+                content: "remember teal".into(),
+                refs: Some("run-7".into()),
+            },
+        };
+        let env = Envelope::new("sess-append-req", 1002, append_req.clone()).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"SessionMessageAppendRequest\""));
+        assert!(json.contains("\"request\":{"));
+        assert!(json.contains("\"role\":\"user\""));
+        assert!(json.contains("\"refs\":\"run-7\""));
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+
+        let append_res = Message::SessionMessageAppendResult {
+            result: SessionMessageAppendResultWire {
+                message_id: "discord:default:chat-1:m0".into(),
+                seq: 0,
+                created_at: 1002,
+                updated_at: 1002,
+            },
+        };
+        let env = Envelope::new("sess-append-res", 1003, append_res).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"SessionMessageAppendResult\""));
+        assert!(json.contains("\"result\":{"));
+        assert!(json.contains("\"message_id\":\"discord:default:chat-1:m0\""));
+        assert!(json.contains("\"seq\":0"));
+        // REFS-ONLY: the appended body never rides the receipt.
+        assert!(!json.contains("remember teal"));
         assert_eq!(Envelope::decode(&json).unwrap(), env);
     }
 

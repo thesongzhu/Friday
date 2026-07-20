@@ -6,6 +6,7 @@ import type { FridayAuthService } from "#api";
 import type { FridayRouteDefinition, FridayHttpContext } from "#api";
 // SEC-SETUP-BOOTSTRAP-001 Slice 3: device-claim now requires proof-of-possession.
 import { generateTestDeviceKey, makeTranscript, signTranscriptLowS } from "../../../../adversarial/_secsetup-s2a.helpers.js";
+import { createTestNativeOwnerResolver } from "../../../../adversarial/_native-owner-capability.helpers.js";
 
 const ROUTE_DEVICE_KEY = generateTestDeviceKey();
 /** Build a device-claim body carrying a valid PoP bound to (nonce, origin, deviceId). */
@@ -60,6 +61,10 @@ describe("FridayAuthRoutes", () => {
       tokenSecret: TOKEN_SECRET,
       accessTokenTtlSec: 900,
       refreshTokenTtlSec: 604800,
+      // Option C: the device-claim route flips ownership only with a per-claim
+      // native capability. Inject a resolver that runs the REAL mint over injected
+      // native-evidence doubles so the route-layer flow is exercised end to end.
+      resolveNativeOwnerClaimContext: createTestNativeOwnerResolver(),
     });
     routes = createFridayAuthRoutes({ authService });
   });
@@ -70,8 +75,8 @@ describe("FridayAuthRoutes", () => {
 
   // ─── Route registration ───
 
-  it("registers 12 auth routes", () => {
-    expect(routes).toHaveLength(12);
+  it("registers 13 auth routes", () => {
+    expect(routes).toHaveLength(13);
   });
 
   it("has correct operation IDs", () => {
@@ -87,6 +92,8 @@ describe("FridayAuthRoutes", () => {
     // the owner-gated binding-state read seam.
     expect(opIds).toContain("auth.migrate.device.readback");
     expect(opIds).toContain("auth.migrate.device.binding.read");
+    // SEC-SETUP-BOOTSTRAP-001 (CR-1): server-issued device-key login challenge.
+    expect(opIds).toContain("auth.login.challenge");
     expect(opIds).toContain("auth.login");
     expect(opIds).toContain("auth.refresh");
     expect(opIds).toContain("auth.logout");
@@ -148,6 +155,52 @@ describe("FridayAuthRoutes", () => {
     expect(route.path).toBe("/v1/auth/bootstrap/device-claim");
     expect(route.auth).toEqual({ public: true, allowUnauthenticatedMutation: true });
     expect(route.rateLimitPolicyId).toBe("auth.login");
+  });
+
+  it("POST /v1/auth/login/challenge is public, rate-limited, loopback-only (CR-1)", () => {
+    const route = findRoute("auth.login.challenge");
+    expect(route.method).toBe("POST");
+    expect(route.path).toBe("/v1/auth/login/challenge");
+    expect(route.auth).toEqual({ public: true, allowUnauthenticatedMutation: true });
+    expect(route.rateLimitPolicyId).toBe("auth.login");
+  });
+
+  it("login-challenge route mints a device_login_challenge nonce over the route layer", async () => {
+    const route = findRoute("auth.login.challenge");
+    const res = (await route.handler(
+      makeCtx({
+        ip: "127.0.0.1",
+        body: {
+          installId: "i-1",
+          osUser: "u",
+          origin: "https://friday.localhost",
+          deviceId: "dev-1",
+          devicePublicKey: "pubkey-b64",
+        },
+      }),
+    )) as { kind: string; nonce: string; deviceId: string; devicePublicKeyHash: string };
+    expect(res.kind).toBe("device_login_challenge");
+    expect(res.nonce.length).toBeGreaterThan(0);
+    expect(res.deviceId).toBe("dev-1");
+    expect(res.devicePublicKeyHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("login-challenge route rejects non-localhost callers (loopback-only)", async () => {
+    const route = findRoute("auth.login.challenge");
+    await expect(
+      route.handler(
+        makeCtx({
+          ip: "10.0.0.2",
+          body: {
+            installId: "i-1",
+            osUser: "u",
+            origin: "https://friday.localhost",
+            deviceId: "dev-1",
+            devicePublicKey: "pubkey-b64",
+          },
+        }),
+      ),
+    ).rejects.toThrow("only allowed from localhost");
   });
 
   it("challenge route rejects non-localhost callers (loopback-only)", async () => {

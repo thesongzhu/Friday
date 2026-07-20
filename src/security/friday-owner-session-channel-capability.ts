@@ -8,7 +8,6 @@ import {
 import type { FridayAuthPrincipal, FridayRole, FridayScope } from "../api/model/friday-api-auth.types.js";
 import {
   DEVICE_OWNER_PRINCIPAL_TYPE,
-  isDeviceOwnerAuthorityEnabled,
   isDeviceOwnerPrincipalId,
 } from "./friday-device-owner-authority-precondition.js";
 
@@ -22,6 +21,7 @@ export type FridayPublicMutationOperation =
   | "capability.grant.revoke"
   | "sessions.create"
   | "sessions.messages.create"
+  | "sessions.run"
   | "workflow.create"
   | "workflow.update"
   | "workflow.archive"
@@ -165,10 +165,12 @@ export function isReleaseDisabledDevicePrincipal(
   principal: FridayAuthPrincipal | null | undefined,
 ): boolean {
   if (!principal) return false;
-  if (principal.principalType !== DEVICE_OWNER_PRINCIPAL_TYPE) return false;
-  // Fail closed: the device principal carries authority ONLY when the
-  // server-derived switch is on. Off (today) ⇒ treat as unauthenticated.
-  return !isDeviceOwnerAuthorityEnabled();
+  // Option C: there is NO global "device authority enabled" switch. A device
+  // principal presented as an HTTP bearer carries NO per-claim capability, so it
+  // is ALWAYS release-disabled here (fail closed) — the ONLY thing that confers
+  // owner authority is a `VerifiedNativeOwnerClaimContext` consumed at claim/login
+  // mint time, which produces a normal user session, never a device-type bearer.
+  return principal.principalType === DEVICE_OWNER_PRINCIPAL_TYPE;
 }
 
 export function isUnauthenticatedPublicPrincipal(
@@ -266,12 +268,11 @@ export function assertBoundActorForSessionOperation(
   // (which is truthy in JavaScript) cannot pass the bound-principal gate or be
   // propagated downstream as an audit identity.
   const normalized = typeof actorId === "string" ? actorId.trim() : "";
-  // SEC-SETUP-BOOTSTRAP-001 Slice 3: a device-owner actor id is refused here
-  // exactly like the synthetic public actor while the server-derived
-  // device-authority switch is off (always, today) — conversational dispatch
-  // never grants owner authority from a disabled device identity.
-  const isDisabledDeviceActor =
-    isDeviceOwnerPrincipalId(normalized) && !isDeviceOwnerAuthorityEnabled();
+  // Option C: a device-owner actor id is ALWAYS refused here exactly like the
+  // synthetic public actor — there is no global device-authority switch, and a
+  // conversational dispatch actor string can never carry a per-claim native
+  // capability, so it never confers owner authority.
+  const isDisabledDeviceActor = isDeviceOwnerPrincipalId(normalized);
   if (
     normalized.length === 0 ||
     normalized === FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID ||

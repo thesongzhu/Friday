@@ -17,6 +17,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import {
   existsSync,
   mkdtempSync,
@@ -25,11 +26,11 @@ import {
   rmSync,
   readdirSync,
 } from "node:fs";
-import { createServer } from "node:net";
+import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url)).replace(/\/$/, "");
 const TIMEOUT_MS = 30_000;
@@ -44,6 +45,19 @@ let tmpDir;
 let serverProc;
 let packSourceBackupDir;
 let packedTarball;
+// CORE-A round-3 Lane C (finding #4): the packaged Rust agent-run WS server proof.
+let rustServerProc;
+let rustProofTmpDir;
+
+const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
+function isTrue(value) {
+  return TRUE_VALUES.has(String(value ?? "").trim().toLowerCase());
+}
+// The SecureStore domain-separation tag for the WS X25519 client secret — byte-identical to
+// `WS_X25519_SECRET_PURPOSE` in friday-rust-hub-agent-run-ws-client-x25519-secret.ts. The client
+// secret is sha256(purpose || masterKey); the Rust enroll bin derives the matching pubkey from the
+// SAME master key, so driving the sealed client with this secret is a REAL ECDH handshake.
+const RUST_WS_X25519_SECRET_PURPOSE = "friday.rust.agent_run.ws.x25519_secret.v1"; // pragma: allowlist secret
 
 function withPackIsolatedReleaseArtifacts(fn) {
   const releaseSourceDir = join(ROOT, "dist", "releases", "source");
@@ -126,6 +140,17 @@ function cleanup() {
       serverProc.kill("SIGINT");
     } catch {}
   }
+  if (rustServerProc && !rustServerProc.killed) {
+    try {
+      rustServerProc.kill("SIGKILL");
+    } catch {}
+  }
+  if (rustProofTmpDir) {
+    try {
+      rmSync(rustProofTmpDir, { recursive: true, force: true });
+    } catch {}
+    rustProofTmpDir = undefined;
+  }
   if (tmpDir) {
     try {
       rmSync(tmpDir, { recursive: true, force: true });
@@ -191,6 +216,204 @@ async function loginWithLocalPassphrase(baseUrl) {
     fail(`Local passphrase login failed: status=${loginRes.status} body=${JSON.stringify(loginBody)}`);
   }
   return loginBody.data.accessToken;
+}
+
+async function pollTcpOpen(port, host, deadlineMs) {
+  while (Date.now() < deadlineMs) {
+    const opened = await new Promise((resolve) => {
+      const socket = connect(port, host);
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("error", () => resolve(false));
+    });
+    if (opened) {
+      return true;
+    }
+    await sleep(200);
+  }
+  return false;
+}
+
+/**
+ * CORE-A round-3 Lane C (finding #4): prove the PACKAGED Rust agent-run WS server actually
+ * SERVES session create + append — the exact leg a clean install used to 503 on because the
+ * server was never packaged/launched. This launches the release-built `hub_agent_run_server`,
+ * enrolls THIS host's peer pubkey, and drives session create → append over the REAL compiled
+ * sealed ECDH client with NO route flag, NO mock/test seam, and NO TS fallback (a 503 or a
+ * failed handshake throws → the smoke fails). It makes NO paid provider call (session create +
+ * append are pure Hub `&Db` mutations). The final SIGNED clean-install and a paid LIVE provider
+ * turn stay EXTERNAL LEAVES (EXT-MAC-*, EXT-TEXT-PROVIDER-LIVE-EVIDENCE-001).
+ *
+ * Runs when release bins are prebuilt (rust-core/target/release) OR when
+ * FRIDAY_INSTALL_SMOKE_BUILD_RUST=1 (then it cargo-builds them). Otherwise it SKIPS loudly so an
+ * env without a Rust toolchain is not silently degraded; set FRIDAY_INSTALL_SMOKE_REQUIRE_RUST=1
+ * to make an unavailable server a hard failure.
+ */
+async function runRustAgentRunSessionProof() {
+  console.log("9. Proving the packaged Rust agent-run WS server serves session create + append…");
+  const rustCoreDir = join(ROOT, "rust-core");
+  const releaseDir = join(rustCoreDir, "target", "release");
+  const serverBin = join(releaseDir, "hub_agent_run_server");
+  const enrollBin = join(releaseDir, "hub_agent_run_enroll");
+
+  const skip = (reason) => {
+    if (isTrue(process.env.FRIDAY_INSTALL_SMOKE_REQUIRE_RUST)) {
+      fail(`Rust agent-run proof required but ${reason}`);
+    }
+    console.log(
+      `   → SKIP: ${reason}. Set FRIDAY_INSTALL_SMOKE_BUILD_RUST=1 to build the bins here, ` +
+      `or FRIDAY_INSTALL_SMOKE_REQUIRE_RUST=1 to make this a hard failure.`,
+    );
+  };
+
+  let haveBins = existsSync(serverBin) && existsSync(enrollBin);
+  if (!haveBins) {
+    if (!existsSync(rustCoreDir)) {
+      return skip("rust-core/ is absent in this checkout");
+    }
+    if (!isTrue(process.env.FRIDAY_INSTALL_SMOKE_BUILD_RUST)) {
+      return skip("prebuilt Rust bins are absent");
+    }
+    console.log("   building hub_agent_run_server + hub_agent_run_enroll (cargo --release)…");
+    try {
+      execFileSync(
+        "cargo",
+        ["build", "--release", "--bin", "hub_agent_run_server", "--bin", "hub_agent_run_enroll"],
+        { cwd: rustCoreDir, stdio: ["pipe", "pipe", "pipe"] },
+      );
+    } catch (err) {
+      fail(`cargo build of the Rust agent-run bins failed: ${err.message}`);
+    }
+    haveBins = existsSync(serverBin) && existsSync(enrollBin);
+    if (!haveBins) {
+      fail("cargo build did not produce the expected Rust agent-run bins");
+    }
+  }
+
+  rustProofTmpDir = mkdtempSync(join(tmpdir(), "friday-rust-proof-"));
+  const storeDir = join(rustProofTmpDir, "store");
+  const wsRoot = join(rustProofTmpDir, "ws");
+  const dbPath = join(rustProofTmpDir, "hub.sqlite");
+  mkdirSync(storeDir, { recursive: true });
+  mkdirSync(wsRoot, { recursive: true });
+
+  const masterKeyHex = randomBytes(32).toString("hex");
+  const owner = "owner:install-smoke";
+  const port = await chooseInstallSmokePort();
+
+  // The Rust bins read the SAME master key the client secret derives from; a dummy DeepSeek key
+  // satisfies HubRuntime::live's construction (session create/append make NO provider call, so it
+  // is never used). EXPLICITLY strip any route/test flags so the proof is flagless by construction.
+  const rustEnv = {
+    ...process.env,
+    FRIDAY_MASTER_KEY: masterKeyHex,
+    FRIDAY_DEEPSEEK_API_KEY: "sk-install-smoke-not-real", // pragma: allowlist secret
+  };
+  delete rustEnv.FRIDAY_ROUTE_AGENT_RUN_VIA_RUST;
+  delete rustEnv.FRIDAY_ROUTE_SESSIONS_VIA_RUST;
+  delete rustEnv.FRIDAY_HUB_AGENT_RUN_WS_X25519_SECRET_PRESENT;
+
+  // Enroll THIS host's client pubkey into the store the server pins (derived from the master key).
+  try {
+    execFileSync(enrollBin, ["--store-dir", storeDir], { env: rustEnv, stdio: ["pipe", "pipe", "pipe"] });
+  } catch (err) {
+    fail(`hub_agent_run_enroll failed: ${err.message}`);
+  }
+  console.log("   → peer pubkey enrolled into the server's SecureStore ✓");
+
+  // Launch the packaged server on the chosen loopback port.
+  rustServerProc = spawn(
+    serverBin,
+    ["--workspace", wsRoot, "--db", dbPath, "--port", String(port), "--owner", owner, "--store-dir", storeDir],
+    { env: rustEnv, stdio: ["pipe", "pipe", "pipe"] },
+  );
+  let rustStderr = "";
+  rustServerProc.stdout.on("data", () => {});
+  rustServerProc.stderr.on("data", (d) => { rustStderr += d.toString(); });
+  rustServerProc.on("error", (err) => fail(`Rust server process error: ${err.message}`));
+
+  const ready = await pollTcpOpen(port, "127.0.0.1", Date.now() + 15_000);
+  if (!ready || rustServerProc.exitCode !== null) {
+    fail(
+      `Packaged Rust agent-run WS server did not listen on 127.0.0.1:${port} ` +
+      `(exit ${rustServerProc?.exitCode}).\nstderr: ${rustStderr}`,
+    );
+  }
+  console.log(`   → packaged hub_agent_run_server listening on 127.0.0.1:${port} ✓`);
+
+  // Derive the client X25519 secret exactly as resolveRustAgentRunWsClientX25519Secret does; drive
+  // the REAL compiled sealed client (no injected resolver, no fixture) — a genuine ECDH handshake.
+  const clientSecret = new Uint8Array(
+    createHash("sha256")
+      .update(RUST_WS_X25519_SECRET_PURPOSE)
+      .update(Buffer.from(masterKeyHex, "hex"))
+      .digest(),
+  );
+  const clientModuleUrl = pathToFileURL(
+    join(ROOT, "dist", "api", "mission-spine", "friday-rust-hub-agent-run-ws-sealed-client.js"),
+  ).href;
+  let mod;
+  try {
+    mod = await import(clientModuleUrl);
+  } catch (err) {
+    fail(`Could not import the compiled sealed client (build dist first): ${err.message}`);
+  }
+  if (typeof mod.createFridayRustHubAgentRunSealedClient !== "function") {
+    fail("Compiled sealed client is missing createFridayRustHubAgentRunSealedClient (stale dist?)");
+  }
+  const client = mod.createFridayRustHubAgentRunSealedClient({
+    host: "127.0.0.1",
+    port,
+    clientSecret,
+    timeoutMs: 10_000,
+  });
+  if (typeof client.createSession !== "function" || typeof client.appendSessionMessage !== "function") {
+    fail("Compiled sealed client is missing createSession/appendSessionMessage — rebuild dist (npm run build).");
+  }
+
+  const sessionId = "channel:smoke|account:default|chat:install-smoke-1";
+  let created;
+  try {
+    created = await client.createSession({ sessionId, userId: owner, channel: "smoke", chatId: "install-smoke-1" });
+  } catch (err) {
+    fail(`Session CREATE was not served by Rust (a 503 / TS fallback is a failure): ${err?.code ?? ""} ${err?.message ?? err}`);
+  }
+  if (created?.truthLabel !== "rust_wired" || created?.sessionId !== sessionId) {
+    fail(`Session CREATE returned an unexpected receipt: ${JSON.stringify(created)}`);
+  }
+
+  let appended;
+  try {
+    appended = await client.appendSessionMessage({ sessionId, role: "user", content: "install-smoke session append proof" });
+  } catch (err) {
+    fail(`Session APPEND was not served by Rust (a 503 / TS fallback is a failure): ${err?.code ?? ""} ${err?.message ?? err}`);
+  }
+  if (
+    appended?.truthLabel !== "rust_wired" ||
+    typeof appended?.messageId !== "string" || appended.messageId.length === 0 ||
+    typeof appended?.seq !== "number"
+  ) {
+    fail(`Session APPEND returned an unexpected receipt: ${JSON.stringify(appended)}`);
+  }
+
+  console.log(`   → CREATE receipt (Rust-served): ${JSON.stringify(created)}`);
+  console.log(`   → APPEND receipt (Rust-served): ${JSON.stringify(appended)}`);
+  console.log("   → session create + append served by the packaged Rust server (no flags, no mock, no TS fallback) ✓");
+
+  // Teardown the Rust server + temp state.
+  try { rustServerProc.kill("SIGINT"); } catch {}
+  const rustShutdownDeadline = Date.now() + 5_000;
+  while (rustServerProc.exitCode === null && Date.now() < rustShutdownDeadline) {
+    await sleep(100);
+  }
+  if (rustServerProc.exitCode === null) {
+    try { rustServerProc.kill("SIGKILL"); } catch {}
+  }
+  rustServerProc = null;
+  rmSync(rustProofTmpDir, { recursive: true, force: true });
+  rustProofTmpDir = null;
 }
 
 async function run() {
@@ -381,6 +604,9 @@ async function run() {
   // Clean up tarball
   try { rmSync(tarball); } catch {}
   packedTarball = undefined;
+
+  // ── Step 9: packaged Rust agent-run WS server serves session create + append ──
+  await runRustAgentRunSessionProof();
 
   console.log("\n✅ Install smoke test passed\n");
 }

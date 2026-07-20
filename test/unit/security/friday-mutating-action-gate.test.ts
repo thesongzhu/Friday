@@ -1,11 +1,23 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
   createFridaySystemIntentMutatingActionRequest,
   signFridayCanonicalApproval,
+  type FridayCanonicalApprovalResolution,
+  type FridayDeviceApprovalVerifyResult,
 } from "../../../src/security/friday-mutating-action-gate.js";
 import type { FridayMutatingActionRequest } from "../../../src/security/friday-mutating-action-gate.js";
+import { createFridayProviderApprovalPoPVerifier } from "../../../src/api/auth/device-attest/index.js";
+import {
+  deviceOwnerPrincipalIdFor,
+  generateTestDeviceKey,
+  makeApprovalProof,
+  makeApprovalTranscript,
+  type TestDeviceKey,
+} from "../../helpers/friday-provider-approval-test-kit.js";
 
 const NOW = "2026-05-04T12:00:00.000Z";
 
@@ -474,5 +486,188 @@ describe("friday mutating action gate", () => {
       windowId: "window:finder:1",
     });
     expect(createFridayMutatingActionDigest(left)).not.toBe(createFridayMutatingActionDigest(right));
+  });
+});
+
+// ─── SEC-APPROVAL-AUTHORITY-001 · device-authored (verify-only) admission ───
+
+describe("friday mutating action gate — device-authored approval", () => {
+  const popVerifier = createFridayProviderApprovalPoPVerifier();
+
+  function deviceGate(options: { withVerifier?: boolean } = {}) {
+    return createFridayMutatingActionGate({
+      nowIso: () => NOW,
+      ticketIdGenerator: () => "ticket-1",
+      // The legacy HMAC secret coexists (plugin lifecycle). The device path never
+      // uses it — the Hub holds NO signing key on the device-authored approval path.
+      approvalSignatureSecret: "legacy-hmac-secret", // pragma: allowlist secret
+      requireApprovalSignature: true,
+      ...(options.withVerifier === false
+        ? {}
+        : {
+            deviceApprovalVerifier: (proof, nowMs): FridayDeviceApprovalVerifyResult => {
+              const r = popVerifier.verifyPossession({
+                transcript: proof.transcript,
+                devicePublicKey: proof.devicePublicKey,
+                signature: proof.signature,
+                nowMs,
+              });
+              return r.ok
+                ? {
+                    ok: true,
+                    devicePublicKeyHash: r.devicePublicKeyHash,
+                    approvalId: r.approvalId,
+                    actionDigest: r.actionDigest,
+                    decidedByPrincipalId: r.decidedByPrincipalId,
+                    expiresAt: r.expiresAt,
+                  }
+                : { ok: false, reason: r.reason };
+            },
+          }),
+    });
+  }
+
+  // Option B*: the acting principal is the ordinary local owner `user.id` (NOT a
+  // `device-owner:` principal); the durable device binding is carried SERVER-SIDE as
+  // `boundDeviceOwnerSentinelHash = sha256Hex(owner SPKI-DER base64)` — the SAME
+  // sentinel convention `deviceKeyLogin`/`users.password_hash` use.
+  function ownerSentinelHash(owner: TestDeviceKey): string {
+    return createHash("sha256").update(owner.spkiDerBase64).digest("hex");
+  }
+
+  function ownerRequest(owner: TestDeviceKey, overrides: Partial<FridayMutatingActionRequest> = {}): FridayMutatingActionRequest {
+    return makeRequest({
+      action: "providers.create",
+      actor: {
+        kind: "user",
+        id: "owner-user-1",
+        principalId: "owner-user-1",
+        boundDeviceOwnerSentinelHash: ownerSentinelHash(owner),
+      },
+      surface: "provider_setup",
+      resource: { type: "provider_setup", id: "prov-x" },
+      mutating: true,
+      risk: "high",
+      ...overrides,
+    });
+  }
+
+  function deviceApprovalFor(
+    owner: TestDeviceKey,
+    request: FridayMutatingActionRequest,
+    opts: { signWith?: TestDeviceKey; decidedByPrincipalId?: string; expiresAt?: string; approvalId?: string } = {},
+  ): FridayCanonicalApprovalResolution {
+    const actionDigest = createFridayMutatingActionDigest(request);
+    const expiresAt = opts.expiresAt ?? "2026-05-04T12:09:00.000Z";
+    const approvalId = opts.approvalId ?? "approval-gate-1";
+    const decidedByPrincipalId = opts.decidedByPrincipalId ?? deviceOwnerPrincipalIdFor(owner);
+    const transcript = makeApprovalTranscript(owner, { actionDigest, decidedByPrincipalId, approvalId, expiresAt });
+    const proof = makeApprovalProof(opts.signWith ?? owner, transcript, owner);
+    return {
+      decision: "approved",
+      approvalId,
+      decidedByPrincipalId,
+      actionDigest,
+      expiresAt,
+      issuer: "friday_device_owner",
+      deviceProof: proof,
+    };
+  }
+
+  it("ADMITS a valid device-authored approval and issues a ticket (Hub verify-only)", () => {
+    const owner = generateTestDeviceKey();
+    const request = ownerRequest(owner);
+    const approval = deviceApprovalFor(owner, request);
+
+    const result = deviceGate().evaluate({ ...request, canonicalApproval: approval });
+    expect(result.decision).toBe("allow");
+    expect(result.ticket?.approvedByPrincipalId).toBe(deviceOwnerPrincipalIdFor(owner));
+  });
+
+  it("DENIES when no device verifier is wired (fail closed)", () => {
+    const owner = generateTestDeviceKey();
+    const request = ownerRequest(owner);
+    const approval = deviceApprovalFor(owner, request);
+
+    const result = deviceGate({ withVerifier: false }).evaluate({ ...request, canonicalApproval: approval });
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toBe("device_approval_verifier_unavailable");
+  });
+
+  it("DENIES a device whose key does not hash to the acting owner (wrong device)", () => {
+    const owner = generateTestDeviceKey();
+    const attacker = generateTestDeviceKey();
+    const request = ownerRequest(owner);
+    // The attacker signs with its own key but claims the owner's principal id. The
+    // presented key does NOT hash (sentinel convention) to the authenticated owner's
+    // registered device → the Option B* durable-binding check refuses it. Every OTHER
+    // field matches the approval object so the device binding is the sole discrepancy.
+    const attackerTranscript = makeApprovalTranscript(attacker, {
+      actionDigest: createFridayMutatingActionDigest(request),
+      decidedByPrincipalId: deviceOwnerPrincipalIdFor(owner),
+      approvalId: "approval-attacker",
+      expiresAt: "2026-05-04T12:09:00.000Z",
+    });
+    const approval: FridayCanonicalApprovalResolution = {
+      decision: "approved",
+      approvalId: "approval-attacker",
+      decidedByPrincipalId: deviceOwnerPrincipalIdFor(owner),
+      actionDigest: createFridayMutatingActionDigest(request),
+      expiresAt: "2026-05-04T12:09:00.000Z",
+      issuer: "friday_device_owner",
+      deviceProof: makeApprovalProof(attacker, attackerTranscript, attacker),
+    };
+
+    const result = deviceGate().evaluate({ ...request, canonicalApproval: approval });
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toBe("device_approval_actor_mismatch");
+  });
+
+  it("DENIES a device approval lifted onto a different action (digest mismatch)", () => {
+    const owner = generateTestDeviceKey();
+    const request = ownerRequest(owner);
+    const approval = deviceApprovalFor(owner, request);
+    // Same approval, but the request that arrives mutates a different resource.
+    const drifted = ownerRequest(owner, { resource: { type: "provider_setup", id: "prov-OTHER" } });
+
+    const result = deviceGate().evaluate({ ...drifted, canonicalApproval: approval });
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toBe("canonical_approval_digest_mismatch");
+  });
+
+  it("DENIES a replayed (already-consumed) device approval", () => {
+    const owner = generateTestDeviceKey();
+    const request = ownerRequest(owner);
+    const approval = deviceApprovalFor(owner, request);
+    const gate = deviceGate();
+
+    expect(gate.evaluate({ ...request, canonicalApproval: approval }).decision).toBe("allow");
+    const replay = gate.evaluate({ ...request, canonicalApproval: approval });
+    expect(replay.decision).toBe("deny");
+    expect(replay.reason).toBe("canonical_approval_already_used");
+  });
+
+  it("DENIES an expired device approval", () => {
+    const owner = generateTestDeviceKey();
+    const request = ownerRequest(owner);
+    const approval = deviceApprovalFor(owner, request, { expiresAt: "2026-05-04T11:00:00.000Z" });
+
+    const result = deviceGate().evaluate({ ...request, canonicalApproval: approval });
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toBe("canonical_approval_expired");
+  });
+
+  it("DENIES a device approval with a tampered signed action digest", () => {
+    const owner = generateTestDeviceKey();
+    const request = ownerRequest(owner);
+    const approval = deviceApprovalFor(owner, request);
+    // Flip the approval's top-level digest to match a DIFFERENT action while the
+    // signed transcript still binds the original — the gate cross-checks both.
+    const tampered: FridayCanonicalApprovalResolution = { ...approval, actionDigest: "f".repeat(64) };
+
+    const result = deviceGate().evaluate({ ...request, canonicalApproval: tampered });
+    expect(result.decision).toBe("deny");
+    // The approval's advertised digest no longer matches the request's recomputed one.
+    expect(result.reason).toBe("canonical_approval_digest_mismatch");
   });
 });

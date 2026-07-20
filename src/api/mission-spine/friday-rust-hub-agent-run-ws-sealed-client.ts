@@ -440,6 +440,25 @@ export interface FridayRustHubAgentRunSealedClient {
   decideRunOutcomeLearning(
     request: FridayRustHubRunOutcomeLearningDecisionRequest,
   ): Promise<FridayRustHubRunOutcomeLearningDecisionResult>;
+  /**
+   * (CORE-A CR-3) Create/ensure ONE agent-session row over a sealed session —
+   * `Message::SessionCreateRequest`. PURE Hub `&Db` mutation (no model/provider call). Opens a fresh
+   * sealed session (the channel auth), sends the create envelope, and awaits the FIRST refs-only
+   * `SessionCreateResult`. Fails closed (503) on any non-clean settle or any other inbound (including
+   * the server's `Error` envelope — which is how an owner mismatch surfaces).
+   */
+  createSession(
+    request: FridayRustHubSessionCreateRequest,
+  ): Promise<FridayRustHubSessionCreateResult>;
+  /**
+   * (CORE-A CR-3) Append ONE conversation message to an existing session over a sealed session —
+   * `Message::SessionMessageAppendRequest`. PURE Hub `&Db` mutation. OWNER-GATED server-side. Awaits
+   * the FIRST refs-only `SessionMessageAppendResult`; fails closed (503) on any other inbound
+   * (including the server's `Error` — the owner-mismatch refusal). The body rides the sealed session.
+   */
+  appendSessionMessage(
+    request: FridayRustHubSessionMessageAppendRequest,
+  ): Promise<FridayRustHubSessionMessageAppendResult>;
 }
 
 /** (A3 courier) A resume relay: the run to resume + the operator's OPAQUE signed approval blob. */
@@ -673,6 +692,57 @@ export interface FridayRustHubRunOutcomeLearningDecisionResult {
   readonly state: string;
   readonly status: string;
   readonly blocker?: string;
+}
+
+/**
+ * (CORE-A CR-3) Create/ensure ONE agent-session row — `Message::SessionCreateRequest`. The OWNER is
+ * bound SERVER-side to the authenticated principal (single-peer session = channel auth); `userId`
+ * here is the forwarded owner (the server FIX-Q3b-refuses a value that disagrees), NOT an authority.
+ * The remaining axes are descriptive surface metadata.
+ */
+export interface FridayRustHubSessionCreateRequest {
+  /** The canonical session key (`agent_session_id`) to ensure. Non-empty. */
+  readonly sessionId: string;
+  readonly channel?: string;
+  readonly chatId?: string;
+  /** The forwarded OWNER principal (server binds the authenticated owner; a mismatch is refused). */
+  readonly userId?: string;
+  readonly accountId?: string;
+  readonly chatKind?: string;
+  /** Opaque client metadata as a JSON STRING (refs-only; not persisted by the minimal store). */
+  readonly metadataJson?: string;
+}
+
+/** (CORE-A CR-3) Refs-only session create receipt — `SessionCreateResultWire` (id + timestamps). */
+export interface FridayRustHubSessionCreateResult {
+  readonly truthLabel: "rust_wired";
+  readonly sessionId: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+/**
+ * (CORE-A CR-3) Append ONE conversation message to a session — `Message::SessionMessageAppendRequest`.
+ * OWNER-GATED server-side: refused unless the authenticated principal owns `sessionId`. `content` is a
+ * BODY that rides the SEALED session (never a refs field).
+ */
+export interface FridayRustHubSessionMessageAppendRequest {
+  readonly sessionId: string;
+  /** Speaker role (e.g. `user` / `assistant`). Non-empty. */
+  readonly role: string;
+  /** Message body kept Hub-side (sealed on the wire). */
+  readonly content: string;
+  /** Optional soft-link ref (e.g. producing run id). */
+  readonly refs?: string;
+}
+
+/** (CORE-A CR-3) Refs-only append receipt — `SessionMessageAppendResultWire` (id + seq + timestamps). */
+export interface FridayRustHubSessionMessageAppendResult {
+  readonly truthLabel: "rust_wired";
+  readonly messageId: string;
+  readonly seq: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
 }
 
 function unavailable(message: string, details?: Record<string, unknown>): FridayDomainError {
@@ -1193,6 +1263,52 @@ export function buildMemoryDecisionEnvelope(
   });
 }
 
+/**
+ * (CORE-A CR-3) Build the `SessionCreateRequest` inner message — the EXACT `SessionCreateRequestWire`
+ * shape nested under `request` (single-field wrapper on the internally-tagged `Message`, same
+ * `{kind,request}` nesting as {@link buildMemoryDecisionEnvelope}; a flat shape 503s server-side).
+ * `session_id` is required; the descriptive axes + `metadata_json` use conditional-spread (absent ⇒
+ * key OMITTED, byte-clean, round-trips to `None`). EXPORTED + pure for socket-free wire testing.
+ */
+export function buildSessionCreateEnvelope(
+  request: FridayRustHubSessionCreateRequest,
+): Record<string, unknown> {
+  const inner: Record<string, unknown> = {
+    session_id: request.sessionId,
+    ...(request.channel !== undefined ? { channel: request.channel } : {}),
+    ...(request.chatId !== undefined ? { chat_id: request.chatId } : {}),
+    ...(request.userId !== undefined ? { user_id: request.userId } : {}),
+    ...(request.accountId !== undefined ? { account_id: request.accountId } : {}),
+    ...(request.chatKind !== undefined ? { chat_kind: request.chatKind } : {}),
+    ...(request.metadataJson !== undefined ? { metadata_json: request.metadataJson } : {}),
+  };
+  return buildMissionEnvelope(`session-create-${request.sessionId}`, {
+    kind: "SessionCreateRequest",
+    request: inner,
+  });
+}
+
+/**
+ * (CORE-A CR-3) Build the `SessionMessageAppendRequest` inner message — the EXACT
+ * `SessionMessageAppendRequestWire` shape nested under `request`. `session_id`/`role`/`content` are
+ * required; `refs` uses conditional-spread (absent ⇒ OMITTED). EXPORTED + pure for socket-free wire
+ * testing.
+ */
+export function buildSessionMessageAppendEnvelope(
+  request: FridayRustHubSessionMessageAppendRequest,
+): Record<string, unknown> {
+  const inner: Record<string, unknown> = {
+    session_id: request.sessionId,
+    role: request.role,
+    content: request.content,
+    ...(request.refs !== undefined ? { refs: request.refs } : {}),
+  };
+  return buildMissionEnvelope(`session-message-append-${request.sessionId}`, {
+    kind: "SessionMessageAppendRequest",
+    request: inner,
+  });
+}
+
 /** Build the exact nested `RunOutcomeLearningDecisionRequest { request: ... }` wire message. */
 export function buildRunOutcomeLearningDecisionEnvelope(
   request: FridayRustHubRunOutcomeLearningDecisionRequest,
@@ -1451,6 +1567,49 @@ export function parseMemoryDecisionResult(
     recallable,
     ...(blocker !== undefined ? { blocker } : {}),
   };
+}
+
+/**
+ * (CORE-A CR-3) Parse a nested `SessionCreateResult { result: ... }` into the refs-only TS shape.
+ * Fail-closed: a missing/wrong-typed id or timestamp ⇒ `undefined` (the round-trip then rejects →
+ * 503), so a malformed receipt never surfaces as a fake success.
+ */
+export function parseSessionCreateResult(
+  fields: Record<string, unknown>,
+): FridayRustHubSessionCreateResult | undefined {
+  const r = unwrapResult(fields);
+  if (r === undefined) {
+    return undefined;
+  }
+  const sessionId = asString(r.session_id);
+  const createdAt = asNumber(r.created_at);
+  const updatedAt = asNumber(r.updated_at);
+  if (!sessionId || createdAt === undefined || updatedAt === undefined) {
+    return undefined;
+  }
+  return { truthLabel: "rust_wired", sessionId, createdAt, updatedAt };
+}
+
+/**
+ * (CORE-A CR-3) Parse a nested `SessionMessageAppendResult { result: ... }` into the refs-only TS
+ * shape. `seq` is validated with `asNumber` (accepts 0 — the first message's ordinal). Fail-closed on
+ * any missing/wrong-typed field.
+ */
+export function parseSessionMessageAppendResult(
+  fields: Record<string, unknown>,
+): FridayRustHubSessionMessageAppendResult | undefined {
+  const r = unwrapResult(fields);
+  if (r === undefined) {
+    return undefined;
+  }
+  const messageId = asString(r.message_id);
+  const seq = asNumber(r.seq);
+  const createdAt = asNumber(r.created_at);
+  const updatedAt = asNumber(r.updated_at);
+  if (!messageId || seq === undefined || createdAt === undefined || updatedAt === undefined) {
+    return undefined;
+  }
+  return { truthLabel: "rust_wired", messageId, seq, createdAt, updatedAt };
 }
 
 /** Parse a nested `RunOutcomeLearningDecisionResult { result: ... }` into refs-only TS shape. */
@@ -2634,6 +2793,46 @@ export function createFridayRustHubAgentRunSealedClient(
         expectedKind: "RunOutcomeLearningDecisionResult",
         parse: parseRunOutcomeLearningDecisionResult,
         leg: "run-outcome-learning-decision",
+      });
+    },
+
+    createSession(
+      request: FridayRustHubSessionCreateRequest,
+    ): Promise<FridayRustHubSessionCreateResult> {
+      if (!request.sessionId) {
+        return Promise.reject(
+          unavailable("Sealed session client create requires a session id."),
+        );
+      }
+      return runMissionRoundTrip<FridayRustHubSessionCreateResult>({
+        host,
+        port,
+        timeoutMs,
+        keypair,
+        envelope: buildSessionCreateEnvelope(request),
+        expectedKind: "SessionCreateResult",
+        parse: parseSessionCreateResult,
+        leg: "session-create",
+      });
+    },
+
+    appendSessionMessage(
+      request: FridayRustHubSessionMessageAppendRequest,
+    ): Promise<FridayRustHubSessionMessageAppendResult> {
+      if (!request.sessionId || !request.role) {
+        return Promise.reject(
+          unavailable("Sealed session client append requires a session id and role."),
+        );
+      }
+      return runMissionRoundTrip<FridayRustHubSessionMessageAppendResult>({
+        host,
+        port,
+        timeoutMs,
+        keypair,
+        envelope: buildSessionMessageAppendEnvelope(request),
+        expectedKind: "SessionMessageAppendResult",
+        parse: parseSessionMessageAppendResult,
+        leg: "session-message-append",
       });
     },
   };

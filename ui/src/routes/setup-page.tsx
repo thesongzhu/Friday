@@ -6,7 +6,14 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
 import { providersApi } from "@/lib/api/providers";
-import { saveProviderWithValidation } from "@/lib/providers";
+import type { FridayProviderMutationPlan } from "@/lib/api/providers";
+import {
+  ProviderMutationDeclinedError,
+  ProviderRoutingAfterSaveError,
+  saveProviderWithRouting,
+  setRoutingWithConfirmation,
+} from "@/lib/providers";
+import { createProviderApprovalAuthor, getDeviceKeyProvider } from "@/lib/auth/device-key";
 import { setupApi } from "@/lib/api/setup";
 import { discoveryApi } from "@/lib/api/discovery";
 import type { DiscoveredProgram, IntegrationRecommendation } from "@/lib/api/discovery";
@@ -405,6 +412,14 @@ export function SetupPage() {
   });
   const [pendingDefaultProviderChoice, setPendingDefaultProviderChoice] = useState<PendingDefaultProviderChoice | null>(null);
   const [routingUpdatePending, setRoutingUpdatePending] = useState(false);
+  // CORE-A CR-2: the server-derived provider mutation plan awaiting THIS owner's
+  // explicit confirmation. `resolve` is the pending `saveProviderWithValidation`
+  // handshake — resolving false aborts before any approval is minted or any
+  // mutation is sent. Never auto-confirmed.
+  const [pendingProviderPlan, setPendingProviderPlan] = useState<{
+    plan: FridayProviderMutationPlan;
+    resolve: (confirmed: boolean) => void;
+  } | null>(null);
   const hasSetupDeepLink = Boolean(
     searchParams.get("step")
       ?? searchParams.get("providerKind")
@@ -626,6 +641,20 @@ export function SetupPage() {
     };
   }
 
+  // SEC-APPROVAL-AUTHORITY-001 (CR-2): the owner DEVICE authors provider approvals.
+  // The Hub holds no signing key — this author signs a P-256 transcript with the
+  // durable device key the owner bootstrap created.
+  const providerApprovalAuthor = useMemo(
+    () => createProviderApprovalAuthor(getDeviceKeyProvider()),
+    [],
+  );
+
+  // The owner reviews the SERVER-derived, secret-free plan summary and explicitly
+  // confirms before any device approval is authored. Resolving false aborts.
+  function confirmProviderPlan(plan: FridayProviderMutationPlan): Promise<boolean> {
+    return new Promise<boolean>((resolve) => setPendingProviderPlan({ plan, resolve }));
+  }
+
   async function saveProviderDraft(
     draft: ProviderSaveDraft,
   ): Promise<{ validation: FridayProviderValidationState | undefined }> {
@@ -642,21 +671,24 @@ export function SetupPage() {
     };
 
     // Validate-before-persist via the same live create/update path the Settings
-    // page uses (validateOnSave: true). This is NOT the retired
-    // POST /v1/providers/detect route.
-    const response = await saveProviderWithValidation(providersApi, existingSameKind, {
-      kind: draft.kind,
-      ...commonPayload,
-    });
-    const provider = response.provider;
-
-    await providersApi.setRouting({
-      defaultProviderId: provider.id,
-      defaultModel: draft.defaultModel,
-      fallbackProviderIds: [],
-      costMode: providerCostMode,
-      enforceRequestedModel: routingConfig?.enforceRequestedModel,
-    });
+    // page uses (validateOnSave: true), then set default-routing as PART of the
+    // SAME owner-reviewed operation. Advisor #1628 finding #3: routing is a first
+    // class confirmed, device-authored mutation, so it can NEVER 403-after-persist
+    // and strand a created-but-unrouted provider.
+    const response = await saveProviderWithRouting(
+      providersApi,
+      existingSameKind,
+      { kind: draft.kind, ...commonPayload },
+      (provider) => ({
+        defaultProviderId: provider.id,
+        defaultModel: draft.defaultModel,
+        fallbackProviderIds: [],
+        costMode: providerCostMode,
+        enforceRequestedModel: routingConfig?.enforceRequestedModel,
+      }),
+      confirmProviderPlan,
+      providerApprovalAuthor,
+    );
 
     return { validation: response.validation };
   }
@@ -664,13 +696,18 @@ export function SetupPage() {
   async function setProviderAsDefault(providerId: string, defaultModel?: string): Promise<void> {
     setRoutingUpdatePending(true);
     try {
-      await providersApi.setRouting({
-        defaultProviderId: providerId,
-        defaultModel,
-        fallbackProviderIds: (routingConfig?.fallbackProviderIds ?? []).filter((id) => id !== providerId),
-        costMode: providerCostMode,
-        enforceRequestedModel: routingConfig?.enforceRequestedModel,
-      });
+      await setRoutingWithConfirmation(
+        providersApi,
+        {
+          defaultProviderId: providerId,
+          defaultModel,
+          fallbackProviderIds: (routingConfig?.fallbackProviderIds ?? []).filter((id) => id !== providerId),
+          costMode: providerCostMode,
+          enforceRequestedModel: routingConfig?.enforceRequestedModel,
+        },
+        confirmProviderPlan,
+        providerApprovalAuthor,
+      );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["setup", "routing-config"] }),
         queryClient.invalidateQueries({ queryKey: ["setup", "providers"] }),
@@ -803,6 +840,40 @@ export function SetupPage() {
       void queryClient.invalidateQueries({ queryKey: ["shell", "provider-truth"] });
     },
     onError: (error) => {
+      // CORE-A CR-2: the owner reviewed the server-derived plan and declined it.
+      // No canonical approval was minted and no mutation was sent — this is a
+      // deliberate cancel, NOT a validation failure, so it must not be surfaced
+      // as an error state (which would wrongly imply the key was rejected).
+      if (error instanceof ProviderMutationDeclinedError) {
+        setProviderFeedback({
+          status: "idle",
+          kind: providerKind,
+          message: localize(locale, "已取消：未保存任何更改。", "Cancelled — nothing was saved."),
+          warnings: [],
+        });
+        return;
+      }
+      // Advisor #1628 finding #3: the provider WAS saved but its default-routing
+      // could not be set. Report the partial state TRUTHFULLY (the provider exists)
+      // instead of implying the key was rejected. The provider was validated, so
+      // mark it validated and tell the owner to finish routing from the list.
+      if (error instanceof ProviderRoutingAfterSaveError) {
+        setProviderValidated(true);
+        void queryClient.invalidateQueries({ queryKey: ["setup", "providers"] });
+        void queryClient.invalidateQueries({ queryKey: ["shell", "provider-truth"] });
+        setProviderFeedback({
+          status: "error",
+          kind: providerKind,
+          message: localize(
+            locale,
+            `提供方“${error.provider.name}”已保存，但默认路由未设置。请在提供方列表中将其设为默认。`,
+            `Provider "${error.provider.name}" was saved, but default routing was not set. Set it as default from the provider list.`,
+          ),
+          warnings: [],
+        });
+        toast.error(localize(locale, "提供方已保存，但路由未设置", "Provider saved, but routing was not set"));
+        return;
+      }
       // Validate-before-persist rejected the key (e.g. invalid / unreachable):
       // it was NOT persisted. Surface the invalid state, do not advance.
       setProviderValidated(false);
@@ -2012,6 +2083,30 @@ export function SetupPage() {
             void setProviderAsDefault(pending.providerId, pending.defaultModel).then(() => {
               setPendingDefaultProviderChoice(null);
             });
+          }}
+        />
+        {/*
+          CORE-A CR-2 owner-confirm gate. The summary lines are produced by the
+          SERVER from the sanitized parameters (secret-free); the owner must
+          explicitly confirm this exact plan before any canonical approval is
+          minted. Cancelling resolves false — nothing is minted, nothing is saved.
+        */}
+        <ConfirmDialog
+          open={pendingProviderPlan !== null}
+          title={localize(locale, "确认提供方变更", "Confirm provider change")}
+          description={pendingProviderPlan?.plan.humanReadableSummary.join(" · ")}
+          confirmLabel={localize(locale, "确认并保存", "Confirm and save")}
+          cancelLabel={localize(locale, "取消", "Cancel")}
+          tone="primary"
+          onCancel={() => {
+            const pending = pendingProviderPlan;
+            setPendingProviderPlan(null);
+            pending?.resolve(false);
+          }}
+          onConfirm={() => {
+            const pending = pendingProviderPlan;
+            setPendingProviderPlan(null);
+            pending?.resolve(true);
           }}
         />
         <BottomDots />

@@ -180,6 +180,8 @@ export {
 // Service
 export type {
   FridayProviderService,
+  FridayProviderMutationOptions,
+  FridayProviderMutationConsumeInTransaction,
   CreateFridayProviderServiceDeps,
   FridayProviderTenantContext,
   FridayProviderCredentialScope,
