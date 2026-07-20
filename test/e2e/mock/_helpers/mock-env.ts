@@ -23,8 +23,19 @@ import type {
 } from "../../../../src/providers/model/friday-provider.types.js";
 import {
   createFridayMutatingActionDigest,
-  signFridayCanonicalApproval,
 } from "../../../../src/security/friday-mutating-action-gate.js";
+import type {
+  FridayCanonicalApprovalResolution,
+  FridayMutatingActionRequest,
+} from "../../../../src/security/friday-mutating-action-gate.js";
+import { encodeToken } from "../../../../src/api/auth/friday-token-validator.js";
+import { getScopesForRole } from "../../../../src/api/auth/friday-rbac-policy.js";
+import {
+  deviceOwnerPrincipalIdFor,
+  generateTestDeviceKey,
+  makeApprovalProof,
+  makeApprovalTranscript,
+} from "../../../helpers/friday-provider-approval-test-kit.js";
 import {
   createMockFetch,
   resetMockCounters,
@@ -121,11 +132,88 @@ const AUTO_DETECT_PROVIDER_ENV_VARS = [
 ] as const;
 const MOCK_E2E_TOKEN_SECRET = "mock-e2e-token-secret"; // pragma: allowlist secret -- deterministic signing key for canonical-gate mock E2E setup
 const MOCK_E2E_MASTER_KEY = Buffer.alloc(32, 23).toString("hex");
-const MOCK_E2E_ACTOR = {
+
+// ─── SEC-APPROVAL-AUTHORITY-001 · CR-2: device-authored provider-mutation owner ───
+//
+// Provider mutations (create / routing.set / capabilities.doctor) now require a
+// DEVICE-AUTHORED owner approval: a P-256 `friday-provider-approval-v1` transcript
+// signed by the OWNER DEVICE and merely VERIFIED by the Hub (the Hub holds NO
+// signing key and REFUSES its own HMAC/unsigned approvals). We mint ONE software
+// dev/test owner device (NOT a Secure Enclave key; parity with the CR-2 runtime
+// tests) and drive the three provider-mutation setup calls AS that device owner:
+//   • the HTTP principal for those three calls is the owner's device-owner principal
+//     (`device-owner:<keyHash>`), minted directly with the PRODUCTION token encoder
+//     so `createActorFromPrincipal` recomputes the SAME action digest the owner
+//     device signed; and
+//   • each approval is the owner device's signed transcript bound to that exact
+//     action digest + owner principal.
+// The rest of the mock env is unchanged — the general session `accessToken` stays
+// the ordinary local-passphrase admin, so no other behaviour shifts.
+const MOCK_E2E_DEVICE_OWNER_KEY = generateTestDeviceKey();
+const MOCK_E2E_DEVICE_OWNER_PRINCIPAL = deviceOwnerPrincipalIdFor(MOCK_E2E_DEVICE_OWNER_KEY);
+// The digest actor MUST mirror the server's `createActorFromPrincipal(ctx.principal)`
+// for the device-owner HTTP principal: principalType "user", id/principalId = the
+// device-owner principal id.
+const MOCK_E2E_DEVICE_OWNER_ACTOR = {
   kind: "user",
-  id: "admin-001",
-  principalId: "admin-001",
+  id: MOCK_E2E_DEVICE_OWNER_PRINCIPAL,
+  principalId: MOCK_E2E_DEVICE_OWNER_PRINCIPAL,
 } as const;
+const MOCK_E2E_PROVIDER_APPROVAL_EXPIRES_AT = "2099-01-01T00:00:00.000Z";
+
+/**
+ * Mint an access token whose bound principal IS the owner's device-owner principal
+ * (`device-owner:<keyHash>`, principalType "user"), using the PRODUCTION token
+ * encoder + the mock hub's token secret. No `sid` is set: the validator skips
+ * session-state tracking for a token without a session id, so this stands in for a
+ * device-owner principal that has already cleared attestation (exactly what the
+ * CR-2 route tests model with an injected `device-owner:<hash>` "user" principal).
+ * Used ONLY for the provider-mutation setup calls; the session token is unchanged.
+ */
+function mintDeviceOwnerAccessToken(): string {
+  const nowSec = Math.floor(Date.now() / 1000);
+  return encodeToken(
+    {
+      tokenId: "mock-e2e-device-owner-token",
+      principalType: "user",
+      principalId: MOCK_E2E_DEVICE_OWNER_PRINCIPAL,
+      userId: MOCK_E2E_DEVICE_OWNER_PRINCIPAL,
+      role: "admin",
+      scopes: [...getScopesForRole("admin")],
+      iat: nowSec,
+      exp: nowSec + 60 * 60 * 24 * 365,
+    },
+    MOCK_E2E_TOKEN_SECRET,
+  );
+}
+
+/**
+ * Build a DEVICE-AUTHORED approval for a provider mutation: recompute the request's
+ * action digest, then have the owner device sign a transcript bound to that exact
+ * digest + owner principal + approvalId + expiry. The Hub verifies (never signs) it.
+ */
+function mintDeviceOwnerApproval(
+  request: FridayMutatingActionRequest,
+  approvalId: string,
+): FridayCanonicalApprovalResolution {
+  const actionDigest = createFridayMutatingActionDigest(request);
+  const expiresAt = MOCK_E2E_PROVIDER_APPROVAL_EXPIRES_AT;
+  const transcript = makeApprovalTranscript(MOCK_E2E_DEVICE_OWNER_KEY, {
+    actionDigest,
+    approvalId,
+    decidedByPrincipalId: MOCK_E2E_DEVICE_OWNER_PRINCIPAL,
+    expiresAt,
+  });
+  return {
+    decision: "approved",
+    approvalId,
+    decidedByPrincipalId: MOCK_E2E_DEVICE_OWNER_PRINCIPAL,
+    actionDigest,
+    expiresAt,
+    issuer: "friday_device_owner",
+    deviceProof: makeApprovalProof(MOCK_E2E_DEVICE_OWNER_KEY, transcript),
+  };
+}
 
 // ─── Helpers ───
 
@@ -241,7 +329,7 @@ async function loginAdmin(
 
 async function installProvider(
   baseUrl: string,
-  token: string,
+  ownerToken: string,
   entry: ProviderMatrixEntry,
   fetchImpl?: typeof fetch,
 ): Promise<InstalledMockProvider> {
@@ -274,7 +362,7 @@ async function installProvider(
   const idempotencyKey = `mock-e2e-provider-create:${entry.kind}`;
   const request = createFridayProviderSetupMutatingActionRequest({
     action: "providers.create",
-    actor: MOCK_E2E_ACTOR,
+    actor: MOCK_E2E_DEVICE_OWNER_ACTOR,
     surface: "api:/v1/providers/create",
     parameters: body,
     planDigest,
@@ -283,17 +371,14 @@ async function installProvider(
   const { status, json } = await apiFetch<{
     ok: boolean;
     data: { provider: { id: string } };
-  }>(baseUrl, token, "POST", "/v1/providers", {
+  }>(baseUrl, ownerToken, "POST", "/v1/providers", {
     ...body,
     planDigest,
     idempotencyKey,
-    canonicalApproval: signFridayCanonicalApproval({
-      decision: "approved",
-      approvalId: `mock-e2e-provider-create:${entry.kind}`,
-      decidedByPrincipalId: MOCK_E2E_ACTOR.principalId,
-      actionDigest: createFridayMutatingActionDigest(request),
-      expiresAt: "2099-01-01T00:00:00.000Z",
-    }, MOCK_E2E_TOKEN_SECRET),
+    canonicalApproval: mintDeviceOwnerApproval(
+      request,
+      `mock-e2e-provider-create:${entry.kind}`,
+    ),
   }, fetchImpl);
 
   if (status !== 200 || !json.ok) {
@@ -537,10 +622,13 @@ export async function createMockHubEnv(opts?: {
   };
   installFetchRouter();
 
-  // 7. Register providers via API
+  // 7. Register providers via API.
+  // Provider mutations require a DEVICE-AUTHORED owner approval (CR-2), so drive
+  // them AS the owner's device-owner principal (bearer token + signed approval).
+  const deviceOwnerToken = mintDeviceOwnerAccessToken();
   const providers: Record<string, InstalledMockProvider> = {};
   for (const entry of selectedEntries) {
-    const installed = await installProvider(hubBaseUrl, accessToken, entry, originalFetch);
+    const installed = await installProvider(hubBaseUrl, deviceOwnerToken, entry, originalFetch);
     providers[installed.kind] = installed;
   }
 
@@ -555,47 +643,35 @@ export async function createMockHubEnv(opts?: {
     const idempotencyKey = "mock-e2e-provider-routing";
     const request = createFridayProviderSetupMutatingActionRequest({
       action: "providers.routing.set",
-      actor: MOCK_E2E_ACTOR,
+      actor: MOCK_E2E_DEVICE_OWNER_ACTOR,
       surface: "api:/v1/model-routing/set",
       resourceId: "model-routing",
       parameters: routingBody,
       planDigest,
       idempotencyKey,
     });
-    await apiFetch(hubBaseUrl, accessToken, "PUT", "/v1/model-routing", {
+    await apiFetch(hubBaseUrl, deviceOwnerToken, "PUT", "/v1/model-routing", {
       ...routingBody,
       planDigest,
       idempotencyKey,
-      canonicalApproval: signFridayCanonicalApproval({
-        decision: "approved",
-        approvalId: "mock-e2e-provider-routing",
-        decidedByPrincipalId: MOCK_E2E_ACTOR.principalId,
-        actionDigest: createFridayMutatingActionDigest(request),
-        expiresAt: "2099-01-01T00:00:00.000Z",
-      }, MOCK_E2E_TOKEN_SECRET),
+      canonicalApproval: mintDeviceOwnerApproval(request, "mock-e2e-provider-routing"),
     }, originalFetch);
     const doctorBody = { providerIds };
     const doctorPlanDigest = "mock-e2e-capability-doctor";
     const doctorRequest = createFridayProviderSetupMutatingActionRequest({
       action: "capabilities.doctor",
-      actor: MOCK_E2E_ACTOR,
+      actor: MOCK_E2E_DEVICE_OWNER_ACTOR,
       surface: "api:/v1/capabilities/doctor",
       resourceId: providerIds.join(","),
       parameters: doctorBody,
       planDigest: doctorPlanDigest,
       idempotencyKey: doctorPlanDigest,
     });
-    await apiFetch(hubBaseUrl, accessToken, "POST", "/v1/capabilities/doctor", {
+    await apiFetch(hubBaseUrl, deviceOwnerToken, "POST", "/v1/capabilities/doctor", {
       ...doctorBody,
       planDigest: doctorPlanDigest,
       idempotencyKey: doctorPlanDigest,
-      canonicalApproval: signFridayCanonicalApproval({
-        decision: "approved",
-        approvalId: doctorPlanDigest,
-        decidedByPrincipalId: MOCK_E2E_ACTOR.principalId,
-        actionDigest: createFridayMutatingActionDigest(doctorRequest),
-        expiresAt: "2099-01-01T00:00:00.000Z",
-      }, MOCK_E2E_TOKEN_SECRET),
+      canonicalApproval: mintDeviceOwnerApproval(doctorRequest, doctorPlanDigest),
     }, originalFetch);
   }
   for (const mock of Object.values(mocks)) {
