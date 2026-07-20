@@ -227,6 +227,7 @@ import {
   signFridayCanonicalApproval,
 } from "../../security/friday-mutating-action-gate.js";
 import { createFridayProviderApprovalPoPVerifier } from "../auth/device-attest/index.js";
+import { FridaySqliteApprovalConsumptionStore } from "../http/persistence/friday-provider-approval-consumption-repository.js";
 import {
   assertBoundPrincipalAuthorityForOperation,
   assertBoundPrincipalForOperation,
@@ -2062,11 +2063,19 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // legacy symmetric `approvalSignatureSecret` remains ONLY for the plugin/mcp/
   // channel/skill/workflow lifecycle path (a separate, out-of-CR-2-scope surface).
   const providerApprovalVerifier = createFridayProviderApprovalPoPVerifier();
+  // SEC-APPROVAL-AUTHORITY-001 · Advisor round-2 finding #3: DURABLE single-use ledger for
+  // canonical approvals (migration v108), replacing the gate's process-local in-memory Set so
+  // a confirmed device-authored approval consumed once cannot be replayed after a restart or
+  // by a concurrent process. Boot-time reconcile marks any crash-orphaned in_flight
+  // reservation indeterminate (fail-closed) BEFORE the runtime serves requests.
+  const approvalConsumptionStore = new FridaySqliteApprovalConsumptionStore(deps.db);
+  approvalConsumptionStore.reconcileOrphanedReservations();
   const canonicalMutationGate = createFridayMutatingActionGate({
     nowIso: deps.nowIso,
     ticketIdGenerator: () => deps.idGenerator(),
     approvalSignatureSecret: deps.tokenSecret,
     requireApprovalSignature: true,
+    approvalConsumptionStore,
     deviceApprovalVerifier: (proof, nowMs): FridayDeviceApprovalVerifyResult => {
       const result = providerApprovalVerifier.verifyPossession({
         transcript: proof.transcript,
@@ -4494,6 +4503,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     // binds to the owner's REGISTERED device while the session principal stays
     // `user.id` (token minting unchanged).
     resolveBoundDeviceOwnerSentinelHash: authService.resolveBoundDeviceOwnerSentinelHash,
+    // SEC-APPROVAL-AUTHORITY-001 · Advisor round-2 finding #3: the SAME durable single-use
+    // ledger the gate consumes. create/update/delete gate with deferred consumption, then
+    // finalize the reservation INSIDE the provider mutation's write transaction so consume ⊗
+    // mutation commit atomically.
+    approvalConsumptionStore,
   })) {
     routes.register(route);
   }

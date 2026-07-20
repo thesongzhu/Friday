@@ -1,3 +1,5 @@
+import type Database from "better-sqlite3";
+
 import type { FridaySqliteLayer } from "#state";
 
 import type {
@@ -37,6 +39,20 @@ import type {
 } from "../model/friday-provider-cost.types.js";
 
 // ─── Service interface ───
+
+/**
+ * A hook the provider MUTATION methods (create/update/delete) invoke as the FIRST
+ * statement INSIDE their persist `withWriteTransaction`, so a durable single-use approval
+ * consumption commits ATOMICALLY with the mutation write — a rollback (or a throw from the
+ * hook, e.g. a PK conflict on a replayed approval) unwinds BOTH the consumption and the
+ * mutation (no effect without a durable consumption). Wired by the provider routes from a
+ * DEFERRED mutating-action gate ticket. Absent for callers that do not gate mutations.
+ */
+export type FridayProviderMutationConsumeInTransaction = (db: Database.Database) => void;
+
+export interface FridayProviderMutationOptions {
+  readonly consumeApprovalInTransaction?: FridayProviderMutationConsumeInTransaction;
+}
 
 export interface FridayProviderService {
   listProviders(): Promise<FridayProviderProfile[]>;
@@ -105,7 +121,7 @@ export interface FridayProviderService {
     enabled?: boolean;
     validateOnSave?: boolean;
     preserveEnvRef?: boolean;
-  }): Promise<FridayProviderProfile>;
+  }, options?: FridayProviderMutationOptions): Promise<FridayProviderProfile>;
 
   updateProvider(
     providerId: string,
@@ -127,9 +143,10 @@ export interface FridayProviderService {
       validateOnSave?: boolean;
       preserveEnvRef?: boolean;
     },
+    options?: FridayProviderMutationOptions,
   ): Promise<FridayProviderProfile>;
 
-  deleteProvider(providerId: string): Promise<void>;
+  deleteProvider(providerId: string, options?: FridayProviderMutationOptions): Promise<void>;
 
   validateProvider(
     providerId: string,

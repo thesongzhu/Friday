@@ -254,7 +254,9 @@ describe("provider mutation plan → DEVICE confirm → gated mutation", () => {
     const result = await harness.route("providers.create").handler(makeCtx({
       body: { ...CREATE_PARAMS, planDigest: planned.planDigest, canonicalApproval: approval },
     }));
-    expect(harness.service.createProvider).toHaveBeenCalledWith(CREATE_PARAMS);
+    // Second arg is the optional provider-mutation options (approval consume hook);
+    // undefined here because this fixture injects no durable approval-consumption store.
+    expect(harness.service.createProvider).toHaveBeenCalledWith(CREATE_PARAMS, undefined);
     expect(result).toHaveProperty("canonicalGate.ticketId", "ticket-1");
   });
 

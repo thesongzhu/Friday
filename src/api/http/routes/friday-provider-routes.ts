@@ -44,6 +44,7 @@ import type {
   FridayProviderCapabilityHealthSnapshotSummary,
   FridayProviderHealthSnapshotItem,
   FridayProviderLane,
+  FridayProviderMutationOptions,
   FridayProviderProfile,
   FridayProviderRuntimeCapabilityDeclaration,
   FridayProviderService,
@@ -75,6 +76,7 @@ import {
   type FridayMutatingActionRequest,
   type FridayMutatingActionTicket,
 } from "../../../security/friday-mutating-action-gate.js";
+import type { FridayApprovalConsumptionStore } from "../persistence/friday-provider-approval-consumption-repository.js";
 import { deviceOwnerPrincipalId } from "../../../security/friday-device-owner-authority-precondition.js";
 import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
 import type {
@@ -487,6 +489,16 @@ export interface FridayProviderRoutesDeps {
    * device-claim), a device-authored approval fails closed at the binding check.
    */
   resolveBoundDeviceOwnerSentinelHash?: (userId: string) => string | null;
+  /**
+   * SEC-APPROVAL-AUTHORITY-001 · Advisor round-2 finding #3: the DURABLE single-use ledger
+   * for canonical approvals — the SAME instance injected into the mutating-action gate. The
+   * provider create/update/delete handlers gate with `deferApprovalConsumption`, then finalize
+   * the reservation on this store INSIDE the provider mutation's write transaction
+   * (`completeConsumptionInTransaction`), so consume ⊗ mutation commit atomically; a clean
+   * pre-commit failure releases the reservation so the owner can retry the same approval. When
+   * absent (db-less test fixtures), the gate's inline consumption is the single-use enforcement.
+   */
+  approvalConsumptionStore?: FridayApprovalConsumptionStore;
 }
 
 // ─── Provider mutation plan / owner-confirm protocol (CORE-RUNNABLE-001) ───
@@ -1081,6 +1093,14 @@ export function createFridayProviderRoutes(
     descriptor: FridayProviderMutationDescriptor;
     ctx: { requestId: string; principal: FridayAuthPrincipal | null };
     body?: Record<string, unknown> | null;
+    /**
+     * DEFER the durable approval consumption to the caller so it can finalize it in the
+     * SAME transaction as the provider mutation (create/update/delete). When true the
+     * returned ticket carries `canonicalApprovalUseKey`; the handler MUST pass
+     * {@link buildApprovalConsumeInTransaction} into the service call and release the
+     * reservation on a caught pre-commit failure.
+     */
+    deferApprovalConsumption?: boolean;
   }): FridayMutatingActionTicket | undefined {
     const { action, surface, resourceId, parameters } = input.descriptor;
     if (!deps.providerMutationGateRequired) {
@@ -1132,10 +1152,13 @@ export function createFridayProviderRoutes(
       planDigest: controls.planDigest,
       idempotencyKey: controls.idempotencyKey,
     });
-    const gateResult = deps.canonicalMutationGate.evaluate({
-      ...request,
-      canonicalApproval: controls.canonicalApproval,
-    });
+    const gateResult = deps.canonicalMutationGate.evaluate(
+      {
+        ...request,
+        canonicalApproval: controls.canonicalApproval,
+      },
+      { deferApprovalConsumption: input.deferApprovalConsumption === true },
+    );
     if (gateResult.decision !== "allow" || !gateResult.ticket) {
       throw new FridayDomainError(
         gateResult.decision === "requires_approval"
@@ -1154,6 +1177,38 @@ export function createFridayProviderRoutes(
       );
     }
     return gateResult.ticket;
+  }
+
+  /**
+   * Run a provider mutation with the DEFERRED approval consumption finalized ATOMICALLY
+   * inside the mutation's own write transaction (`completeConsumptionInTransaction`), so a
+   * replayed approval (PK conflict) rolls back BOTH the consume and the mutation, and no
+   * durable effect commits without a durable consumption. On a clean pre-commit failure the
+   * in_flight reservation is released so the owner can retry the SAME confirmed approval; a
+   * crash instead leaves it in_flight → boot reconcile marks it indeterminate (fail-closed).
+   * When there is no deferred reservation (no gate, no durable store, or a non-deferred
+   * inline consumption already committed), the mutation runs unchanged with no consume hook.
+   */
+  async function runProviderMutationWithDeferredConsumption<T>(
+    ticket: FridayMutatingActionTicket | undefined,
+    run: (options?: FridayProviderMutationOptions) => Promise<T>,
+  ): Promise<T> {
+    const useKey = ticket?.canonicalApprovalUseKey;
+    const store = deps.approvalConsumptionStore;
+    if (useKey === undefined || !store) {
+      return run(undefined);
+    }
+    try {
+      return await run({
+        consumeApprovalInTransaction: (db) => store.completeConsumptionInTransaction(db, useKey),
+      });
+    } catch (err) {
+      // The mutation's write transaction rolled back (or never ran), so no side effect
+      // committed. releaseReservation is scoped to status='in_flight', so it is a no-op once
+      // the consume has committed (e.g. a post-commit throw) — never releasing a real effect.
+      store.releaseReservation(useKey);
+      throw err;
+    }
   }
 
   async function listHealthSnapshot(): Promise<FridayGetProviderHealthSnapshotResponse> {
@@ -1789,8 +1844,12 @@ export function createFridayProviderRoutes(
           descriptor: buildFridayProviderMutationDescriptor({ action: "providers.create", body: rawInput }),
           ctx,
           body: raw && typeof raw === "object" ? raw : undefined,
+          deferApprovalConsumption: true,
         });
-        const provider = await deps.providerService.createProvider(body);
+        const provider = await runProviderMutationWithDeferredConsumption(
+          ticket,
+          (options) => deps.providerService.createProvider(body, options),
+        );
         return withCanonicalGate({
           provider,
           validation: provider.config.validation,
@@ -1816,10 +1875,11 @@ export function createFridayProviderRoutes(
           descriptor: buildFridayProviderMutationDescriptor({ action: "providers.update", providerId, body: raw }),
           ctx,
           body: raw,
+          deferApprovalConsumption: true,
         });
-        const provider = await deps.providerService.updateProvider(
-          providerId,
-          body,
+        const provider = await runProviderMutationWithDeferredConsumption(
+          ticket,
+          (options) => deps.providerService.updateProvider(providerId, body, options),
         );
         return withCanonicalGate({
           provider,
@@ -1842,8 +1902,12 @@ export function createFridayProviderRoutes(
           descriptor: buildFridayProviderMutationDescriptor({ action: "providers.delete", providerId, body }),
           ctx,
           body,
+          deferApprovalConsumption: true,
         });
-        await deps.providerService.deleteProvider(providerId);
+        await runProviderMutationWithDeferredConsumption(
+          ticket,
+          (options) => deps.providerService.deleteProvider(providerId, options),
+        );
         return withCanonicalGate({ deleted: true as const }, ticket);
       },
     },

@@ -572,7 +572,9 @@ describe("FridayProviderRoutes", () => {
       };
 
       const result = await createRoute.handler(makeCtx({ body }));
-      expect(mockService.createProvider).toHaveBeenCalledWith(body);
+      // Second arg is the optional provider-mutation options (approval consume hook); it is
+      // undefined here because this fixture injects no durable approval-consumption store.
+      expect(mockService.createProvider).toHaveBeenCalledWith(body, undefined);
       expect(result).toHaveProperty("provider");
     });
 
@@ -628,7 +630,9 @@ describe("FridayProviderRoutes", () => {
 
       const result = await createRoute.handler(makeDeviceOwnerCtx({ body }));
 
-      expect(mockService.createProvider).toHaveBeenCalledWith(providerBody);
+      // Second arg is the optional provider-mutation options (approval consume hook);
+      // undefined here because this fixture injects no durable approval-consumption store.
+      expect(mockService.createProvider).toHaveBeenCalledWith(providerBody, undefined);
       expect(result).toHaveProperty("canonicalGate.ticketId", "ticket-1");
     });
 

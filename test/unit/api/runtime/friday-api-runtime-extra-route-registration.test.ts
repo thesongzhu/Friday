@@ -1141,7 +1141,9 @@ describe("API Runtime — Extended Route Registration", () => {
       principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
     });
 
-    expect(providerService.createProvider).toHaveBeenCalledWith(providerBody);
+    // No canonical gate in this runtime → no deferred reservation → the optional
+    // provider-mutation options second arg is undefined.
+    expect(providerService.createProvider).toHaveBeenCalledWith(providerBody, undefined);
   });
 
   it("requires signed provider setup canonical approval when runtime canonical gate profile is on", async () => {
@@ -1208,7 +1210,12 @@ describe("API Runtime — Extended Route Registration", () => {
       },
     });
 
-    expect(providerService.createProvider).toHaveBeenCalledWith(providerBody);
+    // Gate-required runtime injects the durable approval-consumption store, so the deferred
+    // ticket threads a consume-in-transaction hook as the second arg (finalized atomically
+    // with the mutation's write).
+    expect(providerService.createProvider).toHaveBeenCalledWith(providerBody, {
+      consumeApprovalInTransaction: expect.any(Function),
+    });
     expect(result).toHaveProperty("canonicalGate.ticketId");
   });
 

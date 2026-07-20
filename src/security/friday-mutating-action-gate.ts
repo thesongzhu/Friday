@@ -1,6 +1,10 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import type { ProviderApprovalDeviceProof } from "../api/auth/device-attest/friday-provider-approval-transcript.types.js";
+import {
+  type FridayApprovalConsumptionStore,
+  FridayInMemoryApprovalConsumptionStore,
+} from "../api/http/persistence/friday-provider-approval-consumption-repository.js";
 import { deviceOwnerPrincipalId } from "./friday-device-owner-authority-precondition.js";
 
 export const FRIDAY_MUTATING_ACTION_RISKS = [
@@ -175,6 +179,15 @@ export interface FridayMutatingActionTicket {
   readonly planDigest?: string;
   readonly childOfLifecycleTicketId?: string;
   readonly idempotencyKey?: string;
+  /**
+   * The canonical approval single-use key this ticket's approval was reserved under
+   * (`createCanonicalApprovalUseKey`). Present ONLY when the approval consumption was
+   * DEFERRED (`deferApprovalConsumption`): the caller must finalize it durably —
+   * `completeConsumptionInTransaction(db, useKey)` in the SAME write transaction as the
+   * mutation, or `releaseReservation(useKey)` on a clean pre-commit failure. Absent for
+   * the inline path (the gate already committed the consumption).
+   */
+  readonly canonicalApprovalUseKey?: string;
 }
 
 export interface FridayMutatingActionGateEvidenceRecord {
@@ -221,10 +234,35 @@ export interface FridayMutatingActionGateOptions {
    * public key here — no signing secret is involved on the device-owner path.
    */
   readonly deviceApprovalVerifier?: FridayDeviceApprovalVerifier;
+  /**
+   * DURABLE single-use ledger for canonical approvals (SEC-APPROVAL-AUTHORITY-001 ·
+   * Advisor finding #3). Defaults to an in-memory impl (equivalent to the previous
+   * process-local `Set`), so db-less callers/tests behave exactly as before. The runtime
+   * injects the SQLite-backed store so a confirmed approval consumed once cannot be
+   * replayed after a restart or by a concurrent process.
+   */
+  readonly approvalConsumptionStore?: FridayApprovalConsumptionStore;
+}
+
+/** Per-evaluate options. */
+export interface FridayMutatingActionGateEvaluateOptions {
+  /**
+   * DEFER the durable approval consumption to the caller instead of committing it inline.
+   * When true the gate atomically RESERVES the single-use key (status='in_flight', a
+   * replay is already refused here on a PK conflict) and returns the reservation on the
+   * ticket as `canonicalApprovalUseKey`; the caller must then finalize it durably in the
+   * SAME write transaction as its mutation (`completeConsumptionInTransaction`) or release
+   * it on a clean failure. Used by provider create/update/delete so consume ⊗ mutation
+   * commit atomically. When false/absent the gate consumes inline in its own transaction.
+   */
+  readonly deferApprovalConsumption?: boolean;
 }
 
 export interface FridayMutatingActionGate {
-  evaluate(request: FridayMutatingActionRequest): FridayMutatingActionGateResult;
+  evaluate(
+    request: FridayMutatingActionRequest,
+    options?: FridayMutatingActionGateEvaluateOptions,
+  ): FridayMutatingActionGateResult;
 }
 
 const RISK_WEIGHT: Record<FridayMutatingActionRisk, number> = {
@@ -568,10 +606,14 @@ export function createFridayMutatingActionGate(
   const approvalSignatureSecret = options.approvalSignatureSecret;
   const requireApprovalSignature = options.requireApprovalSignature ?? false;
   const deviceApprovalVerifier = options.deviceApprovalVerifier;
-  const consumedCanonicalApprovalKeys = new Set<string>();
+  const approvalConsumptionStore =
+    options.approvalConsumptionStore ?? new FridayInMemoryApprovalConsumptionStore();
 
   return {
-    evaluate(request: FridayMutatingActionRequest): FridayMutatingActionGateResult {
+    evaluate(
+      request: FridayMutatingActionRequest,
+      evaluateOptions: FridayMutatingActionGateEvaluateOptions = {},
+    ): FridayMutatingActionGateResult {
       const localClaims = [...(request.localClaims ?? [])];
       const risk = deriveFridayMutatingActionRisk(request);
       const actionDigest = createFridayMutatingActionDigest(request, risk);
@@ -737,54 +779,100 @@ export function createFridayMutatingActionGate(
         });
       }
 
-      const canonicalApprovalUseKey = createCanonicalApprovalUseKey(canonicalApproval);
-      if (consumedCanonicalApprovalKeys.has(canonicalApprovalUseKey)) {
-        return buildResult({
-          request,
-          actionDigest,
-          risk,
-          localClaims,
-          evaluatedAt,
-          decision: "deny",
-          reason: "canonical_approval_already_used",
-          approvalRequired: true,
-          deniedBy: "canonical_gate",
-          approvalId: canonicalApproval.approvalId,
-        });
-      }
-
-      const ticket: FridayMutatingActionTicket = {
-        ticketId: ticketIdGenerator(),
-        actionDigest,
-        action: request.action,
-        actor: request.actor,
-        surface: request.surface,
-        resource: request.resource,
-        risk,
-        approvalId: canonicalApproval.approvalId,
-        approvedByPrincipalId: canonicalApproval.decidedByPrincipalId,
-        issuedAt: evaluatedAt,
-        expiresAt: canonicalApproval.expiresAt,
-        planDigest: request.planDigest,
-        childOfLifecycleTicketId: canonicalApproval.childOfLifecycleTicketId,
-        idempotencyKey: request.idempotencyKey,
-      };
-      consumedCanonicalApprovalKeys.add(canonicalApprovalUseKey);
-
-      return buildResult({
+      // DURABLE single-use (SEC-APPROVAL-AUTHORITY-001 · Advisor finding #3): reserve the
+      // canonical use key and mint the ticket (see helper for the atomic-INSERT semantics).
+      return reserveApprovalAndIssueTicket({
         request,
         actionDigest,
         risk,
         localClaims,
         evaluatedAt,
-        decision: "allow",
-        reason: "canonical_approval_ticket_issued",
-        approvalRequired: true,
-        ticket,
-        approvalId: canonicalApproval.approvalId,
+        canonicalApproval,
+        deferApprovalConsumption: evaluateOptions.deferApprovalConsumption === true,
+        store: approvalConsumptionStore,
+        ticketIdGenerator,
       });
     },
   };
+}
+
+/**
+ * Reserve the canonical approval's single-use key and, on success, mint the mutating-action
+ * ticket. The reserve is an atomic single INSERT keyed on the use key, so a replay of the
+ * same signed approval — a concurrent request OR a fresh process after restart — collides on
+ * the PRIMARY KEY and is refused as `canonical_approval_already_used`. In the DEFERRED path
+ * the reservation is `in_flight` and the ticket carries `canonicalApprovalUseKey` for the
+ * caller to finalize durably in the mutation's transaction; otherwise it is consumed inline.
+ */
+function reserveApprovalAndIssueTicket(input: {
+  request: FridayMutatingActionRequest;
+  actionDigest: string;
+  risk: FridayMutatingActionRisk;
+  localClaims: readonly FridayMutatingActionLocalClaim[];
+  evaluatedAt: string;
+  canonicalApproval: FridayCanonicalApprovalResolution;
+  deferApprovalConsumption: boolean;
+  store: FridayApprovalConsumptionStore;
+  ticketIdGenerator: () => string;
+}): FridayMutatingActionGateResult {
+  const { request, actionDigest, risk, localClaims, evaluatedAt, canonicalApproval } = input;
+  const canonicalApprovalUseKey = createCanonicalApprovalUseKey(canonicalApproval);
+  const reservation = {
+    useKey: canonicalApprovalUseKey,
+    actionDigest,
+    idempotencyKey: request.idempotencyKey,
+    mutationOperationId: request.action,
+  };
+  const reserveOutcome = input.deferApprovalConsumption
+    ? input.store.reserveInFlight(reservation)
+    : input.store.reserveConsumed(reservation);
+  if (!reserveOutcome.ok) {
+    return buildResult({
+      request,
+      actionDigest,
+      risk,
+      localClaims,
+      evaluatedAt,
+      decision: "deny",
+      reason: "canonical_approval_already_used",
+      approvalRequired: true,
+      deniedBy: "canonical_gate",
+      approvalId: canonicalApproval.approvalId,
+    });
+  }
+
+  const ticket: FridayMutatingActionTicket = {
+    ticketId: input.ticketIdGenerator(),
+    actionDigest,
+    action: request.action,
+    actor: request.actor,
+    surface: request.surface,
+    resource: request.resource,
+    risk,
+    approvalId: canonicalApproval.approvalId,
+    approvedByPrincipalId: canonicalApproval.decidedByPrincipalId,
+    issuedAt: evaluatedAt,
+    expiresAt: canonicalApproval.expiresAt,
+    planDigest: request.planDigest,
+    childOfLifecycleTicketId: canonicalApproval.childOfLifecycleTicketId,
+    idempotencyKey: request.idempotencyKey,
+    // Only the DEFERRED path hands the caller a reservation to finalize durably in the
+    // mutation's transaction; the inline path already committed the consumption.
+    ...(input.deferApprovalConsumption ? { canonicalApprovalUseKey } : {}),
+  };
+
+  return buildResult({
+    request,
+    actionDigest,
+    risk,
+    localClaims,
+    evaluatedAt,
+    decision: "allow",
+    reason: "canonical_approval_ticket_issued",
+    approvalRequired: true,
+    ticket,
+    approvalId: canonicalApproval.approvalId,
+  });
 }
 
 function deriveFridayMutatingActionRisk(
