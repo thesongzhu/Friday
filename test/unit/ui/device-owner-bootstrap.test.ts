@@ -116,6 +116,8 @@ describe("CR-1 UI device-key seam ⇄ server verifier", () => {
           Promise.resolve(svc.issueBootstrapChallenge(input, LOOPBACK) as never),
         claim: (input: Parameters<FridayAuthService["claimOwnerWithDeviceKey"]>[0]) =>
           Promise.resolve(svc.claimOwnerWithDeviceKey(input, LOOPBACK) as never),
+        issueLoginChallenge: (input: Parameters<FridayAuthService["issueLoginChallenge"]>[0]) =>
+          Promise.resolve(svc.issueLoginChallenge(input, LOOPBACK) as never),
         login: (input: Parameters<FridayAuthService["login"]>[0]) =>
           Promise.resolve(svc.login(input, LOOPBACK) as never),
       };
@@ -139,8 +141,6 @@ describe("CR-1 UI device-key seam ⇄ server verifier", () => {
         origin: ORIGIN,
         installId: "install-1",
         osUser: "ui",
-        nowMs: () => Date.parse(NOW),
-        loginTranscriptTtlMs: 120_000,
       });
       expect(response.accessToken.length).toBeGreaterThan(0);
       expect(response.refreshToken.length).toBeGreaterThan(0);
@@ -155,8 +155,6 @@ describe("CR-1 UI device-key seam ⇄ server verifier", () => {
           origin: ORIGIN,
           installId: "install-1",
           osUser: "ui",
-          nowMs: () => Date.parse(NOW),
-          loginTranscriptTtlMs: 120_000,
         }),
       ).rejects.toThrow(/DEVICE_AUTHORITY_DISABLED|disabled/i);
     });

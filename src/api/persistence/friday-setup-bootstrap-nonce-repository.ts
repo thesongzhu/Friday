@@ -26,14 +26,20 @@ export interface FridaySetupBootstrapNonceRow {
  * Ledger `kind` discriminator. `install_owner_claim` is the first-boot
  * device-bound owner claim (SEC-SETUP-BOOTSTRAP-001 Slice 1). Slice 5 adds
  * `device_migration_claim` — the SECOND consumer of this same ledger, minted for
- * an AUTHENTICATED existing-passphrase-owner → device migration. The DB CHECK
- * (v104) enforces this closed set; the distinct kind keeps a first-boot nonce
- * from being replayed into a migration and vice-versa (the consume CAS matches
- * on `kind`).
+ * an AUTHENTICATED existing-passphrase-owner → device migration. CR-1 adds
+ * `device_login_challenge` (v107) — the THIRD consumer, a server-issued single-use
+ * nonce minted PER device-key login attempt so the login proof-of-possession is
+ * NOT replayable (Advisor #1628 finding #2). The DB CHECK (v107) enforces this
+ * closed set; the distinct kind keeps a nonce minted for one leg from being
+ * replayed into another (the consume CAS matches on `kind`). NOTE: unlike the two
+ * single-shot kinds, MANY `device_login_challenge` rows are consumed over a
+ * machine's lifetime, so the single-owner partial UNIQUE(kind) belt EXCLUDES it
+ * (v107) — its single-use guarantee is the per-row CAS, not that index.
  */
 export type FridaySetupBootstrapNonceKind =
   | "install_owner_claim"
-  | "device_migration_claim";
+  | "device_migration_claim"
+  | "device_login_challenge";
 
 // ─── Insert / consume inputs ───
 
@@ -65,6 +71,51 @@ export interface ConsumeFridaySetupBootstrapNonceInput {
   deviceId: string;
   /** Owner user id being claimed (e.g. admin-001). */
   claimedUserId: string;
+}
+
+/**
+ * SEC-SETUP-BOOTSTRAP-001 (CR-1): insert input for a `device_login_challenge`
+ * nonce. UNLIKE the claim/migration challenges (whose device columns are written
+ * at CONSUME time), the login challenge binds the device + key hash at ISSUE time
+ * so the consume CAS can gate on them — a challenge minted for device A can never
+ * be consumed by a login presenting device B (or a different key), even if the raw
+ * nonce leaked. Only the nonce HASH is stored; the raw nonce is returned once.
+ */
+export interface InsertFridayLoginChallengeNonceInput {
+  id: string;
+  nonceHash: string;
+  hubId: string;
+  installId: string;
+  osUser: string;
+  origin: string;
+  action: string;
+  /** Device identifier the login challenge is bound to (gated at consume). */
+  deviceId: string;
+  /** Device public key (opaque) recorded at issue for audit. */
+  devicePublicKey: string;
+  /** Deterministic hash of the bound device public key (gated at consume). */
+  devicePublicKeyHash: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/**
+ * SEC-SETUP-BOOTSTRAP-001 (CR-1): single-use compare-and-consume input for a
+ * `device_login_challenge` nonce. The CAS gates on origin + bound deviceId + bound
+ * devicePublicKeyHash + single-use (consumed_at IS NULL) + freshness (expires_at >
+ * now), so a replayed / expired / cross-origin / wrong-device / wrong-key login
+ * yields `changes = 0` and mints nothing.
+ */
+export interface ConsumeFridayLoginChallengeNonceInput {
+  nonceHash: string;
+  /** Origin the login is presented from; MUST equal the bound issue origin. */
+  origin: string;
+  /** Wall-clock ISO used for the `expires_at > now` freshness gate. */
+  nowIso: string;
+  /** Device identifier presented in the login; MUST equal the bound device. */
+  deviceId: string;
+  /** Hash of the presented device key; MUST equal the bound key hash. */
+  devicePublicKeyHash: string;
 }
 
 // ─── Sweep (reaper / TTL) inputs ───
@@ -137,6 +188,31 @@ export interface FridaySetupBootstrapNonceRepository {
   consumeOwnerClaimNonce(
     db: Database.Database,
     input: ConsumeFridaySetupBootstrapNonceInput,
+  ): number;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 (CR-1): insert a `device_login_challenge` nonce with
+   * its device binding stamped at ISSUE time. Only the nonce HASH is persisted.
+   */
+  insertLoginChallengeNonce(
+    db: Database.Database,
+    input: InsertFridayLoginChallengeNonceInput,
+  ): void;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 (CR-1): single-use compare-and-consume of a
+   * `device_login_challenge` nonce.
+   *
+   * The `WHERE consumed_at IS NULL AND expires_at > :now AND origin = :origin AND
+   * device_id = :deviceId AND device_public_key_hash = :devicePublicKeyHash`
+   * predicate is the atomic replay/expiry/cross-origin/wrong-device gate: a
+   * consumed, expired, origin-mismatched, or device/key-mismatched login yields
+   * `changes = 0`. Intended to run in the SAME write transaction that mints the
+   * session so a replayed login mints NO second token pair (ZERO state change).
+   *
+   * Returns the number of affected rows (1 = won, 0 = replay/expired/mismatch).
+   */
+  consumeLoginChallengeNonce(
+    db: Database.Database,
+    input: ConsumeFridayLoginChallengeNonceInput,
   ): number;
 }
 
@@ -247,6 +323,52 @@ export function createFridaySetupBootstrapNonceRepository(): FridaySetupBootstra
           nonceHash: input.nonceHash,
           kind: input.kind,
           origin: input.origin,
+        });
+      return res.changes;
+    },
+
+    insertLoginChallengeNonce(db, input) {
+      db.prepare(
+        `INSERT INTO friday_setup_bootstrap_nonces (
+           id, nonce_hash, kind, hub_id, install_id, os_user, origin, action,
+           device_id, device_public_key, device_public_key_hash, claimed_user_id,
+           created_at, expires_at, consumed_at
+         ) VALUES (?, ?, 'device_login_challenge', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)`,
+      ).run(
+        input.id,
+        input.nonceHash,
+        input.hubId,
+        input.installId,
+        input.osUser,
+        input.origin,
+        input.action,
+        input.deviceId,
+        input.devicePublicKey,
+        input.devicePublicKeyHash,
+        input.createdAt,
+        input.expiresAt,
+      );
+    },
+
+    consumeLoginChallengeNonce(db, input) {
+      const res = db
+        .prepare(
+          `UPDATE friday_setup_bootstrap_nonces
+              SET consumed_at = :nowIso
+            WHERE nonce_hash = :nonceHash
+              AND kind = 'device_login_challenge'
+              AND origin = :origin
+              AND device_id = :deviceId
+              AND device_public_key_hash = :devicePublicKeyHash
+              AND consumed_at IS NULL
+              AND expires_at > :nowIso`,
+        )
+        .run({
+          nowIso: input.nowIso,
+          nonceHash: input.nonceHash,
+          origin: input.origin,
+          deviceId: input.deviceId,
+          devicePublicKeyHash: input.devicePublicKeyHash,
         });
       return res.changes;
     },

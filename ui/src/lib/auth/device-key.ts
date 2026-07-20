@@ -14,11 +14,19 @@
 //   - When WebCrypto is unavailable (e.g. an insecure context), the provider is
 //     `isAvailable() === false` and every operation FAILS CLOSED — the caller must
 //     NOT silently fall back to a fabricated key.
+//   - DURABLE ACROSS RELOAD (CR-1 · Advisor #1628 finding #2): the non-extractable
+//     private key is persisted in IndexedDB as a structured-cloneable CryptoKey.
+//     IndexedDB stores the live key OBJECT (never raw key bytes — a non-extractable
+//     key cannot be exported), and structured clone PRESERVES `extractable=false`,
+//     so the key survives a page reload WITHOUT ever becoming extractable. This is
+//     what makes the device-owner claim + login recoverable across restart rather
+//     than minting a fresh (unbound) key on every load.
 //
 // NATIVE/OPERATOR LEAF (flagged, not faked): hardware-backed (Secure Enclave /
-// TPM) key generation, OS attestation, and durable cross-restart key storage are
-// the native bridge's responsibility. This WebCrypto provider is the software-dev
-// seam that proves the wiring; its keypair lives in memory for the session only.
+// TPM) key generation and OS attestation remain the native bridge's responsibility
+// — this WebCrypto provider is the software-dev seam that proves the wiring and its
+// key protection stays server-derived "unverified". Durable browser-key storage
+// (IndexedDB) is implemented here; hardware backing is NOT claimed.
 
 /** Canonical owner-claim/login transcript (mirrors the server S2a shape). */
 export interface DeviceClaimTranscript {
@@ -167,6 +175,98 @@ export function normalizeLowS(raw: Uint8Array): Uint8Array {
   return out;
 }
 
+// ─── Durable key store (IndexedDB) ───
+
+/**
+ * The durable device-key record persisted across page reloads. `keyPair` is the
+ * LIVE non-extractable CryptoKeyPair — IndexedDB persists it via the structured
+ * clone algorithm, which keeps `privateKey.extractable === false` (raw key bytes
+ * are never materialised). `deviceId` is persisted alongside so the stable device
+ * identity the claim bound to survives a reload too.
+ */
+export interface DurableDeviceKeyRecord {
+  keyPair: CryptoKeyPair;
+  deviceId: string;
+}
+
+/**
+ * Persistence seam for the device key. The default browser implementation is
+ * IndexedDB (`createIndexedDbDeviceKeyStore`); tests inject an in-memory store that
+ * runs the record through the SAME structured-clone algorithm IndexedDB uses.
+ */
+export interface DeviceKeyStore {
+  /** Return the persisted record, or null if none / unreadable. */
+  load(): Promise<DurableDeviceKeyRecord | null>;
+  /** Persist (overwrite) the record. Rejects if the write fails (fail closed). */
+  save(record: DurableDeviceKeyRecord): Promise<void>;
+}
+
+const DEVICE_KEY_DB_NAME = "friday-device-key";
+const DEVICE_KEY_STORE_NAME = "device-owner-keys";
+const DEVICE_KEY_RECORD_ID = "primary";
+
+/** True when the IndexedDB API is present (browser secure context). */
+export function indexedDbDeviceKeyStorageAvailable(): boolean {
+  return typeof indexedDB !== "undefined";
+}
+
+/**
+ * IndexedDB-backed device-key store. Stores the CryptoKeyPair OBJECT (not raw
+ * bytes) under a single fixed key. Because the private key is non-extractable and
+ * structured clone preserves that flag, the reloaded key can sign but can never be
+ * exported. All operations reject on IndexedDB error (the provider fails closed on
+ * a save failure rather than silently continuing with a non-durable key).
+ */
+export function createIndexedDbDeviceKeyStore(): DeviceKeyStore {
+  function openDb(): Promise<IDBDatabase> {
+    return new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(DEVICE_KEY_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(DEVICE_KEY_STORE_NAME)) {
+          database.createObjectStore(DEVICE_KEY_STORE_NAME);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error("indexedDB open failed"));
+    });
+  }
+
+  return {
+    async load(): Promise<DurableDeviceKeyRecord | null> {
+      const database = await openDb();
+      try {
+        return await new Promise<DurableDeviceKeyRecord | null>((resolve, reject) => {
+          const tx = database.transaction(DEVICE_KEY_STORE_NAME, "readonly");
+          const req = tx.objectStore(DEVICE_KEY_STORE_NAME).get(DEVICE_KEY_RECORD_ID);
+          req.onsuccess = () => {
+            const value = req.result as DurableDeviceKeyRecord | undefined;
+            resolve(value && value.keyPair ? value : null);
+          };
+          req.onerror = () => reject(req.error ?? new Error("indexedDB get failed"));
+        });
+      } finally {
+        database.close();
+      }
+    },
+
+    async save(record: DurableDeviceKeyRecord): Promise<void> {
+      const database = await openDb();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const tx = database.transaction(DEVICE_KEY_STORE_NAME, "readwrite");
+          tx.objectStore(DEVICE_KEY_STORE_NAME).put(record, DEVICE_KEY_RECORD_ID);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error ?? new Error("indexedDB put failed"));
+          tx.onabort = () => reject(tx.error ?? new Error("indexedDB put aborted"));
+        });
+      } finally {
+        database.close();
+      }
+    },
+  };
+}
+
 // ─── WebCrypto software provider ───
 
 function subtleAvailable(): boolean {
@@ -175,6 +275,20 @@ function subtleAvailable(): boolean {
     typeof globalThis.crypto.subtle !== "undefined" &&
     typeof globalThis.crypto.subtle.generateKey === "function"
   );
+}
+
+/** Derive the public key material (SPKI base64 + hash) for a keypair + deviceId. */
+async function deriveDeviceKeyMaterial(
+  publicKey: CryptoKey,
+  deviceId: string,
+): Promise<DeviceKeyMaterial> {
+  const spki = new Uint8Array(await globalThis.crypto.subtle.exportKey("spki", publicKey));
+  const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", spki));
+  return {
+    devicePublicKeySpkiBase64: toBase64(spki),
+    devicePublicKeyHash: toHex(digest),
+    deviceId,
+  };
 }
 
 function randomDeviceId(): string {
@@ -188,10 +302,14 @@ function randomDeviceId(): string {
 
 /**
  * Create a WebCrypto-backed device-key provider. The private key is
- * non-extractable and cached in memory for the session. Durable, hardware-backed
- * storage is the native/operator leaf (see file header).
+ * non-extractable and cached in memory for the session. When a `store` is supplied
+ * (the browser default is IndexedDB), the key is DURABLE across page reloads: on
+ * first use it is generated + persisted; on a later load it is read back from the
+ * store (still non-extractable). WITHOUT a store the key is in-memory only (the old
+ * behaviour) — used by cross-encoder / signature unit tests. Hardware backing is
+ * the native/operator leaf (see file header); this seam never claims it.
  */
-export function createWebCryptoDeviceKeyProvider(): DeviceKeyProvider {
+export function createWebCryptoDeviceKeyProvider(store?: DeviceKeyStore): DeviceKeyProvider {
   let cached: { keyPair: CryptoKeyPair; material: DeviceKeyMaterial } | null = null;
 
   return {
@@ -201,22 +319,36 @@ export function createWebCryptoDeviceKeyProvider(): DeviceKeyProvider {
       if (!subtleAvailable()) throw new DeviceKeyUnavailableError();
       if (cached) return cached.material;
 
+      // Durable recovery: reload a previously-persisted non-extractable keypair so
+      // the owner binding survives a reload. A corrupt/unreadable record is treated
+      // as "none" (regenerate); a genuine key just rehydrates and signs.
+      if (store) {
+        let record: DurableDeviceKeyRecord | null = null;
+        try {
+          record = await store.load();
+        } catch {
+          record = null;
+        }
+        if (record) {
+          const material = await deriveDeviceKeyMaterial(record.keyPair.publicKey, record.deviceId);
+          cached = { keyPair: record.keyPair, material };
+          return material;
+        }
+      }
+
       const keyPair = (await globalThis.crypto.subtle.generateKey(
         { name: "ECDSA", namedCurve: "P-256" },
         false, // private key non-extractable; public key stays exportable
         ["sign", "verify"],
       )) as CryptoKeyPair;
 
-      const spki = new Uint8Array(
-        await globalThis.crypto.subtle.exportKey("spki", keyPair.publicKey),
-      );
-      const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", spki));
-
-      const material: DeviceKeyMaterial = {
-        devicePublicKeySpkiBase64: toBase64(spki),
-        devicePublicKeyHash: toHex(digest),
-        deviceId: randomDeviceId(),
-      };
+      const deviceId = randomDeviceId();
+      const material = await deriveDeviceKeyMaterial(keyPair.publicKey, deviceId);
+      // Persist BEFORE returning so the key is durable from first use. A save failure
+      // fails closed (rejects) rather than silently continuing with a non-durable key.
+      if (store) {
+        await store.save({ keyPair, deviceId });
+      }
       cached = { keyPair, material };
       return material;
     },
@@ -245,8 +377,16 @@ export function createWebCryptoDeviceKeyProvider(): DeviceKeyProvider {
 // Default provider singleton (native bridge would replace this at wire time).
 let defaultProvider: DeviceKeyProvider | null = null;
 
-/** The process/tab default device-key provider (WebCrypto software seam). */
+/**
+ * The process/tab default device-key provider (WebCrypto software seam). When
+ * IndexedDB is available (browser secure context) the provider is DURABLE — its
+ * non-extractable key survives reload; otherwise it is in-memory only.
+ */
 export function getDeviceKeyProvider(): DeviceKeyProvider {
-  if (!defaultProvider) defaultProvider = createWebCryptoDeviceKeyProvider();
+  if (!defaultProvider) {
+    defaultProvider = createWebCryptoDeviceKeyProvider(
+      indexedDbDeviceKeyStorageAvailable() ? createIndexedDbDeviceKeyStore() : undefined,
+    );
+  }
   return defaultProvider;
 }

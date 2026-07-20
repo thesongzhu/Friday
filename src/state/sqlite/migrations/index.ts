@@ -105,6 +105,7 @@ import { V103_SETUP_BOOTSTRAP_DEVICE_CLAIM_MIGRATION } from "./v103-setup-bootst
 import { V104_SETUP_BOOTSTRAP_MIGRATION_STATE_MIGRATION } from "./v104-setup-bootstrap-migration-state.js";
 import { V105_RETENTION_SETTINGS_MIGRATION } from "./v105-retention-settings.js";
 import { V106_REALTIME_EVENTS_OWNER_MIGRATION } from "./v106-realtime-events-owner.js";
+import { V107_SETUP_BOOTSTRAP_LOGIN_CHALLENGE_MIGRATION } from "./v107-setup-bootstrap-login-challenge.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -216,6 +217,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V104_SETUP_BOOTSTRAP_MIGRATION_STATE_MIGRATION,
   V105_RETENTION_SETTINGS_MIGRATION,
   V106_REALTIME_EVENTS_OWNER_MIGRATION,
+  V107_SETUP_BOOTSTRAP_LOGIN_CHALLENGE_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };

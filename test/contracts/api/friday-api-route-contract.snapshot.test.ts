@@ -915,6 +915,11 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         // compare-and-set, under the auth.login rate-limit policy.
         "auth.bootstrap.challenge",
         "auth.bootstrap.device.claim",
+        // SEC-SETUP-BOOTSTRAP-001 (CR-1 · Advisor #1628 finding #2): the device-key
+        // LOGIN challenge. Same posture as auth.bootstrap.challenge — public loopback
+        // mutation gated by a localhost-only IP check + single-use device_login_challenge
+        // nonce (CAS-consumed atomically with the login mint), under auth.login rate limit.
+        "auth.login.challenge",
         "auth.login",
       ]);
       // public_low_risk

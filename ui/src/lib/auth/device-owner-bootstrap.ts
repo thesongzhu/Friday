@@ -19,6 +19,7 @@ import {
 import type {
   AuthBootstrapChallengeResponse,
   AuthDeviceClaimResponse,
+  AuthLoginChallengeResponse,
   LoginResponse,
 } from "../api/types";
 
@@ -38,6 +39,19 @@ export interface DeviceOwnerBootstrapApi {
     osUser: string;
     deviceClaimProof: DeviceClaimProof;
   }): Promise<AuthDeviceClaimResponse>;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 (CR-1 · Advisor #1628 finding #2): mint a server-issued
+   * single-use login challenge bound to this device + key + origin. Its nonce is the
+   * ONLY value the backend accepts in the owner-login transcript, which makes the
+   * login proof non-replayable.
+   */
+  issueLoginChallenge(input: {
+    installId: string;
+    osUser: string;
+    origin: string;
+    deviceId: string;
+    devicePublicKey: string;
+  }): Promise<AuthLoginChallengeResponse>;
   login(input: {
     devicePublicKey: string;
     deviceId: string;
@@ -57,26 +71,9 @@ export interface DeviceOwnerBootstrapContext {
    * only echoed into the (signed, but not server-cross-checked) transcript.
    */
   osUser: string;
-  /** Deterministic clock override (tests). Defaults to Date.now. */
-  nowMs?: () => number;
-  /** Deterministic login-nonce override (tests). Defaults to a random value. */
-  randomNonce?: () => string;
-  /** Login transcript TTL (ms); MUST be <= the server login TTL clamp (300s). */
-  loginTranscriptTtlMs?: number;
 }
 
 const TRANSCRIPT_CHANNEL = "ui-loopback";
-const DEFAULT_LOGIN_TTL_MS = 120_000;
-
-function defaultRandomNonce(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") return `login-${c.randomUUID()}`;
-  const rnd = new Uint8Array(16);
-  if (c && typeof c.getRandomValues === "function") c.getRandomValues(rnd);
-  let hex = "";
-  for (let i = 0; i < rnd.length; i += 1) hex += rnd[i].toString(16).padStart(2, "0");
-  return `login-${hex}`;
-}
 
 /**
  * Run the full device-owner first-run: generate/get the device key, claim the
@@ -128,29 +125,41 @@ export async function runDeviceOwnerBootstrap(
     deviceClaimProof: { transcript: claimTranscript, signature: claimSignature },
   });
 
-  // 3) Sign a FRESH owner-login transcript and mint a session by proving possession.
-  const nowMs = (ctx.nowMs ?? (() => Date.now()))();
-  const ttlMs = ctx.loginTranscriptTtlMs ?? DEFAULT_LOGIN_TTL_MS;
+  // 3) Mint a SERVER-ISSUED single-use login challenge (Advisor #1628 finding #2):
+  //    the login nonce is chosen by the SERVER, not the client, so a captured
+  //    owner-login transcript cannot be replayed to mint a second session. The
+  //    challenge is bound to this device + key + origin; its nonce + expiry govern
+  //    the login transcript (the client no longer self-generates either).
+  const loginChallenge = await api.issueLoginChallenge({
+    installId: ctx.installId,
+    osUser: ctx.osUser,
+    origin: ctx.origin,
+    deviceId: key.deviceId,
+    devicePublicKey: key.devicePublicKeySpkiBase64,
+  });
+
+  // 4) Sign a FRESH owner-login transcript over the server nonce and mint a session
+  //    by proving possession.
   const loginTranscript: DeviceClaimTranscript = {
     transcriptVersion: "friday-owner-claim-v1",
     algorithm: "ECDSA_P256_SHA256",
     kind: "install_owner_claim",
-    hubId: challenge.hubId,
-    installId: challenge.installId,
-    osUser: challenge.osUser,
+    hubId: loginChallenge.hubId,
+    installId: loginChallenge.installId,
+    osUser: loginChallenge.osUser,
     deviceId: key.deviceId,
     action: "owner-login",
-    origin: ctx.origin,
+    origin: loginChallenge.origin,
     channel: TRANSCRIPT_CHANNEL,
-    nonce: (ctx.randomNonce ?? defaultRandomNonce)(),
-    expiresAt: new Date(nowMs + ttlMs).toISOString(),
+    nonce: loginChallenge.nonce,
+    expiresAt: loginChallenge.expiresAt,
     devicePublicKeyHash: key.devicePublicKeyHash,
   };
   const loginSignature = await provider.signTranscript(loginTranscript);
   return api.login({
     devicePublicKey: key.devicePublicKeySpkiBase64,
     deviceId: key.deviceId,
-    origin: ctx.origin,
+    origin: loginChallenge.origin,
     deviceLoginProof: { transcript: loginTranscript, signature: loginSignature },
   });
 }

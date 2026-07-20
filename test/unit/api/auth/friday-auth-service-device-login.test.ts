@@ -19,6 +19,8 @@
 // suite NEVER flips it; it exercises the enabled branch ONLY via the injectable
 // authority seam, exactly as a signed-release/native slice would enable it.
 
+import { createHash } from "node:crypto";
+
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createFridayAuthService, FridayAuthError } from "#api";
@@ -41,14 +43,17 @@ const DEVICE_ID = "device-login-001";
 const OWNER_HASH_PREFIX = "device-owner$v1$";
 const TOKEN_SECRET = "test-secret-key-for-device-login-0001"; // pragma: allowlist secret
 
+// Monotonic across the WHOLE file so ids minted by DISTINCT service instances
+// (bootstrap challenge, login challenge, session) never collide on the
+// friday_setup_bootstrap_nonces PRIMARY KEY (id) within a single test's db.
+let idCounter = 0;
 function makeIdGen(): () => string {
-  let n = 0;
-  return () => `id-${String(++n).padStart(4, "0")}`;
+  return () => `id-${String(++idCounter).padStart(6, "0")}`;
 }
 
 function makeService(
   db: FridaySqliteLayer,
-  opts: { authorityEnabled?: boolean } = {},
+  opts: { authorityEnabled?: boolean; failMintAtRegister?: boolean } = {},
 ): FridayAuthService {
   return createFridayAuthService({
     db,
@@ -64,6 +69,15 @@ function makeService(
     // signed-release/native slice supplies once the OS attestation bridge lands.
     ...(opts.authorityEnabled !== undefined
       ? { deviceOwnerAuthorityEnabled: () => opts.authorityEnabled === true }
+      : {}),
+    // Simulate a crash mid-mint: throw INSIDE the mint transaction AFTER the
+    // login-challenge CAS-consume + session insert, so the whole unit must roll back.
+    ...(opts.failMintAtRegister
+      ? {
+        registerIssuedAccessToken: () => {
+          throw new Error("simulated crash mid-mint");
+        },
+      }
       : {}),
   });
 }
@@ -113,8 +127,37 @@ function claimOwner(db: FridaySqliteLayer, key: TestDeviceKey): void {
   expect(res.deviceAuthorityEnabled).toBe(false); // real precondition still off
 }
 
-/** Build a signed device-key LOGIN request for `key`, with optional overrides. */
+/**
+ * Issue a SERVER-ISSUED single-use login challenge bound to `key` + device +
+ * origin, returning the raw nonce. Issuing does not require device authority.
+ */
+function issueLoginNonce(
+  db: FridaySqliteLayer,
+  over: { deviceId?: string; origin?: string; key: TestDeviceKey },
+): string {
+  const challenge = makeService(db).issueLoginChallenge(
+    {
+      installId: "install-1",
+      osUser: "jarvis",
+      origin: over.origin ?? ORIGIN,
+      deviceId: over.deviceId ?? DEVICE_ID,
+      devicePublicKey: over.key.spkiDerBase64,
+    },
+    LOOPBACK,
+  );
+  return challenge.nonce;
+}
+
+/**
+ * Build a signed device-key LOGIN request for `key`, with optional overrides. By
+ * default it FIRST mints a real server-issued login challenge (bound to key +
+ * deviceId + origin) and signs the returned nonce into the transcript — the login
+ * is only replay-safe because that nonce is single-use. Pass `over.nonce` to inject
+ * a foreign / blank / already-used nonce for the negative paths (no challenge is
+ * minted in that case).
+ */
 function loginReq(
+  db: FridaySqliteLayer,
   key: TestDeviceKey,
   over: Partial<{
     action: string;
@@ -123,6 +166,7 @@ function loginReq(
     devicePublicKey: string;
     expiresAt: string;
     signWith: TestDeviceKey;
+    nonce: string;
   }> = {},
 ) {
   const action = over.action ?? "owner-login";
@@ -130,6 +174,8 @@ function loginReq(
   const deviceId = over.deviceId ?? DEVICE_ID;
   const expiresAt = over.expiresAt ?? LOGIN_EXP;
   const signKey = over.signWith ?? key;
+  const nonce =
+    over.nonce ?? issueLoginNonce(db, { deviceId, origin, key });
   const transcript = makeTranscript(key, {
     action,
     origin,
@@ -137,7 +183,7 @@ function loginReq(
     hubId: "test-hub",
     installId: "install-1",
     osUser: "jarvis",
-    nonce: "login-nonce-0001",
+    nonce,
     expiresAt,
   });
   const signature = {
@@ -150,6 +196,26 @@ function loginReq(
     origin,
     deviceLoginProof: { transcript, signature },
   };
+}
+
+/** Count minted sessions (token pairs) for the local owner. */
+function sessionCount(db: FridaySqliteLayer): number {
+  return db.withReadConnection((conn) =>
+    (conn.prepare("SELECT COUNT(*) AS c FROM auth_sessions").get() as { c: number }).c,
+  );
+}
+
+/** Read the consumed_at of the login-challenge row for a raw nonce (via its hash). */
+function loginChallengeConsumedAt(db: FridaySqliteLayer, nonce: string): string | null {
+  const hash = createHash("sha256").update(nonce).digest("hex");
+  return db.withReadConnection((conn) => {
+    const row = conn
+      .prepare(
+        "SELECT consumed_at AS c FROM friday_setup_bootstrap_nonces WHERE nonce_hash = ? AND kind = 'device_login_challenge'",
+      )
+      .get(hash) as { c: string | null } | undefined;
+    return row?.c ?? null;
+  });
 }
 
 describe("FridayAuthService — CR-1 device-key login mint", () => {
@@ -189,7 +255,7 @@ describe("FridayAuthService — CR-1 device-key login mint", () => {
     const svc = makeService(db); // real precondition → authority disabled
     let code = "";
     try {
-      svc.login(loginReq(key), LOOPBACK);
+      svc.login(loginReq(db, key), LOOPBACK);
     } catch (err) {
       code = (err as FridayAuthError).code;
     }
@@ -203,7 +269,7 @@ describe("FridayAuthService — CR-1 device-key login mint", () => {
     claimOwner(db, key);
 
     const svc = makeService(db, { authorityEnabled: true });
-    const res = svc.login(loginReq(key), LOOPBACK);
+    const res = svc.login(loginReq(db, key), LOOPBACK);
 
     expect(res.accessToken.length).toBeGreaterThan(0);
     expect(res.refreshToken.length).toBeGreaterThan(0);
@@ -246,7 +312,7 @@ describe("FridayAuthService — CR-1 device-key login mint", () => {
     const svc = makeService(db, { authorityEnabled: true });
     let code = "";
     try {
-      svc.login(loginReq(key), LOOPBACK);
+      svc.login(loginReq(db, key), LOOPBACK);
     } catch (err) {
       code = (err as FridayAuthError).code;
     }
@@ -265,7 +331,7 @@ describe("FridayAuthService — CR-1 device-key login mint", () => {
     // Present the bound key but sign the transcript with a different private key.
     let code = "";
     try {
-      svc.login(loginReq(key, { signWith: attacker }), LOOPBACK);
+      svc.login(loginReq(db, key, { signWith: attacker }), LOOPBACK);
     } catch (err) {
       code = (err as FridayAuthError).code;
     }
@@ -279,7 +345,7 @@ describe("FridayAuthService — CR-1 device-key login mint", () => {
     const svc = makeService(db, { authorityEnabled: true });
     let code = "";
     try {
-      svc.login(loginReq(key, { action: "owner-claim" }), LOOPBACK);
+      svc.login(loginReq(db, key, { action: "owner-claim" }), LOOPBACK);
     } catch (err) {
       code = (err as FridayAuthError).code;
     }
@@ -296,7 +362,7 @@ describe("FridayAuthService — CR-1 device-key login mint", () => {
     // the bound owner key → sentinel-hash mismatch.
     let code = "";
     try {
-      svc.login(loginReq(other), LOOPBACK);
+      svc.login(loginReq(db, other), LOOPBACK);
     } catch (err) {
       code = (err as FridayAuthError).code;
     }
@@ -310,7 +376,7 @@ describe("FridayAuthService — CR-1 device-key login mint", () => {
     const svc = makeService(db, { authorityEnabled: true });
     let code = "";
     try {
-      svc.login(loginReq(key, { expiresAt: FAR_FUTURE }), LOOPBACK);
+      svc.login(loginReq(db, key, { expiresAt: FAR_FUTURE }), LOOPBACK);
     } catch (err) {
       code = (err as FridayAuthError).code;
     }
@@ -324,10 +390,179 @@ describe("FridayAuthService — CR-1 device-key login mint", () => {
     const svc = makeService(db, { authorityEnabled: true });
     let code = "";
     try {
-      svc.login(loginReq(key), "203.0.113.7");
+      svc.login(loginReq(db, key), "203.0.113.7");
     } catch (err) {
       code = (err as FridayAuthError).code;
     }
     expect(code).toBe("INVALID_CREDENTIALS");
+  });
+
+  // ── (5) SERVER-ISSUED SINGLE-USE NONCE — Advisor #1628 finding #2 anti-replay ──
+
+  it("REPLAY REPRO: one challenge, same signed transcript twice → 1st mints, 2nd mints NOTHING", () => {
+    const key = generateTestDeviceKey();
+    claimOwner(db, key);
+
+    const svc = makeService(db, { authorityEnabled: true });
+    // ONE challenge → ONE signed owner-login transcript, submitted TWICE.
+    const req = loginReq(db, key);
+    const nonce = req.deviceLoginProof.transcript.nonce;
+
+    expect(sessionCount(db)).toBe(0);
+    expect(loginChallengeConsumedAt(db, nonce)).toBeNull();
+
+    // 1st call: mints a real token pair, consumes the challenge.
+    const first = svc.login(req, LOOPBACK);
+    expect(first.accessToken.length).toBeGreaterThan(0);
+    expect(first.refreshToken.length).toBeGreaterThan(0);
+    expect(sessionCount(db)).toBe(1);
+    expect(loginChallengeConsumedAt(db, nonce)).not.toBeNull();
+
+    // 2nd call (the exact Advisor repro): the challenge is already consumed →
+    // consume changes=0 → refused, ZERO new token / ZERO state change. BEFORE the
+    // fix this minted a 2nd token pair (sessionCount would be 2); AFTER, it stays 1.
+    let code = "";
+    try {
+      svc.login(req, LOOPBACK);
+    } catch (err) {
+      code = (err as FridayAuthError).code;
+    }
+    expect(code).toBe("INVALID_CREDENTIALS");
+    expect(sessionCount(db)).toBe(1); // still ONE — no second token pair minted
+  });
+
+  it("refuses a device login with a BLANK challenge nonce", () => {
+    const key = generateTestDeviceKey();
+    claimOwner(db, key);
+
+    const svc = makeService(db, { authorityEnabled: true });
+    let code = "";
+    try {
+      svc.login(loginReq(db, key, { nonce: "" }), LOOPBACK);
+    } catch (err) {
+      code = (err as FridayAuthError).code;
+    }
+    expect(code).toBe("INVALID_CREDENTIALS");
+    expect(sessionCount(db)).toBe(0);
+  });
+
+  it("refuses a challenge nonce minted for a DIFFERENT device", () => {
+    const key = generateTestDeviceKey();
+    claimOwner(db, key);
+
+    // Challenge bound to a different deviceId; login presents the real bound device.
+    const foreignNonce = issueLoginNonce(db, { deviceId: "some-other-device", key });
+    const svc = makeService(db, { authorityEnabled: true });
+    let code = "";
+    try {
+      svc.login(loginReq(db, key, { nonce: foreignNonce }), LOOPBACK);
+    } catch (err) {
+      code = (err as FridayAuthError).code;
+    }
+    expect(code).toBe("INVALID_CREDENTIALS");
+    expect(sessionCount(db)).toBe(0);
+  });
+
+  it("refuses a challenge nonce minted for a DIFFERENT origin", () => {
+    const key = generateTestDeviceKey();
+    claimOwner(db, key);
+
+    // Challenge bound to a different origin; login presents the canonical origin.
+    const foreignNonce = issueLoginNonce(db, { origin: "https://evil.localhost", key });
+    const svc = makeService(db, { authorityEnabled: true });
+    let code = "";
+    try {
+      svc.login(loginReq(db, key, { nonce: foreignNonce }), LOOPBACK);
+    } catch (err) {
+      code = (err as FridayAuthError).code;
+    }
+    expect(code).toBe("INVALID_CREDENTIALS");
+    expect(sessionCount(db)).toBe(0);
+  });
+
+  it("ATTESTATION INDEPENDENCE: valid PoP + valid single-use nonce, authority OFF → DEVICE_AUTHORITY_DISABLED, nonce NOT burned", () => {
+    const key = generateTestDeviceKey();
+    claimOwner(db, key);
+
+    // Build a fully valid login (real challenge, valid PoP) but run it against the
+    // REAL (attestation-disabled) build: it must fail closed at the native gate and
+    // must NOT consume the nonce (the replay fix does not open the native gate).
+    const req = loginReq(db, key);
+    const nonce = req.deviceLoginProof.transcript.nonce;
+
+    const disabled = makeService(db); // real precondition → authority disabled
+    let code = "";
+    try {
+      disabled.login(req, LOOPBACK);
+    } catch (err) {
+      code = (err as FridayAuthError).code;
+    }
+    expect(code).toBe("DEVICE_AUTHORITY_DISABLED");
+    expect(sessionCount(db)).toBe(0);
+    // Fail-closed BEFORE the mint transaction → the challenge is still LIVE.
+    expect(loginChallengeConsumedAt(db, nonce)).toBeNull();
+
+    // And with authority enabled, that still-live nonce logs in exactly once.
+    const enabled = makeService(db, { authorityEnabled: true });
+    const res = enabled.login(req, LOOPBACK);
+    expect(res.accessToken.length).toBeGreaterThan(0);
+    expect(sessionCount(db)).toBe(1);
+    expect(loginChallengeConsumedAt(db, nonce)).not.toBeNull();
+  });
+
+  it("CONCURRENCY: two DISTINCT valid proofs race ONE challenge → exactly one wins", () => {
+    const key = generateTestDeviceKey();
+    claimOwner(db, key);
+
+    const svc = makeService(db, { authorityEnabled: true });
+    // One challenge (nonce N). Build TWO distinct valid proofs over N (different
+    // transcript expiry → different signature bytes) — both are legitimate PoPs; the
+    // single-use CAS must let exactly ONE mint. (better-sqlite3 serializes writes, so
+    // "racing" resolves to sequential CAS: winner changes=1, loser changes=0.)
+    const reqA = loginReq(db, key);
+    const nonce = reqA.deviceLoginProof.transcript.nonce;
+    const reqB = loginReq(db, key, { nonce, expiresAt: "2026-07-13T00:02:00.000Z" });
+    expect(reqB.deviceLoginProof.transcript.nonce).toBe(nonce);
+    expect(reqB.deviceLoginProof.signature.value).not.toBe(reqA.deviceLoginProof.signature.value);
+
+    const winner = svc.login(reqA, LOOPBACK);
+    expect(winner.accessToken.length).toBeGreaterThan(0);
+
+    let code = "";
+    try {
+      svc.login(reqB, LOOPBACK);
+    } catch (err) {
+      code = (err as FridayAuthError).code;
+    }
+    expect(code).toBe("INVALID_CREDENTIALS");
+    expect(sessionCount(db)).toBe(1); // exactly one token pair minted
+  });
+
+  it("CRASH ATOMICITY: a throw mid-mint rolls back the challenge consume AND the session (retry succeeds once)", () => {
+    const key = generateTestDeviceKey();
+    claimOwner(db, key);
+
+    const req = loginReq(db, key);
+    const nonce = req.deviceLoginProof.transcript.nonce;
+
+    // Crash injected AFTER the CAS-consume + session insert, INSIDE the txn.
+    const crashing = makeService(db, { authorityEnabled: true, failMintAtRegister: true });
+    let threw = false;
+    try {
+      crashing.login(req, LOOPBACK);
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    // The whole unit rolled back: no session AND the challenge is still LIVE.
+    expect(sessionCount(db)).toBe(0);
+    expect(loginChallengeConsumedAt(db, nonce)).toBeNull();
+
+    // Retry with the still-live nonce succeeds exactly once.
+    const svc = makeService(db, { authorityEnabled: true });
+    const res = svc.login(req, LOOPBACK);
+    expect(res.accessToken.length).toBeGreaterThan(0);
+    expect(sessionCount(db)).toBe(1);
+    expect(loginChallengeConsumedAt(db, nonce)).not.toBeNull();
   });
 });

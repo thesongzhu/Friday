@@ -1,5 +1,7 @@
 import * as crypto from "node:crypto";
 
+import type Database from "better-sqlite3";
+
 import { FridayDomainError } from "#errors";
 
 import type {
@@ -14,6 +16,8 @@ import type {
   FridayAuthDeviceClaimResponse,
   FridayAuthDeviceReadbackRequest,
   FridayAuthDeviceReadbackResponse,
+  FridayAuthLoginChallengeRequest,
+  FridayAuthLoginChallengeResponse,
   FridayAuthMeResponse,
   FridayAuthMigrateChallengeRequest,
   FridayAuthMigrateChallengeResponse,
@@ -216,10 +220,16 @@ const READBACK_MAX_TRANSCRIPT_TTL_MS = 5 * 60 * 1000;
  * The PoP verifier enforces the transcript's own `expiresAt` but imposes NO upper
  * bound, so a client could otherwise mint a far-future login transcript once and
  * replay it indefinitely. Clamp the accepted window so a login proof is
- * short-lived by construction. NOTE: the AUTHORITATIVE anti-spoof / anti-replay
- * control that GATES minting is the native-IPC caller-identity precondition
- * (`isDeviceOwnerAuthorityEnabled`); a server-issued single-use login-challenge
- * nonce would be a defence-in-depth hardening follow-up.
+ * short-lived by construction.
+ *
+ * ANTI-REPLAY CONTROL HIERARCHY (corrected — Advisor #1628 finding #2): the PRIMARY
+ * anti-replay control is the server-issued single-use `device_login_challenge`
+ * nonce, CAS-consumed inside the SAME transaction that mints the session (a
+ * replayed login finds it consumed → mints NOTHING). This TTL clamp and the native
+ * `isDeviceOwnerAuthorityEnabled` gate are DEFENCE-IN-DEPTH on top of it — the
+ * native gate additionally decides whether a device may carry owner authority AT
+ * ALL (hard-wired off today), and the clamp bounds a proof's freshness window; but
+ * neither is what makes a proof single-use. The single-use nonce is.
  */
 const LOGIN_MAX_TRANSCRIPT_TTL_MS = 5 * 60 * 1000;
 
@@ -643,7 +653,16 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
    * device-key login is not a weaker session, it is the SAME session anchored on a
    * different possession proof.
    */
-  function mintSession(
+  /**
+   * Perform the session-mint WRITES against an ALREADY-OPEN write transaction
+   * (session row + rotating refresh token + registered access token + last_login
+   * stamp) and return the login response. Extracted from `mintSession` so a caller
+   * that must mint ATOMICALLY with another write (e.g. the device-key login's
+   * single-use login-challenge CAS-consume) can run both in ONE transaction — a
+   * rollback then unwinds BOTH the consume and the mint together.
+   */
+  function mintSessionWrites(
+    db: Database.Database,
     user: FridayUserRow,
     ip?: string,
     userAgent?: string,
@@ -656,30 +675,28 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       new Date(now).getTime() + deps.refreshTokenTtlSec * 1000,
     ).toISOString();
 
-    deps.db.withWriteTransaction((db) => {
-      sessionRepo.create(db, {
-        id: sessionId,
-        userId: user.id,
-        refreshTokenHash: refreshHash,
-        expiresAt,
-        ipAddress: ip,
-        userAgent,
-        now,
-      });
-      deps.registerIssuedAccessToken?.(db, {
-        tokenId: accessTokenClaims.tokenId,
-        sessionId,
-        userId: user.id,
-        expiresAtEpoch: accessTokenClaims.exp,
-        now,
-      });
-
-      db.prepare("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?").run(
-        now,
-        now,
-        user.id,
-      );
+    sessionRepo.create(db, {
+      id: sessionId,
+      userId: user.id,
+      refreshTokenHash: refreshHash,
+      expiresAt,
+      ipAddress: ip,
+      userAgent,
+      now,
     });
+    deps.registerIssuedAccessToken?.(db, {
+      tokenId: accessTokenClaims.tokenId,
+      sessionId,
+      userId: user.id,
+      expiresAtEpoch: accessTokenClaims.exp,
+      now,
+    });
+
+    db.prepare("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?").run(
+      now,
+      now,
+      user.id,
+    );
 
     return {
       accessToken,
@@ -692,6 +709,14 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         role: user.role as FridayRole,
       },
     };
+  }
+
+  function mintSession(
+    user: FridayUserRow,
+    ip?: string,
+    userAgent?: string,
+  ): FridayLoginResponse {
+    return deps.db.withWriteTransaction((db) => mintSessionWrites(db, user, ip, userAgent));
   }
 
   /**
@@ -802,6 +827,22 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         "Proof-of-possession transcript was not minted for device-key login.",
       );
     }
+    // ── Require a SERVER-ISSUED single-use login-challenge nonce (Advisor #1628
+    // finding #2) ── The signed transcript MUST carry the nonce from a fresh
+    // `device_login_challenge` (issued by issueLoginChallenge). A blank/absent nonce
+    // is refused up-front; the AUTHORITATIVE single-use gate is the CAS-consume in
+    // the mint transaction below (a value that does not match a LIVE challenge for
+    // THIS device/origin yields changes=0 there). This is the PRIMARY anti-replay
+    // control — a captured owner-login transcript can never be replayed to mint a
+    // second session.
+    const loginNonce = proof.transcript.nonce.trim();
+    if (!loginNonce) {
+      recordFailure(lockoutKey, ip);
+      throw new FridayAuthError(
+        "INVALID_CREDENTIALS",
+        "Device-key login requires a server-issued single-use challenge nonce.",
+      );
+    }
     const pop = ownerClaimPoPVerifier.verifyPossession({
       transcript: proof.transcript,
       devicePublicKey: { encoding: "spki-der-base64", value: devicePublicKey },
@@ -840,8 +881,51 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       );
     }
 
+    // ── PRIMARY anti-replay: single-use login-challenge CAS-consume ⊗ session mint,
+    // ATOMICALLY in ONE write transaction ──
+    // The login-challenge nonce is CAS-consumed BEFORE the session is minted, in the
+    // SAME transaction. On the FIRST valid login the consume flips exactly one row
+    // (changes=1) and the mint runs. On a REPLAY (same signed transcript submitted
+    // again) the challenge is already consumed → changes=0 → we throw, the whole unit
+    // ROLLS BACK, and NO second token pair / session / last_login write survives
+    // (ZERO state change). The gate also binds origin + deviceId + devicePublicKeyHash,
+    // so a nonce minted for a different device/origin/key never consumes here. This is
+    // reached ONLY past the honesty gate above, so an attestation-disabled build never
+    // burns the nonce (it fails closed earlier with the nonce still live).
+    const now = deps.nowIso();
+    const loginNonceHash = sha256Hex(loginNonce);
+    let response: FridayLoginResponse;
+    try {
+      response = deps.db.withWriteTransaction((db) => {
+        const consumed = bootstrapNonceRepo.consumeLoginChallengeNonce(db, {
+          nonceHash: loginNonceHash,
+          origin,
+          nowIso: now,
+          deviceId,
+          // Equals sha256Hex(devicePublicKey); already asserted == the sentinel-bound
+          // owner key hash above, so a login for a non-owner key never reaches here.
+          devicePublicKeyHash: boundKeyHash,
+        });
+        if (consumed !== 1) {
+          throw new FridayAuthError(
+            "INVALID_CREDENTIALS",
+            "Login challenge is invalid, expired, cross-origin, bound to a different device, or already used.",
+          );
+        }
+        return mintSessionWrites(db, localUser, ip, userAgent);
+      });
+    } catch (err) {
+      // A consumed/replayed/expired challenge is a rejected login → record the
+      // failure (rate-limit a replay attacker) and re-throw. The mint writes never
+      // throw INVALID_CREDENTIALS, so this only fires for the CAS refusal.
+      if (err instanceof FridayAuthError && err.code === "INVALID_CREDENTIALS") {
+        recordFailure(lockoutKey, ip);
+      }
+      throw err;
+    }
+
     resetFailures(lockoutKey, ip);
-    return mintSession(localUser, ip, userAgent);
+    return response;
   }
 
   return {
@@ -986,6 +1070,80 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         osUser,
         origin,
         action,
+        createdAt: now,
+        expiresAt,
+      };
+    },
+
+    issueLoginChallenge(
+      request: FridayAuthLoginChallengeRequest,
+      ip?: string,
+    ): FridayAuthLoginChallengeResponse {
+      // Loopback-only, mirroring the bootstrap-challenge ingress boundary.
+      if (!isLocalhostAddress(ip)) {
+        throw new FridayDomainError(
+          "AUTH_LOGIN_CHALLENGE_NOT_ALLOWED",
+          "Login challenge is only allowed from localhost.",
+          { httpStatus: 403 },
+        );
+      }
+
+      const installId = (request.installId ?? "").trim();
+      const osUser = (request.osUser ?? "").trim();
+      const origin = (request.origin ?? "").trim();
+      const deviceId = (request.deviceId ?? "").trim();
+      const devicePublicKey = (request.devicePublicKey ?? "").trim();
+      const action =
+        (request.action ?? LOGIN_TRANSCRIPT_ACTION).trim() || LOGIN_TRANSCRIPT_ACTION;
+      if (!installId || !osUser || !origin || !deviceId || !devicePublicKey) {
+        throw new FridayDomainError(
+          "VALIDATION_ERROR",
+          "installId, osUser, origin, deviceId and devicePublicKey are required to issue a login challenge",
+          { httpStatus: 400 },
+        );
+      }
+
+      const now = deps.nowIso();
+      const expiresAt = new Date(
+        new Date(now).getTime() + bootstrapNonceTtlSec * 1000,
+      ).toISOString();
+      const challengeId = deps.idGenerator();
+      // Raw nonce is returned ONCE; only its hash is persisted. The device binding
+      // (deviceId + key hash) is stamped at ISSUE so the consume CAS gates on it —
+      // a challenge minted for device A can never be consumed by a login presenting
+      // device B or a different key, even if the raw nonce leaked.
+      const nonce = generateBootstrapNonce();
+      const nonceHash = sha256Hex(nonce);
+      const devicePublicKeyHash = sha256Hex(devicePublicKey);
+
+      deps.db.withWriteTransaction((db) => {
+        bootstrapNonceRepo.insertLoginChallengeNonce(db, {
+          id: challengeId,
+          nonceHash,
+          hubId: bootstrapHubId,
+          installId,
+          osUser,
+          origin,
+          action,
+          deviceId,
+          devicePublicKey,
+          devicePublicKeyHash,
+          createdAt: now,
+          expiresAt,
+        });
+      });
+
+      return {
+        challengeId,
+        nonce,
+        kind: "device_login_challenge",
+        hubId: bootstrapHubId,
+        installId,
+        osUser,
+        origin,
+        action,
+        deviceId,
+        devicePublicKeyHash,
         createdAt: now,
         expiresAt,
       };

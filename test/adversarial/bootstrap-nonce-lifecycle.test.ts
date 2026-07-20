@@ -389,3 +389,119 @@ describe("SEC-SETUP-BOOTSTRAP-001 s4: crash / restart recovery", () => {
     expect(readOwnerHash(db)).toBe(afterPass);
   });
 });
+
+// ─── SEC-SETUP-BOOTSTRAP-001 CR-1: device_login_challenge repo lifecycle ───
+//
+// Repo-level proofs (against the REAL full migration chain, incl. v107) for the
+// single-use login-challenge nonce that makes the device-key login non-replayable
+// (Advisor #1628 finding #2). No authority seam needed — this exercises the
+// insert/consume CAS + the re-scoped single-owner index directly.
+
+const LOGIN_EXP = "2026-07-13T00:05:00.000Z"; // NOW + 300s
+const DEVICE_KEY_HASH = sha256Hex(DEVICE_PUBKEY);
+
+function insertLoginChallenge(
+  layer: FridaySqliteLayer,
+  over: Partial<{
+    nonce: string;
+    origin: string;
+    deviceId: string;
+    devicePublicKeyHash: string;
+    expiresAt: string;
+  }> = {},
+): string {
+  const nonce = over.nonce ?? `login-nonce-${++idCounter}`;
+  layer.withWriteTransaction((conn) =>
+    nonceRepo.insertLoginChallengeNonce(conn, {
+      id: `lc-${idCounter}-${Math.random().toString(36).slice(2, 8)}`,
+      nonceHash: sha256Hex(nonce),
+      hubId: "test-hub",
+      installId: "install-1",
+      osUser: "jarvis",
+      origin: over.origin ?? ORIGIN,
+      action: "owner-login",
+      deviceId: over.deviceId ?? DEVICE_ID,
+      devicePublicKey: DEVICE_PUBKEY,
+      devicePublicKeyHash: over.devicePublicKeyHash ?? DEVICE_KEY_HASH,
+      createdAt: NOW,
+      expiresAt: over.expiresAt ?? LOGIN_EXP,
+    }),
+  );
+  return nonce;
+}
+
+function consumeLogin(
+  layer: FridaySqliteLayer,
+  over: {
+    nonce: string;
+    origin?: string;
+    nowIso?: string;
+    deviceId?: string;
+    devicePublicKeyHash?: string;
+  },
+): number {
+  return layer.withWriteTransaction((conn) =>
+    nonceRepo.consumeLoginChallengeNonce(conn, {
+      nonceHash: sha256Hex(over.nonce),
+      origin: over.origin ?? ORIGIN,
+      nowIso: over.nowIso ?? NOW,
+      deviceId: over.deviceId ?? DEVICE_ID,
+      devicePublicKeyHash: over.devicePublicKeyHash ?? DEVICE_KEY_HASH,
+    }),
+  );
+}
+
+describe("SEC-SETUP-BOOTSTRAP-001 CR-1: device_login_challenge nonce", () => {
+  it("is single-use: first consume wins (1), a replay yields 0", () => {
+    const nonce = insertLoginChallenge(db);
+    expect(consumeLogin(db, { nonce })).toBe(1);
+    expect(readNonceRow(db, nonce)?.consumed_at).not.toBeNull();
+    // Replay of the SAME nonce → already consumed → 0.
+    expect(consumeLogin(db, { nonce })).toBe(0);
+  });
+
+  it("binds device + origin + key hash: any mismatch yields 0, the exact match yields 1", () => {
+    const nonce = insertLoginChallenge(db);
+    expect(consumeLogin(db, { nonce, deviceId: "other-device" })).toBe(0);
+    expect(consumeLogin(db, { nonce, origin: "https://evil.localhost" })).toBe(0);
+    expect(consumeLogin(db, { nonce, devicePublicKeyHash: sha256Hex("other-key") })).toBe(0);
+    // Still unconsumed after all the mismatched attempts.
+    expect(readNonceRow(db, nonce)?.consumed_at).toBeNull();
+    // The exact match consumes it once.
+    expect(consumeLogin(db, { nonce })).toBe(1);
+  });
+
+  it("cannot be consumed past its expiry", () => {
+    const nonce = insertLoginChallenge(db, { expiresAt: "2026-07-12T00:00:00.000Z" });
+    expect(consumeLogin(db, { nonce, nowIso: NOW })).toBe(0);
+    expect(readNonceRow(db, nonce)?.consumed_at).toBeNull();
+  });
+
+  it("a consumed login challenge stays consumed across a restart (single-use holds)", () => {
+    const nonce = insertLoginChallenge(db);
+    expect(consumeLogin(db, { nonce })).toBe(1);
+
+    restart();
+
+    expect(readNonceRow(db, nonce)?.consumed_at).not.toBeNull();
+    // A replay after restart still finds it consumed → 0.
+    expect(consumeLogin(db, { nonce })).toBe(0);
+  });
+
+  it("MANY login challenges can be consumed (the re-scoped single-owner index excludes the login kind)", () => {
+    // Two DISTINCT login challenges, both consumed — this would violate the pre-v107
+    // single-owner UNIQUE(kind) belt, but v107 re-scoped it to exclude the login kind.
+    const a = insertLoginChallenge(db, { nonce: "login-a" });
+    const b = insertLoginChallenge(db, { nonce: "login-b" });
+    expect(consumeLogin(db, { nonce: a })).toBe(1);
+    expect(consumeLogin(db, { nonce: b })).toBe(1);
+    const consumed = db.withReadConnection((conn) =>
+      (conn
+        .prepare(
+          "SELECT COUNT(*) AS c FROM friday_setup_bootstrap_nonces WHERE kind = 'device_login_challenge' AND consumed_at IS NOT NULL",
+        )
+        .get() as { c: number }).c,
+    );
+    expect(consumed).toBe(2);
+  });
+});

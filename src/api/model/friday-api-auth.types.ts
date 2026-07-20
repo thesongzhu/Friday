@@ -217,6 +217,51 @@ export interface FridayAuthBootstrapChallengeResponse {
   expiresAt: ISODateTime;
 }
 
+// ─── Device-key LOGIN challenge (SEC-SETUP-BOOTSTRAP-001 · CR-1) ───
+//
+// Advisor #1628 finding #2: the device-key login proof was replayable because no
+// server-issued single-use nonce gated the login. The device now first requests a
+// single-use `device_login_challenge` nonce bound to THIS device (deviceId +
+// devicePublicKeyHash) + origin + action, signs it into the owner-login transcript,
+// and presents it. deviceKeyLogin CAS-consumes the nonce in the SAME transaction
+// that mints the session, so a replayed login finds it consumed and mints nothing.
+
+export interface FridayAuthLoginChallengeRequest {
+  /** Stable installation id for this hub install (echoed into the challenge). */
+  installId: string;
+  /** OS user the install runs as (echoed into the challenge). */
+  osUser: string;
+  /** Loopback origin the login will be presented from (binds the nonce). */
+  origin: string;
+  /** Device identifier the challenge is bound to (gated at consume). */
+  deviceId: string;
+  /**
+   * Device public key (SPKI DER base64/base64url, P-256). The server binds its
+   * SHA-256 hash into the challenge so a nonce minted for one key can never be
+   * consumed by a login presenting a different key.
+   */
+  devicePublicKey: string;
+  /** Optional bound action label; defaults to "owner-login". */
+  action?: string;
+}
+
+export interface FridayAuthLoginChallengeResponse {
+  challengeId: UUID;
+  /** Raw single-use nonce — returned exactly ONCE; only its hash is persisted. */
+  nonce: string;
+  kind: "device_login_challenge";
+  hubId: string;
+  installId: string;
+  osUser: string;
+  origin: string;
+  action: string;
+  deviceId: string;
+  /** SHA-256 hex of the bound device public key (echoed for the caller). */
+  devicePublicKeyHash: string;
+  createdAt: ISODateTime;
+  expiresAt: ISODateTime;
+}
+
 // SEC-SETUP-BOOTSTRAP-001 Slice 3 — proof-of-possession (PoP) over the server
 // nonce. The device MUST prove possession of the PRIVATE key by signing the
 // canonical owner-claim transcript; nonce-possession alone no longer suffices.

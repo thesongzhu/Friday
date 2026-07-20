@@ -7,6 +7,7 @@ import {
   logout,
   postBootstrapChallenge,
   postDeviceClaim,
+  postLoginChallenge,
   type LoginInput,
 } from "@/lib/api/auth";
 import { getDeviceKeyProvider } from "@/lib/auth/device-key";
@@ -144,7 +145,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     const response = await runDeviceOwnerBootstrap(
       getDeviceKeyProvider(),
-      { issueChallenge: postBootstrapChallenge, claim: postDeviceClaim, login: deviceKeyLogin },
+      {
+        issueChallenge: postBootstrapChallenge,
+        claim: postDeviceClaim,
+        issueLoginChallenge: postLoginChallenge,
+        login: deviceKeyLogin,
+      },
       { origin, installId: resolveInstallId(), osUser: "ui" },
     );
     setUser(response.user);

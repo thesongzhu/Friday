@@ -6,6 +6,7 @@ import type {
   AuthBootstrapResponse,
   AuthBootstrapStatusResponse,
   AuthDeviceClaimResponse,
+  AuthLoginChallengeResponse,
   LoginResponse,
   MeResponse,
 } from "./types";
@@ -46,12 +47,35 @@ export interface DeviceKeyLoginInput {
   deviceLoginProof: DeviceClaimProof;
 }
 
+export interface LoginChallengeInput {
+  installId: string;
+  osUser: string;
+  origin: string;
+  deviceId: string;
+  devicePublicKey: string;
+  action?: string;
+}
+
 /** Mint a single-use install nonce (challenge) for a device-bound owner claim. */
 export async function postBootstrapChallenge(
   input: BootstrapChallengeInput,
 ): Promise<AuthBootstrapChallengeResponse> {
   return apiClient.post<BootstrapChallengeInput, AuthBootstrapChallengeResponse>(
     "/v1/auth/bootstrap/challenge",
+    input,
+  );
+}
+
+/**
+ * SEC-SETUP-BOOTSTRAP-001 (CR-1): mint a single-use device-key LOGIN challenge
+ * bound to this device + key + origin. The device signs the returned nonce into a
+ * fresh owner-login transcript so the login proof-of-possession is not replayable.
+ */
+export async function postLoginChallenge(
+  input: LoginChallengeInput,
+): Promise<AuthLoginChallengeResponse> {
+  return apiClient.post<LoginChallengeInput, AuthLoginChallengeResponse>(
+    "/v1/auth/login/challenge",
     input,
   );
 }

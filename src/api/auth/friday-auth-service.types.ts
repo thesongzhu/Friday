@@ -11,6 +11,8 @@ import type {
   FridayAuthDeviceClaimResponse,
   FridayAuthDeviceReadbackRequest,
   FridayAuthDeviceReadbackResponse,
+  FridayAuthLoginChallengeRequest,
+  FridayAuthLoginChallengeResponse,
   FridayAuthMeResponse,
   FridayAuthMigrateChallengeRequest,
   FridayAuthMigrateChallengeResponse,
@@ -46,6 +48,18 @@ export interface FridayAuthService {
     request: FridayAuthBootstrapChallengeRequest,
     ip?: string,
   ): FridayAuthBootstrapChallengeResponse;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 (CR-1 · Advisor #1628 finding #2): mint a single-use
+   * `device_login_challenge` nonce bound to the device (deviceId +
+   * devicePublicKeyHash) + origin + action for a device-key LOGIN. Returns the raw
+   * nonce ONCE; only its hash is persisted. deviceKeyLogin CAS-consumes it inside
+   * the same transaction that mints the session, so the login proof-of-possession
+   * is NOT replayable. Loopback-only.
+   */
+  issueLoginChallenge(
+    request: FridayAuthLoginChallengeRequest,
+    ip?: string,
+  ): FridayAuthLoginChallengeResponse;
   /**
    * SEC-SETUP-BOOTSTRAP-001: atomically claim the local owner slot by consuming
    * a single-use install nonce and binding a device public key. Replay-protected,

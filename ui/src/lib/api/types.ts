@@ -85,6 +85,28 @@ export interface AuthBootstrapChallengeResponse {
   expiresAt: string;
 }
 
+/**
+ * SEC-SETUP-BOOTSTRAP-001 (CR-1): server-issued single-use device-key LOGIN
+ * challenge. The device signs `nonce` into a fresh owner-login transcript; the
+ * backend CAS-consumes it atomically with the session mint, so the login proof is
+ * not replayable.
+ */
+export interface AuthLoginChallengeResponse {
+  challengeId: string;
+  /** Raw single-use nonce — returned exactly once. */
+  nonce: string;
+  kind: "device_login_challenge";
+  hubId: string;
+  installId: string;
+  osUser: string;
+  origin: string;
+  action: string;
+  deviceId: string;
+  devicePublicKeyHash: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface AuthDeviceClaimResponse {
   claimed: true;
   claimedAt: string;
