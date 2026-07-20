@@ -14,6 +14,14 @@ export interface FridayOutboxEnqueueInput {
   nonce: string;
   keyId: string;
   idempotencyKey: string;
+  /**
+   * sha over the STABLE logical operation payload (the caller's plaintext payload MINUS volatile
+   * fields such as per-dispatch timestamps/nonces), computed BEFORE encryption. This is the
+   * AUTHORITATIVE outbox idempotency identity: a reused `idempotency_key` carrying a DIFFERENT
+   * logical payload is surfaced as a typed 409 conflict, not silently resolved to the existing row.
+   * Required — every enqueue caller must compute it so identity is never a lossy routing proxy.
+   */
+  logicalPayloadDigest: string;
   maxAttempts?: number;
   deliverAfter?: string;
   expiresAt?: string;

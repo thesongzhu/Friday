@@ -27,6 +27,7 @@ describe("FridayOutboxQueueService", () => {
     nonce: "nonce-1",
     keyId: "key-1",
     idempotencyKey: "idem-1",
+    logicalPayloadDigest: "logical-digest-base",
   };
 
   beforeEach(() => {
