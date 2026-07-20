@@ -6,7 +6,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
 import { providersApi } from "@/lib/api/providers";
-import { saveProviderWithValidation } from "@/lib/providers";
+import type { FridayProviderMutationPlan } from "@/lib/api/providers";
+import { ProviderMutationDeclinedError, saveProviderWithValidation } from "@/lib/providers";
 import { setupApi } from "@/lib/api/setup";
 import { discoveryApi } from "@/lib/api/discovery";
 import type { DiscoveredProgram, IntegrationRecommendation } from "@/lib/api/discovery";
@@ -405,6 +406,14 @@ export function SetupPage() {
   });
   const [pendingDefaultProviderChoice, setPendingDefaultProviderChoice] = useState<PendingDefaultProviderChoice | null>(null);
   const [routingUpdatePending, setRoutingUpdatePending] = useState(false);
+  // CORE-A CR-2: the server-derived provider mutation plan awaiting THIS owner's
+  // explicit confirmation. `resolve` is the pending `saveProviderWithValidation`
+  // handshake — resolving false aborts before any approval is minted or any
+  // mutation is sent. Never auto-confirmed.
+  const [pendingProviderPlan, setPendingProviderPlan] = useState<{
+    plan: FridayProviderMutationPlan;
+    resolve: (confirmed: boolean) => void;
+  } | null>(null);
   const hasSetupDeepLink = Boolean(
     searchParams.get("step")
       ?? searchParams.get("providerKind")
@@ -644,10 +653,15 @@ export function SetupPage() {
     // Validate-before-persist via the same live create/update path the Settings
     // page uses (validateOnSave: true). This is NOT the retired
     // POST /v1/providers/detect route.
-    const response = await saveProviderWithValidation(providersApi, existingSameKind, {
-      kind: draft.kind,
-      ...commonPayload,
-    });
+    const response = await saveProviderWithValidation(
+      providersApi,
+      existingSameKind,
+      { kind: draft.kind, ...commonPayload },
+      // CORE-A CR-2: the owner reviews the SERVER-derived, secret-free plan
+      // summary and explicitly confirms before any canonical approval is minted.
+      // Resolving false aborts the save with ProviderMutationDeclinedError.
+      (plan) => new Promise<boolean>((resolve) => setPendingProviderPlan({ plan, resolve })),
+    );
     const provider = response.provider;
 
     await providersApi.setRouting({
@@ -803,6 +817,19 @@ export function SetupPage() {
       void queryClient.invalidateQueries({ queryKey: ["shell", "provider-truth"] });
     },
     onError: (error) => {
+      // CORE-A CR-2: the owner reviewed the server-derived plan and declined it.
+      // No canonical approval was minted and no mutation was sent — this is a
+      // deliberate cancel, NOT a validation failure, so it must not be surfaced
+      // as an error state (which would wrongly imply the key was rejected).
+      if (error instanceof ProviderMutationDeclinedError) {
+        setProviderFeedback({
+          status: "idle",
+          kind: providerKind,
+          message: localize(locale, "已取消：未保存任何更改。", "Cancelled — nothing was saved."),
+          warnings: [],
+        });
+        return;
+      }
       // Validate-before-persist rejected the key (e.g. invalid / unreachable):
       // it was NOT persisted. Surface the invalid state, do not advance.
       setProviderValidated(false);
@@ -2012,6 +2039,30 @@ export function SetupPage() {
             void setProviderAsDefault(pending.providerId, pending.defaultModel).then(() => {
               setPendingDefaultProviderChoice(null);
             });
+          }}
+        />
+        {/*
+          CORE-A CR-2 owner-confirm gate. The summary lines are produced by the
+          SERVER from the sanitized parameters (secret-free); the owner must
+          explicitly confirm this exact plan before any canonical approval is
+          minted. Cancelling resolves false — nothing is minted, nothing is saved.
+        */}
+        <ConfirmDialog
+          open={pendingProviderPlan !== null}
+          title={localize(locale, "确认提供方变更", "Confirm provider change")}
+          description={pendingProviderPlan?.plan.humanReadableSummary.join(" · ")}
+          confirmLabel={localize(locale, "确认并保存", "Confirm and save")}
+          cancelLabel={localize(locale, "取消", "Cancel")}
+          tone="primary"
+          onCancel={() => {
+            const pending = pendingProviderPlan;
+            setPendingProviderPlan(null);
+            pending?.resolve(false);
+          }}
+          onConfirm={() => {
+            const pending = pendingProviderPlan;
+            setPendingProviderPlan(null);
+            pending?.resolve(true);
           }}
         />
         <BottomDots />

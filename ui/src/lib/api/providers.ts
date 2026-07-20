@@ -39,6 +39,15 @@ export interface CreateProviderInput {
   runtimeCapabilities?: FridayProviderRuntimeCapabilityDeclaration[];
   enabled?: boolean;
   validateOnSave?: boolean;
+  /**
+   * Owner-confirm control fields (CORE-RUNNABLE-001 / CORE-A CR-2). Replayed
+   * verbatim from the plan → confirm handshake so the canonical mutating-action
+   * gate can recompute the action digest server-side from the request that
+   * actually arrived. Never carries a secret. Absent ⇒ the gate fails closed
+   * with `PROVIDER_MUTATION_PLAN_DIGEST_REQUIRED`.
+   */
+  planDigest?: string;
+  canonicalApproval?: unknown;
 }
 
 export interface UpdateProviderInput {
@@ -57,6 +66,67 @@ export interface UpdateProviderInput {
   runtimeCapabilities?: FridayProviderRuntimeCapabilityDeclaration[];
   enabled?: boolean;
   validateOnSave?: boolean;
+  /** Owner-confirm control fields — see {@link CreateProviderInput.planDigest}. */
+  planDigest?: string;
+  canonicalApproval?: unknown;
+}
+
+// ─── Provider mutation plan / owner-confirm handshake (CORE-A CR-2) ───
+
+export type FridayProviderPlannableAction =
+  | "providers.create"
+  | "providers.update"
+  | "providers.delete"
+  | "providers.validate"
+  | "providers.routing.set"
+  | "providers.routing.pin"
+  | "providers.routing.penalty.clear"
+  | "providers.auth.profiles.activate"
+  | "providers.oauth.openai_codex.device.initiate"
+  | "providers.oauth.openai_codex.device.complete"
+  | "capabilities.doctor";
+
+export interface PlanProviderMutationInput {
+  action: FridayProviderPlannableAction;
+  providerId?: string;
+  profileKey?: string;
+  /** The exact body the follow-up mutation will send (control fields ignored). */
+  params?: Record<string, unknown> | null;
+  idempotencyKey?: string;
+}
+
+export interface FridayProviderMutationPlan {
+  planDigest: string;
+  actionDigest: string;
+  action: FridayProviderPlannableAction;
+  surface: string;
+  resourceId?: string;
+  idempotencyKey?: string;
+  /** Secret-free review lines shown to the owner BEFORE they confirm. */
+  humanReadableSummary: string[];
+  approvalRequired: boolean;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface FridayProviderMutationApproval {
+  planDigest: string;
+  actionDigest: string;
+  action: FridayProviderPlannableAction;
+  resourceId?: string;
+  idempotencyKey?: string;
+  confirmedAt: string;
+  expiresAt: string;
+  /** Signed, single-use canonical approval to replay on the mutation request. */
+  canonicalApproval: unknown;
+}
+
+interface PlanProviderMutationResponse {
+  plan: FridayProviderMutationPlan;
+}
+
+interface ConfirmProviderMutationResponse {
+  approval: FridayProviderMutationApproval;
 }
 
 export interface SetRoutingInput {
@@ -253,6 +323,34 @@ export const providersApi = {
       "/v1/capabilities/doctor",
       {},
     );
+  },
+
+  /**
+   * Step 1 of the owner-confirm handshake (CORE-A CR-2): ask the SERVER to
+   * sanitize the intended parameters and derive the plan + action digests
+   * itself, returning a secret-free summary for the owner to review. The client
+   * never computes a digest — drift can only fail closed, never be forged.
+   */
+  async planMutation(input: PlanProviderMutationInput): Promise<FridayProviderMutationPlan> {
+    const data = await apiClient.post<PlanProviderMutationInput, PlanProviderMutationResponse>(
+      "/v1/providers/plan",
+      input,
+    );
+    return data.plan;
+  },
+
+  /**
+   * Step 2: the SAME authenticated owner explicitly confirms that exact plan
+   * digest; only then does the server mint a signed, short-lived, single-use
+   * canonical approval bound to the server-computed action digest. `confirm` is
+   * always literal `true` — never defaulted, never inferred.
+   */
+  async confirmMutation(planDigest: string): Promise<FridayProviderMutationApproval> {
+    const data = await apiClient.post<
+      { planDigest: string; confirm: true },
+      ConfirmProviderMutationResponse
+    >("/v1/providers/plan/confirm", { planDigest, confirm: true });
+    return data.approval;
   },
 
   async create(input: CreateProviderInput): Promise<CreateProviderResponse> {
