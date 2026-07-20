@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createFridayApiRuntime } from "#api";
@@ -39,6 +41,25 @@ import { createTestDb } from "../../../helpers/friday-test-db.helper.js";
 // tests. The Hub verifies its P-256 proof; no Hub signing key is on the approval path.
 const RUNTIME_OWNER_KEY = generateTestDeviceKey();
 const RUNTIME_OWNER_PRINCIPAL = deviceOwnerPrincipalIdFor(RUNTIME_OWNER_KEY);
+
+/**
+ * Option B*: seed a device-claimed owner (`users.password_hash = device-owner$v1$<sha256Hex
+ * (SPKI-DER base64)>`) so the runtime's server-side resolver binds a device-authored
+ * provider approval to the authenticated owner's registered device. `userId` is the
+ * authenticated principal's `userId` (makePrincipal defaults to "user-1").
+ */
+function seedDeviceOwner(db: FridaySqliteLayer, userId: string): void {
+  const sentinel = `device-owner$v1$${createHash("sha256").update(RUNTIME_OWNER_KEY.spkiDerBase64).digest("hex")}`;
+  db.withWriteTransaction((conn) => {
+    conn
+      .prepare(
+        `INSERT INTO users (id, display_name, role, is_local_only, password_hash, created_at, updated_at)
+         VALUES (?, 'Owner', 'admin', 1, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET password_hash = excluded.password_hash`,
+      )
+      .run(userId, sentinel, NOW, NOW);
+  });
+}
 
 /** A DEVICE-AUTHORED provider approval bound to `actionDigest` + the owner device. */
 function runtimeDeviceApproval(actionDigest: string, approvalId: string): FridayCanonicalApprovalResolution {
@@ -1125,8 +1146,10 @@ describe("API Runtime — Extended Route Registration", () => {
 
   it("requires signed provider setup canonical approval when runtime canonical gate profile is on", async () => {
     const providerService = makeMockProviderService();
+    const deps = makeBaseDeps();
+    seedDeviceOwner(deps.db, "user-1");
     const runtime = createFridayApiRuntime({
-      ...makeBaseDeps(),
+      ...deps,
       providerService,
       canonicalMutatingActionGate: true,
     });
@@ -1300,8 +1323,10 @@ describe("API Runtime — Extended Route Registration", () => {
 
   it("requires signed model-routing canonical approval when runtime canonical gate profile is on", async () => {
     const providerService = makeMockProviderService();
+    const deps = makeBaseDeps();
+    seedDeviceOwner(deps.db, "user-1");
     const runtime = createFridayApiRuntime({
-      ...makeBaseDeps(),
+      ...deps,
       providerService,
       canonicalMutatingActionGate: true,
     });

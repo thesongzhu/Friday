@@ -628,6 +628,31 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
     return deps.db.withReadConnection((db) => userRepo.findLocalUser(db));
   }
 
+  /**
+   * SEC-APPROVAL-AUTHORITY-001 · CORE-A CR-2 (Option B*): resolve the durable
+   * owner↔device binding SERVER-SIDE for an authenticated user, WITHOUT changing
+   * token minting (`principalId` stays `user.id`). Reads the user's
+   * `users.password_hash`; if it is the device-owner sentinel
+   * (`device-owner$v1$<sha256Hex(SPKI-DER base64 string)>`) it returns the bound
+   * device's sentinel hash (the `<hash>` portion), else `null` (no device binding —
+   * e.g. a passphrase owner or a first-boot NULL slot). The provider-approval seam
+   * consumes this to bind a device-authored approval to the authenticated owner's
+   * REGISTERED device using the SAME hashing convention `deviceKeyLogin` already
+   * trusts (`sha256Hex(devicePublicKey)`), so no NEW hash is introduced. This never
+   * mints, never grants, and never touches the SEC-SETUP claim/login/nonce hashing.
+   */
+  function resolveBoundDeviceOwnerSentinelHash(userId: string): string | null {
+    const trimmed = userId.trim();
+    if (!trimmed) return null;
+    const user = findUserById(trimmed);
+    const storedHash = user?.password_hash;
+    if (!storedHash || !storedHash.startsWith(DEVICE_OWNER_HASH_PREFIX)) {
+      return null;
+    }
+    const boundKeyHash = storedHash.slice(DEVICE_OWNER_HASH_PREFIX.length).trim();
+    return boundKeyHash.length > 0 ? boundKeyHash : null;
+  }
+
   function resolveTenantId(user: FridayUserRow): string {
     const role = user.role as FridayRole;
     return normalizeTenantId(
@@ -1029,6 +1054,7 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
   }
 
   return {
+    resolveBoundDeviceOwnerSentinelHash,
     getBootstrapStatus(): FridayAuthBootstrapStatusResponse {
       const localUser = findLocalUser();
       const bootstrapRequired = Boolean(

@@ -2097,6 +2097,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
   });
 
+  // CR-1 Option C native-owner claim wiring. F2 seam: an injected resolver/surface
+  // (tests, or a future signed-release native boundary) overrides the auth service's
+  // honest-absent defaults. When absent, the auth service keeps its own honest-absent
+  // defaults (device claim/login fail closed; surface false → passphrase gate).
+  const nativeOwnerClaimResolver = deps.resolveNativeOwnerClaimContext;
+  const nativeOwnerClaimSurfaceAvailable = deps.nativeOwnerClaimSurfaceAvailable;
+
   const authService = createFridayAuthService({
     db: deps.db,
     idGenerator: deps.idGenerator,
@@ -2115,10 +2122,17 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       });
     },
     rateLimiter,
-    // CR-1 Option C: `resolveNativeOwnerClaimContext` + `nativeOwnerClaimSurfaceAvailable`
-    // default to honestly-absent (no native IPC accept boundary on this tree), so
-    // device owner-claim/login fail closed until a signed release wires the
-    // Companion Unix-socket peercred+codesign accept boundary (the external leaf).
+    // CR-1 Option C: `resolveNativeOwnerClaimContext` + `nativeOwnerClaimSurfaceAvailable`.
+    // When a caller injects them (tests, or a signed release wiring the real
+    // Companion Unix-socket peercred+codesign accept boundary) they are threaded to
+    // the auth service; otherwise the auth service falls back to its honest-ABSENT
+    // defaults (resolver returns null → every device owner-claim/login fails closed;
+    // surface false → the UI keeps the passphrase gate). This never fabricates
+    // authority and never flips NATIVE_IPC_ATTESTATION_AVAILABLE.
+    ...(nativeOwnerClaimResolver ? { resolveNativeOwnerClaimContext: nativeOwnerClaimResolver } : {}),
+    ...(nativeOwnerClaimSurfaceAvailable
+      ? { nativeOwnerClaimSurfaceAvailable }
+      : {}),
     // On a fresh RELEASE profile, passphrase bootstrap is retired (device-native
     // only) per finding #6; dev/CI keeps it (non-release profile).
     releaseProfileNativeOnly: () => isFridayCanonicalGateProtectedProfile(process.env),
@@ -4384,6 +4398,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     // proof-of-possession over the reviewed action digest — the Hub holds NO signing
     // key on this path and never self-mints an approval.
     providerApprovalVerifier,
+    // SEC-APPROVAL-AUTHORITY-001 (CORE-A CR-2, Option B*): resolve the authenticated
+    // owner's durable owner↔device binding SERVER-SIDE, so a device-authored approval
+    // binds to the owner's REGISTERED device while the session principal stays
+    // `user.id` (token minting unchanged).
+    resolveBoundDeviceOwnerSentinelHash: authService.resolveBoundDeviceOwnerSentinelHash,
   })) {
     routes.register(route);
   }

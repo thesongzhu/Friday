@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createFridayProviderRoutes } from "#api";
 import type { FridayProviderService } from "#providers";
@@ -200,6 +202,13 @@ describe("FridayProviderRoutes", () => {
         },
       }),
       providerApprovalVerifier,
+      // Option B*: resolve the authenticated owner's durable device binding
+      // server-side. The device-owner ctx has `userId: "user-1"` and its registered
+      // device is `OWNER`; a passphrase / unknown user resolves to null.
+      resolveBoundDeviceOwnerSentinelHash: (userId: string) =>
+        userId === "user-1"
+          ? createHash("sha256").update(OWNER.spkiDerBase64).digest("hex")
+          : null,
       // Probe + routing-controls surfaces fail-close by default; enable the
       // test-oracle flags so these positive-path tests exercise real behavior.
       // The dedicated retirement describe block omits these flags.

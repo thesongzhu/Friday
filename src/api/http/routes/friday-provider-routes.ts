@@ -477,6 +477,16 @@ export interface FridayProviderRoutesDeps {
    * confirm route fails closed (503); it never self-mints an approval.
    */
   providerApprovalVerifier?: FridayProviderApprovalPoPVerifier;
+  /**
+   * SEC-APPROVAL-AUTHORITY-001 · CORE-A CR-2 (Option B*): resolve the authenticated
+   * user's durable owner↔device binding SERVER-SIDE (`users.password_hash =
+   * device-owner$v1$<hash>` → `<hash>`, else `null`). The runtime injects
+   * `authService.resolveBoundDeviceOwnerSentinelHash`. Used to bind a device-authored
+   * provider approval to the authenticated owner's REGISTERED device WITHOUT changing
+   * token minting (`principalId=user.id`). When absent (test fixtures that never
+   * device-claim), a device-authored approval fails closed at the binding check.
+   */
+  resolveBoundDeviceOwnerSentinelHash?: (userId: string) => string | null;
 }
 
 // ─── Provider mutation plan / owner-confirm protocol (CORE-RUNNABLE-001) ───
@@ -1111,7 +1121,11 @@ export function createFridayProviderRoutes(
     // is refused below as `canonical_approval_digest_mismatch`.
     const request = createFridayProviderSetupMutatingActionRequest({
       action,
-      actor: createActorFromPrincipal(input.ctx.principal, `api:${input.ctx.requestId}`),
+      actor: createActorFromPrincipal(
+        input.ctx.principal,
+        `api:${input.ctx.requestId}`,
+        deps.resolveBoundDeviceOwnerSentinelHash,
+      ),
       surface,
       resourceId,
       parameters,
@@ -1423,7 +1437,11 @@ export function createFridayProviderRoutes(
         // recomputes when the mutation actually arrives.
         const request = createFridayProviderSetupMutatingActionRequest({
           action: descriptor.action,
-          actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
+          actor: createActorFromPrincipal(
+            ctx.principal,
+            `api:${ctx.requestId}`,
+            deps.resolveBoundDeviceOwnerSentinelHash,
+          ),
           surface: descriptor.surface,
           resourceId: descriptor.resourceId,
           parameters: descriptor.parameters,
@@ -1564,20 +1582,36 @@ export function createFridayProviderRoutes(
             { httpStatus: 403 },
           );
         }
-        // (2) The approving principal must be the authenticated owner, AND the signing
-        //     device public key must hash to that owner's bound device (the owner
-        //     principal id embeds the device key hash).
-        if (verified.decidedByPrincipalId !== ownerPrincipalId) {
+        // (2) DURABLE owner-device binding (Option B*): the approval's signing device
+        //     MUST be the device registered to the AUTHENTICATED owner
+        //     (`users.password_hash = device-owner$v1$<hash>`), compared with the
+        //     sentinel's OWN convention `sha256Hex(devicePublicKey)` — the same one
+        //     `deviceKeyLogin` already trusts. The acting `principalId` stays `user.id`
+        //     (token minting is unchanged); a passphrase / unclaimed owner has NO
+        //     sentinel → refused. This resolves the authenticated owner's binding
+        //     SERVER-SIDE and never trusts a request-supplied principal.
+        const boundSentinelHash = deps.resolveBoundDeviceOwnerSentinelHash?.(
+          ctx.principal?.userId ?? ownerPrincipalId,
+        ) ?? null;
+        if (
+          boundSentinelHash === null
+          || createHash("sha256").update(deviceProof.devicePublicKey.value).digest("hex")
+            !== boundSentinelHash
+        ) {
           throw new FridayDomainError(
-            "PROVIDER_MUTATION_APPROVAL_PRINCIPAL_MISMATCH",
-            "The device-authored approval was signed for a different owner principal than the confirming owner.",
+            "PROVIDER_MUTATION_APPROVAL_DEVICE_NOT_BOUND",
+            "The device-authored approval was not signed by the authenticated owner's registered device.",
             { httpStatus: 403 },
           );
         }
-        if (deviceOwnerPrincipalId(verified.devicePublicKeyHash) !== ownerPrincipalId) {
+        // (2b) CANONICAL self-consistency (unchanged intent): the approval's declared
+        //      principal must match its signing device key hash
+        //      (`canonicalDevicePublicKeyHash`), so a valid proof cannot carry a
+        //      foreign owner principal.
+        if (deviceOwnerPrincipalId(verified.devicePublicKeyHash) !== verified.decidedByPrincipalId) {
           throw new FridayDomainError(
-            "PROVIDER_MUTATION_APPROVAL_DEVICE_NOT_BOUND",
-            "The approval's signing device is not the owner's bound device.",
+            "PROVIDER_MUTATION_APPROVAL_PRINCIPAL_MISMATCH",
+            "The device-authored approval's declared principal does not match its signing device key.",
             { httpStatus: 403 },
           );
         }
@@ -1603,10 +1637,16 @@ export function createFridayProviderRoutes(
 
         // The Hub adds NO signature. It returns the DEVICE-AUTHORED approval, which the
         // admission gate re-verifies asymmetrically against the same device proof.
+        // `decidedByPrincipalId` is the DEVICE principal from the verified transcript
+        // (`device-owner:<canonicalDevicePublicKeyHash>`), NOT the acting `user.id` —
+        // so the gate's canonical self-consistency (`deviceOwnerPrincipalId(verified
+        // .devicePublicKeyHash) === decidedByPrincipalId`) holds at mutate time. The
+        // durable owner↔device binding was enforced above (sentinel) and is re-enforced
+        // by the gate via the actor's server-resolved `boundDeviceOwnerSentinelHash`.
         const canonicalApproval: FridayCanonicalApprovalResolution = {
           decision: "approved",
           approvalId: verified.approvalId,
-          decidedByPrincipalId: ownerPrincipalId,
+          decidedByPrincipalId: verified.decidedByPrincipalId,
           actionDigest: record.actionDigest,
           expiresAt: verified.expiresAt,
           issuer: "friday_device_owner",
@@ -2201,6 +2241,7 @@ function readOAuthSelectionInput(body: Record<string, unknown> | null, defaultKi
 function createActorFromPrincipal(
   principal: FridayAuthPrincipal | null,
   fallbackId: string,
+  resolveBoundDeviceOwnerSentinelHash?: (userId: string) => string | null,
 ): FridayMutatingActionActor {
   if (!principal) {
     return {
@@ -2209,10 +2250,18 @@ function createActorFromPrincipal(
       principalId: fallbackId,
     };
   }
+  // Option B*: resolve the durable owner↔device binding SERVER-SIDE from the
+  // authenticated user id (NOT from the acting principalId, which stays `user.id`).
+  // `boundDeviceOwnerSentinelHash` binds a device-authored approval to the owner's
+  // registered device without perturbing the action digest (it is never hashed in).
+  const ownerUserId = principal.userId ?? principal.principalId;
+  const boundDeviceOwnerSentinelHash =
+    resolveBoundDeviceOwnerSentinelHash?.(ownerUserId) ?? undefined;
   return {
     kind: principal.principalType,
     id: principal.principalId,
     principalId: principal.principalId,
+    ...(boundDeviceOwnerSentinelHash ? { boundDeviceOwnerSentinelHash } : {}),
   };
 }
 

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 import {
   createFridayMutatingActionDigest,
@@ -525,10 +527,23 @@ describe("friday mutating action gate — device-authored approval", () => {
     });
   }
 
+  // Option B*: the acting principal is the ordinary local owner `user.id` (NOT a
+  // `device-owner:` principal); the durable device binding is carried SERVER-SIDE as
+  // `boundDeviceOwnerSentinelHash = sha256Hex(owner SPKI-DER base64)` — the SAME
+  // sentinel convention `deviceKeyLogin`/`users.password_hash` use.
+  function ownerSentinelHash(owner: TestDeviceKey): string {
+    return createHash("sha256").update(owner.spkiDerBase64).digest("hex");
+  }
+
   function ownerRequest(owner: TestDeviceKey, overrides: Partial<FridayMutatingActionRequest> = {}): FridayMutatingActionRequest {
     return makeRequest({
       action: "providers.create",
-      actor: { kind: "user", id: deviceOwnerPrincipalIdFor(owner), principalId: deviceOwnerPrincipalIdFor(owner) },
+      actor: {
+        kind: "user",
+        id: "owner-user-1",
+        principalId: "owner-user-1",
+        boundDeviceOwnerSentinelHash: ownerSentinelHash(owner),
+      },
       surface: "provider_setup",
       resource: { type: "provider_setup", id: "prov-x" },
       mutating: true,
@@ -584,7 +599,8 @@ describe("friday mutating action gate — device-authored approval", () => {
     const attacker = generateTestDeviceKey();
     const request = ownerRequest(owner);
     // The attacker signs with its own key but claims the owner's principal id. The
-    // presented key hashes to the attacker → not bound to the owner. Every OTHER
+    // presented key does NOT hash (sentinel convention) to the authenticated owner's
+    // registered device → the Option B* durable-binding check refuses it. Every OTHER
     // field matches the approval object so the device binding is the sole discrepancy.
     const attackerTranscript = makeApprovalTranscript(attacker, {
       actionDigest: createFridayMutatingActionDigest(request),
@@ -604,7 +620,7 @@ describe("friday mutating action gate — device-authored approval", () => {
 
     const result = deviceGate().evaluate({ ...request, canonicalApproval: approval });
     expect(result.decision).toBe("deny");
-    expect(result.reason).toBe("device_approval_device_not_bound_to_owner");
+    expect(result.reason).toBe("device_approval_actor_mismatch");
   });
 
   it("DENIES a device approval lifted onto a different action (digest mismatch)", () => {

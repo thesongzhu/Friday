@@ -5,6 +5,7 @@ import type { FridayLearningEventAppendInput } from "#ledger";
 import type { FridayOutboxQueueService } from "#satellites";
 import type { FridayAccessTokenClaims, FridayRole } from "../model/friday-api-auth.types.js";
 import type { FridayAuthService } from "../auth/friday-auth-service.types.js";
+import type { NativeOwnerClaimContextResolver } from "../../security/attestation/friday-verified-native-owner-claim-context.js";
 import type { FridayRateLimitService } from "../auth/friday-rate-limit-service.types.js";
 import type { FridayTokenValidator } from "../auth/friday-token-validator.js";
 import type { FridayAuthMiddlewareFactory } from "../auth/friday-auth-middleware.js";
@@ -199,6 +200,25 @@ export interface CreateFridayApiRuntimeDeps {
   tokenSecret: string;
   accessTokenTtlSec?: number;
   refreshTokenTtlSec?: number;
+  /**
+   * SEC-NATIVE-OWNER-CLAIM-CAPABILITY-001 · CORE-A CR-1 (Option C) INJECTION SEAM.
+   * When provided, overrides the runtime's DEFAULT native-owner claim resolver that
+   * is passed to the auth service (device owner-claim/login). Production leaves this
+   * UNSET so the runtime builds the real macOS peercred+codesign accept-boundary
+   * resolver (honest-ABSENT on this unsigned dev/CI tree → returns null → every
+   * device claim/login fails closed). Tests inject a resolver that runs the REAL
+   * capability mint over injected native-evidence doubles (the capability brand makes
+   * a forged literal impossible). NEVER flips `NATIVE_IPC_ATTESTATION_AVAILABLE`.
+   */
+  resolveNativeOwnerClaimContext?: NativeOwnerClaimContextResolver;
+  /**
+   * Presence signal for `getBootstrapStatus().deviceClaimAvailable` ONLY. When
+   * provided, overrides the runtime's DEFAULT native-surface presence signal.
+   * Reports whether the native device-claim SURFACE exists; NEVER authorizes a claim
+   * (authority is the per-claim capability). The surface flag MAY be true while the
+   * capability stays UNMINTABLE on an unsigned tree — that is the honest state.
+   */
+  nativeOwnerClaimSurfaceAvailable?: () => boolean;
   /** Optional tenant resolver shared by auth claim issuance and validation. */
   resolveAuthTenantId?: (input: {
     principalType: string;

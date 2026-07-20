@@ -31,6 +31,14 @@ import type { FridayRateLimitService } from "./friday-rate-limit-service.types.j
 import type { NativeOwnerClaimContextResolver } from "../../security/attestation/friday-verified-native-owner-claim-context.js";
 
 export interface FridayAuthService {
+  /**
+   * SEC-APPROVAL-AUTHORITY-001 · CORE-A CR-2 (Option B*): resolve the authenticated
+   * user's durable owner↔device binding SERVER-SIDE. Returns the bound device's
+   * sentinel hash (the `<hash>` in `users.password_hash = device-owner$v1$<hash>`)
+   * when the user is a device-claimed owner, else `null` (passphrase / unclaimed).
+   * Pure read; mints nothing and never changes token minting (`principalId=user.id`).
+   */
+  resolveBoundDeviceOwnerSentinelHash(userId: string): string | null;
   login(request: FridayLoginRequest, ip?: string, userAgent?: string): FridayLoginResponse;
   refresh(request: FridayRefreshRequest): FridayRefreshResponse;
   logout(request: FridayLogoutRequest, principal: FridayAuthPrincipal): FridayLogoutResponse;

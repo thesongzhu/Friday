@@ -28,14 +28,17 @@ import type {
   FridayCanonicalApprovalResolution,
   FridayMutatingActionRequest,
 } from "../../../../src/security/friday-mutating-action-gate.js";
-import { encodeToken } from "../../../../src/api/auth/friday-token-validator.js";
-import { getScopesForRole } from "../../../../src/api/auth/friday-rbac-policy.js";
 import {
   deviceOwnerPrincipalIdFor,
   generateTestDeviceKey,
   makeApprovalProof,
   makeApprovalTranscript,
 } from "../../../helpers/friday-provider-approval-test-kit.js";
+import {
+  makeTranscript,
+  signTranscriptLowS,
+} from "../../../adversarial/_secsetup-s2a.helpers.js";
+import { createTestNativeOwnerResolver } from "../../../adversarial/_native-owner-capability.helpers.js";
 import {
   createMockFetch,
   resetMockCounters,
@@ -133,64 +136,43 @@ const AUTO_DETECT_PROVIDER_ENV_VARS = [
 const MOCK_E2E_TOKEN_SECRET = "mock-e2e-token-secret"; // pragma: allowlist secret -- deterministic signing key for canonical-gate mock E2E setup
 const MOCK_E2E_MASTER_KEY = Buffer.alloc(32, 23).toString("hex");
 
-// ─── SEC-APPROVAL-AUTHORITY-001 · CR-2: device-authored provider-mutation owner ───
+// ─── SEC-APPROVAL-AUTHORITY-001 · CR-2 (Option B*): REAL device-bound owner ───
 //
-// Provider mutations (create / routing.set / capabilities.doctor) now require a
+// Provider mutations (create / routing.set / capabilities.doctor) require a
 // DEVICE-AUTHORED owner approval: a P-256 `friday-provider-approval-v1` transcript
 // signed by the OWNER DEVICE and merely VERIFIED by the Hub (the Hub holds NO
-// signing key and REFUSES its own HMAC/unsigned approvals). We mint ONE software
-// dev/test owner device (NOT a Secure Enclave key; parity with the CR-2 runtime
-// tests) and drive the three provider-mutation setup calls AS that device owner:
-//   • the HTTP principal for those three calls is the owner's device-owner principal
-//     (`device-owner:<keyHash>`), minted directly with the PRODUCTION token encoder
-//     so `createActorFromPrincipal` recomputes the SAME action digest the owner
-//     device signed; and
-//   • each approval is the owner device's signed transcript bound to that exact
-//     action digest + owner principal.
-// The rest of the mock env is unchanged — the general session `accessToken` stays
-// the ordinary local-passphrase admin, so no other behaviour shifts.
-const MOCK_E2E_DEVICE_OWNER_KEY = generateTestDeviceKey();
-const MOCK_E2E_DEVICE_OWNER_PRINCIPAL = deviceOwnerPrincipalIdFor(MOCK_E2E_DEVICE_OWNER_KEY);
-// The digest actor MUST mirror the server's `createActorFromPrincipal(ctx.principal)`
-// for the device-owner HTTP principal: principalType "user", id/principalId = the
-// device-owner principal id.
-const MOCK_E2E_DEVICE_OWNER_ACTOR = {
-  kind: "user",
-  id: MOCK_E2E_DEVICE_OWNER_PRINCIPAL,
-  principalId: MOCK_E2E_DEVICE_OWNER_PRINCIPAL,
-} as const;
+// signing key and REFUSES its own HMAC/unsigned approvals). Instead of fabricating a
+// `device-owner:<hash>` token (which production never emits), we drive the REAL
+// production auth path: this hub is created with an INJECTED native-owner claim
+// resolver (`createTestNativeOwnerResolver()`, which runs the REAL capability mint
+// over injected native-evidence doubles), then we run the REAL owner-bootstrap →
+// deviceKeyLogin over HTTP with ONE software owner device key. The resulting session
+// token's principal is the ordinary local owner `user.id` (NOT a device-owner
+// principal); the server resolves the durable owner↔device binding
+// (`users.password_hash = device-owner$v1$<sha256Hex(devicePublicKey)>`) server-side
+// and binds each device-authored approval to that registered device. The SAME owner
+// device key signs both the owner-claim/login transcripts AND every provider
+// approval, so `sha256Hex(deviceKey)` matches the durable sentinel.
+const MOCK_E2E_OWNER_DEVICE_KEY = generateTestDeviceKey();
+const MOCK_E2E_OWNER_DEVICE_ID = "mock-e2e-owner-device";
+const MOCK_E2E_OWNER_ORIGIN = "https://friday.localhost";
+const MOCK_E2E_OWNER_INSTALL_ID = "mock-e2e-install";
+const MOCK_E2E_OWNER_OS_USER = "mock-e2e";
+// The device-authored approval's `decidedByPrincipalId` stays the CANONICAL device
+// principal (`device-owner:<canonicalDevicePublicKeyHash>`) — the verifier binds it
+// to the signing key via `canonicalDevicePublicKeyHash`. The DURABLE binding to the
+// authenticated owner is enforced separately, server-side, via the sentinel hash.
+const MOCK_E2E_DEVICE_OWNER_PRINCIPAL = deviceOwnerPrincipalIdFor(MOCK_E2E_OWNER_DEVICE_KEY);
 const MOCK_E2E_PROVIDER_APPROVAL_EXPIRES_AT = "2099-01-01T00:00:00.000Z";
 
-/**
- * Mint an access token whose bound principal IS the owner's device-owner principal
- * (`device-owner:<keyHash>`, principalType "user"), using the PRODUCTION token
- * encoder + the mock hub's token secret. No `sid` is set: the validator skips
- * session-state tracking for a token without a session id, so this stands in for a
- * device-owner principal that has already cleared attestation (exactly what the
- * CR-2 route tests model with an injected `device-owner:<hash>` "user" principal).
- * Used ONLY for the provider-mutation setup calls; the session token is unchanged.
- */
-function mintDeviceOwnerAccessToken(): string {
-  const nowSec = Math.floor(Date.now() / 1000);
-  return encodeToken(
-    {
-      tokenId: "mock-e2e-device-owner-token",
-      principalType: "user",
-      principalId: MOCK_E2E_DEVICE_OWNER_PRINCIPAL,
-      userId: MOCK_E2E_DEVICE_OWNER_PRINCIPAL,
-      role: "admin",
-      scopes: [...getScopesForRole("admin")],
-      iat: nowSec,
-      exp: nowSec + 60 * 60 * 24 * 365,
-    },
-    MOCK_E2E_TOKEN_SECRET,
-  );
-}
+/** The action-digest actor for a real owner session: `user` principal = `user.id`. */
+type OwnerSessionActor = { kind: "user"; id: string; principalId: string };
 
 /**
  * Build a DEVICE-AUTHORED approval for a provider mutation: recompute the request's
  * action digest, then have the owner device sign a transcript bound to that exact
- * digest + owner principal + approvalId + expiry. The Hub verifies (never signs) it.
+ * digest + canonical device principal + approvalId + expiry. The Hub verifies (never
+ * signs) it, and binds the signing key to the authenticated owner's durable device.
  */
 function mintDeviceOwnerApproval(
   request: FridayMutatingActionRequest,
@@ -198,7 +180,7 @@ function mintDeviceOwnerApproval(
 ): FridayCanonicalApprovalResolution {
   const actionDigest = createFridayMutatingActionDigest(request);
   const expiresAt = MOCK_E2E_PROVIDER_APPROVAL_EXPIRES_AT;
-  const transcript = makeApprovalTranscript(MOCK_E2E_DEVICE_OWNER_KEY, {
+  const transcript = makeApprovalTranscript(MOCK_E2E_OWNER_DEVICE_KEY, {
     actionDigest,
     approvalId,
     decidedByPrincipalId: MOCK_E2E_DEVICE_OWNER_PRINCIPAL,
@@ -211,7 +193,98 @@ function mintDeviceOwnerApproval(
     actionDigest,
     expiresAt,
     issuer: "friday_device_owner",
-    deviceProof: makeApprovalProof(MOCK_E2E_DEVICE_OWNER_KEY, transcript),
+    deviceProof: makeApprovalProof(MOCK_E2E_OWNER_DEVICE_KEY, transcript),
+  };
+}
+
+/**
+ * Drive the REAL production device-owner bootstrap over HTTP (challenge → owner-claim
+ * → login-challenge → deviceKeyLogin), signing every transcript with the owner device
+ * key. Returns the minted session token (principal = the local owner `user.id`) and
+ * that owner user id (for the action-digest actor). Requires the hub to have been
+ * created with an injected native-owner claim resolver (else claim/login fail closed).
+ */
+async function deviceOwnerBootstrapLogin(
+  baseUrl: string,
+  fetchImpl: typeof fetch,
+): Promise<{ accessToken: string; ownerActor: OwnerSessionActor }> {
+  const key = MOCK_E2E_OWNER_DEVICE_KEY;
+  const deviceId = MOCK_E2E_OWNER_DEVICE_ID;
+  const post = async (pathname: string, body: unknown): Promise<any> => {
+    const res = await fetchImpl(`${baseUrl}${pathname}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", origin: MOCK_E2E_OWNER_ORIGIN },
+      body: JSON.stringify(body),
+    });
+    const json = (await res.json()) as { ok?: boolean; data?: any; error?: any };
+    if (!res.ok || json.ok === false) {
+      throw new Error(
+        `device-owner bootstrap step ${pathname} failed (${res.status}): ${JSON.stringify(json)}`,
+      );
+    }
+    return json.data;
+  };
+
+  // 1) install challenge → 2) sign + claim the owner slot.
+  const challenge = await post("/v1/auth/bootstrap/challenge", {
+    installId: MOCK_E2E_OWNER_INSTALL_ID,
+    osUser: MOCK_E2E_OWNER_OS_USER,
+    origin: MOCK_E2E_OWNER_ORIGIN,
+  });
+  const claimTranscript = makeTranscript(key, {
+    action: challenge.action,
+    nonce: challenge.nonce,
+    origin: challenge.origin,
+    deviceId,
+    hubId: challenge.hubId,
+    installId: challenge.installId,
+    osUser: challenge.osUser,
+    expiresAt: challenge.expiresAt,
+  });
+  await post("/v1/auth/bootstrap/device-claim", {
+    nonce: challenge.nonce,
+    devicePublicKey: key.spkiDerBase64,
+    deviceId,
+    origin: challenge.origin,
+    installId: challenge.installId,
+    osUser: challenge.osUser,
+    deviceClaimProof: {
+      transcript: claimTranscript,
+      signature: { encoding: "ieee-p1363-base64", value: signTranscriptLowS(key, claimTranscript) },
+    },
+  });
+
+  // 3) server-issued single-use login challenge → 4) sign owner-login + mint session.
+  const loginChallenge = await post("/v1/auth/login/challenge", {
+    installId: MOCK_E2E_OWNER_INSTALL_ID,
+    osUser: MOCK_E2E_OWNER_OS_USER,
+    origin: MOCK_E2E_OWNER_ORIGIN,
+    deviceId,
+    devicePublicKey: key.spkiDerBase64,
+  });
+  const loginTranscript = makeTranscript(key, {
+    action: "owner-login",
+    nonce: loginChallenge.nonce,
+    origin: loginChallenge.origin,
+    deviceId,
+    hubId: loginChallenge.hubId,
+    installId: loginChallenge.installId,
+    osUser: loginChallenge.osUser,
+    expiresAt: loginChallenge.expiresAt,
+  });
+  const login = await post("/v1/auth/login", {
+    devicePublicKey: key.spkiDerBase64,
+    deviceId,
+    origin: loginChallenge.origin,
+    deviceLoginProof: {
+      transcript: loginTranscript,
+      signature: { encoding: "ieee-p1363-base64", value: signTranscriptLowS(key, loginTranscript) },
+    },
+  });
+  const ownerUserId = login.user.id as string;
+  return {
+    accessToken: login.accessToken as string,
+    ownerActor: { kind: "user", id: ownerUserId, principalId: ownerUserId },
   };
 }
 
@@ -260,58 +333,6 @@ async function apiFetch<T>(
   return { status: res.status, json };
 }
 
-type LoginEnvelope = {
-  ok: boolean;
-  data?: { accessToken: string };
-  error?: { code?: string; message?: string };
-};
-
-async function loginAdmin(
-  baseUrl: string,
-  fetchImpl: typeof fetch,
-): Promise<string> {
-  const tryLogin = async (
-    body: Record<string, unknown>,
-  ): Promise<LoginEnvelope> => {
-    const res = await fetchImpl(`${baseUrl}/v1/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    return (await res.json()) as LoginEnvelope;
-  };
-
-  const passphrase = process.env.FRIDAY_TEST_LOCAL_PASSPHRASE ?? "friday-e2e-passphrase-123";
-  const bootstrapStatusRes = await fetchImpl(`${baseUrl}/v1/auth/bootstrap/status`, {
-    method: "GET",
-    headers: { "Content-Type": "application/json" },
-  });
-  const bootstrapStatus = (await bootstrapStatusRes.json()) as {
-    ok: boolean;
-    data?: {
-      bootstrapRequired: boolean;
-    };
-  };
-
-  const requiresBootstrap = Boolean(bootstrapStatus.data?.bootstrapRequired);
-  if (requiresBootstrap) {
-    await fetchImpl(`${baseUrl}/v1/auth/bootstrap/local-passphrase`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ passphrase }),
-    });
-  }
-
-  const passphraseAttempt = await tryLogin({ localPassphrase: passphrase });
-  if (passphraseAttempt.ok && passphraseAttempt.data?.accessToken) {
-    return passphraseAttempt.data.accessToken;
-  }
-
-  throw new Error(
-    `Admin login failed: passphrase=${JSON.stringify(passphraseAttempt)}`,
-  );
-}
-
 // ─── Track original fetch ───
 // NOTE: _originalFetch is only used inside createMockHubEnv closures.
 // Each env captures its own instance-local reference to avoid races.
@@ -330,6 +351,7 @@ async function loginAdmin(
 async function installProvider(
   baseUrl: string,
   ownerToken: string,
+  ownerActor: OwnerSessionActor,
   entry: ProviderMatrixEntry,
   fetchImpl?: typeof fetch,
 ): Promise<InstalledMockProvider> {
@@ -362,7 +384,7 @@ async function installProvider(
   const idempotencyKey = `mock-e2e-provider-create:${entry.kind}`;
   const request = createFridayProviderSetupMutatingActionRequest({
     action: "providers.create",
-    actor: MOCK_E2E_DEVICE_OWNER_ACTOR,
+    actor: ownerActor,
     surface: "api:/v1/providers/create",
     parameters: body,
     planDigest,
@@ -522,6 +544,13 @@ export async function createMockHubEnv(opts?: {
       logRequests: false,
       channels: opts?.channels,
       tokenSecret: MOCK_E2E_TOKEN_SECRET,
+      // Option C / Option B*: inject a native-owner claim resolver that runs the REAL
+      // capability mint over injected native-evidence doubles, so the REAL owner-claim
+      // → deviceKeyLogin path mints a genuine `user.id` session (no fabricated token).
+      // The surface flag reports device-claim availability honestly (native seam
+      // injected here). NEVER flips NATIVE_IPC_ATTESTATION_AVAILABLE.
+      resolveNativeOwnerClaimContext: createTestNativeOwnerResolver(),
+      nativeOwnerClaimSurfaceAvailable: () => true,
       allowTestOnlyWorkflowRunExecution: opts?.allowTestOnlyWorkflowRunExecution ?? true,
       allowTestOnlySkillRunExecution: opts?.allowTestOnlySkillRunExecution ?? true,
       allowTestOnlySkillVerifyExecution: opts?.allowTestOnlySkillVerifyExecution ?? true,
@@ -595,7 +624,10 @@ export async function createMockHubEnv(opts?: {
   const hubBaseUrl = `http://127.0.0.1:${String(port)}`;
 
   // 4. Login as admin with local passphrase auth.
-  const accessToken = await loginAdmin(hubBaseUrl, originalFetch);
+  // Real production owner-bootstrap → deviceKeyLogin (principal = local owner
+  // `user.id`). The injected native-owner claim resolver makes the claim/login mint;
+  // the server resolves the durable owner↔device binding for provider mutations.
+  const { accessToken, ownerActor } = await deviceOwnerBootstrapLogin(hubBaseUrl, originalFetch);
 
   // 5. Build mock fetches per API
   const mocks: Record<string, MockFetch> = {};
@@ -623,12 +655,13 @@ export async function createMockHubEnv(opts?: {
   installFetchRouter();
 
   // 7. Register providers via API.
-  // Provider mutations require a DEVICE-AUTHORED owner approval (CR-2), so drive
-  // them AS the owner's device-owner principal (bearer token + signed approval).
-  const deviceOwnerToken = mintDeviceOwnerAccessToken();
+  // Provider mutations require a DEVICE-AUTHORED owner approval (CR-2). We drive them
+  // AS the REAL owner session (principal = `user.id`); the server binds each approval
+  // to the authenticated owner's durable device (Option B*), and the SAME owner device
+  // key that claimed the owner slot signs every approval.
   const providers: Record<string, InstalledMockProvider> = {};
   for (const entry of selectedEntries) {
-    const installed = await installProvider(hubBaseUrl, deviceOwnerToken, entry, originalFetch);
+    const installed = await installProvider(hubBaseUrl, accessToken, ownerActor, entry, originalFetch);
     providers[installed.kind] = installed;
   }
 
@@ -643,14 +676,14 @@ export async function createMockHubEnv(opts?: {
     const idempotencyKey = "mock-e2e-provider-routing";
     const request = createFridayProviderSetupMutatingActionRequest({
       action: "providers.routing.set",
-      actor: MOCK_E2E_DEVICE_OWNER_ACTOR,
+      actor: ownerActor,
       surface: "api:/v1/model-routing/set",
       resourceId: "model-routing",
       parameters: routingBody,
       planDigest,
       idempotencyKey,
     });
-    await apiFetch(hubBaseUrl, deviceOwnerToken, "PUT", "/v1/model-routing", {
+    await apiFetch(hubBaseUrl, accessToken, "PUT", "/v1/model-routing", {
       ...routingBody,
       planDigest,
       idempotencyKey,
@@ -660,14 +693,14 @@ export async function createMockHubEnv(opts?: {
     const doctorPlanDigest = "mock-e2e-capability-doctor";
     const doctorRequest = createFridayProviderSetupMutatingActionRequest({
       action: "capabilities.doctor",
-      actor: MOCK_E2E_DEVICE_OWNER_ACTOR,
+      actor: ownerActor,
       surface: "api:/v1/capabilities/doctor",
       resourceId: providerIds.join(","),
       parameters: doctorBody,
       planDigest: doctorPlanDigest,
       idempotencyKey: doctorPlanDigest,
     });
-    await apiFetch(hubBaseUrl, deviceOwnerToken, "POST", "/v1/capabilities/doctor", {
+    await apiFetch(hubBaseUrl, accessToken, "POST", "/v1/capabilities/doctor", {
       ...doctorBody,
       planDigest: doctorPlanDigest,
       idempotencyKey: doctorPlanDigest,

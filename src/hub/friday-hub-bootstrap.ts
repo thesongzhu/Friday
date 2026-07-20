@@ -7475,6 +7475,15 @@ export async function createFridayHub(
     skillExecutor: executor,
     updateSkillStatus: (skillId, status) => memoryState.updateSkillStatus(skillId, status),
     tokenSecret,
+    // CR-1 Option C (Option B* / F1 injection seam): thread an injected native-owner
+    // claim resolver + surface signal (tests, or a future signed-release native
+    // boundary). Unset in production → the runtime builds its honest-absent default.
+    ...(config.resolveNativeOwnerClaimContext
+      ? { resolveNativeOwnerClaimContext: config.resolveNativeOwnerClaimContext }
+      : {}),
+    ...(config.nativeOwnerClaimSurfaceAvailable
+      ? { nativeOwnerClaimSurfaceAvailable: config.nativeOwnerClaimSurfaceAvailable }
+      : {}),
     pluginRuntimeMode,
     supportedChannelKinds: [...runtimeSupportedChannelKinds],
     enabledChannelKinds: getEnabledChannelKinds,

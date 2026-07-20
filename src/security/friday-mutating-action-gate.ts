@@ -26,6 +26,17 @@ export interface FridayMutatingActionActor {
   readonly id: string;
   readonly principalId?: string;
   readonly displayName?: string;
+  /**
+   * SEC-APPROVAL-AUTHORITY-001 · CORE-A CR-2 (Option B*): the sentinel hash of the
+   * device bound to this authenticated owner (`users.password_hash =
+   * device-owner$v1$<hash>`), resolved SERVER-SIDE — `undefined` when the actor is
+   * not a device-claimed owner. A device-authored approval admits ONLY when the
+   * approval's signing key hashes (via the sentinel's own `sha256Hex` convention) to
+   * THIS value, binding the approval to the authenticated owner's registered device
+   * WITHOUT relying on the acting `principalId` (which stays `user.id`). It is NEVER
+   * folded into the action digest (server-derived, not part of the signed action).
+   */
+  readonly boundDeviceOwnerSentinelHash?: string;
 }
 
 export interface FridayMutatingActionResource {
@@ -391,7 +402,7 @@ export function verifyFridayCanonicalApprovalSignature(
 function verifyCanonicalApprovalAuthority(input: {
   approval: FridayCanonicalApprovalResolution;
   actionDigest: string;
-  actorPrincipalId: string | undefined;
+  actorBoundDeviceOwnerSentinelHash: string | undefined;
   evaluatedAt: string;
   requireApprovalSignature: boolean;
   approvalSignatureSecret: string | undefined;
@@ -424,7 +435,12 @@ function mapDeviceApprovalRejectReason(reason: string | undefined): string {
 function verifyDeviceOwnerApprovalAuthority(input: {
   approval: FridayCanonicalApprovalResolution;
   actionDigest: string;
-  actorPrincipalId: string | undefined;
+  /**
+   * SEC-APPROVAL-AUTHORITY-001 · CORE-A CR-2 (Option B*): the authenticated owner's
+   * durable device-binding sentinel hash, resolved SERVER-SIDE from
+   * `users.password_hash` (`undefined` when the actor is not a device-claimed owner).
+   */
+  actorBoundDeviceOwnerSentinelHash: string | undefined;
   evaluatedAt: string;
   deviceApprovalVerifier: FridayDeviceApprovalVerifier | undefined;
 }): string | null {
@@ -466,15 +482,32 @@ function verifyDeviceOwnerApprovalAuthority(input: {
     return "device_approval_expiry_mismatch";
   }
 
-  // (3) OWNER-DEVICE binding: the approving principal must be the acting principal,
-  //     AND the signing device public key must hash to that owner's bound device.
-  if (approval.decidedByPrincipalId !== input.actorPrincipalId) {
+  // (3) DURABLE OWNER-DEVICE binding (Option B*): the approval's signing device MUST
+  //     be the device registered to the AUTHENTICATED owner. We compare the signing
+  //     key against the owner's durable sentinel using the SENTINEL'S OWN hashing
+  //     convention (`sha256Hex(devicePublicKey)` — the same one `deviceKeyLogin`
+  //     already trusts), NOT the acting `principalId` (which is `user.id`, by design).
+  //     A passphrase / unclaimed owner has NO sentinel (`undefined`) → refused.
+  const boundSentinelHash = input.actorBoundDeviceOwnerSentinelHash;
+  if (
+    boundSentinelHash === undefined
+    || boundSentinelHash.length === 0
+    || sha256Hex(approval.deviceProof.devicePublicKey.value) !== boundSentinelHash
+  ) {
     return "device_approval_actor_mismatch";
   }
+  // (4) CANONICAL self-consistency (unchanged): the approval's declared principal
+  //     must match its signing device key hash (`canonicalDevicePublicKeyHash`), so a
+  //     valid proof cannot carry a foreign owner principal.
   if (deviceOwnerPrincipalId(verified.devicePublicKeyHash) !== approval.decidedByPrincipalId) {
     return "device_approval_device_not_bound_to_owner";
   }
   return null;
+}
+
+/** sha256 hex of a value — the sentinel's hashing convention (see auth-service). */
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function normalizeCanonicalApprovalSignatureText(signature: string | undefined): string | null {
@@ -594,7 +627,7 @@ export function createFridayMutatingActionGate(
         const authorityDenyReason = verifyCanonicalApprovalAuthority({
           approval: canonicalApproval,
           actionDigest,
-          actorPrincipalId: request.actor.principalId,
+          actorBoundDeviceOwnerSentinelHash: request.actor.boundDeviceOwnerSentinelHash,
           evaluatedAt,
           requireApprovalSignature,
           approvalSignatureSecret,

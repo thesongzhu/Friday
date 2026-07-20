@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, it, expect, vi } from "vitest";
 
 import type { FridayHttpContext, FridayRouteDefinition } from "#api";
@@ -117,6 +119,13 @@ describe("provider mutation plan → DEVICE confirm → gated mutation", () => {
       allowTestOnlyProviderProbeExecution: true,
       allowTestOnlyProviderRoutingControlsExecution: true,
       nowIso: () => now,
+      // Option B*: resolve the authenticated owner's durable device binding
+      // server-side. The harness's owner session has `userId: "owner-user"` and its
+      // registered device is `OWNER`; a passphrase / unknown user resolves to null.
+      resolveBoundDeviceOwnerSentinelHash: (userId: string) =>
+        userId === "owner-user"
+          ? createHash("sha256").update(OWNER.spkiDerBase64).digest("hex")
+          : null,
       ...(options.withVerifier === false ? {} : { providerApprovalVerifier }),
     });
 

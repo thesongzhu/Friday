@@ -48,6 +48,7 @@ import type { FridaySkillSecurityProfile } from "#skills";
 import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridaySkillConverterService } from "#skills/converter";
 import type { FridayProviderService } from "#providers";
+import type { NativeOwnerClaimContextResolver } from "../../security/attestation/friday-verified-native-owner-claim-context.js";
 import {
   normalizeFridayModelRoutingConfig,
   normalizeFridayProviderSupportedModels,
@@ -2049,6 +2050,22 @@ export interface FridayHubConfig {
    * wins; otherwise the `FRIDAY_MISSION_AUTO_DISPATCH` env knob).
    */
   missionAutoDispatch?: boolean;
+  /**
+   * SEC-NATIVE-OWNER-CLAIM-CAPABILITY-001 · CORE-A CR-1 (Option C) INJECTION SEAM.
+   * Overrides the api-runtime's DEFAULT native-owner claim resolver (device
+   * owner-claim/login). Production leaves this UNSET so the runtime builds the real
+   * macOS peercred+codesign accept-boundary resolver (honest-absent on this unsigned
+   * tree). Tests inject a resolver that runs the REAL capability mint over injected
+   * native-evidence doubles. NEVER fabricates authority; NEVER flips
+   * `NATIVE_IPC_ATTESTATION_AVAILABLE`.
+   */
+  resolveNativeOwnerClaimContext?: NativeOwnerClaimContextResolver;
+  /**
+   * Overrides the api-runtime's DEFAULT native-surface presence signal for
+   * `getBootstrapStatus().deviceClaimAvailable`. Reports whether the native
+   * device-claim SURFACE exists; NEVER authorizes a claim.
+   */
+  nativeOwnerClaimSurfaceAvailable?: () => boolean;
 }
 
 // ─── Resolved Hub Config ───
