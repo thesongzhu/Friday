@@ -21,12 +21,12 @@ import {
  */
 describe("provider mutation plan → owner confirm → gated mutation", () => {
   const NOW = "2026-02-17T10:00:00.000Z";
-  const APPROVAL_SIGNATURE_SECRET = "test-hub-token-secret";
+  const APPROVAL_SIGNATURE_SECRET = "test-hub-token-secret"; // pragma: allowlist secret
   /**
    * A key-SHAPED value. Every "no secret leaks" assertion below searches the full
    * serialized plan/confirm response for this exact string.
    */
-  const SECRET_API_KEY = "sk-live-CR2SECRET0000000000000000000000000000";
+  const SECRET_API_KEY = "sk-live-CR2SECRET0000000000000000000000000000"; // pragma: allowlist secret
 
   const sampleProfile: FridayProviderProfile = {
     id: "prov-001",

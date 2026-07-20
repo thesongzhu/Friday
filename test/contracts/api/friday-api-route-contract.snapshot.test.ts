@@ -893,6 +893,16 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         // provisional→active flip never touches password_hash and the device binding
         // still carries zero authority.
         "auth.migrate.device.readback",
+        // CORE-A CR-2: provider setup plan → owner-confirm handshake. Both public
+        // POST handlers unconditionally call requireProviderMutationOwnerPrincipalId
+        // at the top, which refuses the synthetic public principal via the same
+        // isUnauthenticatedPublicPrincipal guard used by assertBoundPrincipalForOperation
+        // (throws OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED / 401). This is a strictly
+        // stronger in-handler gate than the sibling providers.create/update/delete
+        // mutations (which rely only on the optional canonical-approval ticket and
+        // therefore remain in the unclassified reconciliation bucket).
+        "providers.plan",
+        "providers.plan.confirm",
       ]);
       // rate_limited_pending
       const RATE_LIMITED_PENDING: ReadonlySet<string> = new Set([
