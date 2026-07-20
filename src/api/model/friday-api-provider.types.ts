@@ -25,6 +25,7 @@ import type {
   FridayProviderUsageSummary,
   FridayProviderValidationState,
 } from "#providers";
+import type { ProviderApprovalDeviceProof } from "../auth/device-attest/friday-provider-approval-transcript.types.js";
 
 // ─── Request types ───
 
@@ -162,6 +163,15 @@ export interface FridayConfirmProviderMutationRequest {
   planDigest: string;
   /** Must be exactly `true`: the explicit owner confirmation. Never defaulted. */
   confirm: boolean;
+  /**
+   * SEC-APPROVAL-AUTHORITY-001 (CORE-A CR-2): the DEVICE-AUTHORED approval proof.
+   * The owner device signs a P-256 transcript binding the exact `actionDigest`
+   * (from the reviewed plan) + the owner principal + expiry. The Hub holds NO
+   * signing key — it only VERIFIES this proof with the presented PUBLIC key and,
+   * on success, returns the device-authored canonical approval. Absent ⇒ the
+   * confirm fails closed (no Hub self-signed approval is ever minted).
+   */
+  deviceApproval: ProviderApprovalDeviceProof;
 }
 
 export interface FridayConfirmProviderMutationResponse {

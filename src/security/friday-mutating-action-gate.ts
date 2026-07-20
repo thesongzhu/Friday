@@ -1,5 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
+import type { ProviderApprovalDeviceProof } from "../api/auth/device-attest/friday-provider-approval-transcript.types.js";
+import { deviceOwnerPrincipalId } from "./friday-device-owner-authority-precondition.js";
+
 export const FRIDAY_MUTATING_ACTION_RISKS = [
   "read_only",
   "low",
@@ -55,8 +58,48 @@ export interface FridayCanonicalApprovalResolution {
   readonly reason?: string;
   readonly expiresAt?: string;
   readonly childOfLifecycleTicketId?: string;
-  readonly issuer?: "friday_canonical_gate";
+  /**
+   * The authority that authored this approval:
+   *  - `friday_canonical_gate` — a symmetric HMAC the Hub both mints AND verifies
+   *    with `deps.tokenSecret` (the LEGACY plugin/mcp/channel/skill/workflow
+   *    lifecycle path; out of CORE-A CR-2 scope).
+   *  - `friday_device_owner` — a DEVICE-AUTHORED (P-256 ECDSA) approval. The Hub
+   *    holds NO signing key; it only VERIFIES the `deviceProof` with the presented
+   *    PUBLIC key. This is the SEC-APPROVAL-AUTHORITY-001 verify-only Hub path used
+   *    by provider-setup mutations, where a Hub self-signed HMAC is refused.
+   */
+  readonly issuer?: "friday_canonical_gate" | "friday_device_owner";
+  /** Symmetric-HMAC signature (LEGACY `friday_canonical_gate` issuer only). */
   readonly signature?: string;
+  /**
+   * The self-describing P-256 device proof (`friday_device_owner` issuer only):
+   * the signed approval transcript + the device PUBLIC key + the raw signature.
+   * Verified asymmetrically — the Hub never holds the private key.
+   */
+  readonly deviceProof?: ProviderApprovalDeviceProof;
+}
+
+/**
+ * The injected ASYMMETRIC verifier for a `friday_device_owner` approval. Performs
+ * the PURE P-256 proof-of-possession + transcript-field check ONLY (no request /
+ * owner binding — the gate does that with the returned fields). Wired by the
+ * runtime from `createFridayProviderApprovalPoPVerifier`. When absent, a
+ * device-authored approval fails CLOSED (the gate cannot verify it).
+ */
+export type FridayDeviceApprovalVerifier = (
+  proof: ProviderApprovalDeviceProof,
+  nowMs: number,
+) => FridayDeviceApprovalVerifyResult;
+
+export interface FridayDeviceApprovalVerifyResult {
+  readonly ok: boolean;
+  readonly reason?: string;
+  /** Canonical SHA-256 hex of the verified SPKI DER public key (present iff ok). */
+  readonly devicePublicKeyHash?: string;
+  readonly approvalId?: string;
+  readonly actionDigest?: string;
+  readonly decidedByPrincipalId?: string;
+  readonly expiresAt?: string;
 }
 
 export interface FridayMutatingActionRequest {
@@ -161,6 +204,12 @@ export interface FridayMutatingActionGateOptions {
   readonly ticketIdGenerator?: () => string;
   readonly approvalSignatureSecret?: string;
   readonly requireApprovalSignature?: boolean;
+  /**
+   * ASYMMETRIC verifier for `friday_device_owner` (device-authored) approvals.
+   * When absent, a device-authored approval fails closed. The Hub holds ONLY the
+   * public key here — no signing secret is involved on the device-owner path.
+   */
+  readonly deviceApprovalVerifier?: FridayDeviceApprovalVerifier;
 }
 
 export interface FridayMutatingActionGate {
@@ -325,6 +374,109 @@ export function verifyFridayCanonicalApprovalSignature(
     && timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
+/**
+ * Verify the AUTHORITY of an `approved` canonical approval. Returns a deny reason
+ * string, or `null` when the approval is authentic AND (for a device-authored
+ * approval) bound to the exact action + owner device.
+ *
+ * Two disjoint authorities:
+ *   - `friday_device_owner` — ASYMMETRIC P-256 proof-of-possession (the Hub holds
+ *     NO signing key). ALWAYS cryptographically verified, then bound to the
+ *     request action digest + acting owner + the owner's device key hash. This is
+ *     the SEC-APPROVAL-AUTHORITY-001 verify-only path.
+ *   - otherwise (`friday_canonical_gate` / unset) — the LEGACY symmetric HMAC,
+ *     verified only when a signature is required/available (unchanged behaviour;
+ *     used by the plugin/mcp/channel/skill/workflow lifecycle, NOT by providers).
+ */
+function verifyCanonicalApprovalAuthority(input: {
+  approval: FridayCanonicalApprovalResolution;
+  actionDigest: string;
+  actorPrincipalId: string | undefined;
+  evaluatedAt: string;
+  requireApprovalSignature: boolean;
+  approvalSignatureSecret: string | undefined;
+  deviceApprovalVerifier: FridayDeviceApprovalVerifier | undefined;
+}): string | null {
+  const { approval } = input;
+
+  if (approval.issuer === "friday_device_owner") {
+    return verifyDeviceOwnerApprovalAuthority(input);
+  }
+
+  // LEGACY symmetric-HMAC authority (plugin/mcp/channel/skill/workflow lifecycle).
+  if (input.requireApprovalSignature || input.approvalSignatureSecret !== undefined) {
+    if (
+      input.approvalSignatureSecret === undefined
+      || !verifyFridayCanonicalApprovalSignature(approval, input.approvalSignatureSecret)
+    ) {
+      return "canonical_approval_signature_invalid";
+    }
+  }
+  return null;
+}
+
+/** Map a pure-verifier reject reason to a stable, non-sensitive gate deny reason. */
+function mapDeviceApprovalRejectReason(reason: string | undefined): string {
+  if (reason === "expired") return "canonical_approval_expired";
+  return "device_approval_signature_invalid";
+}
+
+function verifyDeviceOwnerApprovalAuthority(input: {
+  approval: FridayCanonicalApprovalResolution;
+  actionDigest: string;
+  actorPrincipalId: string | undefined;
+  evaluatedAt: string;
+  deviceApprovalVerifier: FridayDeviceApprovalVerifier | undefined;
+}): string | null {
+  const { approval, deviceApprovalVerifier } = input;
+  // Fail closed: a device-authored approval that cannot be verified never admits.
+  if (deviceApprovalVerifier === undefined) {
+    return "device_approval_verifier_unavailable";
+  }
+  if (approval.deviceProof === undefined) {
+    return "device_approval_proof_missing";
+  }
+  const nowMs = Date.parse(input.evaluatedAt);
+  if (!Number.isFinite(nowMs)) {
+    return "canonical_approval_expiration_invalid";
+  }
+
+  // (1) PURE asymmetric proof-of-possession over the signed transcript.
+  const verified = deviceApprovalVerifier(approval.deviceProof, nowMs);
+  if (!verified.ok || verified.devicePublicKeyHash === undefined) {
+    return mapDeviceApprovalRejectReason(verified.reason);
+  }
+
+  // (2) The SIGNED transcript must cover EXACTLY the approval's claimed fields, and
+  //     the approval's action digest must equal the request's recomputed digest —
+  //     so a proof cannot be lifted onto a different action, owner, or expiry.
+  if (
+    verified.actionDigest !== approval.actionDigest
+    || verified.actionDigest !== input.actionDigest
+  ) {
+    return "device_approval_action_digest_mismatch";
+  }
+  if (verified.approvalId !== approval.approvalId) {
+    return "device_approval_id_mismatch";
+  }
+  if (verified.decidedByPrincipalId !== approval.decidedByPrincipalId) {
+    return "device_approval_principal_mismatch";
+  }
+  if (verified.expiresAt !== approval.expiresAt) {
+    return "device_approval_expiry_mismatch";
+  }
+
+  // (3) OWNER-DEVICE binding: the approving principal must be the acting principal,
+  //     AND the signing device public key must hash to that owner's bound device.
+  if (approval.decidedByPrincipalId !== input.actorPrincipalId) {
+    return "device_approval_actor_mismatch";
+  }
+  if (deviceOwnerPrincipalId(verified.devicePublicKeyHash) !== approval.decidedByPrincipalId) {
+    return "device_approval_device_not_bound_to_owner";
+  }
+  return null;
+}
+
 function normalizeCanonicalApprovalSignatureText(signature: string | undefined): string | null {
   if (typeof signature !== "string" || !/^[0-9a-fA-F]{64}$/.test(signature)) {
     return null;
@@ -333,11 +485,16 @@ function normalizeCanonicalApprovalSignatureText(signature: string | undefined):
 }
 
 function createCanonicalApprovalUseKey(approval: FridayCanonicalApprovalResolution): string {
+  // Single-use is keyed on the approval identity AND the exact signing material, so
+  // replaying a consumed approval (HMAC OR device proof) is refused. For a
+  // device-authored approval the raw P-1363 signature is the single-use token.
+  const deviceSignature = approval.deviceProof?.signature?.value ?? "";
   return [
     approval.approvalId,
     approval.actionDigest,
     approval.issuer ?? "",
     normalizeCanonicalApprovalSignatureText(approval.signature) ?? "",
+    deviceSignature,
   ].join(":");
 }
 
@@ -377,6 +534,7 @@ export function createFridayMutatingActionGate(
   const ticketIdGenerator = options.ticketIdGenerator ?? createDefaultTicketId;
   const approvalSignatureSecret = options.approvalSignatureSecret;
   const requireApprovalSignature = options.requireApprovalSignature ?? false;
+  const deviceApprovalVerifier = options.deviceApprovalVerifier;
   const consumedCanonicalApprovalKeys = new Set<string>();
 
   return {
@@ -432,26 +590,30 @@ export function createFridayMutatingActionGate(
         });
       }
 
-      if (
-        canonicalApproval?.decision === "approved"
-        && (requireApprovalSignature || approvalSignatureSecret !== undefined)
-        && (
-          approvalSignatureSecret === undefined
-          || !verifyFridayCanonicalApprovalSignature(canonicalApproval, approvalSignatureSecret)
-        )
-      ) {
-        return buildResult({
-          request,
+      if (canonicalApproval?.decision === "approved") {
+        const authorityDenyReason = verifyCanonicalApprovalAuthority({
+          approval: canonicalApproval,
           actionDigest,
-          risk,
-          localClaims,
+          actorPrincipalId: request.actor.principalId,
           evaluatedAt,
-          decision: "deny",
-          reason: "canonical_approval_signature_invalid",
-          approvalRequired,
-          deniedBy: "canonical_gate",
-          approvalId: canonicalApproval.approvalId,
+          requireApprovalSignature,
+          approvalSignatureSecret,
+          deviceApprovalVerifier,
         });
+        if (authorityDenyReason !== null) {
+          return buildResult({
+            request,
+            actionDigest,
+            risk,
+            localClaims,
+            evaluatedAt,
+            decision: "deny",
+            reason: authorityDenyReason,
+            approvalRequired,
+            deniedBy: "canonical_gate",
+            approvalId: canonicalApproval.approvalId,
+          });
+        }
       }
 
       if (canonicalApproval?.decision === "denied") {

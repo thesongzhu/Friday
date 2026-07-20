@@ -52,6 +52,47 @@ export interface DeviceClaimProof {
   signature: { encoding: "ieee-p1363-base64"; value: string };
 }
 
+// ─── SEC-APPROVAL-AUTHORITY-001 · CR-2 — device-authored provider approval ───
+//
+// The owner device AUTHORS a provider-mutation approval by signing this canonical
+// transcript with the SAME non-extractable P-256 key. The Hub holds NO signing key
+// — it only VERIFIES this proof with the presented PUBLIC key. The encoding mirrors
+// the server `encodeProviderApprovalTranscript` byte-for-byte (cross-encoder test).
+
+/** Canonical provider-approval transcript (mirrors the server shape). */
+export interface ProviderApprovalTranscript {
+  transcriptVersion: "friday-provider-approval-v1";
+  algorithm: "ECDSA_P256_SHA256";
+  kind: "provider_mutation_approval";
+  /** Unique id the device assigns to this single approval. */
+  approvalId: string;
+  /** The EXACT reviewed mutating-action digest (from the server plan). */
+  actionDigest: string;
+  /** The owner principal authoring the approval (device-owner:<devicePublicKeyHash>). */
+  decidedByPrincipalId: string;
+  /** Absolute expiry (ISO-8601); the Hub bounds this to a short lifetime. */
+  expiresAt: string;
+  /** SHA-256 hex of the canonical SPKI DER of the device public key. */
+  devicePublicKeyHash: string;
+}
+
+/** The self-describing device proof the client sends to plan/confirm. */
+export interface ProviderApprovalDeviceProof {
+  transcript: ProviderApprovalTranscript;
+  /** Device public key, SPKI DER, standard base64. */
+  devicePublicKey: { encoding: "spki-der-base64"; value: string };
+  /** IEEE P-1363 raw (r‖s, 64 bytes) ECDSA signature, base64 (canonical low-S). */
+  signature: { encoding: "ieee-p1363-base64"; value: string };
+}
+
+/** Stable prefix binding a device-owner principal id to its device public key hash. */
+export const DEVICE_OWNER_PRINCIPAL_ID_PREFIX = "device-owner:";
+
+/** Derive the device-owner principal id from a canonical device public key hash. */
+export function deviceOwnerPrincipalId(devicePublicKeyHash: string): string {
+  return `${DEVICE_OWNER_PRINCIPAL_ID_PREFIX}${devicePublicKeyHash}`;
+}
+
 export interface DeviceKeyMaterial {
   /** Device public key, SPKI DER, standard base64. */
   devicePublicKeySpkiBase64: string;
@@ -75,6 +116,14 @@ export interface DeviceKeyProvider {
    * signature as base64. Rejects if no key has been created yet.
    */
   signTranscript(transcript: DeviceClaimTranscript): Promise<DeviceClaimProof["signature"]>;
+  /**
+   * Sign a canonical PROVIDER-APPROVAL transcript (SEC-APPROVAL-AUTHORITY-001).
+   * Returns a canonical low-S IEEE P-1363 raw signature as base64. Rejects if no
+   * key has been created yet.
+   */
+  signApprovalTranscript(
+    transcript: ProviderApprovalTranscript,
+  ): Promise<ProviderApprovalDeviceProof["signature"]>;
 }
 
 /** Thrown when the device-key capability is unavailable — the caller fails closed. */
@@ -122,6 +171,35 @@ export function encodeOwnerClaimTranscript(t: DeviceClaimTranscript): Uint8Array
     lengthPrefixed(t.origin),
     lengthPrefixed(t.channel),
     lengthPrefixed(t.nonce),
+    lengthPrefixed(t.expiresAt),
+    lengthPrefixed(t.devicePublicKeyHash),
+  ];
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
+}
+
+const PROVIDER_APPROVAL_TRANSCRIPT_DOMAIN = "friday.provider-approval.transcript";
+
+/**
+ * Deterministically encode a provider-approval transcript to
+ * `LP(domain) ‖ LP(field_0) ‖ …`. Field order + domain MUST match the server's
+ * `encodeProviderApprovalTranscript` exactly (asserted by a cross-encoder test).
+ */
+export function encodeProviderApprovalTranscript(t: ProviderApprovalTranscript): Uint8Array {
+  const parts = [
+    lengthPrefixed(PROVIDER_APPROVAL_TRANSCRIPT_DOMAIN),
+    lengthPrefixed(t.transcriptVersion),
+    lengthPrefixed(t.algorithm),
+    lengthPrefixed(t.kind),
+    lengthPrefixed(t.approvalId),
+    lengthPrefixed(t.actionDigest),
+    lengthPrefixed(t.decidedByPrincipalId),
     lengthPrefixed(t.expiresAt),
     lengthPrefixed(t.devicePublicKeyHash),
   ];
@@ -312,6 +390,25 @@ function randomDeviceId(): string {
 export function createWebCryptoDeviceKeyProvider(store?: DeviceKeyStore): DeviceKeyProvider {
   let cached: { keyPair: CryptoKeyPair; material: DeviceKeyMaterial } | null = null;
 
+  /** Sign canonical transcript bytes with the cached non-extractable key (low-S). */
+  async function signCanonicalBytes(
+    bytes: Uint8Array,
+  ): Promise<{ encoding: "ieee-p1363-base64"; value: string }> {
+    if (!subtleAvailable()) throw new DeviceKeyUnavailableError();
+    if (!cached) {
+      throw new DeviceKeyUnavailableError("Device key has not been created yet.");
+    }
+    const raw = new Uint8Array(
+      await globalThis.crypto.subtle.sign(
+        { name: "ECDSA", hash: "SHA-256" },
+        cached.keyPair.privateKey,
+        // Copy into a fresh ArrayBuffer-backed view for BufferSource typing.
+        bytes.slice(),
+      ),
+    );
+    return { encoding: "ieee-p1363-base64", value: toBase64(normalizeLowS(raw)) };
+  }
+
   return {
     isAvailable: subtleAvailable,
 
@@ -356,21 +453,67 @@ export function createWebCryptoDeviceKeyProvider(store?: DeviceKeyStore): Device
     async signTranscript(
       transcript: DeviceClaimTranscript,
     ): Promise<DeviceClaimProof["signature"]> {
-      if (!subtleAvailable()) throw new DeviceKeyUnavailableError();
-      if (!cached) {
-        throw new DeviceKeyUnavailableError("Device key has not been created yet.");
-      }
-      const bytes = encodeOwnerClaimTranscript(transcript);
-      const raw = new Uint8Array(
-        await globalThis.crypto.subtle.sign(
-          { name: "ECDSA", hash: "SHA-256" },
-          cached.keyPair.privateKey,
-          // Copy into a fresh ArrayBuffer-backed view for BufferSource typing.
-          bytes.slice(),
-        ),
-      );
-      return { encoding: "ieee-p1363-base64", value: toBase64(normalizeLowS(raw)) };
+      return signCanonicalBytes(encodeOwnerClaimTranscript(transcript));
     },
+
+    async signApprovalTranscript(
+      transcript: ProviderApprovalTranscript,
+    ): Promise<ProviderApprovalDeviceProof["signature"]> {
+      return signCanonicalBytes(encodeProviderApprovalTranscript(transcript));
+    },
+  };
+}
+
+// ─── Provider-approval authoring (SEC-APPROVAL-AUTHORITY-001 · CR-2) ───
+
+/** Authors a device-signed provider-approval proof binding an exact action digest. */
+export type ProviderApprovalAuthor = (
+  input: { actionDigest: string },
+) => Promise<ProviderApprovalDeviceProof>;
+
+/** Device-chosen approval lifetime. Kept below the Hub's max (10 min) with buffer. */
+const DEFAULT_APPROVAL_LIFETIME_MS = 9 * 60 * 1000;
+
+function randomApprovalId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return `approval-${c.randomUUID()}`;
+  const rnd = new Uint8Array(16);
+  if (c && typeof c.getRandomValues === "function") c.getRandomValues(rnd);
+  return `approval-${toHex(rnd)}`;
+}
+
+/**
+ * Build a {@link ProviderApprovalAuthor} backed by a device-key provider. The
+ * returned author signs a canonical approval transcript over the reviewed action
+ * digest, binding `decidedByPrincipalId` to the device (device-owner:<keyHash>) so
+ * the Hub verifies the approving owner IS the signing device. It NEVER holds or
+ * exposes a signing secret — the Hub only ever sees the PUBLIC key + signature.
+ */
+export function createProviderApprovalAuthor(
+  provider: DeviceKeyProvider,
+  opts: { now?: () => number; lifetimeMs?: number; approvalId?: () => string } = {},
+): ProviderApprovalAuthor {
+  return async ({ actionDigest }) => {
+    if (!provider.isAvailable()) throw new DeviceKeyUnavailableError();
+    const key = await provider.getOrCreateDeviceKey();
+    const nowMs = opts.now?.() ?? Date.now();
+    const lifetime = opts.lifetimeMs ?? DEFAULT_APPROVAL_LIFETIME_MS;
+    const transcript: ProviderApprovalTranscript = {
+      transcriptVersion: "friday-provider-approval-v1",
+      algorithm: "ECDSA_P256_SHA256",
+      kind: "provider_mutation_approval",
+      approvalId: opts.approvalId?.() ?? randomApprovalId(),
+      actionDigest,
+      decidedByPrincipalId: deviceOwnerPrincipalId(key.devicePublicKeyHash),
+      expiresAt: new Date(nowMs + lifetime).toISOString(),
+      devicePublicKeyHash: key.devicePublicKeyHash,
+    };
+    const signature = await provider.signApprovalTranscript(transcript);
+    return {
+      transcript,
+      devicePublicKey: { encoding: "spki-der-base64", value: key.devicePublicKeySpkiBase64 },
+      signature,
+    };
   };
 }
 

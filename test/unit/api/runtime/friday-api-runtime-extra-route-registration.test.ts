@@ -26,7 +26,39 @@ import type { FridayProviderProfile } from "#providers";
 import type { FridaySqliteLayer } from "#state";
 import type { FridayWorkflowRuntime } from "#workflows";
 import { signFridayCanonicalApproval } from "../../../../src/security/friday-mutating-action-gate.js";
+import type { FridayCanonicalApprovalResolution } from "../../../../src/security/friday-mutating-action-gate.js";
+import {
+  deviceOwnerPrincipalIdFor,
+  generateTestDeviceKey,
+  makeApprovalProof,
+  makeApprovalTranscript,
+} from "../../../helpers/friday-provider-approval-test-kit.js";
 import { createTestDb } from "../../../helpers/friday-test-db.helper.js";
+
+// SEC-APPROVAL-AUTHORITY-001: a single owner device for the runtime provider-gate
+// tests. The Hub verifies its P-256 proof; no Hub signing key is on the approval path.
+const RUNTIME_OWNER_KEY = generateTestDeviceKey();
+const RUNTIME_OWNER_PRINCIPAL = deviceOwnerPrincipalIdFor(RUNTIME_OWNER_KEY);
+
+/** A DEVICE-AUTHORED provider approval bound to `actionDigest` + the owner device. */
+function runtimeDeviceApproval(actionDigest: string, approvalId: string): FridayCanonicalApprovalResolution {
+  const expiresAt = "2026-02-27T01:00:00.000Z";
+  const transcript = makeApprovalTranscript(RUNTIME_OWNER_KEY, {
+    actionDigest,
+    decidedByPrincipalId: RUNTIME_OWNER_PRINCIPAL,
+    approvalId,
+    expiresAt,
+  });
+  return {
+    decision: "approved",
+    approvalId,
+    decidedByPrincipalId: RUNTIME_OWNER_PRINCIPAL,
+    actionDigest,
+    expiresAt,
+    issuer: "friday_device_owner",
+    deviceProof: makeApprovalProof(RUNTIME_OWNER_KEY, transcript),
+  };
+}
 
 const NOW = "2026-02-27T00:00:00.000Z";
 const allocatedDbs: FridaySqliteLayer[] = [];
@@ -1109,7 +1141,12 @@ describe("API Runtime — Extended Route Registration", () => {
         planDigest: "provider-runtime-plan-1",
       },
       headers: {},
-      principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+      // Owner principal BOUND to the device (principalId = device-owner:<keyHash>).
+      principal: makePrincipal({
+        role: "admin",
+        scopes: ["hub.admin"],
+        principalId: RUNTIME_OWNER_PRINCIPAL,
+      }),
     };
 
     let actionDigest = "";
@@ -1123,17 +1160,28 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(actionDigest).toBeTruthy();
     expect(providerService.createProvider).not.toHaveBeenCalled();
 
-    const result = await route.handler({
+    // A Hub-minted HMAC approval must be REFUSED on the provider path (Hub self-sign).
+    await expect(route.handler({
       ...baseCtx,
       body: {
         ...baseCtx.body,
         canonicalApproval: signFridayCanonicalApproval({
           decision: "approved",
-          approvalId: "provider-runtime-approval",
-          decidedByPrincipalId: "tenant-a",
+          approvalId: "provider-runtime-hmac",
+          decidedByPrincipalId: RUNTIME_OWNER_PRINCIPAL,
           actionDigest,
           expiresAt: "2026-02-27T01:00:00.000Z",
         }, "test-secret"),
+      },
+    })).rejects.toMatchObject({ code: "PROVIDER_MUTATION_APPROVAL_NOT_DEVICE_AUTHORED" });
+    expect(providerService.createProvider).not.toHaveBeenCalled();
+
+    // A DEVICE-AUTHORED approval admits — the Hub verified it with the public key.
+    const result = await route.handler({
+      ...baseCtx,
+      body: {
+        ...baseCtx.body,
+        canonicalApproval: runtimeDeviceApproval(actionDigest, "provider-runtime-approval"),
       },
     });
 
@@ -1269,7 +1317,11 @@ describe("API Runtime — Extended Route Registration", () => {
         planDigest: "provider-routing-plan-1",
       },
       headers: {},
-      principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+      principal: makePrincipal({
+        role: "admin",
+        scopes: ["hub.admin"],
+        principalId: RUNTIME_OWNER_PRINCIPAL,
+      }),
     };
 
     let actionDigest = "";
@@ -1287,13 +1339,7 @@ describe("API Runtime — Extended Route Registration", () => {
       ...baseCtx,
       body: {
         ...baseCtx.body,
-        canonicalApproval: signFridayCanonicalApproval({
-          decision: "approved",
-          approvalId: "provider-routing-runtime-approval",
-          decidedByPrincipalId: "tenant-a",
-          actionDigest,
-          expiresAt: "2026-02-27T01:00:00.000Z",
-        }, "test-secret"),
+        canonicalApproval: runtimeDeviceApproval(actionDigest, "provider-routing-runtime-approval"),
       },
     });
 

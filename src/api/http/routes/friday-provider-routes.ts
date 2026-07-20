@@ -75,7 +75,12 @@ import {
   type FridayMutatingActionRequest,
   type FridayMutatingActionTicket,
 } from "../../../security/friday-mutating-action-gate.js";
+import { deviceOwnerPrincipalId } from "../../../security/friday-device-owner-authority-precondition.js";
 import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
+import type {
+  FridayProviderApprovalPoPVerifier,
+  ProviderApprovalDeviceProof,
+} from "../../auth/device-attest/index.js";
 
 // ─── Validation helpers ───
 
@@ -462,30 +467,30 @@ export interface FridayProviderRoutesDeps {
    */
   nowIso?: () => string;
   /**
-   * Owner-confirm approval MINTER (CORE-RUNNABLE-001 / CORE-A CR-2).
+   * Owner-confirm DEVICE-APPROVAL VERIFIER (SEC-APPROVAL-AUTHORITY-001 / CORE-A CR-2).
    *
-   * Injected by the runtime with the SAME `signCanonicalApprovalForRequest` seam the
-   * plugin / provider-profile-upgrade lifecycles use: it derives the action digest
-   * itself with {@link createFridayMutatingActionDigest}, stamps a ~10-minute expiry
-   * and HMAC-signs with the hub token secret.
-   *
-   * It is consulted from EXACTLY ONE place — `providers.plan.confirm` — and only after
-   * an explicit, owner-authenticated confirmation of a plan digest the server itself
-   * produced. When absent, the confirm route fails closed (503); it never falls back
-   * to an unsigned or self-minted approval.
+   * The Hub holds NO signing key on the approval path. `providers.plan.confirm` no
+   * longer MINTS an HMAC approval — it VERIFIES the owner device's P-256
+   * proof-of-possession over the reviewed action digest with this asymmetric
+   * verifier and, on success, returns the DEVICE-AUTHORED canonical approval. The
+   * runtime injects `createFridayProviderApprovalPoPVerifier()`. When absent, the
+   * confirm route fails closed (503); it never self-mints an approval.
    */
-  signCanonicalApproval?: (
-    request: FridayMutatingActionRequest,
-    input: { approvalIdPrefix: string; childOfLifecycleTicketId?: string },
-  ) => FridayCanonicalApprovalResolution;
+  providerApprovalVerifier?: FridayProviderApprovalPoPVerifier;
 }
 
 // ─── Provider mutation plan / owner-confirm protocol (CORE-RUNNABLE-001) ───
 
-/** Plan lifetime. Deliberately <= the signed approval's ~10 minute expiry. */
+/** Plan lifetime. Deliberately <= the device approval's ~10 minute expiry. */
 const PROVIDER_MUTATION_PLAN_TTL_MS = 10 * 60 * 1000;
 /** Hard cap so an authenticated client cannot grow the plan store without bound. */
 const PROVIDER_MUTATION_PLAN_MAX_ENTRIES = 256;
+/**
+ * Max lifetime the Hub will honour on a DEVICE-AUTHORED approval. The owner device
+ * chooses the expiry; the Hub refuses one further out than this so a device cannot
+ * mint a long-lived standing approval. Matches the plan TTL.
+ */
+const PROVIDER_MUTATION_APPROVAL_MAX_LIFETIME_MS = 10 * 60 * 1000;
 
 const PROVIDER_PLANNABLE_ACTIONS = new Set<string>([
   "providers.create",
@@ -1087,6 +1092,18 @@ export function createFridayProviderRoutes(
         { httpStatus: 403, details: { action, resourceId } },
       );
     }
+    // SEC-APPROVAL-AUTHORITY-001 negative control (Hub self-sign / shared-HMAC leak):
+    // a provider mutation admits ONLY on a DEVICE-AUTHORED approval. Any Hub-minted
+    // symmetric-HMAC approval (`friday_canonical_gate`) — or an issuer-less one — is
+    // refused at the seam BEFORE the gate, so the Hub can never verify its own
+    // signature on the provider path.
+    if (controls.canonicalApproval && controls.canonicalApproval.issuer !== "friday_device_owner") {
+      throw new FridayDomainError(
+        "PROVIDER_MUTATION_APPROVAL_NOT_DEVICE_AUTHORED",
+        "Provider mutations require a device-authored owner approval; a Hub-signed or unsigned approval is refused.",
+        { httpStatus: 403, details: { action, resourceId } },
+      );
+    }
     // The digest of record is recomputed HERE, server-side, from the sanitized
     // parameters this request actually carries. The client-supplied `planDigest` is
     // only an input to that computation — it is never trusted as the truth, and any
@@ -1487,13 +1504,17 @@ export function createFridayProviderRoutes(
             { httpStatus: 400 },
           );
         }
-        if (!deps.signCanonicalApproval) {
+        // SEC-APPROVAL-AUTHORITY-001: the Hub holds NO signing key. It can only
+        // VERIFY the owner device's proof. A runtime without the asymmetric verifier
+        // fails closed — it NEVER self-mints an approval.
+        if (!deps.providerApprovalVerifier) {
           throw new FridayDomainError(
-            "PROVIDER_MUTATION_APPROVAL_SIGNER_UNAVAILABLE",
-            "This runtime cannot mint provider mutation approvals; the canonical approval signer is not wired.",
+            "PROVIDER_MUTATION_APPROVAL_VERIFIER_UNAVAILABLE",
+            "This runtime cannot verify device-authored provider approvals; the asymmetric approval verifier is not wired.",
             { httpStatus: 503 },
           );
         }
+        const deviceProof = readDeviceApprovalProof(body?.deviceApproval);
 
         pruneProviderMutationPlans();
         const record = providerMutationPlans.get(planDigest);
@@ -1519,28 +1540,78 @@ export function createFridayProviderRoutes(
           );
         }
 
+        // ─── ASYMMETRIC device proof-of-possession (verify-only; sync, no side effect) ───
         const confirmedAt = nowIso();
-        // Single-use at the plan layer too: the record is spent BEFORE the approval is
-        // minted, so a concurrent second confirm can never obtain a second signature.
-        record.confirmedAt = confirmedAt;
-
-        const canonicalApproval = deps.signCanonicalApproval(record.request, {
-          approvalIdPrefix: `provider-owner-confirm-${record.action}`,
+        const nowMs = Date.parse(confirmedAt);
+        const verified = deps.providerApprovalVerifier.verifyPossession({
+          transcript: deviceProof.transcript,
+          devicePublicKey: deviceProof.devicePublicKey,
+          signature: deviceProof.signature,
+          nowMs: Number.isFinite(nowMs) ? nowMs : Date.now(),
         });
-        if (canonicalApproval.actionDigest !== record.actionDigest) {
+        if (!verified.ok) {
+          throw new FridayDomainError(
+            "PROVIDER_MUTATION_APPROVAL_SIGNATURE_INVALID",
+            "The device-authored approval could not be verified; it was not signed by a valid owner device key over this action.",
+            { httpStatus: 403, details: { reason: verified.reason } },
+          );
+        }
+        // (1) The signed transcript must bind the EXACT reviewed action digest.
+        if (verified.actionDigest !== record.actionDigest) {
           throw new FridayDomainError(
             "PROVIDER_MUTATION_APPROVAL_DIGEST_MISMATCH",
-            "The minted approval did not bind to the reviewed plan's action digest; refusing to issue it.",
-            { httpStatus: 500 },
+            "The device-authored approval did not bind to the reviewed plan's action digest; refusing it.",
+            { httpStatus: 403 },
           );
         }
-        if (!canonicalApproval.expiresAt) {
+        // (2) The approving principal must be the authenticated owner, AND the signing
+        //     device public key must hash to that owner's bound device (the owner
+        //     principal id embeds the device key hash).
+        if (verified.decidedByPrincipalId !== ownerPrincipalId) {
           throw new FridayDomainError(
-            "PROVIDER_MUTATION_APPROVAL_EXPIRY_REQUIRED",
-            "The minted approval carried no expiry; refusing to issue it.",
-            { httpStatus: 500 },
+            "PROVIDER_MUTATION_APPROVAL_PRINCIPAL_MISMATCH",
+            "The device-authored approval was signed for a different owner principal than the confirming owner.",
+            { httpStatus: 403 },
           );
         }
+        if (deviceOwnerPrincipalId(verified.devicePublicKeyHash) !== ownerPrincipalId) {
+          throw new FridayDomainError(
+            "PROVIDER_MUTATION_APPROVAL_DEVICE_NOT_BOUND",
+            "The approval's signing device is not the owner's bound device.",
+            { httpStatus: 403 },
+          );
+        }
+        // (3) Bound expiry: present, in the future, and no longer than the max lifetime.
+        const expiresAtMs = Date.parse(verified.expiresAt);
+        if (
+          !Number.isFinite(expiresAtMs)
+          || !Number.isFinite(nowMs)
+          || expiresAtMs <= nowMs
+          || expiresAtMs - nowMs > PROVIDER_MUTATION_APPROVAL_MAX_LIFETIME_MS
+        ) {
+          throw new FridayDomainError(
+            "PROVIDER_MUTATION_APPROVAL_EXPIRY_INVALID",
+            "The device-authored approval's expiry is missing, in the past, or beyond the allowed lifetime.",
+            { httpStatus: 403 },
+          );
+        }
+
+        // Single-use at the plan layer: spend the record AFTER a successful verify
+        // (verifyPossession is synchronous, so the check-then-set below cannot
+        // interleave with a concurrent confirm of the same plan).
+        record.confirmedAt = confirmedAt;
+
+        // The Hub adds NO signature. It returns the DEVICE-AUTHORED approval, which the
+        // admission gate re-verifies asymmetrically against the same device proof.
+        const canonicalApproval: FridayCanonicalApprovalResolution = {
+          decision: "approved",
+          approvalId: verified.approvalId,
+          decidedByPrincipalId: ownerPrincipalId,
+          actionDigest: record.actionDigest,
+          expiresAt: verified.expiresAt,
+          issuer: "friday_device_owner",
+          deviceProof,
+        };
 
         return {
           approval: {
@@ -1550,7 +1621,7 @@ export function createFridayProviderRoutes(
             resourceId: record.resourceId,
             idempotencyKey: record.idempotencyKey,
             confirmedAt,
-            expiresAt: canonicalApproval.expiresAt,
+            expiresAt: verified.expiresAt,
             canonicalApproval,
           },
         };
@@ -2153,6 +2224,34 @@ function readCanonicalApproval(value: unknown): FridayCanonicalApprovalResolutio
     return value as FridayCanonicalApprovalResolution;
   }
   throw new FridayDomainError("VALIDATION_ERROR", "canonicalApproval must be an object", { httpStatus: 400 });
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Structurally validate the device-approval proof carried on the confirm body. This
+ * only checks SHAPE (the cryptographic verification is done by the asymmetric
+ * verifier); a malformed shape is a 400 so the verifier is never handed junk.
+ */
+function readDeviceApprovalProof(value: unknown): ProviderApprovalDeviceProof {
+  if (!isPlainObject(value)) {
+    throw new FridayDomainError(
+      "PROVIDER_MUTATION_APPROVAL_PROOF_REQUIRED",
+      "A device-authored approval proof (`deviceApproval`) is required to confirm a provider mutation plan.",
+      { httpStatus: 400 },
+    );
+  }
+  const { transcript, devicePublicKey, signature } = value;
+  if (!isPlainObject(transcript) || !isPlainObject(devicePublicKey) || !isPlainObject(signature)) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "deviceApproval must carry a transcript, a devicePublicKey and a signature object.",
+      { httpStatus: 400 },
+    );
+  }
+  return value as unknown as ProviderApprovalDeviceProof;
 }
 
 function stripProviderMutationControlFields<T extends Record<string, unknown>>(body: T): T {

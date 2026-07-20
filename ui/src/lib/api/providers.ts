@@ -1,4 +1,5 @@
 import { apiClient } from "./client";
+import type { ProviderApprovalDeviceProof } from "@/lib/auth/device-key";
 import type {
   FridayProviderProfile,
   FridayProviderValidationState,
@@ -135,6 +136,16 @@ export interface SetRoutingInput {
   fallbackProviderIds: string[];
   costMode?: FridayModelRoutingConfig["costMode"];
   enforceRequestedModel?: boolean;
+  /**
+   * Owner-confirm control fields (SEC-APPROVAL-AUTHORITY-001 / CORE-A CR-2 finding
+   * #3). `providers.routing.set` is a GATED mutation: in a release profile it
+   * requires an approved plan digest + a device-authored approval, exactly like
+   * create/update. Routing setup MUST flow through plan → confirm so it can never
+   * 403-after-persist and strand a created-but-unrouted provider. Absent ⇒ the gate
+   * fails closed with `PROVIDER_MUTATION_PLAN_DIGEST_REQUIRED`.
+   */
+  planDigest?: string;
+  canonicalApproval?: unknown;
 }
 
 // ─── Response wrappers ───
@@ -341,15 +352,20 @@ export const providersApi = {
 
   /**
    * Step 2: the SAME authenticated owner explicitly confirms that exact plan
-   * digest; only then does the server mint a signed, short-lived, single-use
-   * canonical approval bound to the server-computed action digest. `confirm` is
-   * always literal `true` — never defaulted, never inferred.
+   * digest by presenting a DEVICE-AUTHORED approval proof (SEC-APPROVAL-AUTHORITY-001).
+   * The Hub holds NO signing key — it only VERIFIES the owner device's P-256
+   * proof-of-possession over the reviewed action digest and returns the
+   * device-authored, single-use canonical approval. `confirm` is always literal
+   * `true` — never defaulted, never inferred.
    */
-  async confirmMutation(planDigest: string): Promise<FridayProviderMutationApproval> {
+  async confirmMutation(
+    planDigest: string,
+    deviceApproval: ProviderApprovalDeviceProof,
+  ): Promise<FridayProviderMutationApproval> {
     const data = await apiClient.post<
-      { planDigest: string; confirm: true },
+      { planDigest: string; confirm: true; deviceApproval: ProviderApprovalDeviceProof },
       ConfirmProviderMutationResponse
-    >("/v1/providers/plan/confirm", { planDigest, confirm: true });
+    >("/v1/providers/plan/confirm", { planDigest, confirm: true, deviceApproval });
     return data.approval;
   },
 

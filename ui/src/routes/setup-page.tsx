@@ -7,7 +7,13 @@ import { toast } from "sonner";
 import { healthApi } from "@/lib/api/health";
 import { providersApi } from "@/lib/api/providers";
 import type { FridayProviderMutationPlan } from "@/lib/api/providers";
-import { ProviderMutationDeclinedError, saveProviderWithValidation } from "@/lib/providers";
+import {
+  ProviderMutationDeclinedError,
+  ProviderRoutingAfterSaveError,
+  saveProviderWithRouting,
+  setRoutingWithConfirmation,
+} from "@/lib/providers";
+import { createProviderApprovalAuthor, getDeviceKeyProvider } from "@/lib/auth/device-key";
 import { setupApi } from "@/lib/api/setup";
 import { discoveryApi } from "@/lib/api/discovery";
 import type { DiscoveredProgram, IntegrationRecommendation } from "@/lib/api/discovery";
@@ -635,6 +641,20 @@ export function SetupPage() {
     };
   }
 
+  // SEC-APPROVAL-AUTHORITY-001 (CR-2): the owner DEVICE authors provider approvals.
+  // The Hub holds no signing key — this author signs a P-256 transcript with the
+  // durable device key the owner bootstrap created.
+  const providerApprovalAuthor = useMemo(
+    () => createProviderApprovalAuthor(getDeviceKeyProvider()),
+    [],
+  );
+
+  // The owner reviews the SERVER-derived, secret-free plan summary and explicitly
+  // confirms before any device approval is authored. Resolving false aborts.
+  function confirmProviderPlan(plan: FridayProviderMutationPlan): Promise<boolean> {
+    return new Promise<boolean>((resolve) => setPendingProviderPlan({ plan, resolve }));
+  }
+
   async function saveProviderDraft(
     draft: ProviderSaveDraft,
   ): Promise<{ validation: FridayProviderValidationState | undefined }> {
@@ -651,26 +671,24 @@ export function SetupPage() {
     };
 
     // Validate-before-persist via the same live create/update path the Settings
-    // page uses (validateOnSave: true). This is NOT the retired
-    // POST /v1/providers/detect route.
-    const response = await saveProviderWithValidation(
+    // page uses (validateOnSave: true), then set default-routing as PART of the
+    // SAME owner-reviewed operation. Advisor #1628 finding #3: routing is a first
+    // class confirmed, device-authored mutation, so it can NEVER 403-after-persist
+    // and strand a created-but-unrouted provider.
+    const response = await saveProviderWithRouting(
       providersApi,
       existingSameKind,
       { kind: draft.kind, ...commonPayload },
-      // CORE-A CR-2: the owner reviews the SERVER-derived, secret-free plan
-      // summary and explicitly confirms before any canonical approval is minted.
-      // Resolving false aborts the save with ProviderMutationDeclinedError.
-      (plan) => new Promise<boolean>((resolve) => setPendingProviderPlan({ plan, resolve })),
+      (provider) => ({
+        defaultProviderId: provider.id,
+        defaultModel: draft.defaultModel,
+        fallbackProviderIds: [],
+        costMode: providerCostMode,
+        enforceRequestedModel: routingConfig?.enforceRequestedModel,
+      }),
+      confirmProviderPlan,
+      providerApprovalAuthor,
     );
-    const provider = response.provider;
-
-    await providersApi.setRouting({
-      defaultProviderId: provider.id,
-      defaultModel: draft.defaultModel,
-      fallbackProviderIds: [],
-      costMode: providerCostMode,
-      enforceRequestedModel: routingConfig?.enforceRequestedModel,
-    });
 
     return { validation: response.validation };
   }
@@ -678,13 +696,18 @@ export function SetupPage() {
   async function setProviderAsDefault(providerId: string, defaultModel?: string): Promise<void> {
     setRoutingUpdatePending(true);
     try {
-      await providersApi.setRouting({
-        defaultProviderId: providerId,
-        defaultModel,
-        fallbackProviderIds: (routingConfig?.fallbackProviderIds ?? []).filter((id) => id !== providerId),
-        costMode: providerCostMode,
-        enforceRequestedModel: routingConfig?.enforceRequestedModel,
-      });
+      await setRoutingWithConfirmation(
+        providersApi,
+        {
+          defaultProviderId: providerId,
+          defaultModel,
+          fallbackProviderIds: (routingConfig?.fallbackProviderIds ?? []).filter((id) => id !== providerId),
+          costMode: providerCostMode,
+          enforceRequestedModel: routingConfig?.enforceRequestedModel,
+        },
+        confirmProviderPlan,
+        providerApprovalAuthor,
+      );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["setup", "routing-config"] }),
         queryClient.invalidateQueries({ queryKey: ["setup", "providers"] }),
@@ -828,6 +851,27 @@ export function SetupPage() {
           message: localize(locale, "已取消：未保存任何更改。", "Cancelled — nothing was saved."),
           warnings: [],
         });
+        return;
+      }
+      // Advisor #1628 finding #3: the provider WAS saved but its default-routing
+      // could not be set. Report the partial state TRUTHFULLY (the provider exists)
+      // instead of implying the key was rejected. The provider was validated, so
+      // mark it validated and tell the owner to finish routing from the list.
+      if (error instanceof ProviderRoutingAfterSaveError) {
+        setProviderValidated(true);
+        void queryClient.invalidateQueries({ queryKey: ["setup", "providers"] });
+        void queryClient.invalidateQueries({ queryKey: ["shell", "provider-truth"] });
+        setProviderFeedback({
+          status: "error",
+          kind: providerKind,
+          message: localize(
+            locale,
+            `提供方“${error.provider.name}”已保存，但默认路由未设置。请在提供方列表中将其设为默认。`,
+            `Provider "${error.provider.name}" was saved, but default routing was not set. Set it as default from the provider list.`,
+          ),
+          warnings: [],
+        });
+        toast.error(localize(locale, "提供方已保存，但路由未设置", "Provider saved, but routing was not set"));
         return;
       }
       // Validate-before-persist rejected the key (e.g. invalid / unreachable):

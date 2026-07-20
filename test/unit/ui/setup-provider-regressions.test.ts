@@ -16,13 +16,12 @@ describe("setup provider regressions", () => {
   it("saves the detected provider kind instead of overwriting the first existing provider", () => {
     const setupSource = readFileSync("ui/src/routes/setup-page.tsx", "utf8");
 
-    // The setup save now routes through the shared validate-before-persist
-    // helper, resolving an existing provider by kind (not overwriting the first).
-    // Same axis as before (the helper is called with `providersApi` and the
-    // same-KIND lookup, in that order) but tolerant of argument wrapping: the
-    // call gained a 4th argument (the CORE-A CR-2 owner-confirm callback) and is
-    // now formatted multi-line.
-    expect(setupSource).toMatch(/saveProviderWithValidation\(\s*providersApi,\s*existingSameKind,/);
+    // The setup save now routes through the shared confirmed save+routing helper
+    // (SEC-APPROVAL-AUTHORITY-001 / CR-2 finding #3), resolving an existing provider
+    // by kind (not overwriting the first). Same axis as before (the helper is called
+    // with `providersApi` and the same-KIND lookup, in that order) but tolerant of
+    // argument wrapping: create + routing are now ONE owner-reviewed operation.
+    expect(setupSource).toMatch(/saveProviderWithRouting\(\s*providersApi,\s*existingSameKind,/);
     expect(setupSource).toContain("existingProviders.find((provider) => provider.kind === draft.kind)");
     expect(setupSource).toContain("saveProviderMutation.mutate(buildCurrentProviderSaveDraft()");
     expect(setupSource).not.toContain("const existing = existingProviders[0]");

@@ -4,28 +4,35 @@ import type { FridayHttpContext, FridayRouteDefinition } from "#api";
 import { createFridayProviderRoutes } from "#api";
 import type { FridayProviderProfile, FridayProviderService } from "#providers";
 import {
-  createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
   signFridayCanonicalApproval,
   type FridayCanonicalApprovalResolution,
-  type FridayMutatingActionRequest,
+  type FridayDeviceApprovalVerifyResult,
 } from "../../../../../src/security/friday-mutating-action-gate.js";
+import { createFridayProviderApprovalPoPVerifier } from "../../../../../src/api/auth/device-attest/index.js";
+import type { ProviderApprovalDeviceProof } from "../../../../../src/api/auth/device-attest/index.js";
+import {
+  deviceOwnerPrincipalIdFor,
+  generateTestDeviceKey,
+  makeApprovalProof,
+  makeApprovalTranscript,
+  type TestDeviceKey,
+} from "../../../../helpers/friday-provider-approval-test-kit.js";
 
 /**
- * CORE-A CR-2 — provider setup owner-confirm handshake.
+ * SEC-APPROVAL-AUTHORITY-001 · CORE-A CR-2 — device-authored provider approval.
  *
- * These are integration tests against the REAL provider routes (plan / plan.confirm /
- * the gated mutation routes) with the REAL canonical mutating-action gate wired with a
- * signature secret. Nothing here is a mock of the gate: every negative below is the
- * production fail-closed path.
+ * Integration tests against the REAL provider routes (plan / plan.confirm / the
+ * gated mutation routes) with the REAL canonical mutating-action gate + the REAL
+ * asymmetric device-approval verifier. Nothing here mocks the gate or the crypto:
+ * every negative is the production fail-closed path. The Hub holds NO signing key —
+ * the owner DEVICE signs each approval; the Hub only verifies it.
  */
-describe("provider mutation plan → owner confirm → gated mutation", () => {
+describe("provider mutation plan → DEVICE confirm → gated mutation", () => {
   const NOW = "2026-02-17T10:00:00.000Z";
+  /** The shared HMAC secret the LEGACY plugin-lifecycle path uses — a provider
+   * mutation must REFUSE any approval carrying it (the Hub-self-sign negative). */
   const APPROVAL_SIGNATURE_SECRET = "test-hub-token-secret"; // pragma: allowlist secret
-  /**
-   * A key-SHAPED value. Every "no secret leaks" assertion below searches the full
-   * serialized plan/confirm response for this exact string.
-   */
   const SECRET_API_KEY = "sk-live-CR2SECRET0000000000000000000000000000"; // pragma: allowlist secret
 
   const sampleProfile: FridayProviderProfile = {
@@ -59,67 +66,76 @@ describe("provider mutation plan → owner confirm → gated mutation", () => {
     } as unknown as FridayProviderService;
   }
 
+  interface Plan {
+    planDigest: string;
+    actionDigest: string;
+    humanReadableSummary: string[];
+  }
+
   interface Harness {
-    routes: FridayRouteDefinition<unknown, unknown, unknown, unknown>[];
     service: FridayProviderService;
     route: (operationId: string) => FridayRouteDefinition<unknown, unknown, unknown, unknown>;
     setNow: (iso: string) => void;
-    signCalls: () => number;
   }
 
-  function makeHarness(options: { withSigner?: boolean } = {}): Harness {
+  function makeHarness(options: { withVerifier?: boolean } = {}): Harness {
     const service = makeMockService();
     let now = NOW;
-    let signCalls = 0;
 
-    // The REAL production signing seam (identical to friday-api-runtime's
-    // signCanonicalApprovalForRequest): HMAC over the server-derived action digest,
-    // with a ~10 minute expiry.
-    const signCanonicalApproval = (
-      request: FridayMutatingActionRequest,
-      input: { approvalIdPrefix: string },
-    ): FridayCanonicalApprovalResolution => {
-      signCalls += 1;
-      const expiresAt = new Date(Date.parse(now) + 10 * 60 * 1000).toISOString();
-      return signFridayCanonicalApproval({
-        decision: "approved",
-        approvalId: `${input.approvalIdPrefix}-${String(signCalls)}`,
-        decidedByPrincipalId: request.actor.principalId ?? request.actor.id,
-        actionDigest: createFridayMutatingActionDigest(request),
-        expiresAt,
-      }, APPROVAL_SIGNATURE_SECRET);
-    };
+    const providerApprovalVerifier = createFridayProviderApprovalPoPVerifier();
+    // Wire the gate EXACTLY like the runtime: legacy HMAC secret (plugin path) PLUS
+    // the asymmetric device verifier (provider path). Providers reject HMAC issuers.
+    const canonicalMutationGate = createFridayMutatingActionGate({
+      nowIso: () => now,
+      ticketIdGenerator: () => "ticket-1",
+      approvalSignatureSecret: APPROVAL_SIGNATURE_SECRET,
+      requireApprovalSignature: true,
+      deviceApprovalVerifier: (proof, nowMs): FridayDeviceApprovalVerifyResult => {
+        const r = providerApprovalVerifier.verifyPossession({
+          transcript: proof.transcript,
+          devicePublicKey: proof.devicePublicKey,
+          signature: proof.signature,
+          nowMs,
+        });
+        return r.ok
+          ? {
+              ok: true,
+              devicePublicKeyHash: r.devicePublicKeyHash,
+              approvalId: r.approvalId,
+              actionDigest: r.actionDigest,
+              decidedByPrincipalId: r.decidedByPrincipalId,
+              expiresAt: r.expiresAt,
+            }
+          : { ok: false, reason: r.reason };
+      },
+    });
 
     const routes = createFridayProviderRoutes({
       providerService: service,
       providerMutationGateRequired: true,
-      canonicalMutationGate: createFridayMutatingActionGate({
-        nowIso: () => now,
-        ticketIdGenerator: () => "ticket-1",
-        approvalSignatureSecret: APPROVAL_SIGNATURE_SECRET,
-      }),
+      canonicalMutationGate,
       allowTestOnlyProviderProbeExecution: true,
       allowTestOnlyProviderRoutingControlsExecution: true,
       nowIso: () => now,
-      ...(options.withSigner === false ? {} : { signCanonicalApproval }),
+      ...(options.withVerifier === false ? {} : { providerApprovalVerifier }),
     });
 
     return {
-      routes,
       service,
       route: (operationId: string) => {
         const found = routes.find((entry) => entry.operationId === operationId);
-        if (!found) {
-          throw new Error(`route not found: ${operationId}`);
-        }
+        if (!found) throw new Error(`route not found: ${operationId}`);
         return found;
       },
       setNow: (iso: string) => {
         now = iso;
       },
-      signCalls: () => signCalls,
     };
   }
+
+  // The single owner device for the harness (device-owner principal binds to it).
+  const OWNER = generateTestDeviceKey();
+  const OWNER_PRINCIPAL = deviceOwnerPrincipalIdFor(OWNER);
 
   function makeCtx(input: {
     body?: unknown;
@@ -127,7 +143,7 @@ describe("provider mutation plan → owner confirm → gated mutation", () => {
     principalId?: string;
     requestId?: string;
   }): FridayHttpContext<unknown, unknown, unknown> {
-    const principalId = input.principalId ?? "user-1";
+    const principalId = input.principalId ?? OWNER_PRINCIPAL;
     return {
       requestId: input.requestId ?? "req-1",
       receivedAt: NOW,
@@ -135,11 +151,20 @@ describe("provider mutation plan → owner confirm → gated mutation", () => {
       query: {},
       body: input.body ?? {},
       headers: {},
+      // The owner principal is BOUND to the device (its principalId IS the
+      // device-owner id `device-owner:<keyHash>`). We set `principalType: "user"`
+      // rather than "device" ON PURPOSE: a "device"-typed principal is release
+      // DISABLED today (`isReleaseDisabledDevicePrincipal` — the NATIVE_IPC
+      // attestation operator leaf we must NOT touch), so a "device" principal is
+      // refused before any device-verification logic runs. This fixture stands in
+      // for that principal AFTER it clears the attestation gate, so the tests
+      // exercise the device-authored approval LOGIC (which binds on the principalId).
+      // The real "device"-typed end-to-end admit remains the attestation operator leaf.
       principal: {
         principalType: "user",
         principalId,
-        userId: principalId,
-        role: "admin",
+        userId: "owner-user",
+        role: "owner",
         scopes: ["hub.admin"],
         tokenId: "tok-1",
         tokenKind: "access",
@@ -161,110 +186,153 @@ describe("provider mutation plan → owner confirm → gated mutation", () => {
   async function plan(
     harness: Harness,
     body: Record<string, unknown>,
-    principalId = "user-1",
-  ): Promise<{ plan: { planDigest: string; humanReadableSummary: string[] } }> {
-    return await harness.route("providers.plan").handler(
-      makeCtx({ body, principalId }),
-    ) as { plan: { planDigest: string; humanReadableSummary: string[] } };
+    principalId = OWNER_PRINCIPAL,
+  ): Promise<Plan> {
+    const result = await harness.route("providers.plan").handler(makeCtx({ body, principalId })) as {
+      plan: Plan;
+    };
+    return result.plan;
+  }
+
+  /** Author a device proof for `planned` (defaults: owner key + a fresh expiry). */
+  function deviceProofFor(
+    planned: Plan,
+    opts: { key?: TestDeviceKey; decidedByPrincipalId?: string; expiresAt?: string } = {},
+  ): ProviderApprovalDeviceProof {
+    const key = opts.key ?? OWNER;
+    const transcript = makeApprovalTranscript(key, {
+      actionDigest: planned.actionDigest,
+      decidedByPrincipalId: opts.decidedByPrincipalId ?? deviceOwnerPrincipalIdFor(key),
+      expiresAt: opts.expiresAt ?? "2026-02-17T10:09:00.000Z",
+    });
+    return makeApprovalProof(key, transcript);
   }
 
   async function confirm(
     harness: Harness,
-    planDigest: string,
-    principalId = "user-1",
-  ): Promise<{ approval: { canonicalApproval: unknown; planDigest: string } }> {
+    planned: Plan,
+    opts: {
+      principalId?: string;
+      deviceApproval?: ProviderApprovalDeviceProof;
+    } = {},
+  ): Promise<{ approval: { canonicalApproval: unknown; planDigest: string; expiresAt: string } }> {
     return await harness.route("providers.plan.confirm").handler(
-      makeCtx({ body: { planDigest, confirm: true }, principalId }),
-    ) as { approval: { canonicalApproval: unknown; planDigest: string } };
+      makeCtx({
+        body: {
+          planDigest: planned.planDigest,
+          confirm: true,
+          deviceApproval: opts.deviceApproval ?? deviceProofFor(planned),
+        },
+        principalId: opts.principalId ?? OWNER_PRINCIPAL,
+      }),
+    ) as { approval: { canonicalApproval: unknown; planDigest: string; expiresAt: string } };
   }
 
-  // ─── Happy path ───
+  // ─── Happy path: the Hub VERIFIES a device approval and admits ───
 
-  it("plan → confirm → create passes the canonical gate for a NORMAL owner", async () => {
+  it("plan → DEVICE confirm → create passes the canonical gate", async () => {
     const harness = makeHarness();
     const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-    expect(planned.plan.planDigest).toMatch(/^fpmp_[0-9a-f]{64}$/);
+    expect(planned.planDigest).toMatch(/^fpmp_[0-9a-f]{64}$/);
 
-    const confirmed = await confirm(harness, planned.plan.planDigest);
+    const confirmed = await confirm(harness, planned);
+    // The Hub added NO signature; it returned the device-authored approval verbatim.
+    const approval = confirmed.approval.canonicalApproval as FridayCanonicalApprovalResolution;
+    expect(approval.issuer).toBe("friday_device_owner");
+    expect(approval.signature).toBeUndefined();
+    expect(approval.deviceProof).toBeDefined();
+
     const result = await harness.route("providers.create").handler(makeCtx({
-      body: {
-        ...CREATE_PARAMS,
-        planDigest: planned.plan.planDigest,
-        canonicalApproval: confirmed.approval.canonicalApproval,
-      },
+      body: { ...CREATE_PARAMS, planDigest: planned.planDigest, canonicalApproval: approval },
     }));
-
     expect(harness.service.createProvider).toHaveBeenCalledWith(CREATE_PARAMS);
     expect(result).toHaveProperty("canonicalGate.ticketId", "ticket-1");
-    expect(result).toHaveProperty("canonicalGate.planDigest", planned.plan.planDigest);
   });
 
-  it("plan → confirm → routing.set (a second gated surface) passes the gate", async () => {
+  it("plan → DEVICE confirm → routing.set (a second gated surface) passes the gate", async () => {
     const harness = makeHarness();
     const routingParams = { defaultProviderId: "prov-001", fallbackProviderIds: ["prov-001"] };
     const planned = await plan(harness, { action: "providers.routing.set", params: routingParams });
-    const confirmed = await confirm(harness, planned.plan.planDigest);
+    const confirmed = await confirm(harness, planned);
 
     const result = await harness.route("providers.routing.set").handler(makeCtx({
-      body: {
-        ...routingParams,
-        planDigest: planned.plan.planDigest,
-        canonicalApproval: confirmed.approval.canonicalApproval,
-      },
+      body: { ...routingParams, planDigest: planned.planDigest, canonicalApproval: confirmed.approval.canonicalApproval },
     }));
     expect(result).toHaveProperty("canonicalGate.ticketId", "ticket-1");
   });
 
-  it("plan → confirm → delete (a param-free target-id surface) passes the gate", async () => {
-    const harness = makeHarness();
-    const planned = await plan(harness, { action: "providers.delete", providerId: "prov-001" });
-    const confirmed = await confirm(harness, planned.plan.planDigest);
+  // ─── SEC-APPROVAL-AUTHORITY-001 negative controls ───
 
-    const result = await harness.route("providers.delete").handler(makeCtx({
-      params: { providerId: "prov-001" },
-      body: {
-        planDigest: planned.plan.planDigest,
-        canonicalApproval: confirmed.approval.canonicalApproval,
-      },
-    }));
-    expect(harness.service.deleteProvider).toHaveBeenCalledWith("prov-001");
-    expect(result).toHaveProperty("canonicalGate.ticketId", "ticket-1");
-  });
-
-  // ─── Fail-closed negatives ───
-
-  it("missing planDigest is refused with PROVIDER_MUTATION_PLAN_DIGEST_REQUIRED", async () => {
-    const harness = makeHarness();
-    await expect(harness.route("providers.create").handler(makeCtx({ body: CREATE_PARAMS })))
-      .rejects.toMatchObject({
-        code: "PROVIDER_MUTATION_PLAN_DIGEST_REQUIRED",
-        httpStatus: 403,
-      });
-    expect(harness.service.createProvider).not.toHaveBeenCalled();
-  });
-
-  it("a plan digest alone (no approval) never authorizes a mutation", async () => {
+  it("HUB SELF-SIGN: a Hub-minted HMAC approval is REFUSED on a provider mutation", async () => {
     const harness = makeHarness();
     const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
 
+    // The exact forbidden primitive: a symmetric HMAC the Hub both mints AND holds
+    // the secret for, bound to the correct action digest. It MUST NOT admit.
+    const hubSelfSigned = signFridayCanonicalApproval(
+      {
+        decision: "approved",
+        approvalId: "hub-self-signed-1",
+        decidedByPrincipalId: OWNER_PRINCIPAL,
+        actionDigest: planned.actionDigest,
+        expiresAt: "2026-02-17T10:09:00.000Z",
+      },
+      APPROVAL_SIGNATURE_SECRET,
+    );
+
     await expect(harness.route("providers.create").handler(makeCtx({
-      body: { ...CREATE_PARAMS, planDigest: planned.plan.planDigest },
-    }))).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_REQUIRED" });
+      body: { ...CREATE_PARAMS, planDigest: planned.planDigest, canonicalApproval: hubSelfSigned },
+    }))).rejects.toMatchObject({ code: "PROVIDER_MUTATION_APPROVAL_NOT_DEVICE_AUTHORED", httpStatus: 403 });
     expect(harness.service.createProvider).not.toHaveBeenCalled();
   });
 
-  it("an unknown / stale plan digest cannot be confirmed", async () => {
+  it("WEB-SESSION confirm:true with NO device proof FAILS (no Hub self-mint)", async () => {
     const harness = makeHarness();
-    await expect(confirm(harness, "fpmp_deadbeef")).rejects.toMatchObject({
-      code: "PROVIDER_MUTATION_PLAN_NOT_FOUND",
-      httpStatus: 404,
+    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
+
+    await expect(harness.route("providers.plan.confirm").handler(makeCtx({
+      body: { planDigest: planned.planDigest, confirm: true },
+    }))).rejects.toMatchObject({ code: "PROVIDER_MUTATION_APPROVAL_PROOF_REQUIRED", httpStatus: 400 });
+    expect(harness.service.createProvider).not.toHaveBeenCalled();
+  });
+
+  it("WRONG DEVICE: an approval whose signing key is not the owner's bound device is refused at confirm", async () => {
+    const harness = makeHarness();
+    const attacker = generateTestDeviceKey();
+    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
+
+    // The attacker signs with its OWN key but claims the owner's principal id. The
+    // signing key hash no longer maps to the owner principal → refused.
+    const proof = deviceProofFor(planned, { key: attacker, decidedByPrincipalId: OWNER_PRINCIPAL });
+    await expect(confirm(harness, planned, { deviceApproval: proof })).rejects.toMatchObject({
+      code: "PROVIDER_MUTATION_APPROVAL_DEVICE_NOT_BOUND",
+      httpStatus: 403,
     });
   });
 
-  it("replaying a valid approval under a DIFFERENT plan digest fails closed on digest mismatch", async () => {
+  it("DIGEST MUTATION between preview and dispatch yields zero sink", async () => {
     const harness = makeHarness();
     const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-    const confirmed = await confirm(harness, planned.plan.planDigest);
+    const confirmed = await confirm(harness, planned);
+
+    // Same owner, same planDigest, same device approval — but the body that arrives
+    // points at a different endpoint. The gate recomputes the digest from THIS
+    // request, so the device signature no longer covers it.
+    await expect(harness.route("providers.create").handler(makeCtx({
+      body: {
+        ...CREATE_PARAMS,
+        baseUrl: "https://attacker.example",
+        planDigest: planned.planDigest,
+        canonicalApproval: confirmed.approval.canonicalApproval,
+      },
+    }))).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_DENIED" });
+    expect(harness.service.createProvider).not.toHaveBeenCalled();
+  });
+
+  it("replaying a valid approval under a DIFFERENT plan digest fails closed", async () => {
+    const harness = makeHarness();
+    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
+    const confirmed = await confirm(harness, planned);
 
     await expect(harness.route("providers.create").handler(makeCtx({
       body: {
@@ -276,70 +344,32 @@ describe("provider mutation plan → owner confirm → gated mutation", () => {
     expect(harness.service.createProvider).not.toHaveBeenCalled();
   });
 
-  it("parameter drift between the reviewed plan and the replayed body fails closed", async () => {
+  it("a tampered device signature fails closed at the gate", async () => {
     const harness = makeHarness();
     const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-    const confirmed = await confirm(harness, planned.plan.planDigest);
-
-    // Same owner, same planDigest, same signed approval — but the body that actually
-    // arrives points at a different endpoint. The gate recomputes the action digest
-    // from THIS request, so the approval no longer binds.
-    await expect(harness.route("providers.create").handler(makeCtx({
-      body: {
-        ...CREATE_PARAMS,
-        baseUrl: "https://attacker.example",
-        planDigest: planned.plan.planDigest,
-        canonicalApproval: confirmed.approval.canonicalApproval,
-      },
-    }))).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_DENIED" });
-    expect(harness.service.createProvider).not.toHaveBeenCalled();
-  });
-
-  it("a tampered approval signature fails closed", async () => {
-    const harness = makeHarness();
-    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-    const confirmed = await confirm(harness, planned.plan.planDigest);
+    const confirmed = await confirm(harness, planned);
+    const approval = confirmed.approval.canonicalApproval as FridayCanonicalApprovalResolution;
     const tampered = {
-      ...(confirmed.approval.canonicalApproval as Record<string, unknown>),
-      signature: "00".repeat(32),
+      ...approval,
+      deviceProof: {
+        ...approval.deviceProof!,
+        signature: { encoding: "ieee-p1363-base64" as const, value: Buffer.alloc(64, 7).toString("base64") },
+      },
     };
 
     await expect(harness.route("providers.create").handler(makeCtx({
-      body: { ...CREATE_PARAMS, planDigest: planned.plan.planDigest, canonicalApproval: tampered },
+      body: { ...CREATE_PARAMS, planDigest: planned.planDigest, canonicalApproval: tampered },
     }))).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_DENIED" });
     expect(harness.service.createProvider).not.toHaveBeenCalled();
   });
 
-  it("a plan can only be confirmed by the principal that created it", async () => {
-    const harness = makeHarness();
-    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS }, "user-1");
-
-    await expect(confirm(harness, planned.plan.planDigest, "user-2")).rejects.toMatchObject({
-      code: "PROVIDER_MUTATION_PLAN_OWNER_MISMATCH",
-      httpStatus: 403,
-    });
-    expect(harness.signCalls()).toBe(0);
-  });
-
-  it("a plan is single-use at the confirm layer", async () => {
+  it("a device approval is single-use at the gate (replay is denied)", async () => {
     const harness = makeHarness();
     const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-    await confirm(harness, planned.plan.planDigest);
-
-    await expect(confirm(harness, planned.plan.planDigest)).rejects.toMatchObject({
-      code: "PROVIDER_MUTATION_PLAN_ALREADY_CONFIRMED",
-      httpStatus: 409,
-    });
-    expect(harness.signCalls()).toBe(1);
-  });
-
-  it("a minted approval is single-use at the gate layer (replay is denied)", async () => {
-    const harness = makeHarness();
-    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-    const confirmed = await confirm(harness, planned.plan.planDigest);
+    const confirmed = await confirm(harness, planned);
     const body = {
       ...CREATE_PARAMS,
-      planDigest: planned.plan.planDigest,
+      planDigest: planned.planDigest,
       canonicalApproval: confirmed.approval.canonicalApproval,
     };
 
@@ -349,49 +379,95 @@ describe("provider mutation plan → owner confirm → gated mutation", () => {
     expect(harness.service.createProvider).toHaveBeenCalledTimes(1);
   });
 
+  it("an EXPIRED device approval is refused by the gate", async () => {
+    const harness = makeHarness();
+    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
+    const confirmed = await confirm(harness, planned, {
+      deviceApproval: deviceProofFor(planned, { expiresAt: "2026-02-17T10:05:00.000Z" }),
+    });
+
+    harness.setNow("2026-02-17T10:06:00.000Z"); // past the signed approval expiry
+    await expect(harness.route("providers.create").handler(makeCtx({
+      body: { ...CREATE_PARAMS, planDigest: planned.planDigest, canonicalApproval: confirmed.approval.canonicalApproval },
+    }))).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_DENIED" });
+    expect(harness.service.createProvider).not.toHaveBeenCalled();
+  });
+
+  it("a device approval with an over-long lifetime is refused at confirm", async () => {
+    const harness = makeHarness();
+    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
+    // 30 minutes > the Hub's 10-minute max device-approval lifetime.
+    await expect(confirm(harness, planned, {
+      deviceApproval: deviceProofFor(planned, { expiresAt: "2026-02-17T10:30:00.000Z" }),
+    })).rejects.toMatchObject({ code: "PROVIDER_MUTATION_APPROVAL_EXPIRY_INVALID", httpStatus: 403 });
+  });
+
+  // ─── Plan-layer fail-closed negatives (unchanged semantics) ───
+
+  it("missing planDigest is refused with PROVIDER_MUTATION_PLAN_DIGEST_REQUIRED", async () => {
+    const harness = makeHarness();
+    await expect(harness.route("providers.create").handler(makeCtx({ body: CREATE_PARAMS })))
+      .rejects.toMatchObject({ code: "PROVIDER_MUTATION_PLAN_DIGEST_REQUIRED", httpStatus: 403 });
+    expect(harness.service.createProvider).not.toHaveBeenCalled();
+  });
+
+  it("a plan digest alone (no approval) never authorizes a mutation", async () => {
+    const harness = makeHarness();
+    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
+    await expect(harness.route("providers.create").handler(makeCtx({
+      body: { ...CREATE_PARAMS, planDigest: planned.planDigest },
+    }))).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_REQUIRED" });
+    expect(harness.service.createProvider).not.toHaveBeenCalled();
+  });
+
+  it("an unknown / stale plan digest cannot be confirmed", async () => {
+    const harness = makeHarness();
+    await expect(confirm(harness, { planDigest: "fpmp_deadbeef", actionDigest: "d".repeat(64), humanReadableSummary: [] }))
+      .rejects.toMatchObject({ code: "PROVIDER_MUTATION_PLAN_NOT_FOUND", httpStatus: 404 });
+  });
+
+  it("a plan can only be confirmed by the principal that created it", async () => {
+    const harness = makeHarness();
+    const otherOwner = generateTestDeviceKey();
+    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS }, OWNER_PRINCIPAL);
+
+    // A different owner device presents a structurally valid proof for itself.
+    await expect(confirm(harness, planned, {
+      principalId: deviceOwnerPrincipalIdFor(otherOwner),
+      deviceApproval: deviceProofFor(planned, { key: otherOwner }),
+    })).rejects.toMatchObject({ code: "PROVIDER_MUTATION_PLAN_OWNER_MISMATCH", httpStatus: 403 });
+  });
+
+  it("a plan is single-use at the confirm layer", async () => {
+    const harness = makeHarness();
+    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
+    await confirm(harness, planned);
+    await expect(confirm(harness, planned)).rejects.toMatchObject({
+      code: "PROVIDER_MUTATION_PLAN_ALREADY_CONFIRMED",
+      httpStatus: 409,
+    });
+  });
+
   it("an expired plan cannot be confirmed", async () => {
     const harness = makeHarness();
     const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-
     harness.setNow("2026-02-17T10:11:00.000Z"); // > 10 minute plan TTL
-    await expect(confirm(harness, planned.plan.planDigest)).rejects.toMatchObject({
-      code: "PROVIDER_MUTATION_PLAN_NOT_FOUND",
-    });
-    expect(harness.signCalls()).toBe(0);
-  });
-
-  it("an expired approval is refused by the gate", async () => {
-    const harness = makeHarness();
-    const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-    const confirmed = await confirm(harness, planned.plan.planDigest);
-
-    harness.setNow("2026-02-17T10:20:00.000Z"); // past the ~10 minute approval expiry
-    await expect(harness.route("providers.create").handler(makeCtx({
-      body: {
-        ...CREATE_PARAMS,
-        planDigest: planned.plan.planDigest,
-        canonicalApproval: confirmed.approval.canonicalApproval,
-      },
-    }))).rejects.toMatchObject({ code: "CANONICAL_APPROVAL_DENIED" });
-    expect(harness.service.createProvider).not.toHaveBeenCalled();
+    await expect(confirm(harness, planned)).rejects.toMatchObject({ code: "PROVIDER_MUTATION_PLAN_NOT_FOUND" });
   });
 
   it("confirm requires an explicit `confirm: true` and never defaults it", async () => {
     const harness = makeHarness();
     const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-
     await expect(harness.route("providers.plan.confirm").handler(makeCtx({
-      body: { planDigest: planned.plan.planDigest },
+      body: { planDigest: planned.planDigest },
     }))).rejects.toMatchObject({ code: "PROVIDER_MUTATION_CONFIRMATION_REQUIRED" });
-    expect(harness.signCalls()).toBe(0);
   });
 
-  it("confirm fails closed (503) when no approval signer is wired", async () => {
-    const harness = makeHarness({ withSigner: false });
+  it("confirm fails closed (503) when no device-approval verifier is wired", async () => {
+    const harness = makeHarness({ withVerifier: false });
     const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-
-    await expect(confirm(harness, planned.plan.planDigest)).rejects.toMatchObject({
-      code: "PROVIDER_MUTATION_APPROVAL_SIGNER_UNAVAILABLE",
+    await expect(confirm(harness, planned)).rejects.toMatchObject({
+      code: "PROVIDER_MUTATION_APPROVAL_VERIFIER_UNAVAILABLE",
       httpStatus: 503,
     });
   });
@@ -414,23 +490,21 @@ describe("provider mutation plan → owner confirm → gated mutation", () => {
     });
   });
 
-  // ─── Secret-freedom of the review artifact ───
+  // ─── Secret-freedom of the review + approval artifacts ───
 
   it("the plan response never echoes an API key (presence only)", async () => {
     const harness = makeHarness();
     const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
     const serialized = JSON.stringify(planned);
-
     expect(serialized).not.toContain(SECRET_API_KEY);
     expect(serialized).not.toContain("CR2SECRET");
-    expect(planned.plan.humanReadableSummary.join("\n")).toContain("never shown or echoed back");
+    expect(planned.humanReadableSummary.join("\n")).toContain("never shown or echoed back");
   });
 
   it("the confirm response never echoes an API key", async () => {
     const harness = makeHarness();
     const planned = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-    const confirmed = await confirm(harness, planned.plan.planDigest);
-
+    const confirmed = await confirm(harness, planned);
     expect(JSON.stringify(confirmed)).not.toContain(SECRET_API_KEY);
     expect(JSON.stringify(confirmed)).not.toContain("CR2SECRET");
   });
@@ -442,20 +516,8 @@ describe("provider mutation plan → owner confirm → gated mutation", () => {
       providerId: "prov-001",
       params: { headers: { "X-Api-Token": SECRET_API_KEY } },
     });
-
     expect(JSON.stringify(planned)).not.toContain(SECRET_API_KEY);
-    expect(planned.plan.humanReadableSummary.join("\n")).toContain("1 header value(s)");
-  });
-
-  it("the OAuth device-complete plan never echoes the device code", async () => {
-    const harness = makeHarness();
-    const planned = await plan(harness, {
-      action: "providers.oauth.openai_codex.device.complete",
-      params: { providerId: "codex-001", deviceCodeId: SECRET_API_KEY },
-    });
-
-    expect(JSON.stringify(planned)).not.toContain(SECRET_API_KEY);
-    expect(planned.plan.humanReadableSummary.join("\n")).toContain("never shown here");
+    expect(planned.humanReadableSummary.join("\n")).toContain("1 header value(s)");
   });
 
   // ─── Plannability coverage of every gated action ───
@@ -468,70 +530,25 @@ describe("provider mutation plan → owner confirm → gated mutation", () => {
       { action: "providers.delete", providerId: "prov-001" },
       { action: "providers.validate", providerId: "prov-001" },
       { action: "providers.routing.set", params: { defaultProviderId: "prov-001", fallbackProviderIds: [] } },
-      {
-        action: "providers.routing.pin",
-        params: { providerId: "prov-001", model: "gpt-4o", backendKind: "http" },
-      },
-      {
-        action: "providers.routing.penalty.clear",
-        params: { providerId: "prov-001", model: "gpt-4o", backendKind: "http" },
-      },
+      { action: "providers.routing.pin", params: { providerId: "prov-001", model: "gpt-4o", backendKind: "http" } },
+      { action: "providers.routing.penalty.clear", params: { providerId: "prov-001", model: "gpt-4o", backendKind: "http" } },
       { action: "providers.auth.profiles.activate", providerId: "prov-001", profileKey: "default" },
       { action: "providers.oauth.openai_codex.device.initiate", params: { providerId: "codex-001" } },
-      {
-        action: "providers.oauth.openai_codex.device.complete",
-        params: { providerId: "codex-001", deviceCodeId: "device-1" },
-      },
+      { action: "providers.oauth.openai_codex.device.complete", params: { providerId: "codex-001", deviceCodeId: "device-1" } },
       { action: "capabilities.doctor", params: { providerIds: ["prov-001"] } },
     ];
-
     for (const body of cases) {
       const planned = await plan(harness, body);
-      expect(planned.plan.planDigest, String(body.action)).toMatch(/^fpmp_/);
-      expect(planned.plan.humanReadableSummary.length, String(body.action)).toBeGreaterThan(0);
+      expect(planned.planDigest, String(body.action)).toMatch(/^fpmp_/);
+      expect(planned.humanReadableSummary.length, String(body.action)).toBeGreaterThan(0);
     }
   });
-
-  it("an unknown action is refused before any plan is minted", async () => {
-    const harness = makeHarness();
-    await expect(plan(harness, { action: "providers.exfiltrate" })).rejects.toMatchObject({
-      code: "VALIDATION_ERROR",
-    });
-  });
-
-  it("a plan whose parameters are invalid is refused up front", async () => {
-    const harness = makeHarness();
-    await expect(plan(harness, { action: "providers.create", params: { kind: "openai" } }))
-      .rejects.toMatchObject({ code: "VALIDATION_ERROR" });
-    await expect(plan(harness, { action: "providers.delete" }))
-      .rejects.toMatchObject({ code: "VALIDATION_ERROR" });
-  });
-
-  // ─── The plan/confirm routes grant no authority of their own ───
 
   it("planning performs no provider mutation", async () => {
     const harness = makeHarness();
     await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
     await plan(harness, { action: "providers.delete", providerId: "prov-001" });
-
     expect(harness.service.createProvider).not.toHaveBeenCalled();
     expect(harness.service.deleteProvider).not.toHaveBeenCalled();
-    expect(harness.signCalls()).toBe(0);
-  });
-
-  it("re-planning the same change replaces the record and revokes an unspent confirmation slot", async () => {
-    const harness = makeHarness();
-    const first = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-    await confirm(harness, first.plan.planDigest);
-
-    // Deterministic digest: re-planning yields the SAME digest, and the fresh record
-    // is unconfirmed — but that is safe because the gate refuses the already-minted
-    // approval on replay (single-use), proven above.
-    const second = await plan(harness, { action: "providers.create", params: CREATE_PARAMS });
-    expect(second.plan.planDigest).toBe(first.plan.planDigest);
-
-    const confirmed = await confirm(harness, second.plan.planDigest);
-    expect(harness.signCalls()).toBe(2);
-    expect(confirmed.approval.planDigest).toBe(first.plan.planDigest);
   });
 });

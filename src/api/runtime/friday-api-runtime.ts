@@ -207,11 +207,13 @@ import {
   createFridayMutatingActionDigest,
   createFridayMutatingActionGate,
   type FridayCanonicalApprovalResolution,
+  type FridayDeviceApprovalVerifyResult,
   type FridayMutatingActionActor,
   type FridayMutatingActionRequest,
   type FridayMutatingActionTicket,
   signFridayCanonicalApproval,
 } from "../../security/friday-mutating-action-gate.js";
+import { createFridayProviderApprovalPoPVerifier } from "../auth/device-attest/index.js";
 import {
   assertBoundPrincipalAuthorityForOperation,
   assertBoundPrincipalForOperation,
@@ -1964,11 +1966,36 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const refreshTokenTtlSec = deps.refreshTokenTtlSec ?? DEFAULT_REFRESH_TTL;
   const serverVersion = deps.serverVersion ?? "1.0.0";
   const stateDir = deps.stateDir ?? ".";
+  // SEC-APPROVAL-AUTHORITY-001 (CORE-A CR-2): the ASYMMETRIC device-approval
+  // verifier. The Hub holds ONLY the public key on the provider approval path —
+  // it verifies the owner device's P-256 proof-of-possession and NEVER signs. The
+  // legacy symmetric `approvalSignatureSecret` remains ONLY for the plugin/mcp/
+  // channel/skill/workflow lifecycle path (a separate, out-of-CR-2-scope surface).
+  const providerApprovalVerifier = createFridayProviderApprovalPoPVerifier();
   const canonicalMutationGate = createFridayMutatingActionGate({
     nowIso: deps.nowIso,
     ticketIdGenerator: () => deps.idGenerator(),
     approvalSignatureSecret: deps.tokenSecret,
     requireApprovalSignature: true,
+    deviceApprovalVerifier: (proof, nowMs): FridayDeviceApprovalVerifyResult => {
+      const result = providerApprovalVerifier.verifyPossession({
+        transcript: proof.transcript,
+        devicePublicKey: proof.devicePublicKey,
+        signature: proof.signature,
+        nowMs,
+      });
+      if (!result.ok) {
+        return { ok: false, reason: result.reason };
+      }
+      return {
+        ok: true,
+        devicePublicKeyHash: result.devicePublicKeyHash,
+        approvalId: result.approvalId,
+        actionDigest: result.actionDigest,
+        decidedByPrincipalId: result.decidedByPrincipalId,
+        expiresAt: result.expiresAt,
+      };
+    },
   });
   const providerMutationGateRequired = deps.canonicalMutatingActionGate
     ?? resolveApiRuntimeCanonicalGateRequired(process.env);
@@ -4344,10 +4371,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     routeProvidersViaRust: deps.routeProvidersViaRust,
     rustCapabilityDoctor: rustCapabilityDoctorService,
     nowIso: deps.nowIso,
-    // CORE-A CR-2: the owner-confirm approval minter. Same signing seam the plugin /
-    // upgrade lifecycles use; consulted ONLY by POST /v1/providers/plan/confirm after
-    // an owner explicitly confirms a server-produced plan digest.
-    signCanonicalApproval: signCanonicalApprovalForRequest,
+    // SEC-APPROVAL-AUTHORITY-001 (CORE-A CR-2): the ASYMMETRIC device-approval
+    // verifier. POST /v1/providers/plan/confirm VERIFIES the owner device's P-256
+    // proof-of-possession over the reviewed action digest — the Hub holds NO signing
+    // key on this path and never self-mints an approval.
+    providerApprovalVerifier,
   })) {
     routes.register(route);
   }
