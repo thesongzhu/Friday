@@ -5035,7 +5035,7 @@
         "CANONICAL_APPROVAL_REQUIRED",
         "expect(mockService.createProvider).not.toHaveBeenCalled",
         "providers.create accepts canonical approval in gate-required profile and strips control fields",
-        "expect(mockService.createProvider).toHaveBeenCalledWith(providerBody)"
+        "expect(mockService.createProvider).toHaveBeenCalledWith(providerBody, undefined)"
       ],
       "proof": "src/api/http/routes/friday-provider-routes.ts providers.create strips canonical control fields before providerService.createProvider and maybeRequireProviderMutationTicket gates the route in gate-required profiles. The behavior test proves missing approval blocks before service mutation and valid canonical approval strips control fields before delegation.",
       "next_action": "Keep provider profile creation as a governed adapter until the provider configuration owner moves to a Rust projection/mutation entrypoint."
