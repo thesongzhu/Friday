@@ -1609,10 +1609,18 @@ pub fn session_create_result_for_db(
 ) -> Envelope {
     let owner = authenticated_owner.unwrap_or("").trim();
     if owner.is_empty() {
-        return session_error(msg_id, now_ms, "session create requires an authenticated owner");
+        return session_error(
+            msg_id,
+            now_ms,
+            "session create requires an authenticated owner",
+        );
     }
     if request.session_id.trim().is_empty() {
-        return session_error(msg_id, now_ms, "session create requires a non-empty session id");
+        return session_error(
+            msg_id,
+            now_ms,
+            "session create requires a non-empty session id",
+        );
     }
     // FIX-Q3b: a body-asserted owner that DISAGREES with the authenticated owner is fail-closed.
     // Absent/blank/matching ⇒ bind the authenticated owner (single-owner v1: the forwarded
@@ -1686,11 +1694,19 @@ pub fn session_message_append_result_for_db(
 ) -> Envelope {
     let owner = authenticated_owner.unwrap_or("").trim();
     if owner.is_empty() {
-        return session_error(msg_id, now_ms, "session append requires an authenticated owner");
+        return session_error(
+            msg_id,
+            now_ms,
+            "session append requires an authenticated owner",
+        );
     }
     let session_id = request.session_id.trim();
     if session_id.is_empty() {
-        return session_error(msg_id, now_ms, "session append requires a non-empty session id");
+        return session_error(
+            msg_id,
+            now_ms,
+            "session append requires a non-empty session id",
+        );
     }
     if request.role.trim().is_empty() {
         return session_error(msg_id, now_ms, "session append requires a non-empty role");
@@ -1723,7 +1739,10 @@ pub fn session_message_append_result_for_db(
     // session `updated_at` to the SAME `now_ms` — so `seq` is parsed from the id suffix and the
     // timestamps are `now_ms` (authoritative, not invented). Defensive parse: an unexpected id shape
     // fails closed rather than reporting a wrong ordinal.
-    let seq = match message_id.rsplit_once(":m").and_then(|(_, s)| s.parse::<i64>().ok()) {
+    let seq = match message_id
+        .rsplit_once(":m")
+        .and_then(|(_, s)| s.parse::<i64>().ok())
+    {
         Some(seq) => seq,
         None => return session_error(msg_id, now_ms, "session append produced an unparseable id"),
     };
@@ -4047,7 +4066,10 @@ mod tests {
             }
             other => panic!("expected SessionMessageAppendResult, got {other:?}"),
         }
-        assert_eq!(friday_storage::session_message_count(db.conn(), sid).unwrap(), 1);
+        assert_eq!(
+            friday_storage::session_message_count(db.conn(), sid).unwrap(),
+            1
+        );
 
         // APPEND as a DIFFERENT owner "bob" → REFUSED fail-closed (Error), NO row written.
         let denied = session_message_append_result_for_db(
@@ -4178,8 +4200,14 @@ mod tests {
         );
         match r2.message {
             Message::SessionCreateResult { result } => {
-                assert_eq!(result.created_at, first, "created_at must be preserved on re-ensure");
-                assert_eq!(result.updated_at, later, "updated_at must bump on re-ensure");
+                assert_eq!(
+                    result.created_at, first,
+                    "created_at must be preserved on re-ensure"
+                );
+                assert_eq!(
+                    result.updated_at, later,
+                    "updated_at must bump on re-ensure"
+                );
             }
             other => panic!("expected SessionCreateResult, got {other:?}"),
         }

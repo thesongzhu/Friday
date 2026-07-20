@@ -264,10 +264,7 @@ pub fn session_exists(conn: &Connection, agent_session_id: &str) -> Result<bool>
 /// row's ORIGINAL `created_at` (an idempotent re-ensure keeps `created_at` and only bumps
 /// `updated_at`) rather than guessing `now_ms`. `.optional()` maps ONLY the no-row case to `None`
 /// and propagates any real storage error.
-pub fn session_timestamps(
-    conn: &Connection,
-    agent_session_id: &str,
-) -> Result<Option<(i64, i64)>> {
+pub fn session_timestamps(conn: &Connection, agent_session_id: &str) -> Result<Option<(i64, i64)>> {
     let row = conn
         .query_row(
             "SELECT created_at, updated_at FROM agent_session WHERE agent_session_id = ?1",

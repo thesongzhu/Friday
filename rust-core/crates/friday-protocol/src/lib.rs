@@ -1637,9 +1637,13 @@ pub enum Message {
     /// (CORE-A CR-3) client->hub: append ONE conversation message to an existing session (the
     /// Rust-owned `sessions.messages.create`). PURE Hub `&Db` mutation. OWNER-GATED fail-closed: a
     /// message for a session the authenticated principal does not own is refused (no row written).
-    SessionMessageAppendRequest { request: SessionMessageAppendRequestWire },
+    SessionMessageAppendRequest {
+        request: SessionMessageAppendRequestWire,
+    },
     /// (CORE-A CR-3) hub->client: refs-only append receipt (message id + seq + timestamps; no body).
-    SessionMessageAppendResult { result: SessionMessageAppendResultWire },
+    SessionMessageAppendResult {
+        result: SessionMessageAppendResultWire,
+    },
     /// client->hub: mint one ContextPassport for an existing Mission through the Hub gate.
     /// Never a provider/model call; never direct client DB writes.
     ContextPassportTransferRequest {
