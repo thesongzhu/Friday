@@ -1,8 +1,11 @@
 import { apiClient } from "./client";
 import { authStorage } from "@/lib/storage/auth-storage";
+import type { DeviceClaimProof } from "@/lib/auth/device-key";
 import type {
+  AuthBootstrapChallengeResponse,
   AuthBootstrapResponse,
   AuthBootstrapStatusResponse,
+  AuthDeviceClaimResponse,
   LoginResponse,
   MeResponse,
 } from "./types";
@@ -15,6 +18,72 @@ export interface LoginInput {
   localPassphrase?: string;
   email?: string;
   password?: string;
+}
+
+// ─── SEC-SETUP-BOOTSTRAP-001 (CR-1): device-bound owner claim client fns ───
+
+export interface BootstrapChallengeInput {
+  installId: string;
+  osUser: string;
+  origin: string;
+  action?: string;
+}
+
+export interface DeviceClaimInput {
+  nonce: string;
+  devicePublicKey: string;
+  deviceId: string;
+  origin: string;
+  installId: string;
+  osUser: string;
+  deviceClaimProof: DeviceClaimProof;
+}
+
+export interface DeviceKeyLoginInput {
+  devicePublicKey: string;
+  deviceId: string;
+  origin: string;
+  deviceLoginProof: DeviceClaimProof;
+}
+
+/** Mint a single-use install nonce (challenge) for a device-bound owner claim. */
+export async function postBootstrapChallenge(
+  input: BootstrapChallengeInput,
+): Promise<AuthBootstrapChallengeResponse> {
+  return apiClient.post<BootstrapChallengeInput, AuthBootstrapChallengeResponse>(
+    "/v1/auth/bootstrap/challenge",
+    input,
+  );
+}
+
+/**
+ * Atomically claim the local owner slot with a device public key + proof-of-
+ * possession. The backend is loopback-only, origin-bound, replay-protected.
+ */
+export async function postDeviceClaim(
+  input: DeviceClaimInput,
+): Promise<AuthDeviceClaimResponse> {
+  return apiClient.post<DeviceClaimInput, AuthDeviceClaimResponse>(
+    "/v1/auth/bootstrap/device-claim",
+    input,
+  );
+}
+
+/**
+ * Log in with a device-key proof-of-possession (a fresh `owner-login` transcript
+ * signed by the bound device key). On success stores the session, mirroring
+ * `login()`. NOTE: the backend mints a session ONLY when device-owner authority is
+ * enabled (native-IPC attestation) — otherwise it fails closed and the caller
+ * falls back to the passphrase path.
+ */
+export async function deviceKeyLogin(input: DeviceKeyLoginInput): Promise<LoginResponse> {
+  const data = await apiClient.post<DeviceKeyLoginInput, LoginResponse>(
+    "/v1/auth/login",
+    input,
+  );
+  authStorage.setTokens(data.accessToken, data.refreshToken, data.expiresInSec);
+  authStorage.setUser(data.user);
+  return data;
 }
 
 export async function login(input: LoginInput): Promise<LoginResponse> {

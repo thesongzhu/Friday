@@ -49,12 +49,51 @@ export interface MeResponse {
 
 export interface AuthBootstrapStatusResponse {
   bootstrapRequired: boolean;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 (CR-1): server-derived, fail-closed flag for whether
+   * device-bound owner claim is the AUTHORITATIVE first-run path. `true` ONLY when
+   * device-owner authority is enabled (requires native-IPC attestation). On the
+   * current build it is `false`, so first-run honestly stays on the passphrase
+   * gate. When `true`, RequireAuth routes first-run to the device-claim gate and
+   * the passphrase gate is not offered as the authoritative path.
+   *
+   * Optional in the client type so an older backend (pre-CR-1) that omits the
+   * field is treated as `false` (fail-closed → passphrase), never as available.
+   */
+  deviceClaimAvailable?: boolean;
 }
 
 export interface AuthBootstrapResponse {
   initialized: true;
   initializedAt: string;
   userId: string;
+}
+
+// ─── SEC-SETUP-BOOTSTRAP-001 (CR-1): device-bound owner claim ───
+
+export interface AuthBootstrapChallengeResponse {
+  challengeId: string;
+  /** Raw single-use nonce — returned exactly once. */
+  nonce: string;
+  kind: "install_owner_claim";
+  hubId: string;
+  installId: string;
+  osUser: string;
+  origin: string;
+  action: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface AuthDeviceClaimResponse {
+  claimed: true;
+  claimedAt: string;
+  userId: string;
+  deviceId: string;
+  devicePublicKeyHash: string;
+  keyProtection: "secure_enclave_os_verified" | "keychain_acl_verified" | "software_dev_only" | "unverified";
+  /** Always false in the release/default profile until native-IPC attestation lands. */
+  deviceAuthorityEnabled: boolean;
 }
 
 // ─── Agent types ───

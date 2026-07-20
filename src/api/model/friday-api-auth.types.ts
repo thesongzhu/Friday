@@ -124,6 +124,26 @@ export interface FridayLoginRequest {
   password?: string;
   localPassphrase?: string;
   rememberMe?: boolean;
+  // ─── SEC-SETUP-BOOTSTRAP-001 · device-bound owner login (CR-1) ───
+  // Device-key login for a machine whose owner slot was claimed by a device
+  // (users.password_hash = the non-scrypt device sentinel). The device proves
+  // possession of the bound private key by signing a FRESH owner-login transcript;
+  // no passphrase is involved and the passphrase path can NEVER satisfy the device
+  // sentinel (and vice-versa). Minting a session additionally requires the
+  // server-derived native-IPC attestation precondition — fail-closed until it lands.
+  /** Device public key, SPKI DER base64/base64url (P-256), bound at claim time. */
+  devicePublicKey?: string;
+  /** Device identifier presented in the login transcript. */
+  deviceId?: string;
+  /** Loopback origin the login is presented from (bound into the transcript). */
+  origin?: string;
+  /**
+   * REQUIRED for the device-key login path. Its presence selects the device path.
+   * The device signs a canonical transcript minted for action `owner-login`; the
+   * server verifies the signature against the presented (bound) public key. A
+   * missing/invalid proof fails closed with no session minted.
+   */
+  deviceLoginProof?: FridayDeviceClaimProof;
 }
 
 export interface FridayLoginResponse {
@@ -142,6 +162,16 @@ export interface FridayLoginResponse {
 
 export interface FridayAuthBootstrapStatusResponse {
   bootstrapRequired: boolean;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 (CR-1): whether device-bound owner claim is the
+   * AUTHORITATIVE first-run path on this build. Server-derived and fail-closed —
+   * it is `true` ONLY when device-owner authority is enabled (which requires the
+   * native-IPC attestation precondition). On the current release build it is
+   * `false`, so the UI honestly falls back to the passphrase gate. When it is
+   * `true`, the UI routes first-run to the device-claim gate instead, and the
+   * passphrase gate is NOT offered as the authoritative path.
+   */
+  deviceClaimAvailable: boolean;
 }
 
 export interface FridayAuthBootstrapRequest {

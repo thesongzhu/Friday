@@ -317,6 +317,15 @@ export function createFridayAuthRoutes(
           password: typeof body.password === "string" ? body.password : undefined,
           localPassphrase: typeof body.localPassphrase === "string" ? body.localPassphrase : undefined,
           rememberMe: typeof body.rememberMe === "boolean" ? body.rememberMe : undefined,
+          // SEC-SETUP-BOOTSTRAP-001 (CR-1): device-key login fields. The presence
+          // of deviceLoginProof selects the device path in authService.login; the
+          // auth SERVICE defensively validates the untrusted proof envelope and
+          // fails closed on anything malformed (and requires device-owner authority
+          // to be enabled before minting a session).
+          devicePublicKey: typeof body.devicePublicKey === "string" ? body.devicePublicKey : undefined,
+          deviceId: typeof body.deviceId === "string" ? body.deviceId : undefined,
+          origin: typeof body.origin === "string" ? body.origin : undefined,
+          deviceLoginProof: body.deviceLoginProof as FridayLoginRequest["deviceLoginProof"],
         };
         return deps.authService.login(request, ctx.ip, ctx.userAgent);
       },

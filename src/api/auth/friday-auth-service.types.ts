@@ -152,6 +152,18 @@ export interface CreateFridayAuthServiceDeps {
   ) => void;
   /** Optional rate limit service for auth lockout. */
   rateLimiter?: FridayRateLimitService;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 (CR-1): server-derived predicate for whether a
+   * device-bound owner principal may carry release-profile owner authority. This
+   * is the SOLE gate that lets a device-key login mint a session and that flags
+   * `deviceClaimAvailable` in the bootstrap status. It defaults to the real
+   * `isDeviceOwnerAuthorityEnabled()` (hard-wired `false` today because the
+   * native-IPC attestation precondition is absent). It is injectable ONLY so a
+   * test can exercise the enabled branch WITHOUT flipping the compile-time
+   * attestation constant — production wiring never overrides it, so the honest
+   * native gate is never faked.
+   */
+  deviceOwnerAuthorityEnabled?: () => boolean;
   /** Optional audit hook for failed auth and lockout decisions. */
   auditAuthEvent?: (event: {
     type: "auth.login.failed" | "auth.login.locked_out";

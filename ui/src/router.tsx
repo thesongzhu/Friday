@@ -35,6 +35,7 @@ const ReflexPage = lazy(async () => import("@/routes/reflex-page").then((module)
 const SettingsPage = lazy(async () => import("@/routes/settings-page").then((module) => ({ default: module.SettingsPage })));
 const SetupPage = lazy(async () => import("@/routes/setup-page").then((module) => ({ default: module.SetupPage })));
 const FirstRunPassphraseGate = lazy(async () => import("@/routes/first-run-passphrase-gate").then((module) => ({ default: module.FirstRunPassphraseGate })));
+const FirstRunDeviceClaimGate = lazy(async () => import("@/routes/first-run-device-claim-gate").then((module) => ({ default: module.FirstRunDeviceClaimGate })));
 const SkillsPage = lazy(async () => import("@/routes/skills-page").then((module) => ({ default: module.SkillsPage })));
 const SkillGeneratorPage = lazy(async () => import("@/routes/skill-generator-page").then((module) => ({ default: module.SkillGeneratorPage })));
 const WorkflowBuilderPage = lazy(async () => import("@/routes/workflow-builder-page").then((module) => ({ default: module.WorkflowBuilderPage })));
@@ -211,7 +212,25 @@ function RequireAuth({ children }: { children: ReactNode }) {
     }
     if (bootstrapStatusQuery.data?.bootstrapRequired) {
       // Backend is reachable and reports a fresh machine → offer the first-run local
-      // security gate (create passphrase), NOT a misleading "connecting" screen.
+      // security gate, NOT a misleading "connecting" screen.
+      //
+      // SEC-SETUP-BOOTSTRAP-001 (CR-1): when the backend reports device-owner
+      // authority is enabled (deviceClaimAvailable — server-derived, requires the
+      // native-IPC attestation precondition), route to the DEVICE-CLAIM gate as the
+      // authoritative first-run path. Otherwise (the current release build, where
+      // attestation is honestly unavailable) keep the passphrase gate. The
+      // passphrase gate is NOT offered as the authoritative path when device-claim
+      // is available.
+      if (bootstrapStatusQuery.data.deviceClaimAvailable === true) {
+        return (
+          <RouteSuspense
+            title={localizedText("绑定本机设备", "Bind this device")}
+            detail={localizedText("Friday 正在准备本机设备安全设置。", "Friday is preparing device-bound security setup.")}
+          >
+            <FirstRunDeviceClaimGate />
+          </RouteSuspense>
+        );
+      }
       return (
         <RouteSuspense
           title={localizedText("创建本机口令", "Create local passphrase")}

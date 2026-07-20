@@ -193,6 +193,15 @@ const CLAIM_TRANSCRIPT_ACTION = "owner-claim";
 const MIGRATE_TRANSCRIPT_ACTION = "owner-migrate";
 
 /**
+ * SEC-SETUP-BOOTSTRAP-001 (CR-1): the canonical transcript `action` a device-key
+ * LOGIN proof MUST be minted for. Because `action` is bound INTO the signed
+ * transcript bytes, a proof minted for owner-claim / owner-migrate / owner-readback
+ * can NEVER be replayed into the login leg — and a login proof can never be
+ * replayed into those legs. This is the domain separator for the login intent.
+ */
+const LOGIN_TRANSCRIPT_ACTION = "owner-login";
+
+/**
  * Server-side maximum accepted transcript TTL for a device readback (aligned with
  * the 300s bootstrap-nonce TTL). The transcript's own `expiresAt` is the freshness
  * signal, but the PoP verifier imposes NO upper bound — so a client could mint a
@@ -200,6 +209,19 @@ const MIGRATE_TRANSCRIPT_ACTION = "owner-migrate";
  * so a readback proof is short-lived by construction.
  */
 const READBACK_MAX_TRANSCRIPT_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * SEC-SETUP-BOOTSTRAP-001 (CR-1): server-side maximum accepted transcript TTL for
+ * a device-key LOGIN (aligned with the readback / bootstrap-nonce 300s window).
+ * The PoP verifier enforces the transcript's own `expiresAt` but imposes NO upper
+ * bound, so a client could otherwise mint a far-future login transcript once and
+ * replay it indefinitely. Clamp the accepted window so a login proof is
+ * short-lived by construction. NOTE: the AUTHORITATIVE anti-spoof / anti-replay
+ * control that GATES minting is the native-IPC caller-identity precondition
+ * (`isDeviceOwnerAuthorityEnabled`); a server-issued single-use login-challenge
+ * nonce would be a defence-in-depth hardening follow-up.
+ */
+const LOGIN_MAX_TRANSCRIPT_TTL_MS = 5 * 60 * 1000;
 
 function isLocalhostAddress(addr?: string): boolean {
   return isFridayLoopbackAddress(addr);
@@ -386,6 +408,13 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
   const warn = deps.warn ?? console.warn;
   const warnOnce = createWarnOnce(warn);
   const rateLimiter = deps.rateLimiter;
+  // SEC-SETUP-BOOTSTRAP-001 (CR-1): the SOLE device-owner authority predicate.
+  // Defaults to the real, server-derived, fail-closed precondition (hard-wired
+  // false today — native-IPC attestation is absent). Injectable ONLY for tests
+  // that exercise the enabled branch without flipping the compile-time constant;
+  // production never overrides it, so the native gate is never faked here.
+  const deviceOwnerAuthorityEnabled =
+    deps.deviceOwnerAuthorityEnabled ?? (() => isDeviceOwnerAuthorityEnabled());
   const warnSinkMeta = warn as unknown as { mock?: unknown };
   const suppressExpectedTestWarnings = isFridayTestSecurityWarningSuppressed()
     && warn === console.warn
@@ -607,6 +636,214 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
     }
   }
 
+  /**
+   * Mint a real session for an authenticated user (session row + rotating refresh
+   * token + registered access token + last_login stamp). Shared by the passphrase/
+   * email login path and the device-key login path so BOTH mint identically — a
+   * device-key login is not a weaker session, it is the SAME session anchored on a
+   * different possession proof.
+   */
+  function mintSession(
+    user: FridayUserRow,
+    ip?: string,
+    userAgent?: string,
+  ): FridayLoginResponse {
+    const now = deps.nowIso();
+    const sessionId = deps.idGenerator();
+    const { accessToken, refreshToken, accessTokenClaims } = generateTokenPair(user, sessionId);
+    const refreshHash = hashToken(refreshToken);
+    const expiresAt = new Date(
+      new Date(now).getTime() + deps.refreshTokenTtlSec * 1000,
+    ).toISOString();
+
+    deps.db.withWriteTransaction((db) => {
+      sessionRepo.create(db, {
+        id: sessionId,
+        userId: user.id,
+        refreshTokenHash: refreshHash,
+        expiresAt,
+        ipAddress: ip,
+        userAgent,
+        now,
+      });
+      deps.registerIssuedAccessToken?.(db, {
+        tokenId: accessTokenClaims.tokenId,
+        sessionId,
+        userId: user.id,
+        expiresAtEpoch: accessTokenClaims.exp,
+        now,
+      });
+
+      db.prepare("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?").run(
+        now,
+        now,
+        user.id,
+      );
+    });
+
+    return {
+      accessToken,
+      refreshToken,
+      expiresInSec: deps.accessTokenTtlSec,
+      user: {
+        id: user.id,
+        email: user.email ?? undefined,
+        displayName: user.display_name,
+        role: user.role as FridayRole,
+      },
+    };
+  }
+
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 (CR-1): device-key login mint. A machine whose owner
+   * slot was claimed by a device (users.password_hash = the non-scrypt device
+   * sentinel `device-owner$v1$<sha256Hex(devicePublicKey)>`) authenticates by
+   * proving possession of the BOUND private key — signing a fresh canonical
+   * transcript minted for action `owner-login`. On success it mints a real session
+   * mirroring the passphrase path.
+   *
+   * Cross-path safety (both directions):
+   *   - The device sentinel is NOT a valid scrypt/legacy hash, so the passphrase
+   *     path (`verifyPassword`) rejects it — a device owner can never be logged in
+   *     with a passphrase.
+   *   - This path REQUIRES the sentinel prefix, so a scrypt/legacy passphrase owner
+   *     (or a first-boot NULL slot) can never be logged in via the device path.
+   *
+   * Honesty gate: possession of a SOFTWARE device key is insufficient to carry
+   * release-profile owner authority. Minting is gated on `deviceOwnerAuthorityEnabled()`
+   * — the server-derived native-IPC attestation precondition, hard-wired false on
+   * this build. So today this ALWAYS fails closed (the caller falls back to the
+   * passphrase gate); it starts minting the moment attestation lands, WITHOUT this
+   * code faking it.
+   */
+  function deviceKeyLogin(
+    request: FridayLoginRequest,
+    ip?: string,
+    userAgent?: string,
+  ): FridayLoginResponse {
+    // Loopback-only, consistent with the device-claim family.
+    if (!isLocalhostAddress(ip)) {
+      throw new FridayAuthError(
+        "INVALID_CREDENTIALS",
+        "Device-key login is only allowed from localhost.",
+      );
+    }
+
+    const localUser = findLocalUser();
+    if (!localUser) {
+      throw new FridayAuthError("USER_NOT_FOUND", "No local user configured");
+    }
+    const lockoutKey = `device:${localUser.id}`;
+    checkLockout(lockoutKey, ip);
+
+    // ── Cross-path guard: ONLY a device-claimed owner may device-login ──
+    // The AUTHORITATIVE, durable owner<->device binding is users.password_hash =
+    // the device sentinel (the consumed install-nonce row is reaped on a retention
+    // horizon and is NOT relied upon here). A scrypt/legacy passphrase owner or a
+    // first-boot NULL slot is refused, so this path can never authenticate a
+    // passphrase owner.
+    const storedHash = localUser.password_hash;
+    if (!storedHash || !storedHash.startsWith(DEVICE_OWNER_HASH_PREFIX)) {
+      recordFailure(lockoutKey, ip);
+      throw new FridayAuthError(
+        "INVALID_CREDENTIALS",
+        "No device-bound owner is configured for this machine.",
+      );
+    }
+    const boundKeyHash = storedHash.slice(DEVICE_OWNER_HASH_PREFIX.length);
+
+    const devicePublicKey = (request.devicePublicKey ?? "").trim();
+    const deviceId = (request.deviceId ?? "").trim();
+    const origin = (request.origin ?? "").trim();
+    if (!devicePublicKey || !deviceId || !origin) {
+      recordFailure(lockoutKey, ip);
+      throw new FridayAuthError(
+        "INVALID_CREDENTIALS",
+        "devicePublicKey, deviceId and origin are required for device-key login.",
+      );
+    }
+
+    // ── Bind the presented key to the durable owner<->device binding ──
+    // The presented key MUST hash to the sentinel-bound value (the SAME sha256Hex
+    // the claim path wrote), so a possession-proof for a DIFFERENT key cannot log
+    // in this owner.
+    if (sha256Hex(devicePublicKey) !== boundKeyHash) {
+      recordFailure(lockoutKey, ip);
+      throw new FridayAuthError(
+        "INVALID_CREDENTIALS",
+        "Presented device key is not the bound owner device key.",
+      );
+    }
+
+    // ── Proof-of-possession over a FRESH owner-login transcript ──
+    const proof = coerceDeviceClaimProof(request.deviceLoginProof);
+    if (!proof) {
+      recordFailure(lockoutKey, ip);
+      throw new FridayAuthError(
+        "INVALID_CREDENTIALS",
+        "Device-key login requires a proof-of-possession (signed transcript + signature).",
+      );
+    }
+    // Bind the signed transcript to THIS login request.
+    if (proof.transcript.origin !== origin || proof.transcript.deviceId !== deviceId) {
+      recordFailure(lockoutKey, ip);
+      throw new FridayAuthError(
+        "INVALID_CREDENTIALS",
+        "Proof-of-possession transcript does not match the login request.",
+      );
+    }
+    // Domain-separate the login intent: the transcript MUST be minted FOR
+    // owner-login. Because `action` is bound into the signed bytes, a proof minted
+    // for owner-claim / owner-migrate / owner-readback can NEVER be replayed here.
+    if (proof.transcript.action !== LOGIN_TRANSCRIPT_ACTION) {
+      recordFailure(lockoutKey, ip);
+      throw new FridayAuthError(
+        "INVALID_CREDENTIALS",
+        "Proof-of-possession transcript was not minted for device-key login.",
+      );
+    }
+    const pop = ownerClaimPoPVerifier.verifyPossession({
+      transcript: proof.transcript,
+      devicePublicKey: { encoding: "spki-der-base64", value: devicePublicKey },
+      signature: proof.signature,
+      nowMs: Date.parse(deps.nowIso()),
+    });
+    if (!pop.ok) {
+      recordFailure(lockoutKey, ip);
+      throw new FridayAuthError(
+        "INVALID_CREDENTIALS",
+        `Device proof-of-possession failed: ${pop.reason}.`,
+      );
+    }
+
+    // ── Server-side max-TTL clamp (login freshness) ──
+    const nowMs = Date.parse(deps.nowIso());
+    const expiryMs = Date.parse(proof.transcript.expiresAt);
+    if (!Number.isFinite(expiryMs) || expiryMs - nowMs > LOGIN_MAX_TRANSCRIPT_TTL_MS) {
+      recordFailure(lockoutKey, ip);
+      throw new FridayAuthError(
+        "INVALID_CREDENTIALS",
+        "Proof-of-possession transcript expiry exceeds the maximum allowed TTL.",
+      );
+    }
+
+    // ── HONEST NATIVE-IPC GATE (fail-closed, checked AFTER full validation) ──
+    // Even a cryptographically VALID software-key PoP does NOT mint a session
+    // unless device-owner authority is enabled. Today that is hard-wired false
+    // (native-IPC attestation absent), so this ALWAYS fails closed and the caller
+    // falls back to the passphrase path. Not a credential failure → no lockout
+    // increment (the PoP was valid; the capability is simply disabled).
+    if (!deviceOwnerAuthorityEnabled()) {
+      throw new FridayAuthError(
+        "DEVICE_AUTHORITY_DISABLED",
+        "Device-bound owner authority is disabled on this build (native-IPC attestation unavailable).",
+      );
+    }
+
+    resetFailures(lockoutKey, ip);
+    return mintSession(localUser, ip, userAgent);
+  }
+
   return {
     getBootstrapStatus(): FridayAuthBootstrapStatusResponse {
       const localUser = findLocalUser();
@@ -616,6 +853,10 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       );
       return {
         bootstrapRequired,
+        // CR-1: device-claim is the authoritative first-run path ONLY when
+        // device-owner authority is enabled (server-derived, fail-closed). False
+        // on the current build → the UI honestly keeps the passphrase gate.
+        deviceClaimAvailable: deviceOwnerAuthorityEnabled(),
       };
     },
 
@@ -929,7 +1170,7 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         // device binding carries NO owner authority in release/default (the
         // device principal stays DISABLED until native-IPC precondition (b)).
         keyProtection,
-        deviceAuthorityEnabled: isDeviceOwnerAuthorityEnabled(),
+        deviceAuthorityEnabled: deviceOwnerAuthorityEnabled(),
       };
     },
 
@@ -1215,7 +1456,7 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         keyProtection,
         // ALWAYS false in release/default — the provisional device binding
         // carries ZERO authority until native-IPC precondition (b) lands.
-        deviceAuthorityEnabled: isDeviceOwnerAuthorityEnabled(),
+        deviceAuthorityEnabled: deviceOwnerAuthorityEnabled(),
       };
     },
 
@@ -1411,7 +1652,7 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         passphraseStillActive: true,
         // ALWAYS false in release/default — activation grants ZERO authority until
         // native-IPC precondition (b) lands.
-        deviceAuthorityEnabled: isDeviceOwnerAuthorityEnabled(),
+        deviceAuthorityEnabled: deviceOwnerAuthorityEnabled(),
       };
     },
 
@@ -1456,11 +1697,20 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
         activatedAt: row?.activated_at ?? null,
         revokedAt: row?.revoked_at ?? null,
         passphraseStillActive: true,
-        deviceAuthorityEnabled: isDeviceOwnerAuthorityEnabled(),
+        deviceAuthorityEnabled: deviceOwnerAuthorityEnabled(),
       };
     },
 
     login(request, ip, userAgent) {
+      // SEC-SETUP-BOOTSTRAP-001 (CR-1): a genuine (non-null) device-login proof
+      // selects the device-key login path (proof-of-possession of the bound
+      // device key), which mints a session ONLY when device-owner authority is
+      // enabled. Requiring non-null means a stray null proof cannot hijack a
+      // passphrase/email request; the device path never touches that logic below.
+      if (request.deviceLoginProof !== undefined && request.deviceLoginProof !== null) {
+        return deviceKeyLogin(request, ip, userAgent);
+      }
+
       let user: FridayUserRow | null = null;
 
       // Resolve the principal early for lockout key derivation.
@@ -1528,50 +1778,7 @@ export function createFridayAuthService(deps: CreateFridayAuthServiceDeps): Frid
       // Auth succeeded — reset lockout state
       resetFailures(lockoutKey, ip);
 
-      const now = deps.nowIso();
-      const sessionId = deps.idGenerator();
-      const { accessToken, refreshToken, accessTokenClaims } = generateTokenPair(user, sessionId);
-      const refreshHash = hashToken(refreshToken);
-      const expiresAt = new Date(
-        new Date(now).getTime() + deps.refreshTokenTtlSec * 1000,
-      ).toISOString();
-
-      deps.db.withWriteTransaction((db) => {
-        sessionRepo.create(db, {
-          id: sessionId,
-          userId: user.id,
-          refreshTokenHash: refreshHash,
-          expiresAt,
-          ipAddress: ip,
-          userAgent,
-          now,
-        });
-        deps.registerIssuedAccessToken?.(db, {
-          tokenId: accessTokenClaims.tokenId,
-          sessionId,
-          userId: user.id,
-          expiresAtEpoch: accessTokenClaims.exp,
-          now,
-        });
-
-        db.prepare("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?").run(
-          now,
-          now,
-          user.id,
-        );
-      });
-
-      return {
-        accessToken,
-        refreshToken,
-        expiresInSec: deps.accessTokenTtlSec,
-        user: {
-          id: user.id,
-          email: user.email ?? undefined,
-          displayName: user.display_name,
-          role: user.role as FridayRole,
-        },
-      };
+      return mintSession(user, ip, userAgent);
     },
 
     refresh(request) {

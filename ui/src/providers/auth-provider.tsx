@@ -1,6 +1,16 @@
 import * as React from "react";
 import { authStorage } from "@/lib/storage/auth-storage";
-import { fetchMe, login as loginRequest, logout, type LoginInput } from "@/lib/api/auth";
+import {
+  deviceKeyLogin,
+  fetchMe,
+  login as loginRequest,
+  logout,
+  postBootstrapChallenge,
+  postDeviceClaim,
+  type LoginInput,
+} from "@/lib/api/auth";
+import { getDeviceKeyProvider } from "@/lib/auth/device-key";
+import { runDeviceOwnerBootstrap } from "@/lib/auth/device-owner-bootstrap";
 import type { FridayUser } from "@/lib/api/types";
 
 // ─── Context shape ───
@@ -11,8 +21,35 @@ interface AuthContextValue {
   isLoading: boolean;
   authError: Error | null;
   login: (input: LoginInput) => Promise<void>;
+  /**
+   * SEC-SETUP-BOOTSTRAP-001 (CR-1): device-bound owner first-run. Generates a real
+   * device key, claims the owner slot, and logs in by proving key possession.
+   * Rejects (fails closed) if the device-key capability is unavailable OR if the
+   * backend refuses to mint (device authority disabled) — the caller must NOT
+   * silently fall back to a fabricated identity.
+   */
+  deviceOwnerLogin: () => Promise<void>;
+  /** Whether the device-key capability is available in this context (fail-closed). */
+  deviceKeyAvailable: boolean;
   logout: () => Promise<void>;
   retryLocalSession: () => Promise<void>;
+}
+
+/** Stable per-install id used to bind device-claim challenge context. */
+function resolveInstallId(): string {
+  const KEY = "friday.device.install-id";
+  try {
+    const existing = window.localStorage.getItem(KEY);
+    if (existing) return existing;
+    const generated =
+      typeof window.crypto?.randomUUID === "function"
+        ? window.crypto.randomUUID()
+        : `install-${String(Date.now())}`;
+    window.localStorage.setItem(KEY, generated);
+    return generated;
+  } catch {
+    return "install-local";
+  }
 }
 
 const AuthContext = React.createContext<AuthContextValue | null>(null);
@@ -103,6 +140,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthError(null);
   }, []);
 
+  const handleDeviceOwnerLogin = React.useCallback(async () => {
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const response = await runDeviceOwnerBootstrap(
+      getDeviceKeyProvider(),
+      { issueChallenge: postBootstrapChallenge, claim: postDeviceClaim, login: deviceKeyLogin },
+      { origin, installId: resolveInstallId(), osUser: "ui" },
+    );
+    setUser(response.user);
+    setAuthError(null);
+  }, []);
+
   const handleLogout = React.useCallback(async () => {
     await logout();
     setUser(null);
@@ -116,10 +164,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       authError,
       login: handleLogin,
+      deviceOwnerLogin: handleDeviceOwnerLogin,
+      deviceKeyAvailable: getDeviceKeyProvider().isAvailable(),
       logout: handleLogout,
       retryLocalSession,
     }),
-    [user, isLoading, authError, handleLogin, handleLogout, retryLocalSession],
+    [user, isLoading, authError, handleLogin, handleDeviceOwnerLogin, handleLogout, retryLocalSession],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
